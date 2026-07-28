@@ -108,6 +108,22 @@ export const CapabilitiesSchema = z.object({
 })
 export type Capabilities = z.infer<typeof CapabilitiesSchema>
 
+/**
+ * A model the user can pick, as reported by the provider itself. We never keep
+ * a hardcoded list — vendors ship new models constantly and a stale dropdown is
+ * worse than no dropdown.
+ */
+export const ModelSchema = z.object({
+  id: z.string(),
+  displayName: z.string(),
+  description: z.string().optional(),
+  isDefault: z.boolean(),
+  /** e.g. low / medium / high. Empty when the model has no effort setting. */
+  reasoningEfforts: z.array(z.string()),
+  defaultReasoningEffort: z.string().optional(),
+})
+export type Model = z.infer<typeof ModelSchema>
+
 export const ProviderStatusSchema = z.object({
   id: ProviderIdSchema,
   displayName: z.string(),

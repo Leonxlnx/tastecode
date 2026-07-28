@@ -1,5 +1,5 @@
 import { CodexAdapter } from '@harness/adapter-codex'
-import type { DomainEvent, ProviderId, Thread } from '@harness/contracts'
+import type { DomainEvent, Model, ProviderId, Thread } from '@harness/contracts'
 
 /**
  * Owns every live agent session.
@@ -21,7 +21,23 @@ export class Orchestrator {
     this.#onLog = handlers.onLog
   }
 
-  async startThread(provider: ProviderId, workspacePath: string): Promise<Thread> {
+  /**
+   * Listing models needs a live adapter but no thread, so it gets its own
+   * short-lived one. Cheap enough, and it keeps model discovery available
+   * before the user has started anything.
+   */
+  async listModels(provider: ProviderId): Promise<Model[]> {
+    if (provider !== 'codex') return []
+    const adapter = new CodexAdapter()
+    try {
+      await adapter.start()
+      return await adapter.listModels()
+    } finally {
+      adapter.dispose()
+    }
+  }
+
+  async startThread(provider: ProviderId, workspacePath: string, model?: string): Promise<Thread> {
     if (provider !== 'codex') {
       throw new Error(`provider "${provider}" is not implemented yet`)
     }
@@ -30,7 +46,7 @@ export class Orchestrator {
     adapter.on('log', (line) => this.#onLog(line))
     await adapter.start()
 
-    const thread = await adapter.startThread(workspacePath)
+    const thread = await adapter.startThread(workspacePath, model)
     this.#threads.set(thread.id, { thread, adapter })
 
     // Wired after startThread so the thread id exists before any event fires.

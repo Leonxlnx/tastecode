@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { DomainEventSchema, ProviderIdSchema, ProviderStatusSchema } from './domain.js'
+import { DomainEventSchema, ModelSchema, ProviderIdSchema, ProviderStatusSchema } from './domain.js'
 
 /**
  * The wire protocol between any client (desktop renderer, web, later mobile)
@@ -66,10 +66,15 @@ export const methods = {
     params: z.object({}),
     result: z.object({ providers: z.array(ProviderStatusSchema) }),
   },
+  'models.list': {
+    params: z.object({ provider: ProviderIdSchema }),
+    result: z.object({ models: z.array(ModelSchema) }),
+  },
   'thread.start': {
     params: z.object({
       provider: ProviderIdSchema,
       workspacePath: z.string(),
+      model: z.string().optional(),
     }),
     result: z.object({ threadId: z.string() }),
   },

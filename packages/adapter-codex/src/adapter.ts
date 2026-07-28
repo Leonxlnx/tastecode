@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
-import type { Capabilities, DomainEvent, Thread } from '@harness/contracts'
+import type { Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
+import type { ModelListResponse } from './generated/v2/ModelListResponse'
 import { mapThreadItem } from './map-item.js'
 import { StdioJsonRpc } from './jsonrpc.js'
 import { spawnCli } from './spawn.js'
@@ -73,8 +74,33 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#started = true
   }
 
-  async startThread(workspacePath: string): Promise<Thread> {
-    const response = await this.#call<ThreadStartResponse>('thread/start', { cwd: workspacePath })
+  /**
+   * The real catalogue, from the provider. We never ship a hardcoded model list
+   * — vendors add models constantly and a stale dropdown is worse than none.
+   */
+  async listModels(): Promise<Model[]> {
+    const response = await this.#call<ModelListResponse>('model/list', {})
+    return response.data
+      .filter((model) => !model.hidden)
+      .map((model) => ({
+        id: model.id,
+        displayName: model.displayName,
+        ...(model.description ? { description: model.description } : {}),
+        isDefault: model.isDefault,
+        reasoningEfforts: model.supportedReasoningEfforts.map((option) =>
+          String(option.reasoningEffort),
+        ),
+        ...(model.defaultReasoningEffort
+          ? { defaultReasoningEffort: String(model.defaultReasoningEffort) }
+          : {}),
+      }))
+  }
+
+  async startThread(workspacePath: string, model?: string): Promise<Thread> {
+    const response = await this.#call<ThreadStartResponse>('thread/start', {
+      cwd: workspacePath,
+      ...(model ? { model } : {}),
+    })
     return {
       id: response.thread.id,
       provider: 'codex',
