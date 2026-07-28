@@ -54,7 +54,13 @@
   --r-xl: 16px;
 
   --rail-w: 248px;
-  --titlebar-h: 34px;
+
+  /* Windows reports the real caption-button strip through the Window Controls
+     Overlay. Reading it means our bar can never disagree with the buttons - the
+     failure mode where two hardcoded numbers drift apart and the buttons stand
+     taller than the bar they sit in. 34px is only the fallback for the browser,
+     where there is no overlay. */
+  --titlebar-h: env(titlebar-area-height, 34px);
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --dur-press: 140ms;
