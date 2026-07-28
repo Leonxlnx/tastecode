@@ -23,6 +23,21 @@ export function startServer(port = DEFAULT_PORT) {
   const wss = new WebSocketServer({ port, host: '127.0.0.1' })
   const push = new PushBus()
 
+  // A port clash is the most likely startup failure — a previous run that did
+  // not shut down cleanly. An unhandled 'error' event crashes the process with
+  // a stack trace that tells the user nothing.
+  wss.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EADDRINUSE') {
+      console.error(
+        `[server] port ${port} is already in use — another Personal Harness server is ` +
+          `probably still running. Stop it, or set HARNESS_PORT to a free port.`,
+      )
+      process.exit(1)
+    }
+    console.error(`[server] ${error.message}`)
+    process.exit(1)
+  })
+
   const orchestrator = new Orchestrator({
     onEvent: (threadId, event) => push.broadcast('thread.event', { threadId, event }),
     onLog: (line) => console.log(`[agent] ${line}`),
