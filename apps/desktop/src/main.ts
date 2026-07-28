@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 
 /**
  * Electron shell. Deliberately thin: it opens a window and nothing else.
@@ -37,6 +37,7 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      preload: path.join(here, 'preload.cjs'),
     },
   })
 
@@ -64,6 +65,26 @@ function createWindow(): void {
     void window.loadFile(path.join(here, '../../web/dist/index.html'))
   }
 }
+
+/**
+ * Native pickers. The renderer can ask for a path but never reads the disk
+ * itself — the user's own selection is the only way a path enters the app.
+ */
+ipcMain.handle('harness:pickFolder', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory', 'createDirectory'],
+    title: 'Choose a project folder',
+  })
+  return result.canceled ? undefined : result.filePaths[0]
+})
+
+ipcMain.handle('harness:pickFiles', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile', 'multiSelections'],
+    title: 'Attach files',
+  })
+  return result.canceled ? [] : result.filePaths
+})
 
 void app.whenReady().then(() => {
   createWindow()

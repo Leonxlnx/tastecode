@@ -7,12 +7,13 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b",
-    "start": "tsc -b && electron .",
+    "start": "tsc -b && node scripts/build-preload.js && electron .",
     "test": "vitest run --passWithNoTests"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
     "electron": "^43.2.0",
+    "esbuild": "^0.28.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
   }
