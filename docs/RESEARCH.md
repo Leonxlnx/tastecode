@@ -121,7 +121,7 @@ provider support, or Windows.**
 ## Feature parity checklist
 
 Derived from the union of Claude Code, Codex, Cursor, and the clients above. Detailed
-scoping lives in [`../03-product/product-spec.md`](../03-product/product-spec.md).
+scoping lives in [FEATURES.md](./FEATURES.md).
 
 **Must have for v1**
 - Multiple projects, multiple concurrent sessions, session resume after app restart

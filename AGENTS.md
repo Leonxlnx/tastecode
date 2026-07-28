@@ -10,18 +10,17 @@ there is no application code. See [`docs/README.md`](./docs/README.md).
 
 ## Before you change anything
 
-1. Read [`docs/05-team/working-rules.md`](./docs/05-team/working-rules.md). It is short and
-   it is binding.
-2. Check whether an [ADR](./docs/02-decisions/) already decides the question. If one does,
-   follow it. If you believe it is wrong, write a new ADR that supersedes it — do not
-   quietly diverge in code.
+1. Read [WORKFLOW.md](./docs/WORKFLOW.md). It is short and it is binding.
+2. Check whether [ARCHITECTURE.md](./docs/ARCHITECTURE.md) already decides the question. If
+   it does, follow it. If you believe it is wrong, change it there and add a change-log row
+   — do not quietly diverge in code.
 
 ## Hard rules
 
 - **Never read, copy, or forward a vendor's subscription credential** (`~/.claude/.credentials.json`,
   `~/.codex/auth.json`, keyrings, anything). We spawn vendor binaries and let them
   authenticate themselves. This is a compliance requirement.
-  See [ADR-0005](./docs/02-decisions/ADR-0005-credentials-and-policy.md).
+  See [PROVIDERS.md §1](./docs/PROVIDERS.md#1-the-rule).
 - **Never commit a secret**, including in a test fixture or an example.
 - **Never write a `.sh` script.** Repo scripts are Node/TypeScript. We are a Windows + macOS
   team and a bash-only script breaks one of us.
@@ -48,7 +47,7 @@ proceed, and state the assumption in the PR body. Do not stall with nothing deli
 
 ## Performance is a correctness property here
 
-The budgets in [`docs/01-research/ui-performance.md`](./docs/01-research/ui-performance.md)
+The budgets in [ARCHITECTURE.md §6](./docs/ARCHITECTURE.md#6-making-long-threads-instant)
 are acceptance criteria, not aspirations. A change that regresses one is a broken change.
 
 ## Style

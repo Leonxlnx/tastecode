@@ -45,23 +45,23 @@ We are not building another model wrapper. We are building the client the agents
 Two people. One Windows developer, one macOS developer. Every decision in this repo assumes
 both platforms are first-class and that no one has to leave their OS to review a change.
 
-Read [`docs/05-team/working-rules.md`](./docs/05-team/working-rules.md) before your first commit.
+Read [WORKFLOW.md](./docs/WORKFLOW.md) before your first commit.
 
-## Repository map
+## Docs
 
-```
-docs/
-  00-vision.md                  What we are building and why
-  01-research/                  Field research: competitors, protocols, providers, UI perf
-  02-decisions/                 ADRs — the decisions and what we rejected
-  03-product/                   Product spec, design-agent spec, UX principles
-  04-plan/                      Roadmap and milestones
-  05-team/                      How we work: branches, commits, reviews
-  06-landing/                   Landing page plan (pre-open-source)
-  07-mobile/                    Mobile remote-control plan
-```
+| | |
+| --- | --- |
+| [VISION](./docs/VISION.md) | What we're building, the three bets, non-goals |
+| [FEATURES](./docs/FEATURES.md) | v1 scope, UX principles, the quality bar |
+| [ROADMAP](./docs/ROADMAP.md) | Milestones, landing page, license, mobile, open questions |
+| [ARCHITECTURE](./docs/ARCHITECTURE.md) | How it's built and why — stack, adapters, storage, performance |
+| [PROVIDERS](./docs/PROVIDERS.md) | Credential rules, supported providers, engine protocols |
+| [DESIGN-AGENT](./docs/DESIGN-AGENT.md) | The TasteSkill runtime |
+| [RESEARCH](./docs/RESEARCH.md) | The competitive field, dissected |
+| [WORKFLOW](./docs/WORKFLOW.md) | Branches, commits, reviews, cross-platform rules |
 
 ## License
 
-Undecided while private. See [`docs/02-decisions/ADR-0006-license-and-open-sourcing.md`](./docs/02-decisions/ADR-0006-license-and-open-sourcing.md).
-The project is intended to be open sourced.
+Undecided while private. Apache-2.0 is proposed — see
+[ROADMAP → M7](./docs/ROADMAP.md#m7--open-source). The project is intended to be open
+sourced.

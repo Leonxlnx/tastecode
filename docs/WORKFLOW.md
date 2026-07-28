@@ -154,19 +154,23 @@ These are the things that silently break a two-OS team.
 - Runtime credentials live in the OS credential store (Windows Credential Manager / DPAPI,
   macOS Keychain), never in a plaintext JSON file we write.
 - We never transmit a user's credentials to any server we control. See
-  [`ADR-0005`](../02-decisions/ADR-0005-credentials-and-policy.md) — this is a legal
-  constraint, not just a security preference.
+  [PROVIDERS.md §1](./PROVIDERS.md#1-the-rule) — this is a legal constraint, not just a
+  security preference.
 
 ---
 
 ## 8. Documentation rules
 
-- **Every non-obvious decision becomes an ADR** in `docs/02-decisions/`, numbered, with the
-  rejected alternatives written down. The rejected options are the valuable part; without
+**There are nine documents. Keep it that way.** Add to the right one rather than creating a
+tenth. A new top-level doc needs a reason you can say out loud.
+
+- **Every non-obvious decision goes in [ARCHITECTURE.md](./ARCHITECTURE.md), with the
+  rejected alternatives written down.** The rejected options are the valuable part; without
   them we re-litigate the same decision in three months.
-- ADRs are immutable once merged. To change a decision, write a new ADR that supersedes it.
-- Research goes in `docs/01-research/` with sources linked. Research files carry a
-  "last verified" date because this field moves monthly.
+- To change a decision, edit it in place and add a row to the change log at the bottom of
+  that file. Never quietly diverge in code.
+- Anything with an external source carries a **"last verified" date** —
+  [RESEARCH.md](./RESEARCH.md) and [PROVIDERS.md](./PROVIDERS.md) both move monthly.
 - If behavior differs between Windows and macOS, that difference is documented at the code,
   not discovered later by the other person.
 

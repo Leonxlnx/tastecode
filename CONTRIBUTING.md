@@ -2,10 +2,9 @@
 
 The repository is private and the team is two people plus an agent. This file will grow
 before the repo goes public (see the checklist in
-[ADR-0006](./docs/02-decisions/ADR-0006-license-and-open-sourcing.md)).
+[ROADMAP → M7](./docs/ROADMAP.md#m7--open-source)).
 
-For now, everything you need is in
-**[`docs/05-team/working-rules.md`](./docs/05-team/working-rules.md)**.
+For now, everything you need is in **[WORKFLOW.md](./docs/WORKFLOW.md)**.
 
 ## The short version
 

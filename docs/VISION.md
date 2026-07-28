@@ -45,7 +45,7 @@ Target set at v1: Claude (subscription + API), OpenAI Codex (ChatGPT subscriptio
 Cursor, OpenCode, Kimi, GLM/Z.ai, Grok/xAI, OpenRouter, and any OpenAI-compatible or
 Anthropic-compatible endpoint including local models.
 
-See [`docs/01-research/provider-subscription-matrix.md`](./01-research/provider-subscription-matrix.md).
+See [PROVIDERS.md](./PROVIDERS.md).
 
 ### 2. Craft — the UI is the product
 
@@ -58,7 +58,7 @@ genuinely, obviously better to use than anything else in the category. Concretel
 - Motion is physical and short. Typography is deliberate. Density is adjustable.
 - Windows is not a port. It ships first and it feels native.
 
-See [`docs/03-product/ux-principles.md`](./03-product/ux-principles.md).
+See [FEATURES.md](./FEATURES.md).
 
 ### 3. Taste — a design agent that is actually good
 
@@ -74,7 +74,7 @@ integrated here). It is not a prompt. It is a skill system with:
 Nobody else in the agent-GUI category is competing on design quality. It is the most
 defensible thing we can build.
 
-See [`docs/03-product/design-agent-spec.md`](./03-product/design-agent-spec.md).
+See [DESIGN-AGENT.md](./DESIGN-AGENT.md).
 
 ## What success looks like
 
