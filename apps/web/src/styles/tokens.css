@@ -1,0 +1,132 @@
+/*
+ * Design tokens. Everything downstream references these — no raw values in
+ * component CSS.
+ *
+ * Direction: precision-industrial. This is an instrument panel for driving
+ * agents, not a chat app. Hairline rules instead of shadows, uppercase mono
+ * micro-labels, tabular figures on anything countable, and exactly one signal
+ * accent. Deliberately not the dark-glass-and-violet-glow look every AI tool
+ * converges on.
+ */
+
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+
+:root {
+  color-scheme: dark;
+
+  /* Neutrals, all tinted slightly warm so the amber signal belongs to the
+     same world. One gray temperature, never mixed. */
+  --bg: oklch(16% 0.004 80);
+  --bg-rail: oklch(14% 0.004 80);
+  --surface: oklch(19.5% 0.005 80);
+  --surface-2: oklch(23% 0.006 80);
+
+  --line: oklch(27% 0.006 80);
+  --line-soft: oklch(23% 0.005 80);
+
+  --text: oklch(93% 0.006 80);
+  --text-2: oklch(70% 0.008 80);
+  --text-3: oklch(54% 0.008 80);
+
+  /* One accent. Amber reads as an instrument indicator rather than a brand
+     gradient, and it is nowhere near the banned violet-to-indigo range. */
+  --signal: oklch(78% 0.13 78);
+  --signal-dim: oklch(52% 0.09 78);
+  --danger: oklch(64% 0.16 25);
+  --ok: oklch(72% 0.13 155);
+
+  --font-ui: 'Geist Variable', 'Segoe UI Variable Text', system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', 'Cascadia Code', ui-monospace, monospace;
+
+  /* Type scale. Dense on purpose — this is a tool people keep open all day. */
+  --t-micro: 10.5px;
+  --t-small: 12px;
+  --t-body: 13.5px;
+  --t-lead: 15px;
+  --t-title: 21px;
+
+  /* One radius scale. Mixed arbitrary radii read as generated. */
+  --r-sm: 4px;
+  --r-md: 7px;
+  --r-lg: 11px;
+
+  --rail-w: 232px;
+  --titlebar-h: 34px;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --dur-press: 140ms;
+  --dur-fast: 200ms;
+  --dur-base: 260ms;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--t-body);
+  line-height: 1.55;
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* Uppercase mono micro-label. The structural signature of the whole UI. */
+.label {
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 1px;
+  border-radius: var(--r-sm);
+}
+
+::selection {
+  background: var(--signal-dim);
+  color: var(--text);
+}
+
+/* Scrollbars that belong to the instrument rather than to Windows. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--surface-2);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
