@@ -447,28 +447,61 @@
 
 /* ---------- context chip & tool row ---------- */
 
-.context {
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 9px 10px 0;
+}
+
+.chips:empty {
+  display: none;
+}
+
+.chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin: 9px 10px 0;
-  padding: 3px 9px 3px 7px;
+  padding: 3px 8px 3px 7px;
+  max-width: 240px;
   background: var(--surface-2);
   border-radius: var(--r-md);
   color: var(--text-2);
   font-size: var(--t-sm);
-  max-width: calc(100% - 20px);
 }
 
-.context svg {
+.chip svg {
   color: var(--text-3);
   flex: none;
 }
 
-.context__name {
+.chip__label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chip--file {
+  padding-right: 3px;
+}
+
+.chip__x {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  flex: none;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.chip__x:hover {
+  background: var(--surface-3);
+  color: var(--text);
 }
 
 .tools {
@@ -511,6 +544,20 @@
 .tool--quiet {
   color: var(--text-3);
   padding: 0 8px;
+}
+
+.tool--icon {
+  gap: 0;
+}
+
+.tool--icon svg {
+  color: var(--text-2);
+}
+
+.icon-btn.is-live {
+  opacity: 1;
+  color: var(--error);
+  background: var(--surface-2);
 }
 
 /* ---------- menus ---------- */

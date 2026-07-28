@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ApprovalMode, Model, ProviderId } from '@harness/contracts'
+import { pickFolder } from './bridge.js'
 import { Transport } from './transport.js'
 import { appendUserMessage, emptyThread, reduce, type ThreadState } from './thread-store.js'
 import { Composer } from './ui/Composer.js'
@@ -95,8 +96,8 @@ export function App() {
     if (modelId) localStorage.setItem(MODEL_KEY, modelId)
   }, [modelId])
 
-  const addProject = useCallback(() => {
-    const path = window.prompt('Folder to work in')?.trim()
+  const addProject = useCallback(async () => {
+    const path = await pickFolder()
     if (!path) return
     setProjects((current) =>
       current.some((p) => p.path === path) ? current : [...current, { path, sessions: [] }],
@@ -139,12 +140,16 @@ export function App() {
   )
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, attachments: string[] = []) => {
       if (!activeId) return
       setThread((current) => appendUserMessage(current, text))
       setProjects((current) => titleIfNew(current, activeId, text))
       try {
-        await transport.request('thread.sendTurn', { threadId: activeId, text })
+        await transport.request('thread.sendTurn', {
+          threadId: activeId,
+          text,
+          ...(attachments.length > 0 ? { attachments } : {}),
+        })
       } catch (error) {
         setNotice(error instanceof Error ? error.message : String(error))
       }
@@ -180,7 +185,7 @@ export function App() {
           providerName={providerName(provider)}
           collapsed={collapsed}
           onToggle={() => setCollapsed((c) => !c)}
-          onAddProject={addProject}
+          onAddProject={() => void addProject()}
           onNewSession={(path) => void newSession(path)}
           onSelectSession={(id) => {
             setActiveId(id)
@@ -202,7 +207,7 @@ export function App() {
           ) : (
             <Empty
               hasProjects={projects.length > 0}
-              onAddProject={addProject}
+              onAddProject={() => void addProject()}
               onStart={() => activePath && void newSession(activePath)}
             />
           )}
@@ -218,7 +223,7 @@ export function App() {
             onModelChange={setModelId}
             onEffortChange={setEffort}
             onApprovalChange={setApproval}
-            onSend={(t) => void send(t)}
+            onSend={(t, files) => void send(t, files)}
             onInterrupt={interrupt}
           />
         </main>

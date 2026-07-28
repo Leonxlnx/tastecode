@@ -1,20 +1,47 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ApprovalMode, Model } from '@harness/contracts'
+import { canDictate, pickFiles, startDictation } from '../bridge.js'
 import { Menu, MenuItem } from './Menu.js'
 
 /**
  * Prompt bar.
  *
- * A context chip sits above the input showing exactly which folder the next
- * turn will touch — an agent that edits files must never leave that ambiguous.
- * Controls sit in a quiet row underneath: what it runs on the left, what it is
- * allowed to do in the middle, send on the right.
+ * A context chip names the exact folder the next turn will touch — an agent
+ * that edits files must never leave that ambiguous. Below the input: what it
+ * may do on the left, what it runs on the right, send at the end.
+ *
+ * Every control here does something. A bar full of ornaments looks finished and
+ * behaves like a prototype, so anything that cannot work yet is not drawn.
  */
 
 export const APPROVAL_MODES: { id: ApprovalMode; title: string; detail: string }[] = [
   { id: 'ask', title: 'Ask first', detail: 'Read-only until you approve each action' },
   { id: 'auto', title: 'Auto-approve', detail: 'Edits and commands inside this folder' },
   { id: 'full', title: 'Full access', detail: 'No sandbox, no prompts. Use with care.' },
+]
+
+/** Expanded into the input rather than sent as a command, so nothing is hidden. */
+const SLASH_COMMANDS: { name: string; detail: string; text: string }[] = [
+  {
+    name: '/review',
+    detail: 'Review the current diff',
+    text: 'Review my current changes and tell me what is wrong before I commit.',
+  },
+  {
+    name: '/test',
+    detail: 'Run the test suite',
+    text: 'Run the tests and fix anything that fails.',
+  },
+  {
+    name: '/explain',
+    detail: 'Explain this codebase',
+    text: 'Explain how this project is structured and where the important parts live.',
+  },
+  {
+    name: '/tidy',
+    detail: 'Clean up without behaviour changes',
+    text: 'Tidy the code you can see without changing any behaviour. No new features.',
+  },
 ]
 
 export function Composer(props: {
@@ -28,20 +55,41 @@ export function Composer(props: {
   onModelChange: (id: string) => void
   onEffortChange: (effort: string) => void
   onApprovalChange: (mode: ApprovalMode) => void
-  onSend: (text: string) => void
+  onSend: (text: string, attachments: string[]) => void
   onInterrupt: () => void
 }) {
   const [text, setText] = useState('')
+  const [attachments, setAttachments] = useState<string[]>([])
+  const [dictating, setDictating] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
+  const stopDictation = useRef<(() => void) | null>(null)
+
+  useEffect(() => () => stopDictation.current?.(), [])
 
   const model = props.models.find((m) => m.id === props.modelId)
   const approval = APPROVAL_MODES.find((m) => m.id === props.approval) ?? APPROVAL_MODES[0]!
 
+  const grow = () => {
+    const el = area.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 220)}px`
+  }
+
+  const insert = (value: string) => {
+    setText((current) => (current === '' ? value : `${current} ${value}`))
+    requestAnimationFrame(() => {
+      area.current?.focus()
+      grow()
+    })
+  }
+
   const submit = () => {
     const trimmed = text.trim()
     if (trimmed === '' || props.disabled) return
-    props.onSend(trimmed)
+    props.onSend(trimmed, attachments)
     setText('')
+    setAttachments([])
     const el = area.current
     if (el) {
       el.style.height = 'auto'
@@ -49,15 +97,50 @@ export function Composer(props: {
     }
   }
 
+  const attach = async () => {
+    const picked = await pickFiles()
+    if (picked.length > 0) setAttachments((current) => [...new Set([...current, ...picked])])
+  }
+
+  const toggleDictation = () => {
+    if (dictating) {
+      stopDictation.current?.()
+      return
+    }
+    setDictating(true)
+    stopDictation.current = startDictation({
+      onText: (spoken) => insert(spoken),
+      onEnd: () => {
+        setDictating(false)
+        stopDictation.current = null
+      },
+    })
+  }
+
   return (
     <div className="composer">
       <div className="composer__box">
-        {props.projectName ? (
-          <div className="context">
-            <FolderGlyph />
-            <span className="context__name">{props.projectName}</span>
-          </div>
-        ) : null}
+        <div className="chips">
+          {props.projectName ? (
+            <span className="chip chip--context">
+              <FolderGlyph />
+              <span className="chip__label">{props.projectName}</span>
+            </span>
+          ) : null}
+          {attachments.map((path) => (
+            <span className="chip chip--file" key={path} title={path}>
+              <FileGlyph />
+              <span className="chip__label">{basename(path)}</span>
+              <button
+                className="chip__x"
+                onClick={() => setAttachments((c) => c.filter((p) => p !== path))}
+                title="Remove"
+              >
+                <XGlyph />
+              </button>
+            </span>
+          ))}
+        </div>
 
         <textarea
           ref={area}
@@ -67,8 +150,7 @@ export function Composer(props: {
           disabled={props.disabled}
           onChange={(e) => {
             setText(e.target.value)
-            e.target.style.height = 'auto'
-            e.target.style.height = `${Math.min(e.target.scrollHeight, 220)}px`
+            grow()
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -80,6 +162,42 @@ export function Composer(props: {
         />
 
         <div className="tools">
+          <Menu
+            label="Add"
+            disabled={props.disabled}
+            trigger={() => (
+              <span className="tool tool--icon">
+                <PlusGlyph />
+              </span>
+            )}
+          >
+            {(close) => (
+              <>
+                <MenuItem
+                  title="Attach files"
+                  detail="Images are shown to the model; other files are referenced by path"
+                  onClick={() => {
+                    close()
+                    void attach()
+                  }}
+                />
+                <div className="menu__rule" />
+                <p className="menu__group">Commands</p>
+                {SLASH_COMMANDS.map((command) => (
+                  <MenuItem
+                    key={command.name}
+                    title={command.name}
+                    detail={command.detail}
+                    onClick={() => {
+                      insert(command.text)
+                      close()
+                    }}
+                  />
+                ))}
+              </>
+            )}
+          </Menu>
+
           <Menu
             label="Permissions"
             disabled={props.running}
@@ -141,13 +259,13 @@ export function Composer(props: {
                     <>
                       <div className="menu__rule" />
                       <p className="menu__group">Reasoning</p>
-                      {model.reasoningEfforts.map((effort) => (
+                      {model.reasoningEfforts.map((entry) => (
                         <MenuItem
-                          key={effort}
-                          title={effort}
-                          active={effort === props.effort}
+                          key={entry}
+                          title={entry}
+                          active={entry === props.effort}
                           onClick={() => {
-                            props.onEffortChange(effort)
+                            props.onEffortChange(entry)
                             close()
                           }}
                         />
@@ -160,6 +278,17 @@ export function Composer(props: {
           ) : (
             <span className="tool tool--quiet">Loading models…</span>
           )}
+
+          {canDictate ? (
+            <button
+              className={`icon-btn icon-btn--always ${dictating ? 'is-live' : ''}`}
+              onClick={toggleDictation}
+              disabled={props.disabled}
+              title={dictating ? 'Stop dictation' : 'Dictate'}
+            >
+              <MicGlyph />
+            </button>
+          ) : null}
 
           {props.running ? (
             <button className="orb orb--stop" onClick={props.onInterrupt} title="Stop">
@@ -181,6 +310,11 @@ export function Composer(props: {
   )
 }
 
+function basename(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean)
+  return parts[parts.length - 1] ?? path
+}
+
 function FolderGlyph() {
   return (
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -190,6 +324,36 @@ function FolderGlyph() {
         strokeWidth="1.3"
         strokeLinejoin="round"
       />
+    </svg>
+  )
+}
+
+function FileGlyph() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d="M9 2H4.5A1.5 1.5 0 003 3.5v9A1.5 1.5 0 004.5 14h7a1.5 1.5 0 001.5-1.5V6L9 2z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+      <path d="M9 2v4h4" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function XGlyph() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function PlusGlyph() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M8 3.5v9M3.5 8h9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   )
 }
@@ -215,6 +379,20 @@ function BoltGlyph() {
         stroke="currentColor"
         strokeWidth="1.2"
         strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function MicGlyph() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <rect x="6" y="2" width="4" height="7" rx="2" stroke="currentColor" strokeWidth="1.3" />
+      <path
+        d="M3.8 7.5a4.2 4.2 0 008.4 0M8 11.7V14"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
       />
     </svg>
   )
