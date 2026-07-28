@@ -7,14 +7,25 @@ Order matters; dates do not.
 
 ---
 
-### M0 — Skeleton
+### M0 — Skeleton ✅
 
-Monorepo, CI on Windows + macOS, hardened Electron shell, wire protocol, core server,
-SQLite event log. **First adapter: Codex app-server.** Minimal thread UI.
-→ _A real agent turn streams into a window._
+Monorepo, CI on Windows + macOS, hardened Electron shell, wire protocol, core server.
+**First adapter: Codex app-server.** Thread UI, prompt bar, onboarding with real
+browser sign-in.
+→ _A real agent turn streams into a window._ **Done.**
 
-Hit the painful things now: native modules (`better-sqlite3`, `node-pty`) and Electron
-packaging on both OSes. Start Windows code-signing paperwork — it has weeks of lead time.
+Shipped beyond the original plan, because building it demanded them: real vendor OAuth
+(the URL opens on the vendor's site and they report completion), live model and reasoning
+-effort lists read from the provider, permission modes mapped onto Codex's approval
+policy and sandbox, attachments, git branch and diff in the context chip, rename/pin/
+search in the rail, and settings.
+
+Deferred out of M0 rather than done: the SQLite event log. Projects and sessions live in
+localStorage until the server takes ownership in M2 — it was not needed to prove the pipe
+works, and building it before the UI shape settled would have meant building it twice.
+
+**Still open and not blocked by code:** Windows code-signing paperwork. Weeks of lead
+time, blocks M6. See [open questions](#open-questions).
 
 ### M1 — The thread
 
