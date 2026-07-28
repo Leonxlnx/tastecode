@@ -124,6 +124,14 @@ export const ModelSchema = z.object({
 })
 export type Model = z.infer<typeof ModelSchema>
 
+/**
+ * How much the agent may do without asking. Mapped per adapter onto whatever
+ * the engine calls it — this is the user-facing concept, and it is the single
+ * most consequential setting in the app, so it is never hidden in a menu.
+ */
+export const ApprovalModeSchema = z.enum(['ask', 'auto', 'full'])
+export type ApprovalMode = z.infer<typeof ApprovalModeSchema>
+
 export const ProviderStatusSchema = z.object({
   id: ProviderIdSchema,
   displayName: z.string(),

@@ -1,5 +1,11 @@
 import { z } from 'zod'
-import { DomainEventSchema, ModelSchema, ProviderIdSchema, ProviderStatusSchema } from './domain.js'
+import {
+  ApprovalModeSchema,
+  DomainEventSchema,
+  ModelSchema,
+  ProviderIdSchema,
+  ProviderStatusSchema,
+} from './domain.js'
 
 /**
  * The wire protocol between any client (desktop renderer, web, later mobile)
@@ -75,6 +81,8 @@ export const methods = {
       provider: ProviderIdSchema,
       workspacePath: z.string(),
       model: z.string().optional(),
+      effort: z.string().optional(),
+      approval: ApprovalModeSchema.optional(),
     }),
     result: z.object({ threadId: z.string() }),
   },

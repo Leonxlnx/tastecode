@@ -1,4 +1,4 @@
-import { CodexAdapter } from '@harness/adapter-codex'
+import { CodexAdapter, type StartOptions } from '@harness/adapter-codex'
 import type { DomainEvent, Model, ProviderId, Thread } from '@harness/contracts'
 
 /**
@@ -37,7 +37,11 @@ export class Orchestrator {
     }
   }
 
-  async startThread(provider: ProviderId, workspacePath: string, model?: string): Promise<Thread> {
+  async startThread(
+    provider: ProviderId,
+    workspacePath: string,
+    options: StartOptions = {},
+  ): Promise<Thread> {
     if (provider !== 'codex') {
       throw new Error(`provider "${provider}" is not implemented yet`)
     }
@@ -46,7 +50,7 @@ export class Orchestrator {
     adapter.on('log', (line) => this.#onLog(line))
     await adapter.start()
 
-    const thread = await adapter.startThread(workspacePath, model)
+    const thread = await adapter.startThread(workspacePath, options)
     this.#threads.set(thread.id, { thread, adapter })
 
     // Wired after startThread so the thread id exists before any event fires.

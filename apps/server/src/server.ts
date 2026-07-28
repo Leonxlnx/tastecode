@@ -121,8 +121,18 @@ export function startServer(port = DEFAULT_PORT) {
       }
 
       case 'thread.start': {
-        const p = params as { provider: 'codex'; workspacePath: string; model?: string }
-        const thread = await orchestrator.startThread(p.provider, p.workspacePath, p.model)
+        const p = params as {
+          provider: 'codex'
+          workspacePath: string
+          model?: string
+          effort?: string
+          approval?: 'ask' | 'auto' | 'full'
+        }
+        const thread = await orchestrator.startThread(p.provider, p.workspacePath, {
+          model: p.model,
+          effort: p.effort,
+          approval: p.approval,
+        })
         return { threadId: thread.id }
       }
 

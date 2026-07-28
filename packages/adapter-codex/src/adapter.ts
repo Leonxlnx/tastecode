@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import type { Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
+import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import type { ModelListResponse } from './generated/v2/ModelListResponse'
 import { mapThreadItem } from './map-item.js'
 import { StdioJsonRpc } from './jsonrpc.js'
@@ -33,6 +33,24 @@ export const CODEX_CAPABILITIES: Capabilities = {
   reasoningItems: true,
   approvals: true,
   images: true,
+}
+
+export type StartOptions = {
+  model?: string | undefined
+  effort?: string | undefined
+  approval?: ApprovalMode | undefined
+}
+
+/**
+ * Our three user-facing modes onto Codex's approval policy and sandbox.
+ *
+ * `full` is genuinely dangerous, which is why the UI never makes it the quiet
+ * default and never remembers it silently across sessions.
+ */
+const APPROVAL: Record<ApprovalMode, { approvalPolicy: string; sandbox: string }> = {
+  ask: { approvalPolicy: 'untrusted', sandbox: 'read-only' },
+  auto: { approvalPolicy: 'on-request', sandbox: 'workspace-write' },
+  full: { approvalPolicy: 'never', sandbox: 'danger-full-access' },
 }
 
 export type CodexAdapterEvents = {
@@ -96,10 +114,12 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       }))
   }
 
-  async startThread(workspacePath: string, model?: string): Promise<Thread> {
+  async startThread(workspacePath: string, options: StartOptions = {}): Promise<Thread> {
     const response = await this.#call<ThreadStartResponse>('thread/start', {
       cwd: workspacePath,
-      ...(model ? { model } : {}),
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.effort ? { config: { model_reasoning_effort: options.effort } } : {}),
+      ...(options.approval ? APPROVAL[options.approval] : {}),
     })
     return {
       id: response.thread.id,
