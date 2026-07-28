@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ApprovalMode, Model, ProviderId } from '@harness/contracts'
+import type { Account, ApprovalMode, Model, ProviderId } from '@harness/contracts'
 import { pickFolder } from './bridge.js'
 import { Transport } from './transport.js'
 import { appendUserMessage, emptyThread, reduce, type ThreadState } from './thread-store.js'
 import { Composer, type WorkspaceInfo } from './ui/Composer.js'
 import { Onboarding } from './ui/Onboarding.js'
+import { Settings } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
 import { StageHeader } from './ui/StageHeader.js'
 import { Thread } from './ui/Thread.js'
@@ -48,6 +49,8 @@ export function App() {
   const [approval, setApproval] = useState<ApprovalMode>('ask')
   const [collapsed, setCollapsed] = useState(false)
   const [workspace, setWorkspace] = useState<WorkspaceInfo | undefined>()
+  const [account, setAccount] = useState<Account | undefined>()
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [notice, setNotice] = useState<string | undefined>()
 
   const activeIdRef = useRef(activeId)
@@ -107,6 +110,14 @@ export function App() {
       cancelled = true
     }
   }, [transport, activePath, thread.running])
+
+  useEffect(() => {
+    if (!provider) return
+    void transport
+      .request('auth.status', { provider })
+      .then(setAccount)
+      .catch(() => setAccount(undefined))
+  }, [transport, provider])
 
   useEffect(() => {
     localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects))
@@ -195,6 +206,7 @@ export function App() {
   if (!provider) {
     return (
       <Onboarding
+        transport={transport}
         onDone={(id) => {
           localStorage.setItem(SETUP_KEY, id)
           setProvider(id)
@@ -216,6 +228,7 @@ export function App() {
           providerName={providerName(provider)}
           collapsed={collapsed}
           onToggle={() => setCollapsed((c) => !c)}
+          account={account}
           onAddProject={() => void addProject()}
           onNewSession={(path) => void newSession(path)}
           onSelectSession={(id) => {
@@ -223,6 +236,35 @@ export function App() {
             setActivePath(findSession(projects, id)?.project.path)
             setThread(emptyThread)
           }}
+          onRenameProject={(path, name) =>
+            setProjects((c) => c.map((p) => (p.path === path ? { ...p, name } : p)))
+          }
+          onRemoveProject={(path) => {
+            setProjects((c) => c.filter((p) => p.path !== path))
+            if (activePath === path) setActivePath(undefined)
+          }}
+          onTogglePin={(path) =>
+            setProjects((c) => c.map((p) => (p.path === path ? { ...p, pinned: !p.pinned } : p)))
+          }
+          onRenameSession={(id, title) =>
+            setProjects((c) =>
+              c.map((p) => ({
+                ...p,
+                sessions: p.sessions.map((s) => (s.id === id ? { ...s, title } : s)),
+              })),
+            )
+          }
+          onDeleteSession={(id) => {
+            void transport.request('thread.close', { threadId: id })
+            setProjects((c) =>
+              c.map((p) => ({ ...p, sessions: p.sessions.filter((s) => s.id !== id) })),
+            )
+            if (activeId === id) {
+              setActiveId(undefined)
+              setThread(emptyThread)
+            }
+          }}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
 
         <main className="stage">
@@ -260,6 +302,25 @@ export function App() {
           />
         </main>
       </div>
+
+      {settingsOpen ? (
+        <Settings
+          provider={provider}
+          providerName={providerName(provider)}
+          account={account}
+          projectCount={projects.length}
+          onSignOut={() => {
+            void transport.request('auth.signOut', { provider }).then(() => {
+              setAccount({ signedIn: false })
+            })
+          }}
+          onReset={() => {
+            localStorage.clear()
+            location.reload()
+          }}
+          onClose={() => setSettingsOpen(false)}
+        />
+      ) : null}
 
       {notice ? (
         <div className="notice" role="alert">
