@@ -62,6 +62,29 @@ own branch while working — squash-merge collapses it anyway.)
 
 Never rewrite history on a branch someone else has pulled.
 
+## How we run it
+
+Agreed 2026-07-28.
+
+| | |
+| --- | --- |
+| **Approval** | Either human approves. Neither approves their own PR. |
+| **Visibility** | Claude opens a **draft PR from the first commit** — not when the work is finished. Redirect early; that's what it's for. |
+| **Merging** | Claude merges once approved. Nothing lands without a human sign-off anyway. |
+
+Ownership, so we don't collide:
+
+| Area | Owner |
+| --- | --- |
+| Desktop shell, installer, updater, everything Windows | Windows dev |
+| macOS specifics, notarization | macOS dev |
+| Server, adapters, UI, tests, docs | Claude |
+| `packages/contracts` | **Shared — both humans review.** A change here breaks three clients at once. |
+
+`main` is protected: PR required, 1 approval, squash-merge only, no force-push, no deletion.
+There is currently an **admin bypass** so a solo owner isn't deadlocked —
+**remove it once the second collaborator is added**, or the rule is decorative.
+
 ## CI gates
 
 Green on **both** `windows-latest` and `macos-latest` before merge:
