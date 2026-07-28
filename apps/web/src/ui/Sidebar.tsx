@@ -1,10 +1,12 @@
 import { useState } from 'react'
 
 /**
- * Rail layout follows the shape the first-party agent apps settled on: a
- * workspace switcher, a short action list, then sections (Projects, Recents)
- * with sentence-case headings. No status readout pinned to the bottom — that
- * was a decoration masquerading as information.
+ * The rail. Collapsible, because a thread deserves the full window when you are
+ * reading it and the rail is only needed when you are switching.
+ *
+ * Nothing in here wraps. Session titles are user text of arbitrary length, and
+ * a rail whose rows change height as titles grow is visually unstable — every
+ * label truncates instead.
  */
 
 export type Session = {
@@ -22,16 +24,28 @@ export function Sidebar(props: {
   projects: Project[]
   activeSessionId: string | undefined
   providerName: string
+  collapsed: boolean
+  onToggle: () => void
   onAddProject: () => void
   onNewSession: (projectPath: string) => void
   onSelectSession: (id: string) => void
 }) {
+  if (props.collapsed) {
+    return (
+      <nav className="rail rail--collapsed">
+        <button className="icon-btn icon-btn--always" onClick={props.onToggle} title="Show sidebar">
+          <PanelGlyph />
+        </button>
+      </nav>
+    )
+  }
+
   return (
     <nav className="rail">
       <div className="rail__top">
-        <button className="workspace">
-          <span className="workspace__name">{props.providerName}</span>
-          <Chevron down />
+        <span className="rail__brand">{props.providerName}</span>
+        <button className="icon-btn icon-btn--always" onClick={props.onToggle} title="Hide sidebar">
+          <PanelGlyph />
         </button>
       </div>
 
@@ -44,11 +58,11 @@ export function Sidebar(props: {
             else props.onAddProject()
           }}
         >
-          <PencilIcon />
+          <PencilGlyph />
           <span>New session</span>
         </button>
         <button className="navitem" onClick={props.onAddProject}>
-          <FolderIcon />
+          <FolderGlyph />
           <span>Add project</span>
         </button>
       </div>
@@ -80,23 +94,32 @@ function ProjectRow(props: {
   onSelectSession: (id: string) => void
 }) {
   const [open, setOpen] = useState(true)
-  const name = basename(props.project.path)
+  const count = props.project.sessions.length
 
   return (
     <section className="proj">
       <div className="proj__head">
         <button className="proj__toggle" onClick={() => setOpen(!open)} title={props.project.path}>
-          {/* A stable colour per project, derived from its path. Cheap way to
-              tell repos apart at a glance without asking the user to pick. */}
+          <span className="proj__chev" data-open={open}>
+            <ChevronGlyph />
+          </span>
+          {/* Stable colour per repo, derived from its path — tells projects
+              apart at a glance without asking the user to choose one. */}
           <span className="proj__mark" style={{ background: markColour(props.project.path) }} />
-          <span className="proj__name">{name}</span>
+          <span className="proj__name">{basename(props.project.path)}</span>
         </button>
         <button className="icon-btn" onClick={props.onNewSession} title="New session here">
-          <PlusIcon />
+          <PlusGlyph />
         </button>
       </div>
 
-      {open && props.project.sessions.length > 0 ? (
+      {/* Height animates from a measured max rather than 'auto', which cannot be
+          transitioned. Rows are a known height, so the cap is exact. */}
+      <div
+        className="proj__drawer"
+        data-open={open && count > 0}
+        style={{ maxHeight: open ? `${count * 30}px` : '0px' }}
+      >
         <ul className="proj__sessions">
           {props.project.sessions.map((session) => (
             <li key={session.id}>
@@ -106,12 +129,12 @@ function ProjectRow(props: {
                 title={session.title}
               >
                 <span className="sess__title">{session.title}</span>
-                {session.status === 'running' ? <Spinner /> : null}
+                {session.status === 'running' ? <span className="spinner" /> : null}
               </button>
             </li>
           ))}
         </ul>
-      ) : null}
+      </div>
     </section>
   )
 }
@@ -121,32 +144,22 @@ function basename(path: string): string {
   return parts[parts.length - 1] ?? path
 }
 
-/** Deterministic, muted, and never the same hue twice in a row for short lists. */
 function markColour(path: string): string {
   let hash = 0
   for (let i = 0; i < path.length; i++) hash = (hash * 31 + path.charCodeAt(i)) >>> 0
-  return `oklch(66% 0.11 ${hash % 360})`
+  return `oklch(70% 0.1 ${hash % 360})`
 }
 
-function Spinner() {
-  return <span className="spinner" aria-label="running" />
-}
-
-function Chevron({ down }: { down?: boolean }) {
+function PanelGlyph() {
   return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d={down ? 'M4 6.5l4 4 4-4' : 'M6 4l4 4-4 4'}
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <rect x="2" y="3" width="12" height="10" rx="2" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M6.5 3v10" stroke="currentColor" strokeWidth="1.3" />
     </svg>
   )
 }
 
-function PlusIcon() {
+function PlusGlyph() {
   return (
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
       <path d="M8 3.5v9M3.5 8h9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -154,7 +167,21 @@ function PlusIcon() {
   )
 }
 
-function PencilIcon() {
+function ChevronGlyph() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d="M6 4l4 4-4 4"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function PencilGlyph() {
   return (
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
       <path
@@ -167,7 +194,7 @@ function PencilIcon() {
   )
 }
 
-function FolderIcon() {
+function FolderGlyph() {
   return (
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
       <path

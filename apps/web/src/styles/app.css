@@ -10,6 +10,13 @@
   display: grid;
   grid-template-columns: var(--rail-w) 1fr;
   min-height: 0;
+  /* Grid tracks animate cleanly, so collapsing the rail slides the thread out
+     to fill the window instead of snapping. */
+  transition: grid-template-columns var(--dur-slow) var(--ease-out);
+}
+
+.shell.is-narrow .shell__body {
+  grid-template-columns: 44px 1fr;
 }
 
 /* ---------- title bar ---------- */
@@ -44,34 +51,27 @@
   border-right: 1px solid var(--line);
 }
 
-.rail__top {
-  padding: 6px 8px 2px;
+.rail--collapsed {
+  grid-template-rows: auto;
+  padding: 6px 0 0;
+  justify-items: center;
+  overflow: hidden;
 }
 
-.workspace {
+.rail__top {
   display: flex;
   align-items: center;
-  gap: 6px;
-  width: 100%;
-  background: none;
-  border: 0;
-  border-radius: var(--r-md);
-  color: var(--text);
-  cursor: pointer;
-  font: inherit;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px 4px 14px;
+  overflow: hidden;
+}
+
+.rail__brand {
   font-size: var(--t-lg);
   font-weight: 560;
-  letter-spacing: -0.012em;
-  padding: 6px 8px;
-  text-align: left;
-}
-
-.workspace:hover {
-  background: var(--surface);
-}
-
-.workspace__name {
-  flex: 1;
+  letter-spacing: -0.014em;
+  white-space: nowrap;
 }
 
 .rail__actions {
@@ -178,14 +178,40 @@
   white-space: nowrap;
 }
 
+.proj__chev {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  flex: none;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.proj__chev[data-open='true'] {
+  transform: rotate(90deg);
+}
+
+/* Height-capped drawer: 'auto' cannot be transitioned, and rows are a known
+   height, so the cap is exact rather than a guess. */
+.proj__drawer {
+  overflow: hidden;
+  transition:
+    max-height var(--dur-slow) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+
+.proj__drawer[data-open='false'] {
+  opacity: 0;
+}
+
 .proj__sessions {
   list-style: none;
   margin: 1px 0 4px;
-  padding: 0 0 0 16px;
+  padding: 0 0 0 24px;
 }
 
 .sess {
   width: 100%;
+  height: 28px;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -196,9 +222,12 @@
   cursor: pointer;
   font: inherit;
   font-size: var(--t-sm);
-  padding: 5px 8px;
+  padding: 0 8px;
   text-align: left;
   min-width: 0;
+  /* Nothing in the rail wraps. Titles are arbitrary user text and a row that
+     grows taller as the title grows makes the whole list unstable. */
+  white-space: nowrap;
 }
 
 .sess:hover {
@@ -244,31 +273,18 @@
 }
 
 .picker {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: none;
-  border: 0;
-  border-radius: var(--r-md);
   color: var(--text);
-  cursor: pointer;
-  font: inherit;
   font-size: var(--t-md);
   font-weight: 520;
-  padding: 5px 8px;
-}
-
-.picker:hover:not(:disabled) {
-  background: var(--surface);
-}
-
-.picker:disabled {
-  color: var(--text-3);
-  cursor: default;
+  white-space: nowrap;
 }
 
 .picker svg {
   color: var(--text-3);
+  flex: none;
 }
 
 /* ---------- thread ---------- */
@@ -425,76 +441,158 @@
   color: var(--text-3);
 }
 
-.composer__tools {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 6px 8px 8px 10px;
+.composer textarea:disabled {
+  cursor: not-allowed;
 }
 
-.composer__right {
-  display: flex;
+/* ---------- context chip & tool row ---------- */
+
+.context {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
+  margin: 9px 10px 0;
+  padding: 3px 9px 3px 7px;
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  max-width: calc(100% - 20px);
 }
 
-/* ---------- model picker & menus ---------- */
+.context svg {
+  color: var(--text-3);
+  flex: none;
+}
 
-.modelwrap {
+.context__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 8px 8px;
+}
+
+.tools__spacer {
+  flex: 1;
+}
+
+.tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+}
+
+.tool svg {
+  color: var(--text-3);
+  flex: none;
+}
+
+.tool__sub {
+  color: var(--text-3);
+}
+
+.tool--full {
+  color: var(--error);
+}
+
+.tool--full svg {
+  color: var(--error);
+}
+
+.tool--quiet {
+  color: var(--text-3);
+  padding: 0 8px;
+}
+
+/* ---------- menus ---------- */
+
+.menuwrap {
   position: relative;
 }
 
-.model {
+.menutrigger {
   display: flex;
   align-items: center;
-  gap: 5px;
   background: none;
   border: 0;
   border-radius: var(--r-md);
-  color: var(--text-2);
+  color: inherit;
   cursor: pointer;
   font: inherit;
-  font-size: var(--t-sm);
   padding: 5px 8px;
+  transition: background var(--dur-fast) var(--ease-out);
 }
 
-.model:hover:not(:disabled) {
+.menutrigger:hover:not(:disabled) {
   background: var(--surface-2);
-  color: var(--text);
 }
 
-.model:disabled {
-  opacity: 0.5;
+.menutrigger:disabled {
+  opacity: 0.45;
   cursor: default;
-}
-
-.model--empty {
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  padding: 5px 8px;
 }
 
 .menu {
   position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  z-index: 20;
-  min-width: 268px;
-  max-height: 320px;
+  z-index: 30;
+  min-width: 260px;
+  max-height: 340px;
   overflow-y: auto;
-  list-style: none;
-  margin: 0;
   padding: 4px;
   background: var(--surface-2);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-lg);
-  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.7);
+  /* Grows from the trigger it belongs to. Nothing in the physical world
+     appears from nothing, so nothing here starts at scale(0) either. */
+  animation: menu-in var(--dur-fast) var(--ease-out);
 }
 
-.stagehead .menu {
-  bottom: auto;
-  top: calc(100% + 4px);
+.menu--up {
+  bottom: calc(100% + 6px);
+  transform-origin: bottom;
+}
+
+.menu--down {
+  top: calc(100% + 6px);
+  transform-origin: top;
+}
+
+.menu--left {
+  left: 0;
+}
+
+.menu--right {
+  right: 0;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(2px);
+  }
+}
+
+.menu__rule {
+  height: 1px;
+  background: var(--line-strong);
+  margin: 4px 2px;
+}
+
+.menu__group {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  margin: 2px 0 2px;
+  padding: 0 9px;
 }
 
 .menu__item {
@@ -601,47 +699,45 @@
   transform: scale(0.94);
 }
 
-.send {
+/* Some icon buttons are the only affordance in their row, so they cannot be
+   hover-revealed like the ones that sit beside a label. */
+.icon-btn--always {
+  opacity: 1;
+}
+
+.orb {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  margin-left: 4px;
   background: var(--light);
   border: 0;
   border-radius: 50%;
   color: var(--on-light);
   cursor: pointer;
-  transition: transform var(--dur-press) var(--ease-out);
+  transition:
+    transform var(--dur-press) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 
-.send:active:not(:disabled) {
-  transform: scale(0.93);
+.orb:active:not(:disabled) {
+  transform: scale(0.92);
 }
 
-.send:disabled {
+.orb:disabled {
   background: var(--surface-3);
   color: var(--text-3);
   cursor: default;
 }
 
-.stop {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
+.orb--stop {
   background: var(--surface-3);
-  border: 0;
-  border-radius: 50%;
   color: var(--text);
-  cursor: pointer;
-  transition: transform var(--dur-press) var(--ease-out);
 }
 
-.stop:active {
-  transform: scale(0.93);
-}
-
-.stop__square {
+.orb__square {
   width: 9px;
   height: 9px;
   border-radius: 2px;

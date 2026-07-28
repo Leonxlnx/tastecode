@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Model, ProviderId } from '@harness/contracts'
+import type { ApprovalMode, Model, ProviderId } from '@harness/contracts'
 import { Transport } from './transport.js'
 import { appendUserMessage, emptyThread, reduce, type ThreadState } from './thread-store.js'
 import { Composer } from './ui/Composer.js'
@@ -41,6 +41,11 @@ export function App() {
   const [modelId, setModelId] = useState<string | undefined>(
     () => localStorage.getItem(MODEL_KEY) ?? undefined,
   )
+  const [effort, setEffort] = useState<string | undefined>()
+  // Never restored from storage. Full access is genuinely dangerous, and a
+  // permission level that quietly survives a restart is how people get burned.
+  const [approval, setApproval] = useState<ApprovalMode>('ask')
+  const [collapsed, setCollapsed] = useState(false)
   const [notice, setNotice] = useState<string | undefined>()
 
   const activeIdRef = useRef(activeId)
@@ -70,7 +75,9 @@ export function App() {
       .then(({ models: list }) => {
         if (cancelled) return
         setModels(list)
-        setModelId((current) => current ?? list.find((m) => m.isDefault)?.id ?? list[0]?.id)
+        const chosen = list.find((m) => m.isDefault) ?? list[0]
+        setModelId((current) => current ?? chosen?.id)
+        setEffort((current) => current ?? chosen?.defaultReasoningEffort)
       })
       .catch(() => {
         /* The picker degrades to "Loading models…" — not worth a modal. */
@@ -105,7 +112,9 @@ export function App() {
         const { threadId } = await transport.request('thread.start', {
           provider: 'codex',
           workspacePath: projectPath,
+          approval,
           ...(modelId ? { model: modelId } : {}),
+          ...(effort ? { effort } : {}),
         })
         setProjects((current) =>
           current.map((project) =>
@@ -126,7 +135,7 @@ export function App() {
         setNotice(error instanceof Error ? error.message : String(error))
       }
     },
-    [transport, modelId],
+    [transport, modelId, effort, approval],
   )
 
   const send = useCallback(
@@ -161,7 +170,7 @@ export function App() {
   const active = findSession(projects, activeId)
 
   return (
-    <div className="shell">
+    <div className={`shell ${collapsed ? 'is-narrow' : ''}`}>
       <TitleBar />
 
       <div className="shell__body">
@@ -169,6 +178,8 @@ export function App() {
           projects={projects}
           activeSessionId={activeId}
           providerName={providerName(provider)}
+          collapsed={collapsed}
+          onToggle={() => setCollapsed((c) => !c)}
           onAddProject={addProject}
           onNewSession={(path) => void newSession(path)}
           onSelectSession={(id) => {
@@ -197,12 +208,18 @@ export function App() {
           )}
 
           <Composer
+            projectName={activePath ? basename(activePath) : undefined}
             models={models}
             modelId={modelId}
+            effort={effort}
+            approval={approval}
+            disabled={!active}
+            running={thread.running}
             onModelChange={setModelId}
+            onEffortChange={setEffort}
+            onApprovalChange={setApproval}
             onSend={(t) => void send(t)}
             onInterrupt={interrupt}
-            running={thread.running}
           />
         </main>
       </div>
@@ -263,6 +280,11 @@ function markStatus(projects: Project[], threadId: string, running: boolean): Pr
       session.id === threadId ? { ...session, status: running ? 'running' : 'idle' } : session,
     ),
   }))
+}
+
+function basename(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean)
+  return parts[parts.length - 1] ?? path
 }
 
 /** The first thing a user types is the best title we get for free. */
