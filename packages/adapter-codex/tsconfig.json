@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    // The generated bindings use extensionless relative imports, which NodeNext
+    // resolution rejects. They are type-only and erased at emit, so bundler
+    // resolution is safe here — our own imports still carry .js extensions and
+    // the emitted output runs under Node unchanged.
+    "module": "preserve",
+    "moduleResolution": "bundler"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["src/**/*.test.ts"],
+  "references": [{ "path": "../contracts" }]
+}
