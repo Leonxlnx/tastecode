@@ -6,6 +6,7 @@ import { spawnCli } from './spawn.js'
 import type { AgentMessageDeltaNotification } from './generated/v2/AgentMessageDeltaNotification'
 import type { ItemCompletedNotification } from './generated/v2/ItemCompletedNotification'
 import type { ItemStartedNotification } from './generated/v2/ItemStartedNotification'
+import type { ThreadStartedNotification } from './generated/v2/ThreadStartedNotification'
 import type { ThreadStartResponse } from './generated/v2/ThreadStartResponse'
 import type { TurnCompletedNotification } from './generated/v2/TurnCompletedNotification'
 import type { TurnStartedNotification } from './generated/v2/TurnStartedNotification'
@@ -117,6 +118,20 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const emit = (event: DomainEvent) => this.emit('event', event)
 
     switch (method) {
+      case 'thread/started': {
+        const p = params as ThreadStartedNotification
+        emit({
+          type: 'thread.started',
+          thread: {
+            id: p.thread.id,
+            provider: 'codex',
+            workspacePath: String(p.thread.cwd ?? ''),
+            createdAt: Date.now(),
+          },
+        })
+        return
+      }
+
       case 'turn/started': {
         const p = params as TurnStartedNotification
         emit({
