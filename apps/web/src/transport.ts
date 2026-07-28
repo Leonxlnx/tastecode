@@ -77,6 +77,11 @@ export class Transport {
 
   #open(state: ConnectionState): void {
     this.#setState(state)
+    // Sequence numbers are per connection, so a new socket restarts at 1.
+    // Carrying the old counter across a reconnect made the gap detector fire
+    // on every successful reconnect — a false alarm that would have trained us
+    // to ignore the one warning that actually matters.
+    this.#lastSequence = 0
     const socket = new WebSocket(this.#url)
     this.#socket = socket
 
@@ -85,7 +90,13 @@ export class Transport {
       for (const payload of this.#queue.splice(0)) socket.send(payload)
     }
 
-    socket.onmessage = (event) => this.#receive(String(event.data))
+    socket.onmessage = (event) => {
+      // A replaced socket can still deliver frames while it finishes closing.
+      // The server broadcasts to every open connection, so without this guard
+      // each push is applied twice and the thread shows duplicate messages.
+      if (this.#socket !== socket) return
+      this.#receive(String(event.data))
+    }
 
     socket.onclose = () => {
       if (this.#closedByUs) return
@@ -136,7 +147,6 @@ export class Transport {
   #setState(state: ConnectionState): void {
     if (this.#state === state) return
     this.#state = state
-    if (state === 'connecting' || state === 'closed') this.#lastSequence = 0
     for (const listener of this.#stateListeners) listener(state)
   }
 }
