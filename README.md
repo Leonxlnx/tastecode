@@ -19,22 +19,22 @@ you actually want to read. And a design agent that produces work you would ship.
 
 ## Docs
 
-| | |
-| --- | --- |
-| [VISION](./docs/VISION.md) | What we're building and why |
-| [FEATURES](./docs/FEATURES.md) | Every feature, as a list |
-| [ROADMAP](./docs/ROADMAP.md) | M0–M8 and the open questions |
+|                                        |                                      |
+| -------------------------------------- | ------------------------------------ |
+| [VISION](./docs/VISION.md)             | What we're building and why          |
+| [FEATURES](./docs/FEATURES.md)         | Every feature, as a list             |
+| [ROADMAP](./docs/ROADMAP.md)           | M0–M8 and the open questions         |
 | [ARCHITECTURE](./docs/ARCHITECTURE.md) | How it's built, and what we rejected |
-| [DESIGN-AGENT](./docs/DESIGN-AGENT.md) | The differentiator *(written at M4)* |
+| [DESIGN-AGENT](./docs/DESIGN-AGENT.md) | The differentiator _(written at M4)_ |
 
 ## Rules
 
 Read these before your first commit.
 
-| | |
-| --- | --- |
-| [rules/git](./rules/git.md) | Branches, commits, PRs, CI |
-| [rules/code](./rules/code.md) | Cross-platform, style, decisions |
+|                                       |                                                  |
+| ------------------------------------- | ------------------------------------------------ |
+| [rules/git](./rules/git.md)           | Branches, commits, PRs, CI                       |
+| [rules/code](./rules/code.md)         | Cross-platform, style, decisions                 |
 | [rules/security](./rules/security.md) | ⚠️ Credentials — the one that gets people banned |
 
 ## Team

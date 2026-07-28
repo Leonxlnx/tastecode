@@ -25,7 +25,7 @@ For any coding agent working in this repo — Claude Code, Codex, Cursor.
 
 ## Commits
 
-Conventional Commits, small and frequent, one logical change each. The body says *why*.
+Conventional Commits, small and frequent, one logical change each. The body says _why_.
 
 ## When unsure
 

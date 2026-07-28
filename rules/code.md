@@ -42,7 +42,7 @@ creating another. A new top-level doc needs a reason you can say out loud.
 ## Working with the agent
 
 - Tasks come from the two humans; the agent plans and executes.
-- Ambiguity that changes the *shape* of the work → it asks. Ambiguity that doesn't → it
+- Ambiguity that changes the _shape_ of the work → it asks. Ambiguity that doesn't → it
   decides, proceeds, and flags the assumption in the PR.
 - The agent opens draft PRs early so you can redirect before the work is finished.
 - **Design review is human.** The agent produces visuals; you decide if they're good.

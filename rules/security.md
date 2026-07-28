@@ -7,7 +7,7 @@
 ## Never reuse a vendor's subscription credential
 
 In **March 2026 Anthropic restricted Claude Code's subscription OAuth to first-party
-products**, with legal declarations *and* server-side enforcement. Tokens from Free/Pro/Max
+products**, with legal declarations _and_ server-side enforcement. Tokens from Free/Pro/Max
 plans are for Claude Code and Claude.ai only — using them in any other product, including
 the Agent SDK, is not permitted. Assume every vendor works the same way.
 
@@ -30,13 +30,13 @@ surface, not a chore.
 **What it buys:** we're legally clean and can say so on the landing page. In this category
 that's a selling point:
 
-> *Your credentials never touch Personal Harness. We ask your tools to work; we don't ask
-> for your passwords.*
+> _Your credentials never touch Personal Harness. We ask your tools to work; we don't ask
+> for your passwords._
 
 ### BYOK is different and unambiguous
 
-| Safe | Prohibited |
-| --- | --- |
+| Safe                                            | Prohibited                                                                |
+| ----------------------------------------------- | ------------------------------------------------------------------------- |
 | The user's **API key** → any client they choose | The user's **subscription OAuth token** → any client but the vendor's own |
 
 Kimi and GLM publish Anthropic-compatible endpoints and issue their own API keys for them —

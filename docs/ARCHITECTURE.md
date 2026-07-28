@@ -21,6 +21,7 @@ desktop renderer · web · mobile          thin clients
 ```
 
 Why not just do it in Electron's main process:
+
 - **Agents survive the UI.** Close the window, the turn keeps running.
 - **Mobile becomes a client, not a rewrite.**
 - The web client is nearly free.
@@ -33,7 +34,7 @@ envelopes carry a monotonic `sequence` per connection so clients detect gaps and
 Client transport is an explicit state machine (`connecting → open → reconnecting → closed`)
 that queues outbound requests while disconnected.
 
-*Rejected:* everything in Electron main (forecloses mobile/web). tRPC on the wire (ties us
+_Rejected:_ everything in Electron main (forecloses mobile/web). tRPC on the wire (ties us
 to a TypeScript client).
 
 ---
@@ -61,7 +62,7 @@ one is non-negotiable to fix, in the scaffold from day one — `contextIsolation
 deny-by-default external navigation. The renderer never spawns a process, touches the
 filesystem, or reads a credential.
 
-*Rejected:* Tauri v2 (above) · native per-platform (two codebases for two developers means
+_Rejected:_ Tauri v2 (above) · native per-platform (two codebases for two developers means
 Windows is permanently the worse one) · web-only as primary (no PTY, no filesystem, no
 credential store — but we'll ship it as a secondary surface since it's nearly free) ·
 Wails/Neutralino (same webview divergence, smaller ecosystem).
@@ -70,20 +71,20 @@ Wails/Neutralino (same webview divergence, smaller ecosystem).
 
 ## Stack
 
-| | | |
-| --- | --- | --- |
-| Language / runtime | TypeScript strict, Node 24 LTS | Not Bun — native modules and Windows maturity still lag |
-| Monorepo | pnpm workspaces + Turborepo + Vite | pnpm's store makes worktree-heavy work cheap |
-| UI | React 19 | The two load-bearing libraries below are React |
-| Chat list | TanStack Virtual, `anchorTo: 'end'` | Purpose-built for streaming AI chat |
-| Markdown | Streamdown + Shiki in a worker | Handles unterminated markdown mid-stream |
-| Styling | Tailwind v4 + our own token layer | Tokens generated from the design system |
-| Components | Radix / Base UI primitives, our own visuals | **No component kit adopted wholesale** — shadcn-default styling is the most recognizable AI-app look and would undercut the premise |
-| Motion | Motion | Spring physics, used sparingly |
-| State | Zustand + event-derived store | Selector discipline matters more than the library |
-| DB | SQLite (`better-sqlite3`), WAL, FTS5 | Native module — needs prebuilds on both OSes in CI |
-| PTY | `node-pty` (ConPTY) | Windows 10 1809+ required |
-| Tests | Vitest; Playwright for Electron | Adapter contract tests run the real binaries |
+|                    |                                             |                                                                                                                                     |
+| ------------------ | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Language / runtime | TypeScript strict, Node 24 LTS              | Not Bun — native modules and Windows maturity still lag                                                                             |
+| Monorepo           | pnpm workspaces + Turborepo + Vite          | pnpm's store makes worktree-heavy work cheap                                                                                        |
+| UI                 | React 19                                    | The two load-bearing libraries below are React                                                                                      |
+| Chat list          | TanStack Virtual, `anchorTo: 'end'`         | Purpose-built for streaming AI chat                                                                                                 |
+| Markdown           | Streamdown + Shiki in a worker              | Handles unterminated markdown mid-stream                                                                                            |
+| Styling            | Tailwind v4 + our own token layer           | Tokens generated from the design system                                                                                             |
+| Components         | Radix / Base UI primitives, our own visuals | **No component kit adopted wholesale** — shadcn-default styling is the most recognizable AI-app look and would undercut the premise |
+| Motion             | Motion                                      | Spring physics, used sparingly                                                                                                      |
+| State              | Zustand + event-derived store               | Selector discipline matters more than the library                                                                                   |
+| DB                 | SQLite (`better-sqlite3`), WAL, FTS5        | Native module — needs prebuilds on both OSes in CI                                                                                  |
+| PTY                | `node-pty` (ConPTY)                         | Windows 10 1809+ required                                                                                                           |
+| Tests              | Vitest; Playwright for Electron             | Adapter contract tests run the real binaries                                                                                        |
 
 **On Effect-TS:** T3 Code uses it throughout and it genuinely fits this problem. We don't
 adopt it for v1 — the learning curve colors every signature and with two developers the
@@ -98,13 +99,13 @@ concurrency bugs become a recurring pain.
 **One internal model: Thread → Turn → Item.** Borrowed from Codex because it's the best
 designed and maps straight onto the UI. Items are `message`, `reasoning`, `command`,
 `file_change`, `tool_call`, `plan`, `error`, each with a `started → deltas → completed`
-lifecycle. Adapters translate *into* this. Nothing engine-specific leaks past them.
+lifecycle. Adapters translate _into_ this. Nothing engine-specific leaks past them.
 
-| Tier | Mechanism | Engines | Fidelity |
-| --- | --- | --- | --- |
-| 1 — Native | Vendor's own protocol | Codex (`app-server` JSON-RPC), OpenCode (JS/TS SDK) | Full — approvals, fork, steer, fs events |
-| 2 — ACP | Agent Client Protocol over stdio | Gemini CLI + ~25 others | Good. One adapter, long tail for free |
-| 3 — CLI | Headless NDJSON | Claude Code, Cursor, Grok | Adequate. Version-pinned, fragile |
+| Tier       | Mechanism                        | Engines                                             | Fidelity                                 |
+| ---------- | -------------------------------- | --------------------------------------------------- | ---------------------------------------- |
+| 1 — Native | Vendor's own protocol            | Codex (`app-server` JSON-RPC), OpenCode (JS/TS SDK) | Full — approvals, fork, steer, fs events |
+| 2 — ACP    | Agent Client Protocol over stdio | Gemini CLI + ~25 others                             | Good. One adapter, long tail for free    |
+| 3 — CLI    | Headless NDJSON                  | Claude Code, Cursor, Grok                           | Adequate. Version-pinned, fragile        |
 
 Engines can appear in more than one tier. We default to the highest fidelity available, with
 a user override — so if Claude Code's ACP surface proves more stable than its CLI surface,
@@ -122,7 +123,7 @@ degradation to an `unknown` item (never a crash, never silent loss), and a visib
 Checkpoints, worktrees, cost accounting and search live **above** the adapters, implemented
 once. Git checkpoints work identically regardless of which engine made the change.
 
-*Rejected:* ACP-only (gives up Codex's richest-in-class surface) · native-only (caps us at
+_Rejected:_ ACP-only (gives up Codex's richest-in-class surface) · native-only (caps us at
 4 engines) · our own agent loop for everything (competing with Anthropic's and OpenAI's
 harness teams while also building a UI) · a `switch` on provider in the orchestrator.
 
@@ -147,18 +148,18 @@ content-addressed snapshot of touched files only.
 ever, for almost no implementation cost — and "what was that command three weeks ago in the
 other project?" is a real question nobody in this category answers well.
 
-| | Windows | macOS |
-| --- | --- | --- |
-| DB + logs | `%APPDATA%\PersonalHarness\` | `~/Library/Application Support/PersonalHarness/` |
-| User config | `%USERPROFILE%\.personalharness\` | `~/.personalharness/` |
-| Credentials | Credential Manager | Keychain |
+|             | Windows                           | macOS                                            |
+| ----------- | --------------------------------- | ------------------------------------------------ |
+| DB + logs   | `%APPDATA%\PersonalHarness\`      | `~/Library/Application Support/PersonalHarness/` |
+| User config | `%USERPROFILE%\.personalharness\` | `~/.personalharness/`                            |
+| Credentials | Credential Manager                | Keychain                                         |
 
 Config is human-readable and hand-editable on purpose. It is never where secrets go.
 
 Needs deciding before v1: a retention policy. Unbounded event logs grow forever, and
 silently deleting a user's history is unacceptable.
 
-*Rejected:* JSONL files (we'll *read* Claude Code's, but no indexing/transactions/search) ·
+_Rejected:_ JSONL files (we'll _read_ Claude Code's, but no indexing/transactions/search) ·
 libsql/Turso (sync story we don't need yet) · SQLite in the renderer (source of truth in the
 most disposable process) · whole-DB encryption (the DB holds no credentials by policy).
 
@@ -191,14 +192,14 @@ The rules that solve it:
 
 ### Budgets — CI gates, not aspirations
 
-| | |
-| --- | --- |
-| Open a 500-message thread → first paint | < 150 ms |
-| Scroll a 500-message thread | 60 fps, no frame > 32 ms |
-| Main-thread work per delta batch | < 4 ms |
-| Cold start → interactive | < 1.5 s |
-| Switch sessions | < 100 ms |
-| Idle memory, 5 sessions | < 500 MB |
+|                                         |                          |
+| --------------------------------------- | ------------------------ |
+| Open a 500-message thread → first paint | < 150 ms                 |
+| Scroll a 500-message thread             | 60 fps, no frame > 32 ms |
+| Main-thread work per delta batch        | < 4 ms                   |
+| Cold start → interactive                | < 1.5 s                  |
+| Switch sessions                         | < 100 ms                 |
+| Idle memory, 5 sessions                 | < 500 MB                 |
 
 Build a 1,000-message fixture thread early, keep it in the repo, run every UI PR against it.
 **A PR that regresses a budget doesn't merge.**
@@ -221,6 +222,6 @@ registry entry, which is deliberately a good first outside contribution.
 
 ## Change log
 
-| Date | Change |
-| --- | --- |
+| Date       | Change             |
+| ---------- | ------------------ |
 | 2026-07-28 | Initial decisions. |

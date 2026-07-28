@@ -17,7 +17,7 @@ The problem is a different one, and it does not go away as those apps improve:
 - **Your subscriptions are stranded.** You may already pay for Claude Max, ChatGPT Plus,
   Cursor, Kimi Code, a GLM coding plan, and SuperGrok. Each one is usable only inside its
   own client. Nothing lets you point all of them at the same task in the same window.
-- **Nothing adapts to you.** Every one of these apps is opinionated about how *they* think
+- **Nothing adapts to you.** Every one of these apps is opinionated about how _they_ think
   you should work. None of them lets you assemble your own setup — your providers, your
   budget, your keybindings, your skills, your layout.
 - **Design output is generic, everywhere.** Ask any of them for a landing page and you get
@@ -25,7 +25,7 @@ The problem is a different one, and it does not go away as those apps improve:
   Everyone can see it. It is the single most obvious tell that software was made by an AI,
   and no first-party client is trying to fix it — because the fix is taste, not tokens.
 
-There is a second tier of tools that *does* aggregate — T3 Code, Conductor, Nimbalyst. That
+There is a second tier of tools that _does_ aggregate — T3 Code, Conductor, Nimbalyst. That
 is the shelf we are competing on, not the first-party apps. None of them has solved
 personalization, and none of them is competing on design quality at all.
 
@@ -38,11 +38,11 @@ Threads that stay instant at 500 messages. Real diff review. Parallel agents in 
 worktrees. And a design agent that produces work you would actually ship.
 
 We do not need to beat the Claude app at running Claude. We need to be the only place where
-Claude, Codex, Cursor, GLM and a local model sit side by side, configured the way *you*
+Claude, Codex, Cursor, GLM and a local model sit side by side, configured the way _you_
 want, with an agent that has actual taste.
 
-"Personal" is the point: the harness adapts to *your* providers, *your* budget, *your*
-keybindings, *your* taste. Nobody's setup is the same and the app should not pretend
+"Personal" is the point: the harness adapts to _your_ providers, _your_ budget, _your_
+keybindings, _your_ taste. Nobody's setup is the same and the app should not pretend
 otherwise.
 
 ## Three bets
@@ -50,7 +50,7 @@ otherwise.
 ### 1. Aggregation — bring everything you have
 
 We do not resell tokens. We never proxy your credentials through our servers. The harness
-drives the *official* CLI or protocol server for each vendor, so your subscription is used
+drives the _official_ CLI or protocol server for each vendor, so your subscription is used
 exactly the way the vendor intends, and BYOK keys go straight from your machine to the
 provider.
 

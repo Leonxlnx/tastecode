@@ -17,5 +17,5 @@ That is distribution, not leakage.
 
 Feature list: [FEATURES.md → Design agent](./FEATURES.md#design-agent).
 
-*Everything else — the pipeline, the rubric, the eval method — gets written here when we
-build it.*
+_Everything else — the pipeline, the rubric, the eval method — gets written here when we
+build it._
