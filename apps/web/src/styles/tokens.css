@@ -1,12 +1,13 @@
 /*
- * Design tokens. Everything downstream references these — no raw values in
- * component CSS.
+ * Design tokens. Nothing downstream uses a raw value.
  *
- * Direction: precision-industrial. This is an instrument panel for driving
- * agents, not a chat app. Hairline rules instead of shadows, uppercase mono
- * micro-labels, tabular figures on anything countable, and exactly one signal
- * accent. Deliberately not the dark-glass-and-violet-glow look every AI tool
- * converges on.
+ * Neutral greyscale on purpose. A coloured brand accent in a tool you stare at
+ * all day fights the content, and every AI product reaches for the same tinted
+ * glow. Colour is reserved for meaning — a running session, an error, a project
+ * marker — never decoration.
+ *
+ * No letter-spaced uppercase micro-labels anywhere. Section headings are small,
+ * muted and sentence case, the way the first-party agent apps do it.
  */
 
 @import '@fontsource-variable/geist';
@@ -15,49 +16,49 @@
 :root {
   color-scheme: dark;
 
-  /* Neutrals, all tinted slightly warm so the amber signal belongs to the
-     same world. One gray temperature, never mixed. */
-  --bg: oklch(16% 0.004 80);
-  --bg-rail: oklch(14% 0.004 80);
-  --surface: oklch(19.5% 0.005 80);
-  --surface-2: oklch(23% 0.006 80);
+  --bg: #0f0f0f;
+  --bg-rail: #131313;
+  --surface: #1a1a1a;
+  --surface-2: #222222;
+  --surface-3: #2b2b2b;
 
-  --line: oklch(27% 0.006 80);
-  --line-soft: oklch(23% 0.005 80);
+  --line: #262626;
+  --line-strong: #333333;
 
-  --text: oklch(93% 0.006 80);
-  --text-2: oklch(70% 0.008 80);
-  --text-3: oklch(54% 0.008 80);
+  --text: #ededed;
+  --text-2: #a3a3a3;
+  --text-3: #6f6f6f;
 
-  /* One accent. Amber reads as an instrument indicator rather than a brand
-     gradient, and it is nowhere near the banned violet-to-indigo range. */
-  --signal: oklch(78% 0.13 78);
-  --signal-dim: oklch(52% 0.09 78);
-  --danger: oklch(64% 0.16 25);
-  --ok: oklch(72% 0.13 155);
+  /* Interactive emphasis is a light surface, not a hue. */
+  --on-light: #101010;
+  --light: #ededed;
+
+  /* Meaning only. */
+  --running: #d4d4d4;
+  --error: #e5687a;
+  --success: #6fbf8e;
 
   --font-ui: 'Geist Variable', 'Segoe UI Variable Text', system-ui, sans-serif;
   --font-mono: 'Geist Mono Variable', 'Cascadia Code', ui-monospace, monospace;
 
-  /* Type scale. Dense on purpose — this is a tool people keep open all day. */
-  --t-micro: 10.5px;
-  --t-small: 12px;
-  --t-body: 13.5px;
-  --t-lead: 15px;
-  --t-title: 21px;
+  --t-xs: 11.5px;
+  --t-sm: 12.5px;
+  --t-md: 13.5px;
+  --t-lg: 15px;
+  --t-xl: 20px;
+  --t-2xl: 26px;
 
-  /* One radius scale. Mixed arbitrary radii read as generated. */
-  --r-sm: 4px;
-  --r-md: 7px;
-  --r-lg: 11px;
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
 
-  --rail-w: 232px;
+  --rail-w: 248px;
   --titlebar-h: 34px;
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --dur-press: 140ms;
-  --dur-fast: 200ms;
-  --dur-base: 260ms;
+  --dur-fast: 180ms;
 }
 
 * {
@@ -75,47 +76,46 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: var(--t-body);
+  font-size: var(--t-md);
   line-height: 1.55;
   font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
 
-/* Uppercase mono micro-label. The structural signature of the whole UI. */
-.label {
-  font-family: var(--font-mono);
-  font-size: var(--t-micro);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-3);
+/* Section heading in the rail. Sentence case, small, quiet — a label, not a
+   banner. The all-caps letter-spaced eyebrow is banned in this codebase. */
+.section {
+  font-size: var(--t-xs);
   font-weight: 500;
+  color: var(--text-3);
+  padding: 0 10px;
+  margin: 0;
 }
 
 :focus-visible {
-  outline: 2px solid var(--signal);
+  outline: 2px solid var(--text-2);
   outline-offset: 1px;
   border-radius: var(--r-sm);
 }
 
 ::selection {
-  background: var(--signal-dim);
+  background: var(--surface-3);
   color: var(--text);
 }
 
-/* Scrollbars that belong to the instrument rather than to Windows. */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--line);
+  background: var(--surface-3);
   border: 3px solid transparent;
   background-clip: content-box;
   border-radius: 99px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--surface-2);
+  background: #3a3a3a;
   background-clip: content-box;
 }
 ::-webkit-scrollbar-track {
