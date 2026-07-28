@@ -2,23 +2,32 @@
 
 ## The problem
 
-The best coding agents in 2026 are terminal programs. Claude Code, Codex CLI, Cursor CLI,
-OpenCode, Gemini CLI, and Grok Build are all extraordinary engines wrapped in a 1970s
-interface. That is fine for a power user with tmux muscle memory. It is terrible for
-everything else:
+**It is not that the existing clients are bad.** They are good, and getting better fast.
+Claude Code shipped a redesigned desktop app in April 2026 with parallel tasks, visual
+diffs and server previews. Codex has a first-party app plus IDE extensions. Cursor is an
+entire IDE built around an agent. Anyone claiming this field is a wasteland of ugly
+terminal programs has not looked at it recently.
 
-- **Threads don't scale.** A 200+ message session is unreadable in a scrollback buffer.
-  You cannot jump, filter, fold, search, or diff.
-- **Every agent is an island.** Separate auth, separate config, separate session store,
-  separate mental model. Running two agents on one repo means two terminals and no shared
-  state.
+The problem is a different one, and it does not go away as those apps improve:
+
+- **Every good client is locked to one vendor.** The Claude app runs Claude. The Codex app
+  runs Codex. Cursor runs Cursor. None of them will ever run the others — it is not in
+  their interest to. So the moment you use more than one engine, you are back to switching
+  between three apps with three session models, three histories, and nothing shared.
 - **Your subscriptions are stranded.** You may already pay for Claude Max, ChatGPT Plus,
-  Cursor, Kimi Code, a GLM coding plan, and SuperGrok. Nothing lets you use them from one
-  place.
-- **Nothing is beautiful.** The tools that build beautiful software look like `htop`.
-- **Design output is generic.** Ask any agent for a landing page and you get the same
-  gradient hero, the same three feature cards, the same violet-to-indigo blur. Everyone
-  can see it. It is the single most obvious tell that software was made by an AI.
+  Cursor, Kimi Code, a GLM coding plan, and SuperGrok. Each one is usable only inside its
+  own client. Nothing lets you point all of them at the same task in the same window.
+- **Nothing adapts to you.** Every one of these apps is opinionated about how *they* think
+  you should work. None of them lets you assemble your own setup — your providers, your
+  budget, your keybindings, your skills, your layout.
+- **Design output is generic, everywhere.** Ask any of them for a landing page and you get
+  the same gradient hero, the same three feature cards, the same violet-to-indigo blur.
+  Everyone can see it. It is the single most obvious tell that software was made by an AI,
+  and no first-party client is trying to fix it — because the fix is taste, not tokens.
+
+There is a second tier of tools that *does* aggregate — T3 Code, Conductor, Nimbalyst. That
+is the shelf we are competing on, not the first-party apps. None of them has solved
+personalization, and none of them is competing on design quality at all.
 
 ## The product
 
@@ -27,6 +36,10 @@ everything else:
 One window. Every agent you have. Every subscription you pay for, plus your own keys.
 Threads that stay instant at 500 messages. Real diff review. Parallel agents in isolated
 worktrees. And a design agent that produces work you would actually ship.
+
+We do not need to beat the Claude app at running Claude. We need to be the only place where
+Claude, Codex, Cursor, GLM and a local model sit side by side, configured the way *you*
+want, with an agent that has actual taste.
 
 "Personal" is the point: the harness adapts to *your* providers, *your* budget, *your*
 keybindings, *your* taste. Nobody's setup is the same and the app should not pretend
@@ -49,8 +62,8 @@ The rule that makes this legal is in [rules/security.md](../rules/security.md).
 
 ### 2. Craft — the UI is the product
 
-The engines are commodities; the client is not. Our differentiator is that the app is
-genuinely, obviously better to use than anything else in the category. Concretely:
+The bar here is high, not empty — the first-party apps are well made. Being merely decent
+is not a position. Concretely what we hold ourselves to:
 
 - A 500-message thread scrolls at 60fps and opens in under 150ms.
 - Streaming output never causes layout jank or scroll jumps.
