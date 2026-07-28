@@ -219,7 +219,7 @@ export function App() {
 
   return (
     <div className={`shell ${collapsed ? 'is-narrow' : ''}`}>
-      <TitleBar />
+      <TitleBar collapsed={collapsed} onToggleRail={() => setCollapsed((c) => !c)} />
 
       <div className="shell__body">
         <Sidebar
@@ -227,7 +227,6 @@ export function App() {
           activeSessionId={activeId}
           providerName={providerName(provider)}
           collapsed={collapsed}
-          onToggle={() => setCollapsed((c) => !c)}
           account={account}
           onAddProject={() => void addProject()}
           onNewSession={(path) => void newSession(path)}

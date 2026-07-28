@@ -29,7 +29,6 @@ export function Sidebar(props: {
   account: Account | undefined
   providerName: string
   collapsed: boolean
-  onToggle: () => void
   onAddProject: () => void
   onNewSession: (projectPath: string) => void
   onSelectSession: (id: string) => void
@@ -42,15 +41,9 @@ export function Sidebar(props: {
 }) {
   const [query, setQuery] = useState('')
 
-  if (props.collapsed) {
-    return (
-      <nav className="rail rail--collapsed">
-        <button className="icon-btn icon-btn--always" onClick={props.onToggle} title="Show sidebar">
-          <PanelGlyph />
-        </button>
-      </nav>
-    )
-  }
+  // Collapsed is an empty strip: the toggle that brings it back lives in the
+  // title bar, so it stays put instead of moving with the thing it controls.
+  if (props.collapsed) return <nav className="rail rail--collapsed" />
 
   const term = query.trim().toLowerCase()
   const visible = term
@@ -70,13 +63,6 @@ export function Sidebar(props: {
 
   return (
     <nav className="rail">
-      <div className="rail__top">
-        <span className="rail__brand">Harness</span>
-        <button className="icon-btn icon-btn--always" onClick={props.onToggle} title="Hide sidebar">
-          <PanelGlyph />
-        </button>
-      </div>
-
       <div className="rail__actions">
         <button
           className="navitem"
@@ -401,15 +387,6 @@ function markColour(path: string): string {
   let hash = 0
   for (let i = 0; i < path.length; i++) hash = (hash * 31 + path.charCodeAt(i)) >>> 0
   return `oklch(70% 0.1 ${hash % 360})`
-}
-
-function PanelGlyph() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <rect x="2" y="3" width="12" height="10" rx="2" stroke="currentColor" strokeWidth="1.3" />
-      <path d="M6.5 3v10" stroke="currentColor" strokeWidth="1.3" />
-    </svg>
-  )
 }
 
 function SearchGlyph() {

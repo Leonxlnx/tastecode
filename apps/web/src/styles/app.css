@@ -35,6 +35,10 @@
   user-select: none;
 }
 
+.titlebar__toggle {
+  -webkit-app-region: no-drag;
+}
+
 .titlebar__name {
   font-size: var(--t-sm);
   font-weight: 500;
@@ -45,37 +49,18 @@
 
 .rail {
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto 1fr auto;
   min-height: 0;
   background: var(--bg-rail);
   border-right: 1px solid var(--line);
 }
 
 .rail--collapsed {
-  grid-template-rows: auto;
-  padding: 6px 0 0;
-  justify-items: center;
   overflow: hidden;
-}
-
-.rail__top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 6px 8px 4px 14px;
-  overflow: hidden;
-}
-
-.rail__brand {
-  font-size: var(--t-lg);
-  font-weight: 560;
-  letter-spacing: -0.014em;
-  white-space: nowrap;
 }
 
 .rail__actions {
-  padding: 2px 8px 10px;
+  padding: 10px 8px 10px;
   display: flex;
   flex-direction: column;
   gap: 1px;
