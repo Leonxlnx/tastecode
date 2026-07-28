@@ -2,7 +2,8 @@
 
 For any coding agent working in this repo — Claude Code, Codex, Cursor.
 
-**This repo is planning only. There is no application code yet.**
+**M0 is complete: the app runs and drives a real Codex session.** `pnpm dev` starts the
+server, renderer and desktop shell together.
 
 ## Read first
 
