@@ -4,7 +4,7 @@ Two people, two operating systems, one trunk.
 
 ## Branches
 
-Trunk is `main`. Protected: PR required, 1 approval, squash-merge only, no force-push.
+Trunk is `main`. Protected: PR required, 1 approval, rebase-merge only, no force-push.
 
 ```
 <type>/<area>-<short-description>
@@ -46,7 +46,7 @@ the viewport walks upward on every delta.
 Scopes: `chat` `adapters` `desktop` `server` `design-agent` `ci` `docs`
 
 Not acceptable: `update stuff`, `fixes`, `wip`, `more work on chat`. (`wip` is fine on your
-own branch while working — squash-merge collapses it anyway.)
+own branch while working — clean them up before marking the PR ready, since they land on `main` as-is.)
 
 ## Pull requests
 
@@ -56,8 +56,9 @@ own branch while working — squash-merge collapses it anyway.)
   way to keep the other person oriented.
 - Body says *why* and *how it was verified*. Screenshots or a clip for anything visual.
 - **One approval** from the other human. The agent opens and updates PRs; it never approves.
-- **Squash-merge**, PR title becomes the commit subject. Granular history for review, clean
-  bisectable trunk.
+- **Rebase-merge, never squash.** Every commit on the branch lands on `main` individually
+  and keeps its own message. This is why commits have to be clean and self-contained: on
+  `main` they are the permanent record, not scratch work that gets collapsed away.
 - Delete the branch on merge.
 
 Never rewrite history on a branch someone else has pulled.
@@ -71,6 +72,8 @@ Agreed 2026-07-28.
 | **Approval** | Either human approves. Neither approves their own PR. |
 | **Visibility** | Claude opens a **draft PR from the first commit** — not when the work is finished. Redirect early; that's what it's for. |
 | **Merging** | Claude merges once approved. Nothing lands without a human sign-off anyway. |
+| **Merge style** | **Rebase, never squash.** Squash is disabled in the branch ruleset. |
+| **Pushing** | After every commit, not batched at the end. Work that is not pushed is invisible. |
 
 Ownership, so we don't collide:
 
@@ -81,7 +84,7 @@ Ownership, so we don't collide:
 | Server, adapters, UI, tests, docs | Claude |
 | `packages/contracts` | **Shared — both humans review.** A change here breaks three clients at once. |
 
-`main` is protected: PR required, 1 approval, squash-merge only, no force-push, no deletion.
+`main` is protected: PR required, 1 approval, rebase-merge only, no force-push, no deletion.
 There is currently an **admin bypass** so a solo owner isn't deadlocked —
 **remove it once the second collaborator is added**, or the rule is decorative.
 
