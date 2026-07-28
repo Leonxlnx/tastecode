@@ -568,12 +568,24 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   padding: 3px 8px 3px 7px;
-  max-width: 240px;
+  max-width: 100%;
   background: var(--surface-2);
   border-radius: var(--r-md);
   color: var(--text-2);
   font-size: var(--t-sm);
+}
+
+/* The project name is the identity; the branch is the detail. When space runs
+   out the branch gives way first. */
+.chip--context .chip__label {
+  flex: none;
+  max-width: 180px;
+}
+
+.chip--file {
+  max-width: 220px;
 }
 
 .chip svg {
@@ -615,6 +627,24 @@
   align-items: center;
   gap: 4px;
   padding: 4px 8px 8px 8px;
+  /* Never wraps. Send has to stay on the row at every width, so the labels in
+     the middle shrink and truncate instead. */
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.tools > * {
+  min-width: 0;
+}
+
+.tool span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool--compact span {
+  text-transform: capitalize;
 }
 
 .tools__spacer {
@@ -675,6 +705,8 @@
 .menutrigger {
   display: flex;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
   background: none;
   border: 0;
   border-radius: var(--r-md);

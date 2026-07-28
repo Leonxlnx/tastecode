@@ -339,10 +339,10 @@ export function Composer(props: {
 
           <span className="tools__spacer" />
 
-          {/* Effort is a segmented toggle rather than a menu item: it is changed
-              far more often than the model, and burying a frequent switch one
-              level deeper than an occasional one is backwards. */}
-          {efforts.length > 1 ? (
+          {/* Effort is changed far more often than the model, so it stays at the
+              top level. Segments while they fit; past four options they would
+              push the send button off a narrow window, so it becomes a menu. */}
+          {efforts.length > 1 && efforts.length <= 4 ? (
             <div className="segments" role="group" aria-label="Reasoning effort">
               {efforts.map((entry) => (
                 <button
@@ -356,6 +356,35 @@ export function Composer(props: {
                 </button>
               ))}
             </div>
+          ) : efforts.length > 1 ? (
+            <Menu
+              label="Reasoning effort"
+              align="right"
+              disabled={props.running}
+              trigger={() => (
+                <span className="tool tool--compact">
+                  <GaugeGlyph />
+                  <span>{props.effort ?? 'effort'}</span>
+                </span>
+              )}
+            >
+              {(close) => (
+                <>
+                  <p className="menu__group">Reasoning effort</p>
+                  {efforts.map((entry) => (
+                    <MenuItem
+                      key={entry}
+                      title={entry}
+                      active={entry === props.effort}
+                      onClick={() => {
+                        props.onEffortChange(entry)
+                        close()
+                      }}
+                    />
+                  ))}
+                </>
+              )}
+            </Menu>
           ) : null}
 
           {props.models.length > 0 ? (
@@ -501,6 +530,20 @@ function BoltGlyph() {
         strokeWidth="1.2"
         strokeLinejoin="round"
       />
+    </svg>
+  )
+}
+
+function GaugeGlyph() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d="M2.6 11.5a6 6 0 1110.8 0"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+      />
+      <path d="M8 11L10.6 6.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
     </svg>
   )
 }
