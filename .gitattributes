@@ -29,3 +29,8 @@
 
 # Lockfiles: keep diffs collapsed in PR review.
 pnpm-lock.yaml -diff linguist-generated
+
+# Vendor protocol bindings, produced by `codex app-server generate-ts`.
+# Committed so the build does not require codex to be installed, collapsed in
+# review because nobody should read 500 generated files in a diff.
+packages/adapter-codex/src/generated/** -diff linguist-generated
