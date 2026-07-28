@@ -14,6 +14,13 @@ export type ThreadState = {
 
 export const emptyThread: ThreadState = { items: [], running: false }
 
+/**
+ * Marks a locally-echoed message that the agent has not confirmed yet. The
+ * user's own text must appear the instant they hit send — waiting for a round
+ * trip feels broken — but it has to be reconciled when the real item arrives.
+ */
+const OPTIMISTIC_PREFIX = 'local:'
+
 export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
   switch (event.type) {
     case 'turn.started':
@@ -22,8 +29,15 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
     case 'turn.completed':
       return { ...state, running: false }
 
-    case 'item.started':
-      return { ...state, items: [...state.items, event.item] }
+    case 'item.started': {
+      // The agent echoes the user's message back as a canonical item. Drop our
+      // optimistic copy when it arrives, so the message does not appear twice.
+      const items =
+        event.item.role === 'user'
+          ? state.items.filter((i) => !i.id.startsWith(OPTIMISTIC_PREFIX))
+          : state.items
+      return { ...state, items: [...items, event.item] }
+    }
 
     case 'item.delta': {
       const index = state.items.findIndex((i) => i.id === event.itemId)
@@ -75,7 +89,7 @@ export function appendUserMessage(state: ThreadState, text: string): ThreadState
     items: [
       ...state.items,
       {
-        id: crypto.randomUUID(),
+        id: `${OPTIMISTIC_PREFIX}${crypto.randomUUID()}`,
         turnId: '',
         type: 'message',
         role: 'user',
