@@ -8,6 +8,7 @@ import {
 } from '@harness/contracts'
 import { Orchestrator } from './orchestrator.js'
 import { PushBus } from './push-bus.js'
+import { readWorkspace } from './workspace.js'
 
 export const SERVER_VERSION = '0.0.0'
 export const DEFAULT_PORT = 4311
@@ -114,6 +115,11 @@ export function startServer(port = DEFAULT_PORT) {
             { id: 'codex', displayName: 'Codex', installed: true, auth: 'unknown' as const },
           ],
         }
+
+      case 'workspace.info': {
+        const p = params as { path: string }
+        return readWorkspace(p.path)
+      }
 
       case 'models.list': {
         const p = params as { provider: 'codex' }

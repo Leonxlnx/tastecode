@@ -72,6 +72,15 @@ export const methods = {
     params: z.object({}),
     result: z.object({ providers: z.array(ProviderStatusSchema) }),
   },
+  'workspace.info': {
+    params: z.object({ path: z.string() }),
+    result: z.object({
+      branch: z.string().optional(),
+      added: z.number(),
+      removed: z.number(),
+      dirtyFiles: z.number(),
+    }),
+  },
   'models.list': {
     params: z.object({ provider: ProviderIdSchema }),
     result: z.object({ models: z.array(ModelSchema) }),
