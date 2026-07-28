@@ -147,7 +147,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
    */
   async account(): Promise<Account> {
     try {
-      const account = await this.#call<CodexAccount | null>('account/read', {})
+      // The response wraps the account rather than being one.
+      const { account } = await this.#call<{ account: CodexAccount | null }>('account/read', {})
       if (!account) return { signedIn: false }
       switch (account.type) {
         case 'apiKey':
