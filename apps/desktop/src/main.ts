@@ -20,10 +20,12 @@ function createWindow(): void {
     height: 820,
     minWidth: 720,
     minHeight: 520,
-    backgroundColor: '#0e0f11',
+    backgroundColor: '#211f1d',
     // Draw our own top bar, but keep native window controls on Windows.
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#0e0f11', symbolColor: '#8b919c', height: 44 },
+    // Height must match --titlebar-h in the renderer's tokens, or the native
+    // window controls sit at a different height than our own bar.
+    titleBarOverlay: { color: '#211f1d', symbolColor: '#8e8a83', height: 34 },
     show: false,
     webPreferences: {
       // Hardened from the first commit, not "later". The renderer gets no
