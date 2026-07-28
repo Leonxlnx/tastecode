@@ -42,10 +42,10 @@ exactly the way the vendor intends, and BYOK keys go straight from your machine 
 provider.
 
 Target set at v1: Claude (subscription + API), OpenAI Codex (ChatGPT subscription + API),
-Cursor, OpenCode, Kimi, GLM/Z.ai, Grok/xAI, OpenRouter, and any OpenAI-compatible or
-Anthropic-compatible endpoint including local models.
+Cursor, OpenCode, Kimi, GLM/Z.ai, OpenRouter, and any OpenAI-compatible or
+Anthropic-compatible endpoint including local models. Grok and Gemini follow.
 
-See [PROVIDERS.md](./PROVIDERS.md).
+The rule that makes this legal is in [rules/security.md](../rules/security.md).
 
 ### 2. Craft — the UI is the product
 
