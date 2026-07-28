@@ -1,21 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ProviderId } from '@harness/contracts'
-import { Transport, type ConnectionState } from './transport.js'
+import type { Model, ProviderId } from '@harness/contracts'
+import { Transport } from './transport.js'
 import { appendUserMessage, emptyThread, reduce, type ThreadState } from './thread-store.js'
 import { Composer } from './ui/Composer.js'
 import { Onboarding } from './ui/Onboarding.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
+import { StageHeader } from './ui/StageHeader.js'
 import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
 
 const SERVER_URL = 'ws://127.0.0.1:4311'
 const SETUP_KEY = 'harness.provider'
 const PROJECTS_KEY = 'harness.projects'
+const MODEL_KEY = 'harness.model'
 
 /**
  * Projects and sessions live in localStorage for now. The server takes
- * ownership of both when the event log lands in M2 — this is scaffolding that
- * lets the shell be designed against real state instead of mocks.
+ * ownership when the event log lands in M2 — this is scaffolding that lets the
+ * shell be designed against real state instead of mocks.
  */
 function loadProjects(): Project[] {
   try {
@@ -28,18 +30,24 @@ function loadProjects(): Project[] {
 
 export function App() {
   const transport = useMemo(() => new Transport(SERVER_URL), [])
-  const [connection, setConnection] = useState<ConnectionState>('closed')
   const [provider, setProvider] = useState<ProviderId | null>(
     () => localStorage.getItem(SETUP_KEY) as ProviderId | null,
   )
   const [projects, setProjects] = useState<Project[]>(loadProjects)
   const [activeId, setActiveId] = useState<string | undefined>()
+  const [activePath, setActivePath] = useState<string | undefined>(() => loadProjects()[0]?.path)
   const [thread, setThread] = useState<ThreadState>(emptyThread)
+  const [models, setModels] = useState<Model[]>([])
+  const [modelId, setModelId] = useState<string | undefined>(
+    () => localStorage.getItem(MODEL_KEY) ?? undefined,
+  )
   const [notice, setNotice] = useState<string | undefined>()
 
+  const activeIdRef = useRef(activeId)
+  activeIdRef.current = activeId
+
   useEffect(() => {
-    const offState = transport.onState(setConnection)
-    const offEvent = transport.on('thread.event', ({ threadId, event }) => {
+    const off = transport.on('thread.event', ({ threadId, event }) => {
       setThread((current) => (threadId === activeIdRef.current ? reduce(current, event) : current))
       if (event.type === 'turn.started' || event.type === 'turn.completed') {
         setProjects((current) => markStatus(current, threadId, event.type === 'turn.started'))
@@ -47,24 +55,38 @@ export function App() {
     })
     transport.connect()
     return () => {
-      offState()
-      offEvent()
+      off()
       transport.close()
     }
   }, [transport])
 
-  // Read inside the socket listener without re-subscribing on every selection.
-  const activeIdRef = useRef(activeId)
-  activeIdRef.current = activeId
+  // Ask the provider what it can run, rather than shipping a list that goes
+  // stale the week after release.
+  useEffect(() => {
+    if (!provider) return
+    let cancelled = false
+    void transport
+      .request('models.list', { provider })
+      .then(({ models: list }) => {
+        if (cancelled) return
+        setModels(list)
+        setModelId((current) => current ?? list.find((m) => m.isDefault)?.id ?? list[0]?.id)
+      })
+      .catch(() => {
+        /* The picker degrades to "Loading models…" — not worth a modal. */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [transport, provider])
 
   useEffect(() => {
     localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects))
   }, [projects])
 
-  const pickProvider = (id: ProviderId) => {
-    localStorage.setItem(SETUP_KEY, id)
-    setProvider(id)
-  }
+  useEffect(() => {
+    if (modelId) localStorage.setItem(MODEL_KEY, modelId)
+  }, [modelId])
 
   const addProject = useCallback(() => {
     const path = window.prompt('Folder to work in')?.trim()
@@ -72,15 +94,18 @@ export function App() {
     setProjects((current) =>
       current.some((p) => p.path === path) ? current : [...current, { path, sessions: [] }],
     )
+    setActivePath(path)
   }, [])
 
   const newSession = useCallback(
     async (projectPath: string) => {
       setNotice(undefined)
+      setActivePath(projectPath)
       try {
         const { threadId } = await transport.request('thread.start', {
           provider: 'codex',
           workspacePath: projectPath,
+          ...(modelId ? { model: modelId } : {}),
         })
         setProjects((current) =>
           current.map((project) =>
@@ -89,7 +114,7 @@ export function App() {
                   ...project,
                   sessions: [
                     ...project.sessions,
-                    { id: threadId, title: 'Untitled session', status: 'idle' as const },
+                    { id: threadId, title: 'New session', status: 'idle' as const },
                   ],
                 }
               : project,
@@ -101,15 +126,14 @@ export function App() {
         setNotice(error instanceof Error ? error.message : String(error))
       }
     },
-    [transport],
+    [transport, modelId],
   )
 
   const send = useCallback(
     async (text: string) => {
       if (!activeId) return
       setThread((current) => appendUserMessage(current, text))
-      // The first thing a user says is the best title we will get for free.
-      setProjects((current) => titleIfUntitled(current, activeId, text))
+      setProjects((current) => titleIfNew(current, activeId, text))
       try {
         await transport.request('thread.sendTurn', { threadId: activeId, text })
       } catch (error) {
@@ -123,47 +147,70 @@ export function App() {
     if (activeId) void transport.request('thread.interrupt', { threadId: activeId })
   }, [transport, activeId])
 
-  if (!provider) return <Onboarding onPick={pickProvider} />
+  if (!provider) {
+    return (
+      <Onboarding
+        onDone={(id) => {
+          localStorage.setItem(SETUP_KEY, id)
+          setProvider(id)
+        }}
+      />
+    )
+  }
 
   const active = findSession(projects, activeId)
 
   return (
     <div className="shell">
-      <TitleBar subtitle={active?.project ? basename(active.project.path) : undefined} />
+      <TitleBar />
 
       <div className="shell__body">
         <Sidebar
           projects={projects}
           activeSessionId={activeId}
-          connection={connection}
+          providerName={providerName(provider)}
           onAddProject={addProject}
           onNewSession={(path) => void newSession(path)}
           onSelectSession={(id) => {
             setActiveId(id)
+            setActivePath(findSession(projects, id)?.project.path)
             setThread(emptyThread)
           }}
         />
 
         <main className="stage">
+          <StageHeader
+            projects={projects}
+            activePath={activePath}
+            title={active?.session.title}
+            onSelectProject={setActivePath}
+          />
+
           {active ? (
-            <>
-              <Thread items={thread.items} running={thread.running} />
-              <Composer
-                onSend={(t) => void send(t)}
-                onInterrupt={interrupt}
-                running={thread.running}
-              />
-            </>
+            <Thread items={thread.items} running={thread.running} />
           ) : (
-            <Placeholder hasProjects={projects.length > 0} onAddProject={addProject} />
+            <Empty
+              hasProjects={projects.length > 0}
+              onAddProject={addProject}
+              onStart={() => activePath && void newSession(activePath)}
+            />
           )}
+
+          <Composer
+            models={models}
+            modelId={modelId}
+            onModelChange={setModelId}
+            onSend={(t) => void send(t)}
+            onInterrupt={interrupt}
+            running={thread.running}
+          />
         </main>
       </div>
 
       {notice ? (
         <div className="notice" role="alert">
           <span className="notice__text">{notice}</span>
-          <button className="linkish" onClick={() => setNotice(undefined)}>
+          <button className="ghost" onClick={() => setNotice(undefined)}>
             Dismiss
           </button>
         </div>
@@ -172,22 +219,32 @@ export function App() {
   )
 }
 
-function Placeholder(props: { hasProjects: boolean; onAddProject: () => void }) {
+function Empty(props: { hasProjects: boolean; onAddProject: () => void; onStart: () => void }) {
   return (
-    <div className="placeholder">
-      <p className="label">No session open</p>
-      <p className="placeholder__text">
-        {props.hasProjects
-          ? 'Pick a session on the left, or start a new one.'
-          : 'Add a project folder to start your first session.'}
+    <div className="empty">
+      <p className="empty__text">
+        {props.hasProjects ? 'No session open.' : 'Add a folder to get started.'}
       </p>
-      {props.hasProjects ? null : (
-        <button className="btn" onClick={props.onAddProject}>
-          Add project
-        </button>
-      )}
+      <button className="btn" onClick={props.hasProjects ? props.onStart : props.onAddProject}>
+        {props.hasProjects ? 'Start a session' : 'Add project'}
+      </button>
     </div>
   )
+}
+
+function providerName(id: ProviderId): string {
+  switch (id) {
+    case 'codex':
+      return 'Codex'
+    case 'claude-code':
+      return 'Claude Code'
+    case 'cursor':
+      return 'Cursor'
+    case 'opencode':
+      return 'OpenCode'
+    default:
+      return id
+  }
 }
 
 function findSession(projects: Project[], id: string | undefined) {
@@ -208,18 +265,14 @@ function markStatus(projects: Project[], threadId: string, running: boolean): Pr
   }))
 }
 
-function titleIfUntitled(projects: Project[], threadId: string, text: string): Project[] {
+/** The first thing a user types is the best title we get for free. */
+function titleIfNew(projects: Project[], threadId: string, text: string): Project[] {
   return projects.map((project) => ({
     ...project,
     sessions: project.sessions.map((session) =>
-      session.id === threadId && session.title === 'Untitled session'
-        ? { ...session, title: text.length > 42 ? `${text.slice(0, 42)}…` : text }
+      session.id === threadId && session.title === 'New session'
+        ? { ...session, title: text.length > 40 ? `${text.slice(0, 40)}…` : text }
         : session,
     ),
   }))
-}
-
-function basename(path: string): string {
-  const parts = path.split(/[\\/]/).filter(Boolean)
-  return parts[parts.length - 1] ?? path
 }

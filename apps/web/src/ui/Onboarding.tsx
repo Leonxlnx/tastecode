@@ -1,77 +1,111 @@
+import { useState } from 'react'
 import type { ProviderId } from '@harness/contracts'
 
 /**
- * One step, once. Everything else the app can infer or ask for later.
+ * First run. One screen, no wizard.
  *
- * The honest framing matters here: we are not asking for credentials, we are
- * asking which tool the user already has. Saying so up front is the strongest
- * thing we can say on this screen — see rules/security.md for why we can.
+ * The honest framing is the point: we are not collecting credentials, we are
+ * asking which tools are already on the machine. Sign-in happens in the
+ * vendor's own CLI, which is the only compliant way to use a subscription —
+ * see rules/security.md.
  */
 
-export type ProviderChoice = {
+type Plan = { label: string; note?: string }
+
+export type ProviderCard = {
   id: ProviderId
   name: string
-  detail: string
-  available: boolean
+  plans: Plan[]
+  /** The command that authenticates this provider, run by the user, not by us. */
+  signInCommand: string
+  ready: boolean
 }
 
-export const PROVIDERS: ProviderChoice[] = [
+export const PROVIDER_CARDS: ProviderCard[] = [
   {
     id: 'codex',
     name: 'Codex',
-    detail: 'ChatGPT Plus, Pro or an API key',
-    available: true,
+    plans: [
+      { label: 'ChatGPT Plus' },
+      { label: 'Pro' },
+      { label: 'Business' },
+      { label: 'API key' },
+    ],
+    signInCommand: 'codex login',
+    ready: true,
   },
   {
     id: 'claude-code',
     name: 'Claude Code',
-    detail: 'Claude Pro or Max',
-    available: false,
+    plans: [{ label: 'Claude Pro' }, { label: 'Max' }, { label: 'API key' }],
+    signInCommand: 'claude auth login',
+    ready: false,
   },
   {
     id: 'cursor',
     name: 'Cursor',
-    detail: 'Cursor Pro',
-    available: false,
+    plans: [{ label: 'Pro' }, { label: 'Pro+' }, { label: 'Ultra' }],
+    signInCommand: 'cursor-agent login',
+    ready: false,
   },
   {
     id: 'opencode',
     name: 'OpenCode',
-    detail: 'Bring any model',
-    available: false,
+    plans: [{ label: 'Any provider' }, { label: 'Local models' }],
+    signInCommand: 'opencode auth login',
+    ready: false,
   },
 ]
 
-export function Onboarding({ onPick }: { onPick: (id: ProviderId) => void }) {
+export function Onboarding({ onDone }: { onDone: (id: ProviderId) => void }) {
+  const [selected, setSelected] = useState<ProviderId | undefined>()
+
   return (
     <div className="onboard">
       <div className="onboard__inner">
-        <p className="label">Step 1 of 1</p>
-        <h1 className="onboard__title">Which agent do you run?</h1>
+        <h1 className="onboard__title">Connect a coding agent</h1>
         <p className="onboard__lede">
-          Personal Harness drives the tool you already installed. Your subscription stays where it
-          is — we never ask for a password, and nothing leaves this machine.
+          Personal Harness drives the tools already installed on this machine. You sign in with the
+          vendor&rsquo;s own command — we never see a password, a token, or your code.
         </p>
 
-        <ul className="onboard__list">
-          {PROVIDERS.map((provider) => (
-            <li key={provider.id}>
+        <ul className="cards">
+          {PROVIDER_CARDS.map((card) => (
+            <li key={card.id}>
               <button
-                className="pick"
-                onClick={() => onPick(provider.id)}
-                disabled={!provider.available}
+                className={`card ${selected === card.id ? 'is-selected' : ''}`}
+                onClick={() => card.ready && setSelected(card.id)}
+                disabled={!card.ready}
               >
-                <span className="pick__name">{provider.name}</span>
-                <span className="pick__detail">{provider.detail}</span>
-                <span className={`pick__state ${provider.available ? 'is-ready' : ''}`}>
-                  {provider.available ? 'Ready' : 'Soon'}
+                <span className="card__head">
+                  <span className="card__name">{card.name}</span>
+                  <span className={`card__state ${card.ready ? '' : 'is-muted'}`}>
+                    {card.ready ? (selected === card.id ? 'Selected' : 'Available') : 'Coming soon'}
+                  </span>
                 </span>
+                <span className="card__plans">
+                  {card.plans.map((plan) => (
+                    <span className="chip" key={plan.label}>
+                      {plan.label}
+                    </span>
+                  ))}
+                </span>
+                {selected === card.id ? (
+                  <span className="card__cmd">
+                    Not signed in yet? Run <code>{card.signInCommand}</code> once in a terminal.
+                  </span>
+                ) : null}
               </button>
             </li>
           ))}
         </ul>
 
-        <p className="onboard__foot label">Changeable later in settings</p>
+        <div className="onboard__foot">
+          <button className="btn" disabled={!selected} onClick={() => selected && onDone(selected)}>
+            Continue
+          </button>
+          <span className="onboard__note">You can add the others later.</span>
+        </div>
       </div>
     </div>
   )

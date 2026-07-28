@@ -1,11 +1,10 @@
 import { useState } from 'react'
-import type { ConnectionState } from '../transport.js'
 
 /**
- * One unified rail: projects expand into their sessions, settings pinned at the
- * bottom. Both first-party desktop apps converged on this shape after trying a
- * separate project column, and they were right — a second column costs width
- * and buys nothing until you have far more projects than anyone has.
+ * Rail layout follows the shape the first-party agent apps settled on: a
+ * workspace switcher, a short action list, then sections (Projects, Recents)
+ * with sentence-case headings. No status readout pinned to the bottom — that
+ * was a decoration masquerading as information.
  */
 
 export type Session = {
@@ -22,29 +21,42 @@ export type Project = {
 export function Sidebar(props: {
   projects: Project[]
   activeSessionId: string | undefined
-  connection: ConnectionState
+  providerName: string
   onAddProject: () => void
   onNewSession: (projectPath: string) => void
   onSelectSession: (id: string) => void
 }) {
   return (
     <nav className="rail">
-      <div className="rail__head">
-        <span className="label">Projects</span>
-        <button className="icon-btn" onClick={props.onAddProject} title="Add project">
-          <PlusIcon />
+      <div className="rail__top">
+        <button className="workspace">
+          <span className="workspace__name">{props.providerName}</span>
+          <Chevron down />
+        </button>
+      </div>
+
+      <div className="rail__actions">
+        <button
+          className="navitem"
+          onClick={() => {
+            const first = props.projects[0]
+            if (first) props.onNewSession(first.path)
+            else props.onAddProject()
+          }}
+        >
+          <PencilIcon />
+          <span>New session</span>
+        </button>
+        <button className="navitem" onClick={props.onAddProject}>
+          <FolderIcon />
+          <span>Add project</span>
         </button>
       </div>
 
       <div className="rail__body">
+        <p className="section">Projects</p>
         {props.projects.length === 0 ? (
-          <p className="rail__empty">
-            No projects yet.
-            <button className="linkish" onClick={props.onAddProject}>
-              Add a folder
-            </button>
-            to begin.
-          </p>
+          <p className="rail__hint">Nothing here yet.</p>
         ) : (
           props.projects.map((project) => (
             <ProjectRow
@@ -56,13 +68,6 @@ export function Sidebar(props: {
             />
           ))
         )}
-      </div>
-
-      {/* Connection state lives down here, quiet, rather than shouting next to
-          the product name. It only earns attention when it is wrong. */}
-      <div className="rail__foot">
-        <span className={`dot dot--${props.connection}`} aria-hidden />
-        <span className="label">{props.connection === 'open' ? 'Codex' : props.connection}</span>
       </div>
     </nav>
   )
@@ -81,31 +86,30 @@ function ProjectRow(props: {
     <section className="proj">
       <div className="proj__head">
         <button className="proj__toggle" onClick={() => setOpen(!open)} title={props.project.path}>
-          <ChevronIcon open={open} />
+          {/* A stable colour per project, derived from its path. Cheap way to
+              tell repos apart at a glance without asking the user to pick. */}
+          <span className="proj__mark" style={{ background: markColour(props.project.path) }} />
           <span className="proj__name">{name}</span>
-          <span className="proj__count">{props.project.sessions.length}</span>
         </button>
-        <button className="icon-btn" onClick={props.onNewSession} title="New session">
+        <button className="icon-btn" onClick={props.onNewSession} title="New session here">
           <PlusIcon />
         </button>
       </div>
 
-      {open ? (
+      {open && props.project.sessions.length > 0 ? (
         <ul className="proj__sessions">
           {props.project.sessions.map((session) => (
             <li key={session.id}>
               <button
                 className={`sess ${session.id === props.activeSessionId ? 'is-active' : ''}`}
                 onClick={() => props.onSelectSession(session.id)}
+                title={session.title}
               >
-                <span className={`dot dot--${session.status}`} aria-hidden />
                 <span className="sess__title">{session.title}</span>
+                {session.status === 'running' ? <Spinner /> : null}
               </button>
             </li>
           ))}
-          {props.project.sessions.length === 0 ? (
-            <li className="proj__none label">No sessions</li>
-          ) : null}
         </ul>
       ) : null}
     </section>
@@ -117,6 +121,31 @@ function basename(path: string): string {
   return parts[parts.length - 1] ?? path
 }
 
+/** Deterministic, muted, and never the same hue twice in a row for short lists. */
+function markColour(path: string): string {
+  let hash = 0
+  for (let i = 0; i < path.length; i++) hash = (hash * 31 + path.charCodeAt(i)) >>> 0
+  return `oklch(66% 0.11 ${hash % 360})`
+}
+
+function Spinner() {
+  return <span className="spinner" aria-label="running" />
+}
+
+function Chevron({ down }: { down?: boolean }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d={down ? 'M4 6.5l4 4 4-4' : 'M6 4l4 4-4 4'}
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 function PlusIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -125,18 +154,28 @@ function PlusIcon() {
   )
 }
 
-function ChevronIcon({ open }: { open: boolean }) {
+function PencilIcon() {
   return (
-    <svg
-      width="11"
-      height="11"
-      viewBox="0 0 16 16"
-      fill="none"
-      aria-hidden
-      style={{ transform: open ? 'rotate(90deg)' : 'none' }}
-      className="chev"
-    >
-      <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d="M11.5 2.5l2 2L6 12l-2.5.5L4 10l7.5-7.5z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function FolderIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d="M2 4.5A1.5 1.5 0 013.5 3h2.2l1.2 1.5h5.6A1.5 1.5 0 0114 6v6a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12V4.5z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }

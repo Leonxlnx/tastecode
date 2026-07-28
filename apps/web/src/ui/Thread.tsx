@@ -40,22 +40,18 @@ export function Thread(props: { items: Item[]; running: boolean }) {
 }
 
 function Row({ item }: { item: Item }) {
+  // The user's own words get a surface so the eye can find where each exchange
+  // begins; the agent's answer is plain prose, which is what you actually read.
   if (item.type === 'message' && item.role === 'user') {
     return (
-      <div className="turn">
-        <p className="label turn__who">You</p>
-        <p className="turn__text">{item.text}</p>
+      <div className="said">
+        <p className="said__text">{item.text}</p>
       </div>
     )
   }
 
   if (item.type === 'message') {
-    return (
-      <div className="turn">
-        <p className="label turn__who turn__who--agent">Codex</p>
-        <p className="turn__text">{item.text}</p>
-      </div>
-    )
+    return <p className="reply">{item.text}</p>
   }
 
   return (
@@ -75,8 +71,8 @@ function Row({ item }: { item: Item }) {
 function Working() {
   return (
     <div className="working">
-      <span className="working__pulse" aria-hidden />
-      <span className="label">Working</span>
+      <span className="spinner" aria-hidden />
+      <span>Working</span>
     </div>
   )
 }

@@ -1,23 +1,15 @@
 /**
- * Compact custom title bar.
+ * Custom title bar. Deliberately almost empty — the project and session live in
+ * the rail and the stage header, so repeating them here would be noise in the
+ * one strip of the window that is always visible.
  *
- * Height is kept in one place (--titlebar-h) because Electron's native window
- * controls are sized by the same number from the main process — they drift
- * apart the moment the two are written separately.
+ * Height comes from --titlebar-h, which the main process also uses for the
+ * native caption buttons. Written in two places, so it is commented in both.
  */
-export function TitleBar({ subtitle }: { subtitle?: string | undefined }) {
+export function TitleBar() {
   return (
     <header className="titlebar">
-      <span className="titlebar__mark" aria-hidden />
       <span className="titlebar__name">Personal Harness</span>
-      {subtitle ? (
-        <>
-          <span className="titlebar__sep" aria-hidden>
-            /
-          </span>
-          <span className="titlebar__ctx">{subtitle}</span>
-        </>
-      ) : null}
     </header>
   )
 }
