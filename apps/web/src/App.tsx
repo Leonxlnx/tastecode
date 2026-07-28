@@ -106,7 +106,7 @@ export function App() {
   }, [])
 
   const newSession = useCallback(
-    async (projectPath: string) => {
+    async (projectPath: string): Promise<string | undefined> => {
       setNotice(undefined)
       setActivePath(projectPath)
       try {
@@ -132,8 +132,10 @@ export function App() {
         )
         setActiveId(threadId)
         setThread(emptyThread)
+        return threadId
       } catch (error) {
         setNotice(error instanceof Error ? error.message : String(error))
+        return undefined
       }
     },
     [transport, modelId, effort, approval],
@@ -141,12 +143,21 @@ export function App() {
 
   const send = useCallback(
     async (text: string, attachments: string[] = []) => {
-      if (!activeId) return
+      // Typing first and having the session appear is the natural order. Making
+      // the user press "new session" before they are allowed to type is the
+      // app's bookkeeping leaking into their way of working.
+      let threadId = activeId
+      if (!threadId) {
+        if (!activePath) return
+        threadId = await newSession(activePath)
+        if (!threadId) return
+      }
+
       setThread((current) => appendUserMessage(current, text))
-      setProjects((current) => titleIfNew(current, activeId, text))
+      setProjects((current) => titleIfNew(current, threadId, text))
       try {
         await transport.request('thread.sendTurn', {
-          threadId: activeId,
+          threadId,
           text,
           ...(attachments.length > 0 ? { attachments } : {}),
         })
@@ -154,7 +165,7 @@ export function App() {
         setNotice(error instanceof Error ? error.message : String(error))
       }
     },
-    [transport, activeId],
+    [transport, activeId, activePath, newSession],
   )
 
   const interrupt = useCallback(() => {
@@ -218,7 +229,7 @@ export function App() {
             modelId={modelId}
             effort={effort}
             approval={approval}
-            disabled={!active}
+            disabled={!activePath}
             running={thread.running}
             onModelChange={setModelId}
             onEffortChange={setEffort}

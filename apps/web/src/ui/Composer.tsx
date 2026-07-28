@@ -158,7 +158,7 @@ export function Composer(props: {
               submit()
             }
           }}
-          placeholder={props.disabled ? 'Start a session to begin' : 'Do anything'}
+          placeholder={props.disabled ? 'Add a project folder first' : 'Do anything'}
         />
 
         <div className="tools">
