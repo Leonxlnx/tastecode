@@ -1,5 +1,5 @@
 import { CodexAdapter, type StartOptions } from '@harness/adapter-codex'
-import type { DomainEvent, Model, ProviderId, Thread } from '@harness/contracts'
+import type { Account, DomainEvent, Model, ProviderId, Thread } from '@harness/contracts'
 
 /**
  * Owns every live agent session.
@@ -12,29 +12,70 @@ export class Orchestrator {
   #threads = new Map<string, { thread: Thread; adapter: CodexAdapter }>()
   #onEvent: (threadId: string, event: DomainEvent) => void
   #onLog: (line: string) => void
+  #onLogin: (
+    provider: ProviderId,
+    result: { loginId: string | null; success: boolean; error: string | null },
+  ) => void
 
   constructor(handlers: {
     onEvent: (threadId: string, event: DomainEvent) => void
     onLog: (line: string) => void
+    onLogin: (
+      provider: ProviderId,
+      result: { loginId: string | null; success: boolean; error: string | null },
+    ) => void
   }) {
     this.#onEvent = handlers.onEvent
     this.#onLog = handlers.onLog
+    this.#onLogin = handlers.onLogin
   }
 
   /**
-   * Listing models needs a live adapter but no thread, so it gets its own
-   * short-lived one. Cheap enough, and it keeps model discovery available
-   * before the user has started anything.
+   * A single long-lived adapter for everything that is not a thread: models,
+   * account, sign-in. It has to outlive a request because the OAuth completion
+   * arrives as a notification minutes later, on the same connection that
+   * started the flow.
    */
+  #control: CodexAdapter | undefined
+
+  async #controlAdapter(): Promise<CodexAdapter> {
+    if (this.#control) return this.#control
+    const adapter = new CodexAdapter()
+    adapter.on('log', (line) => this.#onLog(line))
+    adapter.on('login', (result) => this.#onLogin('codex', result))
+    await adapter.start()
+    this.#control = adapter
+    return adapter
+  }
+
   async listModels(provider: ProviderId): Promise<Model[]> {
     if (provider !== 'codex') return []
-    const adapter = new CodexAdapter()
-    try {
-      await adapter.start()
-      return await adapter.listModels()
-    } finally {
-      adapter.dispose()
-    }
+    return (await this.#controlAdapter()).listModels()
+  }
+
+  async account(provider: ProviderId): Promise<Account> {
+    if (provider !== 'codex') return { signedIn: false }
+    return (await this.#controlAdapter()).account()
+  }
+
+  async startLogin(provider: ProviderId): Promise<{ loginId: string; authUrl: string }> {
+    if (provider !== 'codex') throw new Error(`provider "${provider}" cannot sign in yet`)
+    return (await this.#controlAdapter()).startLogin()
+  }
+
+  async cancelLogin(provider: ProviderId, loginId: string): Promise<void> {
+    if (provider !== 'codex') return
+    await (await this.#controlAdapter()).cancelLogin(loginId)
+  }
+
+  async useApiKey(provider: ProviderId, apiKey: string): Promise<Account> {
+    if (provider !== 'codex') throw new Error(`provider "${provider}" cannot sign in yet`)
+    return (await this.#controlAdapter()).useApiKey(apiKey)
+  }
+
+  async signOut(provider: ProviderId): Promise<void> {
+    if (provider !== 'codex') return
+    await (await this.#controlAdapter()).signOut()
   }
 
   async startThread(
@@ -76,6 +117,8 @@ export class Orchestrator {
   disposeAll(): void {
     for (const [, entry] of this.#threads) entry.adapter.dispose()
     this.#threads.clear()
+    this.#control?.dispose()
+    this.#control = undefined
   }
 
   #get(threadId: string) {

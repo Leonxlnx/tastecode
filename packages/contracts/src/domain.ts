@@ -132,6 +132,20 @@ export type Model = z.infer<typeof ModelSchema>
 export const ApprovalModeSchema = z.enum(['ask', 'auto', 'full'])
 export type ApprovalMode = z.infer<typeof ApprovalModeSchema>
 
+/**
+ * Who the user is signed in as with a given provider.
+ *
+ * We learn this by asking the provider's own binary. We never read its
+ * credential files — see rules/security.md.
+ */
+export const AccountSchema = z.object({
+  signedIn: z.boolean(),
+  email: z.string().optional(),
+  /** Vendor's own plan name: plus, pro, team, business, enterprise, api-key… */
+  plan: z.string().optional(),
+})
+export type Account = z.infer<typeof AccountSchema>
+
 export const ProviderStatusSchema = z.object({
   id: ProviderIdSchema,
   displayName: z.string(),

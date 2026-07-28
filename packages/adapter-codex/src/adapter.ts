@@ -1,5 +1,13 @@
 import { EventEmitter } from 'node:events'
-import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
+import type {
+  Account,
+  ApprovalMode,
+  Capabilities,
+  DomainEvent,
+  Model,
+  Thread,
+} from '@harness/contracts'
+import type { LoginAccountResponse } from './generated/v2/LoginAccountResponse'
 import type { ModelListResponse } from './generated/v2/ModelListResponse'
 import { mapThreadItem } from './map-item.js'
 import { StdioJsonRpc } from './jsonrpc.js'
@@ -65,9 +73,36 @@ const APPROVAL: Record<ApprovalMode, { approvalPolicy: string; sandbox: string }
   full: { approvalPolicy: 'never', sandbox: 'danger-full-access' },
 }
 
+/**
+ * Codex's account union has variants we do not model (Bedrock, and whatever
+ * comes next), so the fallback is a bare `type` we can still branch on.
+ */
+type CodexAccount =
+  | { type: 'apiKey' }
+  | { type: 'chatgpt'; email: string | null; planType: string }
+  | { type: 'other' }
+
+/** The vendor's plan ids are not display strings. */
+function planLabel(plan: string): string {
+  const named: Record<string, string> = {
+    free: 'Free',
+    go: 'Go',
+    plus: 'Plus',
+    pro: 'Pro',
+    prolite: 'Pro Lite',
+    team: 'Team',
+    business: 'Business',
+    enterprise: 'Enterprise',
+    edu: 'Edu',
+  }
+  return named[plan] ?? 'Signed in'
+}
+
 export type CodexAdapterEvents = {
   event: [DomainEvent]
   log: [string]
+  /** Emitted when the browser half of an OAuth flow finishes. */
+  login: [{ loginId: string | null; success: boolean; error: string | null }]
 }
 
 export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
@@ -102,6 +137,60 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     })
     rpc.notify('initialized', {})
     this.#started = true
+  }
+
+  /**
+   * Who is signed in, asked of the binary itself.
+   *
+   * We never read ~/.codex/auth.json. The binary owns its credentials and
+   * answers questions about them; that is the whole compliance posture.
+   */
+  async account(): Promise<Account> {
+    try {
+      const account = await this.#call<CodexAccount | null>('account/read', {})
+      if (!account) return { signedIn: false }
+      switch (account.type) {
+        case 'apiKey':
+          return { signedIn: true, plan: 'API key' }
+        case 'chatgpt':
+          return {
+            signedIn: true,
+            ...(account.email ? { email: account.email } : {}),
+            plan: planLabel(account.planType),
+          }
+        default:
+          return { signedIn: true }
+      }
+    } catch {
+      return { signedIn: false }
+    }
+  }
+
+  /**
+   * Starts the vendor's own OAuth flow. Returns the URL to open in a browser —
+   * the user authenticates on OpenAI's site, not in our window, and we are
+   * never in a position to see the credential.
+   */
+  async startLogin(): Promise<{ loginId: string; authUrl: string }> {
+    const response = await this.#call<LoginAccountResponse>('account/login/start', {
+      type: 'chatgpt',
+    })
+    if (response.type !== 'chatgpt') throw new Error('unexpected login response')
+    return { loginId: response.loginId, authUrl: response.authUrl }
+  }
+
+  async cancelLogin(loginId: string): Promise<void> {
+    await this.#call('account/login/cancel', { loginId })
+  }
+
+  /** Bring-your-own-key. The key is the user's to use with any client. */
+  async useApiKey(apiKey: string): Promise<Account> {
+    await this.#call('account/login/start', { type: 'apiKey', apiKey })
+    return this.account()
+  }
+
+  async signOut(): Promise<void> {
+    await this.#call('account/logout', {})
   }
 
   /**
@@ -254,6 +343,12 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       case 'item/agentMessage/delta': {
         const p = params as AgentMessageDeltaNotification
         emit({ type: 'item.delta', turnId: p.turnId, itemId: p.itemId, textDelta: p.delta })
+        return
+      }
+
+      case 'account/login/completed': {
+        const p = params as { loginId: string | null; success: boolean; error: string | null }
+        this.emit('login', p)
         return
       }
 

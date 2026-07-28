@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  AccountSchema,
   ApprovalModeSchema,
   DomainEventSchema,
   ModelSchema,
@@ -72,6 +73,30 @@ export const methods = {
     params: z.object({}),
     result: z.object({ providers: z.array(ProviderStatusSchema) }),
   },
+  'auth.status': {
+    params: z.object({ provider: ProviderIdSchema }),
+    result: AccountSchema,
+  },
+  /**
+   * Starts the vendor's real OAuth flow and returns the URL to open. The user
+   * signs in on the vendor's own site; completion arrives on `auth.event`.
+   */
+  'auth.startLogin': {
+    params: z.object({ provider: ProviderIdSchema }),
+    result: z.object({ loginId: z.string(), authUrl: z.string() }),
+  },
+  'auth.cancelLogin': {
+    params: z.object({ provider: ProviderIdSchema, loginId: z.string() }),
+    result: z.object({}),
+  },
+  'auth.useApiKey': {
+    params: z.object({ provider: ProviderIdSchema, apiKey: z.string() }),
+    result: AccountSchema,
+  },
+  'auth.signOut': {
+    params: z.object({ provider: ProviderIdSchema }),
+    result: z.object({}),
+  },
   'workspace.info': {
     params: z.object({ path: z.string() }),
     result: z.object({
@@ -138,6 +163,12 @@ export const channels = {
   'server.welcome': z.object({
     serverVersion: z.string(),
     protocolVersion: z.number(),
+  }),
+  'auth.event': z.object({
+    provider: ProviderIdSchema,
+    loginId: z.string().nullable(),
+    success: z.boolean(),
+    error: z.string().nullable(),
   }),
   'thread.event': z.object({
     threadId: z.string(),

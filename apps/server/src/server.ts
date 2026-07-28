@@ -42,6 +42,7 @@ export function startServer(port = DEFAULT_PORT) {
   const orchestrator = new Orchestrator({
     onEvent: (threadId, event) => push.broadcast('thread.event', { threadId, event }),
     onLog: (line) => console.log(`[agent] ${line}`),
+    onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
   })
 
   wss.on('connection', (socket) => {
@@ -115,6 +116,33 @@ export function startServer(port = DEFAULT_PORT) {
             { id: 'codex', displayName: 'Codex', installed: true, auth: 'unknown' as const },
           ],
         }
+
+      case 'auth.status': {
+        const p = params as { provider: 'codex' }
+        return orchestrator.account(p.provider)
+      }
+
+      case 'auth.startLogin': {
+        const p = params as { provider: 'codex' }
+        return orchestrator.startLogin(p.provider)
+      }
+
+      case 'auth.cancelLogin': {
+        const p = params as { provider: 'codex'; loginId: string }
+        await orchestrator.cancelLogin(p.provider, p.loginId)
+        return {}
+      }
+
+      case 'auth.useApiKey': {
+        const p = params as { provider: 'codex'; apiKey: string }
+        return orchestrator.useApiKey(p.provider, p.apiKey)
+      }
+
+      case 'auth.signOut': {
+        const p = params as { provider: 'codex' }
+        await orchestrator.signOut(p.provider)
+        return {}
+      }
 
       case 'workspace.info': {
         const p = params as { path: string }
