@@ -1,0 +1,7 @@
+pnpm-lock.yaml
+dist/
+dist-electron/
+out/
+build/
+coverage/
+node_modules/

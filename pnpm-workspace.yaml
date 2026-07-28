@@ -1,0 +1,7 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+# Packages allowed to run install scripts. Keep this list short and deliberate —
+# every entry is code we let run on both developers' machines and in CI.
+allowBuilds:
+  esbuild: true
