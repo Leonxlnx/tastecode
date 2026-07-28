@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b",
-    "start": "electron .",
+    "start": "tsc -b && electron .",
     "test": "vitest run --passWithNoTests"
   },
   "devDependencies": {
