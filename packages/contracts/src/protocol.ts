@@ -90,6 +90,8 @@ export const methods = {
     params: z.object({
       threadId: z.string(),
       text: z.string(),
+      /** Absolute paths the user attached. The agent reads them itself. */
+      attachments: z.array(z.string()).optional(),
     }),
     result: z.object({ turnId: z.string() }),
   },

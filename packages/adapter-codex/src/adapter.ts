@@ -26,6 +26,18 @@ import type { TurnStartResponse } from './generated/v2/TurnStartResponse'
 
 const CLIENT_NAME = 'personal-harness'
 
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'])
+
+function isImage(path: string): boolean {
+  const dot = path.lastIndexOf('.')
+  return dot === -1 ? false : IMAGE_EXTENSIONS.has(path.slice(dot).toLowerCase())
+}
+
+function basename(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean)
+  return parts[parts.length - 1] ?? path
+}
+
 export const CODEX_CAPABILITIES: Capabilities = {
   steer: true,
   fork: true,
@@ -129,10 +141,20 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     }
   }
 
-  async sendTurn(threadId: string, text: string): Promise<string> {
+  async sendTurn(threadId: string, text: string, attachments: string[] = []): Promise<string> {
     const response = await this.#call<TurnStartResponse>('turn/start', {
       threadId,
-      input: [{ type: 'text', text, text_elements: [] }],
+      input: [
+        { type: 'text', text, text_elements: [] },
+        // Images go in as images so the model can actually see them; anything
+        // else becomes a mention, which is Codex's way of saying "this path is
+        // relevant" without pushing the whole file into context.
+        ...attachments.map((path) =>
+          isImage(path)
+            ? { type: 'localImage', path }
+            : { type: 'mention', name: basename(path), path },
+        ),
+      ],
     })
     return response.turn.id
   }

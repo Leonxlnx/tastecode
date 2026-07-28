@@ -58,8 +58,8 @@ export class Orchestrator {
     return thread
   }
 
-  async sendTurn(threadId: string, text: string): Promise<string> {
-    return this.#get(threadId).adapter.sendTurn(threadId, text)
+  async sendTurn(threadId: string, text: string, attachments: string[] = []): Promise<string> {
+    return this.#get(threadId).adapter.sendTurn(threadId, text, attachments)
   }
 
   async interrupt(threadId: string): Promise<void> {

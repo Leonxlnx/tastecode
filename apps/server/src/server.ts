@@ -137,8 +137,8 @@ export function startServer(port = DEFAULT_PORT) {
       }
 
       case 'thread.sendTurn': {
-        const p = params as { threadId: string; text: string }
-        return { turnId: await orchestrator.sendTurn(p.threadId, p.text) }
+        const p = params as { threadId: string; text: string; attachments?: string[] }
+        return { turnId: await orchestrator.sendTurn(p.threadId, p.text, p.attachments) }
       }
 
       case 'thread.interrupt': {
