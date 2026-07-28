@@ -6,21 +6,45 @@ import { Menu, MenuItem } from './Menu.js'
 /**
  * Prompt bar.
  *
- * A context chip names the exact folder the next turn will touch — an agent
- * that edits files must never leave that ambiguous. Below the input: what it
- * may do on the left, what it runs on the right, send at the end.
- *
- * Every control here does something. A bar full of ornaments looks finished and
- * behaves like a prototype, so anything that cannot work yet is not drawn.
+ * Reads left to right as a sentence about the next turn: what it can see
+ * (context chip), what it may do (permissions), what runs it (model + effort),
+ * and how to send. Everything here does something — a bar full of ornaments
+ * looks finished and behaves like a prototype.
  */
 
-export const APPROVAL_MODES: { id: ApprovalMode; title: string; detail: string }[] = [
-  { id: 'ask', title: 'Ask first', detail: 'Read-only until you approve each action' },
-  { id: 'auto', title: 'Auto-approve', detail: 'Edits and commands inside this folder' },
-  { id: 'full', title: 'Full access', detail: 'No sandbox, no prompts. Use with care.' },
+export type WorkspaceInfo = {
+  branch?: string | undefined
+  added: number
+  removed: number
+  dirtyFiles: number
+}
+
+export const APPROVAL_MODES: {
+  id: ApprovalMode
+  title: string
+  short: string
+  detail: string
+}[] = [
+  {
+    id: 'ask',
+    title: 'Ask first',
+    short: 'Ask first',
+    detail: 'Read-only until you approve each action',
+  },
+  {
+    id: 'auto',
+    title: 'Auto-approve',
+    short: 'Auto',
+    detail: 'Edits and commands inside this folder',
+  },
+  {
+    id: 'full',
+    title: 'Full access',
+    short: 'Yolo',
+    detail: 'No sandbox, no prompts, no undo. Use with care.',
+  },
 ]
 
-/** Expanded into the input rather than sent as a command, so nothing is hidden. */
 const SLASH_COMMANDS: { name: string; detail: string; text: string }[] = [
   {
     name: '/review',
@@ -42,10 +66,18 @@ const SLASH_COMMANDS: { name: string; detail: string; text: string }[] = [
     detail: 'Clean up without behaviour changes',
     text: 'Tidy the code you can see without changing any behaviour. No new features.',
   },
+  {
+    name: '/commit',
+    detail: 'Stage and commit what changed',
+    text: 'Commit the current changes with a clear message explaining why, not what.',
+  },
 ]
+
+const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i
 
 export function Composer(props: {
   projectName: string | undefined
+  workspace: WorkspaceInfo | undefined
   models: Model[]
   modelId: string | undefined
   effort: string | undefined
@@ -61,6 +93,8 @@ export function Composer(props: {
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<string[]>([])
   const [dictating, setDictating] = useState(false)
+  const [dragging, setDragging] = useState(false)
+  const [slashOpen, setSlashOpen] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
   const stopDictation = useRef<(() => void) | null>(null)
 
@@ -68,6 +102,11 @@ export function Composer(props: {
 
   const model = props.models.find((m) => m.id === props.modelId)
   const approval = APPROVAL_MODES.find((m) => m.id === props.approval) ?? APPROVAL_MODES[0]!
+  const efforts = model?.reasoningEfforts ?? []
+
+  const matches = slashOpen
+    ? SLASH_COMMANDS.filter((c) => c.name.startsWith(text.trim().toLowerCase()))
+    : []
 
   const grow = () => {
     const el = area.current
@@ -76,12 +115,16 @@ export function Composer(props: {
     el.style.height = `${Math.min(el.scrollHeight, 220)}px`
   }
 
-  const insert = (value: string) => {
-    setText((current) => (current === '' ? value : `${current} ${value}`))
+  const setValue = (value: string) => {
+    setText(value)
     requestAnimationFrame(() => {
       area.current?.focus()
       grow()
     })
+  }
+
+  const addFiles = (paths: string[]) => {
+    if (paths.length > 0) setAttachments((current) => [...new Set([...current, ...paths])])
   }
 
   const submit = () => {
@@ -90,16 +133,12 @@ export function Composer(props: {
     props.onSend(trimmed, attachments)
     setText('')
     setAttachments([])
+    setSlashOpen(false)
     const el = area.current
     if (el) {
       el.style.height = 'auto'
       el.focus()
     }
-  }
-
-  const attach = async () => {
-    const picked = await pickFiles()
-    if (picked.length > 0) setAttachments((current) => [...new Set([...current, ...picked])])
   }
 
   const toggleDictation = () => {
@@ -109,7 +148,7 @@ export function Composer(props: {
     }
     setDictating(true)
     stopDictation.current = startDictation({
-      onText: (spoken) => insert(spoken),
+      onText: (spoken) => setValue(text === '' ? spoken : `${text} ${spoken}`),
       onEnd: () => {
         setDictating(false)
         stopDictation.current = null
@@ -119,17 +158,49 @@ export function Composer(props: {
 
   return (
     <div className="composer">
-      <div className="composer__box">
+      <div
+        className={`composer__box ${dragging ? 'is-dropping' : ''} ${
+          props.approval === 'full' ? 'is-yolo' : ''
+        }`}
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDragging(true)
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragging(false)
+          // Electron exposes a real path on dropped files; browsers do not, so
+          // this quietly does nothing during development rather than lying.
+          const paths = Array.from(e.dataTransfer.files)
+            .map((file) => (file as File & { path?: string }).path)
+            .filter((path): path is string => typeof path === 'string' && path !== '')
+          addFiles(paths)
+        }}
+      >
         <div className="chips">
           {props.projectName ? (
-            <span className="chip chip--context">
+            <span className="chip chip--context" title={props.workspace?.branch}>
               <FolderGlyph />
               <span className="chip__label">{props.projectName}</span>
+              {props.workspace?.branch ? (
+                <>
+                  <span className="chip__sep">/</span>
+                  <span className="chip__branch">{props.workspace.branch}</span>
+                </>
+              ) : null}
+              {props.workspace && props.workspace.dirtyFiles > 0 ? (
+                <span className="chip__stat">
+                  <span className="stat stat--add">+{props.workspace.added}</span>
+                  <span className="stat stat--del">−{props.workspace.removed}</span>
+                </span>
+              ) : null}
             </span>
           ) : null}
+
           {attachments.map((path) => (
-            <span className="chip chip--file" key={path} title={path}>
-              <FileGlyph />
+            <span className={`chip chip--file`} key={path} title={path}>
+              {IMAGE_RE.test(path) ? <ImageGlyph /> : <FileGlyph />}
               <span className="chip__label">{basename(path)}</span>
               <button
                 className="chip__x"
@@ -142,24 +213,64 @@ export function Composer(props: {
           ))}
         </div>
 
-        <textarea
-          ref={area}
-          value={text}
-          rows={1}
-          spellCheck={false}
-          disabled={props.disabled}
-          onChange={(e) => {
-            setText(e.target.value)
-            grow()
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              submit()
-            }
-          }}
-          placeholder={props.disabled ? 'Add a project folder first' : 'Do anything'}
-        />
+        <div className="composer__field">
+          <textarea
+            ref={area}
+            value={text}
+            rows={1}
+            spellCheck={false}
+            disabled={props.disabled}
+            onChange={(e) => {
+              const value = e.target.value
+              setText(value)
+              setSlashOpen(value.startsWith('/') && !value.includes(' '))
+              grow()
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && slashOpen) {
+                setSlashOpen(false)
+                return
+              }
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                if (slashOpen && matches[0]) {
+                  setValue(matches[0].text)
+                  setSlashOpen(false)
+                  return
+                }
+                submit()
+              }
+            }}
+            onPaste={(e) => {
+              const paths = Array.from(e.clipboardData.files)
+                .map((file) => (file as File & { path?: string }).path)
+                .filter((path): path is string => typeof path === 'string' && path !== '')
+              if (paths.length > 0) {
+                e.preventDefault()
+                addFiles(paths)
+              }
+            }}
+            placeholder={props.disabled ? 'Add a project folder first' : 'Do anything'}
+          />
+
+          {slashOpen && matches.length > 0 ? (
+            <div className="slash" role="listbox">
+              {matches.map((command) => (
+                <button
+                  key={command.name}
+                  className="menu__item"
+                  onClick={() => {
+                    setValue(command.text)
+                    setSlashOpen(false)
+                  }}
+                >
+                  <span className="menu__name">{command.name}</span>
+                  <span className="menu__desc">{command.detail}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
 
         <div className="tools">
           <Menu
@@ -175,10 +286,10 @@ export function Composer(props: {
               <>
                 <MenuItem
                   title="Attach files"
-                  detail="Images are shown to the model; other files are referenced by path"
+                  detail="Or drag them onto the box"
                   onClick={() => {
                     close()
-                    void attach()
+                    void pickFiles().then(addFiles)
                   }}
                 />
                 <div className="menu__rule" />
@@ -189,7 +300,7 @@ export function Composer(props: {
                     title={command.name}
                     detail={command.detail}
                     onClick={() => {
-                      insert(command.text)
+                      setValue(command.text)
                       close()
                     }}
                   />
@@ -202,9 +313,9 @@ export function Composer(props: {
             label="Permissions"
             disabled={props.running}
             trigger={() => (
-              <span className={`tool tool--${props.approval}`}>
+              <span className={`tool ${props.approval === 'full' ? 'tool--danger' : ''}`}>
                 <ShieldGlyph />
-                <span>{approval.title}</span>
+                <span>{approval.short}</span>
               </span>
             )}
           >
@@ -228,6 +339,25 @@ export function Composer(props: {
 
           <span className="tools__spacer" />
 
+          {/* Effort is a segmented toggle rather than a menu item: it is changed
+              far more often than the model, and burying a frequent switch one
+              level deeper than an occasional one is backwards. */}
+          {efforts.length > 1 ? (
+            <div className="segments" role="group" aria-label="Reasoning effort">
+              {efforts.map((entry) => (
+                <button
+                  key={entry}
+                  className={`segment ${entry === props.effort ? 'is-on' : ''}`}
+                  onClick={() => props.onEffortChange(entry)}
+                  disabled={props.running}
+                  title={`Reasoning: ${entry}`}
+                >
+                  {entry}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
           {props.models.length > 0 ? (
             <Menu
               label="Model"
@@ -237,7 +367,6 @@ export function Composer(props: {
                 <span className="tool">
                   <BoltGlyph />
                   <span>{model?.displayName ?? 'Model'}</span>
-                  {props.effort ? <span className="tool__sub">{props.effort}</span> : null}
                 </span>
               )}
             >
@@ -255,23 +384,6 @@ export function Composer(props: {
                       }}
                     />
                   ))}
-                  {model && model.reasoningEfforts.length > 0 ? (
-                    <>
-                      <div className="menu__rule" />
-                      <p className="menu__group">Reasoning</p>
-                      {model.reasoningEfforts.map((entry) => (
-                        <MenuItem
-                          key={entry}
-                          title={entry}
-                          active={entry === props.effort}
-                          onClick={() => {
-                            props.onEffortChange(entry)
-                            close()
-                          }}
-                        />
-                      ))}
-                    </>
-                  ) : null}
                 </>
               )}
             </Menu>
@@ -338,6 +450,15 @@ function FileGlyph() {
         strokeLinejoin="round"
       />
       <path d="M9 2v4h4" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function ImageGlyph() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <rect x="2.5" y="3" width="11" height="10" rx="1.6" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M3 11l3-3 2.5 2.5L11 8l2 2" stroke="currentColor" strokeWidth="1.3" />
     </svg>
   )
 }

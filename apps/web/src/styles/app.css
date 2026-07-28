@@ -423,6 +423,112 @@
   border-color: var(--line-strong);
 }
 
+/* Full access has no sandbox and no prompts. It has to look different from
+   every other state in the app, or someone will leave it on by accident. */
+.composer__box.is-yolo {
+  border-color: var(--error);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--error) 25%, transparent);
+}
+
+.composer__box.is-dropping {
+  border-color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.composer__field {
+  position: relative;
+}
+
+.chip__sep {
+  color: var(--text-3);
+}
+
+.chip__branch {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip__stat {
+  display: inline-flex;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  padding-left: 2px;
+}
+
+.stat--add {
+  color: var(--success);
+}
+
+.stat--del {
+  color: var(--error);
+}
+
+/* Inline command list, anchored to the input rather than floating loose. */
+.slash {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 6px;
+  right: 6px;
+  z-index: 25;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.7);
+  animation: menu-in var(--dur-fast) var(--ease-out);
+}
+
+/* Segmented effort toggle. Changed far more often than the model, so it sits
+   at the top level instead of one menu deeper. */
+.segments {
+  display: flex;
+  gap: 1px;
+  padding: 2px;
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+}
+
+.segment {
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+  padding: 3px 8px;
+  text-transform: capitalize;
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.segment:hover:not(:disabled) {
+  color: var(--text-2);
+}
+
+.segment.is-on {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.segment:disabled {
+  cursor: default;
+}
+
+.tool--danger,
+.tool--danger svg {
+  color: var(--error);
+}
+
 .composer textarea {
   display: block;
   width: 100%;

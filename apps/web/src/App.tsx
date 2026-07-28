@@ -3,7 +3,7 @@ import type { ApprovalMode, Model, ProviderId } from '@harness/contracts'
 import { pickFolder } from './bridge.js'
 import { Transport } from './transport.js'
 import { appendUserMessage, emptyThread, reduce, type ThreadState } from './thread-store.js'
-import { Composer } from './ui/Composer.js'
+import { Composer, type WorkspaceInfo } from './ui/Composer.js'
 import { Onboarding } from './ui/Onboarding.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
 import { StageHeader } from './ui/StageHeader.js'
@@ -47,6 +47,7 @@ export function App() {
   // permission level that quietly survives a restart is how people get burned.
   const [approval, setApproval] = useState<ApprovalMode>('ask')
   const [collapsed, setCollapsed] = useState(false)
+  const [workspace, setWorkspace] = useState<WorkspaceInfo | undefined>()
   const [notice, setNotice] = useState<string | undefined>()
 
   const activeIdRef = useRef(activeId)
@@ -87,6 +88,25 @@ export function App() {
       cancelled = true
     }
   }, [transport, provider])
+
+  // Branch and uncommitted size for the context chip. Re-read after every turn,
+  // because the agent is exactly what changes it.
+  useEffect(() => {
+    if (!activePath) {
+      setWorkspace(undefined)
+      return
+    }
+    let cancelled = false
+    void transport
+      .request('workspace.info', { path: activePath })
+      .then((info) => {
+        if (!cancelled) setWorkspace(info)
+      })
+      .catch(() => setWorkspace(undefined))
+    return () => {
+      cancelled = true
+    }
+  }, [transport, activePath, thread.running])
 
   useEffect(() => {
     localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects))
@@ -225,6 +245,7 @@ export function App() {
 
           <Composer
             projectName={activePath ? basename(activePath) : undefined}
+            workspace={workspace}
             models={models}
             modelId={modelId}
             effort={effort}
