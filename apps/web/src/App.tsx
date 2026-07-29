@@ -276,11 +276,12 @@ export function App() {
             projects={projects}
             activePath={activePath}
             title={active?.session.title}
+            usage={thread.usage}
             onSelectProject={setActivePath}
           />
 
           {active ? (
-            <Thread items={thread.items} running={thread.running} />
+            <Thread items={thread.items} running={thread.running} plan={thread.plan} />
           ) : (
             <Empty
               hasProjects={projects.length > 0}

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
-import type { Item } from '@harness/contracts'
+import type { Item, PlanStep } from '@harness/contracts'
 import { Markdown } from './Markdown.js'
+import { Plan } from './Plan.js'
 
 /**
  * The thread.
@@ -9,7 +10,7 @@ import { Markdown } from './Markdown.js'
  * collapses to a one-line row you can open. The default view should read as a
  * summary of what happened, not a transcript of every byte.
  */
-export function Thread(props: { items: Item[]; running: boolean }) {
+export function Thread(props: { items: Item[]; running: boolean; plan: PlanStep[] }) {
   const scroller = useRef<HTMLDivElement>(null)
   const bottom = useRef<HTMLDivElement>(null)
   const pinned = useRef(true)
@@ -33,6 +34,7 @@ export function Thread(props: { items: Item[]; running: boolean }) {
         {props.items.map((item) => (
           <Row key={item.id} item={item} />
         ))}
+        <Plan steps={props.plan} />
         {props.running ? <Working /> : null}
         <div ref={bottom} />
       </div>
