@@ -27,11 +27,21 @@ works, and building it before the UI shape settled would have meant building it 
 **Still open and not blocked by code:** Windows code-signing paperwork. Weeks of lead
 time, blocks M6. See [open questions](#open-questions).
 
-### M1 — The thread
+### M1 — The thread ✅
 
-Virtualized list, streaming markdown, syntax highlighting, all item types, collapse/expand,
-turn navigation, in-thread search, interrupt, steer. Performance budgets in CI.
-→ _We prefer it to the terminal for reading agent output._
+Virtualised list, streaming markdown, syntax highlighting, all item types,
+collapse/expand, turn navigation, in-thread search, interrupt, steer. Performance
+budgets in CI.
+→ _We prefer it to the terminal for reading agent output._ **Done.**
+
+Brought forward from M3: **approval cards**. Without them the safest permission
+mode declined every command, so `Ask first` was unusable — the mode most people
+should be running was the one that did not work.
+
+Also shipped beyond plan, because the data was already arriving and we were
+discarding it: the agent's plan for the turn, the turn-level diff, live token
+spend, command duration and exit codes, and streaming reasoning and command
+output.
 
 ### M2 — Many agents, many sessions
 
@@ -41,8 +51,9 @@ checkpoints, provider setup wizard, cost accounting.
 
 ### M3 — Review & control
 
-Diff review with per-hunk accept/reject, approval cards, mode indicator, panic stop,
-terminal pane, MCP management, Agent Skills, cross-session search.
+Diff review with per-hunk accept/reject, mode indicator, panic stop, terminal pane,
+MCP management, Agent Skills, cross-session search. _(Approval cards landed early
+in M1.)_
 → _We let an agent run autonomously and feel fine about it._
 
 ### M4 — Design agent
