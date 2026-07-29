@@ -73,6 +73,23 @@ export type Thread = z.infer<typeof ThreadSchema>
  * What an adapter emits. The server persists these to the event log and pushes
  * them to clients; adapters never talk to the UI directly.
  */
+/** A step in the agent's own plan for the current turn. */
+export const PlanStepSchema = z.object({
+  text: z.string(),
+  status: z.enum(['pending', 'running', 'done']),
+})
+export type PlanStep = z.infer<typeof PlanStepSchema>
+
+export const UsageSchema = z.object({
+  inputTokens: z.number(),
+  cachedInputTokens: z.number(),
+  outputTokens: z.number(),
+  reasoningTokens: z.number(),
+  totalTokens: z.number(),
+  contextWindow: z.number().optional(),
+})
+export type Usage = z.infer<typeof UsageSchema>
+
 export const DomainEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('thread.started'), thread: ThreadSchema }),
   z.object({ type: z.literal('turn.started'), turn: TurnSchema }),
@@ -90,6 +107,14 @@ export const DomainEventSchema = z.discriminatedUnion('type', [
     status: z.enum(['completed', 'interrupted', 'failed']),
   }),
   z.object({ type: z.literal('thread.error'), threadId: z.string(), message: z.string() }),
+  /** The agent's plan for this turn, replaced wholesale each time it changes. */
+  z.object({
+    type: z.literal('plan.updated'),
+    turnId: z.string(),
+    steps: z.array(PlanStepSchema),
+  }),
+  /** Token spend so far. Surfaced live rather than at the end of a turn. */
+  z.object({ type: z.literal('usage.updated'), usage: UsageSchema }),
 ])
 export type DomainEvent = z.infer<typeof DomainEventSchema>
 

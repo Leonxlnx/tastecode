@@ -1,4 +1,4 @@
-import type { DomainEvent, Item } from '@harness/contracts'
+import type { DomainEvent, Item, PlanStep, Usage } from '@harness/contracts'
 
 /**
  * Folds the domain event stream into what the UI renders.
@@ -10,9 +10,12 @@ import type { DomainEvent, Item } from '@harness/contracts'
 export type ThreadState = {
   items: Item[]
   running: boolean
+  /** The agent's plan for the current turn. Replaced wholesale when it changes. */
+  plan: PlanStep[]
+  usage?: Usage
 }
 
-export const emptyThread: ThreadState = { items: [], running: false }
+export const emptyThread: ThreadState = { items: [], running: false, plan: [] }
 
 /**
  * Marks a locally-echoed message that the agent has not confirmed yet. The
@@ -24,10 +27,18 @@ const OPTIMISTIC_PREFIX = 'local:'
 export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
   switch (event.type) {
     case 'turn.started':
-      return { ...state, running: true }
+      // A new turn gets a fresh plan; the previous one described work already
+      // finished and leaving it up reads as stale instructions.
+      return { ...state, running: true, plan: [] }
 
     case 'turn.completed':
       return { ...state, running: false }
+
+    case 'plan.updated':
+      return { ...state, plan: event.steps }
+
+    case 'usage.updated':
+      return { ...state, usage: event.usage }
 
     case 'item.started': {
       // The agent echoes the user's message back as a canonical item. Drop our

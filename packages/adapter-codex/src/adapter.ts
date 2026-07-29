@@ -16,6 +16,8 @@ import type { AgentMessageDeltaNotification } from './generated/v2/AgentMessageD
 import type { ItemCompletedNotification } from './generated/v2/ItemCompletedNotification'
 import type { ItemStartedNotification } from './generated/v2/ItemStartedNotification'
 import type { ThreadStartedNotification } from './generated/v2/ThreadStartedNotification'
+import type { ThreadTokenUsageUpdatedNotification } from './generated/v2/ThreadTokenUsageUpdatedNotification'
+import type { TurnPlanUpdatedNotification } from './generated/v2/TurnPlanUpdatedNotification'
 import type { ThreadStartResponse } from './generated/v2/ThreadStartResponse'
 import type { TurnCompletedNotification } from './generated/v2/TurnCompletedNotification'
 import type { TurnStartedNotification } from './generated/v2/TurnStartedNotification'
@@ -44,6 +46,15 @@ function isImage(path: string): boolean {
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] ?? path
+}
+
+/** Command output arrives base64-encoded because it is raw bytes, not text. */
+function decodeBase64(value: string): string {
+  try {
+    return Buffer.from(value, 'base64').toString('utf8')
+  } catch {
+    return ''
+  }
 }
 
 export const CODEX_CAPABILITIES: Capabilities = {
@@ -344,6 +355,61 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       case 'item/agentMessage/delta': {
         const p = params as AgentMessageDeltaNotification
         emit({ type: 'item.delta', turnId: p.turnId, itemId: p.itemId, textDelta: p.delta })
+        return
+      }
+
+      // Reasoning streams as its own delta channel. Without this the thinking
+      // row sits empty until the item completes, which reads as a hang.
+      case 'item/reasoning/summaryTextDelta':
+      case 'item/reasoning/textDelta': {
+        const p = params as { turnId: string; itemId: string; delta: string }
+        emit({ type: 'item.delta', turnId: p.turnId, itemId: p.itemId, textDelta: p.delta })
+        return
+      }
+
+      // Command output, live. A build that prints for a minute should show it
+      // printing, not a spinner and then a wall of text.
+      case 'item/commandExecution/outputDelta': {
+        const p = params as { turnId: string; itemId: string; delta?: string; deltaBase64?: string }
+        const text = p.delta ?? (p.deltaBase64 ? decodeBase64(p.deltaBase64) : '')
+        if (text) emit({ type: 'item.delta', turnId: p.turnId, itemId: p.itemId, textDelta: text })
+        return
+      }
+
+      case 'turn/plan/updated': {
+        const p = params as TurnPlanUpdatedNotification
+        emit({
+          type: 'plan.updated',
+          turnId: p.turnId,
+          steps: p.plan.map((entry) => ({
+            text: entry.step,
+            status:
+              entry.status === 'completed'
+                ? 'done'
+                : entry.status === 'inProgress'
+                  ? 'running'
+                  : 'pending',
+          })),
+        })
+        return
+      }
+
+      case 'thread/tokenUsage/updated': {
+        const p = params as ThreadTokenUsageUpdatedNotification
+        const total = p.tokenUsage.total
+        emit({
+          type: 'usage.updated',
+          usage: {
+            inputTokens: total.inputTokens,
+            cachedInputTokens: total.cachedInputTokens,
+            outputTokens: total.outputTokens,
+            reasoningTokens: total.reasoningOutputTokens,
+            totalTokens: total.totalTokens,
+            ...(p.tokenUsage.modelContextWindow
+              ? { contextWindow: p.tokenUsage.modelContextWindow }
+              : {}),
+          },
+        })
         return
       }
 
