@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { Item } from '@harness/contracts'
+import { Markdown } from './Markdown.js'
 
 /**
  * The thread.
@@ -51,7 +52,11 @@ function Row({ item }: { item: Item }) {
   }
 
   if (item.type === 'message') {
-    return <p className="reply">{item.text}</p>
+    return (
+      <div className="reply">
+        <Markdown text={item.text ?? ''} />
+      </div>
+    )
   }
 
   return (
