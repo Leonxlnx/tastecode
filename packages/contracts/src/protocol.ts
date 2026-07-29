@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import {
   AccountSchema,
+  ApprovalDecisionSchema,
   ApprovalModeSchema,
   DomainEventSchema,
   ModelSchema,
@@ -128,6 +129,14 @@ export const methods = {
       attachments: z.array(z.string()).optional(),
     }),
     result: z.object({ turnId: z.string() }),
+  },
+  'thread.respondToApproval': {
+    params: z.object({
+      threadId: z.string(),
+      approvalId: z.string(),
+      decision: ApprovalDecisionSchema,
+    }),
+    result: z.object({}),
   },
   'thread.interrupt': {
     params: z.object({ threadId: z.string() }),

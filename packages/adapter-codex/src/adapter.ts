@@ -1,7 +1,9 @@
 import { EventEmitter } from 'node:events'
 import type {
   Account,
+  ApprovalDecision,
   ApprovalMode,
+  ApprovalRequest,
   Capabilities,
   DomainEvent,
   Model,
@@ -109,6 +111,42 @@ function planLabel(plan: string): string {
   return named[plan] ?? 'Signed in'
 }
 
+/** Which server requests are approval prompts, and what they are about. */
+const APPROVAL_KIND: Record<string, ApprovalRequest['kind'] | undefined> = {
+  'item/commandExecution/requestApproval': 'command',
+  'item/fileChange/requestApproval': 'file_change',
+  'item/permissions/requestApproval': 'permissions',
+  execCommandApproval: 'command',
+  applyPatchApproval: 'file_change',
+}
+
+/**
+ * Our four answers onto Codex's per-kind decision vocabulary.
+ *
+ * `abort` maps to cancel, which stops the turn rather than just this step —
+ * "no, and stop" is a different intent from "not this one".
+ */
+const DECISION: Record<ApprovalRequest['kind'], Record<ApprovalDecision, string>> = {
+  command: {
+    approve: 'accept',
+    'approve-session': 'acceptForSession',
+    deny: 'decline',
+    abort: 'cancel',
+  },
+  file_change: {
+    approve: 'accept',
+    'approve-session': 'acceptForSession',
+    deny: 'decline',
+    abort: 'cancel',
+  },
+  permissions: {
+    approve: 'accept',
+    'approve-session': 'acceptForSession',
+    deny: 'decline',
+    abort: 'cancel',
+  },
+}
+
 export type CodexAdapterEvents = {
   event: [DomainEvent]
   log: [string]
@@ -119,6 +157,14 @@ export type CodexAdapterEvents = {
 export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #rpc: StdioJsonRpc | undefined
   #started = false
+  /**
+   * Approvals waiting on an answer, keyed by our id. Holds the JSON-RPC
+   * responder because Codex is blocked on that specific request id.
+   */
+  #approvals = new Map<
+    string,
+    { kind: ApprovalRequest['kind']; respond: (result: unknown) => void }
+  >()
 
   get capabilities(): Capabilities {
     return CODEX_CAPABILITIES
@@ -135,13 +181,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     rpc.onStderr((text) => this.emit('log', text.trimEnd()))
     rpc.onNotification((method, params) => this.#onNotification(method, params))
 
-    // The server may ask us things mid-turn (approvals). Until the approval UI
-    // exists in M3, decline rather than silently auto-approving: an agent that
-    // runs commands the user never saw is the failure we least want.
-    rpc.onServerRequest((method, _params, respond) => {
-      this.emit('log', `server request not yet handled: ${method}`)
-      respond({ decision: 'denied' })
-    })
+    rpc.onServerRequest((method, params, respond) => this.#onServerRequest(method, params, respond))
 
     await rpc.request('initialize', {
       clientInfo: { name: CLIENT_NAME, title: 'Personal Harness', version: '0.0.0' },
@@ -264,6 +304,21 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     await this.#call('turn/interrupt', { threadId })
   }
 
+  /**
+   * Answer a pending approval.
+   *
+   * The reply goes back on the exact JSON-RPC request that asked, which is why
+   * the responder is held rather than the question re-derived — Codex is
+   * blocked waiting on that specific id.
+   */
+  respondToApproval(approvalId: string, decision: ApprovalDecision): void {
+    const pending = this.#approvals.get(approvalId)
+    if (!pending) return
+    this.#approvals.delete(approvalId)
+    pending.respond({ decision: DECISION[pending.kind][decision] })
+    this.emit('event', { type: 'approval.resolved', id: approvalId })
+  }
+
   /** Inject input without restarting the turn. Codex is one of the few engines that can. */
   async steer(threadId: string, text: string): Promise<void> {
     await this.#call('turn/steer', {
@@ -281,6 +336,44 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #call<T>(method: string, params: unknown): Promise<T> {
     if (!this.#rpc) throw new Error('adapter not started')
     return this.#rpc.request<T>(method, params)
+  }
+
+  /**
+   * Codex asks permission by making a request of us, not by sending an event.
+   * Anything we do not recognise is declined — silently approving a request we
+   * could not even parse is the worst possible default.
+   */
+  #onServerRequest(method: string, params: unknown, respond: (result: unknown) => void): void {
+    const kind = APPROVAL_KIND[method]
+    if (!kind) {
+      this.emit('log', `declined unhandled server request: ${method}`)
+      respond({ decision: 'decline' })
+      return
+    }
+
+    const p = params as {
+      itemId?: string
+      approvalId?: string | null
+      reason?: string | null
+      command?: string | null
+      cwd?: string | null
+      grantRoot?: string | null
+    }
+    const id = p.approvalId ?? p.itemId ?? crypto.randomUUID()
+    this.#approvals.set(id, { kind, respond })
+
+    this.emit('event', {
+      type: 'approval.requested',
+      request: {
+        id,
+        kind,
+        ...(p.reason ? { reason: p.reason } : {}),
+        ...(p.command ? { command: p.command } : {}),
+        ...(p.cwd ? { cwd: String(p.cwd) } : {}),
+        ...(p.grantRoot ? { path: String(p.grantRoot) } : {}),
+        createdAt: Date.now(),
+      },
+    })
   }
 
   #onNotification(method: string, params: unknown): void {

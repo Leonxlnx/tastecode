@@ -75,6 +75,30 @@ export type Thread = z.infer<typeof ThreadSchema>
  * What an adapter emits. The server persists these to the event log and pushes
  * them to clients; adapters never talk to the UI directly.
  */
+/**
+ * The agent asking permission before it does something.
+ *
+ * This is the highest-privilege moment in the app: answering yes authorises
+ * arbitrary execution or a write to disk. Everything about how it is shown and
+ * answered is deliberate.
+ */
+export const ApprovalRequestSchema = z.object({
+  id: z.string(),
+  kind: z.enum(['command', 'file_change', 'permissions']),
+  /** Why the agent says it needs this. Shown verbatim; it is their words. */
+  reason: z.string().optional(),
+  /** Present on `command`. */
+  command: z.string().optional(),
+  cwd: z.string().optional(),
+  /** Present on `file_change` and `permissions`. */
+  path: z.string().optional(),
+  createdAt: z.number(),
+})
+export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>
+
+export const ApprovalDecisionSchema = z.enum(['approve', 'approve-session', 'deny', 'abort'])
+export type ApprovalDecision = z.infer<typeof ApprovalDecisionSchema>
+
 /** A step in the agent's own plan for the current turn. */
 export const PlanStepSchema = z.object({
   text: z.string(),
@@ -123,6 +147,9 @@ export const DomainEventSchema = z.discriminatedUnion('type', [
    * from "what did it do next", and the answer must not be assembled by hand.
    */
   z.object({ type: z.literal('diff.updated'), turnId: z.string(), diff: z.string() }),
+  z.object({ type: z.literal('approval.requested'), request: ApprovalRequestSchema }),
+  /** Resolved — by the user, or because the turn ended without an answer. */
+  z.object({ type: z.literal('approval.resolved'), id: z.string() }),
 ])
 export type DomainEvent = z.infer<typeof DomainEventSchema>
 
