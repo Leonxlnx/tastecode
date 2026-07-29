@@ -50,6 +50,10 @@ export function Thread(props: {
     // insertion look like a change to every row after it.
     getItemKey: (index) => props.items[index]?.id ?? index,
     overscan: 8,
+    // Assume a viewport for the very first render, before measurement has run.
+    // Without it the first frame contains no rows at all, which reads as a
+    // blank thread for one frame when switching sessions.
+    initialRect: { width: 720, height: 800 },
   })
 
   // A turn starting is the one moment the reading position should change.
