@@ -418,8 +418,7 @@ export function Composer(props: {
                 </>
               )}
             </Menu>
-          ) : props.modelsLoaded ? // This provider cannot enumerate models. Saying nothing is right —
-          // "Loading models…" forever is the UI lying about what it is doing.
+          ) : props.modelsLoaded ? // "Loading models…" forever is the UI lying about what it is doing. // This provider cannot enumerate models. Saying nothing is right —
           null : (
             <span className="tool tool--quiet">Loading models…</span>
           )}
