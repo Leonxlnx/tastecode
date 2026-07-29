@@ -514,11 +514,224 @@
   word-break: break-word;
 }
 
+/* ---------- rendered markdown ---------- */
+
 .reply {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
   line-height: 1.68;
+}
+
+.md > *:first-child {
+  margin-top: 0;
+}
+
+.md > *:last-child {
+  margin-bottom: 0;
+}
+
+.md p {
+  margin: 0 0 12px;
+  word-break: break-word;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  font-weight: 580;
+  letter-spacing: -0.014em;
+  line-height: 1.3;
+  margin: 22px 0 8px;
+}
+
+.md h1 {
+  font-size: var(--t-xl);
+}
+.md h2 {
+  font-size: var(--t-lg);
+}
+.md h3,
+.md h4 {
+  font-size: var(--t-md);
+}
+
+.md ul,
+.md ol {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+
+.md li {
+  margin: 3px 0;
+}
+
+.md li::marker {
+  color: var(--text-3);
+}
+
+.md a {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--text-3);
+}
+
+.md a:hover {
+  text-decoration-color: var(--text);
+}
+
+.md blockquote {
+  border-left: 2px solid var(--line-strong);
+  color: var(--text-2);
+  margin: 0 0 12px;
+  padding-left: 12px;
+}
+
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 18px 0;
+}
+
+/* Inline code sits inside a line of prose, so it must not change line height. */
+.md :not(pre) > code {
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  padding: 1px 5px;
+}
+
+/* Streamdown wraps code and tables in a container and puts its copy/download
+   controls inside it. They ship unstyled, so they are anchored to the corner
+   of the block and revealed on hover — visible when wanted, silent otherwise. */
+.md [data-streamdown='code-block'],
+.md [data-streamdown='table-wrapper'] {
+  position: relative;
+}
+
+.md [data-streamdown='code-block'] button,
+.md [data-streamdown='table-wrapper'] button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.md [data-streamdown='code-block']:hover button,
+.md [data-streamdown='table-wrapper']:hover button,
+.md [data-streamdown='code-block'] button:focus-visible,
+.md [data-streamdown='table-wrapper'] button:focus-visible {
+  opacity: 1;
+}
+
+.md [data-streamdown='code-block'] button:hover,
+.md [data-streamdown='table-wrapper'] button:hover {
+  color: var(--text);
+}
+
+.md [data-streamdown='code-block'] button svg,
+.md [data-streamdown='table-wrapper'] button svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Language label and controls share one row directly above the block. Without
+   this they stack as separate blocks and leave a hole the height of the hidden
+   buttons. */
+.md [data-streamdown='code-block-header'] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 26px;
+  padding: 0 2px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+}
+
+.md [data-streamdown='code-block-actions'] {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.md pre {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  font-size: var(--t-sm);
+  margin: 0 0 14px;
+  overflow-x: auto;
+  padding: 11px 13px;
+}
+
+.md pre code {
+  font-family: var(--font-mono);
+  background: none;
+  padding: 0;
+  /* Streamdown emits one element per line; without this, indentation and blank
+     lines collapse and the block reads as one run-on line. */
+  white-space: pre;
+}
+
+/* Streamdown ships Tailwind utility classes, and this app does not use
+   Tailwind. Two rules replace the whole utility chain:
+   one to break lines, one to read the per-token colour Shiki emits as a
+   custom property. Without the second, highlighting runs correctly and every
+   token still renders in the inherited foreground. */
+.md pre code > span {
+  display: block;
+  min-height: 1lh;
+}
+
+.md pre span[style*='--sdm-c'] {
+  color: var(--sdm-c);
+}
+
+.md pre {
+  color: var(--sdm-fg, var(--text));
+}
+
+.md table {
+  border-collapse: collapse;
+  display: block;
+  font-size: var(--t-sm);
+  margin: 0 0 14px;
+  overflow-x: auto;
+  width: 100%;
+}
+
+.md th,
+.md td {
+  border: 1px solid var(--line);
+  padding: 5px 9px;
+  text-align: left;
+}
+
+.md th {
+  background: var(--surface);
+  font-weight: 540;
+}
+
+/* Numbers in a table are compared, so they get tabular figures. */
+.md td {
+  font-variant-numeric: tabular-nums;
+}
+
+.md img {
+  border-radius: var(--r-md);
+  max-width: 100%;
 }
 
 /* ---------- collapsed rows ---------- */
