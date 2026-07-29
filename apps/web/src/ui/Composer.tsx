@@ -103,6 +103,9 @@ export function Composer(props: {
   useEffect(() => () => stopDictation.current?.(), [])
 
   const model = props.models.find((m) => m.id === props.modelId)
+  // A provider that cannot enumerate models shows nothing. Sitting on
+  // "Loading models…" forever is the UI lying about what it is doing.
+  const showModelPlaceholder = props.models.length === 0 && !props.modelsLoaded
   const approval = APPROVAL_MODES.find((m) => m.id === props.approval) ?? APPROVAL_MODES[0]!
   const efforts = model?.reasoningEfforts ?? []
 
@@ -418,10 +421,9 @@ export function Composer(props: {
                 </>
               )}
             </Menu>
-          ) : props.modelsLoaded ? // "Loading models…" forever is the UI lying about what it is doing. // This provider cannot enumerate models. Saying nothing is right —
-          null : (
+          ) : showModelPlaceholder ? (
             <span className="tool tool--quiet">Loading models…</span>
-          )}
+          ) : null}
 
           {canDictate ? (
             <button
