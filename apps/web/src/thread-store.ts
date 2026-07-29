@@ -13,6 +13,8 @@ export type ThreadState = {
   /** The agent's plan for the current turn. Replaced wholesale when it changes. */
   plan: PlanStep[]
   usage?: Usage
+  /** Everything the current turn changed, as one unified diff. */
+  diff?: string | undefined
 }
 
 export const emptyThread: ThreadState = { items: [], running: false, plan: [] }
@@ -27,9 +29,9 @@ const OPTIMISTIC_PREFIX = 'local:'
 export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
   switch (event.type) {
     case 'turn.started':
-      // A new turn gets a fresh plan; the previous one described work already
-      // finished and leaving it up reads as stale instructions.
-      return { ...state, running: true, plan: [] }
+      // A new turn gets a fresh plan and diff; the previous ones described work
+      // already finished, and leaving them up reads as stale instructions.
+      return { ...state, running: true, plan: [], diff: undefined }
 
     case 'turn.completed':
       return { ...state, running: false }
@@ -39,6 +41,9 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
 
     case 'usage.updated':
       return { ...state, usage: event.usage }
+
+    case 'diff.updated':
+      return { ...state, diff: event.diff }
 
     case 'item.started': {
       // The agent echoes the user's message back as a canonical item. Drop our

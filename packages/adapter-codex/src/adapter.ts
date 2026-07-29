@@ -394,6 +394,12 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         return
       }
 
+      case 'turn/diff/updated': {
+        const p = params as { turnId: string; diff: string }
+        emit({ type: 'diff.updated', turnId: p.turnId, diff: p.diff })
+        return
+      }
+
       case 'thread/tokenUsage/updated': {
         const p = params as ThreadTokenUsageUpdatedNotification
         const total = p.tokenUsage.total

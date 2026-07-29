@@ -117,6 +117,12 @@ export const DomainEventSchema = z.discriminatedUnion('type', [
   }),
   /** Token spend so far. Surfaced live rather than at the end of a turn. */
   z.object({ type: z.literal('usage.updated'), usage: UsageSchema }),
+  /**
+   * Everything this turn changed, as one unified diff. Kept separate from the
+   * per-file items because "what did it do to my repo" is a different question
+   * from "what did it do next", and the answer must not be assembled by hand.
+   */
+  z.object({ type: z.literal('diff.updated'), turnId: z.string(), diff: z.string() }),
 ])
 export type DomainEvent = z.infer<typeof DomainEventSchema>
 
