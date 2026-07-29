@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Account, ApprovalMode, Model, ProviderId } from '@harness/contracts'
 import { pickFolder } from './bridge.js'
+import { warmHighlighter } from './ui/highlighter.js'
 import { Transport } from './transport.js'
 import { appendUserMessage, emptyThread, reduce, type ThreadState } from './thread-store.js'
 import { Composer, type WorkspaceInfo } from './ui/Composer.js'
@@ -52,6 +53,10 @@ export function App() {
   const [account, setAccount] = useState<Account | undefined>()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [notice, setNotice] = useState<string | undefined>()
+
+  // Syntax grammars load in the background from the first frame, so the first
+  // code block an agent produces is already coloured.
+  useEffect(warmHighlighter, [])
 
   const activeIdRef = useRef(activeId)
   activeIdRef.current = activeId
