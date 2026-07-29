@@ -41,6 +41,7 @@ export function App() {
   const [activePath, setActivePath] = useState<string | undefined>(() => loadProjects()[0]?.path)
   const [thread, setThread] = useState<ThreadState>(emptyThread)
   const [models, setModels] = useState<Model[]>([])
+  const [modelsLoaded, setModelsLoaded] = useState(false)
   const [modelId, setModelId] = useState<string | undefined>(
     () => localStorage.getItem(MODEL_KEY) ?? undefined,
   )
@@ -85,12 +86,14 @@ export function App() {
       .then(({ models: list }) => {
         if (cancelled) return
         setModels(list)
+        setModelsLoaded(true)
         const chosen = list.find((m) => m.isDefault) ?? list[0]
         setModelId((current) => current ?? chosen?.id)
         setEffort((current) => current ?? chosen?.defaultReasoningEffort)
       })
       .catch(() => {
-        /* The picker degrades to "Loading models…" — not worth a modal. */
+        // A provider that cannot list models is a normal case, not an error.
+        if (!cancelled) setModelsLoaded(true)
       })
     return () => {
       cancelled = true
@@ -309,6 +312,7 @@ export function App() {
             projectName={activePath ? basename(activePath) : undefined}
             workspace={workspace}
             models={models}
+            modelsLoaded={modelsLoaded}
             modelId={modelId}
             effort={effort}
             approval={approval}

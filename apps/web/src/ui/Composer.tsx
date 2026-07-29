@@ -79,6 +79,8 @@ export function Composer(props: {
   projectName: string | undefined
   workspace: WorkspaceInfo | undefined
   models: Model[]
+  /** Whether the list has come back yet, so an empty list is not read as pending. */
+  modelsLoaded: boolean
   modelId: string | undefined
   effort: string | undefined
   approval: ApprovalMode
@@ -416,7 +418,9 @@ export function Composer(props: {
                 </>
               )}
             </Menu>
-          ) : (
+          ) : props.modelsLoaded ? // This provider cannot enumerate models. Saying nothing is right —
+          // "Loading models…" forever is the UI lying about what it is doing.
+          null : (
             <span className="tool tool--quiet">Loading models…</span>
           )}
 
