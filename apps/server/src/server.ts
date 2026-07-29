@@ -175,6 +175,16 @@ export function startServer(port = DEFAULT_PORT) {
         return { turnId: await orchestrator.sendTurn(p.threadId, p.text, p.attachments) }
       }
 
+      case 'thread.respondToApproval': {
+        const p = params as {
+          threadId: string
+          approvalId: string
+          decision: 'approve' | 'approve-session' | 'deny' | 'abort'
+        }
+        orchestrator.respondToApproval(p.threadId, p.approvalId, p.decision)
+        return {}
+      }
+
       case 'thread.interrupt': {
         const p = params as { threadId: string }
         await orchestrator.interrupt(p.threadId)

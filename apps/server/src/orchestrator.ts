@@ -1,5 +1,12 @@
 import { CodexAdapter, type StartOptions } from '@harness/adapter-codex'
-import type { Account, DomainEvent, Model, ProviderId, Thread } from '@harness/contracts'
+import type {
+  Account,
+  ApprovalDecision,
+  DomainEvent,
+  Model,
+  ProviderId,
+  Thread,
+} from '@harness/contracts'
 
 /**
  * Owns every live agent session.
@@ -101,6 +108,10 @@ export class Orchestrator {
 
   async sendTurn(threadId: string, text: string, attachments: string[] = []): Promise<string> {
     return this.#get(threadId).adapter.sendTurn(threadId, text, attachments)
+  }
+
+  respondToApproval(threadId: string, approvalId: string, decision: ApprovalDecision): void {
+    this.#get(threadId).adapter.respondToApproval(approvalId, decision)
   }
 
   async interrupt(threadId: string): Promise<void> {
