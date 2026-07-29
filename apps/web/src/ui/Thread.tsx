@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { Item, PlanStep } from '@harness/contracts'
 import { Diff } from './Diff.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
 import { ThreadSearch } from './ThreadSearch.js'
+import { findTurns, neighbourTurn } from './turns.js'
 import { isAtBottom, modeForNewTurn, shouldReleaseAnchor, type ScrollMode } from './scroll-mode.js'
 
 /**
@@ -28,6 +29,8 @@ export function Thread(props: {
   const scroller = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<ScrollMode>('follow-end')
   const [finding, setFinding] = useState(false)
+  /** Turns the user collapsed. Their detail rows hide; the exchange stays. */
+  const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set())
   const modeRef = useRef(mode)
   modeRef.current = mode
 
@@ -112,6 +115,34 @@ export function Thread(props: {
     [virtualizer],
   )
 
+  const turns = useMemo(() => findTurns(props.items), [props.items])
+
+  // Alt+Up/Down moves a turn at a time. Scrolling by pixel through a long
+  // session to find where an exchange began is the slow way to do it.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
+      const rows = virtualizer.getVirtualItems()
+      const current = rows[0]?.index ?? 0
+      const target = neighbourTurn(turns, current, event.key === 'ArrowUp' ? 'prev' : 'next')
+      if (target === undefined) return
+      event.preventDefault()
+      setMode('free')
+      virtualizer.scrollToIndex(target, { align: 'start' })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [turns, virtualizer])
+
+  const toggleTurn = useCallback((turnId: string) => {
+    setFolded((current) => {
+      const next = new Set(current)
+      if (next.has(turnId)) next.delete(turnId)
+      else next.add(turnId)
+      return next
+    })
+  }, [])
+
   const rows = virtualizer.getVirtualItems()
 
   return (
@@ -124,6 +155,7 @@ export function Thread(props: {
           {rows.map((row) => {
             const item = props.items[row.index]
             if (!item) return null
+            const turn = turns.find((entry) => entry.index === row.index)
             return (
               <div
                 key={row.key}
@@ -132,7 +164,19 @@ export function Thread(props: {
                 ref={virtualizer.measureElement}
                 style={{ transform: `translateY(${row.start}px)` }}
               >
-                <Row item={item} />
+                {/* Only the first row of a turn carries the fold control, so
+                    the affordance appears once per exchange rather than once
+                    per line. */}
+                {turn && turn.count > 1 ? (
+                  <button
+                    className="turnfold"
+                    onClick={() => toggleTurn(turn.turnId)}
+                    title={folded.has(turn.turnId) ? 'Expand turn' : 'Collapse turn'}
+                  >
+                    {folded.has(turn.turnId) ? `Show ${turn.count - 1} more` : 'Collapse'}
+                  </button>
+                ) : null}
+                <Row item={item} hidden={folded.has(item.turnId) && !isHeadline(item)} />
               </div>
             )
           })}
@@ -159,7 +203,14 @@ export function Thread(props: {
   )
 }
 
-function Row({ item }: { item: Item }) {
+/** What survives folding: the exchange itself, not the machinery. */
+function isHeadline(item: Item): boolean {
+  return item.type === 'message'
+}
+
+function Row({ item, hidden }: { item: Item; hidden?: boolean }) {
+  if (hidden) return null
+
   // The user's own words get a surface so the eye can find where each exchange
   // begins; the agent's answer is plain prose, which is what you actually read.
   if (item.type === 'message' && item.role === 'user') {
