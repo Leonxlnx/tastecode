@@ -1,4 +1,5 @@
-import { CodexAdapter, type StartOptions } from '@harness/adapter-codex'
+import { CodexAdapter } from '@harness/adapter-codex'
+import { providerRuntime, type AgentSession, type StartOptions } from './adapters.js'
 import type {
   Account,
   ApprovalDecision,
@@ -16,7 +17,7 @@ import type {
  * point of the adapter contract.
  */
 export class Orchestrator {
-  #threads = new Map<string, { thread: Thread; adapter: CodexAdapter }>()
+  #threads = new Map<string, { thread: Thread; session: AgentSession }>()
   #onEvent: (threadId: string, event: DomainEvent) => void
   #onLog: (line: string) => void
   #onLogin: (
@@ -56,8 +57,10 @@ export class Orchestrator {
   }
 
   async listModels(provider: ProviderId): Promise<Model[]> {
-    if (provider !== 'codex') return []
-    return (await this.#controlAdapter()).listModels()
+    // Codex has a control adapter already running; everything else asks its
+    // own runtime, which is free to answer with nothing.
+    if (provider === 'codex') return (await this.#controlAdapter()).listModels()
+    return providerRuntime(provider, this.#onLog).listModels()
   }
 
   async account(provider: ProviderId): Promise<Account> {
@@ -90,43 +93,36 @@ export class Orchestrator {
     workspacePath: string,
     options: StartOptions = {},
   ): Promise<Thread> {
-    if (provider !== 'codex') {
-      throw new Error(`provider "${provider}" is not implemented yet`)
-    }
+    const runtime = providerRuntime(provider, this.#onLog)
+    const { thread, session } = await runtime.start(workspacePath, options)
+    this.#threads.set(thread.id, { thread, session })
 
-    const adapter = new CodexAdapter()
-    adapter.on('log', (line) => this.#onLog(line))
-    await adapter.start()
-
-    const thread = await adapter.startThread(workspacePath, options)
-    this.#threads.set(thread.id, { thread, adapter })
-
-    // Wired after startThread so the thread id exists before any event fires.
-    adapter.on('event', (event) => this.#onEvent(thread.id, event))
+    // Wired after start so the thread id exists before any event fires.
+    session.on('event', (event) => this.#onEvent(thread.id, event))
     return thread
   }
 
   async sendTurn(threadId: string, text: string, attachments: string[] = []): Promise<string> {
-    return this.#get(threadId).adapter.sendTurn(threadId, text, attachments)
+    return this.#get(threadId).session.sendTurn(threadId, text, attachments)
   }
 
   respondToApproval(threadId: string, approvalId: string, decision: ApprovalDecision): void {
-    this.#get(threadId).adapter.respondToApproval(approvalId, decision)
+    this.#get(threadId).session.respondToApproval(approvalId, decision)
   }
 
   async interrupt(threadId: string): Promise<void> {
-    await this.#get(threadId).adapter.interrupt(threadId)
+    await this.#get(threadId).session.interrupt(threadId)
   }
 
   close(threadId: string): void {
     const entry = this.#threads.get(threadId)
     if (!entry) return
-    entry.adapter.dispose()
+    entry.session.dispose()
     this.#threads.delete(threadId)
   }
 
   disposeAll(): void {
-    for (const [, entry] of this.#threads) entry.adapter.dispose()
+    for (const [, entry] of this.#threads) entry.session.dispose()
     this.#threads.clear()
     this.#control?.dispose()
     this.#control = undefined

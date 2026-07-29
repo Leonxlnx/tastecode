@@ -6,5 +6,9 @@
   },
   "include": ["src/**/*"],
   "exclude": ["src/**/*.test.ts"],
-  "references": [{ "path": "../../packages/contracts" }, { "path": "../../packages/adapter-codex" }]
+  "references": [
+    { "path": "../../packages/contracts" },
+    { "path": "../../packages/adapter-codex" },
+    { "path": "../../packages/adapter-claude-code" }
+  ]
 }

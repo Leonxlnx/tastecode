@@ -44,6 +44,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@harness/adapter-claude-code':
+        specifier: workspace:*
+        version: link:../../packages/adapter-claude-code
       '@harness/adapter-codex':
         specifier: workspace:*
         version: link:../../packages/adapter-codex
