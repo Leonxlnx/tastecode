@@ -43,6 +43,8 @@ export const ItemSchema = z.object({
   /** Present on `command`: the command line and its exit code once finished. */
   command: z.string().optional(),
   exitCode: z.number().optional(),
+  /** How long a command ran. Shown because a slow step is worth noticing. */
+  durationMs: z.number().optional(),
   /** Present on `file_change`. */
   path: z.string().optional(),
   linesAdded: z.number().optional(),

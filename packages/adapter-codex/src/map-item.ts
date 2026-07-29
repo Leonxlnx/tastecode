@@ -45,6 +45,7 @@ export function mapThreadItem(
         command: raw.command,
         ...(raw.aggregatedOutput === null ? {} : { text: raw.aggregatedOutput }),
         ...(raw.exitCode === null ? {} : { exitCode: raw.exitCode }),
+        ...(raw.durationMs === null ? {} : { durationMs: raw.durationMs }),
       }
 
     case 'fileChange': {
@@ -60,7 +61,12 @@ export function mapThreadItem(
     }
 
     case 'mcpToolCall':
-      return { ...base, type: 'tool_call', text: `${raw.server}.${raw.tool}` }
+      return {
+        ...base,
+        type: 'tool_call',
+        text: `${raw.server}.${raw.tool}`,
+        ...(raw.durationMs === null ? {} : { durationMs: raw.durationMs }),
+      }
 
     case 'dynamicToolCall':
       return { ...base, type: 'tool_call', text: raw.tool }
