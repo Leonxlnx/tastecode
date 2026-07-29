@@ -942,6 +942,129 @@
   text-decoration-color: var(--line-strong);
 }
 
+/* ---------- diff ---------- */
+
+.diff {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 9px 12px;
+}
+
+.diff__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+}
+
+.diff__head::-webkit-details-marker {
+  display: none;
+}
+
+.diff__title {
+  font-weight: 540;
+}
+
+.diff__files {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.diff__stat {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.diff__body {
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  margin: 9px 0 0;
+  max-height: 400px;
+  overflow: auto;
+  white-space: pre;
+}
+
+.dline {
+  display: block;
+  padding: 0 6px;
+  margin: 0 -6px;
+}
+
+/* Tinted rows rather than bare coloured text: at a glance you read the shape
+   of the change, not individual characters. */
+.dline--add {
+  background: color-mix(in oklab, var(--success) 13%, transparent);
+  color: var(--success);
+}
+
+.dline--del {
+  background: color-mix(in oklab, var(--error) 13%, transparent);
+  color: var(--error);
+}
+
+.dline--hunk {
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+
+.dline--meta {
+  color: var(--text-3);
+}
+
+.dline--ctx {
+  color: var(--text-2);
+}
+
+/* ---------- find in thread ---------- */
+
+.find {
+  position: absolute;
+  top: 10px;
+  right: 22px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  box-shadow: 0 12px 32px -10px rgba(0, 0, 0, 0.6);
+  animation: menu-in var(--dur-fast) var(--ease-out);
+}
+
+.find input {
+  width: 170px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  outline: none;
+}
+
+.find input::placeholder {
+  color: var(--text-3);
+}
+
+.find__count {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
+}
+
 /* ---------- token usage ---------- */
 
 .usage {

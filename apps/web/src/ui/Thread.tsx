@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { Item, PlanStep } from '@harness/contracts'
+import { Diff } from './Diff.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
+import { ThreadSearch } from './ThreadSearch.js'
 import { isAtBottom, modeForNewTurn, shouldReleaseAnchor, type ScrollMode } from './scroll-mode.js'
 
 /**
@@ -17,9 +19,15 @@ import { isAtBottom, modeForNewTurn, shouldReleaseAnchor, type ScrollMode } from
  * line you can open. The default view should read as a summary of what
  * happened, not a transcript of every byte.
  */
-export function Thread(props: { items: Item[]; running: boolean; plan: PlanStep[] }) {
+export function Thread(props: {
+  items: Item[]
+  running: boolean
+  plan: PlanStep[]
+  diff: string | undefined
+}) {
   const scroller = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<ScrollMode>('follow-end')
+  const [finding, setFinding] = useState(false)
   const modeRef = useRef(mode)
   modeRef.current = mode
 
@@ -83,10 +91,34 @@ export function Thread(props: { items: Item[]; running: boolean; plan: PlanStep[
     }
   }, [])
 
+  // Ctrl+F cannot work with a virtualised list — the match may not be in the
+  // DOM — so the app owns find instead of the browser.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+        event.preventDefault()
+        setFinding(true)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const jumpTo = useCallback(
+    (index: number) => {
+      setMode('free')
+      virtualizer.scrollToIndex(index, { align: 'center' })
+    },
+    [virtualizer],
+  )
+
   const rows = virtualizer.getVirtualItems()
 
   return (
     <div className="thread" ref={scroller} onScroll={onScroll}>
+      {finding ? (
+        <ThreadSearch items={props.items} onJump={jumpTo} onClose={() => setFinding(false)} />
+      ) : null}
       <div className="thread__col">
         <div className="thread__runway" style={{ height: virtualizer.getTotalSize() }}>
           {rows.map((row) => {
@@ -107,6 +139,7 @@ export function Thread(props: { items: Item[]; running: boolean; plan: PlanStep[
         </div>
 
         <Plan steps={props.plan} />
+        <Diff diff={props.diff} />
         {props.running ? <Working /> : null}
       </div>
 

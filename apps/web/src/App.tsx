@@ -281,7 +281,12 @@ export function App() {
           />
 
           {active ? (
-            <Thread items={thread.items} running={thread.running} plan={thread.plan} />
+            <Thread
+              items={thread.items}
+              running={thread.running}
+              plan={thread.plan}
+              diff={thread.diff}
+            />
           ) : (
             <Empty
               hasProjects={projects.length > 0}
