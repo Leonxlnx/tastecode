@@ -34,7 +34,7 @@ export const PROVIDER_CARDS: ProviderCard[] = [
     name: 'Claude Code',
     blurb: 'Anthropic’s agent, signed in with your Claude account',
     plans: ['Pro', 'Max', 'API key'],
-    ready: false,
+    ready: true,
   },
   {
     id: 'cursor',

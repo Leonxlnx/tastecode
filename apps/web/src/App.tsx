@@ -143,11 +143,12 @@ export function App() {
 
   const newSession = useCallback(
     async (projectPath: string): Promise<string | undefined> => {
+      if (!provider) return undefined
       setNotice(undefined)
       setActivePath(projectPath)
       try {
         const { threadId } = await transport.request('thread.start', {
-          provider: 'codex',
+          provider,
           workspacePath: projectPath,
           approval,
           ...(modelId ? { model: modelId } : {}),
@@ -174,7 +175,7 @@ export function App() {
         return undefined
       }
     },
-    [transport, modelId, effort, approval],
+    [transport, provider, modelId, effort, approval],
   )
 
   const send = useCallback(
