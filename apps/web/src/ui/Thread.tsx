@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import type { Item, PlanStep } from '@harness/contracts'
+import type { ApprovalDecision, ApprovalRequest, Item, PlanStep } from '@harness/contracts'
+import { Approval } from './Approval.js'
 import { Diff } from './Diff.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
@@ -25,6 +26,8 @@ export function Thread(props: {
   running: boolean
   plan: PlanStep[]
   diff: string | undefined
+  approvals: ApprovalRequest[]
+  onDecide: (id: string, decision: ApprovalDecision) => void
 }) {
   const scroller = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<ScrollMode>('follow-end')
@@ -182,9 +185,19 @@ export function Thread(props: {
           })}
         </div>
 
+        {/* Above the plan and the diff: it is the only thing here that blocks
+            the agent, so it should be the first thing the eye lands on. */}
+        {props.approvals.map((request) => (
+          <Approval
+            key={request.id}
+            request={request}
+            onDecide={(d) => props.onDecide(request.id, d)}
+          />
+        ))}
+
         <Plan steps={props.plan} />
         <Diff diff={props.diff} />
-        {props.running ? <Working /> : null}
+        {props.running && props.approvals.length === 0 ? <Working /> : null}
       </div>
 
       {mode === 'free' ? (

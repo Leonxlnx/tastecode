@@ -286,6 +286,15 @@ export function App() {
               running={thread.running}
               plan={thread.plan}
               diff={thread.diff}
+              approvals={thread.approvals}
+              onDecide={(approvalId, decision) => {
+                if (!activeId) return
+                void transport.request('thread.respondToApproval', {
+                  threadId: activeId,
+                  approvalId,
+                  decision,
+                })
+              }}
             />
           ) : (
             <Empty

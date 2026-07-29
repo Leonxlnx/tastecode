@@ -970,6 +970,87 @@
   text-decoration-color: var(--line-strong);
 }
 
+/* ---------- approval ---------- */
+
+/* Deliberately the loudest surface in the thread. It is the only thing here
+   that authorises arbitrary execution, and it blocks the agent until answered. */
+.approval {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-left: 2px solid var(--text-2);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+}
+
+.approval__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.approval__head svg {
+  color: var(--text-2);
+  flex: none;
+}
+
+.approval__title {
+  font-weight: 560;
+}
+
+/* The exact command, never a paraphrase — this is what gets authorised. */
+.approval__command {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  margin: 0 0 8px;
+  overflow-x: auto;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.approval__path {
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  margin: 0 0 8px;
+  word-break: break-all;
+}
+
+.approval__meta {
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  margin: 0 0 8px;
+}
+
+.approval__cwd {
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+/* Quoted, because it is the agent's justification and not our claim. */
+.approval__reason {
+  border-left: 1px solid var(--line-strong);
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: 1.6;
+  margin: 0 0 12px;
+  padding-left: 10px;
+}
+
+.approval__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.approval__spacer {
+  flex: 1;
+}
+
 /* ---------- diff ---------- */
 
 .diff {

@@ -1,4 +1,4 @@
-import type { DomainEvent, Item, PlanStep, Usage } from '@harness/contracts'
+import type { ApprovalRequest, DomainEvent, Item, PlanStep, Usage } from '@harness/contracts'
 
 /**
  * Folds the domain event stream into what the UI renders.
@@ -15,9 +15,11 @@ export type ThreadState = {
   usage?: Usage
   /** Everything the current turn changed, as one unified diff. */
   diff?: string | undefined
+  /** Permission requests still waiting on an answer. */
+  approvals: ApprovalRequest[]
 }
 
-export const emptyThread: ThreadState = { items: [], running: false, plan: [] }
+export const emptyThread: ThreadState = { items: [], running: false, plan: [], approvals: [] }
 
 /**
  * Marks a locally-echoed message that the agent has not confirmed yet. The
@@ -44,6 +46,14 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
 
     case 'diff.updated':
       return { ...state, diff: event.diff }
+
+    case 'approval.requested':
+      // Codex is blocked waiting on this. Queued rather than replacing, since
+      // a turn can have more than one outstanding at a time.
+      return { ...state, approvals: [...state.approvals, event.request] }
+
+    case 'approval.resolved':
+      return { ...state, approvals: state.approvals.filter((a) => a.id !== event.id) }
 
     case 'item.started': {
       // The agent echoes the user's message back as a canonical item. Drop our
