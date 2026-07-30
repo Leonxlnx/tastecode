@@ -23,15 +23,39 @@ export class Streamer {
   #turnId: string
   /** The item currently accumulating text, per kind. */
   #open = new Map<'message' | 'reasoning', string>()
+  /**
+   * What each tool call was when it started.
+   *
+   * `tool_call_update` carries only what changed, so the completion frame
+   * usually has no `kind` and no `title`. Without this a finished command
+   * arrives as an anonymous "tool" and replaces the row that showed what was
+   * actually run.
+   */
+  #tools = new Map<string, { kind?: ToolKind; title?: string }>()
   #counter = 0
 
   constructor(turnId: string) {
     this.#turnId = turnId
   }
 
+  /**
+   * Record what a tool call is before any update mentions it.
+   *
+   * A call that needs permission is described only in the permission request,
+   * which is a JSON-RPC request rather than a session update. Its first and
+   * only update is the completion, and that one carries no kind or title.
+   */
+  note(toolCallId: string, fields: { kind?: ToolKind; title?: string }): void {
+    const known = this.#tools.get(toolCallId)
+    const kind = fields.kind ?? known?.kind
+    const title = fields.title ?? known?.title
+    this.#tools.set(toolCallId, { ...(kind ? { kind } : {}), ...(title ? { title } : {}) })
+  }
+
   /** Called when a turn ends, so the next one does not append to a stale item. */
   reset(): void {
     this.#open.clear()
+    this.#tools.clear()
   }
 
   translate(update: SessionUpdate): DomainEvent[] {
@@ -86,7 +110,15 @@ export class Streamer {
 
   #toolCall(update: SessionUpdate): DomainEvent[] {
     const id = update.toolCallId ?? `${this.#turnId}-tool-${++this.#counter}`
-    const type = (update.kind && KIND_TO_ITEM[update.kind]) ?? 'tool_call'
+
+    // An update carries only what changed. Fall back to what we recorded when
+    // this call started, so a completion does not erase its own identity.
+    const known = this.#tools.get(id)
+    const kind = update.kind ?? known?.kind
+    const title = update.title ?? known?.title
+    this.#tools.set(id, { ...(kind ? { kind } : {}), ...(title ? { title } : {}) })
+
+    const type = (kind && KIND_TO_ITEM[kind]) ?? 'tool_call'
     const finished = update.status === 'completed' || update.status === 'failed'
 
     // A tool call interrupts the prose around it. Leaving the message item open
@@ -105,12 +137,11 @@ export class Streamer {
     if (type === 'command') {
       // The title is the only place the command line appears; `rawInput` is
       // agent-specific and not reliably present.
-      item.command = update.title ?? 'command'
+      item.command = title ?? 'command'
     } else if (type === 'file_change') {
-      item.path =
-        update.locations?.[0]?.path ?? pathFromContent(update.content) ?? update.title ?? ''
+      item.path = update.locations?.[0]?.path ?? pathFromContent(update.content) ?? title ?? ''
     } else {
-      item.text = update.title ?? 'tool'
+      item.text = title ?? 'tool'
     }
 
     const output = outputOf(update.content)

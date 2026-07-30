@@ -82,6 +82,52 @@ describe('Streamer', () => {
     expect(event.item.text).toContain('v22.22.2')
   })
 
+  it('keeps a command a command when the completion frame omits its kind', () => {
+    const streamer = new Streamer('t1')
+
+    // Exactly what gemini-cli sends: the start carries kind and title, the
+    // completion carries neither.
+    streamer.translate({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'run_shell_command-1',
+      status: 'in_progress',
+      title: 'node -v',
+      kind: 'execute',
+    })
+    const done = streamer.translate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'run_shell_command-1',
+      status: 'completed',
+      content: [{ type: 'content', content: { type: 'text', text: 'v22.22.2' } }],
+    })
+
+    const event = done[0]
+    if (event?.type !== 'item.completed') throw new Error('shape')
+    // Without carrying the kind forward this arrives as an anonymous "tool"
+    // and replaces the row that showed what was actually run.
+    expect(event.item.type).toBe('command')
+    expect(event.item.command).toBe('node -v')
+  })
+
+  it('takes a permissioned call’s identity from the permission request', () => {
+    const streamer = new Streamer('t1')
+
+    // Gemini describes a call needing permission only in the request, then
+    // sends one completion update with neither kind nor title.
+    streamer.note('run_shell_command-2', { kind: 'execute', title: 'rm -rf build' })
+    const done = streamer.translate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'run_shell_command-2',
+      status: 'completed',
+      content: [{ type: 'content', content: { type: 'text', text: 'ok' } }],
+    })
+
+    const event = done[0]
+    if (event?.type !== 'item.completed') throw new Error('shape')
+    expect(event.item.type).toBe('command')
+    expect(event.item.command).toBe('rm -rf build')
+  })
+
   it('starts a new paragraph after a tool call', () => {
     const streamer = new Streamer('t1')
 

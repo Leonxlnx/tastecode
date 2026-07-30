@@ -227,6 +227,16 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     const id = call.toolCallId ?? `approval-${Date.now()}`
     const options = request.options ?? []
 
+    // This is the only place a permissioned call is described. Its completion
+    // update carries neither kind nor title, so record them now or the finished
+    // command shows up as an anonymous "tool".
+    if (call.toolCallId) {
+      this.#streamer?.note(call.toolCallId, {
+        ...(call.kind ? { kind: call.kind } : {}),
+        ...(call.title ? { title: call.title } : {}),
+      })
+    }
+
     const auto = this.#autoDecision(call.kind)
     if (auto) {
       const optionId = options.find((option) => option.kind === auto)?.optionId
