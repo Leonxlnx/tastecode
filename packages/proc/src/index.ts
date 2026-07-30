@@ -32,6 +32,60 @@ export function spawnCli(
 }
 
 /**
+ * Whether a command exists on PATH.
+ *
+ * Asked with the platform's own lookup rather than by running the thing: agent
+ * CLIs open browsers, start sessions, and print banners on first launch, none
+ * of which is an acceptable side effect of drawing a list.
+ */
+export function isInstalled(command: string): Promise<boolean> {
+  const [lookup, args] =
+    process.platform === 'win32' ? ['where.exe', [command]] : ['/usr/bin/which', [command]]
+
+  return new Promise((resolve) => {
+    const child = spawn(lookup, args, { stdio: 'ignore', windowsHide: true })
+    child.on('error', () => resolve(false))
+    child.on('exit', (code) => resolve(code === 0))
+  })
+}
+
+/**
+ * A CLI's own version string, or undefined if it will not say.
+ *
+ * Every vendor formats this differently and some print startup noise first, so
+ * this takes the first line that contains a version-looking number rather than
+ * trusting position. Reporting nothing beats reporting a deprecation warning as
+ * if it were a version.
+ */
+export function commandVersion(command: string, timeoutMs = 5000): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const child = spawnCli(command, ['--version'])
+    let output = ''
+    let settled = false
+
+    const finish = (value: string | undefined) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      child.kill()
+      resolve(value)
+    }
+
+    const timer = setTimeout(() => finish(undefined), timeoutMs)
+
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      output += chunk
+    })
+    child.on('error', () => finish(undefined))
+    child.on('exit', () => {
+      const line = output.split('\n').find((entry) => /\d+\.\d+/.test(entry))
+      finish(line?.trim() || undefined)
+    })
+  })
+}
+
+/**
  * Read newline-delimited JSON from a stream.
  *
  * Chunks split mid-line constantly, so the partial tail has to survive between
