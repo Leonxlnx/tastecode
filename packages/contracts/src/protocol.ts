@@ -130,6 +130,66 @@ export const methods = {
       ),
     }),
   },
+  /**
+   * Projects and sessions the server knows about. These replace what the
+   * renderer used to keep in localStorage, where a reload could destroy it.
+   */
+  'projects.list': {
+    params: z.object({}),
+    result: z.object({
+      projects: z.array(
+        z.object({
+          path: z.string(),
+          name: z.string(),
+          createdAt: z.number(),
+          sessions: z.array(
+            z.object({
+              id: z.string(),
+              title: z.string(),
+              provider: ProviderIdSchema,
+              agent: z.string().optional(),
+              createdAt: z.number(),
+              /** True while a process is alive for it, not merely on record. */
+              running: z.boolean(),
+              closedAt: z.number().optional(),
+            }),
+          ),
+        }),
+      ),
+    }),
+  },
+  'projects.add': {
+    params: z.object({ path: z.string(), name: z.string().optional() }),
+    result: z.object({ path: z.string(), name: z.string(), createdAt: z.number() }),
+  },
+  'projects.rename': {
+    params: z.object({ path: z.string(), name: z.string() }),
+    result: z.object({}),
+  },
+  'projects.remove': {
+    params: z.object({ path: z.string() }),
+    result: z.object({}),
+  },
+  'thread.rename': {
+    params: z.object({ threadId: z.string(), title: z.string() }),
+    result: z.object({}),
+  },
+  'thread.delete': {
+    params: z.object({ threadId: z.string() }),
+    result: z.object({}),
+  },
+  /**
+   * Everything that has happened in a thread, so reopening it shows the
+   * conversation rather than an empty pane. `afterSeq` asks only for the tail,
+   * which is what a client that fell behind needs.
+   */
+  'thread.history': {
+    params: z.object({ threadId: z.string(), afterSeq: z.number().optional() }),
+    result: z.object({
+      events: z.array(z.object({ seq: z.number(), event: DomainEventSchema })),
+      running: z.boolean(),
+    }),
+  },
   'thread.start': {
     params: z.object({
       provider: ProviderIdSchema,

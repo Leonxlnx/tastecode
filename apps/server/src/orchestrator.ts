@@ -1,5 +1,6 @@
 import { CodexAdapter } from '@harness/adapter-codex'
 import { providerRuntime, type AgentSession, type StartOptions } from './adapters.js'
+import type { Store } from './store.js'
 import type {
   Account,
   ApprovalDecision,
@@ -12,27 +13,37 @@ import type {
 /**
  * Owns every live agent session.
  *
- * Adapters are per-thread today. When a second provider lands (M2) this is
- * where the registry goes; the routing above it does not change, which is the
- * point of the adapter contract.
+ * Sessions are independent: each has its own adapter and child process, and a
+ * turn running in one does not block another. The only thing they share is
+ * this map and the store.
+ *
+ * Every event is written to the log before it is broadcast. That ordering
+ * matters — a client that reconnects mid-turn replays from the log, and an
+ * event that went out but was never recorded would be one the client can never
+ * get back.
  */
 export class Orchestrator {
   #threads = new Map<string, { thread: Thread; session: AgentSession }>()
-  #onEvent: (threadId: string, event: DomainEvent) => void
+  #store: Store
+  #onEvent: (threadId: string, event: DomainEvent, seq: number) => void
   #onLog: (line: string) => void
   #onLogin: (
     provider: ProviderId,
     result: { loginId: string | null; success: boolean; error: string | null },
   ) => void
 
-  constructor(handlers: {
-    onEvent: (threadId: string, event: DomainEvent) => void
-    onLog: (line: string) => void
-    onLogin: (
-      provider: ProviderId,
-      result: { loginId: string | null; success: boolean; error: string | null },
-    ) => void
-  }) {
+  constructor(
+    store: Store,
+    handlers: {
+      onEvent: (threadId: string, event: DomainEvent, seq: number) => void
+      onLog: (line: string) => void
+      onLogin: (
+        provider: ProviderId,
+        result: { loginId: string | null; success: boolean; error: string | null },
+      ) => void
+    },
+  ) {
+    this.#store = store
     this.#onEvent = handlers.onEvent
     this.#onLog = handlers.onLog
     this.#onLogin = handlers.onLogin
@@ -97,9 +108,41 @@ export class Orchestrator {
     const { thread, session } = await runtime.start(workspacePath, options)
     this.#threads.set(thread.id, { thread, session })
 
+    this.#store.addProject(workspacePath)
+    this.#store.addThread({
+      id: thread.id,
+      projectPath: workspacePath,
+      provider,
+      ...(options.agent ? { agent: options.agent } : {}),
+      title: 'New session',
+      createdAt: thread.createdAt,
+    })
+
     // Wired after start so the thread id exists before any event fires.
-    session.on('event', (event) => this.#onEvent(thread.id, event))
+    session.on('event', (event) => this.#record(thread.id, event))
     return thread
+  }
+
+  /**
+   * Log first, then broadcast.
+   *
+   * A client that reconnects mid-turn catches up from the log. An event that
+   * went out but was never recorded would be one it can never get back, so the
+   * write has to happen first even though it is the slower half.
+   */
+  #record(threadId: string, event: DomainEvent): void {
+    const seq = this.#store.append(threadId, event)
+    this.#onEvent(threadId, event, seq)
+  }
+
+  /** A thread's history, for a client opening or reattaching to it. */
+  history(threadId: string, afterSeq = 0): Array<{ seq: number; event: DomainEvent }> {
+    return this.#store.history(threadId, afterSeq)
+  }
+
+  /** Whether a session is still live, as opposed to merely on record. */
+  isRunning(threadId: string): boolean {
+    return this.#threads.has(threadId)
   }
 
   async sendTurn(threadId: string, text: string, attachments: string[] = []): Promise<string> {
@@ -119,6 +162,9 @@ export class Orchestrator {
     if (!entry) return
     entry.session.dispose()
     this.#threads.delete(threadId)
+    // Marked closed, not deleted. Ending the process is not the same as
+    // wanting the transcript gone.
+    this.#store.closeThread(threadId)
   }
 
   disposeAll(): void {
