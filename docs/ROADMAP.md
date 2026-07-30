@@ -60,8 +60,22 @@ differently from the wire, and a permissioned tool call is described only in the
 permission request — a unit test written from the docs passed while the real
 thing was broken.
 
-Still open in M2: session manager, worktrees, checkpoints, cost accounting, and
-the server taking ownership of projects and sessions from localStorage.
+Also done: **the server owns projects, sessions and their event log**, so a session
+survives a reload and a restart; **several sessions run at once** without blocking or
+cross-wiring; **each session can take a private git worktree**, which is what makes two
+agents in one repository safe rather than merely concurrent; and **a session can be rolled
+back**, files and conversation together, from a checkpoint taken before every turn.
+
+Three of those were verified against real agents rather than mocks, and each verification
+found something the tests had not. Two Claude Code sessions writing the same file proved
+isolation held. A rollback restored the right contents but staged them, which only showed
+up in `git status`. And pointing a new build at yesterday's database found that
+`CREATE TABLE IF NOT EXISTS` never adds a column — a break that can only ever hit someone
+who used the app before the change.
+
+Still open in M2, all of it interface work: cost accounting, keyboard shortcuts and a
+command palette, empty and error states, and switching between running sessions from the
+thread view.
 
 ### M3 — Review & control
 
