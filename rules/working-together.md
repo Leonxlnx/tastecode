@@ -35,8 +35,10 @@ a draft PR, not an issue — the PR already says what you are doing.
 - **Title is imperative and specific.** `Add session tab bar`, not `sessions`.
 - **Body says what "done" looks like.** One or two sentences. If you cannot state it, the
   issue is not ready to work on.
-- **Label the milestone** — `M2`, `M3`. That is what keeps the roadmap honest without
-  editing the roadmap.
+- **Set the milestone** — `M2`, `M3`. GitHub milestones, not labels: they carry a progress
+  bar, so the roadmap stays honest without anyone editing the roadmap.
+- **Label the area** — `area:server`, `area:ui`, `area:adapters`, `area:desktop`. That is
+  how you see at a glance whether something is yours.
 - **Assign it when you start**, not when you file it. An unassigned issue is available.
 - **One issue, one PR**, where possible. If a PR closes three issues it was too big.
 
