@@ -9,6 +9,7 @@
   "references": [
     { "path": "../../packages/contracts" },
     { "path": "../../packages/adapter-acp" },
+    { "path": "../../packages/proc" },
     { "path": "../../packages/adapter-codex" },
     { "path": "../../packages/adapter-claude-code" }
   ]

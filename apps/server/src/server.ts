@@ -9,6 +9,7 @@ import {
   type ProviderId,
 } from '@harness/contracts'
 import { Orchestrator } from './orchestrator.js'
+import { detectProviders } from './providers.js'
 import { PushBus } from './push-bus.js'
 import { readWorkspace } from './workspace.js'
 
@@ -111,13 +112,7 @@ export function startServer(port = DEFAULT_PORT) {
         }
 
       case 'providers.list':
-        // Real detection lands with the setup wizard in M2. Until then this
-        // reports only what M0 actually implements, rather than pretending.
-        return {
-          providers: [
-            { id: 'codex', displayName: 'Codex', installed: true, auth: 'unknown' as const },
-          ],
-        }
+        return { providers: await detectProviders() }
 
       case 'auth.status': {
         const p = params as { provider: ProviderId }

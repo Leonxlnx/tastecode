@@ -56,6 +56,9 @@ importers:
       '@harness/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@harness/proc':
+        specifier: workspace:*
+        version: link:../../packages/proc
       ws:
         specifier: ^8.21.1
         version: 8.21.1
