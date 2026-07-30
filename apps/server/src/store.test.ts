@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { DomainEvent } from '@harness/contracts'
 import { Store } from './store.js'
@@ -19,6 +23,50 @@ const message = (text: string): DomainEvent => ({
     text,
     createdAt: 0,
   },
+})
+
+describe('opening a database written by an older build', () => {
+  /**
+   * The break this guards against only ever hits people who used the app
+   * before the change, so it cannot show up in development — a fresh database
+   * always has every column.
+   */
+  it('adds columns that did not exist yet instead of failing every query', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-store-'))
+    const file = path.join(dir, 'old.db')
+
+    // Exactly the shape shipped before worktrees and pinning existed.
+    const old = new DatabaseSync(file)
+    old.exec(`
+      CREATE TABLE projects (path TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL);
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY, project_path TEXT NOT NULL, provider TEXT NOT NULL,
+        agent TEXT, title TEXT NOT NULL, created_at INTEGER NOT NULL, closed_at INTEGER);
+      CREATE TABLE events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL,
+        at INTEGER NOT NULL, payload TEXT NOT NULL);
+    `)
+    old.prepare(`INSERT INTO projects VALUES (?, ?, ?)`).run('/repo', 'Old project', 1)
+    old
+      .prepare(`INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run('t1', '/repo', 'codex', null, 'Old session', 1, null)
+    old.close()
+
+    const migrated = new Store(file)
+    try {
+      // The old rows survive, and the new columns answer rather than throw.
+      expect(migrated.project('/repo')?.name).toBe('Old project')
+      expect(migrated.project('/repo')?.pinned).toBe(false)
+      expect(migrated.thread('t1')?.title).toBe('Old session')
+      expect(migrated.thread('t1')?.worktreePath).toBeUndefined()
+
+      migrated.setPinned('/repo', true)
+      expect(migrated.project('/repo')?.pinned).toBe(true)
+    } finally {
+      migrated.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('projects', () => {

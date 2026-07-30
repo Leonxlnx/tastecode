@@ -41,6 +41,12 @@ export type StoredThread = {
   createdAt: number
   /** Set when the session was closed. Kept, not deleted — history outlives use. */
   closedAt?: number | undefined
+  /**
+   * The private checkout this session works in, when it was isolated. Stored
+   * because a crash must not orphan a directory nobody remembers creating.
+   */
+  worktreePath?: string | undefined
+  worktreeBranch?: string | undefined
 }
 
 const SCHEMA = `
@@ -58,7 +64,9 @@ CREATE TABLE IF NOT EXISTS threads (
   agent        TEXT,
   title        TEXT NOT NULL,
   created_at   INTEGER NOT NULL,
-  closed_at    INTEGER
+  closed_at    INTEGER,
+  worktree_path   TEXT,
+  worktree_branch TEXT
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -72,6 +80,24 @@ CREATE INDEX IF NOT EXISTS events_by_thread ON events (thread_id, seq);
 CREATE INDEX IF NOT EXISTS threads_by_project ON threads (project_path);
 `
 
+/**
+ * Columns added after a version shipped.
+ *
+ * `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists, so
+ * a database written by an older build keeps its old shape and every query
+ * naming a new column fails. Anyone who had used the app before the change
+ * would meet that, and only them — which is the kind of break that never shows
+ * up in development.
+ *
+ * Add here as well as to the schema above: the schema is for a fresh database,
+ * this is for every existing one.
+ */
+const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }> = [
+  { table: 'projects', column: 'pinned', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'threads', column: 'worktree_path', definition: 'TEXT' },
+  { table: 'threads', column: 'worktree_branch', definition: 'TEXT' },
+]
+
 export class Store {
   #db: DatabaseSync
 
@@ -83,6 +109,19 @@ export class Store {
     this.#db.exec('PRAGMA journal_mode = WAL')
     this.#db.exec('PRAGMA foreign_keys = ON')
     this.#db.exec(SCHEMA)
+    this.#migrate()
+  }
+
+  /** Bring a database written by an older build up to the current shape. */
+  #migrate(): void {
+    for (const { table, column, definition } of ADDED_COLUMNS) {
+      const columns = this.#db
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .map((row) => String((row as { name: unknown }).name))
+      if (columns.includes(column)) continue
+      this.#db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+    }
   }
 
   close(): void {
@@ -144,8 +183,9 @@ export class Store {
     const stored: StoredThread = { ...thread, createdAt: thread.createdAt ?? Date.now() }
     this.#db
       .prepare(
-        `INSERT INTO threads (id, project_path, provider, agent, title, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO threads
+           (id, project_path, provider, agent, title, created_at, worktree_path, worktree_branch)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         stored.id,
@@ -154,8 +194,45 @@ export class Store {
         stored.agent ?? null,
         stored.title,
         stored.createdAt,
+        stored.worktreePath ?? null,
+        stored.worktreeBranch ?? null,
       )
     return stored
+  }
+
+  /**
+   * Every worktree we ever created and have not forgotten.
+   *
+   * Read at startup: a crash leaves directories behind that nobody remembers,
+   * and the record here is the only thing that knows they exist.
+   */
+  worktrees(): Array<{ threadId: string; path: string; branch: string; repoPath: string }> {
+    return this.#db
+      .prepare(
+        `SELECT id, project_path, worktree_path, worktree_branch FROM threads
+                WHERE worktree_path IS NOT NULL`,
+      )
+      .all()
+      .map((row) => {
+        const r = row as {
+          id: string
+          project_path: string
+          worktree_path: string
+          worktree_branch: string
+        }
+        return {
+          threadId: r.id,
+          path: r.worktree_path,
+          branch: r.worktree_branch,
+          repoPath: r.project_path,
+        }
+      })
+  }
+
+  forgetWorktree(threadId: string): void {
+    this.#db
+      .prepare(`UPDATE threads SET worktree_path = NULL, worktree_branch = NULL WHERE id = ?`)
+      .run(threadId)
   }
 
   thread(id: string): StoredThread | undefined {
@@ -244,6 +321,8 @@ function toThread(row: unknown): StoredThread {
     title: string
     created_at: number
     closed_at: number | null
+    worktree_path: string | null
+    worktree_branch: string | null
   }
   return {
     id: r.id,
@@ -253,5 +332,7 @@ function toThread(row: unknown): StoredThread {
     title: r.title,
     createdAt: Number(r.created_at),
     ...(r.closed_at === null ? {} : { closedAt: Number(r.closed_at) }),
+    ...(r.worktree_path === null ? {} : { worktreePath: r.worktree_path }),
+    ...(r.worktree_branch === null ? {} : { worktreeBranch: r.worktree_branch }),
   }
 }
