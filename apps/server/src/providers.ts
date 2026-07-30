@@ -39,12 +39,33 @@ const PROBES: Probe[] = [
   { id: 'opencode', displayName: 'OpenCode', unbuilt: 'Not supported yet' },
 ]
 
-export async function detectProviders(): Promise<ProviderStatus[]> {
-  const direct = await Promise.all(PROBES.map(probe))
-  return [...direct, await acpStatus()]
+/**
+ * The machine, as far as this file is concerned.
+ *
+ * Injected so the reporting logic can be tested without a real PATH — the
+ * interesting part is what we say about what we found, and that should not
+ * depend on which agents happen to be installed on the machine running CI.
+ */
+export type SystemProbe = {
+  isInstalled(command: string): Promise<boolean>
+  version(command: string): Promise<string | undefined>
+  acpAgents(): Promise<Array<{ name: string; installed: boolean }>>
 }
 
-async function probe(entry: Probe): Promise<ProviderStatus> {
+const REAL_SYSTEM: SystemProbe = {
+  isInstalled,
+  version: commandVersion,
+  acpAgents: detectAgents,
+}
+
+export async function detectProviders(
+  system: SystemProbe = REAL_SYSTEM,
+): Promise<ProviderStatus[]> {
+  const direct = await Promise.all(PROBES.map((entry) => probe(entry, system)))
+  return [...direct, await acpStatus(system)]
+}
+
+async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus> {
   if (!entry.command) {
     return {
       id: entry.id,
@@ -55,7 +76,7 @@ async function probe(entry: Probe): Promise<ProviderStatus> {
     }
   }
 
-  const installed = await isInstalled(entry.command)
+  const installed = await system.isInstalled(entry.command)
   if (!installed) {
     return {
       id: entry.id,
@@ -66,7 +87,7 @@ async function probe(entry: Probe): Promise<ProviderStatus> {
     }
   }
 
-  const version = await commandVersion(entry.command)
+  const version = await system.version(entry.command)
   return {
     id: entry.id,
     displayName: entry.displayName,
@@ -82,8 +103,8 @@ async function probe(entry: Probe): Promise<ProviderStatus> {
  * of them is present, and the names of those go in the version field — there is
  * no single binary whose version would mean anything here.
  */
-async function acpStatus(): Promise<ProviderStatus> {
-  const agents = await detectAgents()
+async function acpStatus(system: SystemProbe): Promise<ProviderStatus> {
+  const agents = await system.acpAgents()
   const present = agents.filter((agent) => agent.installed)
 
   return {

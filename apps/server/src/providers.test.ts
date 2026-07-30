@@ -1,0 +1,126 @@
+import { describe, expect, it } from 'vitest'
+import { detectProviders, type SystemProbe } from './providers.js'
+
+/**
+ * These assert what we *say* about the machine, not what is on it. A test that
+ * depended on which agents happen to be installed would pass on one laptop and
+ * fail on the next, which is the opposite of useful.
+ */
+
+function system(overrides: Partial<SystemProbe> = {}): SystemProbe {
+  return {
+    isInstalled: async () => false,
+    version: async () => undefined,
+    acpAgents: async () => [],
+    ...overrides,
+  }
+}
+
+const find = (list: Awaited<ReturnType<typeof detectProviders>>, id: string) =>
+  list.find((entry) => entry.id === id)!
+
+describe('detectProviders', () => {
+  it('reports an installed provider with the version it gave us', async () => {
+    const providers = await detectProviders(
+      system({
+        isInstalled: async (command) => command === 'codex',
+        version: async () => 'codex-cli 1.4.0',
+      }),
+    )
+
+    const codex = find(providers, 'codex')
+    expect(codex.installed).toBe(true)
+    expect(codex.version).toBe('codex-cli 1.4.0')
+    expect(codex.problem).toBeUndefined()
+  })
+
+  it('says why a provider is unusable rather than only that it is', async () => {
+    const providers = await detectProviders(system())
+
+    const claude = find(providers, 'claude-code')
+    expect(claude.installed).toBe(false)
+    // "not installed" with no reason leaves the user nothing to act on.
+    expect(claude.problem).toContain('claude')
+  })
+
+  it('keeps unbuilt providers in the list, distinguishable from missing ones', async () => {
+    const providers = await detectProviders(system({ isInstalled: async () => true }))
+
+    const cursor = find(providers, 'cursor')
+    // Dropping it would leave the UI unable to tell "we have not built this"
+    // from "you have not installed it".
+    expect(cursor).toBeDefined()
+    expect(cursor.installed).toBe(false)
+    expect(cursor.problem).toBe('Not supported yet')
+  })
+
+  it('omits the version when the binary would not say', async () => {
+    const providers = await detectProviders(
+      system({ isInstalled: async () => true, version: async () => undefined }),
+    )
+
+    // Reporting an empty string would render as a blank version chip, which
+    // reads as a broken install rather than a quiet one.
+    expect(find(providers, 'codex').version).toBeUndefined()
+  })
+
+  it('never claims to know whether someone is signed in', async () => {
+    const providers = await detectProviders(system({ isInstalled: async () => true }))
+
+    // We do not read credential files to answer this. See rules/security.md.
+    expect(providers.every((entry) => entry.auth === 'unknown')).toBe(true)
+  })
+
+  it('counts ACP as installed when any one agent is present', async () => {
+    const providers = await detectProviders(
+      system({
+        acpAgents: async () => [
+          { name: 'Gemini CLI', installed: true },
+          { name: 'Qwen Code', installed: false },
+        ],
+      }),
+    )
+
+    const acp = find(providers, 'acp')
+    expect(acp.installed).toBe(true)
+    // There is no single binary whose version means anything here, so the
+    // field carries which agents were found instead.
+    expect(acp.version).toBe('Gemini CLI')
+    expect(acp.problem).toBeUndefined()
+  })
+
+  it('lists every ACP agent it found, not just the first', async () => {
+    const providers = await detectProviders(
+      system({
+        acpAgents: async () => [
+          { name: 'Gemini CLI', installed: true },
+          { name: 'Kimi CLI', installed: true },
+        ],
+      }),
+    )
+
+    expect(find(providers, 'acp').version).toBe('Gemini CLI, Kimi CLI')
+  })
+
+  it('explains ACP being unavailable when no agent is present', async () => {
+    const providers = await detectProviders(
+      system({ acpAgents: async () => [{ name: 'Gemini CLI', installed: false }] }),
+    )
+
+    const acp = find(providers, 'acp')
+    expect(acp.installed).toBe(false)
+    expect(acp.problem).toContain('No ACP agent')
+  })
+
+  it('reports every provider we know about, installed or not', async () => {
+    const providers = await detectProviders(system())
+
+    expect(providers.map((entry) => entry.id).sort()).toEqual([
+      'acp',
+      'claude-code',
+      'codex',
+      'cursor',
+      'opencode',
+    ])
+  })
+})
