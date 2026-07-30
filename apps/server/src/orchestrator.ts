@@ -5,7 +5,17 @@ import {
   type ProviderRuntime,
   type StartOptions,
 } from './adapters.js'
+import { existsSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import type { Store } from './store.js'
+import {
+  createWorktree,
+  hasUncommittedChanges,
+  pruneWorktrees,
+  removeWorktree,
+  type Worktree,
+} from './worktree.js'
 import type {
   Account,
   ApprovalDecision,
@@ -28,8 +38,9 @@ import type {
  * get back.
  */
 export class Orchestrator {
-  #threads = new Map<string, { thread: Thread; session: AgentSession }>()
+  #threads = new Map<string, { thread: Thread; session: AgentSession; worktree?: Worktree }>()
   #store: Store
+  #worktreeRoot: string
   #onEvent: (threadId: string, event: DomainEvent, seq: number) => void
   #onLog: (line: string) => void
   #onLogin: (
@@ -55,9 +66,12 @@ export class Orchestrator {
         result: { loginId: string | null; success: boolean; error: string | null },
       ) => void
       runtimeFor?: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
+      /** Where isolated checkouts live. Outside any repository, on purpose. */
+      worktreeRoot?: string
     },
   ) {
     this.#store = store
+    this.#worktreeRoot = handlers.worktreeRoot ?? path.join(os.tmpdir(), 'personal-harness-trees')
     this.#onEvent = handlers.onEvent
     this.#onLog = handlers.onLog
     this.#onLogin = handlers.onLogin
@@ -119,18 +133,38 @@ export class Orchestrator {
     workspacePath: string,
     options: StartOptions = {},
   ): Promise<Thread> {
+    // The id has to exist before the worktree, and the worktree before the
+    // agent — it is the directory the agent will be spawned in.
+    const threadId = `${provider}-${crypto.randomUUID()}`
+    const worktree = options.isolate
+      ? await createWorktree(workspacePath, threadId, this.#worktreeRoot)
+      : undefined
+
     const runtime = this.#runtimeFor(provider, this.#onLog)
-    const { thread, session } = await runtime.start(workspacePath, options)
-    this.#threads.set(thread.id, { thread, session })
+    let started
+    try {
+      started = await runtime.start(worktree?.path ?? workspacePath, options)
+    } catch (error) {
+      // A worktree for a session that never started is litter, and the next
+      // attempt would trip over it.
+      if (worktree) await removeWorktree(worktree, true).catch(() => undefined)
+      throw error
+    }
+
+    const { thread, session } = started
+    this.#threads.set(thread.id, { thread, session, ...(worktree ? { worktree } : {}) })
 
     this.#store.addProject(workspacePath)
     this.#store.addThread({
       id: thread.id,
+      // The project is the repository, not the private checkout. A session
+      // still belongs to the folder the user chose.
       projectPath: workspacePath,
       provider,
       ...(options.agent ? { agent: options.agent } : {}),
       title: 'New session',
       createdAt: thread.createdAt,
+      ...(worktree ? { worktreePath: worktree.path, worktreeBranch: worktree.branch } : {}),
     })
 
     // Wired after start so the thread id exists before any event fires.
@@ -179,7 +213,60 @@ export class Orchestrator {
     this.#threads.delete(threadId)
     // Marked closed, not deleted. Ending the process is not the same as
     // wanting the transcript gone.
+    //
+    // The worktree deliberately survives: it may hold work the agent did not
+    // commit, and closing a session is not a statement about that work.
     this.#store.closeThread(threadId)
+  }
+
+  /**
+   * Whether a session's private checkout still holds work nobody has seen.
+   *
+   * Asked before offering to discard it, so the choice is put to the user in
+   * terms of what they would lose rather than as a routine tidy-up.
+   */
+  async hasUnsavedWork(threadId: string): Promise<boolean> {
+    const stored = this.#store.thread(threadId)
+    if (!stored?.worktreePath) return false
+    return hasUncommittedChanges(stored.worktreePath)
+  }
+
+  /**
+   * Remove a session's private checkout.
+   *
+   * Refuses when the agent left uncommitted work unless `force` — which is the
+   * user answering "yes, discard it", never a default. The branch is kept
+   * either way; it holds whatever was committed.
+   */
+  async discardWorktree(threadId: string, force = false): Promise<void> {
+    const stored = this.#store.thread(threadId)
+    if (!stored?.worktreePath || !stored.worktreeBranch) return
+
+    await removeWorktree(
+      { path: stored.worktreePath, branch: stored.worktreeBranch, repoPath: stored.projectPath },
+      force,
+    )
+    this.#store.forgetWorktree(threadId)
+  }
+
+  /**
+   * Clear up after a crash.
+   *
+   * A process killed mid-session leaves git believing in checkouts that are
+   * gone, and the next session on that path fails with a message about a path
+   * being "already registered" — our leftovers, reported to someone who did
+   * nothing wrong. Only worktrees whose directory has already vanished are
+   * forgotten; anything still on disk may hold work.
+   */
+  async recoverWorktrees(): Promise<void> {
+    const repos = new Set(this.#store.worktrees().map((entry) => entry.repoPath))
+    for (const repo of repos) {
+      await pruneWorktrees(repo).catch(() => undefined)
+    }
+
+    for (const entry of this.#store.worktrees()) {
+      if (!existsSync(entry.path)) this.#store.forgetWorktree(entry.threadId)
+    }
   }
 
   disposeAll(): void {

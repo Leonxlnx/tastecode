@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Capabilities, DomainEvent, ProviderId } from '@harness/contracts'
 import type { AgentSession, ProviderRuntime } from './adapters.js'
 import { Orchestrator } from './orchestrator.js'
@@ -53,13 +57,17 @@ class FakeSession implements AgentSession {
   }
 }
 
-function harness() {
+function harness(worktreeRoot?: string) {
   const store = new Store(':memory:')
   const sessions: FakeSession[] = []
   const received: Array<{ threadId: string; event: DomainEvent }> = []
 
+  /** Where each session was actually told to run. */
+  const startedIn: string[] = []
+
   const runtimeFor = (): ProviderRuntime => ({
     async start(workspacePath) {
+      startedIn.push(workspacePath)
       const session = new FakeSession(`s${sessions.length + 1}`)
       sessions.push(session)
       return {
@@ -82,9 +90,10 @@ function harness() {
     onLog: () => {},
     onLogin: () => {},
     runtimeFor,
+    ...(worktreeRoot ? { worktreeRoot } : {}),
   })
 
-  return { store, sessions, received, orchestrator }
+  return { store, sessions, received, orchestrator, startedIn }
 }
 
 const message = (text: string): DomainEvent => ({
@@ -181,6 +190,123 @@ describe('several sessions at once', () => {
     expect(store.thread(thread.id)?.closedAt).toBeGreaterThan(0)
   })
 })
+
+describe('isolated sessions', () => {
+  let repo: string
+  let trees: string
+
+  beforeEach(() => {
+    const base = mkdtempSync(path.join(os.tmpdir(), 'harness-orch-'))
+    repo = path.join(base, 'repo')
+    trees = path.join(base, 'trees')
+    execFileSync('git', ['init', '-b', 'main', repo], { windowsHide: true })
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, windowsHide: true })
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'Test')
+    writeFileSync(path.join(repo, 'file.txt'), 'original\n')
+    git('add', '.')
+    git('commit', '-m', 'first')
+  })
+
+  afterEach(() => {
+    rmSync(path.dirname(repo), { recursive: true, force: true })
+  })
+
+  it('runs the agent in its own checkout, not in the project folder', async () => {
+    const { startedIn, orchestrator } = harness(trees)
+
+    await orchestrator.startThread('codex', repo, { isolate: true })
+
+    expect(startedIn[0]).not.toBe(repo)
+    expect(existsSync(path.join(startedIn[0]!, 'file.txt'))).toBe(true)
+  })
+
+  it('still records the project as the repository the user chose', async () => {
+    const { store, orchestrator } = harness(trees)
+
+    const thread = await orchestrator.startThread('codex', repo, { isolate: true })
+
+    // The private checkout is where the work happens; it is not what the
+    // session belongs to.
+    expect(store.thread(thread.id)?.projectPath).toBe(repo)
+    expect(store.thread(thread.id)?.worktreePath).toBe(startedInOf(store, thread.id))
+  })
+
+  it('runs in the project folder itself when isolation was not asked for', async () => {
+    const { startedIn, store, orchestrator } = harness(trees)
+
+    const thread = await orchestrator.startThread('codex', repo)
+
+    expect(startedIn[0]).toBe(repo)
+    expect(store.thread(thread.id)?.worktreePath).toBeUndefined()
+  })
+
+  it('refuses to discard a checkout holding work nobody has committed', async () => {
+    const { store, orchestrator } = harness(trees)
+
+    const thread = await orchestrator.startThread('codex', repo, { isolate: true })
+    writeFileSync(path.join(store.thread(thread.id)!.worktreePath!, 'file.txt'), 'agent work\n')
+
+    await expect(orchestrator.discardWorktree(thread.id)).rejects.toThrow(/uncommitted/i)
+    // Refusing has to actually leave it there.
+    expect(existsSync(store.thread(thread.id)!.worktreePath!)).toBe(true)
+  })
+
+  it('closing a session leaves its checkout alone', async () => {
+    const { store, orchestrator } = harness(trees)
+
+    const thread = await orchestrator.startThread('codex', repo, { isolate: true })
+    const worktreePath = store.thread(thread.id)!.worktreePath!
+
+    orchestrator.close(thread.id)
+
+    // Closing ends the process. It says nothing about the work in there.
+    expect(existsSync(worktreePath)).toBe(true)
+  })
+
+  it('forgets a checkout that a crash left behind, and keeps ones still on disk', async () => {
+    const { store, orchestrator } = harness(trees)
+
+    const gone = await orchestrator.startThread('codex', repo, { isolate: true })
+    const alive = await orchestrator.startThread('codex', repo, { isolate: true })
+    rmSync(store.thread(gone.id)!.worktreePath!, { recursive: true, force: true })
+
+    await orchestrator.recoverWorktrees()
+
+    expect(store.thread(gone.id)?.worktreePath).toBeUndefined()
+    expect(store.thread(alive.id)?.worktreePath).toBeDefined()
+  })
+
+  it('leaves nothing behind when the agent fails to start', async () => {
+    const store = new Store(':memory:')
+    const orchestrator = new Orchestrator(store, {
+      onEvent: () => {},
+      onLog: () => {},
+      onLogin: () => {},
+      worktreeRoot: trees,
+      runtimeFor: () => ({
+        async start() {
+          throw new Error('binary not found')
+        },
+        async listModels() {
+          return []
+        },
+      }),
+    })
+
+    await expect(orchestrator.startThread('codex', repo, { isolate: true })).rejects.toThrow(
+      /binary not found/,
+    )
+
+    // A checkout for a session that never started is litter, and the next
+    // attempt would trip over it.
+    expect(existsSync(trees) ? readdirSync(trees) : []).toEqual([])
+  })
+})
+
+function startedInOf(store: Store, threadId: string): string | undefined {
+  return store.thread(threadId)?.worktreePath
+}
 
 function text(entries: Array<{ event: DomainEvent }>): Array<string | undefined> {
   return entries

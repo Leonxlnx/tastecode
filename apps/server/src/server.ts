@@ -75,6 +75,11 @@ export function startServer(port = DEFAULT_PORT) {
     onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
   })
 
+  // A previous run killed mid-session leaves git believing in checkouts that
+  // are gone. Clearing that up at startup means the next session on that path
+  // starts instead of failing with a message about our own leftovers.
+  void orchestrator.recoverWorktrees().catch(() => undefined)
+
   wss.on('connection', (socket) => {
     push.add(socket)
     push.send(socket, 'server.welcome', {
@@ -262,14 +267,31 @@ export function startServer(port = DEFAULT_PORT) {
           model?: string
           effort?: string
           approval?: 'ask' | 'auto' | 'full'
+          isolate?: boolean
         }
         const thread = await orchestrator.startThread(p.provider, p.workspacePath, {
           model: p.model,
           effort: p.effort,
           approval: p.approval,
           agent: p.agent,
+          isolate: p.isolate,
         })
         return { threadId: thread.id }
+      }
+
+      case 'thread.unsavedWork': {
+        const p = params as { threadId: string }
+        const stored = store.thread(p.threadId)
+        return {
+          isolated: stored?.worktreePath !== undefined,
+          uncommitted: await orchestrator.hasUnsavedWork(p.threadId),
+        }
+      }
+
+      case 'thread.discardWorktree': {
+        const p = params as { threadId: string; force?: boolean }
+        await orchestrator.discardWorktree(p.threadId, p.force ?? false)
+        return {}
       }
 
       case 'thread.sendTurn': {

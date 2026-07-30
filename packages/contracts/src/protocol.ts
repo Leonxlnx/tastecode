@@ -213,8 +213,27 @@ export const methods = {
       model: z.string().optional(),
       effort: z.string().optional(),
       approval: ApprovalModeSchema.optional(),
+      /**
+       * Give this session a private git worktree instead of the project folder
+       * itself. Two agents in one directory overwrite each other, and the
+       * second to write wins silently.
+       */
+      isolate: z.boolean().optional(),
     }),
     result: z.object({ threadId: z.string() }),
+  },
+  /** Whether a session's private checkout holds work nobody has committed. */
+  'thread.unsavedWork': {
+    params: z.object({ threadId: z.string() }),
+    result: z.object({ isolated: z.boolean(), uncommitted: z.boolean() }),
+  },
+  /**
+   * Remove a session's private checkout. Fails when it holds uncommitted work
+   * unless `force`, which is the user saying to discard it.
+   */
+  'thread.discardWorktree': {
+    params: z.object({ threadId: z.string(), force: z.boolean().optional() }),
+    result: z.object({}),
   },
   'thread.sendTurn': {
     params: z.object({
