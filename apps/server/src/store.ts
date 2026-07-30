@@ -26,6 +26,8 @@ import type { DomainEvent, ProviderId } from '@harness/contracts'
 export type StoredProject = {
   path: string
   name: string
+  /** Pinned to the top of the rail. A choice the user made, so it persists. */
+  pinned: boolean
   createdAt: number
 }
 
@@ -45,6 +47,7 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
   path       TEXT PRIMARY KEY,
   name       TEXT NOT NULL,
+  pinned     INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
 
@@ -92,17 +95,24 @@ export class Store {
     const project: StoredProject = {
       path: projectPath,
       name: name ?? path.basename(projectPath),
+      pinned: false,
       createdAt: Date.now(),
     }
     // Adding a project twice is a normal thing for a user to do; it must not
     // wipe the name they gave it.
     this.#db
       .prepare(
-        `INSERT INTO projects (path, name, created_at) VALUES (?, ?, ?)
+        `INSERT INTO projects (path, name, pinned, created_at) VALUES (?, ?, 0, ?)
          ON CONFLICT (path) DO NOTHING`,
       )
       .run(project.path, project.name, project.createdAt)
     return this.project(projectPath) ?? project
+  }
+
+  setPinned(projectPath: string, pinned: boolean): void {
+    this.#db
+      .prepare(`UPDATE projects SET pinned = ? WHERE path = ?`)
+      .run(pinned ? 1 : 0, projectPath)
   }
 
   project(projectPath: string): StoredProject | undefined {
@@ -216,8 +226,13 @@ export class Store {
 }
 
 function toProject(row: unknown): StoredProject {
-  const r = row as { path: string; name: string; created_at: number }
-  return { path: r.path, name: r.name, createdAt: Number(r.created_at) }
+  const r = row as { path: string; name: string; pinned: number; created_at: number }
+  return {
+    path: r.path,
+    name: r.name,
+    pinned: r.pinned === 1,
+    createdAt: Number(r.created_at),
+  }
 }
 
 function toThread(row: unknown): StoredThread {

@@ -21,14 +21,18 @@ const PROJECTS_KEY = 'harness.projects'
 const MODEL_KEY = 'harness.model'
 
 /**
- * Projects and sessions live in localStorage for now. The server takes
- * ownership when the event log lands in M2 — this is scaffolding that lets the
- * shell be designed against real state instead of mocks.
+ * Projects and sessions used to live here. The server owns them now, so this
+ * only exists to hand what it finds over once and then get out of the way —
+ * dropping it would silently lose the projects of anyone upgrading.
  */
-function loadProjects(): Project[] {
+function takeLegacyProjects(): Array<{ path: string; name?: string }> {
   try {
     const raw = localStorage.getItem(PROJECTS_KEY)
-    return raw ? (JSON.parse(raw) as Project[]) : []
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as Array<{ path?: string; name?: string }>
+    return parsed
+      .filter((entry): entry is { path: string; name?: string } => typeof entry.path === 'string')
+      .map(({ path, name }) => ({ path, ...(name ? { name } : {}) }))
   } catch {
     return []
   }
@@ -47,9 +51,11 @@ export function App() {
   const [acpAgentName, setAcpAgentName] = useState<string | undefined>(
     () => localStorage.getItem(AGENT_NAME_KEY) ?? undefined,
   )
-  const [projects, setProjects] = useState<Project[]>(loadProjects)
+  // A cache of what the server says, not a source of truth. Every change goes
+  // to the server and comes back through here.
+  const [projects, setProjects] = useState<Project[]>([])
   const [activeId, setActiveId] = useState<string | undefined>()
-  const [activePath, setActivePath] = useState<string | undefined>(() => loadProjects()[0]?.path)
+  const [activePath, setActivePath] = useState<string | undefined>()
   const [thread, setThread] = useState<ThreadState>(emptyThread)
   const [models, setModels] = useState<Model[]>([])
   const [modelsLoaded, setModelsLoaded] = useState(false)
@@ -138,9 +144,39 @@ export function App() {
       .catch(() => setAccount(undefined))
   }, [transport, provider])
 
+  const refreshProjects = useCallback(async () => {
+    const { projects: list } = await transport.request('projects.list', {})
+    setProjects(
+      list.map((project) => ({
+        path: project.path,
+        name: project.name,
+        pinned: project.pinned,
+        sessions: project.sessions.map((session) => ({
+          id: session.id,
+          title: session.title,
+          status: session.running ? ('running' as const) : ('idle' as const),
+        })),
+      })),
+    )
+    setActivePath((current) => current ?? list[0]?.path)
+  }, [transport])
+
+  // First load, plus the one-time handover from localStorage. Anything found
+  // there is given to the server and the key removed, so it happens once.
   useEffect(() => {
-    localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects))
-  }, [projects])
+    let cancelled = false
+    void (async () => {
+      const legacy = takeLegacyProjects()
+      for (const project of legacy) {
+        await transport.request('projects.add', project).catch(() => undefined)
+      }
+      if (legacy.length > 0) localStorage.removeItem(PROJECTS_KEY)
+      if (!cancelled) await refreshProjects().catch(() => undefined)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [transport, refreshProjects])
 
   useEffect(() => {
     if (modelId) localStorage.setItem(MODEL_KEY, modelId)
@@ -149,11 +185,10 @@ export function App() {
   const addProject = useCallback(async () => {
     const path = await pickFolder()
     if (!path) return
-    setProjects((current) =>
-      current.some((p) => p.path === path) ? current : [...current, { path, sessions: [] }],
-    )
+    await transport.request('projects.add', { path })
+    await refreshProjects()
     setActivePath(path)
-  }, [])
+  }, [transport, refreshProjects])
 
   const createSession = useCallback(
     async (projectPath: string): Promise<string | undefined> => {
@@ -169,54 +204,39 @@ export function App() {
           ...(modelId ? { model: modelId } : {}),
           ...(effort ? { effort } : {}),
         })
-        setProjects((current) =>
-          current.map((project) =>
-            project.path === projectPath
-              ? {
-                  ...project,
-                  sessions: [
-                    ...project.sessions,
-                    { id: threadId, title: 'New session', status: 'idle' as const },
-                  ],
-                }
-              : project,
-          ),
-        )
         setActiveId(threadId)
         setThread(emptyThread)
+        // The server recorded the session when it started it; this is asking
+        // what it now knows rather than guessing alongside it.
+        await refreshProjects()
         return threadId
       } catch (error) {
         setNotice(error instanceof Error ? error.message : String(error))
         return undefined
       }
     },
-    [transport, provider, acpAgent, modelId, effort, approval],
+    [transport, provider, acpAgent, modelId, effort, approval, refreshProjects],
   )
 
   const beginSession = useCallback(
     (projectPath: string) => {
+      // A session nobody typed into is bookkeeping, not history. Pressing "new
+      // session" twice should not leave a trail of empty ones.
       const untouched = projects
         .find((project) => project.path === projectPath)
         ?.sessions.filter((session) => session.title === 'New session')
-      for (const session of untouched ?? []) {
-        void transport.request('thread.close', { threadId: session.id })
-      }
-      setProjects((current) =>
-        current.map((project) =>
-          project.path === projectPath
-            ? {
-                ...project,
-                sessions: project.sessions.filter((session) => session.title !== 'New session'),
-              }
-            : project,
-        ),
-      )
+      void (async () => {
+        for (const session of untouched ?? []) {
+          await transport.request('thread.delete', { threadId: session.id }).catch(() => undefined)
+        }
+        await refreshProjects().catch(() => undefined)
+      })()
       setNotice(undefined)
       setActivePath(projectPath)
       setActiveId(undefined)
       setThread(emptyThread)
     },
-    [projects, transport],
+    [projects, transport, refreshProjects],
   )
 
   const send = useCallback(
@@ -225,14 +245,30 @@ export function App() {
       // the user press "new session" before they are allowed to type is the
       // app's bookkeeping leaking into their way of working.
       let threadId = activeId
+      let justCreated = false
       if (!threadId) {
         if (!activePath) return
         threadId = await createSession(activePath)
         if (!threadId) return
+        justCreated = true
       }
 
       setThread((current) => appendUserMessage(current, text))
-      setProjects((current) => titleIfNew(current, threadId, text))
+
+      // A session named after what was asked of it is findable a week later;
+      // "New session" is not. Named from the first message only.
+      //
+      // A session created a moment ago is untitled by definition — `projects`
+      // here is still the value from this render and cannot know about it yet,
+      // so asking it would answer no every time and nothing would be named.
+      const untitled =
+        justCreated || findSession(projects, threadId)?.session.title === 'New session'
+      if (untitled) {
+        const title = titleFrom(text)
+        setProjects((current) => renameSession(current, threadId, title))
+        void transport.request('thread.rename', { threadId, title }).catch(() => undefined)
+      }
+
       try {
         await transport.request('thread.sendTurn', {
           threadId,
@@ -243,7 +279,29 @@ export function App() {
         setNotice(error instanceof Error ? error.message : String(error))
       }
     },
-    [transport, activeId, activePath, createSession],
+    [transport, activeId, activePath, createSession, projects],
+  )
+
+  /**
+   * Open a session and show what already happened in it.
+   *
+   * Switching used to leave an empty pane, because the conversation only ever
+   * existed in the events this client had personally seen. It is replayed from
+   * the server's log now, so a session survives a reload and a restart.
+   */
+  const openSession = useCallback(
+    async (id: string) => {
+      setActiveId(id)
+      setActivePath(findSession(projects, id)?.project.path)
+      setThread(emptyThread)
+      try {
+        const { events } = await transport.request('thread.history', { threadId: id })
+        setThread(events.reduce((state, entry) => reduce(state, entry.event), emptyThread))
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : String(error))
+      }
+    },
+    [transport, projects],
   )
 
   const interrupt = useCallback(() => {
@@ -283,31 +341,29 @@ export function App() {
           account={account}
           onAddProject={() => void addProject()}
           onNewSession={beginSession}
-          onSelectSession={(id) => {
-            setActiveId(id)
-            setActivePath(findSession(projects, id)?.project.path)
-            setThread(emptyThread)
-          }}
-          onRenameProject={(path, name) =>
+          onSelectSession={(id) => void openSession(id)}
+          onRenameProject={(path, name) => {
             setProjects((c) => c.map((p) => (p.path === path ? { ...p, name } : p)))
-          }
+            void transport.request('projects.rename', { path, name }).catch(() => undefined)
+          }}
           onRemoveProject={(path) => {
             setProjects((c) => c.filter((p) => p.path !== path))
             if (activePath === path) setActivePath(undefined)
+            void transport
+              .request('projects.remove', { path })
+              .then(refreshProjects)
+              .catch(() => undefined)
           }}
-          onTogglePin={(path) =>
-            setProjects((c) => c.map((p) => (p.path === path ? { ...p, pinned: !p.pinned } : p)))
-          }
-          onRenameSession={(id, title) =>
-            setProjects((c) =>
-              c.map((p) => ({
-                ...p,
-                sessions: p.sessions.map((s) => (s.id === id ? { ...s, title } : s)),
-              })),
-            )
-          }
+          onTogglePin={(path) => {
+            const pinned = !projects.find((p) => p.path === path)?.pinned
+            setProjects((c) => c.map((p) => (p.path === path ? { ...p, pinned } : p)))
+            void transport.request('projects.pin', { path, pinned }).catch(() => undefined)
+          }}
+          onRenameSession={(id, title) => {
+            setProjects((c) => renameSession(c, id, title))
+            void transport.request('thread.rename', { threadId: id, title }).catch(() => undefined)
+          }}
           onDeleteSession={(id) => {
-            void transport.request('thread.close', { threadId: id })
             setProjects((c) =>
               c.map((p) => ({ ...p, sessions: p.sessions.filter((s) => s.id !== id) })),
             )
@@ -315,6 +371,7 @@ export function App() {
               setActiveId(undefined)
               setThread(emptyThread)
             }
+            void transport.request('thread.delete', { threadId: id }).catch(() => undefined)
           }}
           onOpenSettings={() => setSettingsOpen(true)}
         />
@@ -457,13 +514,20 @@ function basename(path: string): string {
 }
 
 /** The first thing a user types is the best title we get for free. */
-function titleIfNew(projects: Project[], threadId: string, text: string): Project[] {
+function titleFrom(text: string): string {
+  const clean = text.trim().replace(/\s+/g, ' ')
+  return clean.length > 40 ? `${clean.slice(0, 40)}…` : clean
+}
+
+/**
+ * Applied locally as well as sent to the server, so the rail updates as the
+ * message is sent rather than a round trip later.
+ */
+function renameSession(projects: Project[], threadId: string, title: string): Project[] {
   return projects.map((project) => ({
     ...project,
     sessions: project.sessions.map((session) =>
-      session.id === threadId && session.title === 'New session'
-        ? { ...session, title: text.length > 40 ? `${text.slice(0, 40)}…` : text }
-        : session,
+      session.id === threadId ? { ...session, title } : session,
     ),
   }))
 }

@@ -212,6 +212,12 @@ export function startServer(port = DEFAULT_PORT) {
         return store.addProject(p.path, p.name)
       }
 
+      case 'projects.pin': {
+        const p = params as { path: string; pinned: boolean }
+        store.setPinned(p.path, p.pinned)
+        return {}
+      }
+
       case 'projects.rename': {
         const p = params as { path: string; name: string }
         store.renameProject(p.path, p.name)

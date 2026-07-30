@@ -141,6 +141,7 @@ export const methods = {
         z.object({
           path: z.string(),
           name: z.string(),
+          pinned: z.boolean(),
           createdAt: z.number(),
           sessions: z.array(
             z.object({
@@ -160,7 +161,16 @@ export const methods = {
   },
   'projects.add': {
     params: z.object({ path: z.string(), name: z.string().optional() }),
-    result: z.object({ path: z.string(), name: z.string(), createdAt: z.number() }),
+    result: z.object({
+      path: z.string(),
+      name: z.string(),
+      pinned: z.boolean(),
+      createdAt: z.number(),
+    }),
+  },
+  'projects.pin': {
+    params: z.object({ path: z.string(), pinned: z.boolean() }),
+    result: z.object({}),
   },
   'projects.rename': {
     params: z.object({ path: z.string(), name: z.string() }),

@@ -56,6 +56,30 @@ describe('thread reducer', () => {
     expect(state.items[0]?.id).toBe('server-1')
   })
 
+  it('rebuilds a whole conversation from a stored event log', () => {
+    // What reopening a session does: the server hands back everything that
+    // happened, and replaying it has to produce the same thread the user left.
+    const state = apply([
+      {
+        type: 'turn.started',
+        turn: { id: 't1', threadId: 'th1', status: 'running', createdAt: 0 },
+      },
+      { type: 'item.completed', item: item({ id: 'u1', role: 'user', text: 'run the tests' }) },
+      { type: 'item.started', item: item({ id: 'a1', text: '' }) },
+      { type: 'item.delta', turnId: 't1', itemId: 'a1', textDelta: 'All ' },
+      { type: 'item.delta', turnId: 't1', itemId: 'a1', textDelta: 'green.' },
+      {
+        type: 'item.completed',
+        item: item({ id: 'a1', status: 'completed', text: 'All green.' }),
+      },
+      { type: 'turn.completed', turnId: 't1', status: 'completed' },
+    ])
+
+    expect(state.items.map((i) => i.text)).toEqual(['run the tests', 'All green.'])
+    // A replayed turn is finished history, not something still in flight.
+    expect(state.running).toBe(false)
+  })
+
   it('tracks whether a turn is running', () => {
     const running = apply([
       {
