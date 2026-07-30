@@ -12,5 +12,5 @@
   },
   "include": ["src/**/*"],
   "exclude": ["src/**/*.test.ts"],
-  "references": [{ "path": "../contracts" }]
+  "references": [{ "path": "../contracts" }, { "path": "../proc" }]
 }

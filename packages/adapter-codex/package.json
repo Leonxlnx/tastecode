@@ -18,7 +18,8 @@
     "generate": "codex app-server generate-ts --out src/generated"
   },
   "dependencies": {
-    "@harness/contracts": "workspace:*"
+    "@harness/contracts": "workspace:*",
+    "@harness/proc": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

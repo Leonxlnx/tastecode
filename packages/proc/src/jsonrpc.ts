@@ -3,8 +3,13 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 /**
  * Newline-delimited JSON-RPC 2.0 over a child process's stdio.
  *
- * Bidirectional on purpose: the server initiates requests too (approval
- * prompts), so this is not a plain client.
+ * Bidirectional on purpose: agents initiate requests too — Codex asks for
+ * command approval, ACP agents ask for permission and for file reads — so this
+ * is a peer, not a client.
+ *
+ * Shared because both protocols framed themselves the same way. The parts that
+ * differ between them are method names and payloads, which belong in adapters,
+ * not here.
  */
 
 export type JsonRpcId = number | string
@@ -20,9 +25,6 @@ export type ServerRequestHandler = (
   respond: (result: unknown) => void,
 ) => void
 
-/** Codex signals ingress saturation with this code. It is retryable. */
-export const OVERLOADED = -32001
-
 export class JsonRpcError extends Error {
   constructor(
     readonly code: number,
@@ -32,30 +34,37 @@ export class JsonRpcError extends Error {
     super(message)
     this.name = 'JsonRpcError'
   }
-
-  get retryable(): boolean {
-    return this.code === OVERLOADED
-  }
 }
 
 export class StdioJsonRpc {
   #child: ChildProcessWithoutNullStreams
+  /**
+   * Our outbound calls only.
+   *
+   * The peer numbers its own requests independently and starts at 0, so ids
+   * collide across directions. They are never confused because an incoming
+   * frame carrying `method` is a request to us, and one without is a reply to
+   * us — the id alone is not enough to tell them apart.
+   */
   #pending = new Map<JsonRpcId, PendingCall>()
   #nextId = 1
   #buffer = ''
   #disposed = false
+  #label: string
 
   #onNotification: (method: string, params: unknown) => void = () => {}
   #onServerRequest: ServerRequestHandler = (_m, _p, respond) => respond(null)
   #onStderr: (text: string) => void = () => {}
 
-  constructor(child: ChildProcessWithoutNullStreams) {
+  /** `label` names the process in errors, so a dead child says which one died. */
+  constructor(child: ChildProcessWithoutNullStreams, label = 'agent') {
     this.#child = child
+    this.#label = label
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => this.#ingest(chunk))
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => this.#onStderr(chunk))
-    child.on('exit', (code) => this.#failAll(new Error(`codex app-server exited (code ${code})`)))
+    child.on('exit', (code) => this.#failAll(new Error(`${this.#label} exited (code ${code})`)))
     child.on('error', (error) => this.#failAll(error))
   }
 
@@ -128,7 +137,7 @@ export class StdioJsonRpc {
     }
 
     if (id !== undefined && method !== undefined) {
-      // A request from the server — approvals arrive this way.
+      // A request from the agent — approvals and file access arrive this way.
       this.#onServerRequest(method, message['params'], (result) => {
         this.#write({ jsonrpc: '2.0', id, result })
       })

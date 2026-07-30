@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 
+export { JsonRpcError, StdioJsonRpc, type JsonRpcId, type ServerRequestHandler } from './jsonrpc.js'
+
 /**
  * Spawn a CLI that may have been installed as an npm shim.
  *
