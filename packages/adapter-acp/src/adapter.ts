@@ -111,10 +111,21 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     }
     this.#images = init.agentCapabilities?.promptCapabilities?.image ?? false
 
-    const session = await rpc.request<NewSessionResult>('session/new', {
-      cwd: workspacePath,
-      mcpServers: [],
-    })
+    const session = await rpc
+      .request<NewSessionResult>('session/new', { cwd: workspacePath, mcpServers: [] })
+      .catch((error: unknown) => {
+        // Agents report an expired or missing login as a bare protocol error.
+        // Passing that through gives the user two words and no way forward, so
+        // it becomes the one instruction that actually fixes it.
+        const message = error instanceof Error ? error.message : String(error)
+        if (/auth/i.test(message)) {
+          throw new Error(
+            `${this.#spec.name} is not signed in. Run \`${this.#spec.command}\` once in a ` +
+              `terminal and sign in there — we deliberately never handle its credentials.`,
+          )
+        }
+        throw error
+      })
     if (!session.sessionId) throw new Error(`${this.#spec.name} started no session`)
     this.#sessionId = session.sessionId
 
