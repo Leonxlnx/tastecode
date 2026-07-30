@@ -103,10 +103,14 @@ export async function restoreSnapshot(repoPath: string, commit: string): Promise
     await rm(path.join(repoPath, file), { force: true }).catch(() => undefined)
   }
 
-  // Restore the contents of everything the checkpoint knew about. `-- .`
-  // deliberately scopes this to the tree and leaves HEAD and the branch alone:
-  // a rollback is not a commit, and it must not move the user's branch.
-  await run('git', ['checkout', commit, '--', '.'], { cwd: repoPath, windowsHide: true })
+  // `restore --worktree` rather than `checkout`: checkout writes the index as
+  // well, so a rollback would stage everything it touched and hand the user a
+  // staging area they did not arrange. Nothing here moves HEAD or the branch
+  // either — a rollback restores files, it is not a commit.
+  await run('git', ['restore', '--source', commit, '--worktree', '--', '.'], {
+    cwd: repoPath,
+    windowsHide: true,
+  })
 
   return replaced
 }

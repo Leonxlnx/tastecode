@@ -151,6 +151,20 @@ describe('restoreSnapshot', () => {
     expect(git('log', '--oneline').trim().split('\n')).toHaveLength(1)
   })
 
+  it('leaves the staging area as the user arranged it', async () => {
+    write('staged.txt', 'the user staged this\n')
+    git('add', 'staged.txt')
+    const before = git('status', '--porcelain')
+
+    const snapshot = await takeSnapshot(repo)
+    write('tracked.txt', 'the agent went the wrong way\n')
+    await restoreSnapshot(repo, snapshot.commit)
+
+    // `git checkout <commit> -- .` would stage everything it touched and hand
+    // back a staging area the user did not arrange.
+    expect(git('status', '--porcelain')).toBe(before)
+  })
+
   it('restores a file inside a directory the agent created', async () => {
     write('tracked.txt', 'original\n')
     const before = await takeSnapshot(repo)
