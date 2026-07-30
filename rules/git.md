@@ -75,18 +75,13 @@ Agreed 2026-07-28.
 | **Merge style** | **Rebase, never squash.** Squash is disabled in the branch ruleset.                                                      |
 | **Pushing**     | After every commit, not batched at the end. Work that is not pushed is invisible.                                        |
 
-Ownership, so we don't collide:
-
-| Area                                                  | Owner                                                                        |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Desktop shell, installer, updater, everything Windows | Windows dev                                                                  |
-| macOS specifics, notarization                         | macOS dev                                                                    |
-| Server, adapters, UI, tests, docs                     | Claude                                                                       |
-| `packages/contracts`                                  | **Shared — both humans review.** A change here breaks three clients at once. |
+Who owns which area, how tasks are tracked, and what happens when two people want the same
+screen to look different: [working-together.md](./working-together.md).
 
 `main` is protected: PR required, 1 approval, rebase-merge only, no force-push, no deletion.
-There is currently an **admin bypass** so a solo owner isn't deadlocked —
-**remove it once the second collaborator is added**, or the rule is decorative.
+There is an **admin bypass** so a solo owner isn't deadlocked. The second collaborator has
+now joined, and the agreed position as of 2026-07-30 is to keep the bypass until both humans
+are pushing daily — at which point it should go, or the rule is decorative.
 
 ## CI gates
 
