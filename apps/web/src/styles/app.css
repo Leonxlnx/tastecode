@@ -1289,11 +1289,6 @@
   cursor: default;
 }
 
-.tool--danger,
-.tool--danger svg {
-  color: #fe8549;
-}
-
 .composer textarea {
   display: block;
   width: 100%;
@@ -1428,6 +1423,11 @@
 .tool svg {
   color: var(--text-3);
   flex: none;
+}
+
+.tool--danger,
+.tool--danger svg {
+  color: #fe8549;
 }
 
 .tool__sub {

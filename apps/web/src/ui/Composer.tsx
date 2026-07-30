@@ -4,12 +4,14 @@ import {
   ArrowUp,
   File as FileIcon,
   Folder,
-  Gauge,
   Image as ImageIcon,
+  LockOpen,
   Mic,
   Plus,
-  Shield,
+  ShieldCheck,
+  ShieldQuestion,
   Square,
+  type LucideIcon,
   X,
   Zap,
 } from 'lucide-react'
@@ -37,24 +39,28 @@ export const APPROVAL_MODES: {
   title: string
   short: string
   detail: string
+  icon: LucideIcon
 }[] = [
   {
     id: 'ask',
     title: 'Ask first',
     short: 'Ask first',
     detail: 'Read-only until you approve each action',
+    icon: ShieldQuestion,
   },
   {
     id: 'auto',
     title: 'Auto-approve',
     short: 'Auto',
     detail: 'Edits and commands inside this folder',
+    icon: ShieldCheck,
   },
   {
     id: 'full',
     title: 'Full access',
     short: 'Full access',
     detail: 'No sandbox, no prompts, no undo. Use with care.',
+    icon: LockOpen,
   },
 ]
 
@@ -88,6 +94,30 @@ const SLASH_COMMANDS: { name: string; detail: string; text: string }[] = [
 
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i
 
+function EffortGauge({ effort, options }: { effort: string | undefined; options: string[] }) {
+  const selectedIndex = effort === undefined ? -1 : options.indexOf(effort)
+  const progress =
+    selectedIndex < 0 || options.length < 2 ? 0.5 : selectedIndex / (options.length - 1)
+  const needleRotation = -60 + progress * 120
+
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M4 18a8 8 0 0 1 16 0" />
+      <path d="M12 18v-6" transform={`rotate(${needleRotation} 12 18)`} />
+    </svg>
+  )
+}
+
 export function Composer(props: {
   projectName: string | undefined
   workspace: WorkspaceInfo | undefined
@@ -120,6 +150,7 @@ export function Composer(props: {
   // "Loading models…" forever is the UI lying about what it is doing.
   const showModelPlaceholder = props.models.length === 0 && !props.modelsLoaded
   const approval = APPROVAL_MODES.find((m) => m.id === props.approval) ?? APPROVAL_MODES[0]!
+  const ApprovalIcon = approval.icon
   const efforts = model?.reasoningEfforts ?? []
 
   const matches = slashOpen
@@ -334,7 +365,7 @@ export function Composer(props: {
             disabled={props.running}
             trigger={() => (
               <span className={`tool ${props.approval === 'full' ? 'tool--danger' : ''}`}>
-                <Shield size={13} aria-hidden />
+                <ApprovalIcon size={13} aria-hidden />
                 <span>{approval.short}</span>
               </span>
             )}
@@ -383,7 +414,7 @@ export function Composer(props: {
               disabled={props.running}
               trigger={() => (
                 <span className="tool tool--compact">
-                  <Gauge size={13} aria-hidden />
+                  <EffortGauge effort={props.effort} options={efforts} />
                   <span>{props.effort ?? 'effort'}</span>
                 </span>
               )}
