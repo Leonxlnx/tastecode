@@ -49,6 +49,20 @@ ACP adapter (unlocks ~25 engines), Claude Code adapter, session manager, worktre
 checkpoints, provider setup wizard, cost accounting.
 → _Three agents on three worktrees in one repo, no confusion._
 
+Done so far: **Claude Code adapter**, **ACP adapter**, and the provider registry
+underneath both. Adding an engine is now a case in one file rather than a change
+to session handling, and ACP means one integration covers Gemini, Kimi, Qwen and
+anything else that adopts the protocol.
+
+Both adapters were written against frames captured from the running binaries.
+For ACP that mattered twice: the published schema names the update discriminator
+differently from the wire, and a permissioned tool call is described only in the
+permission request — a unit test written from the docs passed while the real
+thing was broken.
+
+Still open in M2: session manager, worktrees, checkpoints, cost accounting, and
+the server taking ownership of projects and sessions from localStorage.
+
 ### M3 — Review & control
 
 Diff review with per-hunk accept/reject, mode indicator, panic stop, terminal pane,
