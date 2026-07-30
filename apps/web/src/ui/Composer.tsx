@@ -1,5 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ApprovalMode, Model } from '@harness/contracts'
+import {
+  ArrowUp,
+  File as FileIcon,
+  Folder,
+  Gauge,
+  Image as ImageIcon,
+  Mic,
+  Plus,
+  Shield,
+  Square,
+  X,
+  Zap,
+} from 'lucide-react'
 import { canDictate, pickFiles, startDictation } from '../bridge.js'
 import { Menu, MenuItem } from './Menu.js'
 
@@ -40,7 +53,7 @@ export const APPROVAL_MODES: {
   {
     id: 'full',
     title: 'Full access',
-    short: 'Yolo',
+    short: 'Full access',
     detail: 'No sandbox, no prompts, no undo. Use with care.',
   },
 ]
@@ -164,9 +177,7 @@ export function Composer(props: {
   return (
     <div className="composer">
       <div
-        className={`composer__box ${dragging ? 'is-dropping' : ''} ${
-          props.approval === 'full' ? 'is-yolo' : ''
-        }`}
+        className={`composer__box ${dragging ? 'is-dropping' : ''}`}
         onDragOver={(e) => {
           e.preventDefault()
           setDragging(true)
@@ -186,7 +197,7 @@ export function Composer(props: {
         <div className="chips">
           {props.projectName ? (
             <span className="chip chip--context" title={props.workspace?.branch}>
-              <FolderGlyph />
+              <Folder size={13} aria-hidden />
               <span className="chip__label">{props.projectName}</span>
               {props.workspace?.branch ? (
                 <>
@@ -205,14 +216,18 @@ export function Composer(props: {
 
           {attachments.map((path) => (
             <span className={`chip chip--file`} key={path} title={path}>
-              {IMAGE_RE.test(path) ? <ImageGlyph /> : <FileGlyph />}
+              {IMAGE_RE.test(path) ? (
+                <ImageIcon size={13} aria-hidden />
+              ) : (
+                <FileIcon size={13} aria-hidden />
+              )}
               <span className="chip__label">{basename(path)}</span>
               <button
                 className="chip__x"
                 onClick={() => setAttachments((c) => c.filter((p) => p !== path))}
                 title="Remove"
               >
-                <XGlyph />
+                <X size={10} aria-hidden />
               </button>
             </span>
           ))}
@@ -283,7 +298,7 @@ export function Composer(props: {
             disabled={props.disabled}
             trigger={() => (
               <span className="tool tool--icon">
-                <PlusGlyph />
+                <Plus size={15} aria-hidden />
               </span>
             )}
           >
@@ -319,7 +334,7 @@ export function Composer(props: {
             disabled={props.running}
             trigger={() => (
               <span className={`tool ${props.approval === 'full' ? 'tool--danger' : ''}`}>
-                <ShieldGlyph />
+                <Shield size={13} aria-hidden />
                 <span>{approval.short}</span>
               </span>
             )}
@@ -368,7 +383,7 @@ export function Composer(props: {
               disabled={props.running}
               trigger={() => (
                 <span className="tool tool--compact">
-                  <GaugeGlyph />
+                  <Gauge size={13} aria-hidden />
                   <span>{props.effort ?? 'effort'}</span>
                 </span>
               )}
@@ -399,7 +414,7 @@ export function Composer(props: {
               disabled={props.running}
               trigger={() => (
                 <span className="tool">
-                  <BoltGlyph />
+                  <Zap size={13} aria-hidden />
                   <span>{model?.displayName ?? 'Model'}</span>
                 </span>
               )}
@@ -432,13 +447,13 @@ export function Composer(props: {
               disabled={props.disabled}
               title={dictating ? 'Stop dictation' : 'Dictate'}
             >
-              <MicGlyph />
+              <Mic size={15} aria-hidden />
             </button>
           ) : null}
 
           {props.running ? (
             <button className="orb orb--stop" onClick={props.onInterrupt} title="Stop">
-              <span className="orb__square" />
+              <Square size={9} fill="currentColor" strokeWidth={0} aria-hidden />
             </button>
           ) : (
             <button
@@ -447,7 +462,7 @@ export function Composer(props: {
               disabled={text.trim() === '' || props.disabled}
               title="Send"
             >
-              <ArrowUp />
+              <ArrowUp size={15} aria-hidden />
             </button>
           )}
         </div>
@@ -459,124 +474,4 @@ export function Composer(props: {
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] ?? path
-}
-
-function FolderGlyph() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M2 4.5A1.5 1.5 0 013.5 3h2.2l1.2 1.5h5.6A1.5 1.5 0 0114 6v6a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12V4.5z"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
-function FileGlyph() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M9 2H4.5A1.5 1.5 0 003 3.5v9A1.5 1.5 0 004.5 14h7a1.5 1.5 0 001.5-1.5V6L9 2z"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinejoin="round"
-      />
-      <path d="M9 2v4h4" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function ImageGlyph() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <rect x="2.5" y="3" width="11" height="10" rx="1.6" stroke="currentColor" strokeWidth="1.3" />
-      <path d="M3 11l3-3 2.5 2.5L11 8l2 2" stroke="currentColor" strokeWidth="1.3" />
-    </svg>
-  )
-}
-
-function XGlyph() {
-  return (
-    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function PlusGlyph() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M8 3.5v9M3.5 8h9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function ShieldGlyph() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M8 2l4.5 1.8v4c0 3-1.9 5.2-4.5 6.2C5.4 13 3.5 10.8 3.5 7.8v-4L8 2z"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
-function BoltGlyph() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M9 1.8L3.8 9h3.4l-.6 5.2L12.2 7H8.8l.2-5.2z"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
-function GaugeGlyph() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M2.6 11.5a6 6 0 1110.8 0"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-      />
-      <path d="M8 11L10.6 6.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function MicGlyph() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <rect x="6" y="2" width="4" height="7" rx="2" stroke="currentColor" strokeWidth="1.3" />
-      <path
-        d="M3.8 7.5a4.2 4.2 0 008.4 0M8 11.7V14"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
-}
-
-function ArrowUp() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M8 13V3.5M8 3.5L3.5 8M8 3.5L12.5 8"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
 }

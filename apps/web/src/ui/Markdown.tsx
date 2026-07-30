@@ -1,6 +1,31 @@
 import { memo, useEffect, useState } from 'react'
-import { Streamdown } from 'streamdown'
+import {
+  Check,
+  Copy,
+  Download,
+  ExternalLink,
+  LoaderCircle,
+  Maximize2,
+  RotateCcw,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react'
+import { Streamdown, type IconMap } from 'streamdown'
 import { onHighlighterChange, shikiPlugin } from './highlighter.js'
+
+const STREAMDOWN_ICONS = {
+  CheckIcon: Check,
+  CopyIcon: Copy,
+  DownloadIcon: Download,
+  ExternalLinkIcon: ExternalLink,
+  Loader2Icon: LoaderCircle,
+  Maximize2Icon: Maximize2,
+  RotateCcwIcon: RotateCcw,
+  XIcon: X,
+  ZoomInIcon: ZoomIn,
+  ZoomOutIcon: ZoomOut,
+} satisfies IconMap
 
 /**
  * Agent output, rendered.
@@ -29,6 +54,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
       parseIncompleteMarkdown
       plugins={{ code: shikiPlugin }}
       controls={{ code: true, table: true, mermaid: false }}
+      icons={STREAMDOWN_ICONS}
     >
       {text}
     </Streamdown>

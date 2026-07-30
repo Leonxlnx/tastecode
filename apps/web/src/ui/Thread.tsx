@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { ApprovalDecision, ApprovalRequest, Item, PlanStep } from '@harness/contracts'
+import {
+  Brain,
+  CircleAlert,
+  CircleQuestionMark,
+  FilePenLine,
+  ListChecks,
+  LoaderCircle,
+  SquareTerminal,
+  Wrench,
+} from 'lucide-react'
 import { Approval } from './Approval.js'
 import { Diff } from './Diff.js'
 import { Markdown } from './Markdown.js'
@@ -260,7 +270,7 @@ function Row({ item, hidden }: { item: Item; hidden?: boolean }) {
         {item.durationMs !== undefined && item.durationMs >= 1000 ? (
           <span className="aux__time">{duration(item.durationMs)}</span>
         ) : null}
-        {item.status === 'started' ? <span className="aux__live" aria-hidden /> : null}
+        {item.status === 'started' ? <LoaderCircle className="spinner" aria-hidden /> : null}
       </summary>
       {item.text ? <pre className="aux__out">{item.text}</pre> : null}
     </details>
@@ -270,7 +280,7 @@ function Row({ item, hidden }: { item: Item; hidden?: boolean }) {
 function Working() {
   return (
     <div className="working">
-      <span className="spinner" aria-hidden />
+      <LoaderCircle className="spinner" aria-hidden />
       <span>Working</span>
     </div>
   )
@@ -281,22 +291,22 @@ function duration(ms: number): string {
   return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
 }
 
-function glyph(type: Item['type']): string {
+function glyph(type: Item['type']) {
   switch (type) {
     case 'command':
-      return '›_'
+      return <SquareTerminal size={13} />
     case 'reasoning':
-      return '~'
+      return <Brain size={13} />
     case 'file_change':
-      return '±'
+      return <FilePenLine size={13} />
     case 'tool_call':
-      return '⌘'
+      return <Wrench size={13} />
     case 'plan':
-      return '≡'
+      return <ListChecks size={13} />
     case 'error':
-      return '!'
+      return <CircleAlert size={13} />
     default:
-      return '·'
+      return <CircleQuestionMark size={13} />
   }
 }
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { ApprovalDecision, ApprovalRequest } from '@harness/contracts'
+import { ShieldAlert } from 'lucide-react'
 
 /**
  * The agent asking permission.
@@ -27,7 +28,7 @@ export function Approval(props: {
   return (
     <div className="approval" ref={card} role="alertdialog" aria-label="Permission needed">
       <div className="approval__head">
-        <ShieldGlyph />
+        <ShieldAlert size={14} aria-hidden />
         <span className="approval__title">{title(props.request)}</span>
       </div>
 
@@ -75,17 +76,4 @@ function title(request: ApprovalRequest): string {
     case 'permissions':
       return 'Grant extra access?'
   }
-}
-
-function ShieldGlyph() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M8 2l4.5 1.8v4c0 3-1.9 5.2-4.5 6.2C5.4 13 3.5 10.8 3.5 7.8v-4L8 2z"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
 }

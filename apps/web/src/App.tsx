@@ -155,7 +155,7 @@ export function App() {
     setActivePath(path)
   }, [])
 
-  const newSession = useCallback(
+  const createSession = useCallback(
     async (projectPath: string): Promise<string | undefined> => {
       if (!provider) return undefined
       setNotice(undefined)
@@ -193,6 +193,32 @@ export function App() {
     [transport, provider, acpAgent, modelId, effort, approval],
   )
 
+  const beginSession = useCallback(
+    (projectPath: string) => {
+      const untouched = projects
+        .find((project) => project.path === projectPath)
+        ?.sessions.filter((session) => session.title === 'New session')
+      for (const session of untouched ?? []) {
+        void transport.request('thread.close', { threadId: session.id })
+      }
+      setProjects((current) =>
+        current.map((project) =>
+          project.path === projectPath
+            ? {
+                ...project,
+                sessions: project.sessions.filter((session) => session.title !== 'New session'),
+              }
+            : project,
+        ),
+      )
+      setNotice(undefined)
+      setActivePath(projectPath)
+      setActiveId(undefined)
+      setThread(emptyThread)
+    },
+    [projects, transport],
+  )
+
   const send = useCallback(
     async (text: string, attachments: string[] = []) => {
       // Typing first and having the session appear is the natural order. Making
@@ -201,7 +227,7 @@ export function App() {
       let threadId = activeId
       if (!threadId) {
         if (!activePath) return
-        threadId = await newSession(activePath)
+        threadId = await createSession(activePath)
         if (!threadId) return
       }
 
@@ -217,7 +243,7 @@ export function App() {
         setNotice(error instanceof Error ? error.message : String(error))
       }
     },
-    [transport, activeId, activePath, newSession],
+    [transport, activeId, activePath, createSession],
   )
 
   const interrupt = useCallback(() => {
@@ -256,7 +282,7 @@ export function App() {
           collapsed={collapsed}
           account={account}
           onAddProject={() => void addProject()}
-          onNewSession={(path) => void newSession(path)}
+          onNewSession={beginSession}
           onSelectSession={(id) => {
             setActiveId(id)
             setActivePath(findSession(projects, id)?.project.path)
@@ -322,7 +348,7 @@ export function App() {
             <Empty
               hasProjects={projects.length > 0}
               onAddProject={() => void addProject()}
-              onStart={() => activePath && void newSession(activePath)}
+              onStart={() => activePath && beginSession(activePath)}
             />
           )}
 
@@ -380,10 +406,10 @@ function Empty(props: { hasProjects: boolean; onAddProject: () => void; onStart:
   return (
     <div className="empty">
       <p className="empty__text">
-        {props.hasProjects ? 'No session open.' : 'Add a folder to get started.'}
+        {props.hasProjects ? 'No chat open.' : 'Add a folder to get started.'}
       </p>
       <button className="btn" onClick={props.hasProjects ? props.onStart : props.onAddProject}>
-        {props.hasProjects ? 'Start a session' : 'Add project'}
+        {props.hasProjects ? 'Start a chat' : 'New project'}
       </button>
     </div>
   )

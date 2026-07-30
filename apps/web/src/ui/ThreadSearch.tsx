@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Item } from '@harness/contracts'
+import { ChevronDown, ChevronUp, X } from 'lucide-react'
 
 /**
  * Find within the open thread.
@@ -64,43 +65,14 @@ export function ThreadSearch(props: {
         {term === '' ? '' : hits.length === 0 ? 'None' : `${cursor + 1}/${hits.length}`}
       </span>
       <button className="icon-btn icon-btn--always" onClick={() => go(cursor - 1)} title="Previous">
-        <Chevron up />
+        <ChevronUp size={12} aria-hidden />
       </button>
       <button className="icon-btn icon-btn--always" onClick={() => go(cursor + 1)} title="Next">
-        <Chevron />
+        <ChevronDown size={12} aria-hidden />
       </button>
       <button className="icon-btn icon-btn--always" onClick={props.onClose} title="Close">
-        <X />
+        <X size={12} aria-hidden />
       </button>
     </div>
-  )
-}
-
-function Chevron({ up }: { up?: boolean }) {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 16 16"
-      fill="none"
-      aria-hidden
-      style={up ? { transform: 'rotate(180deg)' } : undefined}
-    >
-      <path
-        d="M4 6.5l4 4 4-4"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
-function X() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
   )
 }

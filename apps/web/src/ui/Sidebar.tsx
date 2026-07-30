@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Account } from '@harness/contracts'
+import {
+  ChevronRight,
+  Ellipsis,
+  Folder,
+  FolderPen,
+  LoaderCircle,
+  Plus,
+  Search,
+  X,
+} from 'lucide-react'
 import { Menu, MenuItem } from './Menu.js'
 
 /**
@@ -72,24 +82,24 @@ export function Sidebar(props: {
             else props.onAddProject()
           }}
         >
-          <PencilGlyph />
-          <span>New session</span>
+          <Plus size={15} aria-hidden />
+          <span>New chat</span>
         </button>
         <button className="navitem" onClick={props.onAddProject}>
-          <FolderGlyph />
-          <span>Add project</span>
+          <FolderPen size={15} aria-hidden />
+          <span>New project</span>
         </button>
         <div className="search">
-          <SearchGlyph />
+          <Search size={13} aria-hidden />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search sessions"
+            placeholder="Search chats"
             spellCheck={false}
           />
           {query ? (
             <button className="chip__x" onClick={() => setQuery('')} title="Clear">
-              <XGlyph />
+              <X size={10} aria-hidden />
             </button>
           ) : null}
         </div>
@@ -187,18 +197,18 @@ function ProjectRow(props: {
               title={props.project.path}
             >
               <span className="proj__chev" data-open={expanded}>
-                <ChevronGlyph />
+                <ChevronRight size={10} aria-hidden />
               </span>
-              <span className="proj__mark" style={{ background: markColour(props.project.path) }} />
+              <Folder className="proj__mark" size={12} aria-hidden />
               <span className="proj__name">{displayName(props.project)}</span>
             </button>
 
             <button
               className="icon-btn"
               onClick={() => props.onNewSession(props.project.path)}
-              title="New session here"
+              title="New chat here"
             >
-              <PlusGlyph />
+              <Plus size={13} aria-hidden />
             </button>
 
             <Menu
@@ -207,7 +217,7 @@ function ProjectRow(props: {
               label="Project options"
               trigger={() => (
                 <span className="dots">
-                  <DotsGlyph />
+                  <Ellipsis size={14} aria-hidden />
                 </span>
               )}
             >
@@ -298,16 +308,18 @@ function SessionRow(props: {
         title={props.session.title}
       >
         <span className="sess__title">{props.session.title}</span>
-        {props.session.status === 'running' ? <span className="spinner" /> : null}
+        {props.session.status === 'running' ? (
+          <LoaderCircle className="spinner" aria-hidden />
+        ) : null}
       </button>
 
       <Menu
         drop="down"
         align="right"
-        label="Session options"
+        label="Chat options"
         trigger={() => (
           <span className="dots">
-            <DotsGlyph />
+            <Ellipsis size={14} aria-hidden />
           </span>
         )}
       >
@@ -381,90 +393,4 @@ function basename(path: string): string {
 function initial(account: Account | undefined, fallback: string): string {
   const source = account?.email ?? fallback
   return source.slice(0, 1).toUpperCase()
-}
-
-function markColour(path: string): string {
-  let hash = 0
-  for (let i = 0; i < path.length; i++) hash = (hash * 31 + path.charCodeAt(i)) >>> 0
-  return `oklch(70% 0.1 ${hash % 360})`
-}
-
-function SearchGlyph() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <circle cx="7" cy="7" r="4.2" stroke="currentColor" strokeWidth="1.3" />
-      <path
-        d="M10.2 10.2L13.5 13.5"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
-}
-
-function DotsGlyph() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
-      <circle cx="4" cy="8" r="1.2" />
-      <circle cx="8" cy="8" r="1.2" />
-      <circle cx="12" cy="8" r="1.2" />
-    </svg>
-  )
-}
-
-function XGlyph() {
-  return (
-    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function PlusGlyph() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M8 3.5v9M3.5 8h9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function ChevronGlyph() {
-  return (
-    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M6 4l4 4-4 4"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
-function PencilGlyph() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M11.5 2.5l2 2L6 12l-2.5.5L4 10l7.5-7.5z"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
-function FolderGlyph() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M2 4.5A1.5 1.5 0 013.5 3h2.2l1.2 1.5h5.6A1.5 1.5 0 0114 6v6a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12V4.5z"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
 }

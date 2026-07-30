@@ -361,9 +361,7 @@
 }
 
 .proj__mark {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
+  color: var(--text-3);
   flex: none;
 }
 
@@ -846,10 +844,10 @@
 }
 
 .aux__glyph {
-  font-family: var(--font-mono);
-  font-size: var(--t-xs);
   flex: none;
   width: 14px;
+  display: grid;
+  place-items: center;
 }
 
 .aux__label {
@@ -858,14 +856,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.aux__live {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--text-2);
-  flex: none;
 }
 
 .aux__out {
@@ -943,7 +933,7 @@
 
 .planstep {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   color: var(--text-3);
   font-size: var(--t-sm);
@@ -953,8 +943,8 @@
 .planstep__mark {
   flex: none;
   width: 10px;
-  font-family: var(--font-mono);
-  text-align: center;
+  display: grid;
+  place-items: center;
 }
 
 .planstep.is-running {
@@ -1205,13 +1195,6 @@
   border-color: var(--line-strong);
 }
 
-/* Full access has no sandbox and no prompts. It has to look different from
-   every other state in the app, or someone will leave it on by accident. */
-.composer__box.is-yolo {
-  border-color: var(--error);
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--error) 25%, transparent);
-}
-
 .composer__box.is-dropping {
   border-color: var(--text-2);
   background: var(--surface-2);
@@ -1308,7 +1291,7 @@
 
 .tool--danger,
 .tool--danger svg {
-  color: var(--error);
+  color: #fe8549;
 }
 
 .composer textarea {
@@ -1509,37 +1492,31 @@
 }
 
 .menu {
-  position: absolute;
+  position: fixed;
   z-index: 30;
-  min-width: 260px;
-  max-height: 340px;
+  min-width: min(260px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  max-height: min(340px, calc(100vh - 16px));
   overflow-y: auto;
   padding: 4px;
   background: var(--surface-2);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-lg);
   box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.7);
+}
+
+.menu.is-positioned {
   /* Grows from the trigger it belongs to. Nothing in the physical world
      appears from nothing, so nothing here starts at scale(0) either. */
   animation: menu-in var(--dur-fast) var(--ease-out);
 }
 
 .menu--up {
-  bottom: calc(100% + 6px);
   transform-origin: bottom;
 }
 
 .menu--down {
-  top: calc(100% + 6px);
   transform-origin: top;
-}
-
-.menu--left {
-  left: 0;
-}
-
-.menu--right {
-  right: 0;
 }
 
 @keyframes menu-in {
@@ -1579,14 +1556,15 @@
   background: var(--surface-3);
 }
 
-.menu__item.is-active .menu__name::after {
-  content: ' ✓';
-  color: var(--text-3);
+.menu__name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--t-md);
 }
 
-.menu__name {
-  display: block;
-  font-size: var(--t-md);
+.menu__name svg {
+  color: var(--text-3);
 }
 
 .menu__desc {
@@ -1704,22 +1682,13 @@
   color: var(--text);
 }
 
-.orb__square {
-  width: 9px;
-  height: 9px;
-  border-radius: 2px;
-  background: currentColor;
-}
-
 /* ---------- spinner ---------- */
 
 .spinner {
   width: 11px;
   height: 11px;
   flex: none;
-  border: 1.5px solid var(--line-strong);
-  border-top-color: var(--text-2);
-  border-radius: 50%;
+  color: var(--text-2);
   animation: spin 0.7s linear infinite;
 }
 

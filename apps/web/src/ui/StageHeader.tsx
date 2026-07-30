@@ -1,4 +1,5 @@
 import type { Usage } from '@harness/contracts'
+import { ChevronDown } from 'lucide-react'
 import type { Project } from './Sidebar.js'
 import { Menu, MenuItem } from './Menu.js'
 
@@ -23,7 +24,7 @@ export function StageHeader(props: {
         trigger={() => (
           <span className="picker">
             <span>{props.activePath ? basename(props.activePath) : 'No project'}</span>
-            <ChevronDown />
+            <ChevronDown size={11} aria-hidden />
           </span>
         )}
       >
@@ -57,20 +58,6 @@ export function StageHeader(props: {
         </span>
       ) : null}
     </header>
-  )
-}
-
-function ChevronDown() {
-  return (
-    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M4 6.5l4 4 4-4"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
   )
 }
 
