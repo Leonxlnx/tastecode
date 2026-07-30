@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process'
+
 /**
  * Agents we know how to launch in ACP mode.
  *
@@ -53,4 +55,28 @@ export const ACP_AGENTS: AcpAgentSpec[] = [
 
 export function findAgentSpec(id: string): AcpAgentSpec | undefined {
   return ACP_AGENTS.find((agent) => agent.id === id)
+}
+
+/**
+ * Whether a command exists on PATH.
+ *
+ * Asked with the platform's own lookup rather than by running the agent: some
+ * of these open a browser or start a session on first launch, which is not an
+ * acceptable side effect of drawing a list.
+ */
+export function isInstalled(command: string): Promise<boolean> {
+  const [lookup, args] =
+    process.platform === 'win32' ? ['where.exe', [command]] : ['/usr/bin/which', [command]]
+
+  return new Promise((resolve) => {
+    const child = spawn(lookup, args, { stdio: 'ignore', windowsHide: true })
+    child.on('error', () => resolve(false))
+    child.on('exit', (code) => resolve(code === 0))
+  })
+}
+
+export async function detectAgents(): Promise<Array<AcpAgentSpec & { installed: boolean }>> {
+  return Promise.all(
+    ACP_AGENTS.map(async (agent) => ({ ...agent, installed: await isInstalled(agent.command) })),
+  )
 }

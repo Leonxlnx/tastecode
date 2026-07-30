@@ -1,10 +1,12 @@
 import { WebSocketServer, type WebSocket } from 'ws'
+import { detectAgents } from '@harness/adapter-acp'
 import {
   ErrorCode,
   methods,
   PROTOCOL_VERSION,
   RequestSchema,
   type MethodName,
+  type ProviderId,
 } from '@harness/contracts'
 import { Orchestrator } from './orchestrator.js'
 import { PushBus } from './push-bus.js'
@@ -118,28 +120,28 @@ export function startServer(port = DEFAULT_PORT) {
         }
 
       case 'auth.status': {
-        const p = params as { provider: 'codex' }
+        const p = params as { provider: ProviderId }
         return orchestrator.account(p.provider)
       }
 
       case 'auth.startLogin': {
-        const p = params as { provider: 'codex' }
+        const p = params as { provider: ProviderId }
         return orchestrator.startLogin(p.provider)
       }
 
       case 'auth.cancelLogin': {
-        const p = params as { provider: 'codex'; loginId: string }
+        const p = params as { provider: ProviderId; loginId: string }
         await orchestrator.cancelLogin(p.provider, p.loginId)
         return {}
       }
 
       case 'auth.useApiKey': {
-        const p = params as { provider: 'codex'; apiKey: string }
+        const p = params as { provider: ProviderId; apiKey: string }
         return orchestrator.useApiKey(p.provider, p.apiKey)
       }
 
       case 'auth.signOut': {
-        const p = params as { provider: 'codex' }
+        const p = params as { provider: ProviderId }
         await orchestrator.signOut(p.provider)
         return {}
       }
@@ -150,13 +152,27 @@ export function startServer(port = DEFAULT_PORT) {
       }
 
       case 'models.list': {
-        const p = params as { provider: 'codex' }
+        const p = params as { provider: ProviderId }
         return { models: await orchestrator.listModels(p.provider) }
+      }
+
+      case 'acp.agents': {
+        const agents = await detectAgents()
+        return {
+          agents: agents.map(({ id, name, installed, verified, install }) => ({
+            id,
+            name,
+            installed,
+            verified,
+            ...(install === undefined ? {} : { install }),
+          })),
+        }
       }
 
       case 'thread.start': {
         const p = params as {
-          provider: 'codex'
+          provider: ProviderId
+          agent?: string
           workspacePath: string
           model?: string
           effort?: string
@@ -166,6 +182,7 @@ export function startServer(port = DEFAULT_PORT) {
           model: p.model,
           effort: p.effort,
           approval: p.approval,
+          agent: p.agent,
         })
         return { threadId: thread.id }
       }

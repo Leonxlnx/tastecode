@@ -12,6 +12,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@harness/adapter-acp": "workspace:*",
     "@harness/adapter-claude-code": "workspace:*",
     "@harness/adapter-codex": "workspace:*",
     "@harness/contracts": "workspace:*",

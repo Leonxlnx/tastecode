@@ -111,9 +111,34 @@ export const methods = {
     params: z.object({ provider: ProviderIdSchema }),
     result: z.object({ models: z.array(ModelSchema) }),
   },
+  /**
+   * Agents reachable over ACP, and whether each one is actually on this
+   * machine. The list is the server's to answer because only it can look.
+   */
+  'acp.agents': {
+    params: z.object({}),
+    result: z.object({
+      agents: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          installed: z.boolean(),
+          /** True when we captured and read this agent's frames ourselves. */
+          verified: z.boolean(),
+          install: z.string().optional(),
+        }),
+      ),
+    }),
+  },
   'thread.start': {
     params: z.object({
       provider: ProviderIdSchema,
+      /**
+       * Which ACP agent to launch, when `provider` is `acp`. ACP is one
+       * integration serving many agents, so the provider alone does not say
+       * which binary to spawn.
+       */
+      agent: z.string().optional(),
       workspacePath: z.string(),
       model: z.string().optional(),
       effort: z.string().optional(),

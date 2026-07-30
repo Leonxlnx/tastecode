@@ -1,3 +1,4 @@
+import { AcpAdapter } from '@harness/adapter-acp'
 import { CodexAdapter } from '@harness/adapter-codex'
 import { ClaudeCodeAdapter } from '@harness/adapter-claude-code'
 import type {
@@ -22,6 +23,8 @@ export type StartOptions = {
   model?: string | undefined
   effort?: string | undefined
   approval?: ApprovalMode | undefined
+  /** Which ACP agent to launch. Ignored by providers that are one engine. */
+  agent?: string | undefined
 }
 
 export interface AgentSession {
@@ -51,6 +54,8 @@ export function providerRuntime(
       return codexRuntime(onLog)
     case 'claude-code':
       return claudeRuntime(onLog)
+    case 'acp':
+      return acpRuntime(onLog)
     default:
       throw new Error(`provider "${provider}" is not implemented yet`)
   }
@@ -73,6 +78,22 @@ function codexRuntime(onLog: (line: string) => void): ProviderRuntime {
       } finally {
         adapter.dispose()
       }
+    },
+  }
+}
+
+function acpRuntime(onLog: (line: string) => void): ProviderRuntime {
+  return {
+    async start(workspacePath, options) {
+      if (!options.agent) throw new Error('no ACP agent chosen')
+      const adapter = new AcpAdapter(options.agent)
+      adapter.on('log', onLog)
+      const thread = await adapter.startThread(workspacePath, { approval: options.approval })
+      return { thread, session: adapter }
+    },
+    // ACP has no model listing. The picker hides itself when this is empty.
+    async listModels() {
+      return []
     },
   }
 }
