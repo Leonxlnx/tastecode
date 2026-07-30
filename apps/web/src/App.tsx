@@ -14,6 +14,9 @@ import { TitleBar } from './ui/TitleBar.js'
 
 const SERVER_URL = 'ws://127.0.0.1:4311'
 const SETUP_KEY = 'harness.provider'
+/** Which ACP agent was chosen. Meaningless unless the provider is `acp`. */
+const AGENT_KEY = 'harness.acpAgent'
+const AGENT_NAME_KEY = 'harness.acpAgentName'
 const PROJECTS_KEY = 'harness.projects'
 const MODEL_KEY = 'harness.model'
 
@@ -35,6 +38,14 @@ export function App() {
   const transport = useMemo(() => new Transport(SERVER_URL), [])
   const [provider, setProvider] = useState<ProviderId | null>(
     () => localStorage.getItem(SETUP_KEY) as ProviderId | null,
+  )
+  const [acpAgent, setAcpAgent] = useState<string | undefined>(
+    () => localStorage.getItem(AGENT_KEY) ?? undefined,
+  )
+  // Kept so the sidebar can say "Gemini CLI" rather than "acp". The name lives
+  // in the adapter package, which the renderer deliberately cannot import.
+  const [acpAgentName, setAcpAgentName] = useState<string | undefined>(
+    () => localStorage.getItem(AGENT_NAME_KEY) ?? undefined,
   )
   const [projects, setProjects] = useState<Project[]>(loadProjects)
   const [activeId, setActiveId] = useState<string | undefined>()
@@ -154,6 +165,7 @@ export function App() {
           provider,
           workspacePath: projectPath,
           approval,
+          ...(provider === 'acp' && acpAgent ? { agent: acpAgent } : {}),
           ...(modelId ? { model: modelId } : {}),
           ...(effort ? { effort } : {}),
         })
@@ -178,7 +190,7 @@ export function App() {
         return undefined
       }
     },
-    [transport, provider, modelId, effort, approval],
+    [transport, provider, acpAgent, modelId, effort, approval],
   )
 
   const send = useCallback(
@@ -216,8 +228,14 @@ export function App() {
     return (
       <Onboarding
         transport={transport}
-        onDone={(id) => {
+        onDone={(id, agent) => {
           localStorage.setItem(SETUP_KEY, id)
+          if (agent) {
+            localStorage.setItem(AGENT_KEY, agent.id)
+            localStorage.setItem(AGENT_NAME_KEY, agent.name)
+          }
+          setAcpAgent(agent?.id)
+          setAcpAgentName(agent?.name)
           setProvider(id)
         }}
       />
@@ -234,7 +252,7 @@ export function App() {
         <Sidebar
           projects={projects}
           activeSessionId={activeId}
-          providerName={providerName(provider)}
+          providerName={providerName(provider, acpAgentName)}
           collapsed={collapsed}
           account={account}
           onAddProject={() => void addProject()}
@@ -330,7 +348,7 @@ export function App() {
       {settingsOpen ? (
         <Settings
           provider={provider}
-          providerName={providerName(provider)}
+          providerName={providerName(provider, acpAgentName)}
           account={account}
           projectCount={projects.length}
           onSignOut={() => {
@@ -371,7 +389,10 @@ function Empty(props: { hasProjects: boolean; onAddProject: () => void; onStart:
   )
 }
 
-function providerName(id: ProviderId): string {
+function providerName(id: ProviderId, acpAgentName?: string): string {
+  // ACP is how we talk to the agent, not who the agent is. Showing "ACP" would
+  // name our plumbing instead of the thing the user chose.
+  if (id === 'acp') return acpAgentName ?? 'ACP agent'
   switch (id) {
     case 'codex':
       return 'Codex'

@@ -11,7 +11,16 @@ import type { Transport } from '../transport.js'
  * both the compliant design and the honest thing to say on this screen.
  */
 
-type Step = 'welcome' | 'provider' | 'signin' | 'done'
+type Step = 'welcome' | 'provider' | 'agent' | 'signin' | 'done'
+
+/** One row of `acp.agents`, as the server reports it. */
+type AcpAgent = {
+  id: string
+  name: string
+  installed: boolean
+  verified: boolean
+  install?: string | undefined
+}
 
 export type ProviderCard = {
   id: ProviderId
@@ -37,6 +46,13 @@ export const PROVIDER_CARDS: ProviderCard[] = [
     ready: true,
   },
   {
+    id: 'acp',
+    name: 'Any ACP agent',
+    blurb: 'Gemini, Kimi, Qwen — anything speaking the open protocol',
+    plans: ['Your own account', 'API key'],
+    ready: true,
+  },
+  {
     id: 'cursor',
     name: 'Cursor',
     blurb: 'The Cursor agent, outside the editor',
@@ -54,13 +70,17 @@ export const PROVIDER_CARDS: ProviderCard[] = [
 
 export function Onboarding(props: {
   transport: Transport
-  onDone: (provider: ProviderId) => void
+  onDone: (provider: ProviderId, agent?: { id: string; name: string }) => void
 }) {
   const [step, setStep] = useState<Step>('welcome')
   const [provider, setProvider] = useState<ProviderId>('codex')
+  const [agent, setAgent] = useState<AcpAgent | undefined>()
   const [account, setAccount] = useState<Account | undefined>()
 
   const card = PROVIDER_CARDS.find((entry) => entry.id === provider)!
+  // ACP agents sign themselves in on first run, so there is no sign-in step to
+  // show — asking for one would be inventing a screen with nothing behind it.
+  const afterProvider: Step = provider === 'acp' ? 'agent' : 'signin'
 
   // Someone who already ran `codex login` should not be asked to do it again.
   useEffect(() => {
@@ -84,7 +104,15 @@ export function Onboarding(props: {
             selected={provider}
             onSelect={setProvider}
             onBack={() => setStep('welcome')}
-            onNext={() => setStep('signin')}
+            onNext={() => setStep(afterProvider)}
+          />
+        ) : step === 'agent' ? (
+          <PickAcpAgent
+            transport={props.transport}
+            selected={agent}
+            onSelect={setAgent}
+            onBack={() => setStep('provider')}
+            onNext={() => setStep('done')}
           />
         ) : step === 'signin' ? (
           <SignIn
@@ -98,12 +126,19 @@ export function Onboarding(props: {
             }}
           />
         ) : (
-          <Done card={card} account={account} onFinish={() => props.onDone(provider)} />
+          <Done
+            card={card}
+            agentName={agent?.name}
+            account={account}
+            onFinish={() =>
+              props.onDone(provider, agent ? { id: agent.id, name: agent.name } : undefined)
+            }
+          />
         )}
       </div>
 
       <ol className="steps" aria-label="Progress">
-        {(['welcome', 'provider', 'signin', 'done'] as Step[]).map((entry) => (
+        {(['welcome', 'provider', afterProvider, 'done'] as Step[]).map((entry) => (
           <li key={entry} className={`steps__dot ${entry === step ? 'is-on' : ''}`} />
         ))}
       </ol>
@@ -182,6 +217,99 @@ function PickProvider(props: {
           Back
         </button>
         <button className="btn" onClick={props.onNext}>
+          Continue
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Which ACP agent to drive.
+ *
+ * The list comes from the server because only it can look at this machine.
+ * Agents that are not installed stay visible with the command that installs
+ * them — hiding them would leave the user wondering why the app claims to
+ * support something they cannot see.
+ */
+function PickAcpAgent(props: {
+  transport: Transport
+  selected: AcpAgent | undefined
+  onSelect: (agent: AcpAgent) => void
+  onBack: () => void
+  onNext: () => void
+}) {
+  const [agents, setAgents] = useState<AcpAgent[] | undefined>()
+
+  useEffect(() => {
+    let cancelled = false
+    void props.transport
+      .request('acp.agents', {})
+      .then((result) => {
+        if (cancelled) return
+        setAgents(result.agents)
+        // Preselect the first one actually present, so the common case is one
+        // click rather than two.
+        const first = result.agents.find((entry) => entry.installed)
+        if (first) props.onSelect(first)
+      })
+      .catch(() => {
+        if (!cancelled) setAgents([])
+      })
+    return () => {
+      cancelled = true
+    }
+    // Runs once: re-running would fight the user's selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.transport])
+
+  return (
+    <div className="pane">
+      <h1 className="pane__title">Which ACP agent?</h1>
+      <p className="pane__lede">
+        These all speak the same open protocol, so Personal Harness drives them through one
+        integration. Each signs in with its own account, on its own.
+      </p>
+
+      {agents === undefined ? (
+        <p className="pane__lede">Looking for agents on this machine…</p>
+      ) : (
+        <ul className="cards">
+          {agents.map((entry) => (
+            <li key={entry.id}>
+              <button
+                className={`card ${props.selected?.id === entry.id ? 'is-selected' : ''}`}
+                onClick={() => entry.installed && props.onSelect(entry)}
+                disabled={!entry.installed}
+              >
+                <span className="card__head">
+                  <span className="card__name">{entry.name}</span>
+                  {entry.installed ? null : <span className="card__state">Not installed</span>}
+                </span>
+                <span className="card__blurb">
+                  {entry.installed
+                    ? entry.verified
+                      ? 'Tested against this build'
+                      : 'Supported, but not tested by us yet'
+                    : (entry.install ?? 'Install it, then come back')}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {agents?.some((entry) => entry.installed) === false ? (
+        <p className="pane__error">
+          None of these are installed yet. Install one and reopen this step.
+        </p>
+      ) : null}
+
+      <div className="pane__foot">
+        <button className="ghost" onClick={props.onBack}>
+          Back
+        </button>
+        <button className="btn" disabled={!props.selected} onClick={props.onNext}>
           Continue
         </button>
       </div>
@@ -317,12 +445,17 @@ function SignIn(props: {
   )
 }
 
-function Done(props: { card: ProviderCard; account: Account | undefined; onFinish: () => void }) {
+function Done(props: {
+  card: ProviderCard
+  agentName?: string | undefined
+  account: Account | undefined
+  onFinish: () => void
+}) {
   return (
     <div className="pane">
       <h1 className="pane__title">You’re set</h1>
       <div className="signed">
-        <span className="signed__name">{props.card.name}</span>
+        <span className="signed__name">{props.agentName ?? props.card.name}</span>
         {props.account?.plan ? <span className="chiplet">{props.account.plan}</span> : null}
         {props.account?.email ? <span className="signed__email">{props.account.email}</span> : null}
       </div>
