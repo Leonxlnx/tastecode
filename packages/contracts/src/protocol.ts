@@ -222,6 +222,36 @@ export const methods = {
     }),
     result: z.object({ threadId: z.string() }),
   },
+  /**
+   * Points this session can be returned to. One is taken before every turn
+   * that could write, so going back is possible without having planned for it.
+   */
+  'thread.checkpoints': {
+    params: z.object({ threadId: z.string() }),
+    result: z.object({
+      checkpoints: z.array(
+        z.object({
+          id: z.number(),
+          seq: z.number(),
+          label: z.string(),
+          createdAt: z.number(),
+        }),
+      ),
+    }),
+  },
+  /** What the agent has changed since a checkpoint, so a restore is informed. */
+  'thread.changedSince': {
+    params: z.object({ threadId: z.string(), checkpointId: z.number() }),
+    result: z.object({ files: z.array(z.string()) }),
+  },
+  /**
+   * Put files and conversation back to a checkpoint. Whatever is replaced is
+   * itself saved first, so no restore reaches a state nobody can get back to.
+   */
+  'thread.restore': {
+    params: z.object({ threadId: z.string(), checkpointId: z.number() }),
+    result: z.object({ undo: z.string() }),
+  },
   /** Whether a session's private checkout holds work nobody has committed. */
   'thread.unsavedWork': {
     params: z.object({ threadId: z.string() }),

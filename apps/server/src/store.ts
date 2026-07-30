@@ -49,6 +49,17 @@ export type StoredThread = {
   worktreeBranch?: string | undefined
 }
 
+export type StoredCheckpoint = {
+  id: number
+  threadId: string
+  /** Where in the conversation this belongs, so both halves roll back together. */
+  seq: number
+  /** An unreferenced git commit holding the working tree. */
+  commit: string
+  label: string
+  createdAt: number
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
   path       TEXT PRIMARY KEY,
@@ -76,6 +87,16 @@ CREATE TABLE IF NOT EXISTS events (
   payload   TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS checkpoints (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_id  TEXT NOT NULL,
+  seq        INTEGER NOT NULL,
+  commit_sha TEXT NOT NULL,
+  label      TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS checkpoints_by_thread ON checkpoints (thread_id, seq);
 CREATE INDEX IF NOT EXISTS events_by_thread ON events (thread_id, seq);
 CREATE INDEX IF NOT EXISTS threads_by_project ON threads (project_path);
 `
@@ -264,6 +285,7 @@ export class Store {
 
   deleteThread(id: string): void {
     this.#db.prepare(`DELETE FROM events WHERE thread_id = ?`).run(id)
+    this.#db.prepare(`DELETE FROM checkpoints WHERE thread_id = ?`).run(id)
     this.#db.prepare(`DELETE FROM threads WHERE id = ?`).run(id)
   }
 
@@ -291,6 +313,71 @@ export class Store {
         const { seq, payload } = row as { seq: number; payload: string }
         return { seq: Number(seq), event: JSON.parse(payload) as DomainEvent }
       })
+  }
+
+  // ---- checkpoints -------------------------------------------------------
+
+  addCheckpoint(entry: {
+    threadId: string
+    seq: number
+    commit: string
+    label: string
+  }): StoredCheckpoint {
+    const createdAt = Date.now()
+    const result = this.#db
+      .prepare(
+        `INSERT INTO checkpoints (thread_id, seq, commit_sha, label, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(entry.threadId, entry.seq, entry.commit, entry.label, createdAt)
+    return { id: Number(result.lastInsertRowid), createdAt, ...entry }
+  }
+
+  checkpoints(threadId: string): StoredCheckpoint[] {
+    return this.#db
+      .prepare(`SELECT * FROM checkpoints WHERE thread_id = ? ORDER BY seq`)
+      .all(threadId)
+      .map((row) => {
+        const r = row as {
+          id: number
+          thread_id: string
+          seq: number
+          commit_sha: string
+          label: string
+          created_at: number
+        }
+        return {
+          id: Number(r.id),
+          threadId: r.thread_id,
+          seq: Number(r.seq),
+          commit: r.commit_sha,
+          label: r.label,
+          createdAt: Number(r.created_at),
+        }
+      })
+  }
+
+  checkpoint(id: number): StoredCheckpoint | undefined {
+    return this.checkpoints(
+      String(
+        (
+          this.#db.prepare(`SELECT thread_id FROM checkpoints WHERE id = ?`).get(id) as
+            { thread_id: string } | undefined
+        )?.thread_id ?? '',
+      ),
+    ).find((entry) => entry.id === id)
+  }
+
+  /**
+   * Drop everything after a point in the conversation.
+   *
+   * Rolling the files back without this would leave the thread describing work
+   * that no longer exists on disk — the transcript and the repository telling
+   * two different stories.
+   */
+  truncateAfter(threadId: string, seq: number): void {
+    this.#db.prepare(`DELETE FROM events WHERE thread_id = ? AND seq > ?`).run(threadId, seq)
+    this.#db.prepare(`DELETE FROM checkpoints WHERE thread_id = ? AND seq > ?`).run(threadId, seq)
   }
 
   lastSeq(threadId: string): number {

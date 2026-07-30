@@ -8,7 +8,8 @@ import {
 import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import type { Store } from './store.js'
+import { changedSince, restoreSnapshot, takeSnapshot } from './checkpoint.js'
+import type { Store, StoredCheckpoint } from './store.js'
 import {
   createWorktree,
   hasUncommittedChanges,
@@ -195,7 +196,65 @@ export class Orchestrator {
   }
 
   async sendTurn(threadId: string, text: string, attachments: string[] = []): Promise<string> {
+    // Before the agent writes, not after. A checkpoint taken afterwards would
+    // record the damage rather than the state worth returning to.
+    await this.#checkpoint(threadId, text)
     return this.#get(threadId).session.sendTurn(threadId, text, attachments)
+  }
+
+  /** Where the working tree stood before a turn. Silent when there is no repo. */
+  async #checkpoint(threadId: string, label: string): Promise<void> {
+    const stored = this.#store.thread(threadId)
+    if (!stored) return
+    const repoPath = stored.worktreePath ?? stored.projectPath
+
+    try {
+      const snapshot = await takeSnapshot(repoPath)
+      this.#store.addCheckpoint({
+        threadId,
+        seq: this.#store.lastSeq(threadId),
+        commit: snapshot.commit,
+        label: label.trim().slice(0, 60) || 'Turn',
+      })
+    } catch {
+      // A folder that is not a repository is a normal case. Failing the turn
+      // over a backup the user never asked for would be the wrong trade.
+    }
+  }
+
+  checkpoints(threadId: string): StoredCheckpoint[] {
+    return this.#store.checkpoints(threadId)
+  }
+
+  /**
+   * Put a session back to a checkpoint — files and conversation together.
+   *
+   * Returns where the replaced state was saved, because restoring is itself an
+   * action someone can regret. Nothing reachable this way is unrecoverable.
+   */
+  async restoreCheckpoint(threadId: string, checkpointId: number): Promise<{ undo: string }> {
+    const stored = this.#store.thread(threadId)
+    const checkpoint = this.#store.checkpoint(checkpointId)
+    if (!stored || !checkpoint) throw new Error('no such checkpoint')
+
+    const repoPath = stored.worktreePath ?? stored.projectPath
+    const replaced = await restoreSnapshot(repoPath, checkpoint.commit)
+
+    // Rolling the files back without this would leave the transcript
+    // describing work that no longer exists on disk.
+    this.#store.truncateAfter(threadId, checkpoint.seq)
+
+    return { undo: replaced.commit }
+  }
+
+  /** What the agent has changed since a checkpoint, so a restore is informed. */
+  async changedSinceCheckpoint(threadId: string, checkpointId: number): Promise<string[]> {
+    const stored = this.#store.thread(threadId)
+    const checkpoint = this.#store.checkpoint(checkpointId)
+    if (!stored || !checkpoint) return []
+    return changedSince(stored.worktreePath ?? stored.projectPath, checkpoint.commit).catch(
+      () => [],
+    )
   }
 
   respondToApproval(threadId: string, approvalId: string, decision: ApprovalDecision): void {

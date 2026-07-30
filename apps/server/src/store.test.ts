@@ -85,16 +85,19 @@ describe('projects', () => {
     expect(store.project('/repo')?.name).toBe('My thing')
   })
 
-  it('removes a project together with its threads and their events', () => {
+  it('removes a project together with its threads, events and checkpoints', () => {
     store.addProject('/repo')
     store.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'One' })
     store.append('t1', message('hello'))
+    store.addCheckpoint({ threadId: 't1', seq: 1, commit: 'abc', label: 'a turn' })
 
     store.removeProject('/repo')
 
     expect(store.project('/repo')).toBeUndefined()
     expect(store.thread('t1')).toBeUndefined()
     expect(store.history('t1')).toEqual([])
+    // Rows nothing points at any more are a leak that grows with use.
+    expect(store.checkpoints('t1')).toEqual([])
   })
 })
 

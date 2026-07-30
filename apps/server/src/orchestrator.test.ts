@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -301,6 +301,101 @@ describe('isolated sessions', () => {
     // A checkout for a session that never started is litter, and the next
     // attempt would trip over it.
     expect(existsSync(trees) ? readdirSync(trees) : []).toEqual([])
+  })
+})
+
+describe('rolling a session back', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = mkdtempSync(path.join(os.tmpdir(), 'harness-cp-orch-'))
+    execFileSync('git', ['init', '-b', 'main', repo], { windowsHide: true })
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, windowsHide: true })
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'Test')
+    git('config', 'core.autocrlf', 'false')
+    writeFileSync(path.join(repo, 'file.txt'), 'original\n')
+    git('add', '.')
+    git('commit', '-m', 'first')
+  })
+
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('takes a checkpoint before the agent writes, not after', async () => {
+    const { orchestrator } = harness()
+
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'change the file')
+
+    // A checkpoint taken afterwards would record the damage rather than the
+    // state worth returning to.
+    const checkpoints = orchestrator.checkpoints(thread.id)
+    expect(checkpoints).toHaveLength(1)
+    expect(checkpoints[0]?.label).toBe('change the file')
+  })
+
+  it('puts the files back and drops the conversation that described them', async () => {
+    const { sessions, store, orchestrator } = harness()
+
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'first task')
+    sessions[0]!.emit(message('did the first thing'))
+
+    await orchestrator.sendTurn(thread.id, 'second task')
+    writeFileSync(path.join(repo, 'file.txt'), 'the agent went the wrong way\n')
+    sessions[0]!.emit(message('did the wrong thing'))
+
+    const second = orchestrator.checkpoints(thread.id)[1]!
+    await orchestrator.restoreCheckpoint(thread.id, second.id)
+
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('original\n')
+    // Leaving the transcript would have it describing work that is gone.
+    const texts = store
+      .history(thread.id)
+      .map((e) => (e.event.type === 'item.completed' ? e.event.item.text : undefined))
+      .filter(Boolean)
+    expect(texts).toEqual(['did the first thing'])
+  })
+
+  it('saves what it replaced, so a restore can itself be undone', async () => {
+    const { orchestrator } = harness()
+
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'a task')
+    writeFileSync(path.join(repo, 'file.txt'), 'work the user might want\n')
+
+    const first = orchestrator.checkpoints(thread.id)[0]!
+    const { undo } = await orchestrator.restoreCheckpoint(thread.id, first.id)
+
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('original\n')
+    expect(undo).toMatch(/^[0-9a-f]{40}$/)
+  })
+
+  it('names what changed since a checkpoint', async () => {
+    const { orchestrator } = harness()
+
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'a task')
+    writeFileSync(path.join(repo, 'file.txt'), 'changed\n')
+    writeFileSync(path.join(repo, 'new.txt'), 'added\n')
+
+    const first = orchestrator.checkpoints(thread.id)[0]!
+    const files = await orchestrator.changedSinceCheckpoint(thread.id, first.id)
+    expect(files.sort()).toEqual(['file.txt', 'new.txt'])
+  })
+
+  it('does not fail a turn just because the folder is not a repository', async () => {
+    const { orchestrator } = harness()
+    const plain = mkdtempSync(path.join(os.tmpdir(), 'harness-plain-'))
+
+    const thread = await orchestrator.startThread('codex', plain)
+    // A backup the user never asked for must not be able to block their work.
+    await expect(orchestrator.sendTurn(thread.id, 'a task')).resolves.toBeDefined()
+    expect(orchestrator.checkpoints(thread.id)).toEqual([])
+
+    rmSync(plain, { recursive: true, force: true })
   })
 })
 

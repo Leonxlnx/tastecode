@@ -279,6 +279,28 @@ export function startServer(port = DEFAULT_PORT) {
         return { threadId: thread.id }
       }
 
+      case 'thread.checkpoints': {
+        const p = params as { threadId: string }
+        return {
+          checkpoints: orchestrator.checkpoints(p.threadId).map((entry) => ({
+            id: entry.id,
+            seq: entry.seq,
+            label: entry.label,
+            createdAt: entry.createdAt,
+          })),
+        }
+      }
+
+      case 'thread.changedSince': {
+        const p = params as { threadId: string; checkpointId: number }
+        return { files: await orchestrator.changedSinceCheckpoint(p.threadId, p.checkpointId) }
+      }
+
+      case 'thread.restore': {
+        const p = params as { threadId: string; checkpointId: number }
+        return orchestrator.restoreCheckpoint(p.threadId, p.checkpointId)
+      }
+
       case 'thread.unsavedWork': {
         const p = params as { threadId: string }
         const stored = store.thread(p.threadId)
