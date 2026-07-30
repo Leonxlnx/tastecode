@@ -1,5 +1,10 @@
 import { CodexAdapter } from '@harness/adapter-codex'
-import { providerRuntime, type AgentSession, type StartOptions } from './adapters.js'
+import {
+  providerRuntime,
+  type AgentSession,
+  type ProviderRuntime,
+  type StartOptions,
+} from './adapters.js'
 import type { Store } from './store.js'
 import type {
   Account,
@@ -32,6 +37,14 @@ export class Orchestrator {
     result: { loginId: string | null; success: boolean; error: string | null },
   ) => void
 
+  /**
+   * How a provider is turned into a running session. Injectable so the
+   * concurrency behaviour can be tested without spawning real agents — the
+   * property worth protecting is that sessions do not block or cross-wire each
+   * other, and that is about this class, not about any vendor.
+   */
+  #runtimeFor: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
+
   constructor(
     store: Store,
     handlers: {
@@ -41,12 +54,14 @@ export class Orchestrator {
         provider: ProviderId,
         result: { loginId: string | null; success: boolean; error: string | null },
       ) => void
+      runtimeFor?: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
     },
   ) {
     this.#store = store
     this.#onEvent = handlers.onEvent
     this.#onLog = handlers.onLog
     this.#onLogin = handlers.onLogin
+    this.#runtimeFor = handlers.runtimeFor ?? providerRuntime
   }
 
   /**
@@ -104,7 +119,7 @@ export class Orchestrator {
     workspacePath: string,
     options: StartOptions = {},
   ): Promise<Thread> {
-    const runtime = providerRuntime(provider, this.#onLog)
+    const runtime = this.#runtimeFor(provider, this.#onLog)
     const { thread, session } = await runtime.start(workspacePath, options)
     this.#threads.set(thread.id, { thread, session })
 
