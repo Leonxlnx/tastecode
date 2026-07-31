@@ -1,6 +1,7 @@
 import os from 'node:os'
 import path from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
+import { isIPv4 } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { detectAgents } from '@harness/adapter-acp'
 import {
@@ -59,6 +60,7 @@ export function startServer(
 ) {
   const port = options.port ?? DEFAULT_PORT
   const host = options.host ?? '127.0.0.1'
+  assertSafeBind(host, options.accessToken)
   const wss = new WebSocketServer({ port, host })
   const push = new PushBus()
 
@@ -405,4 +407,11 @@ export function hasAccess(requestUrl: string | undefined, expected: string | und
   return (
     expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes)
   )
+}
+
+export function assertSafeBind(host: string, accessToken: string | undefined): void {
+  const loopback = host === '::1' || (isIPv4(host) && host.startsWith('127.'))
+  if (!loopback && !accessToken) {
+    throw new Error('HARNESS_ACCESS_TOKEN is required when HARNESS_HOST is not loopback')
+  }
 }
