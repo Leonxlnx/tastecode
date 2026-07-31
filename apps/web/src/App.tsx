@@ -794,7 +794,7 @@ export function App() {
             activePath={activePath}
             title={active?.session.title}
             usage={thread.usage}
-            checkpointCount={checkpoints.length}
+            checkpointCount={thread.running ? 0 : checkpoints.length}
             onSelectProject={selectProject}
             onOpenRollback={() => {
               setRollbackInspection(undefined)

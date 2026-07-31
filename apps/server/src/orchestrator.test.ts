@@ -395,6 +395,22 @@ describe('rolling a session back', () => {
     expect(files.sort()).toEqual(['file.txt', 'new.txt'])
   })
 
+  it('refuses to restore while the agent is still writing', async () => {
+    const { orchestrator, sessions } = harness()
+
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'a task')
+    sessions[0]!.emit({
+      type: 'turn.started',
+      turn: { id: 'turn-1', threadId: thread.id, status: 'running', createdAt: 0 },
+    })
+
+    const checkpoint = orchestrator.checkpoints(thread.id)[0]!
+    await expect(orchestrator.restoreCheckpoint(thread.id, checkpoint.id)).rejects.toThrow(
+      'cannot restore during a running turn',
+    )
+  })
+
   it('does not fail a turn just because the folder is not a repository', async () => {
     const { orchestrator } = harness()
     const plain = mkdtempSync(path.join(os.tmpdir(), 'harness-plain-'))
