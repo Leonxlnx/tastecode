@@ -242,22 +242,31 @@ end to end, and each run found something the tests had not:
 
 These need a human. Do not decide them alone.
 
-**Blueemi has five open PRs outside M2.** As of this handoff, each has green Windows and
-macOS CI but still needs human review:
+**Blueemi's work moved while this handoff was in review.** Three PRs landed in parallel:
 
-- [#38](https://github.com/Leonxlnx/personalharness/pull/38) adds only the pasted-image
-  materialization contract.
+- [#38](https://github.com/Leonxlnx/personalharness/pull/38) merged the pasted-image
+  materialization contract; the implementation is still separate work.
+- [#41](https://github.com/Leonxlnx/personalharness/pull/41) merged the responsive session
+  sidebar without the mobile screenshot its own PR body required. Visually verify it before
+  building more responsive behavior on top.
+- [#42](https://github.com/Leonxlnx/personalharness/pull/42) removed the repository-level
+  prohibition on vendor subscription credentials. This does not override any platform or
+  agent-runtime compliance policy; future agents must still obey their governing
+  instructions.
+
+Those three used merge commits even though `rules/git.md` requires rebase merges. Do not
+repeat that for later PRs; rewriting `main` to remove them would be worse.
+
+Two contract PRs remain open with green Windows and macOS CI:
+
 - [#39](https://github.com/Leonxlnx/personalharness/pull/39) adds only auto-review
-  contracts and compatibility guards. Its body says `Closes #20`, although the actual
-  Codex/server/UI implementation is explicitly deferred; remove that closure before merge.
+  contracts and compatibility guards.
 - [#40](https://github.com/Leonxlnx/personalharness/pull/40) adds only voice-dictation
   contracts. Recorder, permissions, server and transcription remain deferred.
-- [#41](https://github.com/Leonxlnx/personalharness/pull/41) improves the responsive
-  session sidebar. Its body still requires a mobile screenshot, but the PR is marked ready
-  without one.
-- [#42](https://github.com/Leonxlnx/personalharness/pull/42) removes the vendor-credential
-  compliance rule. **Do not merge it.** It conflicts with the hard rule in `AGENTS.md` and
-  `rules/security.md`; subscription credentials stay owned by vendor binaries.
+
+Issues #20 and #26 are already closed even though those implementations remain deferred.
+Reopen them or create explicit implementation issues before treating either feature as
+shipped.
 
 The separate design-agent work is reserved on branch `feat/design-agent-v2`. Keep it out
 of server session state, shared contracts and the M2 UI files that just landed.
@@ -288,10 +297,9 @@ repo moves.
 
 In order:
 
-1. **Review Blueemi's split PRs.** #38–#41 are small and green, but contracts must land
-   before their implementations. Fix #39's premature issue closure, require #41's promised
-   screenshot, and reject #42 unless the compliance requirement itself changes outside
-   this repository.
+1. **Reconcile Blueemi's split work.** Review #39 and #40 as contracts, restore accurate
+   implementation tracking for #20 and #26, visually verify #41 at mobile width, and make
+   the credential-policy decision explicit before any auth-related implementation.
 
 2. **Start M3 — Review & control.** Per-hunk diff accept/reject, mode indicator, panic stop,
    terminal pane, MCP management, Agent Skills, cross-session search. Its goal is "let an
