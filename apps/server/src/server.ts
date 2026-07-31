@@ -222,6 +222,9 @@ export function startServer(
               ...(thread.agent === undefined ? {} : { agent: thread.agent }),
               createdAt: thread.createdAt,
               running: orchestrator.isRunning(thread.id),
+              ...(thread.worktreeBranch === undefined
+                ? {}
+                : { worktreeBranch: thread.worktreeBranch }),
               ...(thread.closedAt === undefined ? {} : { closedAt: thread.closedAt }),
             })),
           })),

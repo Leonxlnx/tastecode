@@ -122,6 +122,21 @@ describe('threads', () => {
     expect(store.thread('t1')?.agent).toBeUndefined()
   })
 
+  it('refuses to forget an isolated checkout before it is discarded', () => {
+    store.addThread({
+      id: 'isolated',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Isolated',
+      worktreePath: '/trees/isolated',
+      worktreeBranch: 'harness/isolated',
+    })
+
+    expect(() => store.deleteThread('isolated')).toThrow('discard the isolated session checkout')
+    expect(() => store.removeProject('/repo')).toThrow('discard isolated session checkouts')
+    expect(store.thread('isolated')).toBeDefined()
+  })
+
   it('lists newest first', () => {
     store.addThread({
       id: 'old',

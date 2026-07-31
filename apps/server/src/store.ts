@@ -204,6 +204,9 @@ export class Store {
       .prepare(`SELECT id FROM threads WHERE project_path = ?`)
       .all(projectPath)
       .map((row) => String((row as { id: unknown }).id))
+    if (ids.some((id) => this.thread(id)?.worktreePath)) {
+      throw new Error('discard isolated session checkouts before removing the project')
+    }
     for (const id of ids) this.deleteThread(id)
     this.#db.prepare(`DELETE FROM projects WHERE path = ?`).run(projectPath)
   }
@@ -294,6 +297,9 @@ export class Store {
   }
 
   deleteThread(id: string): void {
+    if (this.thread(id)?.worktreePath) {
+      throw new Error('discard the isolated session checkout before deleting it')
+    }
     this.#db.prepare(`DELETE FROM events WHERE thread_id = ?`).run(id)
     this.#db.prepare(`DELETE FROM checkpoints WHERE thread_id = ?`).run(id)
     this.#db.prepare(`DELETE FROM restore_undos WHERE thread_id = ?`).run(id)
