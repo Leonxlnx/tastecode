@@ -7,6 +7,7 @@ import type {
   ProviderId,
   ResultOf,
 } from '@harness/contracts'
+import { Folder } from 'lucide-react'
 import { isDesktop, isMacOS, pickFolder } from './bridge.js'
 import { isEditableTarget, matchesShortcut, SHORTCUTS, shortcutLabel } from './shortcuts.js'
 import { warmHighlighter } from './ui/highlighter.js'
@@ -1110,6 +1111,7 @@ function Empty(props: {
               {props.projects.map((project) => (
                 <MenuItem
                   key={project.path}
+                  icon={Folder}
                   title={displayName(project)}
                   detail={project.path}
                   active={project.path === props.activePath}

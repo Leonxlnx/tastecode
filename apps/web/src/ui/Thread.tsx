@@ -177,83 +177,86 @@ export function Thread(props: {
   const rows = virtualizer.getVirtualItems()
 
   return (
-    <div className="thread" ref={scroller} onScroll={onScroll}>
-      {finding ? (
-        <ThreadSearch items={props.items} onJump={jumpTo} onClose={() => setFinding(false)} />
-      ) : null}
-      <div className="thread__col">
-        <div className="thread__runway" style={{ height: virtualizer.getTotalSize() }}>
-          {rows.map((row) => {
-            const item = props.items[row.index]
-            if (!item) return null
-            const turn = turns.find((entry) => entry.index === row.index)
-            const presentation = presentations.get(item.turnId)
-            const live = props.running && props.activeTurn?.id === item.turnId
-            const foldedDetail = folded.has(item.turnId) && !isHeadline(item)
-            const compactedActivity =
-              !live && presentation?.complete === true && isActivity(item) && !foldedDetail
-            const activityLead = compactedActivity && presentation.firstActivityIndex === row.index
-            const suppressed = foldedDetail || (compactedActivity && !activityLead)
-            const liveActivity = live && isActivity(item)
-            return (
-              <div
-                key={row.key}
-                className={`thread__row ${suppressed ? 'is-suppressed' : ''} ${liveActivity ? 'is-live-activity' : ''}`}
-                data-index={row.index}
-                ref={virtualizer.measureElement}
-                style={{ transform: `translateY(${row.start}px)` }}
-              >
-                {/* Only the first row of a turn carries the fold control, so
-                    the affordance appears once per exchange rather than once
-                    per line. */}
-                {turn && turn.count > 1 ? (
-                  <button
-                    className="turnfold"
-                    onClick={() => toggleTurn(turn.turnId)}
-                    title={folded.has(turn.turnId) ? 'Expand turn' : 'Collapse turn'}
-                  >
-                    {folded.has(turn.turnId) ? `Show ${turn.count - 1} more` : 'Collapse'}
-                  </button>
-                ) : null}
-                <Row
-                  item={item}
-                  hidden={suppressed}
-                  activity={activityLead ? presentation.activity : undefined}
-                  elapsedMs={presentation?.elapsedMs}
-                  live={live}
-                  showWorkingRail={live && presentation?.firstResponseIndex === row.index}
-                  startedAt={props.activeTurn?.startedAt}
-                  showCompletionRail={
-                    !live &&
-                    presentation?.complete === true &&
-                    presentation.activity.length === 0 &&
-                    presentation.finalAnswerIndex === row.index
-                  }
-                />
-              </div>
-            )
-          })}
-        </div>
-
-        {props.running &&
-        props.activeTurn &&
-        activePresentation?.firstResponseIndex === undefined ? (
-          <WorkingRail startedAt={props.activeTurn.startedAt} />
+    <div className="thread-viewport">
+      <div className="thread" ref={scroller} onScroll={onScroll}>
+        {finding ? (
+          <ThreadSearch items={props.items} onJump={jumpTo} onClose={() => setFinding(false)} />
         ) : null}
+        <div className="thread__col">
+          <div className="thread__runway" style={{ height: virtualizer.getTotalSize() }}>
+            {rows.map((row) => {
+              const item = props.items[row.index]
+              if (!item) return null
+              const turn = turns.find((entry) => entry.index === row.index)
+              const presentation = presentations.get(item.turnId)
+              const live = props.running && props.activeTurn?.id === item.turnId
+              const foldedDetail = folded.has(item.turnId) && !isHeadline(item)
+              const compactedActivity =
+                !live && presentation?.complete === true && isActivity(item) && !foldedDetail
+              const activityLead =
+                compactedActivity && presentation.firstActivityIndex === row.index
+              const suppressed = foldedDetail || (compactedActivity && !activityLead)
+              const liveActivity = live && isActivity(item)
+              return (
+                <div
+                  key={row.key}
+                  className={`thread__row ${suppressed ? 'is-suppressed' : ''} ${liveActivity ? 'is-live-activity' : ''}`}
+                  data-index={row.index}
+                  ref={virtualizer.measureElement}
+                  style={{ transform: `translateY(${row.start}px)` }}
+                >
+                  {/* Only the first row of a turn carries the fold control, so
+                      the affordance appears once per exchange rather than once
+                      per line. */}
+                  {turn && turn.count > 1 ? (
+                    <button
+                      className="turnfold"
+                      onClick={() => toggleTurn(turn.turnId)}
+                      title={folded.has(turn.turnId) ? 'Expand turn' : 'Collapse turn'}
+                    >
+                      {folded.has(turn.turnId) ? `Show ${turn.count - 1} more` : 'Collapse'}
+                    </button>
+                  ) : null}
+                  <Row
+                    item={item}
+                    hidden={suppressed}
+                    activity={activityLead ? presentation.activity : undefined}
+                    elapsedMs={presentation?.elapsedMs}
+                    live={live}
+                    showWorkingRail={live && presentation?.firstResponseIndex === row.index}
+                    startedAt={props.activeTurn?.startedAt}
+                    showCompletionRail={
+                      !live &&
+                      presentation?.complete === true &&
+                      presentation.activity.length === 0 &&
+                      presentation.finalAnswerIndex === row.index
+                    }
+                  />
+                </div>
+              )
+            })}
+          </div>
 
-        {/* Above the plan and the diff: it is the only thing here that blocks
-            the agent, so it should be the first thing the eye lands on. */}
-        {props.approvals.map((request) => (
-          <Approval
-            key={request.id}
-            request={request}
-            onDecide={(d) => props.onDecide(request.id, d)}
-          />
-        ))}
+          {props.running &&
+          props.activeTurn &&
+          activePresentation?.firstResponseIndex === undefined ? (
+            <WorkingRail startedAt={props.activeTurn.startedAt} />
+          ) : null}
 
-        {props.running ? <Plan steps={props.plan} compact /> : null}
-        {!props.running ? <Diff diff={props.diff} /> : null}
-        {!props.running ? <LatestResponseActions items={props.items} /> : null}
+          {/* Above the plan and the diff: it is the only thing here that blocks
+              the agent, so it should be the first thing the eye lands on. */}
+          {props.approvals.map((request) => (
+            <Approval
+              key={request.id}
+              request={request}
+              onDecide={(d) => props.onDecide(request.id, d)}
+            />
+          ))}
+
+          {props.running ? <Plan steps={props.plan} compact /> : null}
+          {!props.running ? <Diff diff={props.diff} /> : null}
+          {!props.running ? <LatestResponseActions items={props.items} /> : null}
+        </div>
       </div>
 
       {mode === 'free' ? (

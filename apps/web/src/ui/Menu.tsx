@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Check } from 'lucide-react'
+import { Check, type LucideIcon } from 'lucide-react'
 import { ShortcutHint } from './ShortcutHint.js'
 
 type Drop = 'up' | 'down'
@@ -27,6 +27,8 @@ export function Menu(props: {
   drop?: 'up' | 'down'
   disabled?: boolean
   label?: string
+  centerOnSmallScreens?: boolean
+  wrapperClassName?: string
   triggerClassName?: string
   panelRole?: 'menu' | 'dialog'
   panelLabel?: string
@@ -61,40 +63,48 @@ export function Menu(props: {
 
     const updatePosition = () => {
       const triggerBounds = trigger.current?.getBoundingClientRect()
-      const menuBounds = panel.current?.getBoundingClientRect()
-      if (!triggerBounds || !menuBounds) return
+      const menuElement = panel.current
+      const menuBounds = menuElement?.getBoundingClientRect()
+      if (!triggerBounds || !menuElement || !menuBounds) return
+
+      // The opening animation transforms the visual bounds. Layout dimensions
+      // stay stable, so they keep centered menus from drifting mid-animation.
+      const menuWidth = menuElement.offsetWidth || menuBounds.width
+      const menuHeight = menuElement.offsetHeight || menuBounds.height
 
       const preferredDrop = props.drop ?? 'up'
       const spaceAbove = triggerBounds.top - MENU_GAP - VIEWPORT_GUTTER
       const spaceBelow = window.innerHeight - triggerBounds.bottom - MENU_GAP - VIEWPORT_GUTTER
       let drop = preferredDrop
 
-      if (drop === 'down' && menuBounds.height > spaceBelow && spaceAbove > spaceBelow) {
+      if (drop === 'down' && menuHeight > spaceBelow && spaceAbove > spaceBelow) {
         drop = 'up'
-      } else if (drop === 'up' && menuBounds.height > spaceAbove && spaceBelow > spaceAbove) {
+      } else if (drop === 'up' && menuHeight > spaceAbove && spaceBelow > spaceAbove) {
         drop = 'down'
       }
 
-      const preferredLeft =
-        props.align === 'right' ? triggerBounds.right - menuBounds.width : triggerBounds.left
-      const maxLeft = Math.max(
-        VIEWPORT_GUTTER,
-        window.innerWidth - menuBounds.width - VIEWPORT_GUTTER,
-      )
-      const left = Math.min(Math.max(preferredLeft, VIEWPORT_GUTTER), maxLeft)
+      const centered = props.centerOnSmallScreens && window.innerWidth <= 700
+      const preferredLeft = centered
+        ? (window.innerWidth - menuWidth) / 2
+        : props.align === 'right'
+          ? triggerBounds.right - menuWidth
+          : triggerBounds.left
+      const horizontalGutter = centered ? 0 : VIEWPORT_GUTTER
+      const maxLeft = Math.max(horizontalGutter, window.innerWidth - menuWidth - horizontalGutter)
+      const left =
+        !centered && props.align === 'right' && preferredLeft < VIEWPORT_GUTTER
+          ? maxLeft
+          : Math.min(Math.max(preferredLeft, horizontalGutter), maxLeft)
 
       const preferredTop =
         drop === 'down'
           ? triggerBounds.bottom + MENU_GAP
-          : triggerBounds.top - MENU_GAP - menuBounds.height
-      const maxTop = Math.max(
-        VIEWPORT_GUTTER,
-        window.innerHeight - menuBounds.height - VIEWPORT_GUTTER,
-      )
+          : triggerBounds.top - MENU_GAP - menuHeight
+      const maxTop = Math.max(VIEWPORT_GUTTER, window.innerHeight - menuHeight - VIEWPORT_GUTTER)
       const top = Math.min(Math.max(preferredTop, VIEWPORT_GUTTER), maxTop)
       const next =
         drop === 'up'
-          ? { left, bottom: window.innerHeight - top - menuBounds.height, drop }
+          ? { left, bottom: window.innerHeight - top - menuHeight, drop }
           : { left, top, drop }
 
       setPosition((current) =>
@@ -118,10 +128,13 @@ export function Menu(props: {
       document.removeEventListener('scroll', updatePosition, true)
       resizeObserver?.disconnect()
     }
-  }, [open, props.align, props.drop])
+  }, [open, props.align, props.centerOnSmallScreens, props.drop])
 
   return (
-    <div className="menuwrap" ref={wrap}>
+    <div
+      className={`menuwrap${props.wrapperClassName ? ` ${props.wrapperClassName}` : ''}`}
+      ref={wrap}
+    >
       <button
         ref={trigger}
         className={`menutrigger${props.triggerClassName ? ` ${props.triggerClassName}` : ''}`}
@@ -169,12 +182,15 @@ export function Menu(props: {
 
 export function MenuItem(props: {
   onClick: () => void
+  icon: LucideIcon
   active?: boolean
   title: string
   detail?: string | undefined
   shortcut?: string
   shortcutAria?: string
 }) {
+  const Icon = props.icon
+
   return (
     <button
       className={`menu__item ${props.active ? 'is-active' : ''}`}
@@ -182,14 +198,17 @@ export function MenuItem(props: {
       role="menuitem"
       aria-keyshortcuts={props.shortcutAria}
     >
-      <span className="menu__name">
-        <span>{props.title}</span>
-        <span className="menu__meta">
-          {props.active ? <Check size={13} aria-hidden /> : null}
-          {props.shortcut ? <ShortcutHint>{props.shortcut}</ShortcutHint> : null}
+      <Icon className="menu__icon" size={12} aria-hidden />
+      <span className="menu__copy">
+        <span className="menu__name">
+          <span>{props.title}</span>
+          <span className="menu__meta">
+            {props.active ? <Check size={13} aria-hidden /> : null}
+            {props.shortcut ? <ShortcutHint>{props.shortcut}</ShortcutHint> : null}
+          </span>
         </span>
+        {props.detail ? <span className="menu__desc">{props.detail}</span> : null}
       </span>
-      {props.detail ? <span className="menu__desc">{props.detail}</span> : null}
     </button>
   )
 }

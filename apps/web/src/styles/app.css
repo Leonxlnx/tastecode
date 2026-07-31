@@ -39,12 +39,6 @@
   -webkit-app-region: no-drag;
 }
 
-.titlebar__name {
-  font-size: var(--t-sm);
-  font-weight: 500;
-  color: var(--text-2);
-}
-
 /* ---------- rail ---------- */
 
 .rail-slot {
@@ -2032,6 +2026,8 @@
 }
 
 .composer__box {
+  width: min(100%, var(--chat-w));
+  min-width: 0;
   max-width: var(--chat-w);
   margin: 0 auto;
   background: var(--surface);
@@ -2692,13 +2688,13 @@
   color: var(--text-3);
   font-size: var(--t-xs);
   margin: 2px 0 2px;
-  padding: 0 9px;
+  padding: 0 9px 0 31px;
 }
 
 .menu__item {
   display: grid;
-  grid-template-columns: 14px minmax(0, 1fr);
-  column-gap: 4px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 6px;
   align-items: start;
   width: 100%;
   background: none;
@@ -2716,8 +2712,10 @@
 }
 
 .menu__icon {
-  margin-top: 2px;
+  justify-self: center;
+  margin-top: 6px;
   color: var(--text-3);
+  flex: none;
 }
 
 .menu__copy {
@@ -3385,6 +3383,75 @@
 
   .composer {
     padding: 4px 10px max(8px, env(safe-area-inset-bottom));
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .composer__box,
+  .tools {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .tools {
+    gap: 2px;
+    padding: 4px 6px 7px;
+    overflow: hidden;
+  }
+
+  .composer-tool--add,
+  .composer-tool--approval,
+  .tools > .isolation-toggle {
+    width: 30px;
+    flex: none;
+  }
+
+  .composer-tool--add .menutrigger,
+  .composer-tool--approval .menutrigger,
+  .tools > .isolation-toggle {
+    width: 30px;
+    height: 30px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .composer-tool--approval .tool > span,
+  .tools > .isolation-toggle > span,
+  .model-selector__trigger-effort {
+    display: none;
+  }
+
+  .composer-tool--model {
+    max-width: 132px;
+    flex: 0 1 132px;
+  }
+
+  .menutrigger--model-selector {
+    width: 100%;
+    max-width: 100%;
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+
+  .model-selector__trigger {
+    width: 100%;
+  }
+
+  .model-selector__trigger-copy {
+    margin-left: auto;
+  }
+
+  .model-selector__trigger-fast {
+    margin-left: auto;
+  }
+
+  .model-selector__trigger-fast + .model-selector__trigger-copy {
+    margin-left: 0;
+  }
+
+  .tools > .orb,
+  .tools > .composer-voice-button {
+    flex: none;
   }
 
   .composer textarea {

@@ -336,8 +336,10 @@ export function ModelSelector(props: ModelSelectorProps) {
   return (
     <Menu
       align="right"
+      centerOnSmallScreens
       disabled={props.disabled}
       label={TRIGGER_LABEL}
+      wrapperClassName="composer-tool composer-tool--model"
       triggerClassName="menutrigger--model-selector"
       panelRole="dialog"
       panelLabel={DIALOG_LABEL}

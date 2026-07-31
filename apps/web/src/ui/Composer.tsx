@@ -11,6 +11,7 @@ import {
   GitCommitHorizontal,
   Image as ImageIcon,
   LockOpen,
+  Paperclip,
   Plus,
   ScanSearch,
   ShieldCheck,
@@ -552,7 +553,7 @@ export function Composer(props: {
                         setSlashOpen(false)
                       }}
                     >
-                      <CommandIcon className="menu__icon" size={14} aria-hidden />
+                      <CommandIcon className="menu__icon" size={12} aria-hidden />
                       <span className="menu__copy">
                         <span className="menu__name">{command.name}</span>
                         <span className="menu__desc">{command.detail}</span>
@@ -568,6 +569,7 @@ export function Composer(props: {
             <Menu
               label="Add"
               disabled={props.disabled}
+              wrapperClassName="composer-tool composer-tool--add"
               trigger={() => (
                 <span className="tool tool--icon">
                   <Plus size={15} aria-hidden />
@@ -577,6 +579,7 @@ export function Composer(props: {
               {(close) => (
                 <>
                   <MenuItem
+                    icon={Paperclip}
                     title="Attach files"
                     detail="Or drag them onto the box"
                     onClick={() => {
@@ -589,6 +592,7 @@ export function Composer(props: {
                   {SLASH_COMMANDS.map((command) => (
                     <MenuItem
                       key={command.name}
+                      icon={command.icon}
                       title={command.name}
                       detail={command.detail}
                       onClick={() => {
@@ -604,6 +608,7 @@ export function Composer(props: {
             <Menu
               label="Permissions"
               disabled={props.running}
+              wrapperClassName="composer-tool composer-tool--approval"
               trigger={() => (
                 <span className={`tool ${props.approval === 'full' ? 'tool--danger' : ''}`}>
                   <ApprovalIcon size={13} aria-hidden />
@@ -616,6 +621,7 @@ export function Composer(props: {
                   {APPROVAL_MODES.map((mode) => (
                     <MenuItem
                       key={mode.id}
+                      icon={mode.icon}
                       title={mode.title}
                       detail={mode.detail}
                       active={mode.id === props.approval}
