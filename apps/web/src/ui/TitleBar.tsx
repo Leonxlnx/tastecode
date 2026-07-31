@@ -27,7 +27,6 @@ export function TitleBar(props: { collapsed: boolean; onToggleRail: () => void }
       >
         <PanelLeft size={15} aria-hidden />
       </button>
-      <span className="titlebar__name">Personal Harness</span>
     </header>
   )
 }

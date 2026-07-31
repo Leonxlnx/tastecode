@@ -1,5 +1,5 @@
 import type { ResultOf, Usage } from '@harness/contracts'
-import { ChevronDown, GitBranch, History } from 'lucide-react'
+import { ChevronDown, Folder, GitBranch, History } from 'lucide-react'
 import { isMacOS } from '../bridge.js'
 import { SHORTCUTS, shortcutAria, shortcutLabel } from '../shortcuts.js'
 import type { Project } from './Sidebar.js'
@@ -44,6 +44,7 @@ export function StageHeader(props: {
             {props.projects.map((project) => (
               <MenuItem
                 key={project.path}
+                icon={Folder}
                 title={basename(project.path)}
                 detail={project.path}
                 active={project.path === props.activePath}

@@ -5,10 +5,14 @@ import {
   ChevronRight,
   Ellipsis,
   Folder,
+  FolderMinus,
   FolderPen,
   Pencil,
+  Pin,
+  PinOff,
   Plus,
   Search,
+  Settings as SettingsIcon,
   X,
 } from 'lucide-react'
 import { isMacOS } from '../bridge.js'
@@ -201,6 +205,7 @@ export function Sidebar(props: {
             {(close) => (
               <>
                 <MenuItem
+                  icon={SettingsIcon}
                   title="Settings"
                   detail="Providers, appearance, storage"
                   shortcut={shortcutLabel(SHORTCUTS.settings, macOS)}
@@ -302,6 +307,7 @@ function ProjectRow(props: {
               {(close) => (
                 <>
                   <MenuItem
+                    icon={Pencil}
                     title="Rename"
                     onClick={() => {
                       setRenaming(true)
@@ -309,6 +315,7 @@ function ProjectRow(props: {
                     }}
                   />
                   <MenuItem
+                    icon={props.project.pinned ? PinOff : Pin}
                     title={props.project.pinned ? 'Unpin' : 'Pin to top'}
                     onClick={() => {
                       props.onTogglePin(props.project.path)
@@ -317,6 +324,7 @@ function ProjectRow(props: {
                   />
                   <div className="menu__rule" />
                   <MenuItem
+                    icon={FolderMinus}
                     title="Remove from sidebar"
                     detail="The folder on disk is untouched"
                     onClick={() => {
