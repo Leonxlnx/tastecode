@@ -7,6 +7,7 @@ import {
   ModelSchema,
   ProviderIdSchema,
   ProviderStatusSchema,
+  UsageSchema,
 } from './domain.js'
 
 /**
@@ -198,6 +199,14 @@ export const methods = {
     result: z.object({
       events: z.array(z.object({ seq: z.number(), event: DomainEventSchema })),
       running: z.boolean(),
+    }),
+  },
+  /** Persistent token totals, with money only when the provider reports it. */
+  'usage.summary': {
+    params: z.object({ threadId: z.string() }),
+    result: z.object({
+      session: UsageSchema.omit({ contextWindow: true }),
+      today: UsageSchema.omit({ contextWindow: true }),
     }),
   },
   'thread.start': {

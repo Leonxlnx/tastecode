@@ -61,6 +61,29 @@ describe('protocol envelopes', () => {
     expect(() => methods['thread.start'].params.parse({ provider: 'nope' })).toThrow()
   })
 
+  it('keeps unreported usage cost absent', () => {
+    const result = methods['usage.summary'].result.parse({
+      session: {
+        inputTokens: 10,
+        cachedInputTokens: 2,
+        outputTokens: 3,
+        reasoningTokens: 1,
+        totalTokens: 16,
+      },
+      today: {
+        inputTokens: 10,
+        cachedInputTokens: 2,
+        outputTokens: 3,
+        reasoningTokens: 1,
+        totalTokens: 16,
+        costUsd: 0.04,
+      },
+    })
+
+    expect(result.session.costUsd).toBeUndefined()
+    expect(result.today.costUsd).toBe(0.04)
+  })
+
   it('validates data for every declared channel', () => {
     expect(
       channels['thread.event'].parse({

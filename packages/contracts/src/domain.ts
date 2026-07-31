@@ -112,6 +112,8 @@ export const UsageSchema = z.object({
   outputTokens: z.number(),
   reasoningTokens: z.number(),
   totalTokens: z.number(),
+  /** Actual cost reported by the provider. Absent when it would be an estimate. */
+  costUsd: z.number().nonnegative().optional(),
   contextWindow: z.number().optional(),
 })
 export type Usage = z.infer<typeof UsageSchema>
@@ -140,7 +142,7 @@ export const DomainEventSchema = z.discriminatedUnion('type', [
     steps: z.array(PlanStepSchema),
   }),
   /** Token spend so far. Surfaced live rather than at the end of a turn. */
-  z.object({ type: z.literal('usage.updated'), usage: UsageSchema }),
+  z.object({ type: z.literal('usage.updated'), turnId: z.string().optional(), usage: UsageSchema }),
   /**
    * Everything this turn changed, as one unified diff. Kept separate from the
    * per-file items because "what did it do to my repo" is a different question
