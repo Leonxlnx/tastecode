@@ -65,28 +65,27 @@ describe('protocol envelopes', () => {
       undo,
     })
     expect(() => methods['thread.restore'].result.parse({ undo: '' })).toThrow()
-    expect(
-      methods['projects.list'].result.parse({
-        projects: [
-          {
-            path: 'D:\\x',
-            name: 'x',
-            pinned: false,
-            createdAt: 0,
-            sessions: [
-              {
-                id: 'th1',
-                title: 'Isolated',
-                provider: 'codex',
-                createdAt: 0,
-                running: true,
-                worktreeBranch: 'harness/th1',
-              },
-            ],
-          },
-        ],
-      }),
-    ).toBeTruthy()
+    const projects = methods['projects.list'].result.parse({
+      projects: [
+        {
+          path: 'D:\\x',
+          name: 'x',
+          pinned: false,
+          createdAt: 0,
+          sessions: [
+            {
+              id: 'th1',
+              title: 'Isolated',
+              provider: 'codex',
+              createdAt: 0,
+              running: true,
+              worktreeBranch: 'harness/th1',
+            },
+          ],
+        },
+      ],
+    })
+    expect(projects.projects[0]?.sessions[0]?.worktreeBranch).toBe('harness/th1')
   })
 
   it('keeps unreported usage cost absent', () => {
