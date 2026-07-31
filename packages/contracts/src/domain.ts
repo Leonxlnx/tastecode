@@ -142,7 +142,7 @@ export const DomainEventSchema = z.discriminatedUnion('type', [
     steps: z.array(PlanStepSchema),
   }),
   /** Token spend so far. Surfaced live rather than at the end of a turn. */
-  z.object({ type: z.literal('usage.updated'), turnId: z.string().optional(), usage: UsageSchema }),
+  z.object({ type: z.literal('usage.updated'), usage: UsageSchema }),
   /**
    * Everything this turn changed, as one unified diff. Kept separate from the
    * per-file items because "what did it do to my repo" is a different question
