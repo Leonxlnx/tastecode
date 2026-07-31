@@ -4,10 +4,10 @@ For any coding agent working in this repo — Claude Code, Codex, Cursor, an ACP
 
 `pnpm dev` starts the server, renderer and desktop shell together.
 
-**Where the project is:** M0 and M1 are done. M2 is in progress — Codex, Claude Code and
-any ACP agent (Gemini, Kimi, Qwen) all run. What is left of M2 is parallel sessions,
-worktrees, checkpoints and moving state out of the renderer. See
-[docs/ROADMAP.md](./docs/ROADMAP.md) and the open issues.
+**Where the project is:** M0, M1 and M2 are done — Codex, Claude Code and any ACP agent
+(Gemini, Kimi, Qwen) all run with parallel sessions, isolated worktrees, rollback and
+persistent usage. M3 (review and control) is next. See [docs/ROADMAP.md](./docs/ROADMAP.md)
+and the open issues.
 
 ## Read first
 

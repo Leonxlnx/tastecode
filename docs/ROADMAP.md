@@ -43,39 +43,21 @@ discarding it: the agent's plan for the turn, the turn-level diff, live token
 spend, command duration and exit codes, and streaming reasoning and command
 output.
 
-### M2 — Many agents, many sessions
+### M2 — Many agents, many sessions ✅
 
 ACP adapter (unlocks ~25 engines), Claude Code adapter, session manager, worktrees,
 checkpoints, provider setup wizard, cost accounting.
-→ _Three agents on three worktrees in one repo, no confusion._
+→ _Three agents on three worktrees in one repo, no confusion._ **Done.**
 
-Done so far: **Claude Code adapter**, **ACP adapter**, and the provider registry
-underneath both. Adding an engine is now a case in one file rather than a change
-to session handling, and ACP means one integration covers Gemini, Kimi, Qwen and
-anything else that adopts the protocol.
+Shipped: **Claude Code and ACP adapters**, provider discovery, SQLite-owned projects and
+session event logs, parallel session status and switching, private worktrees requested and
+managed from the UI, reversible checkpoint rollback with changed-file inspection, and
+persistent session/day usage. Money is displayed only when the provider reports actual
+cost; Codex subscriptions show their real rate-limit headroom instead.
 
-Both adapters were written against frames captured from the running binaries.
-For ACP that mattered twice: the published schema names the update discriminator
-differently from the wire, and a permissioned tool call is described only in the
-permission request — a unit test written from the docs passed while the real
-thing was broken.
-
-Also done: **the server owns projects, sessions and their event log**, so a session
-survives a reload and a restart; **several sessions run at once** without blocking or
-cross-wiring; **each session can take a private git worktree**, which is what makes two
-agents in one repository safe rather than merely concurrent; and **a session can be rolled
-back**, files and conversation together, from a checkpoint taken before every turn.
-
-Three of those were verified against real agents rather than mocks, and each verification
-found something the tests had not. Two Claude Code sessions writing the same file proved
-isolation held. A rollback restored the right contents but staged them, which only showed
-up in `git status`. And pointing a new build at yesterday's database found that
-`CREATE TABLE IF NOT EXISTS` never adds a column — a break that can only ever hit someone
-who used the app before the change.
-
-Still open in M2, all of it interface work: cost accounting, keyboard shortcuts and a
-command palette, empty and error states, and switching between running sessions from the
-thread view.
+The risky paths were verified against real agents and repositories as well as the test
+suite. The GitHub milestone closed with 9/9 issues complete after green Windows and macOS
+CI.
 
 ### M3 — Review & control
 
