@@ -207,6 +207,15 @@ export const methods = {
     result: z.object({
       session: UsageSchema.omit({ contextWindow: true }),
       today: UsageSchema.omit({ contextWindow: true }),
+      /** Provider-reported subscription windows. Empty when unavailable. */
+      limits: z.array(
+        z.object({
+          label: z.string(),
+          usedPercent: z.number().min(0).max(100),
+          /** Unix time in milliseconds. */
+          resetsAt: z.number().optional(),
+        }),
+      ),
     }),
   },
   'thread.start': {

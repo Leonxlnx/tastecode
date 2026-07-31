@@ -78,10 +78,12 @@ describe('protocol envelopes', () => {
         totalTokens: 16,
         costUsd: 0.04,
       },
+      limits: [{ label: '5 hours', usedPercent: 25, resetsAt: 1_800_000 }],
     })
 
     expect(result.session.costUsd).toBeUndefined()
     expect(result.today.costUsd).toBe(0.04)
+    expect(result.limits[0]?.usedPercent).toBe(25)
   })
 
   it('validates data for every declared channel', () => {
