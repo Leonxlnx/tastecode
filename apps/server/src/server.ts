@@ -9,6 +9,7 @@ import {
   PROTOCOL_VERSION,
   RequestSchema,
   type MethodName,
+  type ParamsOf,
   type ProviderId,
 } from '@harness/contracts'
 import { Orchestrator } from './orchestrator.js'
@@ -196,6 +197,20 @@ export function startServer(
       case 'models.list': {
         const p = params as { provider: ProviderId }
         return { models: await orchestrator.listModels(p.provider) }
+      }
+
+      case 'voice.status': {
+        const p = params as { provider: ProviderId }
+        return orchestrator.voiceStatus(p.provider)
+      }
+
+      case 'voice.transcribe':
+        return orchestrator.transcribeVoice(params as ParamsOf<'voice.transcribe'>)
+
+      case 'voice.cancel': {
+        const p = params as { requestId: string }
+        orchestrator.cancelVoice(p.requestId)
+        return {}
       }
 
       case 'acp.agents': {

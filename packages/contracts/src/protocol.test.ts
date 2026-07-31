@@ -80,6 +80,28 @@ describe('protocol envelopes', () => {
     expect(() => methods['thread.start'].params.parse({ provider: 'nope' })).toThrow()
   })
 
+  it('bounds normalized voice clips at the protocol boundary', () => {
+    const valid = {
+      requestId: '0dca4330-66f5-4f68-9287-c6b2bf4c6bf0',
+      provider: 'codex' as const,
+      audioBase64: 'UklGRg==',
+      mimeType: 'audio/wav' as const,
+      sampleRateHz: 24_000 as const,
+      durationMs: 1_000,
+    }
+
+    expect(methods['voice.transcribe'].params.parse(valid)).toEqual(valid)
+    expect(() =>
+      methods['voice.transcribe'].params.parse({ ...valid, durationMs: 120_001 }),
+    ).toThrow()
+    expect(() =>
+      methods['voice.transcribe'].params.parse({ ...valid, mimeType: 'audio/webm' }),
+    ).toThrow()
+    expect(() =>
+      methods['voice.transcribe'].params.parse({ ...valid, audioBase64: 'not base64!' }),
+    ).toThrow()
+  })
+
   it('validates data for every declared channel', () => {
     expect(
       channels['thread.event'].parse({

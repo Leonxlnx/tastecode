@@ -16,5 +16,14 @@
     "esbuild": "^0.28.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
+  },
+  "build": {
+    "mac": {
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Personal Harness uses your microphone to record dictation that you choose to send to OpenAI for transcription."
+      },
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist"
+    }
   }
 }

@@ -22,6 +22,7 @@ import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { Menu, MenuItem } from './ui/Menu.js'
 import { serverUrl } from './server-url.js'
+import { canCaptureVoice, type VoiceRecording } from './voice-recorder.js'
 
 const SERVER_URL = serverUrl(import.meta.env.VITE_HARNESS_SERVER_URL ?? 'ws://127.0.0.1:4311')
 const SETUP_KEY = 'harness.provider'
@@ -99,6 +100,7 @@ export function App() {
   )
   const [workspace, setWorkspace] = useState<WorkspaceInfo | undefined>()
   const [account, setAccount] = useState<Account | undefined>()
+  const [voiceAvailable, setVoiceAvailable] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [paletteScope, setPaletteScope] = useState<CommandScope | null>(null)
   const [composerFocusRequest, setComposerFocusRequest] = useState(0)
@@ -184,6 +186,25 @@ export function App() {
       cancelled = true
     }
   }, [transport, provider])
+
+  useEffect(() => {
+    if (!provider || !canCaptureVoice()) {
+      setVoiceAvailable(false)
+      return
+    }
+    let cancelled = false
+    void transport
+      .request('voice.status', { provider })
+      .then((status) => {
+        if (!cancelled) setVoiceAvailable(status.available)
+      })
+      .catch(() => {
+        if (!cancelled) setVoiceAvailable(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [transport, provider, account?.signedIn])
 
   useEffect(() => {
     if (!provider) return
@@ -465,6 +486,25 @@ export function App() {
         data: await fileBase64(file),
       })
       return path
+    },
+    [transport],
+  )
+
+  const transcribeVoice = useCallback(
+    async (requestId: string, recording: VoiceRecording): Promise<string> => {
+      const { text } = await transport.request('voice.transcribe', {
+        requestId,
+        provider: 'codex',
+        ...recording,
+      })
+      return text
+    },
+    [transport],
+  )
+
+  const cancelVoice = useCallback(
+    (requestId: string) => {
+      void transport.request('voice.cancel', { requestId }).catch(() => undefined)
     },
     [transport],
   )
@@ -782,6 +822,7 @@ export function App() {
             serviceTier={serviceTier}
             approval={approval}
             autoReviewAvailable={capabilities?.autoReview === true}
+            voiceAvailable={provider === 'codex' && voiceAvailable}
             disabled={!activePath}
             running={thread.running}
             focusRequest={composerFocusRequest}
@@ -790,6 +831,8 @@ export function App() {
             onServiceTierChange={setServiceTier}
             onApprovalChange={setApproval}
             onSavePastedImage={materializePastedImage}
+            onTranscribeVoice={transcribeVoice}
+            onCancelVoice={cancelVoice}
             onSend={(t, files) => void send(t, files)}
             onInterrupt={interrupt}
           />

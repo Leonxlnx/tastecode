@@ -24,6 +24,11 @@ import type { TurnCompletedNotification } from './generated/v2/TurnCompletedNoti
 import type { TurnStartedNotification } from './generated/v2/TurnStartedNotification'
 import type { TurnStartResponse } from './generated/v2/TurnStartResponse'
 import { mapAutoReviewNotification } from './auto-review.js'
+import {
+  CodexVoiceTranscriber,
+  type VoiceCapability,
+  type VoiceTranscriptionInput,
+} from './voice.js'
 
 /**
  * Tier 1 adapter: drives `codex app-server` over JSON-RPC.
@@ -32,8 +37,8 @@ import { mapAutoReviewNotification } from './auto-review.js'
  * first one built — designing the internal domain model against the best
  * available protocol keeps it from collapsing to a lowest common denominator.
  *
- * Note what this adapter does NOT do: it never reads `~/.codex/auth.json` or
- * any other credential. The binary authenticates itself. See rules/security.md.
+ * The binary owns authentication. Features that need a ChatGPT backend token
+ * ask app-server for the current short-lived session instead of reading auth storage.
  */
 
 const CLIENT_NAME = 'personal-harness'
@@ -168,6 +173,9 @@ export type CodexAdapterEvents = {
 
 export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #rpc: StdioJsonRpc | undefined
+  #voice = new CodexVoiceTranscriber(<T>(method: string, params: unknown) =>
+    this.#call<T>(method, params),
+  )
   #started = false
   /**
    * Approvals waiting on an answer, keyed by our id. Holds the JSON-RPC
@@ -202,12 +210,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#started = true
   }
 
-  /**
-   * Who is signed in, asked of the binary itself.
-   *
-   * We never read ~/.codex/auth.json. The binary owns its credentials and
-   * answers questions about them; that is the whole compliance posture.
-   */
+  /** Who is signed in, asked of the binary itself. */
   async account(): Promise<Account> {
     try {
       // The response wraps the account rather than being one.
@@ -255,6 +258,14 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
   async signOut(): Promise<void> {
     await this.#call('account/logout', {})
+  }
+
+  voiceCapability(): Promise<VoiceCapability> {
+    return this.#voice.capability()
+  }
+
+  transcribeVoice(input: VoiceTranscriptionInput, signal?: AbortSignal): Promise<string> {
+    return this.#voice.transcribe(input, signal)
   }
 
   /**

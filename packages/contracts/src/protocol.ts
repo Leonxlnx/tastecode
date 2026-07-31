@@ -112,6 +112,39 @@ export const methods = {
     result: z.object({ models: z.array(ModelSchema) }),
   },
   /**
+   * Whether this provider can accept a recorded clip. Availability is account-
+   * and binary-specific, so the renderer asks instead of inferring it from a mic API.
+   */
+  'voice.status': {
+    params: z.object({ provider: ProviderIdSchema }),
+    result: z.object({
+      available: z.boolean(),
+      reason: z
+        .enum(['provider_unsupported', 'sign_in_required', 'unsupported_auth', 'codex_too_old'])
+        .optional(),
+    }),
+  },
+  /** A normalized clip. The server and Codex adapter validate the WAV again. */
+  'voice.transcribe': {
+    params: z.object({
+      requestId: z.string().uuid(),
+      provider: z.literal('codex'),
+      audioBase64: z
+        .string()
+        .min(1)
+        .max(13_981_016)
+        .regex(/^[A-Za-z0-9+/]*={0,2}$/),
+      mimeType: z.literal('audio/wav'),
+      sampleRateHz: z.literal(24_000),
+      durationMs: z.number().int().positive().max(120_000),
+    }),
+    result: z.object({ text: z.string() }),
+  },
+  'voice.cancel': {
+    params: z.object({ requestId: z.string().uuid() }),
+    result: z.object({}),
+  },
+  /**
    * Agents reachable over ACP, and whether each one is actually on this
    * machine. The list is the server's to answer because only it can look.
    */

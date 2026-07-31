@@ -119,6 +119,7 @@ function renderComposer(
       serviceTier={undefined}
       approval="ask"
       autoReviewAvailable={autoReviewAvailable}
+      voiceAvailable={false}
       disabled={false}
       running={false}
       focusRequest={0}
@@ -127,6 +128,8 @@ function renderComposer(
       onServiceTierChange={vi.fn()}
       onApprovalChange={vi.fn()}
       onSavePastedImage={onSavePastedImage ?? (async () => '/tmp/pasted-image.png')}
+      onTranscribeVoice={vi.fn()}
+      onCancelVoice={vi.fn()}
       onSend={onSend}
       onInterrupt={vi.fn()}
     />,
