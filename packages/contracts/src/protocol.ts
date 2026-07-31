@@ -252,6 +252,11 @@ export const methods = {
     params: z.object({ threadId: z.string(), checkpointId: z.number() }),
     result: z.object({ undo: z.string() }),
   },
+  /** Reverse the latest restore using the opaque token it returned. */
+  'thread.undoRestore': {
+    params: z.object({ threadId: z.string(), undo: z.string().min(1) }),
+    result: z.object({}),
+  },
   /** Whether a session's private checkout holds work nobody has committed. */
   'thread.unsavedWork': {
     params: z.object({ threadId: z.string() }),
