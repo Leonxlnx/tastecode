@@ -52,8 +52,9 @@ checkpoints, provider setup wizard, cost accounting.
 Shipped: **Claude Code and ACP adapters**, provider discovery, SQLite-owned projects and
 session event logs, parallel session status and switching, private worktrees requested and
 managed from the UI, reversible checkpoint rollback with changed-file inspection, and
-persistent session/day usage. Money is displayed only when the provider reports actual
-cost; Codex subscriptions show their real rate-limit headroom instead.
+persistent Codex/Claude session/day usage. ACP does not currently emit usage. Money is
+displayed only when the provider reports actual cost; Codex subscriptions show their real
+rate-limit headroom instead.
 
 The risky paths were verified against real agents and repositories as well as the test
 suite. The GitHub milestone closed with 9/9 issues complete after green Windows and macOS

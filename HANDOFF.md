@@ -65,9 +65,9 @@ Done, all of it verified against real agents rather than mocks:
   uncommitted work requires explicit confirmation before discard
 - **Reachable rollback** — checkpoint history lists the exact files that would change and
   a completed restore can itself be undone
-- **Persistent usage** — per-session and per-day totals come from SQLite; Claude cost is
-  shown only when Claude reports it, while Codex subscriptions show real rate-limit
-  headroom from the Codex binary
+- **Persistent Codex/Claude usage** — per-session and per-day totals come from SQLite;
+  Claude cost is shown only when Claude reports it, while Codex subscriptions show real
+  rate-limit headroom from the Codex binary. ACP agents do not currently emit usage.
 
 The final interface PRs were [#37](https://github.com/Leonxlnx/personalharness/pull/37)
 (rollback), [#43](https://github.com/Leonxlnx/personalharness/pull/43) (isolated checkout
