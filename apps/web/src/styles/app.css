@@ -81,6 +81,10 @@
   transform: translateX(0);
 }
 
+.rail__backdrop {
+  display: none;
+}
+
 .rail__edge {
   position: absolute;
   z-index: 1;
@@ -667,7 +671,7 @@
   cursor: pointer;
   font: inherit;
   font-size: var(--t-sm);
-  padding: 0 8px 0 32px;
+  padding: 0 61px 0 32px;
   text-align: left;
   min-width: 0;
   /* Nothing in the rail wraps. Titles are arbitrary user text and a row that
@@ -731,15 +735,15 @@
 }
 
 .sess__spinner {
-  position: relative;
+  position: absolute;
+  top: 50%;
+  left: 8px;
   width: 12px;
   height: 14px;
-  margin-left: auto;
-  margin-right: 1px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 14px;
   line-height: 1;
-  flex: none;
+  transform: translateY(-50%);
 }
 
 .sess__spinner span {
@@ -3015,9 +3019,20 @@
 
   .rail-slot .rail {
     position: absolute;
+    z-index: 1;
     inset: 0 auto 0 0;
     width: min(86vw, 320px);
     box-shadow: 18px 0 36px rgba(0, 0, 0, 0.38);
+  }
+
+  .rail__backdrop {
+    display: block;
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 100vw;
+    border: 0;
+    padding: 0;
+    background: transparent;
   }
 
   .rail-slot.is-collapsed .rail {

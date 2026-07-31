@@ -647,6 +647,7 @@ export function App() {
           providerName={providerName(provider, acpAgentName)}
           collapsed={collapsed}
           account={account}
+          onClose={() => setCollapsed(true)}
           onAddProject={() => void addProject()}
           onNewSession={beginSession}
           onSelectSession={(id) => void selectSession(id)}

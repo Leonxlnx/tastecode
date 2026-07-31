@@ -48,6 +48,7 @@ export function Sidebar(props: {
   account: Account | undefined
   providerName: string
   collapsed: boolean
+  onClose: () => void
   onAddProject: () => void
   onNewSession: (projectPath: string) => void
   onSelectSession: (id: string) => void
@@ -97,6 +98,16 @@ export function Sidebar(props: {
     >
       {props.collapsed ? (
         <div className="rail__edge" aria-hidden onMouseEnter={() => setEdgeRevealed(true)} />
+      ) : null}
+
+      {!props.collapsed ? (
+        <button
+          type="button"
+          className="rail__backdrop"
+          aria-label="Close sidebar"
+          tabIndex={-1}
+          onPointerDown={props.onClose}
+        />
       ) : null}
 
       <nav className="rail" inert={props.collapsed && !edgeRevealed ? true : undefined}>

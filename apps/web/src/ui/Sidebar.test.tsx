@@ -29,6 +29,7 @@ describe('Sidebar chat actions', () => {
         account={undefined}
         providerName="Codex"
         collapsed={false}
+        onClose={vi.fn()}
         onAddProject={vi.fn()}
         onNewSession={vi.fn()}
         onSelectSession={vi.fn()}
@@ -74,6 +75,7 @@ describe('Sidebar chat actions', () => {
         account={undefined}
         providerName="Codex"
         collapsed={false}
+        onClose={vi.fn()}
         onAddProject={vi.fn()}
         onNewSession={vi.fn()}
         onSelectSession={vi.fn()}
@@ -114,6 +116,36 @@ describe('Sidebar chat actions', () => {
     expect(onReorderSession).toHaveBeenCalledWith('/work/harness', 'thread-1', 'thread-2', 'after')
   })
 
+  it('closes an open sidebar from the mobile backdrop', () => {
+    const onClose = vi.fn()
+
+    render(
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        onClose={onClose}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Close sidebar' }))
+
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
   it('reveals a collapsed sidebar only while the pointer is at the window edge', () => {
     const { container } = render(
       <Sidebar
@@ -123,6 +155,7 @@ describe('Sidebar chat actions', () => {
         account={undefined}
         providerName="Codex"
         collapsed
+        onClose={vi.fn()}
         onAddProject={vi.fn()}
         onNewSession={vi.fn()}
         onSelectSession={vi.fn()}
