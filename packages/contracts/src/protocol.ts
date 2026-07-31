@@ -22,7 +22,7 @@ import {
  * validation is what keeps three client surfaces from silently drifting apart.
  */
 
-export const PROTOCOL_VERSION = 1
+export const PROTOCOL_VERSION = 2
 
 /** Bumped whenever a client and server can no longer understand each other. */
 export const ErrorCode = {
@@ -43,6 +43,14 @@ export const RequestSchema = z.object({
   params: z.unknown(),
 })
 export type Request = z.infer<typeof RequestSchema>
+
+export const QueuedTurnSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  attachments: z.array(z.string()),
+  createdAt: z.number(),
+})
+export type QueuedTurn = z.infer<typeof QueuedTurnSchema>
 
 export const ResponseSchema = z.union([
   z.object({ id: z.string(), result: z.unknown() }),
@@ -101,6 +109,19 @@ export const methods = {
   },
   'workspace.info': {
     params: z.object({ path: z.string() }),
+    result: z.object({
+      branch: z.string().optional(),
+      added: z.number(),
+      removed: z.number(),
+      dirtyFiles: z.number(),
+    }),
+  },
+  'workspace.branches': {
+    params: z.object({ path: z.string() }),
+    result: z.object({ branches: z.array(z.string()) }),
+  },
+  'workspace.switchBranch': {
+    params: z.object({ path: z.string(), branch: z.string().min(1) }),
     result: z.object({
       branch: z.string().optional(),
       added: z.number(),
@@ -184,7 +205,7 @@ export const methods = {
               provider: ProviderIdSchema,
               agent: z.string().optional(),
               createdAt: z.number(),
-              /** True while a process is alive for it, not merely on record. */
+              /** True while the agent is actively working on a turn. */
               running: z.boolean(),
               closedAt: z.number().optional(),
               /** The private checkout branch, when this session is isolated. */
@@ -342,7 +363,26 @@ export const methods = {
       effort: z.string().optional(),
       serviceTier: z.string().optional(),
     }),
-    result: z.object({ turnId: z.string() }),
+    result: z.discriminatedUnion('queued', [
+      z.object({ queued: z.literal(false), turnId: z.string() }),
+      z.object({ queued: z.literal(true), queuedTurn: QueuedTurnSchema }),
+    ]),
+  },
+  /** Prompts waiting behind the turn currently in progress. */
+  'thread.queue': {
+    params: z.object({ threadId: z.string() }),
+    result: z.object({
+      items: z.array(QueuedTurnSchema),
+      canSteer: z.boolean(),
+    }),
+  },
+  'thread.deleteQueuedTurn': {
+    params: z.object({ threadId: z.string(), queuedTurnId: z.string() }),
+    result: z.object({}),
+  },
+  'thread.steerQueuedTurn': {
+    params: z.object({ threadId: z.string(), queuedTurnId: z.string() }),
+    result: z.object({}),
   },
   'thread.respondToApproval': {
     params: z.object({
@@ -396,6 +436,11 @@ export const channels = {
   'thread.event': z.object({
     threadId: z.string(),
     event: DomainEventSchema,
+  }),
+  'thread.queue': z.object({
+    threadId: z.string(),
+    items: z.array(QueuedTurnSchema),
+    canSteer: z.boolean(),
   }),
 } as const
 

@@ -77,6 +77,21 @@ describe('protocol envelopes', () => {
         serviceTier: 'priority',
       }),
     ).toBeTruthy()
+    expect(
+      methods['thread.sendTurn'].result.parse({
+        queued: true,
+        queuedTurn: {
+          id: 'queued-1',
+          text: 'Do this next',
+          attachments: ['D:\\x\\reference.png'],
+          createdAt: 10,
+        },
+      }),
+    ).toBeTruthy()
+    expect(methods['thread.queue'].result.parse({ items: [], canSteer: true })).toEqual({
+      items: [],
+      canSteer: true,
+    })
     expect(() => methods['thread.start'].params.parse({ provider: 'nope' })).toThrow()
     const { undo } = methods['thread.restore'].result.parse({ undo: 'restore-token' })
     expect(methods['thread.undoRestore'].params.parse({ threadId: 'th1', undo })).toEqual({
@@ -105,6 +120,9 @@ describe('protocol envelopes', () => {
       ],
     })
     expect(projects.projects[0]?.sessions[0]?.worktreeBranch).toBe('harness/th1')
+    expect(
+      methods['workspace.switchBranch'].params.parse({ path: 'D:\\x', branch: 'feature/shelf' }),
+    ).toEqual({ path: 'D:\\x', branch: 'feature/shelf' })
   })
 
   it('keeps unreported usage cost absent', () => {
@@ -159,6 +177,20 @@ describe('protocol envelopes', () => {
       channels['thread.event'].parse({
         threadId: 'th1',
         event: { type: 'turn.completed', turnId: 't1', status: 'completed' },
+      }),
+    ).toBeTruthy()
+    expect(
+      channels['thread.queue'].parse({
+        threadId: 'th1',
+        items: [
+          {
+            id: 'queued-1',
+            text: 'Do this next',
+            attachments: [],
+            createdAt: 10,
+          },
+        ],
+        canSteer: false,
       }),
     ).toBeTruthy()
   })
