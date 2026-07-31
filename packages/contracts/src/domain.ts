@@ -99,6 +99,19 @@ export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>
 export const ApprovalDecisionSchema = z.enum(['approve', 'approve-session', 'deny', 'abort'])
 export type ApprovalDecision = z.infer<typeof ApprovalDecisionSchema>
 
+export const ApprovalReviewSchema = z.object({
+  id: z.string(),
+  turnId: z.string(),
+  status: z.enum(['in_progress', 'approved', 'denied', 'timed_out', 'aborted']),
+  /** A provider-neutral description of the access being reviewed. */
+  description: z.string(),
+  rationale: z.string().optional(),
+  riskLevel: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+  startedAt: z.number(),
+  completedAt: z.number().optional(),
+})
+export type ApprovalReview = z.infer<typeof ApprovalReviewSchema>
+
 /** A step in the agent's own plan for the current turn. */
 export const PlanStepSchema = z.object({
   text: z.string(),
@@ -152,6 +165,8 @@ export const DomainEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('approval.requested'), request: ApprovalRequestSchema }),
   /** Resolved — by the user, or because the turn ended without an answer. */
   z.object({ type: z.literal('approval.resolved'), id: z.string() }),
+  z.object({ type: z.literal('approval.review.started'), review: ApprovalReviewSchema }),
+  z.object({ type: z.literal('approval.review.completed'), review: ApprovalReviewSchema }),
 ])
 export type DomainEvent = z.infer<typeof DomainEventSchema>
 
@@ -166,6 +181,8 @@ export const CapabilitiesSchema = z.object({
   interrupt: z.boolean(),
   reasoningItems: z.boolean(),
   approvals: z.boolean(),
+  /** Can route elevated approval requests through an automatic risk reviewer. */
+  autoReview: z.boolean(),
   images: z.boolean(),
 })
 export type Capabilities = z.infer<typeof CapabilitiesSchema>
@@ -202,7 +219,7 @@ export type Model = z.infer<typeof ModelSchema>
  * the engine calls it — this is the user-facing concept, and it is the single
  * most consequential setting in the app, so it is never hidden in a menu.
  */
-export const ApprovalModeSchema = z.enum(['ask', 'auto', 'full'])
+export const ApprovalModeSchema = z.enum(['ask', 'auto', 'auto-review', 'full'])
 export type ApprovalMode = z.infer<typeof ApprovalModeSchema>
 
 /**
