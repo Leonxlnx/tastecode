@@ -30,6 +30,15 @@ import { StageHeader } from './ui/StageHeader.js'
 import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { serverUrl } from './server-url.js'
+import {
+  applyTheme,
+  DARK_THEME_QUERY,
+  readSystemTheme,
+  readThemePreference,
+  THEME_KEY,
+  type Theme,
+  type ThemePreference,
+} from './theme.js'
 
 const SERVER_BASE_URL = import.meta.env.VITE_HARNESS_SERVER_URL ?? 'ws://127.0.0.1:4311'
 const SETUP_KEY = 'harness.provider'
@@ -129,6 +138,9 @@ export function App() {
   >()
   const [checkoutDeleteBusy, setCheckoutDeleteBusy] = useState(false)
   const macOS = isMacOS()
+  const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference)
+  const [systemTheme, setSystemTheme] = useState<Theme>(readSystemTheme)
+  const theme = themePreference === 'system' ? systemTheme : themePreference
   const [macOSFontSmoothing, setMacOSFontSmoothing] = useState(
     () => localStorage.getItem(MACOS_FONT_SMOOTHING_KEY) !== 'false',
   )
@@ -141,6 +153,24 @@ export function App() {
     const reconnectWithCurrentToken = () => setConnectionUrl(serverUrl(SERVER_BASE_URL))
     window.addEventListener('hashchange', reconnectWithCurrentToken)
     return () => window.removeEventListener('hashchange', reconnectWithCurrentToken)
+  }, [])
+
+  useLayoutEffect(() => {
+    applyTheme(theme)
+  }, [theme])
+
+  useEffect(() => {
+    localStorage.setItem(THEME_KEY, themePreference)
+  }, [themePreference])
+
+  useEffect(() => {
+    const media = globalThis.matchMedia?.(DARK_THEME_QUERY)
+    if (!media) return
+
+    const updateSystemTheme = () => setSystemTheme(media.matches ? 'dark' : 'light')
+    updateSystemTheme()
+    media.addEventListener('change', updateSystemTheme)
+    return () => media.removeEventListener('change', updateSystemTheme)
   }, [])
 
   useLayoutEffect(() => {
@@ -1092,6 +1122,8 @@ export function App() {
           providerName={providerName(provider, acpAgentName)}
           account={account}
           projectCount={projects.length}
+          themePreference={themePreference}
+          onThemePreferenceChange={setThemePreference}
           showMacOSFontSmoothing={macOS}
           macOSFontSmoothing={macOSFontSmoothing}
           onMacOSFontSmoothingChange={setMacOSFontSmoothing}

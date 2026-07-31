@@ -16,7 +16,8 @@ import type { CodeHighlighterPlugin } from 'streamdown'
  * we return plain tokens immediately and re-render once when Shiki is ready.
  */
 
-const THEME = 'github-dark-default'
+const LIGHT_THEME = 'github-light-default'
+const DARK_THEME = 'github-dark-default'
 
 /** Languages an agent emits constantly. Everything else loads on demand. */
 const COMMON = [
@@ -74,7 +75,7 @@ export function warmHighlighter(): void {
 
 function boot(): void {
   booting ??= createHighlighter({
-    themes: [THEME],
+    themes: [LIGHT_THEME, DARK_THEME],
     langs: COMMON,
     engine: createJavaScriptRegexEngine({ forgiving: true }),
   })
@@ -115,7 +116,7 @@ export const shikiPlugin: CodeHighlighterPlugin = {
   type: 'code-highlighter',
   name: 'shiki',
   getSupportedLanguages: () => COMMON,
-  getThemes: () => [THEME, THEME],
+  getThemes: () => [LIGHT_THEME, DARK_THEME],
   supportsLanguage: () => true,
 
   highlight(options) {
@@ -131,6 +132,9 @@ export const shikiPlugin: CodeHighlighterPlugin = {
       return plain(options.code) as never
     }
 
-    return instance.codeToTokens(options.code, { lang: language, theme: THEME } as never) as never
+    return instance.codeToTokens(options.code, {
+      lang: language,
+      themes: { light: LIGHT_THEME, dark: DARK_THEME },
+    } as never) as never
   },
 }

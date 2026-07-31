@@ -64,6 +64,8 @@ beforeEach(() => {
   transport.listeners.clear()
   transport.urls.length = 0
   window.location.hash = ''
+  document.documentElement.removeAttribute('data-theme')
+  document.documentElement.classList.remove('dark')
   localStorage.clear()
   localStorage.setItem('harness.provider', 'codex')
   serverProjects = [
@@ -196,6 +198,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  vi.restoreAllMocks()
 })
 
 describe('web client', () => {
@@ -386,6 +389,7 @@ describe('new chats', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
 
     const toggle = screen.getByRole('switch', { name: 'Font smoothing' })
     expect(toggle.getAttribute('aria-checked')).toBe('true')
@@ -395,6 +399,66 @@ describe('new chats', () => {
       expect(localStorage.getItem('harness.macosFontSmoothing')).toBe('false')
       expect(document.documentElement.classList.contains('is-macos-font-smoothing')).toBe(false)
     })
+  })
+
+  it('persists a selected appearance across app restarts', async () => {
+    const first = render(<App />)
+
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
+
+    const lightTheme = screen.getByRole('radio', { name: 'Light' })
+    expect((lightTheme as HTMLInputElement).checked).toBe(false)
+    fireEvent.click(lightTheme)
+
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.theme')).toBe('light')
+      expect(document.documentElement.dataset.theme).toBe('light')
+      expect(document.documentElement.classList.contains('dark')).toBe(false)
+    })
+
+    first.unmount()
+    render(<App />)
+
+    expect(document.documentElement.dataset.theme).toBe('light')
+  })
+
+  it('tracks OS appearance while System is selected', async () => {
+    const originalMatchMedia = window.matchMedia.bind(window)
+    const listeners = new Set<() => void>()
+    let systemIsDark = false
+    const systemThemeMedia = {
+      get matches() {
+        return systemIsDark
+      },
+      media: '(prefers-color-scheme: dark)',
+      addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+    } as unknown as MediaQueryList
+
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) =>
+      query === systemThemeMedia.media ? systemThemeMedia : originalMatchMedia(query),
+    )
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'System' }))
+
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.theme')).toBe('system')
+      expect(document.documentElement.dataset.theme).toBe('light')
+    })
+
+    systemIsDark = true
+    act(() => listeners.forEach((listener) => listener()))
+
+    expect(document.documentElement.dataset.theme).toBe('dark')
   })
 
   it('keeps full access selected after the app restarts', () => {
