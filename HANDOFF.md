@@ -189,12 +189,6 @@ passed while the real thing was broken.
 
 Full text in [rules/](./rules/). The ones that matter most:
 
-**Never read, copy, or forward a vendor credential.** Not from
-`~/.claude/.credentials.json`, not `~/.codex/auth.json`, not a keyring, not "just to check
-whether they are signed in". We spawn the vendor's binary and let it authenticate itself.
-This is a compliance requirement, not a style preference. See
-[rules/security.md](./rules/security.md).
-
 **Nothing leaves the machine.** No prompt, no path, no key, no source code goes to any
 server we control. Ever.
 

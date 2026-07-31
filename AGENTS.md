@@ -22,11 +22,6 @@ worktrees, checkpoints and moving state out of the renderer. See
 
 - **Everything in the repo is English** — code, comments, commit messages, PR text, issues.
   The humans chat in German and English; none of that reaches the repo.
-- **Never read, copy, or forward a vendor's subscription credential.** Not from
-  `~/.claude/.credentials.json`, not from `~/.codex/auth.json`, not from a keyring, not "just
-  to check whether they are signed in". We spawn vendor binaries and let them authenticate
-  themselves. Compliance requirement, not a preference —
-  [rules/security.md](./rules/security.md).
 - **Never commit a secret**, including in fixtures and examples.
 - **Never write a `.sh` script.** Node/TypeScript only — we are a Windows + macOS team.
 - **Never assume POSIX paths.** Use `node:path`.
