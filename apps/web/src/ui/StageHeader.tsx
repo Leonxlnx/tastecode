@@ -1,5 +1,5 @@
 import type { Usage } from '@harness/contracts'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, History } from 'lucide-react'
 import { isMacOS } from '../bridge.js'
 import { SHORTCUTS, shortcutAria, shortcutLabel } from '../shortcuts.js'
 import type { Project } from './Sidebar.js'
@@ -16,7 +16,9 @@ export function StageHeader(props: {
   activePath: string | undefined
   title: string | undefined
   usage: Usage | undefined
+  checkpointCount: number
   onSelectProject: (path: string) => void
+  onOpenRollback: () => void
 }) {
   const switchProjectShortcut = shortcutLabel(SHORTCUTS.switchProject, isMacOS())
 
@@ -55,15 +57,23 @@ export function StageHeader(props: {
 
       {props.title ? <span className="stagehead__title">{props.title}</span> : null}
 
-      {props.usage ? (
-        <span
-          className="usage"
-          title={`${props.usage.inputTokens.toLocaleString()} in · ${props.usage.cachedInputTokens.toLocaleString()} cached · ${props.usage.outputTokens.toLocaleString()} out · ${props.usage.reasoningTokens.toLocaleString()} reasoning`}
-        >
-          {compact(props.usage.totalTokens)}
-          {props.usage.contextWindow ? ` / ${compact(props.usage.contextWindow)}` : ' tokens'}
-        </span>
-      ) : null}
+      <div className="stagehead__tools">
+        {props.checkpointCount > 0 ? (
+          <button className="ghost rollback-trigger" onClick={props.onOpenRollback}>
+            <History size={12} aria-hidden />
+            {props.checkpointCount} checkpoint{props.checkpointCount === 1 ? '' : 's'}
+          </button>
+        ) : null}
+        {props.usage ? (
+          <span
+            className="usage"
+            title={`${props.usage.inputTokens.toLocaleString()} in · ${props.usage.cachedInputTokens.toLocaleString()} cached · ${props.usage.outputTokens.toLocaleString()} out · ${props.usage.reasoningTokens.toLocaleString()} reasoning`}
+          >
+            {compact(props.usage.totalTokens)}
+            {props.usage.contextWindow ? ` / ${compact(props.usage.contextWindow)}` : ' tokens'}
+          </span>
+        ) : null}
+      </div>
     </header>
   )
 }

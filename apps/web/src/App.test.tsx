@@ -83,6 +83,16 @@ beforeEach(() => {
         return Promise.resolve({ projects: serverProjects })
       case 'thread.history':
         return Promise.resolve({ events: [], running: false })
+      case 'thread.checkpoints':
+        return Promise.resolve({
+          checkpoints: [{ id: 7, seq: 1, label: 'Fix the parser', createdAt: 1_800_000 }],
+        })
+      case 'thread.changedSince':
+        return Promise.resolve({ files: ['src/parser.ts', 'src/parser.test.ts'] })
+      case 'thread.restore':
+        return Promise.resolve({ undo: 'undo-token' })
+      case 'thread.undoRestore':
+        return Promise.resolve({})
       case 'thread.delete': {
         // The server really does drop it, so the next listing must agree.
         const { threadId } = params as { threadId: string }
@@ -140,6 +150,49 @@ afterEach(() => {
 })
 
 describe('new chats', () => {
+  it('shows changed files before restoring and offers undo afterwards', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          {
+            id: 'thread-rollback',
+            title: 'Parser work',
+            provider: 'codex',
+            createdAt: 0,
+            running: false,
+          },
+        ],
+      },
+    ]
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Parser work' }))
+    fireEvent.click(await screen.findByRole('button', { name: '1 checkpoint' }))
+    fireEvent.click(screen.getByRole('button', { name: /Before “Fix the parser”/ }))
+
+    expect(await screen.findByText('src/parser.ts')).toBeTruthy()
+    expect(screen.getByText('src/parser.test.ts')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.restore', {
+        threadId: 'thread-rollback',
+        checkpointId: 7,
+      })
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.undoRestore', {
+        threadId: 'thread-rollback',
+        undo: 'undo-token',
+      })
+    })
+  })
+
   it('persists the macOS font smoothing setting', async () => {
     render(<App />)
 

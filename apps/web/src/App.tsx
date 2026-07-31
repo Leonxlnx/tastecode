@@ -8,6 +8,7 @@ import { appendUserMessage, emptyThread, reduce, type ThreadState } from './thre
 import { CommandPalette, type CommandScope, type PaletteCommand } from './ui/CommandPalette.js'
 import { Composer, type WorkspaceInfo } from './ui/Composer.js'
 import { Onboarding } from './ui/Onboarding.js'
+import { RollbackDialog, type Checkpoint } from './ui/RollbackDialog.js'
 import { Settings } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
 import { StageHeader } from './ui/StageHeader.js'
@@ -94,6 +95,14 @@ export function App() {
   const [paletteScope, setPaletteScope] = useState<CommandScope | null>(null)
   const [composerFocusRequest, setComposerFocusRequest] = useState(0)
   const [notice, setNotice] = useState<string | undefined>()
+  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([])
+  const [rollbackOpen, setRollbackOpen] = useState(false)
+  const [rollbackInspection, setRollbackInspection] = useState<
+    { checkpoint: Checkpoint; files: string[] } | undefined
+  >()
+  const [rollbackLoadingId, setRollbackLoadingId] = useState<number | undefined>()
+  const [rollbackRestoring, setRollbackRestoring] = useState(false)
+  const [undoRestore, setUndoRestore] = useState<{ threadId: string; token: string } | undefined>()
   const macOS = isMacOS()
   const [macOSFontSmoothing, setMacOSFontSmoothing] = useState(
     () => localStorage.getItem(MACOS_FONT_SMOOTHING_KEY) !== 'false',
@@ -225,6 +234,32 @@ export function App() {
     setActivePath((current) => current ?? list[0]?.path)
   }, [transport])
 
+  const refreshCheckpoints = useCallback(
+    async (threadId: string) => {
+      const result = await transport.request('thread.checkpoints', { threadId })
+      if (activeIdRef.current === threadId) setCheckpoints(result.checkpoints)
+    },
+    [transport],
+  )
+
+  const loadHistory = useCallback(
+    async (threadId: string) => {
+      const { events } = await transport.request('thread.history', { threadId })
+      const restored = events.reduce((state, entry) => reduce(state, entry.event), emptyThread)
+      threadStates.current.set(threadId, restored)
+      if (activeIdRef.current === threadId) setThread(restored)
+    },
+    [transport],
+  )
+
+  useEffect(() => {
+    if (!activeId || thread.running) {
+      if (!activeId) setCheckpoints([])
+      return
+    }
+    void refreshCheckpoints(activeId).catch(() => setCheckpoints([]))
+  }, [activeId, thread.running, refreshCheckpoints])
+
   // First load, plus the one-time handover from localStorage. Anything found
   // there is given to the server and the key removed, so it happens once.
   useEffect(() => {
@@ -304,6 +339,8 @@ export function App() {
     async (projectPath: string): Promise<string | undefined> => {
       if (!provider) return undefined
       setNotice(undefined)
+      setUndoRestore(undefined)
+      setRollbackOpen(false)
       setActivePath(projectPath)
       try {
         const { threadId } = await transport.request('thread.start', {
@@ -380,6 +417,9 @@ export function App() {
         justCreated = true
       }
 
+      setNotice(undefined)
+      setUndoRestore(undefined)
+
       const next = appendUserMessage(threadStates.current.get(threadId) ?? emptyThread, text)
       threadStates.current.set(threadId, next)
       if (threadId === activeIdRef.current) setThread(next)
@@ -424,12 +464,17 @@ export function App() {
       activeIdRef.current = undefined
       setActiveId(undefined)
       setThread(emptyThread)
+      setUndoRestore(undefined)
+      setRollbackOpen(false)
     },
     [activePath],
   )
 
   const selectSession = useCallback(
     async (id: string) => {
+      setNotice(undefined)
+      setUndoRestore(undefined)
+      setRollbackOpen(false)
       activeIdRef.current = id
       setActiveId(id)
       setActivePath(findSession(projects, id)?.project.path)
@@ -441,16 +486,71 @@ export function App() {
 
       setThread(emptyThread)
       try {
-        const { events } = await transport.request('thread.history', { threadId: id })
-        const restored = events.reduce((state, entry) => reduce(state, entry.event), emptyThread)
-        threadStates.current.set(id, restored)
-        if (activeIdRef.current === id) setThread(restored)
+        await loadHistory(id)
       } catch (error) {
         setNotice(error instanceof Error ? error.message : String(error))
       }
     },
-    [transport, projects],
+    [projects, loadHistory],
   )
+
+  const inspectCheckpoint = useCallback(
+    async (checkpoint: Checkpoint) => {
+      if (!activeId) return
+      setRollbackLoadingId(checkpoint.id)
+      try {
+        const { files } = await transport.request('thread.changedSince', {
+          threadId: activeId,
+          checkpointId: checkpoint.id,
+        })
+        setRollbackInspection({ checkpoint, files })
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : String(error))
+      } finally {
+        setRollbackLoadingId(undefined)
+      }
+    },
+    [transport, activeId],
+  )
+
+  const restoreCheckpoint = useCallback(async () => {
+    if (!activeId || !rollbackInspection) return
+    setRollbackRestoring(true)
+    try {
+      const { undo } = await transport.request('thread.restore', {
+        threadId: activeId,
+        checkpointId: rollbackInspection.checkpoint.id,
+      })
+      await loadHistory(activeId)
+      await refreshCheckpoints(activeId)
+      if (activePath) setWorkspace(await transport.request('workspace.info', { path: activePath }))
+      setUndoRestore({ threadId: activeId, token: undo })
+      setNotice(`Restored to before “${rollbackInspection.checkpoint.label}”.`)
+      setRollbackOpen(false)
+      setRollbackInspection(undefined)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+    } finally {
+      setRollbackRestoring(false)
+    }
+  }, [transport, activeId, activePath, rollbackInspection, loadHistory, refreshCheckpoints])
+
+  const reverseRestore = useCallback(async () => {
+    if (!undoRestore) return
+    try {
+      await transport.request('thread.undoRestore', {
+        threadId: undoRestore.threadId,
+        undo: undoRestore.token,
+      })
+      await loadHistory(undoRestore.threadId)
+      await refreshCheckpoints(undoRestore.threadId)
+      if (activePath) setWorkspace(await transport.request('workspace.info', { path: activePath }))
+      setUndoRestore(undefined)
+      setNotice('Restore undone.')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+    }
+  }, [transport, undoRestore, activePath, loadHistory, refreshCheckpoints])
 
   const startNewChat = useCallback(() => {
     const path = activePath ?? projects[0]?.path
@@ -694,7 +794,12 @@ export function App() {
             activePath={activePath}
             title={active?.session.title}
             usage={thread.usage}
+            checkpointCount={checkpoints.length}
             onSelectProject={selectProject}
+            onOpenRollback={() => {
+              setRollbackInspection(undefined)
+              setRollbackOpen(true)
+            }}
           />
 
           {active ? (
@@ -770,10 +875,39 @@ export function App() {
         />
       ) : null}
 
+      {rollbackOpen ? (
+        <RollbackDialog
+          checkpoints={checkpoints}
+          inspection={rollbackInspection}
+          loadingId={rollbackLoadingId}
+          restoring={rollbackRestoring}
+          onInspect={(checkpoint) => void inspectCheckpoint(checkpoint)}
+          onRestore={() => void restoreCheckpoint()}
+          onClose={() => {
+            setRollbackOpen(false)
+            setRollbackInspection(undefined)
+          }}
+        />
+      ) : null}
+
       {notice ? (
-        <div className="notice" role="alert">
+        <div
+          className={`notice${undoRestore || notice === 'Restore undone.' ? ' notice--success' : ''}`}
+          role="alert"
+        >
           <span className="notice__text">{notice}</span>
-          <button className="ghost" onClick={() => setNotice(undefined)}>
+          {undoRestore ? (
+            <button className="ghost" onClick={() => void reverseRestore()}>
+              Undo restore
+            </button>
+          ) : null}
+          <button
+            className="ghost"
+            onClick={() => {
+              setNotice(undefined)
+              setUndoRestore(undefined)
+            }}
+          >
             Dismiss
           </button>
         </div>
