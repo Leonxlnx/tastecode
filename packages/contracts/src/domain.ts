@@ -182,7 +182,7 @@ export const CapabilitiesSchema = z.object({
   reasoningItems: z.boolean(),
   approvals: z.boolean(),
   /** Can route elevated approval requests through an automatic risk reviewer. */
-  autoReview: z.boolean(),
+  autoReview: z.boolean().optional(),
   images: z.boolean(),
 })
 export type Capabilities = z.infer<typeof CapabilitiesSchema>

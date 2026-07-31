@@ -34,7 +34,7 @@ export const CLAUDE_CAPABILITIES: Capabilities = {
 }
 
 /** Claude Code names its permission modes differently; ours map on cleanly. */
-const PERMISSION_MODE: Record<ApprovalMode, string> = {
+const PERMISSION_MODE: Partial<Record<ApprovalMode, string>> = {
   ask: 'default',
   auto: 'acceptEdits',
   full: 'bypassPermissions',
@@ -67,6 +67,9 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
    * continuity comes from `--resume` with the session id the CLI hands back.
    */
   async startThread(workspacePath: string, options: ClaudeStartOptions = {}): Promise<Thread> {
+    if (options.approval === 'auto-review') {
+      throw new Error('Claude Code does not support automatic approval review')
+    }
     this.#workspacePath = workspacePath
     this.#options = options
     this.#sessionId = undefined
@@ -80,6 +83,9 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 
   async sendTurn(threadId: string, text: string): Promise<string> {
     const turnId = `${threadId}-turn-${++this.#turnCounter}`
+    const permissionMode = this.#options.approval
+      ? PERMISSION_MODE[this.#options.approval]
+      : undefined
 
     const args = [
       '-p',
@@ -90,9 +96,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       // all rather than only the final answer.
       '--verbose',
       ...(this.#options.model ? ['--model', this.#options.model] : []),
-      ...(this.#options.approval
-        ? ['--permission-mode', PERMISSION_MODE[this.#options.approval]]
-        : []),
+      ...(permissionMode ? ['--permission-mode', permissionMode] : []),
       // Continuity: without this every turn starts a fresh context and the
       // agent forgets the conversation it is in the middle of.
       ...(this.#sessionId ? ['--resume', this.#sessionId] : []),

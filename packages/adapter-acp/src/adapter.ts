@@ -84,6 +84,9 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   }
 
   async startThread(workspacePath: string, options: AcpStartOptions = {}): Promise<Thread> {
+    if (options.approval === 'auto-review') {
+      throw new Error('ACP agents do not support automatic approval review')
+    }
     this.#approval = options.approval ?? 'ask'
 
     const child = spawnCli(this.#spec.command, this.#spec.args, { cwd: workspacePath })

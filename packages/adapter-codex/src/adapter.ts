@@ -82,7 +82,7 @@ export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>
  * `full` is genuinely dangerous, which is why the UI never makes it the quiet
  * default and never remembers it silently across sessions.
  */
-const APPROVAL: Record<ApprovalMode, { approvalPolicy: string; sandbox: string }> = {
+const APPROVAL: Partial<Record<ApprovalMode, { approvalPolicy: string; sandbox: string }>> = {
   ask: { approvalPolicy: 'untrusted', sandbox: 'read-only' },
   auto: { approvalPolicy: 'on-request', sandbox: 'workspace-write' },
   full: { approvalPolicy: 'never', sandbox: 'danger-full-access' },
@@ -278,12 +278,16 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   }
 
   async startThread(workspacePath: string, options: StartOptions = {}): Promise<Thread> {
+    const approval = options.approval ? APPROVAL[options.approval] : undefined
+    if (options.approval && !approval) {
+      throw new Error('Codex automatic approval review is not implemented')
+    }
     const response = await this.#call<ThreadStartResponse>('thread/start', {
       cwd: workspacePath,
       ...(options.model ? { model: options.model } : {}),
       ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
       ...(options.effort ? { config: { model_reasoning_effort: options.effort } } : {}),
-      ...(options.approval ? APPROVAL[options.approval] : {}),
+      ...(approval ?? {}),
     })
     return {
       id: response.thread.id,
