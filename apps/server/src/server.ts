@@ -280,6 +280,18 @@ export function startServer(
         }
       }
 
+      case 'usage.summary': {
+        const p = params as { threadId: string }
+        const thread = store.thread(p.threadId)
+        if (!thread) throw new Error('thread not found')
+        const startOfToday = new Date()
+        startOfToday.setHours(0, 0, 0, 0)
+        return {
+          ...store.usageSummary(p.threadId, startOfToday.getTime()),
+          limits: await orchestrator.usageLimits(thread.provider),
+        }
+      }
+
       case 'thread.start': {
         const p = params as {
           provider: ProviderId

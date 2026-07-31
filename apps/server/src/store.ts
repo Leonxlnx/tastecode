@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { DomainEvent, ProviderId } from '@harness/contracts'
+import type { DomainEvent, ProviderId, Usage } from '@harness/contracts'
 
 /**
  * Everything that has to survive a restart.
@@ -332,6 +332,39 @@ export class Store {
       })
   }
 
+  /** Persistent totals derived from the event log that already owns usage. */
+  usageSummary(threadId: string, since: number): { session: UsageTotal; today: UsageTotal } {
+    const thread = this.thread(threadId)
+    if (!thread) return { session: emptyUsage(), today: emptyUsage() }
+
+    const rows = this.#db
+      .prepare(
+        `SELECT events.thread_id, events.at, events.payload
+         FROM events JOIN threads ON threads.id = events.thread_id
+         WHERE threads.provider = ? ORDER BY events.thread_id, events.seq`,
+      )
+      .all(thread.provider) as Array<{ thread_id: string; at: number; payload: string }>
+    const previous = new Map<string, UsageTotal>()
+    let session = emptyUsage()
+    let today = emptyUsage()
+
+    for (const row of rows) {
+      const event = JSON.parse(row.payload) as DomainEvent
+      if (event.type !== 'usage.updated') continue
+      const current = withoutContext(event.usage)
+      // Codex reports a running thread total. Claude reports one completed turn.
+      const increment =
+        thread.provider === 'claude-code'
+          ? current
+          : usageIncrement(current, previous.get(row.thread_id))
+      previous.set(row.thread_id, current)
+      if (row.thread_id === threadId) session = addUsage(session, increment)
+      if (Number(row.at) >= since) today = addUsage(today, increment)
+    }
+
+    return { session, today }
+  }
+
   // ---- checkpoints -------------------------------------------------------
 
   addCheckpoint(entry: {
@@ -500,6 +533,51 @@ export class Store {
       .get(threadId)
     const seq = (row as { seq: number | null } | undefined)?.seq
     return seq ? Number(seq) : 0
+  }
+}
+
+type UsageTotal = Omit<Usage, 'contextWindow'>
+
+function emptyUsage(): UsageTotal {
+  return {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    totalTokens: 0,
+  }
+}
+
+function withoutContext(usage: Usage): UsageTotal {
+  const { contextWindow: _contextWindow, ...total } = usage
+  return total
+}
+
+function addUsage(left: UsageTotal, right: UsageTotal): UsageTotal {
+  const hasCost = left.costUsd !== undefined || right.costUsd !== undefined
+  return {
+    inputTokens: left.inputTokens + right.inputTokens,
+    cachedInputTokens: left.cachedInputTokens + right.cachedInputTokens,
+    outputTokens: left.outputTokens + right.outputTokens,
+    reasoningTokens: left.reasoningTokens + right.reasoningTokens,
+    totalTokens: left.totalTokens + right.totalTokens,
+    ...(hasCost ? { costUsd: (left.costUsd ?? 0) + (right.costUsd ?? 0) } : {}),
+  }
+}
+
+function usageIncrement(current: UsageTotal, previous = emptyUsage()): UsageTotal {
+  const delta = (now: number, before: number) => (now >= before ? now - before : now)
+  const costUsd =
+    current.costUsd === undefined
+      ? undefined
+      : delta(current.costUsd, previous.costUsd ?? 0)
+  return {
+    inputTokens: delta(current.inputTokens, previous.inputTokens),
+    cachedInputTokens: delta(current.cachedInputTokens, previous.cachedInputTokens),
+    outputTokens: delta(current.outputTokens, previous.outputTokens),
+    reasoningTokens: delta(current.reasoningTokens, previous.reasoningTokens),
+    totalTokens: delta(current.totalTokens, previous.totalTokens),
+    ...(costUsd === undefined ? {} : { costUsd }),
   }
 }
 

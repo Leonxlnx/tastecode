@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DomainEvent } from '@harness/contracts'
 import { Store } from './store.js'
 
@@ -22,6 +22,18 @@ const message = (text: string): DomainEvent => ({
     status: 'completed',
     text,
     createdAt: 0,
+  },
+})
+
+const usage = (totalTokens: number, costUsd?: number): DomainEvent => ({
+  type: 'usage.updated',
+  usage: {
+    inputTokens: totalTokens,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    totalTokens,
+    ...(costUsd === undefined ? {} : { costUsd }),
   },
 })
 
@@ -231,5 +243,42 @@ describe('events', () => {
 
     const event = store.history('t1')[0]?.event
     expect(event?.type === 'item.completed' ? event.item.text : undefined).toBe(nasty)
+  })
+})
+
+describe('usage totals', () => {
+  it('turns cumulative Codex updates into session and daily increments', () => {
+    vi.useFakeTimers()
+    try {
+      store.addProject('/repo')
+      store.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
+      store.addThread({ id: 'two', projectPath: '/repo', provider: 'codex', title: 'Two' })
+      vi.setSystemTime(new Date('2026-07-30T23:50:00'))
+      store.append('one', usage(100))
+      vi.setSystemTime(new Date('2026-07-31T00:10:00'))
+      store.append('one', usage(140))
+      store.append('two', usage(50))
+
+      expect(store.usageSummary('one', new Date('2026-07-31T00:00:00').getTime())).toEqual({
+        session: expect.objectContaining({ totalTokens: 140 }),
+        today: expect.objectContaining({ totalTokens: 90 }),
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('adds per-turn Claude usage and provider-reported cost', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'one', projectPath: '/repo', provider: 'claude-code', title: 'One' })
+    store.addThread({ id: 'two', projectPath: '/repo', provider: 'claude-code', title: 'Two' })
+    store.append('one', usage(10, 0.02))
+    store.append('one', usage(20, 0.03))
+    store.append('two', usage(40, 0.04))
+
+    expect(store.usageSummary('one', 0)).toEqual({
+      session: expect.objectContaining({ totalTokens: 30, costUsd: 0.05 }),
+      today: expect.objectContaining({ totalTokens: 70, costUsd: 0.09 }),
+    })
   })
 })

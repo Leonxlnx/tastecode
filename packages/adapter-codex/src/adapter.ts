@@ -10,6 +10,7 @@ import type {
   Thread,
 } from '@harness/contracts'
 import type { LoginAccountResponse } from './generated/v2/LoginAccountResponse'
+import type { GetAccountRateLimitsResponse } from './generated/v2/GetAccountRateLimitsResponse'
 import type { ModelListResponse } from './generated/v2/ModelListResponse'
 import { mapThreadItem } from './map-item.js'
 import { spawnCli, StdioJsonRpc } from '@harness/proc'
@@ -217,6 +218,34 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       }
     } catch {
       return { signedIn: false }
+    }
+  }
+
+  /** Subscription headroom as reported by Codex itself. */
+  async rateLimits(): Promise<
+    Array<{ label: string; usedPercent: number; resetsAt?: number | undefined }>
+  > {
+    try {
+      const response = await this.#call<GetAccountRateLimitsResponse>('account/rateLimits/read', {})
+      const snapshot = response.rateLimitsByLimitId?.['codex'] ?? response.rateLimits
+      return [snapshot.primary, snapshot.secondary].flatMap((window, index) => {
+        if (!window) return []
+        const resetsAt =
+          window.resetsAt === null
+            ? undefined
+            : window.resetsAt < 1_000_000_000_000
+              ? window.resetsAt * 1000
+              : window.resetsAt
+        return [
+          {
+            label: rateLimitLabel(window.windowDurationMins, index === 0 ? 'Primary' : 'Secondary'),
+            usedPercent: Math.max(0, Math.min(100, window.usedPercent)),
+            ...(resetsAt === undefined ? {} : { resetsAt }),
+          },
+        ]
+      })
+    } catch {
+      return []
     }
   }
 
@@ -544,4 +573,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         this.emit('log', `unmapped notification: ${method}`)
     }
   }
+}
+
+function rateLimitLabel(minutes: number | null, fallback: string): string {
+  if (minutes === null) return `${fallback} limit`
+  if (minutes % 1440 === 0) return `${minutes / 1440} day${minutes === 1440 ? '' : 's'}`
+  if (minutes % 60 === 0) return `${minutes / 60} hour${minutes === 60 ? '' : 's'}`
+  return `${minutes} minutes`
 }

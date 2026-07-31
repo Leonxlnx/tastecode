@@ -111,6 +111,13 @@ export class Orchestrator {
     return (await this.#controlAdapter()).account()
   }
 
+  async usageLimits(
+    provider: ProviderId,
+  ): Promise<Array<{ label: string; usedPercent: number; resetsAt?: number | undefined }>> {
+    if (provider !== 'codex') return []
+    return (await this.#controlAdapter()).rateLimits()
+  }
+
   async startLogin(provider: ProviderId): Promise<{ loginId: string; authUrl: string }> {
     if (provider !== 'codex') throw new Error(`provider "${provider}" cannot sign in yet`)
     return (await this.#controlAdapter()).startLogin()

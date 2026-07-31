@@ -122,4 +122,22 @@ describe('claude event translation', () => {
     })
     expect(usage).toMatchObject({ cachedInputTokens: 24787, totalTokens: 34090 })
   })
+
+  it('keeps only cost reported by Claude Code', () => {
+    const events = toDomainEvents(
+      { type: 'result', usage: { input_tokens: 2, output_tokens: 3 }, total_cost_usd: 0.04 },
+      't1',
+    )
+    expect(events).toContainEqual({
+      type: 'usage.updated',
+      usage: {
+        inputTokens: 2,
+        cachedInputTokens: 0,
+        outputTokens: 3,
+        reasoningTokens: 0,
+        totalTokens: 5,
+        costUsd: 0.04,
+      },
+    })
+  })
 })

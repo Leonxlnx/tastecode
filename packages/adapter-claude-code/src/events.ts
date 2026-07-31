@@ -92,7 +92,7 @@ export function toDomainEvents(event: ClaudeEvent, turnId: string): DomainEvent[
 
   if (event.type === 'result') {
     const events: DomainEvent[] = []
-    const usage = toUsage(event.usage)
+    const usage = toUsage(event.usage, event.total_cost_usd)
     if (usage) events.push({ type: 'usage.updated', usage })
     events.push({
       type: 'turn.completed',
@@ -153,7 +153,7 @@ function flattenContent(content: unknown): string {
     .trim()
 }
 
-export function toUsage(usage: ClaudeUsage | undefined): Usage | undefined {
+export function toUsage(usage: ClaudeUsage | undefined, costUsd?: number): Usage | undefined {
   if (!usage) return undefined
   const input = usage.input_tokens ?? 0
   const output = usage.output_tokens ?? 0
@@ -165,5 +165,6 @@ export function toUsage(usage: ClaudeUsage | undefined): Usage | undefined {
     // Claude Code does not report reasoning tokens separately.
     reasoningTokens: 0,
     totalTokens: input + output + cached + (usage.cache_creation_input_tokens ?? 0),
+    ...(costUsd === undefined ? {} : { costUsd }),
   }
 }
