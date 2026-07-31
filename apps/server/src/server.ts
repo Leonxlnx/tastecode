@@ -16,7 +16,7 @@ import { Orchestrator } from './orchestrator.js'
 import { detectProviders } from './providers.js'
 import { PushBus } from './push-bus.js'
 import { Store } from './store.js'
-import { readWorkspace } from './workspace.js'
+import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
 
 export const SERVER_VERSION = '0.0.0'
 export const DEFAULT_PORT = 4311
@@ -191,6 +191,22 @@ export function startServer(
       case 'workspace.info': {
         const p = params as { path: string }
         return readWorkspace(p.path)
+      }
+
+      case 'workspace.branches': {
+        const p = params as { path: string }
+        return { branches: await listWorkspaceBranches(p.path) }
+      }
+
+      case 'workspace.switchBranch': {
+        const p = params as { path: string; branch: string }
+        const localSessionRunning = store
+          .threads(p.path)
+          .some((thread) => !thread.worktreePath && orchestrator.isRunning(thread.id))
+        if (localSessionRunning) {
+          throw new Error('stop local sessions in this project before switching branches')
+        }
+        return switchWorkspaceBranch(p.path, p.branch)
       }
 
       case 'models.list': {
