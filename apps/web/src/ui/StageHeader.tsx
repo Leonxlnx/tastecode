@@ -1,5 +1,5 @@
 import type { Usage } from '@harness/contracts'
-import { ChevronDown, History } from 'lucide-react'
+import { ChevronDown, GitBranch, History } from 'lucide-react'
 import { isMacOS } from '../bridge.js'
 import { SHORTCUTS, shortcutAria, shortcutLabel } from '../shortcuts.js'
 import type { Project } from './Sidebar.js'
@@ -17,6 +17,7 @@ export function StageHeader(props: {
   title: string | undefined
   usage: Usage | undefined
   checkpointCount: number
+  worktreeBranch: string | undefined
   onSelectProject: (path: string) => void
   onOpenRollback: () => void
 }) {
@@ -58,6 +59,12 @@ export function StageHeader(props: {
       {props.title ? <span className="stagehead__title">{props.title}</span> : null}
 
       <div className="stagehead__tools">
+        {props.worktreeBranch ? (
+          <span className="worktree-branch" title="Isolated checkout">
+            <GitBranch size={12} aria-hidden />
+            {props.worktreeBranch}
+          </span>
+        ) : null}
         {props.checkpointCount > 0 ? (
           <button className="ghost rollback-trigger" onClick={props.onOpenRollback}>
             <History size={12} aria-hidden />

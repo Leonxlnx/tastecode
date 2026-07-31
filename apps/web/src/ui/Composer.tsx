@@ -4,6 +4,7 @@ import {
   ArrowUp,
   File as FileIcon,
   Folder,
+  GitBranch,
   Image as ImageIcon,
   LockOpen,
   Mic,
@@ -122,11 +123,14 @@ export function Composer(props: {
   approval: ApprovalMode
   disabled: boolean
   running: boolean
+  newSession: boolean
+  isolate: boolean
   focusRequest: number
   onModelChange: (id: string) => void
   onEffortChange: (effort: string) => void
   onServiceTierChange: (serviceTier: string | undefined) => void
   onApprovalChange: (mode: ApprovalMode) => void
+  onIsolateChange: (isolate: boolean) => void
   onSend: (text: string, attachments: string[]) => void
   onInterrupt: () => void
 }) {
@@ -498,6 +502,19 @@ export function Composer(props: {
                 </>
               )}
             </Menu>
+
+            {props.newSession ? (
+              <button
+                className={`tool isolation-toggle${props.isolate ? ' is-on' : ''}`}
+                type="button"
+                aria-pressed={props.isolate}
+                onClick={() => props.onIsolateChange(!props.isolate)}
+                title="Give this session its own git worktree"
+              >
+                <GitBranch size={13} aria-hidden />
+                <span>{props.isolate ? 'Isolated checkout' : 'Shared checkout'}</span>
+              </button>
+            ) : null}
 
             <span className="tools__spacer" />
 

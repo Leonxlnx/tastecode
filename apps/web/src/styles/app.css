@@ -870,6 +870,19 @@
   color: var(--text-3);
 }
 
+.worktree-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 190px;
+  overflow: hidden;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .picker {
   display: inline-flex;
   align-items: center;
@@ -1967,6 +1980,39 @@
   margin-top: 14px;
 }
 
+.checkout-discard {
+  max-width: 460px;
+}
+
+.checkout-discard__branch {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 3px 0 0;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+}
+
+.checkout-discard__copy {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: 1.55;
+}
+
+.checkout-discard__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.btn--danger {
+  background: var(--error);
+  color: var(--light);
+}
+
 /* ---------- composer ---------- */
 
 .composer {
@@ -2424,6 +2470,25 @@
 
 .tool--icon svg {
   color: var(--text-2);
+}
+
+.isolation-toggle {
+  padding: 5px 7px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font: inherit;
+}
+
+.isolation-toggle:hover,
+.isolation-toggle.is-on {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.isolation-toggle.is-on svg {
+  color: var(--success);
 }
 
 .icon-btn.is-live {

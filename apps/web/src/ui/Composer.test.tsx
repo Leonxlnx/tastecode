@@ -106,11 +106,14 @@ function renderComposer(onSend: (text: string, attachments: string[]) => void) {
       approval="ask"
       disabled={false}
       running={false}
+      newSession
+      isolate={false}
       focusRequest={0}
       onModelChange={vi.fn()}
       onEffortChange={vi.fn()}
       onServiceTierChange={vi.fn()}
       onApprovalChange={vi.fn()}
+      onIsolateChange={vi.fn()}
       onSend={onSend}
       onInterrupt={vi.fn()}
     />,

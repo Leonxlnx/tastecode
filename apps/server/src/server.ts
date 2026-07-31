@@ -264,6 +264,9 @@ export function startServer(
 
       case 'thread.delete': {
         const p = params as { threadId: string }
+        if (store.thread(p.threadId)?.worktreePath) {
+          throw new Error('discard the isolated session checkout before deleting it')
+        }
         orchestrator.close(p.threadId)
         store.deleteThread(p.threadId)
         return {}

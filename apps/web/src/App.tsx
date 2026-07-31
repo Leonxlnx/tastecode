@@ -6,6 +6,7 @@ import { warmHighlighter } from './ui/highlighter.js'
 import { Transport } from './transport.js'
 import { appendUserMessage, emptyThread, reduce, type ThreadState } from './thread-store.js'
 import { CommandPalette, type CommandScope, type PaletteCommand } from './ui/CommandPalette.js'
+import { CheckoutDiscardDialog } from './ui/CheckoutDiscardDialog.js'
 import { Composer, type WorkspaceInfo } from './ui/Composer.js'
 import { Onboarding } from './ui/Onboarding.js'
 import { RollbackDialog, type Checkpoint } from './ui/RollbackDialog.js'
@@ -103,6 +104,11 @@ export function App() {
   const [rollbackLoadingId, setRollbackLoadingId] = useState<number | undefined>()
   const [rollbackRestoring, setRollbackRestoring] = useState(false)
   const [undoRestore, setUndoRestore] = useState<{ threadId: string; token: string } | undefined>()
+  const [isolateSession, setIsolateSession] = useState(false)
+  const [checkoutDelete, setCheckoutDelete] = useState<
+    { id: string; title: string; branch: string } | undefined
+  >()
+  const [checkoutDeleteBusy, setCheckoutDeleteBusy] = useState(false)
   const macOS = isMacOS()
   const [macOSFontSmoothing, setMacOSFontSmoothing] = useState(
     () => localStorage.getItem(MACOS_FONT_SMOOTHING_KEY) !== 'false',
@@ -226,6 +232,7 @@ export function App() {
             id: session.id,
             title: session.title,
             status: session.running ? ('running' as const) : ('idle' as const),
+            ...(session.worktreeBranch ? { worktreeBranch: session.worktreeBranch } : {}),
           })),
           savedOrder,
         ),
@@ -351,6 +358,7 @@ export function App() {
           ...(modelId ? { model: modelId } : {}),
           ...(serviceTier ? { serviceTier } : {}),
           ...(effort ? { effort } : {}),
+          ...(isolateSession ? { isolate: true } : {}),
         })
         threadStates.current.set(threadId, emptyThread)
         activeIdRef.current = threadId
@@ -365,7 +373,17 @@ export function App() {
         return undefined
       }
     },
-    [transport, provider, acpAgent, modelId, serviceTier, effort, approval, refreshProjects],
+    [
+      transport,
+      provider,
+      acpAgent,
+      modelId,
+      serviceTier,
+      effort,
+      approval,
+      isolateSession,
+      refreshProjects,
+    ],
   )
 
   const beginSession = useCallback(
@@ -551,6 +569,71 @@ export function App() {
       setNotice(error instanceof Error ? error.message : String(error))
     }
   }, [transport, undoRestore, activePath, loadHistory, refreshCheckpoints])
+
+  const deleteSession = useCallback(
+    async (id: string) => {
+      await transport.request('thread.delete', { threadId: id })
+      threadStates.current.delete(id)
+      setProjects((current) =>
+        current.map((project) => ({
+          ...project,
+          sessions: project.sessions.filter((session) => session.id !== id),
+        })),
+      )
+      if (activeIdRef.current === id) {
+        activeIdRef.current = undefined
+        setActiveId(undefined)
+        setThread(emptyThread)
+      }
+    },
+    [transport],
+  )
+
+  const archiveSession = useCallback(
+    async (id: string) => {
+      const found = findSession(projects, id)
+      if (!found) return
+      try {
+        const work = await transport.request('thread.unsavedWork', { threadId: id })
+        if (work.isolated && work.uncommitted) {
+          setCheckoutDelete({
+            id,
+            title: found.session.title,
+            branch: found.session.worktreeBranch ?? 'isolated checkout',
+          })
+          return
+        }
+        if (work.isolated) {
+          await transport.request('thread.close', { threadId: id })
+          await transport.request('thread.discardWorktree', { threadId: id })
+        }
+        await deleteSession(id)
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : String(error))
+        await refreshProjects().catch(() => undefined)
+      }
+    },
+    [transport, projects, deleteSession, refreshProjects],
+  )
+
+  const discardAndArchive = useCallback(async () => {
+    if (!checkoutDelete) return
+    setCheckoutDeleteBusy(true)
+    try {
+      await transport.request('thread.close', { threadId: checkoutDelete.id })
+      await transport.request('thread.discardWorktree', {
+        threadId: checkoutDelete.id,
+        force: true,
+      })
+      await deleteSession(checkoutDelete.id)
+      setCheckoutDelete(undefined)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+      await refreshProjects().catch(() => undefined)
+    } finally {
+      setCheckoutDeleteBusy(false)
+    }
+  }, [transport, checkoutDelete, deleteSession, refreshProjects])
 
   const startNewChat = useCallback(() => {
     const path = activePath ?? projects[0]?.path
@@ -746,7 +829,10 @@ export function App() {
             void transport
               .request('projects.remove', { path })
               .then(refreshProjects)
-              .catch(() => undefined)
+              .catch((error) => {
+                setNotice(error instanceof Error ? error.message : String(error))
+                void refreshProjects().catch(() => undefined)
+              })
           }}
           onTogglePin={(path) => {
             const pinned = !projects.find((p) => p.path === path)?.pinned
@@ -757,18 +843,7 @@ export function App() {
             setProjects((c) => renameSession(c, id, title))
             void transport.request('thread.rename', { threadId: id, title }).catch(() => undefined)
           }}
-          onDeleteSession={(id) => {
-            threadStates.current.delete(id)
-            setProjects((c) =>
-              c.map((p) => ({ ...p, sessions: p.sessions.filter((s) => s.id !== id) })),
-            )
-            if (activeId === id) {
-              activeIdRef.current = undefined
-              setActiveId(undefined)
-              setThread(emptyThread)
-            }
-            void transport.request('thread.delete', { threadId: id }).catch(() => undefined)
-          }}
+          onDeleteSession={(id) => void archiveSession(id)}
           onReorderSession={(projectPath, sourceId, targetId, position) =>
             setProjects((current) =>
               current.map((project) => {
@@ -795,6 +870,7 @@ export function App() {
             title={active?.session.title}
             usage={thread.usage}
             checkpointCount={thread.running ? 0 : checkpoints.length}
+            worktreeBranch={active?.session.worktreeBranch}
             onSelectProject={selectProject}
             onOpenRollback={() => {
               setRollbackInspection(undefined)
@@ -825,7 +901,7 @@ export function App() {
 
           <Composer
             projectName={activePath ? basename(activePath) : undefined}
-            workspace={workspace}
+            workspace={active?.session.worktreeBranch ? undefined : workspace}
             models={models}
             modelsLoaded={modelsLoaded}
             modelId={modelId}
@@ -834,11 +910,14 @@ export function App() {
             approval={approval}
             disabled={!activePath}
             running={thread.running}
+            newSession={!activeId}
+            isolate={isolateSession}
             focusRequest={composerFocusRequest}
             onModelChange={selectModel}
             onEffortChange={setEffort}
             onServiceTierChange={setServiceTier}
             onApprovalChange={setApproval}
+            onIsolateChange={setIsolateSession}
             onSend={(t, files) => void send(t, files)}
             onInterrupt={interrupt}
           />
@@ -887,6 +966,16 @@ export function App() {
             setRollbackOpen(false)
             setRollbackInspection(undefined)
           }}
+        />
+      ) : null}
+
+      {checkoutDelete ? (
+        <CheckoutDiscardDialog
+          title={checkoutDelete.title}
+          branch={checkoutDelete.branch}
+          busy={checkoutDeleteBusy}
+          onDiscard={() => void discardAndArchive()}
+          onClose={() => setCheckoutDelete(undefined)}
         />
       ) : null}
 

@@ -48,6 +48,7 @@ vi.mock('./bridge.js', async (importOriginal) => ({
 
 /** What the server reports. Projects live there now, not in localStorage. */
 let serverProjects: unknown[] = []
+let serverUnsavedWork = { isolated: false, uncommitted: false }
 
 beforeEach(() => {
   transport.listeners.clear()
@@ -70,6 +71,7 @@ beforeEach(() => {
       ],
     },
   ]
+  serverUnsavedWork = { isolated: false, uncommitted: false }
 
   transport.request.mockImplementation((method: string, params: unknown) => {
     switch (method) {
@@ -93,6 +95,11 @@ beforeEach(() => {
         return Promise.resolve({ undo: 'undo-token' })
       case 'thread.undoRestore':
         return Promise.resolve({})
+      case 'thread.unsavedWork':
+        return Promise.resolve(serverUnsavedWork)
+      case 'thread.discardWorktree':
+      case 'thread.close':
+        return Promise.resolve({})
       case 'thread.delete': {
         // The server really does drop it, so the next listing must agree.
         const { threadId } = params as { threadId: string }
@@ -105,7 +112,7 @@ beforeEach(() => {
       case 'thread.start': {
         // The real server records the session as it starts it, so the next
         // listing has to show it or the rail would stay empty.
-        const { workspacePath } = params as { workspacePath: string }
+        const { workspacePath, isolate } = params as { workspacePath: string; isolate?: boolean }
         serverProjects = serverProjects.map((project) => {
           const p = project as { path: string; sessions: unknown[] }
           if (p.path !== workspacePath) return p
@@ -119,6 +126,7 @@ beforeEach(() => {
                 provider: 'codex',
                 createdAt: 1,
                 running: false,
+                ...(isolate ? { worktreeBranch: 'harness/thread-1' } : {}),
               },
             ],
           }
@@ -150,6 +158,69 @@ afterEach(() => {
 })
 
 describe('new chats', () => {
+  it('starts a new session in an isolated checkout when selected', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Shared checkout' }))
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Work in parallel' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.start', {
+        provider: 'codex',
+        workspacePath: '/work/project',
+        approval: 'ask',
+        isolate: true,
+      })
+    })
+    expect(await screen.findByText('harness/thread-1')).toBeTruthy()
+  })
+
+  it('asks before discarding uncommitted work from an isolated session', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          {
+            id: 'isolated-thread',
+            title: 'Parallel work',
+            provider: 'codex',
+            createdAt: 0,
+            running: false,
+            worktreeBranch: 'harness/parallel',
+          },
+        ],
+      },
+    ]
+    serverUnsavedWork = { isolated: true, uncommitted: true }
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive Parallel work' }))
+    expect(await screen.findByRole('dialog', { name: 'Discard isolated checkout' })).toBeTruthy()
+    expect(transport.request).not.toHaveBeenCalledWith('thread.discardWorktree', expect.anything())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes and archive' }))
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.close', {
+        threadId: 'isolated-thread',
+      })
+      expect(transport.request).toHaveBeenCalledWith('thread.discardWorktree', {
+        threadId: 'isolated-thread',
+        force: true,
+      })
+      expect(transport.request).toHaveBeenCalledWith('thread.delete', {
+        threadId: 'isolated-thread',
+      })
+    })
+  })
+
   it('shows changed files before restoring and offers undo afterwards', async () => {
     serverProjects = [
       {
