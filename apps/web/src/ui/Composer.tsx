@@ -14,7 +14,7 @@ import {
   type LucideIcon,
   X,
 } from 'lucide-react'
-import { canDictate, pickFiles, savePastedImage, startDictation } from '../bridge.js'
+import { canDictate, pickFiles, startDictation } from '../bridge.js'
 import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
 import { ImageViewer } from './ImageViewer.js'
 import { Menu, MenuItem } from './Menu.js'
@@ -127,6 +127,7 @@ export function Composer(props: {
   onEffortChange: (effort: string) => void
   onServiceTierChange: (serviceTier: string | undefined) => void
   onApprovalChange: (mode: ApprovalMode) => void
+  onSavePastedImage: (file: File) => Promise<string>
   onSend: (text: string, attachments: string[]) => void
   onInterrupt: () => void
 }) {
@@ -205,14 +206,10 @@ export function Composer(props: {
         { id, name: file.name || 'Pasted image', previewUrl },
       ])
 
-      void savePastedImage(file)
+      void props
+        .onSavePastedImage(file)
         .then((path) => {
           if (!mounted.current) return
-          if (!path) {
-            removeAttachment(id)
-            setAttachmentError('Pasting images is available in the desktop app.')
-            return
-          }
           setAttachments((current) =>
             current.map((attachment) =>
               attachment.id === id ? { ...attachment, path } : attachment,

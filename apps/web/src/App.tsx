@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Account, ApprovalMode, DomainEvent, Model, ProviderId } from '@harness/contracts'
-import { isMacOS, pickFolder } from './bridge.js'
+import { isMacOS, pickFolder, savePastedImage } from './bridge.js'
 import { isEditableTarget, matchesShortcut, SHORTCUTS, shortcutLabel } from './shortcuts.js'
 import { warmHighlighter } from './ui/highlighter.js'
 import { Transport } from './transport.js'
@@ -417,6 +417,20 @@ export function App() {
     if (activeId) void transport.request('thread.interrupt', { threadId: activeId })
   }, [transport, activeId])
 
+  const materializePastedImage = useCallback(
+    async (file: File): Promise<string> => {
+      const desktopPath = await savePastedImage(file)
+      if (desktopPath) return desktopPath
+
+      const { path } = await transport.request('attachments.saveImage', {
+        mimeType: file.type,
+        data: await fileBase64(file),
+      })
+      return path
+    },
+    [transport],
+  )
+
   const selectProject = useCallback(
     (path: string) => {
       if (path === activePath) return
@@ -734,6 +748,7 @@ export function App() {
             onEffortChange={setEffort}
             onServiceTierChange={setServiceTier}
             onApprovalChange={setApproval}
+            onSavePastedImage={materializePastedImage}
             onSend={(t, files) => void send(t, files)}
             onInterrupt={interrupt}
           />
@@ -970,4 +985,24 @@ function saveSessionOrder(projects: Project[]): void {
       ),
     ),
   )
+}
+
+export function fileBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error ?? new Error('Could not read pasted image'))
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        reject(new Error('Could not encode pasted image'))
+        return
+      }
+      const separator = reader.result.indexOf(',')
+      if (separator === -1) {
+        reject(new Error('Could not encode pasted image'))
+        return
+      }
+      resolve(reader.result.slice(separator + 1))
+    }
+    reader.readAsDataURL(file)
+  })
 }

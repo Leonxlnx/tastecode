@@ -12,6 +12,7 @@ import {
   type ProviderId,
 } from '@harness/contracts'
 import { Orchestrator } from './orchestrator.js'
+import { savePastedImage } from './pasted-image.js'
 import { detectProviders } from './providers.js'
 import { PushBus } from './push-bus.js'
 import { Store } from './store.js'
@@ -249,6 +250,11 @@ export function startServer(
         for (const thread of store.threads(p.path)) orchestrator.close(thread.id)
         store.removeProject(p.path)
         return {}
+      }
+
+      case 'attachments.saveImage': {
+        const p = params as { mimeType: string; data: string }
+        return { path: await savePastedImage(p) }
       }
 
       case 'thread.rename': {

@@ -3,19 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Composer } from './Composer.js'
 
-const bridge = vi.hoisted(() => ({
-  savePastedImage: vi.fn(),
-}))
-
 vi.mock('../bridge.js', () => ({
   canDictate: false,
   pickFiles: vi.fn(async () => []),
-  savePastedImage: bridge.savePastedImage,
   startDictation: vi.fn(),
 }))
 
 beforeEach(() => {
-  bridge.savePastedImage.mockResolvedValue('/tmp/pasted-image.png')
   Object.defineProperty(URL, 'createObjectURL', {
     configurable: true,
     value: vi.fn(() => 'blob:pasted-image'),
@@ -34,14 +28,15 @@ afterEach(() => {
 describe('Composer image paste', () => {
   it('previews a pasted image and sends its materialized path', async () => {
     const onSend = vi.fn()
-    renderComposer(onSend)
+    const savePastedImage = vi.fn(async () => '/tmp/pasted-image.png')
+    renderComposer(onSend, savePastedImage)
     const composer = screen.getByPlaceholderText('Do anything')
     const image = new File(['image bytes'], 'Screenshot.png', { type: 'image/png' })
 
     fireEvent.paste(composer, { clipboardData: { files: [image] } })
 
     expect(screen.getByRole('button', { name: 'Open Screenshot.png' })).toBeTruthy()
-    expect(bridge.savePastedImage).toHaveBeenCalledWith(image)
+    expect(savePastedImage).toHaveBeenCalledWith(image)
     fireEvent.change(composer, { target: { value: 'What is in this image?' } })
     await waitFor(() =>
       expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
@@ -93,7 +88,10 @@ describe('Composer image paste', () => {
   })
 })
 
-function renderComposer(onSend: (text: string, attachments: string[]) => void) {
+function renderComposer(
+  onSend: (text: string, attachments: string[]) => void,
+  onSavePastedImage: (file: File) => Promise<string> = async () => '/tmp/pasted-image.png',
+) {
   return render(
     <Composer
       projectName="Harness"
@@ -111,6 +109,7 @@ function renderComposer(onSend: (text: string, attachments: string[]) => void) {
       onEffortChange={vi.fn()}
       onServiceTierChange={vi.fn()}
       onApprovalChange={vi.fn()}
+      onSavePastedImage={onSavePastedImage}
       onSend={onSend}
       onInterrupt={vi.fn()}
     />,

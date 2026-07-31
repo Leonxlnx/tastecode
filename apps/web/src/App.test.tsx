@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { DomainEvent } from '@harness/contracts'
-import { App } from './App.js'
+import { App, fileBase64 } from './App.js'
 
 const transport = vi.hoisted(() => ({
   request: vi.fn(),
@@ -140,6 +140,12 @@ afterEach(() => {
 })
 
 describe('new chats', () => {
+  it('encodes browser-pasted images for the local server', async () => {
+    await expect(fileBase64(new File(['image bytes'], 'image.png'))).resolves.toBe(
+      btoa('image bytes'),
+    )
+  })
+
   it('persists the macOS font smoothing setting', async () => {
     render(<App />)
 

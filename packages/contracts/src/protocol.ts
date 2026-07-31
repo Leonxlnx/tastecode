@@ -180,6 +180,14 @@ export const methods = {
     params: z.object({ path: z.string() }),
     result: z.object({}),
   },
+  /** Materialize a browser clipboard image where the local agents can read it. */
+  'attachments.saveImage': {
+    params: z.object({
+      mimeType: z.string(),
+      data: z.string().max(34_952_536),
+    }),
+    result: z.object({ path: z.string() }),
+  },
   'thread.rename': {
     params: z.object({ threadId: z.string(), title: z.string() }),
     result: z.object({}),
