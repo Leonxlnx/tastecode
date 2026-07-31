@@ -12,6 +12,7 @@ import {
   type ProviderId,
 } from '@harness/contracts'
 import { Orchestrator } from './orchestrator.js'
+import { supportsApprovalMode } from './adapters.js'
 import { savePastedImage } from './pasted-image.js'
 import { detectProviders } from './providers.js'
 import { PushBus } from './push-bus.js'
@@ -286,8 +287,11 @@ export function startServer(
           model?: string
           serviceTier?: string
           effort?: string
-          approval?: 'ask' | 'auto' | 'full'
+          approval?: 'ask' | 'auto' | 'auto-review' | 'full'
           isolate?: boolean
+        }
+        if (p.approval && !supportsApprovalMode(p.provider, p.approval)) {
+          throw new Error(`${p.provider} does not support ${p.approval} approval mode`)
         }
         const thread = await orchestrator.startThread(p.provider, p.workspacePath, {
           model: p.model,

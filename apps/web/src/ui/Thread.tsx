@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import type { ApprovalDecision, ApprovalRequest, Item, PlanStep } from '@harness/contracts'
+import type {
+  ApprovalDecision,
+  ApprovalRequest,
+  ApprovalReview as ApprovalReviewModel,
+  Item,
+  PlanStep,
+} from '@harness/contracts'
 import {
   BookOpen,
   Brain,
@@ -21,6 +27,7 @@ import {
 } from 'lucide-react'
 import { isEditableTarget } from '../shortcuts.js'
 import { Approval } from './Approval.js'
+import { ApprovalReview } from './ApprovalReview.js'
 import { Diff } from './Diff.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
@@ -47,6 +54,7 @@ export function Thread(props: {
   plan: PlanStep[]
   diff: string | undefined
   approvals: ApprovalRequest[]
+  approvalReviews: ApprovalReviewModel[]
   onDecide: (id: string, decision: ApprovalDecision) => void
 }) {
   const scroller = useRef<HTMLDivElement>(null)
@@ -249,6 +257,10 @@ export function Thread(props: {
             request={request}
             onDecide={(d) => props.onDecide(request.id, d)}
           />
+        ))}
+
+        {props.approvalReviews.map((review) => (
+          <ApprovalReview key={review.id} review={review} />
         ))}
 
         {props.running ? <Plan steps={props.plan} compact /> : null}

@@ -23,6 +23,7 @@ import type { ThreadStartResponse } from './generated/v2/ThreadStartResponse'
 import type { TurnCompletedNotification } from './generated/v2/TurnCompletedNotification'
 import type { TurnStartedNotification } from './generated/v2/TurnStartedNotification'
 import type { TurnStartResponse } from './generated/v2/TurnStartResponse'
+import { mapAutoReviewNotification } from './auto-review.js'
 
 /**
  * Tier 1 adapter: drives `codex app-server` over JSON-RPC.
@@ -64,6 +65,7 @@ export const CODEX_CAPABILITIES: Capabilities = {
   interrupt: true,
   reasoningItems: true,
   approvals: true,
+  autoReview: true,
   images: true,
 }
 
@@ -77,14 +79,22 @@ export type StartOptions = {
 export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>
 
 /**
- * Our three user-facing modes onto Codex's approval policy and sandbox.
+ * Our user-facing modes onto Codex's approval policy, sandbox, and reviewer.
  *
  * `full` is genuinely dangerous, which is why the UI never makes it the quiet
  * default and never remembers it silently across sessions.
  */
-const APPROVAL: Record<ApprovalMode, { approvalPolicy: string; sandbox: string }> = {
+export const APPROVAL: Record<
+  ApprovalMode,
+  { approvalPolicy: string; sandbox: string; approvalsReviewer?: 'auto_review' }
+> = {
   ask: { approvalPolicy: 'untrusted', sandbox: 'read-only' },
   auto: { approvalPolicy: 'on-request', sandbox: 'workspace-write' },
+  'auto-review': {
+    approvalPolicy: 'on-request',
+    sandbox: 'workspace-write',
+    approvalsReviewer: 'auto_review',
+  },
   full: { approvalPolicy: 'never', sandbox: 'danger-full-access' },
 }
 
@@ -397,6 +407,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
   #onNotification(method: string, params: unknown): void {
     const emit = (event: DomainEvent) => this.emit('event', event)
+    const reviewEvent = mapAutoReviewNotification(method, params)
+    if (reviewEvent) {
+      emit(reviewEvent)
+      return
+    }
 
     switch (method) {
       case 'thread/started': {

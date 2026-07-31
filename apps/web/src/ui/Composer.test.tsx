@@ -88,9 +88,25 @@ describe('Composer image paste', () => {
   })
 })
 
+describe('Composer permissions', () => {
+  it('shows automatic review only when the provider advertises it', () => {
+    renderComposer(vi.fn())
+    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
+    expect(screen.queryByText('Auto-review')).toBeNull()
+    cleanup()
+
+    renderComposer(vi.fn(), undefined, true)
+    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
+    expect(screen.getByText('Auto-review')).toBeTruthy()
+    expect(screen.getByText('Works in this folder; Codex reviews extra access')).toBeTruthy()
+  })
+})
+
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,
-  onSavePastedImage: (file: File) => Promise<string> = async () => '/tmp/pasted-image.png',
+  onSavePastedImage: ((file: File) => Promise<string>) | undefined = async () =>
+    '/tmp/pasted-image.png',
+  autoReviewAvailable = false,
 ) {
   return render(
     <Composer
@@ -102,6 +118,7 @@ function renderComposer(
       effort={undefined}
       serviceTier={undefined}
       approval="ask"
+      autoReviewAvailable={autoReviewAvailable}
       disabled={false}
       running={false}
       focusRequest={0}
@@ -109,7 +126,7 @@ function renderComposer(
       onEffortChange={vi.fn()}
       onServiceTierChange={vi.fn()}
       onApprovalChange={vi.fn()}
-      onSavePastedImage={onSavePastedImage}
+      onSavePastedImage={onSavePastedImage ?? (async () => '/tmp/pasted-image.png')}
       onSend={onSend}
       onInterrupt={vi.fn()}
     />,

@@ -1,5 +1,5 @@
 import { AcpAdapter } from '@harness/adapter-acp'
-import { CodexAdapter } from '@harness/adapter-codex'
+import { CODEX_CAPABILITIES, CodexAdapter } from '@harness/adapter-codex'
 import { ClaudeCodeAdapter } from '@harness/adapter-claude-code'
 import type {
   ApprovalDecision,
@@ -56,6 +56,11 @@ export type ProviderRuntime = {
     options: StartOptions,
   ): Promise<{ thread: Thread; session: AgentSession }>
   listModels(): Promise<Model[]>
+}
+
+export function supportsApprovalMode(provider: ProviderId, approval: ApprovalMode): boolean {
+  if (approval !== 'auto-review') return true
+  return provider === 'codex' && CODEX_CAPABILITIES.autoReview
 }
 
 export function providerRuntime(

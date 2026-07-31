@@ -23,6 +23,7 @@ const CAPABILITIES: Capabilities = {
   interrupt: true,
   reasoningItems: false,
   approvals: false,
+  autoReview: false,
   images: false,
 }
 

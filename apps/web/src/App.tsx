@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { Account, ApprovalMode, DomainEvent, Model, ProviderId } from '@harness/contracts'
+import type {
+  Account,
+  ApprovalMode,
+  Capabilities,
+  DomainEvent,
+  Model,
+  ProviderId,
+} from '@harness/contracts'
 import { isMacOS, pickFolder, savePastedImage } from './bridge.js'
 import { isEditableTarget, matchesShortcut, SHORTCUTS, shortcutLabel } from './shortcuts.js'
 import { warmHighlighter } from './ui/highlighter.js'
@@ -72,6 +79,8 @@ export function App() {
   const threadStates = useRef(new Map<string, ThreadState>())
   const [models, setModels] = useState<Model[]>([])
   const [modelsLoaded, setModelsLoaded] = useState(false)
+  /** undefined while loading, null when the provider advertises no capabilities. */
+  const [capabilities, setCapabilities] = useState<Capabilities | null | undefined>()
   const [modelId, setModelId] = useState<string | undefined>(
     () => localStorage.getItem(MODEL_KEY) ?? undefined,
   )
@@ -83,7 +92,7 @@ export function App() {
   )
   const [approval, setApproval] = useState<ApprovalMode>(() => {
     const stored = localStorage.getItem(APPROVAL_KEY)
-    return stored === 'auto' || stored === 'full' ? stored : 'ask'
+    return stored === 'auto' || stored === 'auto-review' || stored === 'full' ? stored : 'ask'
   })
   const [collapsed, setCollapsed] = useState(
     () => globalThis.matchMedia?.('(max-width: 700px)').matches ?? false,
@@ -175,6 +184,35 @@ export function App() {
       cancelled = true
     }
   }, [transport, provider])
+
+  useEffect(() => {
+    if (!provider) return
+    let cancelled = false
+    setCapabilities(undefined)
+    void transport
+      .request('providers.list', {})
+      .then(({ providers }) => {
+        if (!cancelled) {
+          setCapabilities(providers.find((entry) => entry.id === provider)?.capabilities ?? null)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setCapabilities(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [transport, provider])
+
+  useEffect(() => {
+    if (
+      capabilities !== undefined &&
+      approval === 'auto-review' &&
+      capabilities?.autoReview !== true
+    ) {
+      setApproval('ask')
+    }
+  }, [approval, capabilities])
 
   // Branch and uncommitted size for the context chip. Re-read after every turn,
   // because the agent is exactly what changes it.
@@ -720,6 +758,7 @@ export function App() {
               plan={thread.plan}
               diff={thread.diff}
               approvals={thread.approvals}
+              approvalReviews={thread.approvalReviews}
               onDecide={(approvalId, decision) => {
                 if (!activeId) return
                 void transport.request('thread.respondToApproval', {
@@ -742,6 +781,7 @@ export function App() {
             effort={effort}
             serviceTier={serviceTier}
             approval={approval}
+            autoReviewAvailable={capabilities?.autoReview === true}
             disabled={!activePath}
             running={thread.running}
             focusRequest={composerFocusRequest}

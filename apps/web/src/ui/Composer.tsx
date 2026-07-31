@@ -9,6 +9,7 @@ import {
   Mic,
   Plus,
   ShieldCheck,
+  ShieldEllipsis,
   ShieldQuestion,
   Square,
   type LucideIcon,
@@ -54,8 +55,15 @@ export const APPROVAL_MODES: {
     id: 'auto',
     title: 'Auto-approve',
     short: 'Auto',
-    detail: 'Edits and commands inside this folder',
+    detail: 'Works in this folder; asks you for extra access',
     icon: ShieldCheck,
+  },
+  {
+    id: 'auto-review',
+    title: 'Auto-review',
+    short: 'Auto-review',
+    detail: 'Works in this folder; Codex reviews extra access',
+    icon: ShieldEllipsis,
   },
   {
     id: 'full',
@@ -120,6 +128,7 @@ export function Composer(props: {
   effort: string | undefined
   serviceTier: string | undefined
   approval: ApprovalMode
+  autoReviewAvailable: boolean
   disabled: boolean
   running: boolean
   focusRequest: number
@@ -480,7 +489,9 @@ export function Composer(props: {
             >
               {(close) => (
                 <>
-                  {APPROVAL_MODES.map((mode) => (
+                  {APPROVAL_MODES.filter(
+                    (mode) => mode.id !== 'auto-review' || props.autoReviewAvailable,
+                  ).map((mode) => (
                     <MenuItem
                       key={mode.id}
                       title={mode.title}

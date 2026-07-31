@@ -30,6 +30,24 @@ describe('domain events', () => {
     })
     expect(item.type).toBe('unknown')
   })
+
+  it('accepts automatic approval review progress and results', () => {
+    const review = {
+      id: 'review-1',
+      turnId: 'turn-1',
+      status: 'approved' as const,
+      description: 'Run npm test',
+      rationale: 'The command only runs the local test suite.',
+      riskLevel: 'low' as const,
+      startedAt: 10,
+      completedAt: 20,
+    }
+
+    expect(DomainEventSchema.parse({ type: 'approval.review.completed', review })).toEqual({
+      type: 'approval.review.completed',
+      review,
+    })
+  })
 })
 
 describe('protocol envelopes', () => {
@@ -47,6 +65,7 @@ describe('protocol envelopes', () => {
         provider: 'codex',
         workspacePath: 'D:\\x',
         serviceTier: 'priority',
+        approval: 'auto-review',
       }),
     ).toBeTruthy()
     expect(

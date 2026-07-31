@@ -73,6 +73,26 @@ beforeEach(() => {
 
   transport.request.mockImplementation((method: string, params: unknown) => {
     switch (method) {
+      case 'providers.list':
+        return Promise.resolve({
+          providers: [
+            {
+              id: 'codex',
+              displayName: 'Codex',
+              installed: true,
+              auth: 'unknown',
+              capabilities: {
+                steer: true,
+                fork: true,
+                interrupt: true,
+                reasoningItems: true,
+                approvals: true,
+                autoReview: true,
+                images: true,
+              },
+            },
+          ],
+        })
       case 'models.list':
         return Promise.resolve({ models: [] })
       case 'workspace.info':
@@ -175,6 +195,25 @@ describe('new chats', () => {
     render(<App />)
 
     expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain('Full access')
+  })
+
+  it('starts a Codex session with automatic approval review', async () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Auto-review/ }))
+
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Check the release' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.start', {
+        provider: 'codex',
+        workspacePath: '/work/project',
+        approval: 'auto-review',
+      })
+    })
   })
 
   it('switches the new chat project from the prompt', async () => {

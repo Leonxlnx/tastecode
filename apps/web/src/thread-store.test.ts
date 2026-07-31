@@ -107,4 +107,33 @@ describe('thread reducer', () => {
     expect(done.running).toBe(false)
     expect(done.activeTurn).toBeUndefined()
   })
+
+  it('replaces automatic approval review progress with its result', () => {
+    const started = reduce(emptyThread, {
+      type: 'approval.review.started',
+      review: {
+        id: 'review-1',
+        turnId: 't1',
+        status: 'in_progress',
+        description: 'Connect to example.com:443',
+        startedAt: 10,
+      },
+    })
+    const completed = reduce(started, {
+      type: 'approval.review.completed',
+      review: {
+        id: 'review-1',
+        turnId: 't1',
+        status: 'approved',
+        description: 'Connect to example.com:443',
+        rationale: 'Required by the requested API call.',
+        riskLevel: 'low',
+        startedAt: 10,
+        completedAt: 20,
+      },
+    })
+
+    expect(completed.approvalReviews).toHaveLength(1)
+    expect(completed.approvalReviews[0]?.status).toBe('approved')
+  })
 })
