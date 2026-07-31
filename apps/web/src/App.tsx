@@ -7,6 +7,7 @@ import type {
   ProviderId,
   ResultOf,
 } from '@harness/contracts'
+import { Folder } from 'lucide-react'
 import { isMacOS, pickFolder } from './bridge.js'
 import { isEditableTarget, matchesShortcut, SHORTCUTS, shortcutLabel } from './shortcuts.js'
 import { warmHighlighter } from './ui/highlighter.js'
@@ -24,6 +25,7 @@ import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { Menu, MenuItem } from './ui/Menu.js'
 import { serverUrl } from './server-url.js'
+import { canCaptureVoice, type VoiceRecording } from './voice-recorder.js'
 
 const SERVER_URL = serverUrl(import.meta.env.VITE_HARNESS_SERVER_URL ?? 'ws://127.0.0.1:4311')
 const SETUP_KEY = 'harness.provider'
@@ -100,6 +102,7 @@ export function App() {
   )
   const [workspace, setWorkspace] = useState<WorkspaceInfo | undefined>()
   const [account, setAccount] = useState<Account | undefined>()
+  const [voiceAvailable, setVoiceAvailable] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [paletteScope, setPaletteScope] = useState<CommandScope | null>(null)
   const [composerFocusRequest, setComposerFocusRequest] = useState(0)
@@ -198,6 +201,25 @@ export function App() {
       cancelled = true
     }
   }, [transport, provider])
+
+  useEffect(() => {
+    if (!provider || !canCaptureVoice()) {
+      setVoiceAvailable(false)
+      return
+    }
+    let cancelled = false
+    void transport
+      .request('voice.status', { provider })
+      .then((status) => {
+        if (!cancelled) setVoiceAvailable(status.available)
+      })
+      .catch(() => {
+        if (!cancelled) setVoiceAvailable(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [transport, provider, account?.signedIn])
 
   // Branch and uncommitted size for the context chip. Re-read after every turn,
   // because the agent is exactly what changes it.
@@ -501,6 +523,25 @@ export function App() {
   const interrupt = useCallback(() => {
     if (activeId) void transport.request('thread.interrupt', { threadId: activeId })
   }, [transport, activeId])
+
+  const transcribeVoice = useCallback(
+    async (requestId: string, recording: VoiceRecording): Promise<string> => {
+      const { text } = await transport.request('voice.transcribe', {
+        requestId,
+        provider: 'codex',
+        ...recording,
+      })
+      return text
+    },
+    [transport],
+  )
+
+  const cancelVoice = useCallback(
+    (requestId: string) => {
+      void transport.request('voice.cancel', { requestId }).catch(() => undefined)
+    },
+    [transport],
+  )
 
   const selectProject = useCallback(
     (path: string) => {
@@ -937,6 +978,7 @@ export function App() {
             effort={effort}
             serviceTier={serviceTier}
             approval={approval}
+            voiceAvailable={provider === 'codex' && voiceAvailable}
             disabled={!activePath}
             running={thread.running}
             newSession={!activeId}
@@ -947,6 +989,8 @@ export function App() {
             onServiceTierChange={setServiceTier}
             onApprovalChange={setApproval}
             onIsolateChange={setIsolateSession}
+            onTranscribeVoice={transcribeVoice}
+            onCancelVoice={cancelVoice}
             onSend={(t, files) => void send(t, files)}
             onInterrupt={interrupt}
           />
@@ -1067,6 +1111,7 @@ function Empty(props: {
               {props.projects.map((project) => (
                 <MenuItem
                   key={project.path}
+                  icon={Folder}
                   title={displayName(project)}
                   detail={project.path}
                   active={project.path === props.activePath}

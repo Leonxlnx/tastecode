@@ -904,10 +904,14 @@
 
 /* ---------- thread ---------- */
 
-.thread {
+.thread-viewport {
   position: relative;
-  overflow-y: auto;
   min-height: 0;
+}
+
+.thread {
+  height: 100%;
+  overflow-y: auto;
   padding: 8px 0 4px;
   font-size: var(--t-lg);
 }
@@ -978,8 +982,12 @@
 
 .jump {
   position: absolute;
+  z-index: 3;
   bottom: 14px;
   left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   transform: translateX(-50%);
   background: var(--surface-2);
   border: 1px solid var(--line-strong);
@@ -2495,10 +2503,118 @@
   color: var(--success);
 }
 
-.icon-btn.is-live {
-  opacity: 1;
-  color: var(--error);
+.composer-voice-button {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-md);
+}
+
+.composer-voice-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.composer-voice-bar__track {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  align-items: center;
+  overflow: hidden;
+}
+
+.composer-voice-bar__centerline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px dashed var(--line-strong);
+  transform: translateY(-50%);
+}
+
+.composer-voice-bar__levels {
+  position: relative;
+  display: flex;
+  height: 100%;
+  margin-left: auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.composer-voice-bar__level {
+  flex: none;
+  border-radius: 1px;
+  background: var(--text);
+}
+
+.composer-voice-bar.is-transcribing .composer-voice-bar__level {
+  opacity: 0.55;
+}
+
+.composer-voice-bar__duration {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.composer-voice-bar__button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+}
+
+.composer-voice-bar__button:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.composer-voice-bar__button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.composer-voice-bar__button--cancel {
   background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.composer-voice-bar__button--cancel:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.composer-voice-bar__button--submit {
+  background: var(--light);
+  color: var(--on-light);
+}
+
+.composer-voice-bar__button--submit:hover:not(:disabled) {
+  transform: scale(1.05);
+}
+
+.composer__voice-error {
+  max-width: var(--chat-w);
+  margin: 5px auto 0;
+  color: var(--error);
+  font-size: var(--t-xs);
+  line-height: 1.4;
+  padding: 0 12px;
 }
 
 /* ---------- menus ---------- */
@@ -2580,7 +2696,10 @@
 }
 
 .menu__item {
-  display: block;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  column-gap: 4px;
+  align-items: start;
   width: 100%;
   background: none;
   border: 0;
@@ -2594,6 +2713,16 @@
 
 .menu__item:hover {
   background: var(--surface-3);
+}
+
+.menu__icon {
+  margin-top: 2px;
+  color: var(--text-3);
+}
+
+.menu__copy {
+  display: block;
+  min-width: 0;
 }
 
 .menu__name {
@@ -2986,14 +3115,20 @@
 
 /* Icons share one small clockwise gesture so controls feel related without
    moving their labels or hit targets. Spinners keep their own full rotation. */
-:where(button:not(:disabled):not(.composer__dictation):not(.orb) svg:not(.spinner)) {
+:where(
+  button:not(:disabled):not(.composer-voice-button):not(.composer-voice-bar__button):not(.orb)
+    svg:not(.spinner)
+) {
   transform-box: fill-box;
   transform-origin: center;
   rotate: 0deg;
   transition: rotate var(--dur-fast) var(--ease-out);
 }
 
-:where(button:not(:disabled):not(.composer__dictation):not(.orb):hover svg:not(.spinner)) {
+:where(
+  button:not(:disabled):not(.composer-voice-button):not(.composer-voice-bar__button):not(.orb):hover
+    svg:not(.spinner)
+) {
   rotate: 4deg;
 }
 

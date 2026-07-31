@@ -24,6 +24,11 @@ import type { ThreadStartResponse } from './generated/v2/ThreadStartResponse'
 import type { TurnCompletedNotification } from './generated/v2/TurnCompletedNotification'
 import type { TurnStartedNotification } from './generated/v2/TurnStartedNotification'
 import type { TurnStartResponse } from './generated/v2/TurnStartResponse'
+import {
+  CodexVoiceTranscriber,
+  type VoiceCapability,
+  type VoiceTranscriptionInput,
+} from './voice.js'
 
 /**
  * Tier 1 adapter: drives `codex app-server` over JSON-RPC.
@@ -159,6 +164,9 @@ export type CodexAdapterEvents = {
 
 export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #rpc: StdioJsonRpc | undefined
+  #voice = new CodexVoiceTranscriber(<T>(method: string, params: unknown) =>
+    this.#call<T>(method, params),
+  )
   #started = false
   /**
    * Approvals waiting on an answer, keyed by our id. Holds the JSON-RPC
@@ -274,6 +282,14 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
   async signOut(): Promise<void> {
     await this.#call('account/logout', {})
+  }
+
+  voiceCapability(): Promise<VoiceCapability> {
+    return this.#voice.capability()
+  }
+
+  transcribeVoice(input: VoiceTranscriptionInput, signal?: AbortSignal): Promise<string> {
+    return this.#voice.transcribe(input, signal)
   }
 
   /**

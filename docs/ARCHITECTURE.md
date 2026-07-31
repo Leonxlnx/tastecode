@@ -127,6 +127,22 @@ _Rejected:_ ACP-only (gives up Codex's richest-in-class surface) · native-only 
 4 engines) · our own agent loop for everything (competing with Anthropic's and OpenAI's
 harness teams while also building a UI) · a `switch` on provider in the orchestrator.
 
+### Voice dictation uses the active Codex ChatGPT session
+
+The shared renderer records mono 24 kHz PCM WAV, then sends the bounded clip through the
+local server. The Codex adapter asks app-server for the current ChatGPT session token and
+uses it only for a bounded multipart upload to ChatGPT's transcription endpoint. The token
+never crosses the server protocol, renderer bridge, logs, database, or filesystem. A 401 or
+403 refreshes the session through Codex once before failing.
+
+The mic is capability-gated to ChatGPT-authenticated Codex sessions. API-key auth, older
+Codex versions without `getAuthStatus`, and other providers hide it rather than falling back
+to browser `SpeechRecognition`, which is unreliable in packaged Electron and inconsistent
+across web clients.
+
+_Rejected:_ Codex realtime websocket transcription (currently requires API-key auth) · Web
+Speech API (unreliable in packaged Electron and inconsistent across web clients).
+
 ---
 
 ## Storage
@@ -222,6 +238,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 ## Change log
 
-| Date       | Change             |
-| ---------- | ------------------ |
-| 2026-07-28 | Initial decisions. |
+| Date       | Change                              |
+| ---------- | ----------------------------------- |
+| 2026-07-28 | Initial decisions.                  |
+| 2026-07-31 | Added Codex-backed voice dictation. |

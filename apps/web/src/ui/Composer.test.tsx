@@ -104,6 +104,7 @@ function renderComposer(onSend: (text: string, attachments: string[]) => void) {
       effort={undefined}
       serviceTier={undefined}
       approval="ask"
+      voiceAvailable={false}
       disabled={false}
       running={false}
       newSession
@@ -114,6 +115,8 @@ function renderComposer(onSend: (text: string, attachments: string[]) => void) {
       onServiceTierChange={vi.fn()}
       onApprovalChange={vi.fn()}
       onIsolateChange={vi.fn()}
+      onTranscribeVoice={vi.fn()}
+      onCancelVoice={vi.fn()}
       onSend={onSend}
       onInterrupt={vi.fn()}
     />,
