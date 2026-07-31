@@ -43,6 +43,7 @@ import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { serverUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
+import { canCaptureVoice, type VoiceRecording } from './voice-recorder.js'
 import {
   applyTheme,
   DARK_THEME_QUERY,
@@ -149,6 +150,7 @@ export function App() {
   const [workspace, setWorkspace] = useState<WorkspaceInfo | undefined>()
   const [branches, setBranches] = useState<string[]>([])
   const [account, setAccount] = useState<Account | undefined>()
+  const [voiceAvailable, setVoiceAvailable] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sidebarSettings, setSidebarSettings] = useState(DEFAULT_SIDEBAR_SETTINGS)
   const [paletteScope, setPaletteScope] = useState<CommandScope | null>(null)
@@ -338,6 +340,25 @@ export function App() {
       cancelled = true
     }
   }, [transport, provider])
+
+  useEffect(() => {
+    if (!provider || !canCaptureVoice()) {
+      setVoiceAvailable(false)
+      return
+    }
+    let cancelled = false
+    void transport
+      .request('voice.status', { provider })
+      .then((status) => {
+        if (!cancelled) setVoiceAvailable(status.available)
+      })
+      .catch(() => {
+        if (!cancelled) setVoiceAvailable(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [transport, provider, account?.signedIn])
 
   useEffect(() => {
     if (!provider) return
@@ -872,6 +893,25 @@ export function App() {
   const interrupt = useCallback(() => {
     if (activeId) void transport.request('thread.interrupt', { threadId: activeId })
   }, [transport, activeId])
+
+  const transcribeVoice = useCallback(
+    async (requestId: string, recording: VoiceRecording): Promise<string> => {
+      const { text } = await transport.request('voice.transcribe', {
+        requestId,
+        provider: 'codex',
+        ...recording,
+      })
+      return text
+    },
+    [transport],
+  )
+
+  const cancelVoice = useCallback(
+    (requestId: string) => {
+      void transport.request('voice.cancel', { requestId }).catch(() => undefined)
+    },
+    [transport],
+  )
 
   const deleteQueuedTurn = useCallback(
     (queuedTurnId: string) => {
@@ -1518,6 +1558,7 @@ export function App() {
               serviceTier={serviceTier}
               approval={approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval}
               autoReviewSupported={autoReviewSupported}
+              voiceAvailable={provider === 'codex' && voiceAvailable}
               disabled={!activePath}
               running={thread.running}
               newSession={!activeId}
@@ -1532,6 +1573,8 @@ export function App() {
               onApprovalChange={setApproval}
               onIsolateChange={setIsolateSession}
               onDesignModeChange={setDesignMode}
+              onTranscribeVoice={transcribeVoice}
+              onCancelVoice={cancelVoice}
               onProjectChange={selectProject}
               onBranchChange={(branch) => void selectBranch(branch)}
               onSend={(t, files) => void send(t, files)}

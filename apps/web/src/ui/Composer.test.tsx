@@ -8,10 +8,8 @@ const bridge = vi.hoisted(() => ({
 }))
 
 vi.mock('../bridge.js', () => ({
-  canDictate: false,
   pickFiles: vi.fn(async () => []),
   savePastedImage: bridge.savePastedImage,
-  startDictation: vi.fn(),
 }))
 
 beforeEach(() => {
@@ -195,6 +193,7 @@ function renderComposer(
       serviceTier={undefined}
       approval="ask"
       autoReviewSupported={false}
+      voiceAvailable={false}
       disabled={false}
       running={false}
       newSession
@@ -209,6 +208,8 @@ function renderComposer(
       onApprovalChange={vi.fn()}
       onIsolateChange={vi.fn()}
       onDesignModeChange={vi.fn()}
+      onTranscribeVoice={vi.fn()}
+      onCancelVoice={vi.fn()}
       onProjectChange={vi.fn()}
       onBranchChange={vi.fn()}
       onSend={onSend}

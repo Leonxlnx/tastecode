@@ -12,7 +12,6 @@ import {
   Laptop,
   ListRestart,
   LockOpen,
-  Mic,
   Palette,
   Plus,
   ShieldCheck,
@@ -22,8 +21,17 @@ import {
   type LucideIcon,
   X,
 } from 'lucide-react'
-import { canDictate, pickFiles, savePastedImage, startDictation } from '../bridge.js'
+import { pickFiles, savePastedImage } from '../bridge.js'
 import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
+import {
+  describeMicrophoneError,
+  formatRecordingDuration,
+  MAX_RECORDING_MS,
+  type VoiceRecording,
+  useVoiceRecorder,
+} from '../voice-recorder.js'
+import { ComposerVoiceButton } from './ComposerVoiceButton.js'
+import { ComposerVoiceRecorderBar } from './ComposerVoiceRecorderBar.js'
 import { ImageViewer } from './ImageViewer.js'
 import { Menu, MenuItem } from './Menu.js'
 import { ModelSelector } from './ModelSelector.js'
@@ -145,6 +153,7 @@ export function Composer(props: {
   serviceTier: string | undefined
   approval: ApprovalMode
   autoReviewSupported: boolean
+  voiceAvailable: boolean
   disabled: boolean
   running: boolean
   newSession: boolean
@@ -159,6 +168,8 @@ export function Composer(props: {
   onApprovalChange: (mode: ApprovalMode) => void
   onIsolateChange: (isolate: boolean) => void
   onDesignModeChange: (enabled: boolean) => void
+  onTranscribeVoice: (requestId: string, recording: VoiceRecording) => Promise<string>
+  onCancelVoice: (requestId: string) => void
   onProjectChange: (path: string) => void
   onBranchChange: (branch: string) => void
   onSend: (text: string, attachments: string[]) => void
@@ -170,12 +181,16 @@ export function Composer(props: {
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState<string>()
   const [viewingImage, setViewingImage] = useState<{ src: string; name: string }>()
-  const [dictating, setDictating] = useState(false)
+  const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle')
+  const [voiceError, setVoiceError] = useState<string>()
   const [dragging, setDragging] = useState(false)
   const [slashOpen, setSlashOpen] = useState(false)
   const [sending, setSending] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
-  const stopDictation = useRef<(() => void) | null>(null)
+  const voiceRequest = useRef<string | undefined>(undefined)
+  const voiceOperation = useRef(0)
+  const cancelVoiceRequest = useRef(props.onCancelVoice)
+  const textRef = useRef(text)
   const previewUrls = useRef(new Set<string>())
   const resizeFrame = useRef<number | undefined>(undefined)
   const sendTimer = useRef<number | undefined>(undefined)
@@ -185,19 +200,24 @@ export function Composer(props: {
   const previousComposerRect = useRef<DOMRect | null>(null)
   const dockAnimation = useRef<Animation | null>(null)
   const mounted = useRef(true)
+  const recorder = useVoiceRecorder()
+
+  textRef.current = text
+  cancelVoiceRequest.current = props.onCancelVoice
 
   useEffect(() => {
     mounted.current = true
     return () => {
       mounted.current = false
-      stopDictation.current?.()
+      void recorder.cancel()
+      if (voiceRequest.current) cancelVoiceRequest.current(voiceRequest.current)
       if (resizeFrame.current !== undefined) window.cancelAnimationFrame(resizeFrame.current)
       if (sendTimer.current !== undefined) window.clearTimeout(sendTimer.current)
       dockAnimation.current?.cancel()
       for (const url of previewUrls.current) URL.revokeObjectURL(url)
       previewUrls.current.clear()
     }
-  }, [])
+  }, [recorder.cancel])
 
   // T3 Code's draft composer uses a FLIP transition: remember where the real
   // composer was before send, render it in the docked layout, then animate only
@@ -338,7 +358,14 @@ export function Composer(props: {
   const submit = () => {
     const trimmed = text.trim()
     const paths = attachments.flatMap((attachment) => attachment.path ?? [])
-    if (trimmed === '' || paths.length !== attachments.length || props.disabled) return
+    if (
+      trimmed === '' ||
+      paths.length !== attachments.length ||
+      props.disabled ||
+      voiceState !== 'idle'
+    ) {
+      return
+    }
     const el = area.current
     const currentHeight = el?.offsetHeight ?? COMPOSER_MIN_HEIGHT
     previousComposerRect.current = composerAnchor.current?.getBoundingClientRect() ?? null
@@ -369,20 +396,98 @@ export function Composer(props: {
     props.onDeleteQueuedTurn(queuedTurn.id)
   }
 
-  const toggleDictation = () => {
-    if (dictating) {
-      stopDictation.current?.()
-      return
-    }
-    setDictating(true)
-    stopDictation.current = startDictation({
-      onText: (spoken) => setValue(text === '' ? spoken : `${text} ${spoken}`),
-      onEnd: () => {
-        setDictating(false)
-        stopDictation.current = null
-      },
+  const insertTranscript = (transcript: string) => {
+    const cursor = area.current?.selectionStart ?? textRef.current.length
+    const inserted = insertTranscriptAtCursor(textRef.current, transcript, cursor)
+    if (!inserted) return
+    textRef.current = inserted.text
+    setText(inserted.text)
+    requestAnimationFrame(() => {
+      area.current?.focus()
+      area.current?.setSelectionRange(inserted.cursor, inserted.cursor)
+      grow()
     })
   }
+
+  const startVoice = async () => {
+    const operation = voiceOperation.current + 1
+    voiceOperation.current = operation
+    setVoiceError(undefined)
+    try {
+      await recorder.start()
+      if (mounted.current && voiceOperation.current === operation) setVoiceState('recording')
+      else await recorder.cancel()
+    } catch (error) {
+      if (mounted.current && voiceOperation.current === operation) {
+        setVoiceState('idle')
+        setVoiceError(describeMicrophoneError(error))
+      }
+    }
+  }
+
+  const transcribeVoice = async () => {
+    if (voiceState !== 'recording') return
+    const operation = voiceOperation.current
+    setVoiceState('transcribing')
+    setVoiceError(undefined)
+    const recording = await recorder.stop()
+    if (!mounted.current || voiceOperation.current !== operation) return
+    if (!recording) {
+      setVoiceState('idle')
+      setVoiceError('No audio was captured. Check the selected microphone and try again.')
+      return
+    }
+    const requestId = crypto.randomUUID()
+    voiceRequest.current = requestId
+    try {
+      const transcript = await props.onTranscribeVoice(requestId, recording)
+      if (
+        mounted.current &&
+        voiceOperation.current === operation &&
+        voiceRequest.current === requestId
+      ) {
+        insertTranscript(transcript)
+      }
+    } catch (error) {
+      if (
+        mounted.current &&
+        voiceOperation.current === operation &&
+        voiceRequest.current === requestId
+      ) {
+        setVoiceError(error instanceof Error ? error.message : 'Voice transcription failed.')
+      }
+    } finally {
+      if (
+        mounted.current &&
+        voiceOperation.current === operation &&
+        voiceRequest.current === requestId
+      ) {
+        voiceRequest.current = undefined
+        setVoiceState('idle')
+      }
+    }
+  }
+
+  const cancelVoice = () => {
+    voiceOperation.current += 1
+    if (voiceRequest.current) {
+      props.onCancelVoice(voiceRequest.current)
+      voiceRequest.current = undefined
+    }
+    void recorder.cancel()
+    setVoiceError(undefined)
+    setVoiceState('idle')
+  }
+
+  useEffect(() => {
+    if (voiceState === 'recording' && recorder.durationMs >= MAX_RECORDING_MS) {
+      void transcribeVoice()
+    }
+  })
+
+  useEffect(() => {
+    if (!props.voiceAvailable && voiceState !== 'idle') cancelVoice()
+  }, [props.voiceAvailable])
 
   const showStop = props.running && text.trim() === '' && attachments.length === 0
   const sendDisabled =
@@ -758,9 +863,9 @@ export function Composer(props: {
                   </button>
                 </BorderBeam>
 
-                <span className="tools__spacer" />
+                {voiceState === 'idle' ? <span className="tools__spacer" /> : null}
 
-                {props.models.length > 0 ? (
+                {voiceState === 'idle' && props.models.length > 0 ? (
                   <ModelSelector
                     models={props.models}
                     modelId={props.modelId}
@@ -771,49 +876,64 @@ export function Composer(props: {
                     onEffortChange={props.onEffortChange}
                     onServiceTierChange={props.onServiceTierChange}
                   />
-                ) : showModelPlaceholder ? (
+                ) : voiceState === 'idle' && showModelPlaceholder ? (
                   <span className="tool tool--quiet">Loading models…</span>
                 ) : null}
 
-                {canDictate ? (
-                  <button
-                    className={`icon-btn icon-btn--always composer__dictation ${dictating ? 'is-live' : ''}`}
-                    onClick={toggleDictation}
+                {props.voiceAvailable && voiceState === 'idle' && !props.running ? (
+                  <ComposerVoiceButton
                     disabled={props.disabled}
-                    title={dictating ? 'Stop dictation' : 'Dictate'}
-                  >
-                    <Mic size={15} aria-hidden />
-                  </button>
+                    isRecording={false}
+                    isTranscribing={false}
+                    durationLabel={formatRecordingDuration(recorder.durationMs)}
+                    onClick={() => void startVoice()}
+                  />
                 ) : null}
 
-                <BorderBeam
-                  className="composer__send-beam"
-                  size="sm"
-                  colorVariant="ocean"
-                  strength={0.72}
-                  active={showStop}
-                  borderRadius={15}
-                >
-                  <button
-                    className={`orb${showStop ? ' orb--stop' : ''}${sending ? ' is-sending' : ''}`}
-                    onClick={showStop ? props.onInterrupt : submit}
-                    disabled={!showStop && sendDisabled}
-                    title={showStop ? 'Stop' : 'Send'}
-                    aria-label={showStop ? 'Stop' : 'Send'}
+                {props.voiceAvailable && voiceState !== 'idle' ? (
+                  <ComposerVoiceRecorderBar
+                    disabled={props.disabled || props.running}
+                    isTranscribing={voiceState === 'transcribing'}
+                    durationLabel={formatRecordingDuration(recorder.durationMs)}
+                    waveformLevels={recorder.levels}
+                    onCancel={cancelVoice}
+                    onSubmit={() => void transcribeVoice()}
+                  />
+                ) : (
+                  <BorderBeam
+                    className="composer__send-beam"
+                    size="sm"
+                    colorVariant="ocean"
+                    strength={0.72}
+                    active={showStop}
+                    borderRadius={15}
                   >
-                    <span className="orb__icon orb__icon--send">
-                      <ArrowUp size={15} aria-hidden />
-                    </span>
-                    <span className="orb__icon orb__icon--stop">
-                      <Square size={9} fill="currentColor" strokeWidth={0} aria-hidden />
-                    </span>
-                  </button>
-                </BorderBeam>
+                    <button
+                      className={`orb${showStop ? ' orb--stop' : ''}${sending ? ' is-sending' : ''}`}
+                      onClick={showStop ? props.onInterrupt : submit}
+                      disabled={!showStop && sendDisabled}
+                      title={showStop ? 'Stop' : 'Send'}
+                      aria-label={showStop ? 'Stop' : 'Send'}
+                    >
+                      <span className="orb__icon orb__icon--send">
+                        <ArrowUp size={15} aria-hidden />
+                      </span>
+                      <span className="orb__icon orb__icon--stop">
+                        <Square size={9} fill="currentColor" strokeWidth={0} aria-hidden />
+                      </span>
+                    </button>
+                  </BorderBeam>
+                )}
               </div>
             </div>
           </BorderBeam>
         </div>
       </div>
+      {voiceError ? (
+        <div className="composer__voice-error" role="alert">
+          {voiceError}
+        </div>
+      ) : null}
       {viewingImage ? (
         <ImageViewer
           src={viewingImage.src}
@@ -823,6 +943,25 @@ export function Composer(props: {
       ) : null}
     </>
   )
+}
+
+export function insertTranscriptAtCursor(
+  current: string,
+  transcript: string,
+  cursor: number,
+): { text: string; cursor: number } | undefined {
+  const spoken = transcript.trim()
+  if (!spoken) return undefined
+  const position = Math.max(0, Math.min(current.length, cursor))
+  const before = current.slice(0, position)
+  const after = current.slice(position)
+  const leading = before && !/\s$/.test(before) ? ' ' : ''
+  const trailing = after && !/^\s/.test(after) ? ' ' : ''
+  const insertion = `${leading}${spoken}${trailing}`
+  return {
+    text: `${before}${insertion}${after}`,
+    cursor: before.length + leading.length + spoken.length + trailing.length,
+  }
 }
 
 function basename(path: string): string {

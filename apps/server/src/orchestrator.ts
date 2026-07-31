@@ -34,6 +34,7 @@ import type {
   McpServerConfig,
   Model,
   PanicStopResult,
+  ParamsOf,
   ProviderId,
   QueuedTurn,
   SessionDiff,
@@ -170,6 +171,7 @@ export class Orchestrator {
    * started the flow.
    */
   #control: CodexAdapter | undefined
+  #voiceRequests = new Map<string, AbortController>()
 
   async #controlAdapter(): Promise<CodexAdapter> {
     if (this.#control) return this.#control
@@ -407,6 +409,42 @@ export class Orchestrator {
   async signOut(provider: ProviderId): Promise<void> {
     if (provider !== 'codex') return
     await (await this.#controlAdapter()).signOut()
+  }
+
+  async voiceStatus(provider: ProviderId): Promise<{
+    available: boolean
+    reason?: 'provider_unsupported' | 'sign_in_required' | 'unsupported_auth' | 'codex_too_old'
+  }> {
+    if (provider !== 'codex') return { available: false, reason: 'provider_unsupported' }
+    return (await this.#controlAdapter()).voiceCapability()
+  }
+
+  async transcribeVoice(input: ParamsOf<'voice.transcribe'>): Promise<{ text: string }> {
+    if (this.#voiceRequests.has(input.requestId)) {
+      throw new Error('A voice transcription with this request id is already running.')
+    }
+    const controller = new AbortController()
+    this.#voiceRequests.set(input.requestId, controller)
+    try {
+      const text = await (
+        await this.#controlAdapter()
+      ).transcribeVoice(
+        {
+          audioBase64: input.audioBase64,
+          mimeType: input.mimeType,
+          sampleRateHz: input.sampleRateHz,
+          durationMs: input.durationMs,
+        },
+        controller.signal,
+      )
+      return { text }
+    } finally {
+      this.#voiceRequests.delete(input.requestId)
+    }
+  }
+
+  cancelVoice(requestId: string): void {
+    this.#voiceRequests.get(requestId)?.abort()
   }
 
   async startThread(
@@ -1021,6 +1059,8 @@ export class Orchestrator {
   }
 
   disposeAll(): void {
+    for (const controller of this.#voiceRequests.values()) controller.abort()
+    this.#voiceRequests.clear()
     this.#terminals.closeAll()
     for (const [, entry] of this.#threads) entry.session.dispose()
     this.#threads.clear()

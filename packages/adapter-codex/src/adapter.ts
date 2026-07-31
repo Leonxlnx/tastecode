@@ -47,6 +47,11 @@ import type { SkillsConfigWriteResponse } from './generated/v2/SkillsConfigWrite
 import type { ToolRequestUserInputParams } from './generated/v2/ToolRequestUserInputParams.js'
 import { mapSkillList } from './skills.js'
 import {
+  CodexVoiceTranscriber,
+  type VoiceCapability,
+  type VoiceTranscriptionInput,
+} from './voice.js'
+import {
   DESIGN_BRIEF_ATTACHMENT,
   DESIGN_BRIEF_OUTPUT_SCHEMA,
   designBriefingPrompt,
@@ -261,6 +266,9 @@ export type CodexAdapterEvents = {
 
 export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #rpc: StdioJsonRpc | undefined
+  #voice = new CodexVoiceTranscriber(<T>(method: string, params: unknown) =>
+    this.#call<T>(method, params),
+  )
   #started = false
   #mcpStartup = new Map<string, McpStartupStatus>()
   #mcpServers: Record<string, JsonValue>
@@ -401,6 +409,14 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
   async signOut(): Promise<void> {
     await this.#call('account/logout', {})
+  }
+
+  voiceCapability(): Promise<VoiceCapability> {
+    return this.#voice.capability()
+  }
+
+  transcribeVoice(input: VoiceTranscriptionInput, signal?: AbortSignal): Promise<string> {
+    return this.#voice.transcribe(input, signal)
   }
 
   /**

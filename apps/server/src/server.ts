@@ -12,6 +12,7 @@ import {
   type DiffDecision,
   type MethodName,
   type McpServerConfig,
+  type ParamsOf,
   type ProviderId,
   type SidebarSettings,
 } from '@harness/contracts'
@@ -328,6 +329,20 @@ export function startServer(
       case 'models.list': {
         const p = params as { provider: ProviderId }
         return { models: await orchestrator.listModels(p.provider) }
+      }
+
+      case 'voice.status': {
+        const p = params as { provider: ProviderId }
+        return orchestrator.voiceStatus(p.provider)
+      }
+
+      case 'voice.transcribe':
+        return orchestrator.transcribeVoice(params as ParamsOf<'voice.transcribe'>)
+
+      case 'voice.cancel': {
+        const p = params as { requestId: string }
+        orchestrator.cancelVoice(p.requestId)
+        return {}
       }
 
       case 'acp.agents': {

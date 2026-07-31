@@ -2,7 +2,17 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  session,
+  shell,
+  systemPreferences,
+  type WebContents,
+} from 'electron'
+import { allowsMicrophoneRequest } from './media-permissions.js'
 
 /**
  * Electron shell. Deliberately thin: it opens a window and nothing else.
@@ -107,11 +117,47 @@ ipcMain.handle('harness:savePastedImage', async (_event, payload: unknown) => {
 })
 
 void app.whenReady().then(() => {
+  configureMediaPermissions()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
+
+/** Allow this app's own renderer to request audio, never video or another origin. */
+function configureMediaPermissions(): void {
+  session.defaultSession.setPermissionRequestHandler(
+    (webContents, permission, callback, details) => {
+      if (
+        permission !== 'media' ||
+        !isOwnRenderer(webContents) ||
+        !allowsMicrophoneRequest(details)
+      ) {
+        callback(false)
+        return
+      }
+
+      if (process.platform !== 'darwin') {
+        callback(true)
+        return
+      }
+
+      const status = systemPreferences.getMediaAccessStatus('microphone')
+      if (status === 'granted') {
+        callback(true)
+      } else if (status === 'not-determined') {
+        void systemPreferences.askForMediaAccess('microphone').then(callback, () => callback(false))
+      } else {
+        callback(false)
+      }
+    },
+  )
+}
+
+function isOwnRenderer(webContents: WebContents): boolean {
+  const url = webContents.getURL()
+  return devServer ? url.startsWith(devServer) : url.startsWith('file:')
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
