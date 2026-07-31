@@ -30,6 +30,8 @@ Codex and Claude also expose persistent usage. M3 (review and control) is next. 
 
 ## How to work
 
+- **Every issue has one directly responsible assignee from creation.** The assignee owns
+  the next action; update the assignment before handing work to someone else.
 - **Many small commits**, one logical change each. Push after every one — unpushed work is
   invisible to the other two.
 - **Open a draft PR on the first commit**, not when the work is finished. That draft is how
