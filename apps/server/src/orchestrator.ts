@@ -241,23 +241,44 @@ export class Orchestrator {
   async restoreCheckpoint(threadId: string, checkpointId: number): Promise<{ undo: string }> {
     const stored = this.#store.thread(threadId)
     const checkpoint = this.#store.checkpoint(checkpointId)
-    if (!stored || !checkpoint) throw new Error('no such checkpoint')
+    if (!stored || !checkpoint || checkpoint.threadId !== threadId) {
+      throw new Error('no such checkpoint')
+    }
 
     const repoPath = stored.worktreePath ?? stored.projectPath
     const replaced = await restoreSnapshot(repoPath, checkpoint.commit)
 
     // Rolling the files back without this would leave the transcript
     // describing work that no longer exists on disk.
-    this.#store.truncateAfter(threadId, checkpoint.seq)
+    try {
+      return { undo: this.#store.saveRestoreUndo(threadId, checkpoint.seq, replaced.commit) }
+    } catch (error) {
+      await restoreSnapshot(repoPath, replaced.commit)
+      throw error
+    }
+  }
 
-    return { undo: replaced.commit }
+  /** Reverse the latest restore, including both files and conversation. */
+  async undoRestore(threadId: string, token: string): Promise<void> {
+    const stored = this.#store.thread(threadId)
+    const undo = this.#store.restoreUndo(threadId, token)
+    if (!stored || !undo) throw new Error('restore can no longer be undone')
+
+    const repoPath = stored.worktreePath ?? stored.projectPath
+    const replaced = await restoreSnapshot(repoPath, undo.commit)
+    try {
+      this.#store.applyRestoreUndo(threadId, token)
+    } catch (error) {
+      await restoreSnapshot(repoPath, replaced.commit)
+      throw error
+    }
   }
 
   /** What the agent has changed since a checkpoint, so a restore is informed. */
   async changedSinceCheckpoint(threadId: string, checkpointId: number): Promise<string[]> {
     const stored = this.#store.thread(threadId)
     const checkpoint = this.#store.checkpoint(checkpointId)
-    if (!stored || !checkpoint) return []
+    if (!stored || !checkpoint || checkpoint.threadId !== threadId) return []
     return changedSince(stored.worktreePath ?? stored.projectPath, checkpoint.commit).catch(
       () => [],
     )

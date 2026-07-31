@@ -318,6 +318,12 @@ export function startServer(
         return orchestrator.restoreCheckpoint(p.threadId, p.checkpointId)
       }
 
+      case 'thread.undoRestore': {
+        const p = params as { threadId: string; undo: string }
+        await orchestrator.undoRestore(p.threadId, p.undo)
+        return {}
+      }
+
       case 'thread.unsavedWork': {
         const p = params as { threadId: string }
         const stored = store.thread(p.threadId)

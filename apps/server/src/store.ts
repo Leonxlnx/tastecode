@@ -1,6 +1,7 @@
-import { DatabaseSync } from 'node:sqlite'
+import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import type { DomainEvent, ProviderId } from '@harness/contracts'
 
 /**
@@ -94,6 +95,15 @@ CREATE TABLE IF NOT EXISTS checkpoints (
   commit_sha TEXT NOT NULL,
   label      TEXT NOT NULL,
   created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS restore_undos (
+  token            TEXT PRIMARY KEY,
+  thread_id        TEXT NOT NULL UNIQUE,
+  checkpoint_seq   INTEGER NOT NULL,
+  snapshot_commit  TEXT NOT NULL,
+  events_json      TEXT NOT NULL,
+  checkpoints_json TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS checkpoints_by_thread ON checkpoints (thread_id, seq);
@@ -286,6 +296,7 @@ export class Store {
   deleteThread(id: string): void {
     this.#db.prepare(`DELETE FROM events WHERE thread_id = ?`).run(id)
     this.#db.prepare(`DELETE FROM checkpoints WHERE thread_id = ?`).run(id)
+    this.#db.prepare(`DELETE FROM restore_undos WHERE thread_id = ?`).run(id)
     this.#db.prepare(`DELETE FROM threads WHERE id = ?`).run(id)
   }
 
@@ -375,9 +386,106 @@ export class Store {
    * that no longer exists on disk — the transcript and the repository telling
    * two different stories.
    */
-  truncateAfter(threadId: string, seq: number): void {
+  #truncateAfter(threadId: string, seq: number): void {
     this.#db.prepare(`DELETE FROM events WHERE thread_id = ? AND seq > ?`).run(threadId, seq)
     this.#db.prepare(`DELETE FROM checkpoints WHERE thread_id = ? AND seq > ?`).run(threadId, seq)
+  }
+
+  /** Save and remove the conversation tail so a restore remains reversible. */
+  saveRestoreUndo(threadId: string, seq: number, commit: string): string {
+    const token = randomUUID()
+    const events = this.#db
+      .prepare(`SELECT * FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq`)
+      .all(threadId, seq)
+    const checkpoints = this.#db
+      .prepare(`SELECT * FROM checkpoints WHERE thread_id = ? AND seq > ? ORDER BY seq`)
+      .all(threadId, seq)
+
+    this.#db.exec('BEGIN IMMEDIATE')
+    try {
+      this.#db.prepare(`DELETE FROM restore_undos WHERE thread_id = ?`).run(threadId)
+      this.#db
+        .prepare(
+          `INSERT INTO restore_undos
+             (token, thread_id, checkpoint_seq, snapshot_commit, events_json, checkpoints_json)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(token, threadId, seq, commit, JSON.stringify(events), JSON.stringify(checkpoints))
+      this.#truncateAfter(threadId, seq)
+      this.#db.exec('COMMIT')
+      return token
+    } catch (error) {
+      this.#db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  restoreUndo(threadId: string, token: string): { commit: string } | undefined {
+    const row = this.#db
+      .prepare(`SELECT snapshot_commit FROM restore_undos WHERE thread_id = ? AND token = ?`)
+      .get(threadId, token) as { snapshot_commit: string } | undefined
+    return row ? { commit: row.snapshot_commit } : undefined
+  }
+
+  /** Put back the exact event/checkpoint rows removed by the latest restore. */
+  applyRestoreUndo(threadId: string, token: string): void {
+    const row = this.#db
+      .prepare(`SELECT * FROM restore_undos WHERE thread_id = ? AND token = ?`)
+      .get(threadId, token) as
+      | {
+          checkpoint_seq: number
+          events_json: string
+          checkpoints_json: string
+        }
+      | undefined
+    if (!row) throw new Error('restore can no longer be undone')
+    if (this.lastSeq(threadId) > Number(row.checkpoint_seq)) {
+      throw new Error('restore can only be undone before the session continues')
+    }
+
+    const events = JSON.parse(row.events_json) as Array<{
+      seq: number
+      thread_id: string
+      at: number
+      payload: string
+    }>
+    const checkpoints = JSON.parse(row.checkpoints_json) as Array<{
+      id: number
+      thread_id: string
+      seq: number
+      commit_sha: string
+      label: string
+      created_at: number
+    }>
+
+    this.#db.exec('BEGIN IMMEDIATE')
+    try {
+      const insertEvent = this.#db.prepare(
+        `INSERT INTO events (seq, thread_id, at, payload) VALUES (?, ?, ?, ?)`,
+      )
+      for (const event of events) {
+        insertEvent.run(event.seq, event.thread_id, event.at, event.payload)
+      }
+      const insertCheckpoint = this.#db.prepare(
+        `INSERT INTO checkpoints (id, thread_id, seq, commit_sha, label, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      for (const checkpoint of checkpoints) {
+        insertCheckpoint.run(
+          checkpoint.id,
+          checkpoint.thread_id,
+          checkpoint.seq,
+          checkpoint.commit_sha,
+          checkpoint.label,
+          checkpoint.created_at,
+        )
+      }
+      this.#db.prepare(`DELETE FROM restore_undos WHERE token = ?`).run(token)
+      this.#db.exec('COMMIT')
+    } catch (error) {
+      this.#db.exec('ROLLBACK')
+      throw error
+    }
   }
 
   lastSeq(threadId: string): number {
