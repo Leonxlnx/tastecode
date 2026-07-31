@@ -5,13 +5,20 @@ import type {
   DomainEvent,
   Model,
   ProviderId,
+  QueuedTurn,
   ResultOf,
 } from '@harness/contracts'
 import { isMacOS, pickFolder } from './bridge.js'
 import { isEditableTarget, matchesShortcut, SHORTCUTS, shortcutLabel } from './shortcuts.js'
 import { warmHighlighter } from './ui/highlighter.js'
 import { Transport } from './transport.js'
-import { appendUserMessage, emptyThread, reduce, type ThreadState } from './thread-store.js'
+import {
+  appendUserMessage,
+  emptyThread,
+  reduce,
+  removeQueuedOptimisticMessage,
+  type ThreadState,
+} from './thread-store.js'
 import { CommandPalette, type CommandScope, type PaletteCommand } from './ui/CommandPalette.js'
 import { CheckoutDiscardDialog } from './ui/CheckoutDiscardDialog.js'
 import { Composer, type WorkspaceInfo } from './ui/Composer.js'
@@ -22,7 +29,6 @@ import { Sidebar, type Project } from './ui/Sidebar.js'
 import { StageHeader } from './ui/StageHeader.js'
 import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
-import { Menu, MenuItem } from './ui/Menu.js'
 import { serverUrl } from './server-url.js'
 
 const SERVER_BASE_URL = import.meta.env.VITE_HARNESS_SERVER_URL ?? 'ws://127.0.0.1:4311'
@@ -81,6 +87,9 @@ export function App() {
   // intentional: streamed deltas for a background session should not rerender
   // the active thread, while selecting it still gets the latest state at once.
   const threadStates = useRef(new Map<string, ThreadState>())
+  const queueStates = useRef(new Map<string, { items: QueuedTurn[]; canSteer: boolean }>())
+  const [queuedTurns, setQueuedTurns] = useState<QueuedTurn[]>([])
+  const [canSteerQueue, setCanSteerQueue] = useState(false)
   const [models, setModels] = useState<Model[]>([])
   const [modelsLoaded, setModelsLoaded] = useState(false)
   const [modelId, setModelId] = useState<string | undefined>(
@@ -100,6 +109,7 @@ export function App() {
     () => globalThis.matchMedia?.('(max-width: 700px)').matches ?? false,
   )
   const [workspace, setWorkspace] = useState<WorkspaceInfo | undefined>()
+  const [branches, setBranches] = useState<string[]>([])
   const [account, setAccount] = useState<Account | undefined>()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [paletteScope, setPaletteScope] = useState<CommandScope | null>(null)
@@ -149,7 +159,7 @@ export function App() {
   activeIdRef.current = activeId
 
   useEffect(() => {
-    const off = transport.on('thread.event', ({ threadId, event }) => {
+    const offEvents = transport.on('thread.event', ({ threadId, event }) => {
       const next = reduce(threadStates.current.get(threadId) ?? emptyThread, event)
       threadStates.current.set(threadId, next)
 
@@ -162,9 +172,16 @@ export function App() {
         })
       }
     })
+    const offQueue = transport.on('thread.queue', ({ threadId, items, canSteer }) => {
+      queueStates.current.set(threadId, { items, canSteer })
+      if (threadId !== activeIdRef.current) return
+      setQueuedTurns(items)
+      setCanSteerQueue(canSteer)
+    })
     transport.connect()
     return () => {
-      off()
+      offEvents()
+      offQueue()
       transport.close()
     }
   }, [transport])
@@ -206,20 +223,31 @@ export function App() {
     }
   }, [transport, provider])
 
-  // Branch and uncommitted size for the context chip. Re-read after every turn,
-  // because the agent is exactly what changes it.
+  // Branches and uncommitted size for the composer shelf. Re-read after every
+  // turn, because the agent is exactly what changes them.
   useEffect(() => {
     if (!activePath) {
       setWorkspace(undefined)
+      setBranches([])
       return
     }
     let cancelled = false
-    void transport
-      .request('workspace.info', { path: activePath })
-      .then((info) => {
-        if (!cancelled) setWorkspace(info)
-      })
-      .catch(() => setWorkspace(undefined))
+    void (async () => {
+      const info = await transport
+        .request('workspace.info', { path: activePath })
+        .catch(() => undefined)
+      if (cancelled) return
+      setWorkspace(info)
+
+      const result = await transport
+        .request('workspace.branches', { path: activePath })
+        .catch(() => undefined)
+      if (cancelled) return
+      setBranches(result?.branches ?? (info?.branch ? [info.branch] : []))
+    })().catch(() => {
+      if (cancelled) return
+      setBranches([])
+    })
     return () => {
       cancelled = true
     }
@@ -273,6 +301,32 @@ export function App() {
     },
     [transport],
   )
+
+  useEffect(() => {
+    if (!activeId) {
+      setQueuedTurns([])
+      setCanSteerQueue(false)
+      return
+    }
+
+    const cached = queueStates.current.get(activeId)
+    setQueuedTurns(cached?.items ?? [])
+    setCanSteerQueue(cached?.canSteer ?? false)
+    let cancelled = false
+    void transport
+      .request('thread.queue', { threadId: activeId })
+      .then((state) => {
+        if (cancelled) return
+        queueStates.current.set(activeId, state)
+        if (activeIdRef.current !== activeId) return
+        setQueuedTurns(state.items)
+        setCanSteerQueue(state.canSteer)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [transport, activeId])
 
   useEffect(() => {
     if (!activeId || thread.running) {
@@ -472,9 +526,14 @@ export function App() {
       setNotice(undefined)
       setUndoRestore(undefined)
 
-      const next = appendUserMessage(threadStates.current.get(threadId) ?? emptyThread, text)
-      threadStates.current.set(threadId, next)
-      if (threadId === activeIdRef.current) setThread(next)
+      const before = threadStates.current.get(threadId) ?? emptyThread
+      const wasRunning = before.running
+      const beforeItemIds = new Set(before.items.map((item) => item.id))
+      if (!wasRunning) {
+        const next = appendUserMessage(before, text)
+        threadStates.current.set(threadId, next)
+        if (threadId === activeIdRef.current) setThread(next)
+      }
 
       // A session named after what was asked of it is findable a week later;
       // "New session" is not. Named from the first message only.
@@ -490,7 +549,7 @@ export function App() {
         void transport.request('thread.rename', { threadId, title }).catch(() => undefined)
       }
       try {
-        await transport.request('thread.sendTurn', {
+        const result = await transport.request('thread.sendTurn', {
           threadId,
           text,
           ...(attachments.length > 0 ? { attachments } : {}),
@@ -498,6 +557,22 @@ export function App() {
           ...(effort ? { effort } : {}),
           ...(serviceTier ? { serviceTier } : {}),
         })
+        const current = threadStates.current.get(threadId) ?? emptyThread
+        if (result.queued && !wasRunning) {
+          const reconciled = removeQueuedOptimisticMessage(current, text)
+          threadStates.current.set(threadId, reconciled)
+          if (threadId === activeIdRef.current) setThread(reconciled)
+        } else if (!result.queued && wasRunning) {
+          const canonicalArrived = current.items.some(
+            (item) =>
+              !beforeItemIds.has(item.id) && item.role === 'user' && item.text?.trim() === text,
+          )
+          if (!canonicalArrived) {
+            const next = appendUserMessage(current, text)
+            threadStates.current.set(threadId, next)
+            if (threadId === activeIdRef.current) setThread(next)
+          }
+        }
       } catch (error) {
         setNotice(error instanceof Error ? error.message : String(error))
       }
@@ -508,6 +583,26 @@ export function App() {
   const interrupt = useCallback(() => {
     if (activeId) void transport.request('thread.interrupt', { threadId: activeId })
   }, [transport, activeId])
+
+  const deleteQueuedTurn = useCallback(
+    (queuedTurnId: string) => {
+      if (!activeId) return
+      void transport
+        .request('thread.deleteQueuedTurn', { threadId: activeId, queuedTurnId })
+        .catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
+    },
+    [transport, activeId],
+  )
+
+  const steerQueuedTurn = useCallback(
+    (queuedTurnId: string) => {
+      if (!activeId) return
+      void transport
+        .request('thread.steerQueuedTurn', { threadId: activeId, queuedTurnId })
+        .catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
+    },
+    [transport, activeId],
+  )
 
   const selectProject = useCallback(
     (path: string) => {
@@ -520,6 +615,24 @@ export function App() {
       setRollbackOpen(false)
     },
     [activePath],
+  )
+
+  const selectBranch = useCallback(
+    async (branch: string) => {
+      if (!activePath || activeId) return
+      setNotice(undefined)
+      try {
+        const info = await transport.request('workspace.switchBranch', {
+          path: activePath,
+          branch,
+        })
+        setWorkspace(info)
+        setBranches((current) => [branch, ...current.filter((item) => item !== branch)])
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : String(error))
+      }
+    },
+    [transport, activePath, activeId],
   )
 
   const selectSession = useCallback(
@@ -743,6 +856,7 @@ export function App() {
   }
 
   const active = findSession(projects, activeId)
+  const activeProject = projects.find((project) => project.path === activePath)
   const labels = {
     newChat: shortcutLabel(SHORTCUTS.newChat, macOS),
     switchProject: shortcutLabel(SHORTCUTS.switchProject, macOS),
@@ -914,49 +1028,61 @@ export function App() {
             }}
           />
 
-          {active ? (
-            <Thread
-              items={thread.items}
-              running={thread.running}
-              activeTurn={thread.activeTurn}
-              plan={thread.plan}
-              diff={thread.diff}
-              approvals={thread.approvals}
-              onDecide={(approvalId, decision) => {
-                if (!activeId) return
-                void transport.request('thread.respondToApproval', {
-                  threadId: activeId,
-                  approvalId,
-                  decision,
-                })
-              }}
-            />
-          ) : (
-            <Empty projects={projects} activePath={activePath} onSelectProject={selectProject} />
-          )}
+          <div className={`stage__body${activeId ? '' : ' is-new-session'}`}>
+            {active ? (
+              <Thread
+                key={activeId}
+                items={thread.items}
+                running={thread.running}
+                activeTurn={thread.activeTurn}
+                plan={thread.plan}
+                diff={thread.diff}
+                approvals={thread.approvals}
+                onDecide={(approvalId, decision) => {
+                  if (!activeId) return
+                  void transport.request('thread.respondToApproval', {
+                    threadId: activeId,
+                    approvalId,
+                    decision,
+                  })
+                }}
+              />
+            ) : (
+              <Empty projects={projects} activePath={activePath} />
+            )}
 
-          <Composer
-            projectName={activePath ? basename(activePath) : undefined}
-            workspace={active?.session.worktreeBranch ? undefined : workspace}
-            models={models}
-            modelsLoaded={modelsLoaded}
-            modelId={modelId}
-            effort={effort}
-            serviceTier={serviceTier}
-            approval={approval}
-            disabled={!activePath}
-            running={thread.running}
-            newSession={!activeId}
-            isolate={isolateSession}
-            focusRequest={composerFocusRequest}
-            onModelChange={selectModel}
-            onEffortChange={setEffort}
-            onServiceTierChange={setServiceTier}
-            onApprovalChange={setApproval}
-            onIsolateChange={setIsolateSession}
-            onSend={(t, files) => void send(t, files)}
-            onInterrupt={interrupt}
-          />
+            <Composer
+              projects={projects}
+              projectPath={activePath}
+              projectName={activeProject ? displayName(activeProject) : undefined}
+              branch={active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]}
+              branches={branches}
+              models={models}
+              modelsLoaded={modelsLoaded}
+              modelId={modelId}
+              effort={effort}
+              serviceTier={serviceTier}
+              approval={approval}
+              disabled={!activePath}
+              running={thread.running}
+              newSession={!activeId}
+              isolate={active?.session.worktreeBranch ? true : isolateSession}
+              focusRequest={composerFocusRequest}
+              queuedTurns={queuedTurns}
+              canSteerQueue={canSteerQueue}
+              onModelChange={selectModel}
+              onEffortChange={setEffort}
+              onServiceTierChange={setServiceTier}
+              onApprovalChange={setApproval}
+              onIsolateChange={setIsolateSession}
+              onProjectChange={selectProject}
+              onBranchChange={(branch) => void selectBranch(branch)}
+              onSend={(t, files) => void send(t, files)}
+              onInterrupt={interrupt}
+              onDeleteQueuedTurn={deleteQueuedTurn}
+              onSteerQueuedTurn={steerQueuedTurn}
+            />
+          </div>
         </main>
       </div>
 
@@ -1041,11 +1167,7 @@ export function App() {
   )
 }
 
-function Empty(props: {
-  projects: Project[]
-  activePath: string | undefined
-  onSelectProject: (path: string) => void
-}) {
+function Empty(props: { projects: Project[]; activePath: string | undefined }) {
   const activeProject = props.projects.find((project) => project.path === props.activePath)
 
   if (props.projects.length === 0) {
@@ -1061,32 +1183,7 @@ function Empty(props: {
   return (
     <div className="empty">
       <div className="empty__prompt" role="heading" aria-level={1}>
-        What should we build in{' '}
-        <Menu
-          label="Choose project"
-          drop="up"
-          triggerClassName="empty__project-trigger"
-          panelClassName="empty__project-menu"
-          trigger={() => <span>{activeProject ? displayName(activeProject) : 'a project'}</span>}
-        >
-          {(close) => (
-            <>
-              {props.projects.map((project) => (
-                <MenuItem
-                  key={project.path}
-                  title={displayName(project)}
-                  detail={project.path}
-                  active={project.path === props.activePath}
-                  onClick={() => {
-                    props.onSelectProject(project.path)
-                    close()
-                  }}
-                />
-              ))}
-            </>
-          )}
-        </Menu>
-        ?
+        What should we build in {activeProject ? displayName(activeProject) : 'a project'}?
       </div>
     </div>
   )

@@ -93,11 +93,65 @@ describe('Composer image paste', () => {
   })
 })
 
-function renderComposer(onSend: (text: string, attachments: string[]) => void) {
+describe('Composer queue', () => {
+  it('changes Stop back to Send when a running session has a draft and Enter queues it', () => {
+    const onSend = vi.fn()
+    const onInterrupt = vi.fn()
+    renderComposer(onSend, { running: true, onInterrupt })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    const action = screen.getByRole('button', { name: 'Stop' })
+    fireEvent.change(composer, { target: { value: 'Do this next' } })
+    expect(screen.getByRole('button', { name: 'Send' })).toBe(action)
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).toHaveBeenCalledWith('Do this next', [])
+    expect(onInterrupt).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Stop' })).toBe(action)
+    expect(action.classList.contains('is-sending')).toBe(true)
+  })
+
+  it('offers steer, remove, and edit actions for queued prompts', () => {
+    const onDeleteQueuedTurn = vi.fn()
+    const onSteerQueuedTurn = vi.fn()
+    renderComposer(vi.fn(), {
+      running: true,
+      canSteerQueue: true,
+      queuedTurns: [
+        {
+          id: 'queued-1',
+          text: 'Polish the queue',
+          attachments: ['/work/reference.png'],
+          createdAt: 1,
+        },
+      ],
+      onDeleteQueuedTurn,
+      onSteerQueuedTurn,
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Steer' }))
+    expect(onSteerQueuedTurn).toHaveBeenCalledWith('queued-1')
+
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for Polish the queue' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit prompt' }))
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+      'Polish the queue',
+    )
+    expect(onDeleteQueuedTurn).toHaveBeenCalledWith('queued-1')
+  })
+})
+
+function renderComposer(
+  onSend: (text: string, attachments: string[]) => void,
+  overrides: Partial<Parameters<typeof Composer>[0]> = {},
+) {
   return render(
     <Composer
+      projects={[{ path: '/work/harness', name: 'Harness', sessions: [] }]}
+      projectPath="/work/harness"
       projectName="Harness"
-      workspace={undefined}
+      branch="main"
+      branches={['main']}
       models={[]}
       modelsLoaded
       modelId={undefined}
@@ -109,13 +163,20 @@ function renderComposer(onSend: (text: string, attachments: string[]) => void) {
       newSession
       isolate={false}
       focusRequest={0}
+      queuedTurns={[]}
+      canSteerQueue={false}
       onModelChange={vi.fn()}
       onEffortChange={vi.fn()}
       onServiceTierChange={vi.fn()}
       onApprovalChange={vi.fn()}
       onIsolateChange={vi.fn()}
+      onProjectChange={vi.fn()}
+      onBranchChange={vi.fn()}
       onSend={onSend}
       onInterrupt={vi.fn()}
+      onDeleteQueuedTurn={vi.fn()}
+      onSteerQueuedTurn={vi.fn()}
+      {...overrides}
     />,
   )
 }

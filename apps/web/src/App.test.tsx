@@ -90,13 +90,24 @@ beforeEach(() => {
       case 'models.list':
         return Promise.resolve({ models: [] })
       case 'workspace.info':
-        return Promise.resolve({ added: 0, removed: 0, dirtyFiles: 0 })
+        return Promise.resolve({ branch: 'main', added: 0, removed: 0, dirtyFiles: 0 })
+      case 'workspace.branches':
+        return Promise.resolve({ branches: ['main', 'feature/shelf'] })
+      case 'workspace.switchBranch':
+        return Promise.resolve({
+          branch: (params as { branch: string }).branch,
+          added: 0,
+          removed: 0,
+          dirtyFiles: 0,
+        })
       case 'auth.status':
         return Promise.resolve({ signedIn: true })
       case 'projects.list':
         return Promise.resolve({ projects: serverProjects })
       case 'thread.history':
         return Promise.resolve({ events: [], running: false })
+      case 'thread.queue':
+        return Promise.resolve({ items: [], canSteer: true })
       case 'usage.summary':
         return Promise.resolve({
           session: {
@@ -175,7 +186,7 @@ beforeEach(() => {
         return Promise.resolve({})
       }
       case 'thread.sendTurn':
-        return Promise.resolve({ turnId: 'turn-1' })
+        return Promise.resolve({ queued: false, turnId: 'turn-1' })
       default:
         return Promise.resolve({})
     }
@@ -221,13 +232,31 @@ describe('web client', () => {
   })
 })
 describe('new chats', () => {
+  it('moves the composer from the centered new-chat layout after the first prompt', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+
+    expect(document.querySelector('.stage__body.is-new-session .composer')).not.toBeNull()
+
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Start building' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(document.querySelector('.stage__body.is-new-session')).toBeNull()
+    })
+    expect(document.querySelector('.stage__body > .composer')).not.toBeNull()
+  })
+
   it('starts a new session in an isolated checkout when selected', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
     ]
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Shared checkout' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Work in parallel' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
@@ -240,7 +269,30 @@ describe('new chats', () => {
         isolate: true,
       })
     })
-    expect(await screen.findByText('harness/thread-1')).toBeTruthy()
+    expect(await screen.findAllByText('harness/thread-1')).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: 'Choose project' })).toBeNull()
+  })
+
+  it('switches the project checkout from the branch shelf before starting a chat', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+
+    const branchPicker = await screen.findByRole('button', { name: 'Choose branch' })
+    await waitFor(() => expect((branchPicker as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(branchPicker)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'feature/shelf' }))
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('workspace.switchBranch', {
+        path: '/work/project',
+        branch: 'feature/shelf',
+      })
+      expect(screen.getByRole('button', { name: 'Choose branch' }).textContent).toContain(
+        'feature/shelf',
+      )
+    })
   })
 
   it('asks before discarding uncommitted work from an isolated session', async () => {
@@ -389,7 +441,9 @@ describe('new chats', () => {
     expect(screen.getByRole('heading').textContent).toContain(
       'What should we build in Another Project?',
     )
-    expect(document.querySelector('.chip__label')?.textContent).toBe('another-project')
+    expect(screen.getByRole('button', { name: 'Choose project' }).textContent).toContain(
+      'Another Project',
+    )
   })
 
   it('keeps an untouched session out of the sidebar until the first prompt', async () => {
@@ -452,15 +506,19 @@ describe('new chats', () => {
             ],
           })
         case 'workspace.info':
-          return Promise.resolve({ added: 0, removed: 0, dirtyFiles: 0 })
+          return Promise.resolve({ branch: 'main', added: 0, removed: 0, dirtyFiles: 0 })
+        case 'workspace.branches':
+          return Promise.resolve({ branches: ['main'] })
         case 'auth.status':
           return Promise.resolve({ signedIn: true })
         case 'projects.list':
           return Promise.resolve({ projects: serverProjects })
         case 'thread.start':
           return Promise.resolve({ threadId: 'thread-1' })
+        case 'thread.queue':
+          return Promise.resolve({ items: [], canSteer: true })
         case 'thread.sendTurn':
-          return Promise.resolve({ turnId: 'turn-1' })
+          return Promise.resolve({ queued: false, turnId: 'turn-1' })
         default:
           return Promise.resolve({})
       }
@@ -654,6 +712,69 @@ describe('global shortcuts', () => {
 })
 
 describe('live sessions', () => {
+  it('queues Enter submissions while the active session is running', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Existing work', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.sendTurn') {
+        return Promise.resolve({
+          queued: true,
+          queuedTurn: {
+            id: 'queued-1',
+            text: 'Queue this next',
+            attachments: [],
+            createdAt: 1,
+          },
+        })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
+    emitThreadEvent('thread-1', {
+      type: 'turn.started',
+      turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
+    })
+
+    const composer = screen.getByPlaceholderText('Do anything')
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
+    fireEvent.change(composer, { target: { value: 'Queue this next' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
+        threadId: 'thread-1',
+        text: 'Queue this next',
+      })
+    })
+    expect(screen.getByTestId('thread').textContent).not.toContain('Queue this next')
+
+    emitQueue('thread-1', [
+      {
+        id: 'queued-1',
+        text: 'Queue this next',
+        attachments: [],
+        createdAt: 1,
+      },
+    ])
+    expect(screen.getByLabelText('Queued prompts').textContent).toContain('Queue this next')
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Queue this next from queue' }))
+    expect(transport.request).toHaveBeenCalledWith('thread.deleteQueuedTurn', {
+      threadId: 'thread-1',
+      queuedTurnId: 'queued-1',
+    })
+  })
+
   it('shows the most recently active session first', async () => {
     serverProjects = [
       {
@@ -751,6 +872,15 @@ describe('live sessions', () => {
 function emitThreadEvent(threadId: string, event: DomainEvent) {
   act(() => {
     transport.listeners.get('thread.event')?.({ threadId, event })
+  })
+}
+
+function emitQueue(
+  threadId: string,
+  items: Array<{ id: string; text: string; attachments: string[]; createdAt: number }>,
+) {
+  act(() => {
+    transport.listeners.get('thread.queue')?.({ threadId, items, canSteer: true })
   })
 }
 

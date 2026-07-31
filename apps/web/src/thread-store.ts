@@ -153,3 +153,17 @@ export function appendUserMessage(state: ThreadState, text: string): ThreadState
     ],
   }
 }
+
+/** A prompt that the server queued belongs on the shelf, not in the transcript yet. */
+export function removeQueuedOptimisticMessage(state: ThreadState, text: string): ThreadState {
+  let index = -1
+  for (let itemIndex = state.items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+    const item = state.items[itemIndex]
+    if (item?.id.startsWith(OPTIMISTIC_PREFIX) && item.role === 'user' && item.text === text) {
+      index = itemIndex
+      break
+    }
+  }
+  if (index < 0) return state
+  return { ...state, items: state.items.filter((_, itemIndex) => itemIndex !== index) }
+}

@@ -1,17 +1,22 @@
-import { useEffect, useRef, useState } from 'react'
-import type { ApprovalMode, Model } from '@harness/contracts'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { ApprovalMode, Model, QueuedTurn } from '@harness/contracts'
 import {
   ArrowUp,
+  CornerDownRight,
+  Ellipsis,
   File as FileIcon,
   Folder,
   GitBranch,
   Image as ImageIcon,
+  Laptop,
+  ListRestart,
   LockOpen,
   Mic,
   Plus,
   ShieldCheck,
   ShieldQuestion,
   Square,
+  Trash2,
   type LucideIcon,
   X,
 } from 'lucide-react'
@@ -20,6 +25,7 @@ import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
 import { ImageViewer } from './ImageViewer.js'
 import { Menu, MenuItem } from './Menu.js'
 import { ModelSelector } from './ModelSelector.js'
+import type { Project } from './Sidebar.js'
 
 /**
  * Prompt bar.
@@ -96,6 +102,11 @@ const SLASH_COMMANDS: { name: string; detail: string; text: string }[] = [
 ]
 
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i
+const COMPOSER_MIN_HEIGHT = 86
+const COMPOSER_DOCK_ANIMATION_ID = 'harness-composer-dock'
+const COMPOSER_DOCK_MOTION_MS = 180
+const COMPOSER_DOCK_EASING = 'cubic-bezier(0.4, 0, 0.2, 1)'
+const SEND_MOTION_MS = 180
 const PASTEABLE_IMAGE_TYPES = new Set([
   'image/png',
   'image/jpeg',
@@ -112,8 +123,11 @@ type ComposerAttachment = {
 }
 
 export function Composer(props: {
+  projects: Project[]
+  projectPath: string | undefined
   projectName: string | undefined
-  workspace: WorkspaceInfo | undefined
+  branch: string | undefined
+  branches: string[]
   models: Model[]
   /** Whether the list has come back yet, so an empty list is not read as pending. */
   modelsLoaded: boolean
@@ -126,13 +140,19 @@ export function Composer(props: {
   newSession: boolean
   isolate: boolean
   focusRequest: number
+  queuedTurns: QueuedTurn[]
+  canSteerQueue: boolean
   onModelChange: (id: string) => void
   onEffortChange: (effort: string) => void
   onServiceTierChange: (serviceTier: string | undefined) => void
   onApprovalChange: (mode: ApprovalMode) => void
   onIsolateChange: (isolate: boolean) => void
+  onProjectChange: (path: string) => void
+  onBranchChange: (branch: string) => void
   onSend: (text: string, attachments: string[]) => void
   onInterrupt: () => void
+  onDeleteQueuedTurn: (id: string) => void
+  onSteerQueuedTurn: (id: string) => void
 }) {
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
@@ -141,9 +161,17 @@ export function Composer(props: {
   const [dictating, setDictating] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [slashOpen, setSlashOpen] = useState(false)
+  const [sending, setSending] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
   const stopDictation = useRef<(() => void) | null>(null)
   const previewUrls = useRef(new Set<string>())
+  const resizeFrame = useRef<number | undefined>(undefined)
+  const sendTimer = useRef<number | undefined>(undefined)
+  const transitionGroup = useRef<HTMLDivElement>(null)
+  const composerAnchor = useRef<HTMLDivElement>(null)
+  const previousNewSession = useRef(props.newSession)
+  const previousComposerRect = useRef<DOMRect | null>(null)
+  const dockAnimation = useRef<Animation | null>(null)
   const mounted = useRef(true)
 
   useEffect(() => {
@@ -151,10 +179,48 @@ export function Composer(props: {
     return () => {
       mounted.current = false
       stopDictation.current?.()
+      if (resizeFrame.current !== undefined) window.cancelAnimationFrame(resizeFrame.current)
+      if (sendTimer.current !== undefined) window.clearTimeout(sendTimer.current)
+      dockAnimation.current?.cancel()
       for (const url of previewUrls.current) URL.revokeObjectURL(url)
       previewUrls.current.clear()
     }
   }, [])
+
+  // T3 Code's draft composer uses a FLIP transition: remember where the real
+  // composer was before send, render it in the docked layout, then animate only
+  // that positional delta. This keeps focus and textarea state on one DOM tree.
+  useLayoutEffect(() => {
+    const group = transitionGroup.current
+    const nextRect = composerAnchor.current?.getBoundingClientRect() ?? null
+    const stateChanged = previousNewSession.current !== props.newSession
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+
+    dockAnimation.current?.cancel()
+    dockAnimation.current = null
+
+    const previousRect = previousComposerRect.current
+    if (stateChanged && !reduceMotion && group && previousRect && nextRect && group.animate) {
+      const x = previousRect.left - nextRect.left
+      const y = previousRect.top - nextRect.top
+      if (Math.abs(x) >= 0.5 || Math.abs(y) >= 0.5) {
+        const animation = group.animate(
+          [{ transform: `translate3d(${x}px, ${y}px, 0)` }, { transform: 'translate3d(0, 0, 0)' }],
+          { duration: COMPOSER_DOCK_MOTION_MS, easing: COMPOSER_DOCK_EASING },
+        )
+        animation.id = COMPOSER_DOCK_ANIMATION_ID
+        dockAnimation.current = animation
+        void animation.finished
+          .catch(() => undefined)
+          .then(() => {
+            if (dockAnimation.current === animation) dockAnimation.current = null
+          })
+      }
+    }
+
+    previousNewSession.current = props.newSession
+    previousComposerRect.current = nextRect
+  }, [props.newSession])
 
   useEffect(() => {
     if (props.focusRequest > 0 && !props.disabled) area.current?.focus()
@@ -173,8 +239,15 @@ export function Composer(props: {
   const grow = () => {
     const el = area.current
     if (!el) return
+    const currentHeight = el.offsetHeight
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 220)}px`
+    const nextHeight = Math.max(COMPOSER_MIN_HEIGHT, Math.min(el.scrollHeight, 220))
+    el.style.height = `${currentHeight}px`
+    if (resizeFrame.current !== undefined) window.cancelAnimationFrame(resizeFrame.current)
+    resizeFrame.current = window.requestAnimationFrame(() => {
+      resizeFrame.current = undefined
+      el.style.height = `${nextHeight}px`
+    })
   }
 
   const setValue = (value: string) => {
@@ -254,15 +327,34 @@ export function Composer(props: {
     const trimmed = text.trim()
     const paths = attachments.flatMap((attachment) => attachment.path ?? [])
     if (trimmed === '' || paths.length !== attachments.length || props.disabled) return
+    const el = area.current
+    const currentHeight = el?.offsetHeight ?? COMPOSER_MIN_HEIGHT
+    previousComposerRect.current = composerAnchor.current?.getBoundingClientRect() ?? null
+    if (sendTimer.current !== undefined) window.clearTimeout(sendTimer.current)
+    setSending(true)
+    sendTimer.current = window.setTimeout(() => {
+      sendTimer.current = undefined
+      setSending(false)
+    }, SEND_MOTION_MS)
     props.onSend(trimmed, paths)
     setText('')
     clearAttachments()
     setSlashOpen(false)
-    const el = area.current
     if (el) {
-      el.style.height = 'auto'
+      if (resizeFrame.current !== undefined) window.cancelAnimationFrame(resizeFrame.current)
+      el.style.height = `${currentHeight}px`
+      resizeFrame.current = window.requestAnimationFrame(() => {
+        resizeFrame.current = undefined
+        el.style.height = `${COMPOSER_MIN_HEIGHT}px`
+      })
       el.focus()
     }
+  }
+
+  const editQueuedTurn = (queuedTurn: QueuedTurn) => {
+    setValue(queuedTurn.text)
+    addFiles(queuedTurn.attachments)
+    props.onDeleteQueuedTurn(queuedTurn.id)
   }
 
   const toggleDictation = () => {
@@ -280,10 +372,15 @@ export function Composer(props: {
     })
   }
 
+  const showStop = props.running && text.trim() === '' && attachments.length === 0
+  const sendDisabled =
+    text.trim() === '' || attachments.some((attachment) => !attachment.path) || props.disabled
+
   return (
     <>
-      <div className="composer">
+      <div className="composer" ref={transitionGroup}>
         <div
+          ref={composerAnchor}
           className={`composer__box ${dragging ? 'is-dropping' : ''}`}
           onDragOver={(e) => {
             e.preventDefault()
@@ -301,267 +398,362 @@ export function Composer(props: {
             addFiles(paths)
           }}
         >
-          <div className="chips">
-            {props.projectName ? (
-              <span className="chip chip--context" title={props.workspace?.branch}>
-                <Folder size={13} aria-hidden />
-                <span className="chip__label">{props.projectName}</span>
-                {props.workspace?.branch ? (
-                  <>
-                    <span className="chip__sep">/</span>
-                    <span className="chip__branch">{props.workspace.branch}</span>
-                  </>
-                ) : null}
-                {props.workspace && props.workspace.dirtyFiles > 0 ? (
-                  <span className="chip__stat">
-                    <span className="stat stat--add">+{props.workspace.added}</span>
-                    <span className="stat stat--del">−{props.workspace.removed}</span>
+          {props.newSession ? (
+            <div className="composer__shelf">
+              <Menu
+                label="Choose project"
+                drop="down"
+                triggerClassName="shelf-control shelf-control--project"
+                trigger={() => (
+                  <span className="shelf-control__content">
+                    <Folder size={15} aria-hidden />
+                    <span>{props.projectName ?? 'Choose project'}</span>
                   </span>
-                ) : null}
-              </span>
-            ) : null}
+                )}
+              >
+                {(close) => (
+                  <>
+                    {props.projects.map((project) => (
+                      <MenuItem
+                        key={project.path}
+                        title={project.name ?? basename(project.path)}
+                        detail={project.path}
+                        active={project.path === props.projectPath}
+                        onClick={() => {
+                          props.onProjectChange(project.path)
+                          close()
+                        }}
+                      />
+                    ))}
+                  </>
+                )}
+              </Menu>
 
-            {attachments.map((attachment) =>
-              attachment.previewUrl ? (
-                <span
-                  className={`attachment-preview ${attachment.path ? '' : 'is-loading'}`}
-                  key={attachment.id}
-                  title={attachment.name}
-                >
-                  <button
-                    className="attachment-preview__open"
-                    type="button"
-                    onClick={() =>
-                      setViewingImage({ src: attachment.previewUrl!, name: attachment.name })
-                    }
-                    aria-label={`Open ${attachment.name}`}
-                  >
-                    <img src={attachment.previewUrl} alt="" />
-                  </button>
-                  <button
-                    className="attachment-preview__remove"
-                    onClick={() => removeAttachment(attachment.id)}
-                    title="Remove"
-                    aria-label={`Remove ${attachment.name}`}
-                  >
-                    <X size={13} aria-hidden />
-                  </button>
-                  {attachment.path ? null : <span className="attachment-preview__loading" />}
-                </span>
-              ) : (
-                <span className="chip chip--file" key={attachment.id} title={attachment.path}>
-                  {attachment.path && IMAGE_RE.test(attachment.path) ? (
-                    <ImageIcon size={13} aria-hidden />
+              <button
+                type="button"
+                className="shelf-control shelf-control--mode"
+                aria-label="Workspace mode"
+                aria-pressed={props.isolate}
+                onClick={() => props.onIsolateChange(!props.isolate)}
+                title="Switch between the project checkout and an isolated worktree"
+              >
+                <span className="shelf-control__content">
+                  {props.isolate ? (
+                    <GitBranch size={15} aria-hidden />
                   ) : (
-                    <FileIcon size={13} aria-hidden />
+                    <Laptop size={15} aria-hidden />
                   )}
-                  <span className="chip__label">{attachment.name}</span>
-                  <button
-                    className="chip__x"
-                    onClick={() => removeAttachment(attachment.id)}
-                    title="Remove"
-                    aria-label={`Remove ${attachment.name}`}
-                  >
-                    <X size={10} aria-hidden />
-                  </button>
+                  <span>{props.isolate ? 'Isolated' : 'Local'}</span>
                 </span>
-              ),
-            )}
-            {attachmentError ? (
-              <span className="chip chip--error" role="alert">
-                {attachmentError}
-              </span>
-            ) : null}
-          </div>
+              </button>
 
-          <div className="composer__field">
-            <textarea
-              ref={area}
-              value={text}
-              rows={1}
-              spellCheck={false}
-              disabled={props.disabled}
-              aria-keyshortcuts={shortcutAria(SHORTCUTS.focusComposer)}
-              onChange={(e) => {
-                const value = e.target.value
-                setText(value)
-                setSlashOpen(value.startsWith('/') && !value.includes(' '))
-                grow()
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape' && slashOpen) {
-                  setSlashOpen(false)
-                  return
-                }
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  if (slashOpen && matches[0]) {
-                    setValue(matches[0].text)
+              <Menu
+                label="Choose branch"
+                drop="down"
+                disabled={props.branches.length === 0}
+                triggerClassName="shelf-control shelf-control--branch"
+                trigger={() => (
+                  <span className="shelf-control__content">
+                    <GitBranch size={15} aria-hidden />
+                    <span>{props.branch ?? 'No branch'}</span>
+                  </span>
+                )}
+              >
+                {(close) => (
+                  <>
+                    {props.branches.map((branch) => (
+                      <MenuItem
+                        key={branch}
+                        title={branch}
+                        active={branch === props.branch}
+                        onClick={() => {
+                          props.onBranchChange(branch)
+                          close()
+                        }}
+                      />
+                    ))}
+                  </>
+                )}
+              </Menu>
+            </div>
+          ) : null}
+
+          {props.queuedTurns.length > 0 ? (
+            <div className="composer__queue" aria-label="Queued prompts">
+              {props.queuedTurns.map((queuedTurn) => (
+                <div className="queue-row" key={queuedTurn.id}>
+                  <ListRestart className="queue-row__icon" size={15} aria-hidden />
+                  <span className="queue-row__text" title={queuedTurn.text}>
+                    {queuedTurn.text}
+                  </span>
+                  {props.canSteerQueue ? (
+                    <button
+                      type="button"
+                      className="queue-row__steer"
+                      onClick={() => props.onSteerQueuedTurn(queuedTurn.id)}
+                      title="Steer the running agent with this prompt"
+                    >
+                      <CornerDownRight size={15} aria-hidden />
+                      <span>Steer</span>
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="queue-row__action"
+                    onClick={() => props.onDeleteQueuedTurn(queuedTurn.id)}
+                    title="Remove from queue"
+                    aria-label={`Remove ${queuedTurn.text} from queue`}
+                  >
+                    <Trash2 size={15} aria-hidden />
+                  </button>
+                  <Menu
+                    label={`More actions for ${queuedTurn.text}`}
+                    align="right"
+                    triggerClassName="queue-row__action"
+                    trigger={() => <Ellipsis size={15} aria-hidden />}
+                  >
+                    {(close) => (
+                      <MenuItem
+                        title="Edit prompt"
+                        onClick={() => {
+                          close()
+                          editQueuedTurn(queuedTurn)
+                        }}
+                      />
+                    )}
+                  </Menu>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className={`composer__prompt${props.newSession ? ' is-shelved' : ''}`}>
+            <div className="chips">
+              {attachments.map((attachment) =>
+                attachment.previewUrl ? (
+                  <span
+                    className={`attachment-preview ${attachment.path ? '' : 'is-loading'}`}
+                    key={attachment.id}
+                    title={attachment.name}
+                  >
+                    <button
+                      className="attachment-preview__open"
+                      type="button"
+                      onClick={() =>
+                        setViewingImage({ src: attachment.previewUrl!, name: attachment.name })
+                      }
+                      aria-label={`Open ${attachment.name}`}
+                    >
+                      <img src={attachment.previewUrl} alt="" />
+                    </button>
+                    <button
+                      className="attachment-preview__remove"
+                      onClick={() => removeAttachment(attachment.id)}
+                      title="Remove"
+                      aria-label={`Remove ${attachment.name}`}
+                    >
+                      <X size={13} aria-hidden />
+                    </button>
+                    {attachment.path ? null : <span className="attachment-preview__loading" />}
+                  </span>
+                ) : (
+                  <span className="chip chip--file" key={attachment.id} title={attachment.path}>
+                    {attachment.path && IMAGE_RE.test(attachment.path) ? (
+                      <ImageIcon size={13} aria-hidden />
+                    ) : (
+                      <FileIcon size={13} aria-hidden />
+                    )}
+                    <span className="chip__label">{attachment.name}</span>
+                    <button
+                      className="chip__x"
+                      onClick={() => removeAttachment(attachment.id)}
+                      title="Remove"
+                      aria-label={`Remove ${attachment.name}`}
+                    >
+                      <X size={10} aria-hidden />
+                    </button>
+                  </span>
+                ),
+              )}
+              {attachmentError ? (
+                <span className="chip chip--error" role="alert">
+                  {attachmentError}
+                </span>
+              ) : null}
+            </div>
+
+            <div className="composer__field">
+              <textarea
+                ref={area}
+                value={text}
+                rows={1}
+                spellCheck={false}
+                disabled={props.disabled}
+                aria-keyshortcuts={shortcutAria(SHORTCUTS.focusComposer)}
+                onChange={(e) => {
+                  const value = e.target.value
+                  setText(value)
+                  setSlashOpen(value.startsWith('/') && !value.includes(' '))
+                  grow()
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape' && slashOpen) {
                     setSlashOpen(false)
                     return
                   }
-                  submit()
-                }
-              }}
-              onPaste={(e) => {
-                const files = Array.from(e.clipboardData.files)
-                const images = files.filter((file) => PASTEABLE_IMAGE_TYPES.has(file.type))
-                const paths = files
-                  .filter((file) => !PASTEABLE_IMAGE_TYPES.has(file.type))
-                  .map((file) => (file as File & { path?: string }).path)
-                  .filter((path): path is string => typeof path === 'string' && path !== '')
-                if (images.length > 0 || paths.length > 0) {
-                  e.preventDefault()
-                  addFiles(paths)
-                  addPastedImages(images)
-                }
-              }}
-              placeholder={props.disabled ? 'Add a project folder first' : 'Do anything'}
-            />
-
-            {slashOpen && matches.length > 0 ? (
-              <div className="slash" role="listbox">
-                {matches.map((command) => (
-                  <button
-                    key={command.name}
-                    className="menu__item"
-                    onClick={() => {
-                      setValue(command.text)
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    if (slashOpen && matches[0]) {
+                      setValue(matches[0].text)
                       setSlashOpen(false)
-                    }}
-                  >
-                    <span className="menu__name">{command.name}</span>
-                    <span className="menu__desc">{command.detail}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
+                      return
+                    }
+                    submit()
+                  }
+                }}
+                onPaste={(e) => {
+                  const files = Array.from(e.clipboardData.files)
+                  const images = files.filter((file) => PASTEABLE_IMAGE_TYPES.has(file.type))
+                  const paths = files
+                    .filter((file) => !PASTEABLE_IMAGE_TYPES.has(file.type))
+                    .map((file) => (file as File & { path?: string }).path)
+                    .filter((path): path is string => typeof path === 'string' && path !== '')
+                  if (images.length > 0 || paths.length > 0) {
+                    e.preventDefault()
+                    addFiles(paths)
+                    addPastedImages(images)
+                  }
+                }}
+                placeholder={props.disabled ? 'Add a project folder first' : 'Do anything'}
+              />
 
-          <div className="tools">
-            <Menu
-              label="Add"
-              disabled={props.disabled}
-              trigger={() => (
-                <span className="tool tool--icon">
-                  <Plus size={15} aria-hidden />
-                </span>
-              )}
-            >
-              {(close) => (
-                <>
-                  <MenuItem
-                    title="Attach files"
-                    detail="Or drag them onto the box"
-                    onClick={() => {
-                      close()
-                      void pickFiles().then(addFiles)
-                    }}
-                  />
-                  <div className="menu__rule" />
-                  <p className="menu__group">Commands</p>
-                  {SLASH_COMMANDS.map((command) => (
-                    <MenuItem
+              {slashOpen && matches.length > 0 ? (
+                <div className="slash" role="listbox">
+                  {matches.map((command) => (
+                    <button
                       key={command.name}
-                      title={command.name}
-                      detail={command.detail}
+                      className="menu__item"
                       onClick={() => {
                         setValue(command.text)
-                        close()
+                        setSlashOpen(false)
                       }}
-                    />
+                    >
+                      <span className="menu__name">{command.name}</span>
+                      <span className="menu__desc">{command.detail}</span>
+                    </button>
                   ))}
-                </>
-              )}
-            </Menu>
+                </div>
+              ) : null}
+            </div>
 
-            <Menu
-              label="Permissions"
-              disabled={props.running}
-              trigger={() => (
-                <span className={`tool ${props.approval === 'full' ? 'tool--danger' : ''}`}>
-                  <ApprovalIcon size={13} aria-hidden />
-                  <span>{approval.short}</span>
-                </span>
-              )}
-            >
-              {(close) => (
-                <>
-                  {APPROVAL_MODES.map((mode) => (
-                    <MenuItem
-                      key={mode.id}
-                      title={mode.title}
-                      detail={mode.detail}
-                      active={mode.id === props.approval}
-                      onClick={() => {
-                        props.onApprovalChange(mode.id)
-                        close()
-                      }}
-                    />
-                  ))}
-                </>
-              )}
-            </Menu>
-
-            {props.newSession ? (
-              <button
-                className={`tool isolation-toggle${props.isolate ? ' is-on' : ''}`}
-                type="button"
-                aria-pressed={props.isolate}
-                onClick={() => props.onIsolateChange(!props.isolate)}
-                title="Give this session its own git worktree"
-              >
-                <GitBranch size={13} aria-hidden />
-                <span>{props.isolate ? 'Isolated checkout' : 'Shared checkout'}</span>
-              </button>
-            ) : null}
-
-            <span className="tools__spacer" />
-
-            {props.models.length > 0 ? (
-              <ModelSelector
-                models={props.models}
-                modelId={props.modelId}
-                effort={props.effort}
-                serviceTier={props.serviceTier}
-                disabled={props.running}
-                onModelChange={props.onModelChange}
-                onEffortChange={props.onEffortChange}
-                onServiceTierChange={props.onServiceTierChange}
-              />
-            ) : showModelPlaceholder ? (
-              <span className="tool tool--quiet">Loading models…</span>
-            ) : null}
-
-            {canDictate ? (
-              <button
-                className={`icon-btn icon-btn--always composer__dictation ${dictating ? 'is-live' : ''}`}
-                onClick={toggleDictation}
+            <div className="tools">
+              <Menu
+                label="Add"
                 disabled={props.disabled}
-                title={dictating ? 'Stop dictation' : 'Dictate'}
+                trigger={() => (
+                  <span className="tool tool--icon">
+                    <Plus size={15} aria-hidden />
+                  </span>
+                )}
               >
-                <Mic size={15} aria-hidden />
-              </button>
-            ) : null}
+                {(close) => (
+                  <>
+                    <MenuItem
+                      title="Attach files"
+                      detail="Or drag them onto the box"
+                      onClick={() => {
+                        close()
+                        void pickFiles().then(addFiles)
+                      }}
+                    />
+                    <div className="menu__rule" />
+                    <p className="menu__group">Commands</p>
+                    {SLASH_COMMANDS.map((command) => (
+                      <MenuItem
+                        key={command.name}
+                        title={command.name}
+                        detail={command.detail}
+                        onClick={() => {
+                          setValue(command.text)
+                          close()
+                        }}
+                      />
+                    ))}
+                  </>
+                )}
+              </Menu>
 
-            {props.running ? (
-              <button className="orb orb--stop" onClick={props.onInterrupt} title="Stop">
-                <Square size={9} fill="currentColor" strokeWidth={0} aria-hidden />
-              </button>
-            ) : (
-              <button
-                className="orb"
-                onClick={submit}
-                disabled={
-                  text.trim() === '' ||
-                  attachments.some((attachment) => !attachment.path) ||
-                  props.disabled
-                }
-                title="Send"
+              <Menu
+                label="Permissions"
+                disabled={props.running}
+                trigger={() => (
+                  <span className={`tool ${props.approval === 'full' ? 'tool--danger' : ''}`}>
+                    <ApprovalIcon size={13} aria-hidden />
+                    <span>{approval.short}</span>
+                  </span>
+                )}
               >
-                <ArrowUp size={15} aria-hidden />
+                {(close) => (
+                  <>
+                    {APPROVAL_MODES.map((mode) => (
+                      <MenuItem
+                        key={mode.id}
+                        title={mode.title}
+                        detail={mode.detail}
+                        active={mode.id === props.approval}
+                        onClick={() => {
+                          props.onApprovalChange(mode.id)
+                          close()
+                        }}
+                      />
+                    ))}
+                  </>
+                )}
+              </Menu>
+
+              <span className="tools__spacer" />
+
+              {props.models.length > 0 ? (
+                <ModelSelector
+                  models={props.models}
+                  modelId={props.modelId}
+                  effort={props.effort}
+                  serviceTier={props.serviceTier}
+                  disabled={props.running}
+                  onModelChange={props.onModelChange}
+                  onEffortChange={props.onEffortChange}
+                  onServiceTierChange={props.onServiceTierChange}
+                />
+              ) : showModelPlaceholder ? (
+                <span className="tool tool--quiet">Loading models…</span>
+              ) : null}
+
+              {canDictate ? (
+                <button
+                  className={`icon-btn icon-btn--always composer__dictation ${dictating ? 'is-live' : ''}`}
+                  onClick={toggleDictation}
+                  disabled={props.disabled}
+                  title={dictating ? 'Stop dictation' : 'Dictate'}
+                >
+                  <Mic size={15} aria-hidden />
+                </button>
+              ) : null}
+
+              <button
+                className={`orb${showStop ? ' orb--stop' : ''}${sending ? ' is-sending' : ''}`}
+                onClick={showStop ? props.onInterrupt : submit}
+                disabled={!showStop && sendDisabled}
+                title={showStop ? 'Stop' : 'Send'}
+                aria-label={showStop ? 'Stop' : 'Send'}
+              >
+                <span className="orb__icon orb__icon--send">
+                  <ArrowUp size={15} aria-hidden />
+                </span>
+                <span className="orb__icon orb__icon--stop">
+                  <Square size={9} fill="currentColor" strokeWidth={0} aria-hidden />
+                </span>
               </button>
-            )}
+            </div>
           </div>
         </div>
       </div>
