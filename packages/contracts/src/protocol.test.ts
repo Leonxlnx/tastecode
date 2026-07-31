@@ -46,9 +46,12 @@ describe('protocol envelopes', () => {
       methods['thread.start'].params.parse({ provider: 'codex', workspacePath: 'D:\\x' }),
     ).toBeTruthy()
     expect(() => methods['thread.start'].params.parse({ provider: 'nope' })).toThrow()
-    expect(() =>
-      methods['thread.undoRestore'].params.parse({ threadId: 'th1', undo: '' }),
-    ).toThrow()
+    const { undo } = methods['thread.restore'].result.parse({ undo: 'restore-token' })
+    expect(methods['thread.undoRestore'].params.parse({ threadId: 'th1', undo })).toEqual({
+      threadId: 'th1',
+      undo,
+    })
+    expect(() => methods['thread.restore'].result.parse({ undo: '' })).toThrow()
   })
 
   it('validates data for every declared channel', () => {

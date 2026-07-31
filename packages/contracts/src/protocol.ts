@@ -250,7 +250,7 @@ export const methods = {
    */
   'thread.restore': {
     params: z.object({ threadId: z.string(), checkpointId: z.number() }),
-    result: z.object({ undo: z.string() }),
+    result: z.object({ undo: z.string().min(1) }),
   },
   /** Reverse the latest restore using the opaque token it returned. */
   'thread.undoRestore': {
