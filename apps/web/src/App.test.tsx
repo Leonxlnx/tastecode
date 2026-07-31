@@ -85,6 +85,24 @@ beforeEach(() => {
         return Promise.resolve({ projects: serverProjects })
       case 'thread.history':
         return Promise.resolve({ events: [], running: false })
+      case 'usage.summary':
+        return Promise.resolve({
+          session: {
+            inputTokens: 1200,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            reasoningTokens: 0,
+            totalTokens: 1200,
+          },
+          today: {
+            inputTokens: 3400,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            reasoningTokens: 0,
+            totalTokens: 3400,
+          },
+          limits: [{ label: '5 hours', usedPercent: 25 }],
+        })
       case 'thread.checkpoints':
         return Promise.resolve({
           checkpoints: [{ id: 7, seq: 1, label: 'Fix the parser', createdAt: 1_800_000 }],
@@ -716,5 +734,6 @@ describe('reopening a session', () => {
         threadId: 'untouched-thread',
       })
     })
+    expect(await screen.findByText('1.2k session · 3.4k today · 75% left (5 hours)')).toBeTruthy()
   })
 })

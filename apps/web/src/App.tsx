@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { Account, ApprovalMode, DomainEvent, Model, ProviderId } from '@harness/contracts'
+import type {
+  Account,
+  ApprovalMode,
+  DomainEvent,
+  Model,
+  ProviderId,
+  ResultOf,
+} from '@harness/contracts'
 import { isMacOS, pickFolder } from './bridge.js'
 import { isEditableTarget, matchesShortcut, SHORTCUTS, shortcutLabel } from './shortcuts.js'
 import { warmHighlighter } from './ui/highlighter.js'
@@ -68,6 +75,7 @@ export function App() {
   const [activeId, setActiveId] = useState<string | undefined>()
   const [activePath, setActivePath] = useState<string | undefined>()
   const [thread, setThread] = useState<ThreadState>(emptyThread)
+  const [usageSummary, setUsageSummary] = useState<ResultOf<'usage.summary'> | undefined>()
   // Every live session keeps reducing events while it is off screen. A ref is
   // intentional: streamed deltas for a background session should not rerender
   // the active thread, while selecting it still gets the latest state at once.
@@ -266,6 +274,25 @@ export function App() {
     }
     void refreshCheckpoints(activeId).catch(() => setCheckpoints([]))
   }, [activeId, thread.running, refreshCheckpoints])
+
+  useEffect(() => {
+    if (!activeId) {
+      setUsageSummary(undefined)
+      return
+    }
+    let cancelled = false
+    void transport
+      .request('usage.summary', { threadId: activeId })
+      .then((summary) => {
+        if (!cancelled) setUsageSummary(summary)
+      })
+      .catch(() => {
+        if (!cancelled) setUsageSummary(undefined)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [transport, activeId, thread.running])
 
   // First load, plus the one-time handover from localStorage. Anything found
   // there is given to the server and the key removed, so it happens once.
@@ -869,6 +896,7 @@ export function App() {
             activePath={activePath}
             title={active?.session.title}
             usage={thread.usage}
+            usageSummary={usageSummary}
             checkpointCount={thread.running ? 0 : checkpoints.length}
             worktreeBranch={active?.session.worktreeBranch}
             onSelectProject={selectProject}

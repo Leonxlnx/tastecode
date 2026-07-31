@@ -1,4 +1,4 @@
-import type { Usage } from '@harness/contracts'
+import type { ResultOf, Usage } from '@harness/contracts'
 import { ChevronDown, GitBranch, History } from 'lucide-react'
 import { isMacOS } from '../bridge.js'
 import { SHORTCUTS, shortcutAria, shortcutLabel } from '../shortcuts.js'
@@ -16,6 +16,7 @@ export function StageHeader(props: {
   activePath: string | undefined
   title: string | undefined
   usage: Usage | undefined
+  usageSummary: ResultOf<'usage.summary'> | undefined
   checkpointCount: number
   worktreeBranch: string | undefined
   onSelectProject: (path: string) => void
@@ -71,7 +72,11 @@ export function StageHeader(props: {
             {props.checkpointCount} checkpoint{props.checkpointCount === 1 ? '' : 's'}
           </button>
         ) : null}
-        {props.usage ? (
+        {props.usageSummary ? (
+          <span className="usage" title={summaryTitle(props.usageSummary)}>
+            {summaryText(props.usageSummary)}
+          </span>
+        ) : props.usage ? (
           <span
             className="usage"
             title={`${props.usage.inputTokens.toLocaleString()} in · ${props.usage.cachedInputTokens.toLocaleString()} cached · ${props.usage.outputTokens.toLocaleString()} out · ${props.usage.reasoningTokens.toLocaleString()} reasoning`}
@@ -90,6 +95,30 @@ function compact(value: number): string {
   if (value < 1000) return String(value)
   if (value < 1_000_000) return `${Math.round(value / 100) / 10}k`
   return `${Math.round(value / 100_000) / 10}M`
+}
+
+function summaryText(summary: ResultOf<'usage.summary'>): string {
+  const cost = summary.session.costUsd
+  const totals =
+    cost === undefined
+      ? `${compact(summary.session.totalTokens)} session · ${compact(summary.today.totalTokens)} today`
+      : `${money(cost)} session · ${money(summary.today.costUsd ?? 0)} today`
+  const limit = summary.limits[0]
+  return limit
+    ? `${totals} · ${Math.round(100 - limit.usedPercent)}% left (${limit.label})`
+    : totals
+}
+
+function summaryTitle(summary: ResultOf<'usage.summary'>): string {
+  const totals = `${summary.session.totalTokens.toLocaleString()} session tokens · ${summary.today.totalTokens.toLocaleString()} today`
+  const limits = summary.limits.map(
+    (limit) => `${limit.label}: ${Math.round(100 - limit.usedPercent)}% left`,
+  )
+  return [totals, ...limits].join(' · ')
+}
+
+function money(value: number): string {
+  return `$${value.toFixed(value < 0.1 ? 3 : 2)}`
 }
 
 function basename(path: string): string {
