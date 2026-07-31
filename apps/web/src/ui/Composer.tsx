@@ -2,12 +2,17 @@ import { useEffect, useRef, useState } from 'react'
 import type { ApprovalMode, Model } from '@harness/contracts'
 import {
   ArrowUp,
+  BookOpen,
+  BrushCleaning,
   File as FileIcon,
+  FlaskConical,
   Folder,
   GitBranch,
+  GitCommitHorizontal,
   Image as ImageIcon,
   LockOpen,
   Plus,
+  ScanSearch,
   ShieldCheck,
   ShieldQuestion,
   Square,
@@ -75,31 +80,36 @@ export const APPROVAL_MODES: {
   },
 ]
 
-const SLASH_COMMANDS: { name: string; detail: string; text: string }[] = [
+const SLASH_COMMANDS: { name: string; detail: string; text: string; icon: LucideIcon }[] = [
   {
     name: '/review',
     detail: 'Review the current diff',
     text: 'Review my current changes and tell me what is wrong before I commit.',
+    icon: ScanSearch,
   },
   {
     name: '/test',
     detail: 'Run the test suite',
     text: 'Run the tests and fix anything that fails.',
+    icon: FlaskConical,
   },
   {
     name: '/explain',
     detail: 'Explain this codebase',
     text: 'Explain how this project is structured and where the important parts live.',
+    icon: BookOpen,
   },
   {
     name: '/tidy',
     detail: 'Clean up without behaviour changes',
     text: 'Tidy the code you can see without changing any behaviour. No new features.',
+    icon: BrushCleaning,
   },
   {
     name: '/commit',
     detail: 'Stage and commit what changed',
     text: 'Commit the current changes with a clear message explaining why, not what.',
+    icon: GitCommitHorizontal,
   },
 ]
 
