@@ -154,6 +154,8 @@ export const methods = {
               /** True while a process is alive for it, not merely on record. */
               running: z.boolean(),
               closedAt: z.number().optional(),
+              /** The private checkout branch, when this session is isolated. */
+              worktreeBranch: z.string().optional(),
             }),
           ),
         }),
