@@ -372,10 +372,17 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   }
 
   /** Inject input without restarting the turn. Codex is one of the few engines that can. */
-  async steer(threadId: string, text: string): Promise<void> {
+  async steer(threadId: string, text: string, attachments: string[] = []): Promise<void> {
     await this.#call('turn/steer', {
       threadId,
-      input: [{ type: 'text', text, text_elements: [] }],
+      input: [
+        { type: 'text', text, text_elements: [] },
+        ...attachments.map((path) =>
+          isImage(path)
+            ? { type: 'localImage', path }
+            : { type: 'mention', name: basename(path), path },
+        ),
+      ],
     })
   }
 

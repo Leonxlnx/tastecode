@@ -24,8 +24,12 @@ import type {
   DomainEvent,
   Model,
   ProviderId,
+  QueuedTurn,
   Thread,
 } from '@harness/contracts'
+
+type QueuedTurnEntry = QueuedTurn & { options: TurnOptions }
+type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 
 /**
  * Owns every live agent session.
@@ -42,9 +46,13 @@ import type {
 export class Orchestrator {
   #threads = new Map<string, { thread: Thread; session: AgentSession; worktree?: Worktree }>()
   #activeTurns = new Set<string>()
+  #startingTurns = new Set<string>()
+  #queuedTurns = new Map<string, QueuedTurnEntry[]>()
+  #drainingQueues = new Set<string>()
   #store: Store
   #worktreeRoot: string
   #onEvent: (threadId: string, event: DomainEvent, seq: number) => void
+  #onQueue: (threadId: string, state: QueueState) => void
   #onLog: (line: string) => void
   #onLogin: (
     provider: ProviderId,
@@ -63,6 +71,7 @@ export class Orchestrator {
     store: Store,
     handlers: {
       onEvent: (threadId: string, event: DomainEvent, seq: number) => void
+      onQueue?: (threadId: string, state: QueueState) => void
       onLog: (line: string) => void
       onLogin: (
         provider: ProviderId,
@@ -76,6 +85,7 @@ export class Orchestrator {
     this.#store = store
     this.#worktreeRoot = handlers.worktreeRoot ?? path.join(os.tmpdir(), 'personal-harness-trees')
     this.#onEvent = handlers.onEvent
+    this.#onQueue = handlers.onQueue ?? (() => {})
     this.#onLog = handlers.onLog
     this.#onLogin = handlers.onLogin
     this.#runtimeFor = handlers.runtimeFor ?? providerRuntime
@@ -188,10 +198,83 @@ export class Orchestrator {
     attachments: string[] = [],
     options: TurnOptions = {},
   ): Promise<string> {
-    // Before the agent writes, not after. A checkpoint taken afterwards would
-    // record the damage rather than the state worth returning to.
-    await this.#checkpoint(threadId, text)
-    return this.#get(threadId).session.sendTurn(threadId, text, attachments, options)
+    this.#startingTurns.add(threadId)
+    try {
+      // Before the agent writes, not after. A checkpoint taken afterwards would
+      // record the damage rather than the state worth returning to.
+      await this.#checkpoint(threadId, text)
+      return await this.#get(threadId).session.sendTurn(threadId, text, attachments, options)
+    } finally {
+      this.#startingTurns.delete(threadId)
+    }
+  }
+
+  /** Send now when idle, otherwise put the prompt behind the active turn. */
+  async submitTurn(
+    threadId: string,
+    text: string,
+    attachments: string[] = [],
+    options: TurnOptions = {},
+  ): Promise<{ queued: false; turnId: string } | { queued: true; queuedTurn: QueuedTurn }> {
+    const queue = this.#queuedTurns.get(threadId) ?? []
+    if (this.#activeTurns.has(threadId) || this.#startingTurns.has(threadId) || queue.length > 0) {
+      const queuedTurn: QueuedTurnEntry = {
+        id: crypto.randomUUID(),
+        text,
+        attachments,
+        createdAt: Date.now(),
+        options,
+      }
+      queue.push(queuedTurn)
+      this.#queuedTurns.set(threadId, queue)
+      this.#notifyQueue(threadId)
+      if (!this.#activeTurns.has(threadId) && !this.#startingTurns.has(threadId)) {
+        void this.#drainQueue(threadId)
+      }
+      return { queued: true, queuedTurn: this.#publicQueuedTurn(queuedTurn) }
+    }
+
+    const turnId = await this.sendTurn(threadId, text, attachments, options)
+    this.#activeTurns.add(threadId)
+    return { queued: false, turnId }
+  }
+
+  queue(threadId: string): QueueState {
+    const session = this.#get(threadId).session
+    return {
+      items: (this.#queuedTurns.get(threadId) ?? []).map((item) => this.#publicQueuedTurn(item)),
+      canSteer: session.capabilities.steer && session.steer !== undefined,
+    }
+  }
+
+  deleteQueuedTurn(threadId: string, queuedTurnId: string): void {
+    const queue = this.#queuedTurns.get(threadId) ?? []
+    const index = queue.findIndex((item) => item.id === queuedTurnId)
+    if (index < 0) return
+    queue.splice(index, 1)
+    this.#notifyQueue(threadId)
+  }
+
+  async steerQueuedTurn(threadId: string, queuedTurnId: string): Promise<void> {
+    const session = this.#get(threadId).session
+    if (!this.#activeTurns.has(threadId)) throw new Error('there is no running turn to steer')
+    if (!session.capabilities.steer || !session.steer) {
+      throw new Error('this agent does not support steering a running turn')
+    }
+
+    const queue = this.#queuedTurns.get(threadId) ?? []
+    const index = queue.findIndex((item) => item.id === queuedTurnId)
+    if (index < 0) throw new Error('queued prompt not found')
+    const [item] = queue.splice(index, 1)
+    if (!item) return
+    this.#notifyQueue(threadId)
+    try {
+      await session.steer(threadId, item.text, item.attachments)
+    } catch (error) {
+      queue.splice(index, 0, item)
+      this.#notifyQueue(threadId)
+      throw error
+    }
   }
 
   /**
@@ -208,6 +291,7 @@ export class Orchestrator {
     }
     const seq = this.#store.append(threadId, event)
     this.#onEvent(threadId, event, seq)
+    if (event.type === 'turn.completed') void this.#drainQueue(threadId)
   }
 
   /** A thread's history, for a client opening or reattaching to it. */
@@ -218,6 +302,53 @@ export class Orchestrator {
   /** Whether a session is still live, as opposed to merely on record. */
   isRunning(threadId: string): boolean {
     return this.#threads.has(threadId)
+  }
+
+  /** Whether the agent is inside a turn, rather than merely attached to the session. */
+  isTurnRunning(threadId: string): boolean {
+    return this.#activeTurns.has(threadId) || this.#startingTurns.has(threadId)
+  }
+
+  async #drainQueue(threadId: string): Promise<void> {
+    if (
+      this.#drainingQueues.has(threadId) ||
+      this.#activeTurns.has(threadId) ||
+      this.#startingTurns.has(threadId)
+    ) {
+      return
+    }
+    const queue = this.#queuedTurns.get(threadId)
+    const next = queue?.shift()
+    if (!queue || !next) return
+
+    this.#drainingQueues.add(threadId)
+    this.#notifyQueue(threadId)
+    try {
+      await this.sendTurn(threadId, next.text, next.attachments, next.options)
+      this.#activeTurns.add(threadId)
+    } catch (error) {
+      queue.unshift(next)
+      this.#notifyQueue(threadId)
+      this.#onLog(
+        `could not start queued turn: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    } finally {
+      this.#drainingQueues.delete(threadId)
+    }
+  }
+
+  #notifyQueue(threadId: string): void {
+    if (!this.#threads.has(threadId)) return
+    this.#onQueue(threadId, this.queue(threadId))
+  }
+
+  #publicQueuedTurn(item: QueuedTurnEntry): QueuedTurn {
+    return {
+      id: item.id,
+      text: item.text,
+      attachments: item.attachments,
+      createdAt: item.createdAt,
+    }
   }
 
   /** Where the working tree stood before a turn. Silent when there is no repo. */
@@ -312,6 +443,9 @@ export class Orchestrator {
     entry.session.dispose()
     this.#threads.delete(threadId)
     this.#activeTurns.delete(threadId)
+    this.#startingTurns.delete(threadId)
+    this.#queuedTurns.delete(threadId)
+    this.#drainingQueues.delete(threadId)
     // Marked closed, not deleted. Ending the process is not the same as
     // wanting the transcript gone.
     //
@@ -374,6 +508,9 @@ export class Orchestrator {
     for (const [, entry] of this.#threads) entry.session.dispose()
     this.#threads.clear()
     this.#activeTurns.clear()
+    this.#startingTurns.clear()
+    this.#queuedTurns.clear()
+    this.#drainingQueues.clear()
     this.#control?.dispose()
     this.#control = undefined
   }

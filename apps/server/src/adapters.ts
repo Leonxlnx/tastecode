@@ -43,6 +43,7 @@ export interface AgentSession {
     attachments?: string[],
     options?: TurnOptions,
   ): Promise<string>
+  steer?(threadId: string, text: string, attachments?: string[]): Promise<void>
   interrupt(threadId: string): Promise<void>
   respondToApproval(approvalId: string, decision: ApprovalDecision): void
   dispose(): void

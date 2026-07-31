@@ -82,6 +82,7 @@ export function startServer(
   const store = new Store(storeLocation())
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event) => push.broadcast('thread.event', { threadId, event }),
+    onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
     onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
   })
@@ -237,7 +238,7 @@ export function startServer(
               provider: thread.provider,
               ...(thread.agent === undefined ? {} : { agent: thread.agent }),
               createdAt: thread.createdAt,
-              running: orchestrator.isRunning(thread.id),
+              running: orchestrator.isTurnRunning(thread.id),
               ...(thread.worktreeBranch === undefined
                 ? {}
                 : { worktreeBranch: thread.worktreeBranch }),
@@ -292,7 +293,7 @@ export function startServer(
         const p = params as { threadId: string; afterSeq?: number }
         return {
           events: orchestrator.history(p.threadId, p.afterSeq ?? 0),
-          running: orchestrator.isRunning(p.threadId),
+          running: orchestrator.isTurnRunning(p.threadId),
         }
       }
 
@@ -383,12 +384,29 @@ export function startServer(
           serviceTier?: string
         }
         return {
-          turnId: await orchestrator.sendTurn(p.threadId, p.text, p.attachments, {
+          ...(await orchestrator.submitTurn(p.threadId, p.text, p.attachments, {
             model: p.model,
             effort: p.effort,
             serviceTier: p.serviceTier,
-          }),
+          })),
         }
+      }
+
+      case 'thread.queue': {
+        const p = params as { threadId: string }
+        return orchestrator.queue(p.threadId)
+      }
+
+      case 'thread.deleteQueuedTurn': {
+        const p = params as { threadId: string; queuedTurnId: string }
+        orchestrator.deleteQueuedTurn(p.threadId, p.queuedTurnId)
+        return {}
+      }
+
+      case 'thread.steerQueuedTurn': {
+        const p = params as { threadId: string; queuedTurnId: string }
+        await orchestrator.steerQueuedTurn(p.threadId, p.queuedTurnId)
+        return {}
       }
 
       case 'thread.respondToApproval': {

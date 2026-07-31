@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Capabilities, DomainEvent, ProviderId } from '@harness/contracts'
 import type { AgentSession, ProviderRuntime } from './adapters.js'
 import { Orchestrator } from './orchestrator.js'
@@ -18,7 +18,7 @@ import { Store } from './store.js'
  */
 
 const CAPABILITIES: Capabilities = {
-  steer: false,
+  steer: true,
   fork: false,
   interrupt: true,
   reasoningItems: false,
@@ -31,6 +31,8 @@ class FakeSession implements AgentSession {
   readonly capabilities = CAPABILITIES
   emit: (event: DomainEvent) => void = () => {}
   disposed = false
+  sent: string[] = []
+  steered: string[] = []
   /** Resolves the pending sendTurn, letting a test hold one open. */
   release: (() => void) | undefined
 
@@ -38,9 +40,14 @@ class FakeSession implements AgentSession {
 
   constructor(readonly id: string) {}
 
-  async sendTurn(_threadId: string, _text: string): Promise<string> {
+  async sendTurn(_threadId: string, text: string): Promise<string> {
+    this.sent.push(text)
     if (this.release) await new Promise<void>((resolve) => (this.release = resolve))
     return `${this.id}-turn`
+  }
+
+  async steer(_threadId: string, text: string): Promise<void> {
+    this.steered.push(text)
   }
 
   async interrupt(): Promise<void> {}
@@ -188,6 +195,59 @@ describe('several sessions at once', () => {
     expect(orchestrator.isRunning(thread.id)).toBe(false)
     expect(store.history(thread.id)).toHaveLength(1)
     expect(store.thread(thread.id)?.closedAt).toBeGreaterThan(0)
+  })
+})
+
+describe('queued turns', () => {
+  it('runs queued prompts in order after the active turn completes', async () => {
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+
+    await expect(orchestrator.submitTurn(thread.id, 'first')).resolves.toMatchObject({
+      queued: false,
+    })
+    await expect(orchestrator.submitTurn(thread.id, 'second')).resolves.toMatchObject({
+      queued: true,
+    })
+    await expect(orchestrator.submitTurn(thread.id, 'third')).resolves.toMatchObject({
+      queued: true,
+    })
+    expect(orchestrator.queue(thread.id).items.map((item) => item.text)).toEqual([
+      'second',
+      'third',
+    ])
+
+    sessions[0]!.emit({
+      type: 'turn.completed',
+      turnId: 'first-turn',
+      status: 'completed',
+    })
+    await vi.waitFor(() => expect(sessions[0]!.sent).toEqual(['first', 'second']))
+    expect(orchestrator.queue(thread.id).items.map((item) => item.text)).toEqual(['third'])
+
+    sessions[0]!.emit({
+      type: 'turn.completed',
+      turnId: 'second-turn',
+      status: 'completed',
+    })
+    await vi.waitFor(() => expect(sessions[0]!.sent).toEqual(['first', 'second', 'third']))
+    expect(orchestrator.queue(thread.id).items).toEqual([])
+  })
+
+  it('can remove a queued prompt or steer it into the running turn', async () => {
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'first')
+    await orchestrator.submitTurn(thread.id, 'remove me')
+    const steer = await orchestrator.submitTurn(thread.id, 'steer with this')
+    if (!steer.queued) throw new Error('expected the prompt to queue')
+
+    const remove = orchestrator.queue(thread.id).items[0]!
+    orchestrator.deleteQueuedTurn(thread.id, remove.id)
+    await orchestrator.steerQueuedTurn(thread.id, steer.queuedTurn.id)
+
+    expect(sessions[0]!.steered).toEqual(['steer with this'])
+    expect(orchestrator.queue(thread.id).items).toEqual([])
   })
 })
 
