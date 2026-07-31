@@ -17,7 +17,9 @@ export type TurnMark = {
 }
 
 export type TurnPresentation = {
+  /** Ordered items shown inside the completed Worked disclosure. */
   activity: Item[]
+  responseText: string
   firstActivityIndex: number | undefined
   firstResponseIndex: number | undefined
   finalAnswerIndex: number | undefined
@@ -46,19 +48,18 @@ export function findTurns(items: Item[]): TurnMark[] {
 /**
  * The compact, completed-turn view used by first-party agent apps.
  *
- * Commands and reasoning stay available, but they sit behind one elapsed-time
- * disclosure instead of interrupting the final answer as a transcript. The
- * indices let Thread keep one flat virtualised list while rendering that
- * disclosure only once.
+ * The provider may emit commentary messages before its final answer. Those
+ * messages belong beside the useful work milestones inside the disclosure,
+ * while the last completed assistant message remains the answer below it. The
+ * indices let Thread keep one flat virtualised list while rendering each group
+ * only once.
  */
 export function presentTurns(items: Item[]): ReadonlyMap<string, TurnPresentation> {
   const drafts = new Map<
     string,
     {
-      activity: Item[]
-      firstActivityIndex?: number
+      work: Array<{ item: Item; index: number }>
       firstResponseIndex?: number
-      finalAnswerIndex?: number
       earliest: number
       latest: number
       hasRunningActivity: boolean
@@ -69,7 +70,7 @@ export function presentTurns(items: Item[]): ReadonlyMap<string, TurnPresentatio
     if (!item.turnId) return
 
     const draft = drafts.get(item.turnId) ?? {
-      activity: [],
+      work: [],
       earliest: item.createdAt,
       latest: item.createdAt,
       hasRunningActivity: false,
@@ -83,37 +84,48 @@ export function presentTurns(items: Item[]): ReadonlyMap<string, TurnPresentatio
     }
 
     if (isActivity(item)) {
-      draft.activity.push(item)
-      draft.firstActivityIndex ??= index
+      draft.work.push({ item, index })
       draft.hasRunningActivity ||= item.status === 'started'
     } else if (
       item.type === 'message' &&
       item.role === 'assistant' &&
       item.status === 'completed'
     ) {
-      draft.finalAnswerIndex = index
+      draft.work.push({ item, index })
     }
 
     drafts.set(item.turnId, draft)
   })
 
   return new Map(
-    [...drafts].map(([turnId, draft]) => [
-      turnId,
-      {
-        activity: draft.activity,
-        firstActivityIndex: draft.firstActivityIndex,
-        firstResponseIndex: draft.firstResponseIndex,
-        finalAnswerIndex: draft.finalAnswerIndex,
-        elapsedMs: Math.max(0, draft.latest - draft.earliest),
-        complete: draft.finalAnswerIndex !== undefined && !draft.hasRunningActivity,
-      },
-    ]),
+    [...drafts].map(([turnId, draft]) => {
+      const finalAnswer = draft.work.findLast(({ item }) => isAssistantMessage(item))
+      const activity = finalAnswer
+        ? draft.work.filter((entry) => entry !== finalAnswer)
+        : draft.work
+
+      return [
+        turnId,
+        {
+          activity: activity.map(({ item }) => item),
+          responseText: finalAnswer?.item.text ?? '',
+          firstActivityIndex: activity[0]?.index,
+          firstResponseIndex: draft.firstResponseIndex,
+          finalAnswerIndex: finalAnswer?.index,
+          elapsedMs: Math.max(0, draft.latest - draft.earliest),
+          complete: finalAnswer !== undefined && !draft.hasRunningActivity,
+        },
+      ]
+    }),
   )
 }
 
 function isActivity(item: Item): boolean {
   return item.type !== 'message' && item.type !== 'error'
+}
+
+function isAssistantMessage(item: Item): boolean {
+  return item.type === 'message' && item.role === 'assistant'
 }
 
 /**

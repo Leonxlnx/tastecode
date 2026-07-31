@@ -67,6 +67,7 @@ describe('turn boundaries', () => {
 
     expect(presentTurns(items).get('t1')).toMatchObject({
       activity: [items[1], items[2]],
+      responseText: 'Done.',
       firstActivityIndex: 1,
       firstResponseIndex: 1,
       finalAnswerIndex: 3,
@@ -82,5 +83,24 @@ describe('turn boundaries', () => {
     ]
 
     expect(presentTurns(items).get('t1')?.complete).toBe(false)
+  })
+
+  it('keeps commentary in the worked disclosure and the last message as the response', () => {
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', text: 'Fix it.' },
+      { ...item('update-1', 't1'), role: 'assistant', text: 'I found the cause.' },
+      { ...item('command', 't1'), type: 'command', command: 'pnpm test' },
+      { ...item('update-2', 't1'), role: 'assistant', text: 'The focused test passes.' },
+      { ...item('files', 't1'), type: 'file_change', text: '2 files changed' },
+      { ...item('answer', 't1'), role: 'assistant', text: 'Fixed.' },
+    ]
+
+    expect(presentTurns(items).get('t1')).toMatchObject({
+      activity: [items[1], items[2], items[3], items[4]],
+      responseText: 'Fixed.',
+      firstActivityIndex: 1,
+      finalAnswerIndex: 5,
+      complete: true,
+    })
   })
 })

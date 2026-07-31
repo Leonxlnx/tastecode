@@ -15,8 +15,6 @@ import {
   LoaderCircle,
   Search,
   SquareTerminal,
-  ThumbsDown,
-  ThumbsUp,
   Wrench,
 } from 'lucide-react'
 import { isEditableTarget } from '../shortcuts.js'
@@ -52,14 +50,14 @@ export function Thread(props: {
   const scroller = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<ScrollMode>('follow-end')
   const [finding, setFinding] = useState(false)
-  /** Turns the user collapsed. Their detail rows hide; the exchange stays. */
-  const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set())
   const modeRef = useRef(mode)
   modeRef.current = mode
 
   /** Index the current turn starts at, for anchor mode. */
   const anchorIndex = useRef(0)
   const wasRunning = useRef(props.running)
+  const enteringItemIds = useEnteringItemIds(props.items)
+  const settledTurnId = useSettledTurnId(props.running, props.activeTurn?.id)
 
   const virtualizer = useVirtualizer({
     count: props.items.length,
@@ -165,15 +163,6 @@ export function Thread(props: {
     return () => window.removeEventListener('keydown', onKey)
   }, [turns, virtualizer])
 
-  const toggleTurn = useCallback((turnId: string) => {
-    setFolded((current) => {
-      const next = new Set(current)
-      if (next.has(turnId)) next.delete(turnId)
-      else next.add(turnId)
-      return next
-    })
-  }, [])
-
   const rows = virtualizer.getVirtualItems()
 
   return (
@@ -186,41 +175,34 @@ export function Thread(props: {
           {rows.map((row) => {
             const item = props.items[row.index]
             if (!item) return null
-            const turn = turns.find((entry) => entry.index === row.index)
             const presentation = presentations.get(item.turnId)
             const live = props.running && props.activeTurn?.id === item.turnId
-            const foldedDetail = folded.has(item.turnId) && !isHeadline(item)
             const compactedActivity =
-              !live && presentation?.complete === true && isActivity(item) && !foldedDetail
+              !live && presentation?.complete === true && presentation.activity.includes(item)
             const activityLead = compactedActivity && presentation.firstActivityIndex === row.index
-            const suppressed = foldedDetail || (compactedActivity && !activityLead)
+            const responseLead =
+              !live &&
+              presentation?.complete === true &&
+              presentation.finalAnswerIndex === row.index
+            const suppressed = compactedActivity && !activityLead
             const liveActivity = live && isActivity(item)
+            const settling = settledTurnId === item.turnId
             return (
               <div
                 key={row.key}
-                className={`thread__row ${suppressed ? 'is-suppressed' : ''} ${liveActivity ? 'is-live-activity' : ''}`}
+                className={`thread__row${suppressed ? ' is-suppressed' : ''}${liveActivity ? ' is-live-activity' : ''}${enteringItemIds.has(item.id) ? ' is-entering' : ''}${settling ? ' is-settling' : ''}`}
                 data-index={row.index}
                 ref={virtualizer.measureElement}
                 style={{ transform: `translateY(${row.start}px)` }}
               >
-                {/* Only the first row of a turn carries the fold control, so
-                    the affordance appears once per exchange rather than once
-                    per line. */}
-                {turn && turn.count > 1 ? (
-                  <button
-                    className="turnfold"
-                    onClick={() => toggleTurn(turn.turnId)}
-                    title={folded.has(turn.turnId) ? 'Expand turn' : 'Collapse turn'}
-                  >
-                    {folded.has(turn.turnId) ? `Show ${turn.count - 1} more` : 'Collapse'}
-                  </button>
-                ) : null}
                 <Row
                   item={item}
                   hidden={suppressed}
                   activity={activityLead ? presentation.activity : undefined}
                   elapsedMs={presentation?.elapsedMs}
                   live={live}
+                  responseText={responseLead ? presentation.responseText : undefined}
+                  settling={settling}
                   showWorkingRail={live && presentation?.firstResponseIndex === row.index}
                   startedAt={props.activeTurn?.startedAt}
                   showCompletionRail={
@@ -253,7 +235,6 @@ export function Thread(props: {
 
         {props.running ? <Plan steps={props.plan} compact /> : null}
         {!props.running ? <Diff diff={props.diff} /> : null}
-        {!props.running ? <LatestResponseActions items={props.items} /> : null}
       </div>
 
       {mode === 'free' ? (
@@ -272,13 +253,123 @@ export function Thread(props: {
   )
 }
 
-/** What survives folding: the exchange itself, not the machinery. */
-function isHeadline(item: Item): boolean {
-  return item.type === 'message'
+const ITEM_ENTRY_MS = 360
+const TURN_SETTLE_MS = 520
+
+/**
+ * Only animate items appended while this thread is open. Historical rows can
+ * remount as virtualisation scrolls, and replaying their entrance then makes
+ * the list feel unstable rather than alive.
+ */
+function useEnteringItemIds(items: Item[]): ReadonlySet<string> {
+  const previousItems = useRef(items)
+  const timers = useRef(new Map<string, number>())
+  const [entering, setEntering] = useState<ReadonlySet<string>>(() => new Set())
+
+  useLayoutEffect(() => {
+    const previous = previousItems.current
+    previousItems.current = items
+    let incoming: Item[] = []
+
+    if (items.length > previous.length) {
+      const appended = items.slice(previous.length)
+      // Loading an existing transcript is one state replacement, not a burst
+      // of new messages. A live event appends one item at a time.
+      if (!(previous.length === 0 && appended.length > 1)) incoming = appended
+    } else if (items.length === previous.length && items.length > 0) {
+      const previousTail = previous.at(-1)
+      const nextTail = items.at(-1)
+      const prefixStayedStable = items.length === 1 || previous.at(-2)?.id === items.at(-2)?.id
+      const reconciledLocalEcho =
+        previousTail?.id.startsWith('optimistic:') === true &&
+        previousTail.role === 'user' &&
+        nextTail?.role === 'user' &&
+        previousTail.text === nextTail.text
+
+      if (
+        prefixStayedStable &&
+        nextTail &&
+        previousTail?.id !== nextTail.id &&
+        !reconciledLocalEcho
+      ) {
+        incoming = [nextTail]
+      }
+    }
+
+    if (incoming.length === 0) return
+
+    setEntering((current) => {
+      const next = new Set(current)
+      for (const item of incoming) next.add(item.id)
+      return next
+    })
+
+    for (const item of incoming) {
+      const existingTimer = timers.current.get(item.id)
+      if (existingTimer !== undefined) window.clearTimeout(existingTimer)
+      timers.current.set(
+        item.id,
+        window.setTimeout(() => {
+          timers.current.delete(item.id)
+          setEntering((current) => {
+            if (!current.has(item.id)) return current
+            const next = new Set(current)
+            next.delete(item.id)
+            return next
+          })
+        }, ITEM_ENTRY_MS),
+      )
+    }
+  }, [items])
+
+  useEffect(
+    () => () => {
+      for (const timer of timers.current.values()) window.clearTimeout(timer)
+      timers.current.clear()
+    },
+    [],
+  )
+
+  return entering
+}
+
+/** Keeps the final working-to-worked change animated for one short beat. */
+function useSettledTurnId(running: boolean, activeTurnId: string | undefined): string | undefined {
+  const lastActiveTurnId = useRef(activeTurnId)
+  const wasRunning = useRef(running)
+  const timer = useRef<number | undefined>(undefined)
+  const [settledTurnId, setSettledTurnId] = useState<string>()
+
+  useLayoutEffect(() => {
+    const finishedTurnId = wasRunning.current && !running ? lastActiveTurnId.current : undefined
+    if (activeTurnId) lastActiveTurnId.current = activeTurnId
+    wasRunning.current = running
+    if (!finishedTurnId) return
+
+    setSettledTurnId(finishedTurnId)
+    if (timer.current !== undefined) window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => {
+      timer.current = undefined
+      setSettledTurnId((current) => (current === finishedTurnId ? undefined : current))
+    }, TURN_SETTLE_MS)
+  }, [activeTurnId, running])
+
+  useEffect(
+    () => () => {
+      if (timer.current !== undefined) window.clearTimeout(timer.current)
+    },
+    [],
+  )
+
+  return settledTurnId
 }
 
 function isActivity(item: Item): boolean {
   return item.type !== 'message' && item.type !== 'error'
+}
+
+function isAssistantMessage(item: Item): boolean {
+  return item.type === 'message' && item.role === 'assistant'
 }
 
 function Row({
@@ -287,6 +378,8 @@ function Row({
   activity,
   elapsedMs,
   live,
+  responseText,
+  settling,
   showWorkingRail,
   startedAt,
   showCompletionRail,
@@ -296,6 +389,8 @@ function Row({
   activity: Item[] | undefined
   elapsedMs: number | undefined
   live: boolean
+  responseText: string | undefined
+  settling: boolean
   showWorkingRail: boolean
   startedAt: number | undefined
   showCompletionRail: boolean
@@ -303,7 +398,7 @@ function Row({
   if (hidden) return null
 
   if (activity) {
-    return <CompletionRail activity={activity} elapsedMs={elapsedMs ?? 0} />
+    return <CompletionRail activity={activity} elapsedMs={elapsedMs ?? 0} settling={settling} />
   }
 
   // The user's own words get a surface so the eye can find where each exchange
@@ -317,12 +412,18 @@ function Row({
   }
 
   if (item.type === 'message') {
+    const text = responseText ?? item.text ?? ''
     return (
       <>
         {showWorkingRail && startedAt !== undefined ? <WorkingRail startedAt={startedAt} /> : null}
-        <div className="reply">
-          {showCompletionRail ? <CompletionRail activity={[]} elapsedMs={elapsedMs ?? 0} /> : null}
-          <Markdown text={item.text ?? ''} />
+        <div className={`reply${live ? ' is-streaming' : ''}`}>
+          {showCompletionRail ? (
+            <CompletionRail activity={[]} elapsedMs={elapsedMs ?? 0} settling={settling} />
+          ) : null}
+          <Markdown text={text} streaming={live && item.status === 'started'} />
+          {!live && item.status === 'completed' && text ? (
+            <ResponseActions text={text} createdAt={item.createdAt} />
+          ) : null}
         </div>
       </>
     )
@@ -354,61 +455,59 @@ function Row({
   )
 }
 
-function CompletionRail({ activity, elapsedMs }: { activity: Item[]; elapsedMs: number }) {
+function CompletionRail({
+  activity,
+  elapsedMs,
+  settling,
+}: {
+  activity: Item[]
+  elapsedMs: number
+  settling: boolean
+}) {
   const label = `Worked for ${workedFor(elapsedMs)}`
+  const visibleActivity = activity.filter(isVisibleWorkedItem)
 
-  if (activity.length === 0) {
+  if (visibleActivity.length === 0) {
     return (
-      <div className="activity activity--empty">
+      <div className={`activity activity--empty${settling ? ' is-settling' : ''}`}>
         <div className="activity__summary">{label}</div>
       </div>
     )
   }
 
   return (
-    <details className="activity">
+    <details className={`activity${settling ? ' is-settling' : ''}`}>
       <summary className="activity__summary">
         <span>{label}</span>
         <ChevronRight size={15} strokeWidth={1.8} aria-hidden />
       </summary>
       <div className="activity__body">
-        {activity.map((item) => (
-          <details className="activity__item" key={item.id}>
-            <summary className="activity__item-head">
-              <span className="activity__glyph" aria-hidden>
-                {glyph(item)}
-              </span>
-              <span className="activity__label">{summarise(item)}</span>
-              {item.exitCode !== undefined && item.exitCode !== 0 ? (
-                <span className="aux__code">exit {item.exitCode}</span>
-              ) : null}
-              {item.durationMs !== undefined && item.durationMs >= 1000 ? (
-                <span className="aux__time">{duration(item.durationMs)}</span>
-              ) : null}
-            </summary>
-            {item.text ? <pre className="activity__out">{item.text}</pre> : null}
-          </details>
-        ))}
+        {visibleActivity.map((item) =>
+          item.type === 'message' ? (
+            <div className="activity__message" key={item.id}>
+              <Markdown text={item.text ?? ''} />
+            </div>
+          ) : (
+            <div className="activity__file-change" key={item.id}>
+              <FilePenLine size={15} strokeWidth={1.8} aria-hidden />
+              <span>Edited files</span>
+            </div>
+          ),
+        )}
       </div>
     </details>
   )
 }
 
-function LatestResponseActions({ items }: { items: Item[] }) {
-  const answer = items.findLast(
-    (item) =>
-      item.type === 'message' &&
-      item.role === 'assistant' &&
-      item.status === 'completed' &&
-      Boolean(item.text),
+function isVisibleWorkedItem(item: Item): boolean {
+  return (
+    item.type === 'file_change' ||
+    (isAssistantMessage(item) && item.status === 'completed' && Boolean(item.text?.trim()))
   )
-
-  return answer?.text ? <ResponseActions key={answer.id} text={answer.text} /> : null
 }
 
-function ResponseActions({ text }: { text: string }) {
+function ResponseActions({ text, createdAt }: { text: string; createdAt: number }) {
   const [copied, setCopied] = useState(false)
-  const [rating, setRating] = useState<'up' | 'down'>()
 
   const copy = async () => {
     try {
@@ -425,44 +524,46 @@ function ResponseActions({ text }: { text: string }) {
       <button type="button" onClick={() => void copy()} aria-label="Copy response" title="Copy">
         {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
       </button>
-      <button
-        type="button"
-        className={rating === 'up' ? 'is-selected' : ''}
-        onClick={() => setRating((current) => (current === 'up' ? undefined : 'up'))}
-        aria-label="Good response"
-        aria-pressed={rating === 'up'}
-        title="Good response"
-      >
-        <ThumbsUp aria-hidden />
-      </button>
-      <button
-        type="button"
-        className={rating === 'down' ? 'is-selected' : ''}
-        onClick={() => setRating((current) => (current === 'down' ? undefined : 'down'))}
-        aria-label="Bad response"
-        aria-pressed={rating === 'down'}
-        title="Bad response"
-      >
-        <ThumbsDown aria-hidden />
-      </button>
+      <time dateTime={new Date(createdAt).toISOString()}>
+        {new Date(createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+      </time>
     </div>
   )
 }
 
 function WorkingRail({ startedAt }: { startedAt: number }) {
-  const [now, setNow] = useState(() => Date.now())
+  return (
+    <div className="activity activity--working">
+      <div className="activity__summary">
+        <span className="activity__working-dots" aria-hidden>
+          <span />
+          <span />
+          <span />
+        </span>
+        <span>
+          Working for <WorkingTimer startedAt={startedAt} />
+        </span>
+      </div>
+    </div>
+  )
+}
+
+// Updating this text node directly avoids committing the virtualized thread
+// every second while a response is streaming.
+function WorkingTimer({ startedAt }: { startedAt: number }) {
+  const text = useRef<HTMLSpanElement>(null)
+  const initial = workedFor(Math.max(0, Date.now() - startedAt))
 
   useEffect(() => {
-    setNow(Date.now())
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    const update = () => {
+      if (text.current) text.current.textContent = workedFor(Math.max(0, Date.now() - startedAt))
+    }
+    update()
+    const timer = window.setInterval(update, 1000)
     return () => window.clearInterval(timer)
   }, [startedAt])
 
-  return (
-    <div className="activity activity--working">
-      <div className="activity__summary">Working for {workedFor(Math.max(0, now - startedAt))}</div>
-    </div>
-  )
+  return <span ref={text}>{initial}</span>
 }
 
 function duration(ms: number): string {
@@ -536,7 +637,7 @@ function summarise(item: Item): string {
     case 'reasoning':
       return 'Thinking'
     case 'file_change':
-      return item.path ? `Edited ${item.path}` : 'Edited files'
+      return 'Edited files'
     case 'tool_call':
       return item.text ?? 'Tool call'
     case 'plan':

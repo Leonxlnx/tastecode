@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react'
+import { memo, useEffect, useState, type ComponentPropsWithoutRef } from 'react'
 import {
   Check,
   Copy,
@@ -11,7 +11,8 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import { Streamdown, type IconMap } from 'streamdown'
+import { Streamdown, type Components, type IconMap } from 'streamdown'
+import { FileTypeIcon, isFileReference } from './FileTypeIcon.js'
 import { onHighlighterChange, shikiPlugin } from './highlighter.js'
 
 const STREAMDOWN_ICONS = {
@@ -27,6 +28,79 @@ const STREAMDOWN_ICONS = {
   ZoomOutIcon: ZoomOut,
 } satisfies IconMap
 
+type InlineCodeProps = ComponentPropsWithoutRef<'code'> & { node?: unknown }
+
+function InlineCode({ children, node: _node, ...props }: InlineCodeProps) {
+  const reference = typeof children === 'string' && isFileReference(children)
+
+  if (!reference) return <code {...props}>{children}</code>
+
+  return (
+    <span className="md-file-ref">
+      <FileTypeIcon path={children} />
+      {children}
+    </span>
+  )
+}
+
+type MarkdownLinkProps = ComponentPropsWithoutRef<'a'> & { node?: unknown }
+
+function MarkdownLink({ children, href, node: _node, ...props }: MarkdownLinkProps) {
+  const filePath = href ? localFileReferencePath(href) : undefined
+  if (filePath) {
+    return (
+      <span className="md-file-link" title={href}>
+        <FileTypeIcon path={filePath} />
+        {children}
+      </span>
+    )
+  }
+
+  const external = href ? /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href) : false
+  return (
+    <a
+      {...props}
+      href={href}
+      target={external ? '_blank' : props.target}
+      rel={external ? 'noreferrer' : props.rel}
+    >
+      {children}
+    </a>
+  )
+}
+
+function localFileReferencePath(href: string): string | undefined {
+  let decoded = href
+  try {
+    decoded = decodeURIComponent(href)
+  } catch {
+    // Keep the original href when an agent emits a malformed escape sequence.
+  }
+
+  const localPath =
+    decoded.startsWith('/') ||
+    decoded.startsWith('\\\\') ||
+    /^file:\/\//i.test(decoded) ||
+    /^[a-z]:[\\/]/i.test(decoded)
+  if (!localPath) return undefined
+
+  const withoutAnchor = decoded.replace(/[?#].*$/, '')
+  return isFileReference(withoutAnchor) ? withoutAnchor : undefined
+}
+
+const STREAMDOWN_COMPONENTS = {
+  a: MarkdownLink,
+  inlineCode: InlineCode,
+} satisfies Components
+
+const STREAM_ANIMATION = {
+  animation: 'fadeIn',
+  duration: 160,
+  easing: 'cubic-bezier(0.23, 1, 0.32, 1)',
+  sep: 'word',
+  stagger: 0,
+} as const
+
 /**
  * Agent output, rendered.
  *
@@ -37,7 +111,13 @@ const STREAMDOWN_ICONS = {
  * Memoised on the text, so a completed message renders once and stays put while
  * the message after it is still streaming.
  */
-export const Markdown = memo(function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({
+  text,
+  streaming = false,
+}: {
+  text: string
+  streaming?: boolean
+}) {
   // Shiki loads grammars in the background. This is the one re-render that
   // swaps plain code for coloured code once they arrive — the layout box is
   // identical either way, so nothing moves.
@@ -47,14 +127,16 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
   return (
     <Streamdown
       className="md"
-      // We already stream: the text prop grows token by token, so Streamdown's
-      // own reveal animation would gate content behind a second timeline.
-      mode="static"
-      animated={false}
+      // A zero-stagger fade softens irregular provider chunks without putting
+      // the text behind a second, slower reveal timeline.
+      mode="streaming"
+      isAnimating={streaming}
+      animated={STREAM_ANIMATION}
       parseIncompleteMarkdown
       plugins={{ code: shikiPlugin }}
       controls={{ code: true, table: true, mermaid: false }}
       icons={STREAMDOWN_ICONS}
+      components={STREAMDOWN_COMPONENTS}
     >
       {text}
     </Streamdown>
