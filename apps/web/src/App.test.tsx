@@ -46,6 +46,11 @@ vi.mock('./bridge.js', async (importOriginal) => ({
   isMacOS: () => true,
 }))
 
+vi.mock('./voice-recorder.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./voice-recorder.js')>()),
+  canCaptureVoice: () => true,
+}))
+
 /** What the server reports. Projects live there now, not in localStorage. */
 let serverProjects: unknown[] = []
 let serverUnsavedWork = { isolated: false, uncommitted: false }
@@ -173,6 +178,16 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+})
+
+describe('web client', () => {
+  it('does not expose or initialize desktop dictation', async () => {
+    render(<App />)
+    await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
+
+    expect(transport.request).not.toHaveBeenCalledWith('voice.status', expect.anything())
+    expect(screen.queryByRole('button', { name: 'Record voice note' })).toBeNull()
+  })
 })
 
 describe('new chats', () => {
