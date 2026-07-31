@@ -18,7 +18,7 @@ import type {
   ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
-import { isMacOS, pickFolder } from './bridge.js'
+import { isDesktop, isMacOS, pickFolder } from './bridge.js'
 import { isEditableTarget, matchesShortcut, SHORTCUTS, shortcutLabel } from './shortcuts.js'
 import { warmHighlighter } from './ui/highlighter.js'
 import { Transport } from './transport.js'
@@ -342,7 +342,7 @@ export function App() {
   }, [transport, provider])
 
   useEffect(() => {
-    if (!provider || !canCaptureVoice()) {
+    if (!isDesktop || !provider || !canCaptureVoice()) {
       setVoiceAvailable(false)
       return
     }
@@ -1558,7 +1558,7 @@ export function App() {
               serviceTier={serviceTier}
               approval={approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval}
               autoReviewSupported={autoReviewSupported}
-              voiceAvailable={provider === 'codex' && voiceAvailable}
+              voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
               disabled={!activePath}
               running={thread.running}
               newSession={!activeId}
