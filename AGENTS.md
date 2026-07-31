@@ -48,6 +48,20 @@ Codex and Claude also expose persistent usage. M3 (review and control) is next. 
 - Platform-specific code **run** on both, not just reviewed
 - Anything visual has a screenshot in the PR body
 
+## Local verification when Actions are unavailable
+
+- If GitHub Actions minutes or runners are unavailable, run the same checks locally from the repository root:
+  ```text
+  pnpm install --frozen-lockfile
+  pnpm lint
+  pnpm -r typecheck
+  pnpm -r test
+  pnpm -r build
+  ```
+- For UI or server changes, start `pnpm dev` and exercise the affected flow manually. Keep local binds on `127.0.0.1`.
+- Local checks are a safety net, not proof of Windows/macOS compatibility. Test platform-specific code on both operating systems when possible.
+- Record the commands and results in the PR body, state when hosted CI is pending, and rerun CI after the Actions billing reset before merging.
+
 ## Traps in this repo
 
 Each of these cost someone hours. They are not preferences.
