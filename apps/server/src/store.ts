@@ -568,9 +568,7 @@ function addUsage(left: UsageTotal, right: UsageTotal): UsageTotal {
 function usageIncrement(current: UsageTotal, previous = emptyUsage()): UsageTotal {
   const delta = (now: number, before: number) => (now >= before ? now - before : now)
   const costUsd =
-    current.costUsd === undefined
-      ? undefined
-      : delta(current.costUsd, previous.costUsd ?? 0)
+    current.costUsd === undefined ? undefined : delta(current.costUsd, previous.costUsd ?? 0)
   return {
     inputTokens: delta(current.inputTokens, previous.inputTokens),
     cachedInputTokens: delta(current.cachedInputTokens, previous.cachedInputTokens),
