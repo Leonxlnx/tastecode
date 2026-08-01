@@ -175,6 +175,27 @@ describe('Composer Design mode', () => {
   })
 })
 
+describe('Composer project requirement', () => {
+  it('keeps the draft when send is blocked without a project', () => {
+    const onSend = vi.fn()
+    const onProjectRequired = vi.fn()
+    renderComposer(onSend, {
+      projects: [],
+      projectPath: undefined,
+      projectName: undefined,
+      onProjectRequired,
+    })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: 'Keep this prompt' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect(onProjectRequired).toHaveBeenCalledOnce()
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('Keep this prompt')
+  })
+})
+
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,
   overrides: Partial<Parameters<typeof Composer>[0]> = {},
@@ -212,6 +233,7 @@ function renderComposer(
       onCancelVoice={vi.fn()}
       onProjectChange={vi.fn()}
       onBranchChange={vi.fn()}
+      onProjectRequired={vi.fn()}
       onSend={onSend}
       onInterrupt={vi.fn()}
       onDeleteQueuedTurn={vi.fn()}

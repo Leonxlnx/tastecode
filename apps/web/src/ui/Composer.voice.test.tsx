@@ -125,6 +125,7 @@ function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>>
       onDesignModeChange={vi.fn()}
       onProjectChange={vi.fn()}
       onBranchChange={vi.fn()}
+      onProjectRequired={vi.fn()}
       onTranscribeVoice={vi.fn()}
       onCancelVoice={vi.fn()}
       onSend={vi.fn()}

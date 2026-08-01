@@ -172,6 +172,7 @@ export function Composer(props: {
   onCancelVoice: (requestId: string) => void
   onProjectChange: (path: string) => void
   onBranchChange: (branch: string) => void
+  onProjectRequired: () => void
   onSend: (text: string, attachments: string[]) => void
   onInterrupt: () => void
   onDeleteQueuedTurn: (id: string) => void
@@ -359,6 +360,10 @@ export function Composer(props: {
     const trimmed = content.trim()
     const paths = attachments.flatMap((attachment) => attachment.path ?? [])
     if (trimmed === '' || paths.length !== attachments.length || props.disabled) return
+    if (!props.projectPath) {
+      props.onProjectRequired()
+      return
+    }
     const el = area.current
     const currentHeight = el?.offsetHeight ?? COMPOSER_MIN_HEIGHT
     previousComposerRect.current = composerAnchor.current?.getBoundingClientRect() ?? null

@@ -1561,7 +1561,7 @@ export function App() {
               approval={approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval}
               autoReviewSupported={autoReviewSupported}
               voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
-              disabled={!activePath}
+              disabled={false}
               running={thread.running}
               newSession={!activeId}
               isolate={active?.session.worktreeBranch ? true : isolateSession}
@@ -1579,6 +1579,7 @@ export function App() {
               onCancelVoice={cancelVoice}
               onProjectChange={selectProject}
               onBranchChange={(branch) => void selectBranch(branch)}
+              onProjectRequired={() => setNotice('Choose a project before sending.')}
               onSend={(t, files) => void send(t, files)}
               onInterrupt={interrupt}
               onDeleteQueuedTurn={deleteQueuedTurn}

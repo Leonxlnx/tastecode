@@ -350,6 +350,21 @@ describe('new chats', () => {
     })
   })
 
+  it('keeps a draft and asks for a project when sending without one', async () => {
+    serverProjects = []
+    render(<App />)
+
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Start after I choose a project' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'Choose a project before sending.',
+    )
+    expect((composer as HTMLTextAreaElement).value).toBe('Start after I choose a project')
+    expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
+  })
+
   it('moves the composer from the centered new-chat layout after the first prompt', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
