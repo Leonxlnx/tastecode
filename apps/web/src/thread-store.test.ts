@@ -107,4 +107,33 @@ describe('thread reducer', () => {
     expect(done.running).toBe(false)
     expect(done.activeTurn).toBeUndefined()
   })
+
+  it('replays automatic reviews to the same final state as live events', () => {
+    const started: DomainEvent = {
+      type: 'approval.review.started',
+      review: {
+        id: 'review-1',
+        turnId: 't1',
+        status: 'in_progress',
+        description: 'Run pnpm test',
+        startedAt: 10,
+      },
+    }
+    const completed: DomainEvent = {
+      type: 'approval.review.completed',
+      review: {
+        ...started.review,
+        status: 'approved',
+        rationale: 'The test command only reads and writes inside the workspace.',
+        riskLevel: 'low',
+        completedAt: 20,
+      },
+    }
+
+    const live = reduce(reduce(emptyThread, started), completed)
+    const replayed = apply([started, completed])
+
+    expect(replayed.reviews).toEqual(live.reviews)
+    expect(replayed.reviews['review-1']).toEqual(completed.review)
+  })
 })

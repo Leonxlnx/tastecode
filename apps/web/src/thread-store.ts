@@ -1,4 +1,11 @@
-import type { ApprovalRequest, DomainEvent, Item, PlanStep, Usage } from '@harness/contracts'
+import type {
+  ApprovalRequest,
+  ApprovalReview,
+  DomainEvent,
+  Item,
+  PlanStep,
+  Usage,
+} from '@harness/contracts'
 
 /**
  * Folds the domain event stream into what the UI renders.
@@ -19,6 +26,8 @@ export type ThreadState = {
   diff?: string | undefined
   /** Permission requests still waiting on an answer. */
   approvals: ApprovalRequest[]
+  /** Automatic approval reviews, upserted by their stable provider id. */
+  reviews: Record<string, ApprovalReview>
 }
 
 export const emptyThread: ThreadState = {
@@ -27,6 +36,7 @@ export const emptyThread: ThreadState = {
   activeTurn: undefined,
   plan: [],
   approvals: [],
+  reviews: {},
 }
 
 /**
@@ -80,6 +90,10 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
 
     case 'approval.resolved':
       return { ...state, approvals: state.approvals.filter((a) => a.id !== event.id) }
+
+    case 'approval.review.started':
+    case 'approval.review.completed':
+      return { ...state, reviews: { ...state.reviews, [event.review.id]: event.review } }
 
     case 'item.started': {
       // The agent echoes the user's message back as a canonical item. Drop our
