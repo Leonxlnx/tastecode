@@ -32,7 +32,14 @@ export const ErrorCode = {
   STALE_SNAPSHOT: 'stale_snapshot',
   INTERNAL: 'internal',
 } as const
-export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode]
+export const ErrorCodeSchema = z.enum([
+  ErrorCode.BAD_REQUEST,
+  ErrorCode.NOT_FOUND,
+  ErrorCode.PROVIDER_UNAVAILABLE,
+  ErrorCode.STALE_SNAPSHOT,
+  ErrorCode.INTERNAL,
+])
+export type ErrorCode = z.infer<typeof ErrorCodeSchema>
 
 // ---------------------------------------------------------------------------
 // Requests
@@ -69,7 +76,7 @@ export const ResponseSchema = z.union([
   z.object({
     id: z.string(),
     error: z.object({
-      code: z.string(),
+      code: ErrorCodeSchema,
       message: z.string(),
       /** Shown to the user verbatim when present, so keep it human-readable. */
       detail: z.string().optional(),
@@ -102,22 +109,25 @@ export const DiffLineSchema = z.discriminatedUnion('kind', [
     oldLine: z.number().int().positive(),
     newLine: z.number().int().positive(),
     text: z.string(),
+    noNewlineAtEnd: z.boolean().optional(),
   }),
   z.object({
     kind: z.literal('addition'),
     newLine: z.number().int().positive(),
     text: z.string(),
+    noNewlineAtEnd: z.boolean().optional(),
   }),
   z.object({
     kind: z.literal('deletion'),
     oldLine: z.number().int().positive(),
     text: z.string(),
+    noNewlineAtEnd: z.boolean().optional(),
   }),
 ])
 export type DiffLine = z.infer<typeof DiffLineSchema>
 
-export const DiffHunkDecisionSchema = z.enum(['accept', 'reject'])
-export type DiffHunkDecision = z.infer<typeof DiffHunkDecisionSchema>
+export const DiffDecisionSchema = z.enum(['accept', 'reject'])
+export type DiffDecision = z.infer<typeof DiffDecisionSchema>
 
 export const DiffHunkSchema = z.object({
   id: z.string().min(1),
@@ -127,17 +137,31 @@ export const DiffHunkSchema = z.object({
   newStart: z.number().int().nonnegative(),
   newLines: z.number().int().nonnegative(),
   lines: z.array(DiffLineSchema),
-  decision: DiffHunkDecisionSchema.optional(),
+  decision: DiffDecisionSchema.optional(),
 })
 export type DiffHunk = z.infer<typeof DiffHunkSchema>
 
-export const DiffFileSchema = z.object({
-  path: z.string().min(1),
-  previousPath: z.string().min(1).optional(),
-  status: z.enum(['added', 'modified', 'deleted', 'renamed']),
-  binary: z.boolean(),
-  hunks: z.array(DiffHunkSchema),
-})
+export const DiffFileSchema = z
+  .object({
+    path: z.string().min(1),
+    previousPath: z.string().min(1).optional(),
+    status: z.enum(['added', 'modified', 'deleted', 'renamed']),
+    binary: z.boolean(),
+    hunks: z.array(DiffHunkSchema),
+    decision: DiffDecisionSchema.optional(),
+  })
+  .superRefine((file, context) => {
+    if (file.binary && file.hunks.length > 0) {
+      context.addIssue({ code: 'custom', path: ['hunks'], message: 'binary files have no hunks' })
+    }
+    if ((file.status === 'renamed') !== (file.previousPath !== undefined)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['previousPath'],
+        message: 'previousPath is required only for renamed files',
+      })
+    }
+  })
 export type DiffFile = z.infer<typeof DiffFileSchema>
 
 export const SessionDiffSchema = z.object({
@@ -373,7 +397,16 @@ export const methods = {
       version: z.string().min(1),
       path: z.string().min(1),
       hunkId: z.string().min(1),
-      decision: DiffHunkDecisionSchema,
+      decision: DiffDecisionSchema,
+    }),
+    result: z.object({ diff: SessionDiffSchema }),
+  },
+  'thread.reviewFile': {
+    params: z.object({
+      threadId: z.string(),
+      version: z.string().min(1),
+      path: z.string().min(1),
+      decision: DiffDecisionSchema,
     }),
     result: z.object({ diff: SessionDiffSchema }),
   },

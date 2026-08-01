@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DomainEventSchema, ItemSchema } from './domain.js'
 import {
   channels,
+  DiffFileSchema,
   ErrorCode,
   methods,
   PushSchema,
@@ -191,11 +192,18 @@ describe('protocol envelopes', () => {
               newStart: 1,
               newLines: 1,
               lines: [
-                { kind: 'deletion' as const, oldLine: 1, text: 'old' },
+                { kind: 'deletion' as const, oldLine: 1, text: 'old', noNewlineAtEnd: true },
                 { kind: 'addition' as const, newLine: 1, text: 'new' },
               ],
             },
           ],
+        },
+        {
+          path: 'assets/new-logo.png',
+          previousPath: 'assets/logo.png',
+          status: 'renamed' as const,
+          binary: true,
+          hunks: [],
         },
       ],
     }
@@ -211,11 +219,42 @@ describe('protocol envelopes', () => {
       }).decision,
     ).toBe('reject')
     expect(
+      methods['thread.reviewFile'].params.parse({
+        threadId: 'thread-1',
+        version: 'snapshot-1',
+        path: 'assets/new-logo.png',
+        decision: 'accept',
+      }).decision,
+    ).toBe('accept')
+    expect(() =>
+      DiffFileSchema.parse({
+        path: 'asset.bin',
+        status: 'added',
+        binary: true,
+        hunks: diff.files[0]?.hunks,
+      }),
+    ).toThrow()
+    expect(() =>
+      DiffFileSchema.parse({ path: 'new.ts', status: 'renamed', binary: false, hunks: [] }),
+    ).toThrow()
+    expect(() =>
+      DiffFileSchema.parse({
+        path: 'new.ts',
+        previousPath: 'old.ts',
+        status: 'modified',
+        binary: false,
+        hunks: [],
+      }),
+    ).toThrow()
+    expect(
       ResponseSchema.parse({
         id: 'request-1',
         error: { code: ErrorCode.STALE_SNAPSHOT, message: 'Refresh the diff and try again.' },
       }),
     ).toMatchObject({ error: { code: 'stale_snapshot' } })
+    expect(() =>
+      ResponseSchema.parse({ id: 'request-2', error: { code: 'typo', message: 'Nope' } }),
+    ).toThrow()
   })
 
   it('validates paginated cross-session search', () => {
