@@ -54,12 +54,12 @@ Codex and Claude also expose persistent usage. M3 (review and control) is next. 
   ```text
   pnpm install --frozen-lockfile
   pnpm lint
-  pnpm -r typecheck
-  pnpm -r test
-  pnpm -r build
+  pnpm typecheck
+  pnpm test
+  pnpm build
   ```
 - For UI or server changes, start `pnpm dev` and exercise the affected flow manually. Keep local binds on `127.0.0.1`.
-- Local checks are a safety net, not proof of Windows/macOS compatibility. Test platform-specific code on both operating systems when possible.
+- Local checks are a safety net, not proof of Windows/macOS compatibility. Platform-specific code must still run on both operating systems before readiness.
 - Record the commands and results in the PR body, state when hosted CI is pending, and rerun CI after the Actions billing reset before merging.
 
 ## Traps in this repo
