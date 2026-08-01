@@ -42,20 +42,8 @@ export function prepareMcpConfig(
 
     if (server.transport.type === 'stdio') {
       const env: Record<string, string> = {}
-      const envVars: string[] = []
       for (const [name, value] of Object.entries(server.transport.environment ?? {})) {
-        if (value.source === 'literal') {
-          env[name] = value.value
-        } else {
-          const resolved = secret(value.credentialRef)
-          if (environment[name] !== undefined && environment[name] !== resolved) {
-            throw new Error(
-              `MCP servers use different credentials for environment variable "${name}"`,
-            )
-          }
-          environment[name] = resolved
-          envVars.push(name)
-        }
+        env[name] = value.source === 'literal' ? value.value : secret(value.credentialRef)
       }
       result[server.id] = {
         command: server.transport.command,
@@ -63,7 +51,6 @@ export function prepareMcpConfig(
         ...(server.transport.args ? { args: server.transport.args } : {}),
         ...(server.transport.cwd ? { cwd: server.transport.cwd } : {}),
         ...(Object.keys(env).length ? { env } : {}),
-        ...(envVars.length ? { env_vars: envVars } : {}),
       }
       continue
     }
