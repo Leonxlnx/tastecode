@@ -74,8 +74,11 @@ export type SessionSearchPage = {
   nextCursor: string | null
 }
 
+type SearchCursor = { score: number; createdAt: number; rowid: number }
+
 const SNIPPET_START = '\u0001'
 const SNIPPET_END = '\u0002'
+const SEARCH_INDEX_VERSION = 'session_search_v1'
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -122,6 +125,10 @@ CREATE TABLE IF NOT EXISTS restore_undos (
   checkpoints_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  name TEXT PRIMARY KEY
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS session_search USING fts5 (
   thread_id UNINDEXED,
   event_seq UNINDEXED,
@@ -164,12 +171,12 @@ export class Store {
     // Without WAL a reader blocks a writer, and we do both on every turn.
     this.#db.exec('PRAGMA journal_mode = WAL')
     this.#db.exec('PRAGMA foreign_keys = ON')
-    const hadSearchIndex = this.#db
-      .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_search'`)
-      .get()
     this.#db.exec(SCHEMA)
     this.#migrate()
-    if (!hadSearchIndex) this.#rebuildSearchIndex()
+    const searchIndexReady = this.#db
+      .prepare(`SELECT 1 FROM schema_migrations WHERE name = ?`)
+      .get(SEARCH_INDEX_VERSION)
+    if (!searchIndexReady) this.#rebuildSearchIndex()
   }
 
   /** Bring a database written by an older build up to the current shape. */
@@ -341,12 +348,19 @@ export class Store {
   /** Returns the sequence number, which is what a client resumes from. */
   append(threadId: string, event: DomainEvent): number {
     const at = Date.now()
-    const result = this.#db
-      .prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`)
-      .run(threadId, at, JSON.stringify(event))
-    const seq = Number(result.lastInsertRowid)
-    this.#indexEvent(seq, threadId, at, event)
-    return seq
+    this.#db.exec('BEGIN IMMEDIATE')
+    try {
+      const result = this.#db
+        .prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`)
+        .run(threadId, at, JSON.stringify(event))
+      const seq = Number(result.lastInsertRowid)
+      this.#indexEvent(seq, threadId, at, event)
+      this.#db.exec('COMMIT')
+      return seq
+    } catch (error) {
+      this.#db.exec('ROLLBACK')
+      throw error
+    }
   }
 
   /**
@@ -366,8 +380,11 @@ export class Store {
   }
 
   searchSessions(options: SessionSearchOptions): SessionSearchPage {
-    const limit = options.limit ?? 25
-    const offset = decodeCursor(options.cursor)
+    const requestedLimit = options.limit ?? 25
+    const limit = Number.isSafeInteger(requestedLimit)
+      ? Math.min(Math.max(requestedLimit, 1), 100)
+      : 25
+    const cursor = decodeCursor(options.cursor)
     const clauses = ['session_search MATCH ?']
     const parameters: Array<string | number> = [toFtsQuery(options.query)]
 
@@ -380,20 +397,33 @@ export class Store {
       parameters.push(options.provider)
     }
 
+    const cursorClause = cursor
+      ? `WHERE score > ?
+            OR (score = ? AND created_at < ?)
+            OR (score = ? AND created_at = ? AND search_rowid < ?)`
+      : ''
+    const cursorParameters = cursor
+      ? [cursor.score, cursor.score, cursor.createdAt, cursor.score, cursor.createdAt, cursor.rowid]
+      : []
     const rows = this.#db
       .prepare(
-        `SELECT projects.path AS project_path, projects.name AS project_name,
-                threads.id AS thread_id, threads.title AS thread_title,
-                threads.provider, session_search.turn_id, session_search.created_at,
-                snippet(session_search, 4, ?, ?, ' … ', 24) AS snippet
-         FROM session_search
-         JOIN threads ON threads.id = session_search.thread_id
-         JOIN projects ON projects.path = threads.project_path
-         WHERE ${clauses.join(' AND ')}
-         ORDER BY bm25(session_search), session_search.created_at DESC, session_search.rowid DESC
-         LIMIT ? OFFSET ?`,
+        `WITH matches AS (
+           SELECT projects.path AS project_path, projects.name AS project_name,
+                  threads.id AS thread_id, threads.title AS thread_title,
+                  threads.provider, session_search.turn_id, session_search.created_at,
+                  session_search.rowid AS search_rowid, bm25(session_search) AS score,
+                  snippet(session_search, 4, ?, ?, ' … ', 24) AS snippet
+           FROM session_search
+           JOIN threads ON threads.id = session_search.thread_id
+           JOIN projects ON projects.path = threads.project_path
+           WHERE ${clauses.join(' AND ')}
+         )
+         SELECT * FROM matches
+         ${cursorClause}
+         ORDER BY score, created_at DESC, search_rowid DESC
+         LIMIT ?`,
       )
-      .all(SNIPPET_START, SNIPPET_END, ...parameters, limit + 1, offset) as Array<{
+      .all(SNIPPET_START, SNIPPET_END, ...parameters, ...cursorParameters, limit + 1) as Array<{
       project_path: string
       project_name: string
       thread_id: string
@@ -401,11 +431,15 @@ export class Store {
       provider: ProviderId
       turn_id: string
       created_at: number
+      search_rowid: number
+      score: number
       snippet: string
     }>
 
+    const page = rows.slice(0, limit)
+    const last = page.at(-1)
     return {
-      results: rows.slice(0, limit).map((row) => ({
+      results: page.map((row) => ({
         projectPath: row.project_path,
         projectName: row.project_name,
         threadId: row.thread_id,
@@ -415,7 +449,14 @@ export class Store {
         createdAt: Number(row.created_at),
         snippet: parseSnippet(row.snippet),
       })),
-      nextCursor: rows.length > limit ? encodeCursor(offset + limit) : null,
+      nextCursor:
+        rows.length > limit && last
+          ? encodeCursor({
+              score: Number(last.score),
+              createdAt: Number(last.created_at),
+              rowid: Number(last.search_rowid),
+            })
+          : null,
     }
   }
 
@@ -423,8 +464,19 @@ export class Store {
     const rows = this.#db
       .prepare(`SELECT seq, thread_id, at, payload FROM events ORDER BY seq`)
       .all() as Array<{ seq: number; thread_id: string; at: number; payload: string }>
-    for (const row of rows) {
-      this.#indexEvent(row.seq, row.thread_id, row.at, JSON.parse(row.payload) as DomainEvent)
+    this.#db.exec('BEGIN IMMEDIATE')
+    try {
+      this.#db.exec(`DELETE FROM session_search`)
+      for (const row of rows) {
+        this.#indexEvent(row.seq, row.thread_id, row.at, JSON.parse(row.payload) as DomainEvent)
+      }
+      this.#db
+        .prepare(`INSERT OR REPLACE INTO schema_migrations (name) VALUES (?)`)
+        .run(SEARCH_INDEX_VERSION)
+      this.#db.exec('COMMIT')
+    } catch (error) {
+      this.#db.exec('ROLLBACK')
+      throw error
     }
   }
 
@@ -678,17 +730,27 @@ function toFtsQuery(query: string): string {
   return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(' ')
 }
 
-function encodeCursor(offset: number): string {
-  return Buffer.from(String(offset)).toString('base64url')
+function encodeCursor(cursor: SearchCursor): string {
+  return Buffer.from(JSON.stringify(cursor)).toString('base64url')
 }
 
-function decodeCursor(cursor: string | undefined): number {
-  if (!cursor) return 0
-  const decoded = Buffer.from(cursor, 'base64url').toString('utf8')
-  if (!/^(0|[1-9]\d*)$/.test(decoded)) throw new Error('invalid search cursor')
-  const offset = Number(decoded)
-  if (!Number.isSafeInteger(offset)) throw new Error('invalid search cursor')
-  return offset
+function decodeCursor(cursor: string | undefined): SearchCursor | undefined {
+  if (!cursor) return undefined
+  try {
+    const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as SearchCursor
+    if (
+      !Number.isFinite(value.score) ||
+      !Number.isSafeInteger(value.createdAt) ||
+      value.createdAt < 0 ||
+      !Number.isSafeInteger(value.rowid) ||
+      value.rowid < 1
+    ) {
+      return undefined
+    }
+    return value
+  } catch {
+    return undefined
+  }
 }
 
 function parseSnippet(value: string): SessionSearchResult['snippet'] {

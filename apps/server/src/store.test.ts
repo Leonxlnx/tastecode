@@ -83,6 +83,56 @@ describe('opening a database written by an older build', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('rebuilds a search migration that never reached its completion marker', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-search-migration-'))
+    const file = path.join(dir, 'partial.db')
+    const partial = new DatabaseSync(file)
+    partial.exec(`
+      CREATE TABLE projects (
+        path TEXT PRIMARY KEY, name TEXT NOT NULL, pinned INTEGER NOT NULL, created_at INTEGER NOT NULL);
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY, project_path TEXT NOT NULL, provider TEXT NOT NULL,
+        agent TEXT, title TEXT NOT NULL, created_at INTEGER NOT NULL, closed_at INTEGER,
+        worktree_path TEXT, worktree_branch TEXT);
+      CREATE TABLE events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL,
+        at INTEGER NOT NULL, payload TEXT NOT NULL);
+      CREATE VIRTUAL TABLE session_search USING fts5 (
+        thread_id UNINDEXED, event_seq UNINDEXED, turn_id UNINDEXED,
+        created_at UNINDEXED, text);
+    `)
+    partial.prepare(`INSERT INTO projects VALUES (?, ?, 0, ?)`).run('/repo', 'Repo', 1)
+    partial
+      .prepare(`INSERT INTO threads VALUES (?, ?, ?, NULL, ?, ?, NULL, NULL, NULL)`)
+      .run('t1', '/repo', 'codex', 'Thread', 1)
+    partial
+      .prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?), (?, ?, ?)`)
+      .run(
+        't1',
+        1,
+        JSON.stringify(message('first migration result')),
+        't1',
+        2,
+        JSON.stringify(message('second migration result')),
+      )
+    partial
+      .prepare(
+        `INSERT INTO session_search
+           (rowid, thread_id, event_seq, turn_id, created_at, text)
+         VALUES (1, 't1', 1, 't1', 1, 'first migration result')`,
+      )
+      .run()
+    partial.close()
+
+    const migrated = new Store(file)
+    try {
+      expect(migrated.searchSessions({ query: 'migration' }).results).toHaveLength(2)
+    } finally {
+      migrated.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('projects', () => {
@@ -310,6 +360,61 @@ describe('cross-session search', () => {
     const second = store.searchSessions({ query: 'shared', limit: 1, cursor: first.nextCursor! })
     expect(second.results[0]?.threadId).not.toBe(first.results[0]?.threadId)
     expect(second.nextCursor).toBeNull()
+  })
+
+  it('keeps pagination stable when a new matching event arrives', () => {
+    store.append('t1', message('first stable result'))
+    store.append('t1', message('second stable result'))
+    const first = store.searchSessions({ query: 'stable', limit: 1 })
+
+    store.append('t1', message('new stable result'))
+    const second = store.searchSessions({
+      query: 'stable',
+      limit: 1,
+      cursor: first.nextCursor!,
+    })
+
+    expect(second.results[0]?.snippet.map((part) => part.text).join('')).toContain('first')
+  })
+
+  it('clamps internal page sizes and treats malformed cursors as a fresh search', () => {
+    for (let index = 0; index < 101; index += 1) {
+      store.append('t1', message(`bounded result ${index}`))
+    }
+
+    expect(store.searchSessions({ query: 'bounded', limit: 1_000 }).results).toHaveLength(100)
+    expect(store.searchSessions({ query: 'bounded', limit: 0 }).results).toHaveLength(1)
+    const fresh = store.searchSessions({ query: 'bounded', limit: 1 })
+    const malformed = store.searchSessions({ query: 'bounded', limit: 1, cursor: 'not-json' })
+    expect(malformed.results).toEqual(fresh.results)
+  })
+
+  it('rolls back the event when indexing the same row fails', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-search-atomic-'))
+    const file = path.join(dir, 'atomic.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'One' })
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw
+      .prepare(
+        `INSERT INTO session_search
+           (rowid, thread_id, event_seq, turn_id, created_at, text)
+         VALUES (1, 't1', 1, 't1', 1, 'collision')`,
+      )
+      .run()
+    raw.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(() => reopened.append('t1', message('atomic result'))).toThrow()
+      expect(reopened.history('t1')).toEqual([])
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('keeps rollback, undo and deletion consistent with the index', () => {
