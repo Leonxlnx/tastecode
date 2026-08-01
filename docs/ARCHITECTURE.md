@@ -129,6 +129,38 @@ harness teams while also building a UI) · a `switch` on provider in the orchest
 
 ---
 
+## Project-scoped MCP configuration
+
+**Harness owns project-scoped MCP configuration; vendor-global configuration is an
+inherited input, not our storage layer.** Definitions and per-project enablement live in
+the server-owned, human-readable user config under `~/.personalharness/`, keyed by the
+canonical project path and a stable server id. They do not live in the repository or the
+SQLite event log.
+
+Secrets live only in the OS credential store. The config may contain an opaque credential
+reference, never a token or secret environment value. Provider-owned OAuth credentials
+remain with the provider binary; Harness starts the provider's login flow and observes its
+reported status without reading the credential.
+
+For each provider, effective MCP configuration resolves in this order:
+
+1. An explicitly disabled project entry hides the vendor-global server with the same id.
+2. A project definition replaces the vendor-global definition with the same id for that
+   project only.
+3. Vendor-global servers without a project override remain inherited and read-only.
+
+Project-scoped operations never rewrite or delete unrelated vendor-global configuration.
+An adapter that cannot perform an operation reports it as unsupported through capabilities
+and returns an actionable error; Harness does not pretend success or fall back to mutating
+global state. Read-only inventory may still be exposed when the provider supports it.
+
+_Rejected:_ repository-local MCP config (opening an untrusted checkout must not authorize
+command execution; revisit only with an explicit trust gate) · SQLite config (not
+human-readable or hand-editable) · writing project state into each vendor's global config
+(provider-specific, lossy, and too easy to overwrite unrelated user settings).
+
+---
+
 ## Storage
 
 **SQLite in the server. Append-only event log is the source of truth; UI state is a derived
@@ -222,6 +254,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 ## Change log
 
-| Date       | Change             |
-| ---------- | ------------------ |
-| 2026-07-28 | Initial decisions. |
+| Date       | Change                                                                 |
+| ---------- | ---------------------------------------------------------------------- |
+| 2026-07-28 | Initial decisions.                                                     |
+| 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration. |
