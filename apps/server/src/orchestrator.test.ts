@@ -31,6 +31,9 @@ class FakeSession implements AgentSession {
   readonly capabilities = CAPABILITIES
   emit: (event: DomainEvent) => void = () => {}
   disposed = false
+  interrupted = false
+  interruptBarrier: Promise<void> | undefined
+  interruptError: Error | undefined
   sent: string[] = []
   steered: string[] = []
   /** Resolves the pending sendTurn, letting a test hold one open. */
@@ -50,7 +53,11 @@ class FakeSession implements AgentSession {
     this.steered.push(text)
   }
 
-  async interrupt(): Promise<void> {}
+  async interrupt(): Promise<void> {
+    this.interrupted = true
+    await this.interruptBarrier
+    if (this.interruptError) throw this.interruptError
+  }
   respondToApproval(): void {}
   dispose(): void {
     this.disposed = true
@@ -195,6 +202,31 @@ describe('several sessions at once', () => {
     expect(orchestrator.isRunning(thread.id)).toBe(false)
     expect(store.history(thread.id)).toHaveLength(1)
     expect(store.thread(thread.id)?.closedAt).toBeGreaterThan(0)
+  })
+
+  it('interrupts every live session concurrently and reports adapter failures', async () => {
+    const { sessions, orchestrator } = harness()
+    await orchestrator.startThread('codex', '/repo')
+    await orchestrator.startThread('codex', '/repo')
+    await orchestrator.startThread('codex', '/repo')
+
+    let releaseFirst = () => {}
+    sessions[0]!.interruptBarrier = new Promise<void>((resolve) => (releaseFirst = resolve))
+    sessions[1]!.interruptError = new Error('adapter did not respond')
+
+    const stopping = orchestrator.panicStop()
+    await vi.waitFor(() =>
+      expect(sessions.map((session) => session.interrupted)).toEqual([true, true, true]),
+    )
+    releaseFirst()
+
+    await expect(stopping).resolves.toEqual({
+      sessions: [
+        { threadId: 'thread-1', status: 'interrupted' },
+        { threadId: 'thread-2', status: 'failed', error: 'adapter did not respond' },
+        { threadId: 'thread-3', status: 'interrupted' },
+      ],
+    })
   })
 })
 

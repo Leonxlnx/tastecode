@@ -23,6 +23,7 @@ import type {
   ApprovalDecision,
   DomainEvent,
   Model,
+  PanicStopResult,
   ProviderId,
   QueuedTurn,
   Thread,
@@ -435,6 +436,26 @@ export class Orchestrator {
 
   async interrupt(threadId: string): Promise<void> {
     await this.#get(threadId).session.interrupt(threadId)
+  }
+
+  async panicStop(): Promise<PanicStopResult> {
+    const sessions = [...this.#threads.entries()]
+    return {
+      sessions: await Promise.all(
+        sessions.map(async ([threadId, entry]) => {
+          try {
+            await entry.session.interrupt(threadId)
+            return { threadId, status: 'interrupted' as const }
+          } catch (error) {
+            return {
+              threadId,
+              status: 'failed' as const,
+              error: (error instanceof Error ? error.message : String(error)) || 'Unknown error',
+            }
+          }
+        }),
+      ),
+    }
   }
 
   close(threadId: string): void {

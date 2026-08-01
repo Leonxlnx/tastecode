@@ -159,6 +159,9 @@ export function startServer(
           platform: process.platform,
         }
 
+      case 'system.panicStop':
+        return orchestrator.panicStop()
+
       case 'providers.list':
         return { providers: await detectProviders() }
 
