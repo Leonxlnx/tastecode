@@ -150,6 +150,49 @@ describe('protocol envelopes', () => {
     expect(result.limits[0]?.usedPercent).toBe(25)
   })
 
+  it('validates paginated cross-session search', () => {
+    expect(
+      methods['search.sessions'].params.parse({
+        query: ' regression ',
+        projectPath: 'D:\\project',
+        provider: 'codex',
+        cursor: 'current-page',
+        limit: 25,
+      }),
+    ).toEqual({
+      query: 'regression',
+      projectPath: 'D:\\project',
+      provider: 'codex',
+      cursor: 'current-page',
+      limit: 25,
+    })
+    expect(
+      methods['search.sessions'].result.parse({
+        results: [
+          {
+            projectPath: 'D:\\project',
+            projectName: 'project',
+            threadId: 'thread-1',
+            threadTitle: 'Find the regression',
+            turnId: 'turn-2',
+            provider: 'codex',
+            createdAt: 42,
+            snippet: [
+              { text: 'The ', highlighted: false },
+              { text: 'regression', highlighted: true },
+              { text: ' started here.', highlighted: false },
+            ],
+          },
+        ],
+        nextCursor: 'next-page',
+      }).nextCursor,
+    ).toBe('next-page')
+    expect(() => methods['search.sessions'].params.parse({ query: '   ' })).toThrow()
+    expect(() =>
+      methods['search.sessions'].params.parse({ query: 'regression', limit: 101 }),
+    ).toThrow()
+  })
+
   it('bounds normalized voice clips at the protocol boundary', () => {
     const valid = {
       requestId: '0dca4330-66f5-4f68-9287-c6b2bf4c6bf0',

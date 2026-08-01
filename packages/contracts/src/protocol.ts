@@ -66,6 +66,24 @@ export const ResponseSchema = z.union([
 ])
 export type Response = z.infer<typeof ResponseSchema>
 
+export const SearchSnippetPartSchema = z.object({
+  text: z.string(),
+  highlighted: z.boolean(),
+})
+export type SearchSnippetPart = z.infer<typeof SearchSnippetPartSchema>
+
+export const SessionSearchResultSchema = z.object({
+  projectPath: z.string(),
+  projectName: z.string(),
+  threadId: z.string(),
+  threadTitle: z.string(),
+  turnId: z.string(),
+  provider: ProviderIdSchema,
+  createdAt: z.number(),
+  snippet: z.array(SearchSnippetPartSchema).min(1),
+})
+export type SessionSearchResult = z.infer<typeof SessionSearchResultSchema>
+
 /**
  * Method table. Adding a method means adding it here first — this object is the
  * single source of truth that the server routes against and the client calls.
@@ -82,6 +100,19 @@ export const methods = {
   'providers.list': {
     params: z.object({}),
     result: z.object({ providers: z.array(ProviderStatusSchema) }),
+  },
+  'search.sessions': {
+    params: z.object({
+      query: z.string().trim().min(1),
+      projectPath: z.string().min(1).optional(),
+      provider: ProviderIdSchema.optional(),
+      cursor: z.string().min(1).optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+    }),
+    result: z.object({
+      results: z.array(SessionSearchResultSchema),
+      nextCursor: z.string().nullable(),
+    }),
   },
   'auth.status': {
     params: z.object({ provider: ProviderIdSchema }),
