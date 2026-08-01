@@ -40,8 +40,8 @@ export async function reviewDiffHunk(
   const hunk = file?.hunks.find((entry) => entry.value.id === hunkId)
   if (!file || !hunk) throw new Error('diff hunk not found')
 
-  if (decision === 'accept') store.setDiffDecision(threadId, hunkTarget(hunkId), decision)
-  else await applyReverse(repoPath, hunk.patch)
+  if (decision === 'reject') await applyReverse(repoPath, hunk.patch)
+  store.setDiffDecision(threadId, hunkTarget(hunkId), decision)
   return readSessionDiff(repoPath, threadId, store)
 }
 
@@ -57,8 +57,8 @@ export async function reviewDiffFile(
   const file = diff.files.find((entry) => entry.value.path === filePath)
   if (!file) throw new Error('diff file not found')
 
-  if (decision === 'accept') store.setDiffDecision(threadId, fileTarget(file.targetId), decision)
-  else await applyReverse(repoPath, file.patch)
+  if (decision === 'reject') await applyReverse(repoPath, file.patch)
+  store.setDiffDecision(threadId, fileTarget(file.targetId), decision)
   return readSessionDiff(repoPath, threadId, store)
 }
 
@@ -85,6 +85,9 @@ async function parseDiff(repoPath: string, threadId: string, store: Store): Prom
         '--binary',
         '--no-color',
         '--no-ext-diff',
+        '--no-textconv',
+        '--src-prefix=a/',
+        '--dst-prefix=b/',
         '--find-renames',
         '--unified=3',
         'HEAD',
@@ -192,7 +195,8 @@ function parseHunks(filePath: string, patch: string, renamed: boolean): ParsedHu
       }
     }
 
-    const id = digest(`hunk\0${filePath}\0${raw}`)
+    const body = `${rawLines.slice(1).join('\n')}\n`
+    const id = digest(`hunk\0${filePath}\0${match[1]}\0${body}`)
     const applyOldHeader = renamed ? `--- ${newHeader.slice(4)}` : oldHeader
     return {
       value: {
@@ -220,7 +224,7 @@ async function applyReverse(repoPath: string, patch: string): Promise<void> {
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => (stderr += chunk))
     child.once('error', reject)
-    child.once('exit', (code) => {
+    child.once('close', (code) => {
       if (code === 0) resolve()
       else reject(new Error(stderr.trim() || 'could not apply diff decision'))
     })

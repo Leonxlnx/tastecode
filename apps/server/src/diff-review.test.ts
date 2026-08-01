@@ -72,6 +72,60 @@ describe('structured diff review', () => {
     expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toContain('accepted change')
   })
 
+  it('keeps an accepted hunk reviewed after rejecting an earlier insertion', async () => {
+    writeFileSync(path.join(repo, 'file.txt'), `inserted\n${lines({ 18: 'accepted change' })}`)
+
+    let diff = await readSessionDiff(repo, 'thread-1', store)
+    const file = diff.files.find((entry) => entry.path === 'file.txt')!
+    expect(file.hunks).toHaveLength(2)
+    const accepted = file.hunks[1]!
+    diff = await reviewDiffHunk(
+      repo,
+      'thread-1',
+      diff.version,
+      file.path,
+      accepted.id,
+      'accept',
+      store,
+    )
+    const first = diff.files[0]!.hunks[0]!
+    diff = await reviewDiffHunk(
+      repo,
+      'thread-1',
+      diff.version,
+      file.path,
+      first.id,
+      'reject',
+      store,
+    )
+
+    expect(diff.files[0]?.hunks[0]).toMatchObject({ id: accepted.id, decision: 'accept' })
+  })
+
+  it('stores reject as the latest hunk decision', async () => {
+    writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'review twice' }))
+
+    let diff = await readSessionDiff(repo, 'thread-1', store)
+    const file = diff.files[0]!
+    const hunk = file.hunks[0]!
+    diff = await reviewDiffHunk(repo, 'thread-1', diff.version, file.path, hunk.id, 'accept', store)
+    await reviewDiffHunk(repo, 'thread-1', diff.version, file.path, hunk.id, 'reject', store)
+    expect(store.diffDecision('thread-1', `hunk:${hunk.id}`)).toBe('reject')
+  })
+
+  it('stores reject as the latest file decision', async () => {
+    writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'review twice' }))
+
+    let diff = await readSessionDiff(repo, 'thread-1', store)
+    const file = diff.files[0]!
+    await reviewDiffFile(repo, 'thread-1', diff.version, file.path, 'accept', store)
+    diff = await reviewDiffFile(repo, 'thread-1', diff.version, file.path, 'reject', store)
+    expect(diff.files).toEqual([])
+
+    writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'review twice' }))
+    expect((await readSessionDiff(repo, 'thread-1', store)).files[0]?.decision).toBe('reject')
+  })
+
   it('rejects only one hunk without changing the index or unrelated work', async () => {
     writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'reject me', 18: 'keep me' }))
     writeFileSync(path.join(repo, 'staged.txt'), 'staged work\n')
@@ -137,6 +191,47 @@ describe('structured diff review', () => {
     )
 
     expect(readFileSync(path.join(repo, 'windows.crlf'), 'utf8')).toBe('one\r\ntwo\r\nthree\r\n')
+  })
+
+  it('rejects changes when diff.noprefix is enabled', async () => {
+    git('config', 'diff.noprefix', 'true')
+    writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'reject me' }))
+
+    const diff = await readSessionDiff(repo, 'thread-1', store)
+    const file = diff.files[0]!
+    await reviewDiffHunk(
+      repo,
+      'thread-1',
+      diff.version,
+      file.path,
+      file.hunks[0]!.id,
+      'reject',
+      store,
+    )
+
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe(lines())
+  })
+
+  it('does not invoke configured textconv drivers', async () => {
+    writeFileSync(path.join(repo, '.gitattributes'), 'file.txt diff=broken\n')
+    git('add', '.gitattributes')
+    git('commit', '-m', 'add diff driver')
+    git('config', 'diff.broken.textconv', 'missing-textconv-command')
+    writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'reject me' }))
+
+    const diff = await readSessionDiff(repo, 'thread-1', store)
+    const file = diff.files.find((entry) => entry.path === 'file.txt')!
+    await reviewDiffHunk(
+      repo,
+      'thread-1',
+      diff.version,
+      file.path,
+      file.hunks[0]!.id,
+      'reject',
+      store,
+    )
+
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe(lines())
   })
 
   it('reviews binary changes and renames at file scope', async () => {
