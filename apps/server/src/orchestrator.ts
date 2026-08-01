@@ -21,13 +21,16 @@ import {
 import type {
   Account,
   ApprovalDecision,
+  DiffDecision,
   DomainEvent,
   Model,
   PanicStopResult,
   ProviderId,
   QueuedTurn,
+  SessionDiff,
   Thread,
 } from '@harness/contracts'
+import { readSessionDiff, reviewDiffFile, reviewDiffHunk } from './diff-review.js'
 
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
@@ -308,6 +311,44 @@ export class Orchestrator {
     return this.#store.history(threadId, afterSeq)
   }
 
+  async diff(threadId: string): Promise<SessionDiff> {
+    return readSessionDiff(this.#repoPath(threadId), threadId, this.#store)
+  }
+
+  async reviewHunk(
+    threadId: string,
+    version: string,
+    filePath: string,
+    hunkId: string,
+    decision: DiffDecision,
+  ): Promise<SessionDiff> {
+    return reviewDiffHunk(
+      this.#repoPath(threadId),
+      threadId,
+      version,
+      filePath,
+      hunkId,
+      decision,
+      this.#store,
+    )
+  }
+
+  async reviewFile(
+    threadId: string,
+    version: string,
+    filePath: string,
+    decision: DiffDecision,
+  ): Promise<SessionDiff> {
+    return reviewDiffFile(
+      this.#repoPath(threadId),
+      threadId,
+      version,
+      filePath,
+      decision,
+      this.#store,
+    )
+  }
+
   /** Whether a session is still live, as opposed to merely on record. */
   isRunning(threadId: string): boolean {
     return this.#threads.has(threadId)
@@ -316,6 +357,12 @@ export class Orchestrator {
   /** Whether the agent is inside a turn, rather than merely attached to the session. */
   isTurnRunning(threadId: string): boolean {
     return this.#activeTurns.has(threadId) || this.#startingTurns.has(threadId)
+  }
+
+  #repoPath(threadId: string): string {
+    const stored = this.#store.thread(threadId)
+    if (!stored) throw new Error(`no such thread: ${threadId}`)
+    return stored.worktreePath ?? stored.projectPath
   }
 
   async #drainQueue(threadId: string): Promise<void> {

@@ -9,9 +9,11 @@ import {
   methods,
   PROTOCOL_VERSION,
   RequestSchema,
+  type DiffDecision,
   type MethodName,
   type ProviderId,
 } from '@harness/contracts'
+import { StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator } from './orchestrator.js'
 import { detectProviders } from './providers.js'
 import { PushBus } from './push-bus.js'
@@ -146,7 +148,12 @@ export function startServer(
       socket.send(JSON.stringify({ id, result }))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      respondError(socket, id, ErrorCode.INTERNAL, message)
+      respondError(
+        socket,
+        id,
+        error instanceof StaleDiffSnapshotError ? ErrorCode.STALE_SNAPSHOT : ErrorCode.INTERNAL,
+        message,
+      )
     }
   }
 
@@ -308,6 +315,36 @@ export function startServer(
         return {
           events: orchestrator.history(p.threadId, p.afterSeq ?? 0),
           running: orchestrator.isTurnRunning(p.threadId),
+        }
+      }
+
+      case 'thread.diff': {
+        const p = params as { threadId: string }
+        return orchestrator.diff(p.threadId)
+      }
+
+      case 'thread.reviewHunk': {
+        const p = params as {
+          threadId: string
+          version: string
+          path: string
+          hunkId: string
+          decision: DiffDecision
+        }
+        return {
+          diff: await orchestrator.reviewHunk(p.threadId, p.version, p.path, p.hunkId, p.decision),
+        }
+      }
+
+      case 'thread.reviewFile': {
+        const p = params as {
+          threadId: string
+          version: string
+          path: string
+          decision: DiffDecision
+        }
+        return {
+          diff: await orchestrator.reviewFile(p.threadId, p.version, p.path, p.decision),
         }
       }
 
