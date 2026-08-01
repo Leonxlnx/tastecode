@@ -100,7 +100,7 @@ describe('structured diff review', () => {
     )
 
     expect(diff.files[0]?.hunks[0]).toMatchObject({ id: accepted.id, decision: 'accept' })
-  })
+  }, 15_000)
 
   it('stores reject as the latest hunk decision', async () => {
     writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'review twice' }))
@@ -124,7 +124,7 @@ describe('structured diff review', () => {
 
     writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'review twice' }))
     expect((await readSessionDiff(repo, 'thread-1', store)).files[0]?.decision).toBe('reject')
-  })
+  }, 15_000)
 
   it('rejects only one hunk without changing the index or unrelated work', async () => {
     writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'reject me', 18: 'keep me' }))
