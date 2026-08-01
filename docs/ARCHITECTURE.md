@@ -133,9 +133,9 @@ harness teams while also building a UI) · a `switch` on provider in the orchest
 
 **Harness owns project-scoped MCP configuration; vendor-global configuration is an
 inherited input, not our storage layer.** Definitions and per-project enablement live in
-the server-owned, human-readable user config under `~/.personalharness/`, keyed by the
-canonical project path and a stable server id. They do not live in the repository or the
-SQLite event log.
+the server-owned, human-readable user-config location documented under Storage, keyed by
+the canonical project path and a stable server id. They do not live in the repository or
+the SQLite event log.
 
 Secrets live only in the OS credential store. The config may contain an opaque credential
 reference, never a token or secret environment value. Provider-owned OAuth credentials
