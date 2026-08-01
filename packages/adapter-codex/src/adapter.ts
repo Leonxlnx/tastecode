@@ -7,6 +7,7 @@ import type {
   Capabilities,
   DomainEvent,
   McpServer,
+  McpServerConfig,
   McpStartupStatus,
   Model,
   Thread,
@@ -28,7 +29,10 @@ import type { TurnStartedNotification } from './generated/v2/TurnStartedNotifica
 import type { TurnStartResponse } from './generated/v2/TurnStartResponse'
 import type { ListMcpServerStatusResponse } from './generated/v2/ListMcpServerStatusResponse'
 import type { McpServerStatusUpdatedNotification } from './generated/v2/McpServerStatusUpdatedNotification'
-import { mapMcpServerStatus, mapMcpStartupStatus } from './mcp.js'
+import type { McpServerOauthLoginResponse } from './generated/v2/McpServerOauthLoginResponse'
+import type { McpServerOauthLoginCompletedNotification } from './generated/v2/McpServerOauthLoginCompletedNotification'
+import type { JsonValue } from './generated/serde_json/JsonValue.js'
+import { mapMcpServerStatus, mapMcpStartupStatus, prepareMcpConfig } from './mcp.js'
 
 /**
  * Tier 1 adapter: drives `codex app-server` over JSON-RPC.
@@ -160,12 +164,16 @@ export type CodexAdapterEvents = {
   log: [string]
   /** Emitted when the browser half of an OAuth flow finishes. */
   login: [{ loginId: string | null; success: boolean; error: string | null }]
+  mcpOAuth: [{ serverId: string; loginId: string; success: boolean; error: string | null }]
 }
 
 export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #rpc: StdioJsonRpc | undefined
   #started = false
   #mcpStartup = new Map<string, McpStartupStatus>()
+  #mcpServers: Record<string, JsonValue>
+  #mcpEnvironment: NodeJS.ProcessEnv
+  #mcpLogins = new Map<string, string>()
   /**
    * Approvals waiting on an answer, keyed by our id. Holds the JSON-RPC
    * responder because Codex is blocked on that specific request id.
@@ -175,6 +183,18 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     { kind: ApprovalRequest['kind']; respond: (result: unknown) => void }
   >()
 
+  constructor(
+    options: {
+      mcpServers?: McpServerConfig[]
+      mcpCredentials?: Record<string, string>
+    } = {},
+  ) {
+    super()
+    const prepared = prepareMcpConfig(options.mcpServers ?? [], options.mcpCredentials ?? {})
+    this.#mcpServers = prepared.servers
+    this.#mcpEnvironment = prepared.environment
+  }
+
   get capabilities(): Capabilities {
     return CODEX_CAPABILITIES
   }
@@ -183,7 +203,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   async start(): Promise<void> {
     if (this.#started) return
 
-    const child = spawnCli('codex', ['app-server'])
+    const child = spawnCli('codex', ['app-server'], { env: this.#mcpEnvironment })
     const rpc = new StdioJsonRpc(child)
     this.#rpc = rpc
 
@@ -331,16 +351,67 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     return servers
   }
 
+  async reloadMcpServers(
+    threadId: string,
+    servers: McpServerConfig[],
+    credentials: Record<string, string>,
+  ): Promise<void> {
+    const prepared = prepareMcpConfig(servers, credentials)
+    for (const [name, value] of Object.entries(prepared.environment)) {
+      if (this.#mcpEnvironment[name] !== value) {
+        throw new Error('start a new session to apply new MCP credentials')
+      }
+    }
+    try {
+      await this.#call('thread/resume', {
+        threadId,
+        config: { mcp_servers: prepared.servers },
+      })
+    } catch {
+      throw new Error('Codex could not hot-reload MCP config; start a new session to apply it')
+    }
+    this.#mcpServers = prepared.servers
+    await this.#call('config/mcpServer/reload', undefined)
+  }
+
+  async startMcpOAuth(
+    serverId: string,
+    threadId: string,
+  ): Promise<{ loginId: string; authUrl: string }> {
+    const response = await this.#call<McpServerOauthLoginResponse>('mcpServer/oauth/login', {
+      name: serverId,
+      threadId,
+    })
+    const loginId = crypto.randomUUID()
+    this.#mcpLogins.set(mcpLoginKey(threadId, serverId), loginId)
+    return { loginId, authUrl: response.authorizationUrl }
+  }
+
+  onMcpOAuth(
+    listener: (result: {
+      serverId: string
+      loginId: string
+      success: boolean
+      error: string | null
+    }) => void,
+  ): void {
+    this.on('mcpOAuth', listener)
+  }
+
   async startThread(workspacePath: string, options: StartOptions = {}): Promise<Thread> {
     const approval = options.approval ? APPROVAL[options.approval] : undefined
     if (options.approval && !approval) {
       throw new Error('Codex automatic approval review is not implemented')
     }
+    const config = {
+      ...(options.effort ? { model_reasoning_effort: options.effort } : {}),
+      ...(Object.keys(this.#mcpServers).length ? { mcp_servers: this.#mcpServers } : {}),
+    }
     const response = await this.#call<ThreadStartResponse>('thread/start', {
       cwd: workspacePath,
       ...(options.model ? { model: options.model } : {}),
       ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
-      ...(options.effort ? { config: { model_reasoning_effort: options.effort } } : {}),
+      ...(Object.keys(config).length ? { config } : {}),
       ...(approval ?? {}),
     })
     return {
@@ -609,6 +680,22 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         return
       }
 
+      case 'mcpServer/oauthLogin/completed': {
+        const p = params as McpServerOauthLoginCompletedNotification
+        if (!p.threadId) return
+        const key = mcpLoginKey(p.threadId, p.name)
+        const loginId = this.#mcpLogins.get(key)
+        if (!loginId) return
+        this.#mcpLogins.delete(key)
+        this.emit('mcpOAuth', {
+          serverId: p.name,
+          loginId,
+          success: p.success,
+          error: p.error ?? null,
+        })
+        return
+      }
+
       default:
         // Codex emits far more than we consume (realtime audio, MCP progress,
         // remote control). Ignoring the rest is correct; logging it is how we
@@ -620,6 +707,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
 function mcpStartupKey(threadId: string | undefined, server: string): string {
   return `${threadId ?? ''}\0${server}`
+}
+
+function mcpLoginKey(threadId: string, server: string): string {
+  return `${threadId}\0${server}`
 }
 
 function rateLimitLabel(minutes: number | null, fallback: string): string {
