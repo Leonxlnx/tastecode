@@ -6,6 +6,8 @@ import type {
   ApprovalRequest,
   Capabilities,
   DomainEvent,
+  McpServer,
+  McpStartupStatus,
   Model,
   Thread,
 } from '@harness/contracts'
@@ -24,6 +26,9 @@ import type { ThreadStartResponse } from './generated/v2/ThreadStartResponse'
 import type { TurnCompletedNotification } from './generated/v2/TurnCompletedNotification'
 import type { TurnStartedNotification } from './generated/v2/TurnStartedNotification'
 import type { TurnStartResponse } from './generated/v2/TurnStartResponse'
+import type { ListMcpServerStatusResponse } from './generated/v2/ListMcpServerStatusResponse'
+import type { McpServerStatusUpdatedNotification } from './generated/v2/McpServerStatusUpdatedNotification'
+import { mapMcpServerStatus, mapMcpStartupStatus } from './mcp.js'
 
 /**
  * Tier 1 adapter: drives `codex app-server` over JSON-RPC.
@@ -160,6 +165,7 @@ export type CodexAdapterEvents = {
 export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #rpc: StdioJsonRpc | undefined
   #started = false
+  #mcpStartup = new Map<string, McpStartupStatus>()
   /**
    * Approvals waiting on an answer, keyed by our id. Holds the JSON-RPC
    * responder because Codex is blocked on that specific request id.
@@ -306,6 +312,25 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       }))
   }
 
+  async listMcpServers(threadId?: string): Promise<McpServer[]> {
+    const servers: McpServer[] = []
+    let cursor: string | undefined
+    do {
+      const response = await this.#call<ListMcpServerStatusResponse>('mcpServerStatus/list', {
+        detail: 'full',
+        ...(threadId ? { threadId } : {}),
+        ...(cursor ? { cursor } : {}),
+      })
+      servers.push(
+        ...response.data.map((status) =>
+          mapMcpServerStatus(status, this.#mcpStartup.get(mcpStartupKey(threadId, status.name))),
+        ),
+      )
+      cursor = response.nextCursor ?? undefined
+    } while (cursor)
+    return servers
+  }
+
   async startThread(workspacePath: string, options: StartOptions = {}): Promise<Thread> {
     const approval = options.approval ? APPROVAL[options.approval] : undefined
     if (options.approval && !approval) {
@@ -390,6 +415,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#rpc?.dispose()
     this.#rpc = undefined
     this.#started = false
+    this.#mcpStartup.clear()
   }
 
   #call<T>(method: string, params: unknown): Promise<T> {
@@ -577,6 +603,12 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         return
       }
 
+      case 'mcpServer/startupStatus/updated': {
+        const p = params as McpServerStatusUpdatedNotification
+        this.#mcpStartup.set(mcpStartupKey(p.threadId ?? undefined, p.name), mapMcpStartupStatus(p))
+        return
+      }
+
       default:
         // Codex emits far more than we consume (realtime audio, MCP progress,
         // remote control). Ignoring the rest is correct; logging it is how we
@@ -584,6 +616,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         this.emit('log', `unmapped notification: ${method}`)
     }
   }
+}
+
+function mcpStartupKey(threadId: string | undefined, server: string): string {
+  return `${threadId ?? ''}\0${server}`
 }
 
 function rateLimitLabel(minutes: number | null, fallback: string): string {
