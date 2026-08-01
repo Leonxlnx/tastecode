@@ -111,7 +111,7 @@ export const methods = {
     }),
     result: z.object({
       results: z.array(SessionSearchResultSchema),
-      nextCursor: z.string().nullable(),
+      nextCursor: z.string().min(1).nullable(),
     }),
   },
   'auth.status': {

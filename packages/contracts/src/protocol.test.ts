@@ -187,6 +187,7 @@ describe('protocol envelopes', () => {
         nextCursor: 'next-page',
       }).nextCursor,
     ).toBe('next-page')
+    expect(() => methods['search.sessions'].result.parse({ results: [], nextCursor: '' })).toThrow()
     expect(() => methods['search.sessions'].params.parse({ query: '   ' })).toThrow()
     expect(() =>
       methods['search.sessions'].params.parse({ query: 'regression', limit: 101 }),
