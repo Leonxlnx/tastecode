@@ -33,7 +33,8 @@ function defaultLocation(): string {
 }
 
 function canonicalProjectPath(projectPath: string): string {
-  const resolved = realpathSync.native(path.resolve(projectPath))
+  const absolute = path.resolve(projectPath)
+  const resolved = existsSync(absolute) ? realpathSync.native(absolute) : absolute
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved
 }
 

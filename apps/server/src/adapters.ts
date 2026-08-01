@@ -7,6 +7,7 @@ import type {
   Capabilities,
   DomainEvent,
   McpServer,
+  McpServerConfig,
   Model,
   ProviderId,
   Thread,
@@ -32,6 +33,9 @@ export type StartOptions = {
    * folder itself, so two agents cannot overwrite each other.
    */
   isolate?: boolean | undefined
+  /** Internal project overrides and their already-resolved OS credentials. */
+  mcpServers?: McpServerConfig[] | undefined
+  mcpCredentials?: Record<string, string> | undefined
 }
 
 export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>
@@ -47,6 +51,20 @@ export interface AgentSession {
   steer?(threadId: string, text: string, attachments?: string[]): Promise<void>
   interrupt(threadId: string): Promise<void>
   listMcpServers?(threadId?: string): Promise<McpServer[]>
+  reloadMcpServers?(
+    threadId: string,
+    servers: McpServerConfig[],
+    credentials: Record<string, string>,
+  ): Promise<void>
+  startMcpOAuth?(serverId: string, threadId: string): Promise<{ loginId: string; authUrl: string }>
+  onMcpOAuth?(
+    listener: (result: {
+      serverId: string
+      loginId: string
+      success: boolean
+      error: string | null
+    }) => void,
+  ): void
   respondToApproval(approvalId: string, decision: ApprovalDecision): void
   dispose(): void
   on(event: 'event', listener: (event: DomainEvent) => void): void
@@ -80,7 +98,10 @@ export function providerRuntime(
 function codexRuntime(onLog: (line: string) => void): ProviderRuntime {
   return {
     async start(workspacePath, options) {
-      const adapter = new CodexAdapter()
+      const adapter = new CodexAdapter({
+        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+        ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
+      })
       adapter.on('log', onLog)
       await adapter.start()
       const thread = await adapter.startThread(workspacePath, options)

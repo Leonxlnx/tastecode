@@ -4,7 +4,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Capabilities, DomainEvent, McpServer, ProviderId } from '@harness/contracts'
-import type { AgentSession, ProviderRuntime } from './adapters.js'
+import type { AgentSession, ProviderRuntime, StartOptions } from './adapters.js'
+import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
 import * as checkpoint from './checkpoint.js'
@@ -83,10 +84,12 @@ function harness(worktreeRoot?: string) {
 
   /** Where each session was actually told to run. */
   const startedIn: string[] = []
+  const startedOptions: StartOptions[] = []
 
   const runtimeFor = (): ProviderRuntime => ({
-    async start(workspacePath) {
+    async start(workspacePath, options) {
       startedIn.push(workspacePath)
+      startedOptions.push(options)
       const session = new FakeSession(`s${sessions.length + 1}`)
       sessions.push(session)
       return {
@@ -108,11 +111,15 @@ function harness(worktreeRoot?: string) {
     onEvent: (threadId, event) => received.push({ threadId, event }),
     onLog: () => {},
     onLogin: () => {},
+    mcpConfig: new McpConfigStore(
+      path.join(mkdtempSync(path.join(os.tmpdir(), 'harness-mcp-')), 'mcp.json'),
+    ),
+    readCredential: (reference) => `secret:${reference}`,
     runtimeFor,
     ...(worktreeRoot ? { worktreeRoot } : {}),
   })
 
-  return { store, sessions, received, orchestrator, startedIn }
+  return { store, sessions, received, orchestrator, startedIn, startedOptions }
 }
 
 const message = (text: string): DomainEvent => ({
@@ -165,6 +172,30 @@ describe('MCP inventory', () => {
     await expect(orchestrator.listMcpServers('codex', '/repo')).resolves.toMatchObject({
       capabilities: { inventory: true },
       servers: [{ id: 'docs', startup: { state: 'failed' } }],
+    })
+  })
+
+  it('applies project overrides and resolves only their credential references', async () => {
+    const { orchestrator, startedOptions } = harness()
+    orchestrator.addMcpServer('codex', '/repo', {
+      id: 'docs',
+      enabled: true,
+      transport: {
+        type: 'http',
+        url: 'https://example.com/mcp',
+        headers: { Authorization: { source: 'credential', credentialRef: 'mcp/docs/auth' } },
+      },
+    })
+
+    await orchestrator.startThread('codex', '/repo')
+
+    expect(startedOptions[0]).toMatchObject({
+      mcpServers: [{ id: 'docs', enabled: true }],
+      mcpCredentials: { 'mcp/docs/auth': 'secret:mcp/docs/auth' },
+    })
+    await expect(orchestrator.listMcpServers('codex', '/repo')).resolves.toMatchObject({
+      capabilities: { add: true, reload: true, startOAuth: true, cancelOAuth: false },
+      servers: [{ id: 'docs', scope: 'project', enabled: true }],
     })
   })
 })

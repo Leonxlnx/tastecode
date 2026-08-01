@@ -25,6 +25,7 @@ import type {
   DomainEvent,
   McpCapabilities,
   McpServer,
+  McpServerConfig,
   Model,
   PanicStopResult,
   ProviderId,
@@ -33,6 +34,8 @@ import type {
   Thread,
 } from '@harness/contracts'
 import { readSessionDiff, reviewDiffFile, reviewDiffHunk } from './diff-review.js'
+import { McpConfigStore } from './mcp-config.js'
+import { readCredential } from './credentials.js'
 
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
@@ -77,6 +80,13 @@ export class Orchestrator {
     provider: ProviderId,
     result: { loginId: string | null; success: boolean; error: string | null },
   ) => void
+  #onMcpOAuth: (
+    provider: ProviderId,
+    projectPath: string,
+    result: { serverId: string; loginId: string; success: boolean; error: string | null },
+  ) => void
+  #mcpConfig: McpConfigStore
+  #readCredential: (reference: string) => string
 
   /**
    * How a provider is turned into a running session. Injectable so the
@@ -96,6 +106,13 @@ export class Orchestrator {
         provider: ProviderId,
         result: { loginId: string | null; success: boolean; error: string | null },
       ) => void
+      onMcpOAuth?: (
+        provider: ProviderId,
+        projectPath: string,
+        result: { serverId: string; loginId: string; success: boolean; error: string | null },
+      ) => void
+      mcpConfig?: McpConfigStore
+      readCredential?: (reference: string) => string
       runtimeFor?: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
       /** Where isolated checkouts live. Outside any repository, on purpose. */
       worktreeRoot?: string
@@ -107,6 +124,9 @@ export class Orchestrator {
     this.#onQueue = handlers.onQueue ?? (() => {})
     this.#onLog = handlers.onLog
     this.#onLogin = handlers.onLogin
+    this.#onMcpOAuth = handlers.onMcpOAuth ?? (() => {})
+    this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
+    this.#readCredential = handlers.readCredential ?? readCredential
     this.#runtimeFor = handlers.runtimeFor ?? providerRuntime
   }
 
@@ -149,10 +169,113 @@ export class Orchestrator {
         this.#store.thread(thread.id)?.projectPath === projectPath &&
         session.listMcpServers,
     )
-    const servers = active?.session.listMcpServers
+    const inherited = active?.session.listMcpServers
       ? await active.session.listMcpServers(active.thread.id)
       : await (await this.#controlAdapter()).listMcpServers()
-    return { capabilities: CODEX_MCP_CAPABILITIES, servers }
+    const servers = new Map(inherited.map((server) => [server.id, server]))
+    for (const config of this.#mcpConfig.list(provider, projectPath)) {
+      const current = servers.get(config.id)
+      const base: McpServer = current ?? {
+        id: config.id,
+        scope: 'project',
+        enabled: config.enabled,
+        auth: { status: 'not_required' },
+        startup: { state: 'stopped' },
+        tools: [],
+        resources: [],
+        resourceTemplates: [],
+      }
+      servers.set(config.id, {
+        ...base,
+        scope: 'project',
+        enabled: config.enabled,
+        ...(!config.enabled
+          ? { startup: { state: 'stopped' as const } }
+          : {
+              transport: config.transport,
+              ...(config.displayName ? { displayName: config.displayName } : {}),
+            }),
+      })
+    }
+    return { capabilities: CODEX_MCP_CAPABILITIES, servers: [...servers.values()] }
+  }
+
+  addMcpServer(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
+    this.#requireMcpManagement(provider)
+    this.#mcpConfig.add(provider, projectPath, server)
+  }
+
+  updateMcpServer(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
+    this.#requireMcpManagement(provider)
+    this.#mcpConfig.update(provider, projectPath, server)
+  }
+
+  removeMcpServer(provider: ProviderId, projectPath: string, serverId: string): void {
+    this.#requireMcpManagement(provider)
+    this.#mcpConfig.remove(provider, projectPath, serverId)
+  }
+
+  async reloadMcpServers(provider: ProviderId, projectPath: string): Promise<void> {
+    this.#requireMcpManagement(provider)
+    const active = [...this.#threads.values()].find(
+      ({ thread }) =>
+        thread.provider === provider && this.#store.thread(thread.id)?.projectPath === projectPath,
+    )
+    if (!active?.session.reloadMcpServers) {
+      throw new Error('start a Codex session for this project before reloading MCP servers')
+    }
+    const options = this.#mcpRuntimeOptions(provider, projectPath)
+    await active.session.reloadMcpServers(
+      active.thread.id,
+      options.mcpServers ?? [],
+      options.mcpCredentials ?? {},
+    )
+  }
+
+  async startMcpOAuth(
+    provider: ProviderId,
+    projectPath: string,
+    serverId: string,
+  ): Promise<{ loginId: string; authUrl: string }> {
+    this.#requireMcpManagement(provider)
+    const active = [...this.#threads.values()].find(
+      ({ thread }) =>
+        thread.provider === provider && this.#store.thread(thread.id)?.projectPath === projectPath,
+    )
+    if (!active?.session.startMcpOAuth) {
+      throw new Error('start a Codex session for this project before signing in to an MCP server')
+    }
+    return active.session.startMcpOAuth(serverId, active.thread.id)
+  }
+
+  cancelMcpOAuth(provider: ProviderId): never {
+    throw new Error(
+      `provider "${provider}" cannot cancel MCP OAuth; close the browser flow instead`,
+    )
+  }
+
+  #requireMcpManagement(provider: ProviderId): void {
+    if (provider !== 'codex')
+      throw new Error(`provider "${provider}" cannot manage MCP servers yet`)
+  }
+
+  #mcpRuntimeOptions(provider: ProviderId, projectPath: string): StartOptions {
+    if (provider !== 'codex') return {}
+    const mcpServers = this.#mcpConfig.list(provider, projectPath)
+    const mcpCredentials: Record<string, string> = {}
+    for (const server of mcpServers) {
+      if (!server.enabled) continue
+      const values =
+        server.transport.type === 'stdio'
+          ? Object.values(server.transport.environment ?? {})
+          : Object.values(server.transport.headers ?? {})
+      for (const value of values) {
+        if (value.source === 'credential' && mcpCredentials[value.credentialRef] === undefined) {
+          mcpCredentials[value.credentialRef] = this.#readCredential(value.credentialRef)
+        }
+      }
+    }
+    return { mcpServers, mcpCredentials }
   }
 
   async account(provider: ProviderId): Promise<Account> {
@@ -200,9 +323,10 @@ export class Orchestrator {
       : undefined
 
     const runtime = this.#runtimeFor(provider, this.#onLog)
+    const runtimeOptions = { ...options, ...this.#mcpRuntimeOptions(provider, workspacePath) }
     let started
     try {
-      started = await runtime.start(worktree?.path ?? workspacePath, options)
+      started = await runtime.start(worktree?.path ?? workspacePath, runtimeOptions)
     } catch (error) {
       // A worktree for a session that never started is litter, and the next
       // attempt would trip over it.
@@ -212,6 +336,7 @@ export class Orchestrator {
 
     const { thread, session } = started
     this.#threads.set(thread.id, { thread, session, ...(worktree ? { worktree } : {}) })
+    session.onMcpOAuth?.((result) => this.#onMcpOAuth(provider, workspacePath, result))
 
     this.#store.addProject(workspacePath)
     this.#store.addThread({
