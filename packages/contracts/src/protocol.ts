@@ -85,6 +85,134 @@ export const ResponseSchema = z.union([
 ])
 export type Response = z.infer<typeof ResponseSchema>
 
+export type JsonValue =
+  string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
+
+export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number().finite(),
+    z.boolean(),
+    z.null(),
+    z.array(JsonValueSchema),
+    z.record(z.string(), JsonValueSchema),
+  ]),
+)
+
+const HttpUrlSchema = z
+  .url()
+  .refine((value) => /^https?:\/\//i.test(value), 'expected an HTTP or HTTPS URL')
+
+export const McpConfigValueSchema = z.discriminatedUnion('source', [
+  /** Non-secret config only. Credentials must use the reference shape below. */
+  z.object({ source: z.literal('literal'), value: z.string() }),
+  z.object({ source: z.literal('credential'), credentialRef: z.string().min(1) }),
+])
+export type McpConfigValue = z.infer<typeof McpConfigValueSchema>
+
+export const McpTransportSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('stdio'),
+    command: z.string().min(1),
+    args: z.array(z.string()).optional(),
+    cwd: z.string().min(1).optional(),
+    environment: z.record(z.string().min(1), McpConfigValueSchema).optional(),
+  }),
+  z.object({
+    type: z.literal('http'),
+    url: HttpUrlSchema,
+    headers: z.record(z.string().min(1), McpConfigValueSchema).optional(),
+  }),
+])
+export type McpTransport = z.infer<typeof McpTransportSchema>
+
+export const McpServerScopeSchema = z.enum(['project', 'global'])
+export type McpServerScope = z.infer<typeof McpServerScopeSchema>
+
+export const McpAuthSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('unsupported') }),
+  z.object({ status: z.literal('not_required') }),
+  z.object({ status: z.literal('sign_in_required'), method: z.enum(['oauth', 'bearer']) }),
+  z.object({ status: z.literal('authenticated'), method: z.enum(['oauth', 'bearer']) }),
+])
+export type McpAuth = z.infer<typeof McpAuthSchema>
+
+export const McpStartupStatusSchema = z.discriminatedUnion('state', [
+  z.object({ state: z.literal('stopped') }),
+  z.object({ state: z.literal('starting') }),
+  z.object({ state: z.literal('ready') }),
+  z.object({ state: z.literal('failed'), message: z.string().min(1) }),
+])
+export type McpStartupStatus = z.infer<typeof McpStartupStatusSchema>
+
+export const McpToolSchema = z.object({
+  name: z.string().min(1),
+  title: z.string().min(1).optional(),
+  description: z.string().optional(),
+  inputSchema: z.record(z.string(), JsonValueSchema),
+  outputSchema: z.record(z.string(), JsonValueSchema).optional(),
+})
+export type McpTool = z.infer<typeof McpToolSchema>
+
+export const McpResourceSchema = z.object({
+  uri: z.string().min(1),
+  name: z.string().min(1),
+  title: z.string().min(1).optional(),
+  description: z.string().optional(),
+  mimeType: z.string().min(1).optional(),
+  size: z.number().int().nonnegative().optional(),
+})
+export type McpResource = z.infer<typeof McpResourceSchema>
+
+export const McpResourceTemplateSchema = z.object({
+  uriTemplate: z.string().min(1),
+  name: z.string().min(1),
+  title: z.string().min(1).optional(),
+  description: z.string().optional(),
+  mimeType: z.string().min(1).optional(),
+})
+export type McpResourceTemplate = z.infer<typeof McpResourceTemplateSchema>
+
+/** A project entry either hides an inherited server or defines its replacement. */
+export const McpServerConfigSchema = z.discriminatedUnion('enabled', [
+  z.object({ id: z.string().min(1), enabled: z.literal(false) }),
+  z.object({
+    id: z.string().min(1),
+    enabled: z.literal(true),
+    displayName: z.string().min(1).optional(),
+    transport: McpTransportSchema,
+  }),
+])
+export type McpServerConfig = z.infer<typeof McpServerConfigSchema>
+
+export const McpServerSchema = z.object({
+  id: z.string().min(1),
+  displayName: z.string().min(1).optional(),
+  description: z.string().optional(),
+  version: z.string().min(1).optional(),
+  scope: McpServerScopeSchema,
+  enabled: z.boolean(),
+  /** Vendor-global inventory may not expose its underlying transport. */
+  transport: McpTransportSchema.optional(),
+  auth: McpAuthSchema,
+  startup: McpStartupStatusSchema,
+  tools: z.array(McpToolSchema),
+  resources: z.array(McpResourceSchema),
+  resourceTemplates: z.array(McpResourceTemplateSchema),
+})
+export type McpServer = z.infer<typeof McpServerSchema>
+
+export const McpCapabilitiesSchema = z.object({
+  inventory: z.boolean(),
+  add: z.boolean(),
+  update: z.boolean(),
+  remove: z.boolean(),
+  reload: z.boolean(),
+  startOAuth: z.boolean(),
+  cancelOAuth: z.boolean(),
+})
+export type McpCapabilities = z.infer<typeof McpCapabilitiesSchema>
+
 export const SearchSnippetPartSchema = z.object({
   text: z.string(),
   highlighted: z.boolean(),

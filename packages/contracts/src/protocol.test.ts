@@ -4,6 +4,10 @@ import {
   channels,
   DiffFileSchema,
   ErrorCode,
+  McpCapabilitiesSchema,
+  McpServerConfigSchema,
+  McpServerSchema,
+  McpStartupStatusSchema,
   methods,
   PushSchema,
   RequestSchema,
@@ -299,6 +303,98 @@ describe('protocol envelopes', () => {
     expect(() =>
       methods['search.sessions'].params.parse({ query: 'regression', limit: 101 }),
     ).toThrow()
+  })
+
+  it('validates provider-neutral MCP inventory', () => {
+    const servers = McpServerSchema.array().parse([
+      {
+        id: 'local-files',
+        displayName: 'Local files',
+        scope: 'project',
+        enabled: true,
+        transport: {
+          type: 'stdio',
+          command: 'node',
+          args: ['server.js'],
+          environment: {
+            API_TOKEN: { source: 'credential', credentialRef: 'mcp/local-files/token' },
+          },
+        },
+        auth: { status: 'not_required' },
+        startup: { state: 'ready' },
+        tools: [
+          {
+            name: 'read_file',
+            inputSchema: {
+              type: 'object',
+              properties: { path: { type: 'string' } },
+              required: ['path'],
+            },
+          },
+        ],
+        resources: [{ uri: 'project://readme', name: 'README', mimeType: 'text/markdown' }],
+        resourceTemplates: [
+          {
+            uriTemplate: 'project://files/{path}',
+            name: 'Project file',
+            mimeType: 'text/plain',
+          },
+        ],
+      },
+      {
+        id: 'github',
+        scope: 'global',
+        enabled: true,
+        auth: { status: 'sign_in_required', method: 'oauth' },
+        startup: { state: 'stopped' },
+        tools: [],
+        resources: [],
+        resourceTemplates: [],
+      },
+    ])
+
+    expect(servers[0]?.scope).toBe('project')
+    expect(servers[1]?.transport).toBeUndefined()
+    expect(
+      McpCapabilitiesSchema.parse({
+        inventory: true,
+        add: true,
+        update: true,
+        remove: true,
+        reload: true,
+        startOAuth: true,
+        cancelOAuth: false,
+      }).cancelOAuth,
+    ).toBe(false)
+    expect(
+      McpServerConfigSchema.parse({
+        id: 'remote-docs',
+        enabled: true,
+        transport: {
+          type: 'http',
+          url: 'https://mcp.example.test',
+          headers: {
+            Authorization: {
+              source: 'credential',
+              credentialRef: 'mcp/remote-docs/authorization',
+            },
+          },
+        },
+      }).id,
+    ).toBe('remote-docs')
+    expect(McpServerConfigSchema.parse({ id: 'github', enabled: false })).toEqual({
+      id: 'github',
+      enabled: false,
+    })
+    expect(() => McpServerConfigSchema.parse({ id: 'missing-transport', enabled: true })).toThrow()
+    expect(() =>
+      McpServerConfigSchema.parse({
+        id: 'bad-url',
+        enabled: true,
+        transport: { type: 'http', url: 'ftp://example.test' },
+      }),
+    ).toThrow()
+    expect(() => McpStartupStatusSchema.parse({ state: 'failed', message: '' })).toThrow()
   })
 
   it('bounds normalized voice clips at the protocol boundary', () => {
