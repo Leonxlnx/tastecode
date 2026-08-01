@@ -30,6 +30,7 @@ const view = (items: ReturnType<typeof makeFixtureThread>) => (
     plan={[]}
     diff={undefined}
     approvals={[]}
+    reviews={[]}
     onDecide={() => {}}
   />
 )

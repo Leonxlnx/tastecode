@@ -2232,6 +2232,46 @@
   flex: 1;
 }
 
+.approval--review {
+  border-left-color: var(--text-3);
+}
+
+.approval--review.is-approved {
+  border-left-color: var(--success);
+}
+
+.approval--review.is-denied {
+  border-left-color: var(--error);
+}
+
+.approval--review .approval__head {
+  margin-bottom: 6px;
+}
+
+.approval-review__risk {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  margin-left: auto;
+  text-transform: uppercase;
+}
+
+.approval-review__description,
+.approval-review__rationale {
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.approval-review__description {
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+
+.approval-review__rationale {
+  color: var(--text-2);
+  margin-top: 6px;
+}
+
 /* ---------- diff ---------- */
 
 .diff {
