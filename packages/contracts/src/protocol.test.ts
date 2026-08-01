@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { DomainEventSchema, ItemSchema } from './domain.js'
-import { channels, methods, PushSchema, RequestSchema } from './protocol.js'
+import {
+  channels,
+  ErrorCode,
+  methods,
+  PushSchema,
+  RequestSchema,
+  ResponseSchema,
+} from './protocol.js'
 
 describe('domain events', () => {
   it('accepts a streaming delta', () => {
@@ -164,6 +171,51 @@ describe('protocol envelopes', () => {
     expect(result.session.costUsd).toBeUndefined()
     expect(result.today.costUsd).toBe(0.04)
     expect(result.limits[0]?.usedPercent).toBe(25)
+  })
+
+  it('validates versioned diff review and stale snapshot errors', () => {
+    const diff = {
+      threadId: 'thread-1',
+      version: 'snapshot-1',
+      files: [
+        {
+          path: 'src/index.ts',
+          status: 'modified' as const,
+          binary: false,
+          hunks: [
+            {
+              id: 'hunk-1',
+              header: '@@ -1 +1 @@',
+              oldStart: 1,
+              oldLines: 1,
+              newStart: 1,
+              newLines: 1,
+              lines: [
+                { kind: 'deletion' as const, oldLine: 1, text: 'old' },
+                { kind: 'addition' as const, newLine: 1, text: 'new' },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(methods['thread.diff'].result.parse(diff)).toEqual(diff)
+    expect(
+      methods['thread.reviewHunk'].params.parse({
+        threadId: 'thread-1',
+        version: 'snapshot-1',
+        path: 'src/index.ts',
+        hunkId: 'hunk-1',
+        decision: 'reject',
+      }).decision,
+    ).toBe('reject')
+    expect(
+      ResponseSchema.parse({
+        id: 'request-1',
+        error: { code: ErrorCode.STALE_SNAPSHOT, message: 'Refresh the diff and try again.' },
+      }),
+    ).toMatchObject({ error: { code: 'stale_snapshot' } })
   })
 
   it('validates paginated cross-session search', () => {

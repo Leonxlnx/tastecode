@@ -29,6 +29,7 @@ export const ErrorCode = {
   BAD_REQUEST: 'bad_request',
   NOT_FOUND: 'not_found',
   PROVIDER_UNAVAILABLE: 'provider_unavailable',
+  STALE_SNAPSHOT: 'stale_snapshot',
   INTERNAL: 'internal',
 } as const
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode]
@@ -94,6 +95,57 @@ export const SessionSearchResultSchema = z.object({
   snippet: z.array(SearchSnippetPartSchema).min(1),
 })
 export type SessionSearchResult = z.infer<typeof SessionSearchResultSchema>
+
+export const DiffLineSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('context'),
+    oldLine: z.number().int().positive(),
+    newLine: z.number().int().positive(),
+    text: z.string(),
+  }),
+  z.object({
+    kind: z.literal('addition'),
+    newLine: z.number().int().positive(),
+    text: z.string(),
+  }),
+  z.object({
+    kind: z.literal('deletion'),
+    oldLine: z.number().int().positive(),
+    text: z.string(),
+  }),
+])
+export type DiffLine = z.infer<typeof DiffLineSchema>
+
+export const DiffHunkDecisionSchema = z.enum(['accept', 'reject'])
+export type DiffHunkDecision = z.infer<typeof DiffHunkDecisionSchema>
+
+export const DiffHunkSchema = z.object({
+  id: z.string().min(1),
+  header: z.string(),
+  oldStart: z.number().int().nonnegative(),
+  oldLines: z.number().int().nonnegative(),
+  newStart: z.number().int().nonnegative(),
+  newLines: z.number().int().nonnegative(),
+  lines: z.array(DiffLineSchema),
+  decision: DiffHunkDecisionSchema.optional(),
+})
+export type DiffHunk = z.infer<typeof DiffHunkSchema>
+
+export const DiffFileSchema = z.object({
+  path: z.string().min(1),
+  previousPath: z.string().min(1).optional(),
+  status: z.enum(['added', 'modified', 'deleted', 'renamed']),
+  binary: z.boolean(),
+  hunks: z.array(DiffHunkSchema),
+})
+export type DiffFile = z.infer<typeof DiffFileSchema>
+
+export const SessionDiffSchema = z.object({
+  threadId: z.string(),
+  version: z.string().min(1),
+  files: z.array(DiffFileSchema),
+})
+export type SessionDiff = z.infer<typeof SessionDiffSchema>
 
 /**
  * Method table. Adding a method means adding it here first — this object is the
@@ -310,6 +362,20 @@ export const methods = {
       events: z.array(z.object({ seq: z.number(), event: DomainEventSchema })),
       running: z.boolean(),
     }),
+  },
+  'thread.diff': {
+    params: z.object({ threadId: z.string() }),
+    result: SessionDiffSchema,
+  },
+  'thread.reviewHunk': {
+    params: z.object({
+      threadId: z.string(),
+      version: z.string().min(1),
+      path: z.string().min(1),
+      hunkId: z.string().min(1),
+      decision: DiffHunkDecisionSchema,
+    }),
+    result: z.object({ diff: SessionDiffSchema }),
   },
   /** Persistent token totals, with money only when the provider reports it. */
   'usage.summary': {
