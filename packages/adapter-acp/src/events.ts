@@ -22,7 +22,7 @@ const KIND_TO_ITEM: Partial<Record<ToolKind, Item['type']>> = {
 export class Streamer {
   #turnId: string
   /** The item currently accumulating text, per kind. */
-  #open = new Map<'message' | 'reasoning', string>()
+  #open = new Map<'message' | 'reasoning', Item>()
   /**
    * What each tool call was when it started.
    *
@@ -58,6 +58,15 @@ export class Streamer {
     this.#tools.clear()
   }
 
+  /** Finish streamed items before the turn closes so history has immutable text. */
+  finish(): DomainEvent[] {
+    const events = [this.#complete('message'), this.#complete('reasoning')].filter(
+      (event): event is DomainEvent => event !== undefined,
+    )
+    this.#tools.clear()
+    return events
+  }
+
   translate(update: SessionUpdate): DomainEvent[] {
     switch (update.sessionUpdate) {
       case 'agent_message_chunk':
@@ -87,25 +96,34 @@ export class Streamer {
 
     const existing = this.#open.get(kind)
     if (existing) {
-      return [{ type: 'item.delta', turnId: this.#turnId, itemId: existing, textDelta: text }]
+      this.#open.set(kind, { ...existing, text: (existing.text ?? '') + text })
+      return [{ type: 'item.delta', turnId: this.#turnId, itemId: existing.id, textDelta: text }]
     }
 
     const id = `${this.#turnId}-${kind}-${++this.#counter}`
-    this.#open.set(kind, id)
+    const item: Item = {
+      id,
+      turnId: this.#turnId,
+      type: kind,
+      status: 'started',
+      ...(kind === 'message' ? { role: 'assistant' as const } : {}),
+      text,
+      createdAt: Date.now(),
+    }
+    this.#open.set(kind, item)
     return [
       {
         type: 'item.started',
-        item: {
-          id,
-          turnId: this.#turnId,
-          type: kind,
-          status: 'started',
-          ...(kind === 'message' ? { role: 'assistant' as const } : {}),
-          text,
-          createdAt: Date.now(),
-        },
+        item,
       },
     ]
+  }
+
+  #complete(kind: 'message' | 'reasoning'): DomainEvent | undefined {
+    const item = this.#open.get(kind)
+    if (!item) return undefined
+    this.#open.delete(kind)
+    return { type: 'item.completed', item: { ...item, status: 'completed' } }
   }
 
   #toolCall(update: SessionUpdate): DomainEvent[] {
@@ -121,10 +139,9 @@ export class Streamer {
     const type = (kind && KIND_TO_ITEM[kind]) ?? 'tool_call'
     const finished = update.status === 'completed' || update.status === 'failed'
 
-    // A tool call interrupts the prose around it. Leaving the message item open
-    // across it would append the agent's next sentence to the paragraph from
-    // before the call, which reads as one thought when it is two.
-    this.#open.delete('message')
+    // A tool call interrupts the prose around it. Complete that message before
+    // the tool so its text remains immutable and the next sentence starts fresh.
+    const completedMessage = this.#complete('message')
 
     const item: Item = {
       id,
@@ -148,6 +165,7 @@ export class Streamer {
     if (output) item.text = item.text ? `${item.text}\n${output}` : output
 
     const events: DomainEvent[] = [
+      ...(completedMessage ? [completedMessage] : []),
       finished ? { type: 'item.completed', item } : { type: 'item.started', item },
     ]
 

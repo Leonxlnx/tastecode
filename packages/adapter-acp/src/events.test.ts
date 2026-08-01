@@ -32,6 +32,10 @@ describe('Streamer', () => {
     const delta = second[0]
     if (started?.type !== 'item.started' || delta?.type !== 'item.delta') throw new Error('shape')
     expect(delta.itemId).toBe(started.item.id)
+
+    const completed = streamer.finish()[0]
+    if (completed?.type !== 'item.completed') throw new Error('shape')
+    expect(completed.item).toMatchObject({ status: 'completed', text: 'hello world' })
   })
 
   it('keeps thinking separate from the answer', () => {
@@ -132,7 +136,7 @@ describe('Streamer', () => {
     const streamer = new Streamer('t1')
 
     streamer.translate(chunk('agent_message_chunk', 'before'))
-    streamer.translate({
+    const tool = streamer.translate({
       sessionUpdate: 'tool_call',
       toolCallId: 'x',
       kind: 'execute',
@@ -141,6 +145,7 @@ describe('Streamer', () => {
     const after = streamer.translate(chunk('agent_message_chunk', 'after'))
 
     // Appending "after" to the "before" item would read as one thought.
+    expect(tool[0]).toMatchObject({ type: 'item.completed', item: { text: 'before' } })
     expect(after[0]?.type).toBe('item.started')
   })
 

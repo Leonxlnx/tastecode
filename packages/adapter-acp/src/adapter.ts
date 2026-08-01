@@ -290,7 +290,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   }
 
   #finishTurn(turnId: string, stopReason: PromptResult['stopReason']): void {
-    this.#streamer?.reset()
+    for (const event of this.#streamer?.finish() ?? []) this.emit('event', event)
 
     // Anything still waiting is now unanswerable — the turn it belonged to is
     // over. Clearing them stops the UI showing a card that can never resolve.
