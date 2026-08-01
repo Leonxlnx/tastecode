@@ -2,7 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { DomainEvent, ProviderId, SessionSearchResult, Usage } from '@harness/contracts'
+import type {
+  DiffDecision,
+  DomainEvent,
+  ProviderId,
+  SessionSearchResult,
+  Usage,
+} from '@harness/contracts'
 
 /**
  * Everything that has to survive a restart.
@@ -136,6 +142,13 @@ CREATE VIRTUAL TABLE IF NOT EXISTS session_search USING fts5 (
   created_at UNINDEXED,
   text,
   tokenize = 'unicode61'
+);
+
+CREATE TABLE IF NOT EXISTS diff_decisions (
+  thread_id TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  decision  TEXT NOT NULL,
+  PRIMARY KEY (thread_id, target_id)
 );
 
 CREATE INDEX IF NOT EXISTS checkpoints_by_thread ON checkpoints (thread_id, seq);
@@ -340,7 +353,24 @@ export class Store {
     this.#db.prepare(`DELETE FROM events WHERE thread_id = ?`).run(id)
     this.#db.prepare(`DELETE FROM checkpoints WHERE thread_id = ?`).run(id)
     this.#db.prepare(`DELETE FROM restore_undos WHERE thread_id = ?`).run(id)
+    this.#db.prepare(`DELETE FROM diff_decisions WHERE thread_id = ?`).run(id)
     this.#db.prepare(`DELETE FROM threads WHERE id = ?`).run(id)
+  }
+
+  setDiffDecision(threadId: string, targetId: string, decision: DiffDecision): void {
+    this.#db
+      .prepare(
+        `INSERT INTO diff_decisions (thread_id, target_id, decision) VALUES (?, ?, ?)
+         ON CONFLICT (thread_id, target_id) DO UPDATE SET decision = excluded.decision`,
+      )
+      .run(threadId, targetId, decision)
+  }
+
+  diffDecision(threadId: string, targetId: string): DiffDecision | undefined {
+    const row = this.#db
+      .prepare(`SELECT decision FROM diff_decisions WHERE thread_id = ? AND target_id = ?`)
+      .get(threadId, targetId) as { decision: DiffDecision } | undefined
+    return row?.decision
   }
 
   // ---- events ------------------------------------------------------------

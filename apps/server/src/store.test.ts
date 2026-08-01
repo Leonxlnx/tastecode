@@ -441,6 +441,24 @@ describe('cross-session search', () => {
   })
 })
 
+describe('diff review decisions', () => {
+  beforeEach(() => {
+    store.addProject('/repo')
+    store.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'Review' })
+  })
+
+  it('persists the latest decision and removes it with the thread', () => {
+    store.setDiffDecision('t1', 'hunk:one', 'accept')
+    expect(store.diffDecision('t1', 'hunk:one')).toBe('accept')
+
+    store.setDiffDecision('t1', 'hunk:one', 'reject')
+    expect(store.diffDecision('t1', 'hunk:one')).toBe('reject')
+
+    store.deleteThread('t1')
+    expect(store.diffDecision('t1', 'hunk:one')).toBeUndefined()
+  })
+})
+
 describe('usage totals', () => {
   it('turns cumulative Codex updates into session and daily increments', () => {
     vi.useFakeTimers()
