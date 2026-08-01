@@ -4,6 +4,7 @@ import type {
   ApprovalDecision,
   ApprovalMode,
   ApprovalRequest,
+  ApprovalReview,
   Capabilities,
   DomainEvent,
   McpServer,
@@ -31,6 +32,10 @@ import type { ListMcpServerStatusResponse } from './generated/v2/ListMcpServerSt
 import type { McpServerStatusUpdatedNotification } from './generated/v2/McpServerStatusUpdatedNotification'
 import type { McpServerOauthLoginResponse } from './generated/v2/McpServerOauthLoginResponse'
 import type { McpServerOauthLoginCompletedNotification } from './generated/v2/McpServerOauthLoginCompletedNotification'
+import type { GuardianApprovalReviewAction } from './generated/v2/GuardianApprovalReviewAction'
+import type { GuardianApprovalReviewStatus } from './generated/v2/GuardianApprovalReviewStatus'
+import type { ItemGuardianApprovalReviewCompletedNotification } from './generated/v2/ItemGuardianApprovalReviewCompletedNotification'
+import type { ItemGuardianApprovalReviewStartedNotification } from './generated/v2/ItemGuardianApprovalReviewStartedNotification'
 import type { JsonValue } from './generated/serde_json/JsonValue.js'
 import { mapMcpServerStatus, mapMcpStartupStatus, prepareMcpConfig } from './mcp.js'
 
@@ -74,6 +79,7 @@ export const CODEX_CAPABILITIES: Capabilities = {
   interrupt: true,
   reasoningItems: true,
   approvals: true,
+  autoReview: true,
   images: true,
 }
 
@@ -92,10 +98,63 @@ export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>
  * `full` is genuinely dangerous, which is why the UI never makes it the quiet
  * default and never remembers it silently across sessions.
  */
-const APPROVAL: Partial<Record<ApprovalMode, { approvalPolicy: string; sandbox: string }>> = {
+export const CODEX_APPROVAL: Record<
+  ApprovalMode,
+  { approvalPolicy: string; sandbox: string; approvalsReviewer?: 'auto_review' }
+> = {
   ask: { approvalPolicy: 'untrusted', sandbox: 'read-only' },
   auto: { approvalPolicy: 'on-request', sandbox: 'workspace-write' },
+  'auto-review': {
+    approvalPolicy: 'on-request',
+    sandbox: 'workspace-write',
+    approvalsReviewer: 'auto_review',
+  },
   full: { approvalPolicy: 'never', sandbox: 'danger-full-access' },
+}
+
+const REVIEW_STATUS: Record<GuardianApprovalReviewStatus, ApprovalReview['status']> = {
+  inProgress: 'in_progress',
+  approved: 'approved',
+  denied: 'denied',
+  timedOut: 'timed_out',
+  aborted: 'aborted',
+}
+
+function describeApprovalReviewAction(action: GuardianApprovalReviewAction): string {
+  switch (action.type) {
+    case 'command':
+      return `Run ${action.command}`
+    case 'execve':
+      return `Run ${[action.program, ...action.argv].join(' ')}`
+    case 'applyPatch':
+      return action.files.length === 1
+        ? `Edit ${action.files[0]}`
+        : `Edit ${action.files.length} files`
+    case 'networkAccess':
+      return `Connect to ${action.target}`
+    case 'mcpToolCall':
+      return `Use ${action.toolTitle ?? `${action.server}.${action.toolName}`}`
+    case 'requestPermissions':
+      return action.reason
+        ? `Request extra permissions: ${action.reason}`
+        : 'Request extra permissions'
+  }
+}
+
+export function mapAutoApprovalReview(
+  params:
+    ItemGuardianApprovalReviewStartedNotification | ItemGuardianApprovalReviewCompletedNotification,
+): ApprovalReview {
+  return {
+    id: params.reviewId,
+    turnId: params.turnId,
+    status: REVIEW_STATUS[params.review.status],
+    description: describeApprovalReviewAction(params.action),
+    ...(params.review.rationale ? { rationale: params.review.rationale } : {}),
+    ...(params.review.riskLevel ? { riskLevel: params.review.riskLevel } : {}),
+    startedAt: params.startedAtMs,
+    ...('completedAtMs' in params ? { completedAt: params.completedAtMs } : {}),
+  }
 }
 
 /**
@@ -399,10 +458,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   }
 
   async startThread(workspacePath: string, options: StartOptions = {}): Promise<Thread> {
-    const approval = options.approval ? APPROVAL[options.approval] : undefined
-    if (options.approval && !approval) {
-      throw new Error('Codex automatic approval review is not implemented')
-    }
+    const approval = options.approval ? CODEX_APPROVAL[options.approval] : undefined
     const config = {
       ...(options.effort ? { model_reasoning_effort: options.effort } : {}),
       ...(Object.keys(this.#mcpServers).length ? { mcp_servers: this.#mcpServers } : {}),
@@ -597,6 +653,22 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
             status: 'completed',
             createdAt: p.completedAtMs,
           }),
+        })
+        return
+      }
+
+      case 'item/autoApprovalReview/started': {
+        emit({
+          type: 'approval.review.started',
+          review: mapAutoApprovalReview(params as ItemGuardianApprovalReviewStartedNotification),
+        })
+        return
+      }
+
+      case 'item/autoApprovalReview/completed': {
+        emit({
+          type: 'approval.review.completed',
+          review: mapAutoApprovalReview(params as ItemGuardianApprovalReviewCompletedNotification),
         })
         return
       }
