@@ -1,0 +1,50 @@
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { describe, expect, it } from 'vitest'
+import { McpConfigStore } from './mcp-config.js'
+
+function setup(): { project: string; location: string; store: McpConfigStore } {
+  const root = mkdtempSync(path.join(tmpdir(), 'harness-mcp-config-'))
+  const project = path.join(root, 'project')
+  mkdirSync(project)
+  const location = path.join(root, 'config', 'mcp.json')
+  return { project, location, store: new McpConfigStore(location) }
+}
+
+describe('project MCP config', () => {
+  it('adds, updates, and removes one project without disturbing another', () => {
+    const { project, location, store } = setup()
+    const otherProject = path.join(path.dirname(project), 'other')
+    mkdirSync(otherProject)
+
+    store.add('codex', otherProject, { id: 'other', enabled: false })
+    store.add('codex', project, {
+      id: 'docs',
+      enabled: true,
+      transport: { type: 'http', url: 'https://example.com/mcp' },
+    })
+    store.update('codex', project, { id: 'docs', enabled: false })
+
+    expect(store.list('codex', project)).toEqual([{ id: 'docs', enabled: false }])
+    expect(() => store.add('codex', project, { id: 'docs', enabled: false })).toThrow(
+      'already exists',
+    )
+
+    store.remove('codex', project, 'docs')
+    expect(store.list('codex', project)).toEqual([])
+    expect(store.list('codex', otherProject)).toEqual([{ id: 'other', enabled: false }])
+    expect(readFileSync(location, 'utf8')).not.toContain('example.com')
+  })
+
+  it('rejects malformed hand-edited config instead of overwriting it', () => {
+    const { project, location, store } = setup()
+    mkdirSync(path.dirname(location))
+    writeFileSync(
+      location,
+      '{"version":1,"projects":{"bad":{"codex":{"x":{"id":"y","enabled":false}}}}}',
+    )
+
+    expect(() => store.list('codex', project)).toThrow('invalid MCP server "x"')
+  })
+})
