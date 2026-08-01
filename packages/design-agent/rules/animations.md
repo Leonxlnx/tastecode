@@ -1,6 +1,6 @@
 # Animation Rules
 
-*Runtime-ready rules for landing pages, portfolios, and normal websites. Derived from `../research/animations/`. These rules complement `anti-slop.md` rather than replacing its motion, accessibility, interaction, or engineering rules.*
+_Runtime-ready rules for landing pages, portfolios, and normal websites. Derived from `../research/animations/`. These rules complement `anti-slop.md` rather than replacing its motion, accessibility, interaction, or engineering rules._
 
 ## 1. Enforcement
 

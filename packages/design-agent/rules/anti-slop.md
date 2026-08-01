@@ -1,6 +1,6 @@
 # Web Design Quality Rules
 
-*Synthesis of four independent research reports plus an audit of the existing non-image Taste Skill variants. This document contains the quality rules for later Taste Skill v2 development; it is not the final runtime prompt.*
+_Synthesis of four independent research reports plus an audit of the existing non-image Taste Skill variants. This document contains the quality rules for later Taste Skill v2 development; it is not the final runtime prompt._
 
 ## 1. Enforcement model
 
@@ -35,6 +35,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 ### Brand and visual identity
 
 ### VIS-001 - Unchosen indigo, violet, or purple palette
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not use the common indigo-to-violet AI palette unless it belongs to the brand or concept.
 - **Failure signature:** Purple or indigo CTA, gradient headline, colored glow, and accent tokens appear before any brand reasoning.
@@ -44,6 +45,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 V-01; R2 Color, "Tailwind indigo/violet default palette."
 
 ### VIS-002 - Gradient text used as instant visual interest
+
 - **Level:** CONTEXTUAL WARNING; HARD BAN when text disappears or fails contrast
 - **Rule:** Keep important text solid unless a verified brand treatment requires a gradient.
 - **Failure signature:** `bg-clip-text text-transparent` on the key word of a generic hero headline.
@@ -53,6 +55,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 V-02; R2 Color and Surface sections; WCAG 2.2 SC 1.4.3.
 
 ### VIS-003 - Neon-on-near-black as a generic technology identity
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not equate technology with a dark canvas, neon accent, and colored outer glow.
 - **Failure signature:** Near-black page, cyan or violet accent, luminous borders, and dim gray body copy regardless of product category.
@@ -62,6 +65,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 V-03 and V-05; R2 "Neon accents on near-black backgrounds."
 
 ### VIS-004 - Contrast sacrificed for a muted aesthetic
+
 - **Level:** HARD BAN when WCAG thresholds fail
 - **Rule:** Never use low-contrast gray text, translucent text, or white text on bright accent fills without measuring contrast.
 - **Failure signature:** Placeholder gray becomes body text; muted labels disappear; white text sits on 400-scale Tailwind colors.
@@ -71,6 +75,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 A-05; R2 Color findings; R4 5.10; WCAG 2.2 SC 1.4.3.
 
 ### VIS-005 - Palette without a usable neutral ramp
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Define background, surface, border, primary text, secondary text, and disabled roles instead of using one accent plus white.
 - **Failure signature:** Two-color palette, arbitrary opacity modifiers, and no stable hierarchy across surfaces.
@@ -80,6 +85,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R2 "Absence of a neutral ramp" and "Single-accent monoculture."
 
 ### VIS-006 - Semantic colors used as decoration
+
 - **Level:** CONTEXTUAL WARNING; HARD BAN when color is the only cue
 - **Rule:** Reserve success, warning, and error colors for state, and pair state color with text, shape, or iconography.
 - **Failure signature:** Random green and red cards, rainbow status dots, or colored tabs with no semantic meaning.
@@ -89,6 +95,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 V-09; R2 "Semantic color misuse"; R4 5.11; WCAG 2.2 SC 1.4.1.
 
 ### VIS-007 - Default font stack treated as brand voice
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not select Inter, Geist, Roboto, or Space Grotesk solely because they are familiar defaults.
 - **Failure signature:** Default sans across every role, generic logo-less wordmark, and no relationship between typography and subject.
@@ -98,6 +105,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 V-04; R2 Typography and Brand findings.
 
 ### VIS-008 - No typographic role system
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Define display, heading, body, label, utility, and data roles only when needed; do not style tags independently.
 - **Failure signature:** One typeface, three arbitrary weights, isolated pixel sizes, and no repeatable hierarchy.
@@ -107,6 +115,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R2 Typography findings: single typeface, weight misuse, scale monotony or chaos.
 
 ### VIS-009 - Broken leading, tracking, or measure
+
 - **Level:** HARD BAN when text clips, overlaps, or becomes unreadable; otherwise AVOID BY DEFAULT
 - **Rule:** Do not use display line-height for paragraphs, tight tracking on small text, or full-container body measure.
 - **Failure signature:** Multi-line heading at line-height 1, body copy wider than roughly 70 characters, clipped italic descenders, or dense all-caps paragraphs.
@@ -116,6 +125,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R2 Typography findings; R4 5.12; WCAG 2.2 SC 1.4.12.
 
 ### VIS-010 - Center-aligned reading text and all-caps overuse
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Keep multi-line reading copy left-aligned and reserve uppercase for short functional UI labels such as buttons, form labels, navigation items, status tags, table headers, or compact real metadata.
 - **Failure signature:** Centered paragraphs, long all-caps descriptions, and letter-spaced utility styling applied to ordinary prose.
@@ -125,6 +135,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R2 "All-Caps Overuse" and "Center-Aligned Body Copy."
 
 ### VIS-011 - Radius monoculture
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not apply the same large radius to navigation, cards, media, inputs, buttons, and entire sections.
 - **Failure signature:** `rounded-2xl` or `rounded-3xl` on nearly every container.
@@ -134,6 +145,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 V-06; R2 "Radius monoculture."
 
 ### VIS-012 - Surface and elevation monotony
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Use cards and elevation only when enclosure or depth communicates a real object or hierarchy.
 - **Failure signature:** Every paragraph becomes a bordered card; every dark card uses `bg-white/5 border-white/10`; every light card receives the same shadow.
@@ -143,6 +155,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 V-06; R2 Surface findings.
 
 ### VIS-013 - Effect stacking without material logic
+
 - **Level:** CONTEXTUAL WARNING
 - **Rule:** Do not combine gradient fill, glass blur, border, glow, noise, and shadow on the same surface merely to make it feel premium.
 - **Failure signature:** Multiple decorative cues communicate no state or depth difference.
@@ -152,6 +165,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 V-03; R2 Surface findings: cue stacking, aurora blobs, glass, grain, and animated borders.
 
 ### VIS-014 - Uniform section rhythm
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not give every section identical vertical padding, container width, heading placement, and density.
 - **Failure signature:** Repeated `py-24 sm:py-32`, centered heading, content block, and identical exit spacing across the page.
@@ -161,6 +175,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 S-10; R2 Surface findings; R3 Full-page architecture.
 
 ### VIS-015 - Unmodified component-library skin
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not ship the default shadcn, Tailwind UI, Bootstrap, or design-system theme as the product identity.
 - **Failure signature:** Default fonts, radii, neutral colors, shadows, and component spacing remain unchanged.
@@ -170,6 +185,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 V-08; R2 Brand findings.
 
 ### VIS-016 - Brand token and cross-page drift
+
 - **Level:** HARD BAN when inconsistency changes meaning or usability; otherwise AVOID BY DEFAULT
 - **Rule:** Do not regenerate a new color, radius, label, or component treatment per page.
 - **Failure signature:** Multiple primary blues, mixed neutral temperatures, inconsistent button labels, and unrelated surface systems.
@@ -179,6 +195,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R2 Brand findings: token drift, cross-page inconsistency, missing brand primitives.
 
 ### VIS-017 - Arbitrary theme inversion inside one page
+
 - **Level:** AVOID BY DEFAULT; HARD BAN when contrast or meaning breaks
 - **Rule:** Do not flip whole sections between unrelated light and dark themes merely to create variety.
 - **Failure signature:** A coherent dark page suddenly becomes warm paper, then returns to dark, with different text, border, and accent logic in each section.
@@ -188,6 +205,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 theme-lock rules, deduplicated against VIS-016.
 
 ### VIS-018 - Category palette stereotype
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not equate every premium consumer, artisan, wellness, cookware, or heritage project with beige, cream, brass, clay, ochre, oxblood, and espresso.
 - **Failure signature:** The same warm-craft palette appears before any brand, product, photography, or audience evidence supports it.
@@ -199,6 +217,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 ### Page architecture, sections, and layout components
 
 ### LAY-001 - Canonical marketing-section conveyor belt
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** When the user request and existing project leave page structure open, do not automatically generate hero, logos, three features, stats, testimonials, pricing, FAQ, CTA, and footer in that order.
 - **Failure signature:** The page sequence follows category convention without reflecting the visitor's actual questions or decision path.
@@ -208,6 +227,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 S-01; R3 Full-page architecture.
 
 ### LAY-002 - Centered hero package emitted by reflex
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** When no hero direction is supplied, do not reflexively choose a giant centered headline, short paragraph, dual CTAs, and a decorative preview below.
 - **Failure signature:** The first viewport could introduce any software company after a logo swap.
@@ -217,6 +237,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 S-02; R3 Hero.
 
 ### LAY-003 - Hero fails the first viewport
+
 - **Level:** HARD BAN
 - **Rule:** The first viewport must identify the subject, value, and next action without clipping, overflow, or hiding the primary CTA.
 - **Failure signature:** Four-line desktop H1, CTA below the fold, overlapping nav, or decorative media displacing the message.
@@ -226,6 +247,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R3 Hero; R4 Responsive failures.
 
 ### LAY-004 - Navigation optimized for appearance instead of orientation
+
 - **Level:** HARD BAN when destinations become inaccessible; otherwise AVOID BY DEFAULT
 - **Rule:** Do not hide ordinary desktop navigation, use mystery labels, or make menu animation more prominent than destinations.
 - **Failure signature:** Hamburger-only desktop nav, icon-only destinations, wrapped header, dead dropdown, or capsule nav chosen for trend value.
@@ -235,6 +257,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 S-11; R3 Navigation; R4 4.3.
 
 ### LAY-005 - Three equal feature cards as the first answer
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** When the presentation is unspecified, do not turn every set of three copy points into three equal icon cards.
 - **Failure signature:** Identical card size, icon placement, text length, and hover lift regardless of feature importance.
@@ -244,6 +267,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 S-03; R3 Feature presentation and 4.1.
 
 ### LAY-006 - Bento grid used as a synonym for good design
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not use a bento grid unless differences in cell size and placement communicate hierarchy or relationships.
 - **Failure signature:** Arbitrary mixed spans, text-only cells, empty filler cells, and no meaningful reading order.
@@ -253,6 +277,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 S-05; R3 4.2.
 
 ### LAY-007 - Decorative fake product demonstration
+
 - **Level:** HARD BAN when presented as real behavior
 - **Rule:** Do not represent a product with styled rectangles, fake terminals, or hardcoded dashboards that imply functionality the product does not have.
 - **Failure signature:** Browser chrome around static divs, fake live values, decorative chat, or controls that cannot be used.
@@ -262,6 +287,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 V-11 and B-05; R3 Product demonstrations and 4.16.
 
 ### LAY-008 - Unverified logo wall or social-proof band
+
 - **Level:** HARD BAN when logos or relationships are fabricated; otherwise AVOID BY DEFAULT
 - **Rule:** Do not add "Trusted by" proof without supplied, attributable evidence.
 - **Failure signature:** Grayscale logo cloud, anonymous marks, fake companies, or unrelated famous logos.
@@ -271,6 +297,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 S-04, C-04; R3 Social proof and 4.8.
 
 ### LAY-009 - Decorative stat band
+
 - **Level:** HARD BAN when numbers are invented; otherwise AVOID BY DEFAULT
 - **Rule:** Do not create large round metrics merely to add visual authority.
 - **Failure signature:** `99.9%`, `10x`, or millions of users without provenance, context, timeframe, or denominator.
@@ -280,6 +307,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 S-07 and C-03; R3 4.9.
 
 ### LAY-010 - Biased or decorative comparison
+
 - **Level:** HARD BAN when materially misleading; otherwise CONTEXTUAL WARNING
 - **Rule:** Do not build a comparison whose criteria exist only to make the preferred option win.
 - **Failure signature:** Vague checkmarks, missing labels on mobile, invented competitor limitations, or preselected winner without evidence.
@@ -289,6 +317,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R3 Comparison; R1 C-07.
 
 ### LAY-011 - Numbered cards pretending to explain a process
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not treat numbered boxes and abstract icons as proof of how a product works.
 - **Failure signature:** Three or four equal steps with no artifact or state changing between them.
@@ -298,6 +327,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R3 Process and How It Works.
 
 ### LAY-012 - Three pricing cards with an arbitrary highlighted middle tier
+
 - **Level:** HARD BAN when prices or savings are invented; otherwise AVOID BY DEFAULT
 - **Rule:** When pricing structure is unspecified, do not default to three equal plans, a "Most Popular" pill, and a cosmetic billing toggle.
 - **Failure signature:** Highlighted center plan without usage evidence, crossed-out invented price, or toggle that changes no value.
@@ -307,6 +337,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 S-06; R3 Pricing and 4.11.
 
 ### LAY-013 - Generic testimonial grid
+
 - **Level:** HARD BAN when people or quotes are fabricated; otherwise AVOID BY DEFAULT
 - **Rule:** Do not create three equal testimonial cards to fill a trust section.
 - **Failure signature:** Stock avatars, generic praise, identical quote lengths, and no product context.
@@ -316,6 +347,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 C-02; R3 Testimonials and 4.10.
 
 ### LAY-014 - FAQ added only to extend the page
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Include an FAQ only for unresolved, real objections that were not clearer elsewhere.
 - **Failure signature:** Generic questions, marketing answers, and accordion copy that repeats earlier sections.
@@ -325,6 +357,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 S-08; R3 FAQ and 4.12.
 
 ### LAY-015 - Repeated closing CTA
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not add a giant final CTA when the same action has already concluded the journey.
 - **Failure signature:** Repeated hero headline, oversized color field, duplicate buttons, and unused empty space before the footer.
@@ -334,6 +367,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R3 Full-page architecture, Calls to action, and 4.17.
 
 ### LAY-016 - Appended or theatrical footer
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not use an enormous wordmark, newsletter box, or dense mega-footer solely as a dramatic ending.
 - **Failure signature:** Tiny low-contrast utility links beneath a giant identity treatment unrelated to the page.
@@ -343,6 +377,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 S-10; R3 Footers and 4.20.
 
 ### LAY-017 - Repeated 50/50 image-text zigzag
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not alternate left-image/right-copy rows throughout the page without changing information mechanics.
 - **Failure signature:** Every section uses the same split, ratio, scale, and reveal with sides swapped.
@@ -352,6 +387,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 S-10; R3 4.15 and Repetition findings.
 
 ### LAY-018 - Auto-advancing content used to hide weak information architecture
+
 - **Level:** CONTEXTUAL WARNING; HARD BAN when users cannot pause or reach content
 - **Rule:** Do not rotate heroes, testimonials, or features automatically unless timing, control, and accessibility are justified.
 - **Failure signature:** Content changes before reading is complete, dots are dead, offscreen slides remain focusable, or movement continues indefinitely.
@@ -361,6 +397,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 S-09; R3 4.7; R4 2.14-2.15.
 
 ### LAY-019 - Hero overloaded with secondary content
+
 - **Level:** AVOID BY DEFAULT; HARD BAN when the primary action or meaning leaves the first viewport
 - **Rule:** Keep the hero focused on identification, value, and the primary next action. Do not also pack feature lists, pricing teasers, trust microcopy, logo walls, testimonial avatars, and secondary metadata into the same opening composition, or push useful content down with unjustified top padding.
 - **Failure signature:** The hero becomes a miniature landing page, the primary message competes with several unrelated proof and feature blocks, or empty space delays the headline and CTA.
@@ -370,6 +407,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 hero-stack and first-viewport audit; extends LAY-003 without replacing it.
 
 ### LAY-020 - CTA or desktop navigation wraps unnecessarily
+
 - **Level:** HARD BAN for CTA labels at normal desktop widths; otherwise AVOID BY DEFAULT
 - **Rule:** Keep CTA labels and primary desktop navigation items on one line when usable horizontal space exists.
 - **Failure signature:** A CTA breaks into two lines, a desktop nav becomes two rows, or an oversized header consumes a large part of the first viewport.
@@ -379,6 +417,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 CTA-wrap, single-line navigation, and navigation-height checks.
 
 ### LAY-021 - Multiple labels for the same CTA intent
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Use one clear label for one action instead of renaming the same intent across navigation, hero, body, and footer.
 - **Failure signature:** `Get in touch`, `Let's talk`, `Contact us`, and `Start a project` all lead to the same destination on one page.
@@ -388,6 +427,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 duplicate-intent CTA audit.
 
 ### LAY-022 - Split-header filler composition
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not default to a large headline on the left and a small floating explanation in the far-right corner merely to fill a grid.
 - **Failure signature:** The right paragraph has weak alignment, adds no necessary information, and leaves a large unresolved gap between related text.
@@ -397,6 +437,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 production-test split-header findings.
 
 ### LAY-023 - Long list or data dump used as a landing-page section
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not paste a long list, award archive, publication table, capability inventory, or pricing matrix into a marketing page without prioritization.
 - **Failure signature:** Visitors face many similar rows with no grouping, summary, search, disclosure, or path to the full dataset.
@@ -406,6 +447,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 content-density and long-list audit.
 
 ### LAY-024 - Divider monotony in lists and specifications
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not use top and bottom hairlines on every row as the automatic treatment for long lists or spec sheets.
 - **Failure signature:** Ten or more identical text rows form a spreadsheet-like wall with borders providing no additional grouping.
@@ -415,6 +457,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 list and specification-table audit.
 
 ### LAY-025 - Decorative score or progress visualization
+
 - **Level:** AVOID BY DEFAULT; HARD BAN when values are fabricated or misleading
 - **Rule:** Do not use filled progress tracks, scores, gauges, or percentage bars merely to make a comparison look quantitative.
 - **Failure signature:** Arbitrary partial fills imply measurement without a scale, source, denominator, or real progress state.
@@ -424,6 +467,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 decorative comparison-visual audit; complements LAY-009 and LAY-010.
 
 ### LAY-026 - Ornamental overlays, crosshairs, and rotated edge text
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not add crosshair grids, registration lines, vertically rotated labels, or tags over images solely to make a composition feel art-directed.
 - **Failure signature:** Lines organize no content, edge text is difficult to read, and image pills repeat category or issue metadata with no action or provenance.
@@ -433,6 +477,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 production-test decoration audit.
 
 ### LAY-027 - Accidental absolute positioning and optical misalignment
+
 - **Level:** HARD BAN when reading order, interaction, or responsiveness breaks; otherwise AVOID BY DEFAULT
 - **Rule:** Do not use arbitrary absolute coordinates to assemble ordinary sections, and do not accept mathematically centered elements that look visibly misaligned.
 - **Failure signature:** Content drifts, overlaps, detaches from its anchor, or requires many breakpoint-specific offsets; icons and labels look off despite equal numeric spacing.
@@ -444,6 +489,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 ### Copy, credibility, imagery, and icons
 
 ### CNT-001 - Generic marketing abstraction
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Remove claims that could describe any product, including vague transformation, elevation, seamlessness, and power language.
 - **Failure signature:** Buzzword-heavy headline and copy with no object, action, constraint, or outcome.
@@ -453,6 +499,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 C-01; R3 brand-swap test.
 
 ### CNT-002 - Fabricated testimonial or identity
+
 - **Level:** HARD BAN
 - **Rule:** Never invent a customer, quote, portrait, rating, or attribution and present it as real.
 - **Failure signature:** Generated headshot, synthetic name, invented title, fake review, or placeholder avatar framed as social proof.
@@ -462,6 +509,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 C-02; R2 Imagery; FTC Consumer Reviews and Testimonials Rule.
 
 ### CNT-003 - Invented metric, benchmark, award, or outcome
+
 - **Level:** HARD BAN
 - **Rule:** Never create precise numbers, rankings, adoption claims, awards, or performance outcomes without evidence.
 - **Failure signature:** Plausible but sourceless percentages, customer counts, speedups, or trophy claims.
@@ -471,6 +519,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 C-03 and C-07.
 
 ### CNT-004 - Fake or unauthorized customer and partner logos
+
 - **Level:** HARD BAN
 - **Rule:** Do not imply a commercial relationship through a logo without verification and permission where required.
 - **Failure signature:** Famous logos inserted as trust decoration or fictional logos presented as customers.
@@ -480,6 +529,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 C-04; R3 Social proof.
 
 ### CNT-005 - Placeholder and meta-text shipped as content
+
 - **Level:** HARD BAN
 - **Rule:** Do not ship lorem ipsum, `href="#"`, TODO copy, generic names, scaffold titles, AI meta-language, or placeholder-image services.
 - **Failure signature:** Demo text or routes remain visible in production.
@@ -489,6 +539,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 C-05, C-06, I-03, I-06.
 
 ### CNT-006 - Formulaic AI cadence treated as a ban target
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Edit repetitive antithesis, rule-of-three phrasing, mechanical boldface, list soup, and punctuation habits, but do not use a single punctuation mark as proof of AI.
 - **Failure signature:** Every sentence follows the same rhetorical pattern and the page sounds generated rather than spoken by the brand.
@@ -498,6 +549,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 C-08 and C-09; R1 Executive Summary warns that single tells are weak.
 
 ### CNT-007 - Decorative or mismatched imagery
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not use glossy 3D blobs, unrelated stock photos, code screens, or oversized hero art that adds no information about the subject.
 - **Failure signature:** The image could move to an unrelated company without changing meaning.
@@ -507,6 +559,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 V-10; R2 Imagery findings.
 
 ### CNT-008 - Incoherent icon and illustration system
+
 - **Level:** AVOID BY DEFAULT; HARD BAN when icon-only controls lack names
 - **Rule:** Do not mix emoji, hand-drawn SVGs, outline-library icons, and unrelated illustration styles without a system. Do not hand-draw routine interface glyphs when a coherent installed icon family already covers them.
 - **Failure signature:** Lucide used for every concept, inconsistent stroke weights, emoji features, or invisible labels on controls.
@@ -516,6 +569,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 V-12 and A-03; R2 Imagery and Iconography.
 
 ### CNT-009 - Eyebrow, kicker, or overline copy
+
 - **Level:** HARD BAN - Taste Skill authoring policy
 - **Rule:** Never generate eyebrow, kicker, overline, pretitle, or tiny label copy above a heading.
 - **Failure signature:** A section begins with a small uppercase word, pill, category, or phrase such as `OUR APPROACH`, `SELECTED WORK`, `CREATIVE STUDIO`, or `BUILT FOR TEAMS` before the actual heading.
@@ -525,6 +579,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** Taste Skill v2 authoring policy, informed by R1 and R3 hero and section-template findings.
 
 ### CNT-010 - Decorative filler text
+
 - **Level:** HARD BAN - Taste Skill authoring policy
 - **Rule:** If text is unnecessary, omit it. Every visible text fragment must provide information, instruction, evidence, identification, navigation, status, or an action.
 - **Failure signature:** Floating words or pseudo-metadata such as `ATELIER`, `STUDIO XXX`, `EST. 2026`, fake coordinates, archive numbers, timestamps, issue codes, or repeated brand fragments exist only to make the composition look designed.
@@ -534,6 +589,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** Taste Skill v2 authoring policy; R1 C-01 and C-05; R3 filler-section and brand-swap tests.
 
 ### CNT-011 - Bloated headline or prematurely forced wrap
+
 - **Level:** HARD BAN - Taste Skill authoring policy
 - **Rule:** Use the shortest precise headline that preserves the intended meaning. Do not turn body-copy sentences into headings, and do not force an earlier line break while usable horizontal space remains.
 - **Failure signature:** A desktop headline runs for three to five lines unnecessarily, ends as a full marketing sentence, leaves large unused width beside it, isolates one or two words per line, or wraps early because of `<br>`, narrow `max-width`, nested spans, or nonbreaking spaces.
@@ -545,6 +601,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 ### Interaction and behavior
 
 ### INT-001 - Dead link or CTA
+
 - **Level:** HARD BAN
 - **Rule:** Every visible link and CTA must reach a valid destination or perform its stated action.
 - **Failure signature:** `href="#"`, missing route, 404, click handler stub, or button with no effect.
@@ -554,6 +611,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 B-01 and B-02; R4 Interaction failures.
 
 ### INT-002 - Cosmetic-only control
+
 - **Level:** HARD BAN when presented as functional
 - **Rule:** A tab, filter, switch, search field, pagination control, or selector must change the corresponding content or state.
 - **Failure signature:** Active styling changes but data, media, URL, or accessible state does not.
@@ -563,6 +621,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 B-06; R4 2.1 and 2.13.
 
 ### INT-003 - Fake form submission or unconditional success
+
 - **Level:** HARD BAN
 - **Rule:** Never show success unless the action succeeded, and never discard user input silently.
 - **Failure signature:** Timeout-based success toast, form with no endpoint, swallowed failure, or submit button outside a real form.
@@ -572,6 +631,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 B-03 and B-04; R4 2.2, 2.11-2.12, 7.6-7.10.
 
 ### INT-004 - Fabricated live state
+
 - **Level:** HARD BAN
 - **Rule:** Do not label hardcoded or random values as live, synced, secure, online, or real-time.
 - **Failure signature:** Perpetual pulse, fake activity feed, static uptime, or timer-backed data unrelated to a source.
@@ -581,6 +641,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 B-05; R4 2.3.
 
 ### INT-005 - Mouse-only pseudo-control
+
 - **Level:** HARD BAN
 - **Rule:** Actions must use native buttons or links and remain operable through keyboard, assistive technology, touch, and pointer input.
 - **Failure signature:** Click handler on `div`, `span`, or `li`; pointerdown-only action; role-button without complete keyboard behavior.
@@ -590,6 +651,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 A-01; R4 2.5 and 5.1; WCAG 2.2 SC 2.1.1.
 
 ### INT-006 - Hover-gated content without keyboard or touch path
+
 - **Level:** HARD BAN
 - **Rule:** Menus, previews, and required information revealed on hover must also work through focus and touch.
 - **Failure signature:** `group-hover` submenu, hover-only tooltip, or preview that disappears across a pointer gap.
@@ -599,6 +661,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R4 2.6 and 4.4; WCAG 2.2 SC 1.4.13 and 2.1.1.
 
 ### INT-007 - Menu or overlay without complete dismissal
+
 - **Level:** HARD BAN
 - **Rule:** Non-persistent overlays must close on Escape, outside activation where appropriate, trigger reactivation, and route change.
 - **Failure signature:** Orphaned menu, stale overlay after navigation, leaked listener, or focus left behind it.
@@ -608,6 +671,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R4 2.7; APG Menu and Menu Button patterns.
 
 ### INT-008 - Broken modal contract
+
 - **Level:** HARD BAN
 - **Rule:** Modal dialogs must establish initial focus, contain focus, label themselves, dismiss safely, prevent background interaction, and restore focus.
 - **Failure signature:** Focus leaks behind the modal, Escape fails, background scrolls, or backdrop click destroys unsaved work.
@@ -617,6 +681,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 A-02; R4 2.8-2.9 and 5.4; APG Dialog pattern.
 
 ### INT-009 - Accessible state contradicts visible state
+
 - **Level:** HARD BAN
 - **Rule:** Update visual, behavioral, and ARIA state together.
 - **Failure signature:** `aria-expanded="false"` on an open menu, cosmetic disabled state, switch that does not change value, or hidden content remaining focusable.
@@ -626,6 +691,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R4 2.10 and 5.8; WCAG 2.2 SC 4.1.2.
 
 ### INT-010 - Missing loading, empty, error, pending, or rollback behavior
+
 - **Level:** HARD BAN when omission causes silent failure or data loss
 - **Rule:** Implement only the states the feature can actually enter, but cover all real asynchronous and empty outcomes.
 - **Failure signature:** Blank section, infinite spinner, duplicate mutation, optimistic update without rollback, or empty table with no explanation.
@@ -635,6 +701,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 B-08 and I-11; R4 Validation and QA failures.
 
 ### INT-011 - Modal used for an ordinary inline task
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not open a modal for every edit, explanation, confirmation, or secondary action.
 - **Failure signature:** Simple field changes, help text, filters, or low-risk actions repeatedly interrupt context and create nested overlays.
@@ -644,6 +711,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 redesign and component anti-pattern audit; complements INT-008.
 
 ### INT-012 - Browser alert used as application feedback
+
 - **Level:** AVOID BY DEFAULT; HARD BAN when it loses context or blocks recovery
 - **Rule:** Do not use `window.alert()`, `confirm()`, or `prompt()` as routine form, validation, error, or success UI.
 - **Failure signature:** Browser chrome replaces contextual feedback, cannot point to the failing field, blocks interaction, or communicates no recovery path.
@@ -653,6 +721,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 redesign interaction audit.
 
 ### INT-013 - Missing hover, active, or current-state feedback
+
 - **Level:** HARD BAN when state becomes ambiguous; otherwise AVOID BY DEFAULT
 - **Rule:** Interactive elements must expose the feedback relevant to their input and state, including hover where a pointer exists, visible press or activation, focus, disabled state, selection, and current location.
 - **Failure signature:** Buttons feel inert, selected tabs look identical, active navigation is invisible, or a control appears disabled without behaving as disabled.
@@ -664,6 +733,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 ### Motion
 
 ### MOT-001 - Animation everywhere
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not animate every section, card, icon, and background simply to signal polish.
 - **Failure signature:** Page-wide fade-up, floating decorations, animated gradients, pulsing dots, and hover lifts applied indiscriminately.
@@ -673,6 +743,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 V-07; R4 Motion findings.
 
 ### MOT-002 - One reveal animation repeated across the page
+
 - **Level:** AVOID BY DEFAULT
 - **Rule:** Do not use the same viewport fade and upward offset on most sections.
 - **Failure signature:** Every block begins hidden and replays the same entrance.
@@ -682,6 +753,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 V-07; R4 3.8.
 
 ### MOT-003 - Motion ignores user preference
+
 - **Level:** HARD BAN
 - **Rule:** Respect `prefers-reduced-motion` across CSS, JavaScript, and animation libraries without breaking state changes.
 - **Failure signature:** Parallax, travel, autoplay, or continuous movement persists after reduced motion is enabled.
@@ -691,6 +763,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 A-09; R4 3.3-3.4 and 5.14; WCAG 2.2 SC 2.3.3.
 
 ### MOT-004 - Scrolljacking and mandatory full-page snapping
+
 - **Level:** HARD BAN when native navigation is blocked; otherwise CONTEXTUAL WARNING
 - **Rule:** Do not intercept wheel or touch input to replace normal document scrolling without a compelling interaction need.
 - **Failure signature:** Prevented wheel events, forced slide transitions, trapped horizontal scene, or inaccessible in-between content.
@@ -700,6 +773,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R4 3.5-3.7.
 
 ### MOT-005 - Layout-property animation in hot paths
+
 - **Level:** CONTEXTUAL WARNING; HARD BAN when it causes sustained jank
 - **Rule:** Prefer transform and opacity for frequent motion; profile width, height, top, left, filter, clip, and shadow animation instead of banning them categorically.
 - **Failure signature:** Per-frame layout reads and writes, scroll-linked React state, or animated geometry across large trees.
@@ -709,6 +783,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R4 3.9 and 6.13-6.14.
 
 ### MOT-006 - Leaked listeners, timers, animation frames, or instances
+
 - **Level:** HARD BAN
 - **Rule:** Every subscription, timer, animation frame, and animation instance must have symmetric cleanup and lifecycle ownership.
 - **Failure signature:** Duplicate animation after navigation, background work in hidden tabs, stale closure, or increasing CPU use.
@@ -718,6 +793,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R4 3.10 and 6.11.
 
 ### MOT-007 - Repaint-heavy effects and indiscriminate layer promotion
+
 - **Level:** CONTEXTUAL WARNING
 - **Rule:** Do not animate large blur, backdrop-filter, shadow, or filter surfaces or apply permanent `will-change` without measurement.
 - **Failure signature:** Large glowing blobs, scrolling glass layers, many promoted cards, and high GPU memory use.
@@ -727,6 +803,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 V-03; R4 3.11 and 6.13.
 
 ### MOT-008 - Motion blocks or contradicts interaction
+
 - **Level:** HARD BAN when input is delayed or state becomes incorrect
 - **Rule:** Motion must be interruptible, retargetable, and secondary to user input.
 - **Failure signature:** Button disabled until animation completes, conflicting tweens, long exits, non-settling spring, or state jump unannounced.
@@ -736,6 +813,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R4 3.12-3.13.
 
 ### MOT-009 - Continuous input routed through render state
+
 - **Level:** CONTEXTUAL WARNING; HARD BAN when it causes sustained jank or feedback lag
 - **Rule:** Do not route scroll position, pointer coordinates, drag progress, magnetic hover, or animation-frame values through component render state on every frame.
 - **Failure signature:** Raw scroll handlers call state setters, `requestAnimationFrame` mutates React state, or the page rerenders large trees during pointer movement.
@@ -745,6 +823,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R4 performance findings; R5 existing skill motion audit.
 
 ### MOT-010 - Conflicting animation ownership and unnecessary layout measurement
+
 - **Level:** AVOID BY DEFAULT; HARD BAN when state or cleanup becomes incorrect
 - **Rule:** Do not let multiple animation runtimes control the same element or attach layout-measurement features to static content without a transition need.
 - **Failure signature:** GSAP, Motion, CSS transitions, and custom rAF compete for transforms; static trees carry layout props; route changes leave orphaned timelines.
@@ -754,6 +833,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 animation-library and layout-transition audit; complements MOT-006.
 
 ### MOT-011 - Custom cursor as decorative substitution
+
 - **Level:** AVOID BY DEFAULT; HARD BAN when the native pointer, focus, selection, or input feedback is lost
 - **Rule:** Do not replace the system cursor merely to make a site feel experimental.
 - **Failure signature:** Delayed follower, hidden pointer, unreadable cursor state, touch artifacts, or cursor animation competing with actual controls.
@@ -765,6 +845,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 ### Responsive design and accessibility
 
 ### ACC-001 - Fixed width or minimum width creates horizontal overflow
+
 - **Level:** HARD BAN
 - **Rule:** Pages must reflow at narrow widths without two-dimensional document scrolling.
 - **Failure signature:** Fixed panels, oversized code, media, or grid min-width pushes the viewport horizontally.
@@ -774,6 +855,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 I-04; R4 4.1; WCAG 2.2 SC 1.4.10.
 
 ### ACC-002 - Desktop grid compressed instead of recomposed
+
 - **Level:** HARD BAN when content becomes unreadable or unusable
 - **Rule:** Define a deliberate mobile order and composition for every multi-column section.
 - **Failure signature:** Tiny columns, collapsed hierarchy, reordered CTA, or media separated from its explanation.
@@ -783,6 +865,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R3 mobile guidance; R4 4.2.
 
 ### ACC-003 - Mobile navigation is decorative or incomplete
+
 - **Level:** HARD BAN
 - **Rule:** Mobile navigation must open, close, label state, expose every required destination, manage focus, and survive route changes.
 - **Failure signature:** Dead hamburger, clipped menu, no Escape, hidden links, or focus trapped behind the panel.
@@ -792,6 +875,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R4 4.3; R3 Navigation.
 
 ### ACC-004 - Hover-only information or action
+
 - **Level:** HARD BAN
 - **Rule:** No required content or action may depend on hover capability.
 - **Failure signature:** Hover card reveals the only CTA, title, preview, or submenu.
@@ -801,6 +885,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R4 4.4; WCAG 2.2 SC 2.1.1.
 
 ### ACC-005 - Whole-page scrolling caused by wide data
+
 - **Level:** HARD BAN
 - **Rule:** Tables, code, charts, and canvases must not force the entire page into horizontal scrolling.
 - **Failure signature:** A single wide component expands document width.
@@ -810,6 +895,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R4 4.5; WCAG 2.2 SC 1.4.10.
 
 ### ACC-006 - Undersized or crowded targets
+
 - **Level:** HARD BAN
 - **Rule:** Interactive targets must meet WCAG 2.2 target-size requirements or valid spacing exceptions.
 - **Failure signature:** Tiny icon buttons, cramped pagination, or adjacent links with no separation.
@@ -819,6 +905,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 A-11; R4 4.6, 5.13; WCAG 2.2 SC 2.5.8.
 
 ### ACC-007 - Zoom blocked or mobile viewport misconfigured
+
 - **Level:** HARD BAN
 - **Rule:** Do not disable user scaling or omit a correct viewport declaration.
 - **Failure signature:** `user-scalable=no`, low `maximum-scale`, or desktop-width rendering on mobile.
@@ -828,6 +915,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R4 4.7; WCAG 2.2 SC 1.4.4.
 
 ### ACC-008 - Focus visibility removed
+
 - **Level:** HARD BAN
 - **Rule:** Every keyboard-focusable control must have a visible focus indicator with sufficient area and contrast.
 - **Failure signature:** `outline-none` with no replacement or focus hidden by clipping.
@@ -837,6 +925,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 A-08; R4 5.3; WCAG 2.2 SC 2.4.7 and 2.4.11.
 
 ### ACC-009 - Missing native semantics or accessible name
+
 - **Level:** HARD BAN
 - **Rule:** Use native elements and ensure every control, image, region, and form field has the correct accessible name and role.
 - **Failure signature:** Clickable div, unlabeled icon, placeholder-as-label, empty link, or custom widget with partial ARIA.
@@ -846,6 +935,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 A-01-A-04; R4 5.1-5.2 and 5.8; WCAG 2.2 SC 1.3.1, 3.3.2, 4.1.2.
 
 ### ACC-010 - Incorrect alternative text
+
 - **Level:** HARD BAN
 - **Rule:** Meaningful images need concise purpose-aware alternatives; decorative images need empty alternatives and no redundant announcement.
 - **Failure signature:** Filename alt, invented visual details, duplicated caption, or missing alt on meaningful media.
@@ -855,6 +945,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 A-06; R2 Imagery; WCAG 2.2 SC 1.1.1.
 
 ### ACC-011 - ARIA misuse and structural collapse
+
 - **Level:** HARD BAN
 - **Rule:** Do not add redundant roles, invalid attributes, landmark soup, skipped heading structure, or `aria-hidden` around focusable content.
 - **Failure signature:** Accessibility layer contradicts native semantics or destroys document navigation.
@@ -864,6 +955,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 A-07 and A-10; R4 5.7-5.9.
 
 ### ACC-012 - Reflow, zoom, or text-spacing overrides lose content
+
 - **Level:** HARD BAN
 - **Rule:** Content and controls must remain available under zoom, larger text, and WCAG text-spacing overrides.
 - **Failure signature:** Fixed-height text box clips, ellipsis hides essential content, or controls overlap after spacing changes.
@@ -873,6 +965,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R4 5.12 and 6.10; WCAG 2.2 SC 1.4.4, 1.4.10, 1.4.12.
 
 ### ACC-013 - Unstable full-viewport sizing on mobile
+
 - **Level:** HARD BAN when content or controls become unreachable
 - **Rule:** Do not assume legacy `100vh` or `h-screen` equals the visible mobile viewport when browser chrome, virtual keyboards, or safe areas change.
 - **Failure signature:** Hero jumps, CTA drops below the screen, modal is clipped, or the keyboard hides focused controls.
@@ -882,6 +975,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 viewport-stability audit; complements ACC-001 and ACC-012.
 
 ### ACC-014 - Missing page orientation and escape paths
+
 - **Level:** HARD BAN when users become trapped or cannot identify location; otherwise AVOID BY DEFAULT
 - **Rule:** Larger sites and multi-page flows must provide the orientation aids their structure requires, including a skip link, current-page indication, useful back or parent paths, and a recoverable not-found route.
 - **Failure signature:** Keyboard users repeat the whole header, active navigation is indistinguishable, detail pages dead-end, or a 404 offers no path forward.
@@ -893,6 +987,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 ### Frontend implementation and QA
 
 ### ENG-001 - Hydration and first-paint mismatch
+
 - **Level:** HARD BAN
 - **Rule:** Server and client output must agree on initial render.
 - **Failure signature:** Hydration warning, flicker, duplicated content, or client-only value rendered during SSR.
@@ -902,6 +997,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 I-02; R4 6.6.
 
 ### ENG-002 - Scaffold and metadata debris
+
 - **Level:** HARD BAN for broken identity or discovery; otherwise quality failure
 - **Rule:** Replace default title, favicon, description, social metadata, manifest values, and starter content before shipping.
 - **Failure signature:** "Vite + React", framework favicon, empty description, or copied template metadata.
@@ -911,6 +1007,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 I-03 and C-05.
 
 ### ENG-003 - Codebase generated as one disposable component
+
 - **Level:** AVOID BY DEFAULT; HARD BAN when it blocks correctness or maintenance
 - **Rule:** Do not keep a full page, data, state, event logic, and animation in one god component when natural boundaries already exist.
 - **Failure signature:** Huge component, repeated markup, unused imports, arbitrary-value spam, and unrelated state updates.
@@ -920,6 +1017,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 I-05; R4 6.7 and 6.14.
 
 ### ENG-004 - Hallucinated asset, route, endpoint, or configuration
+
 - **Level:** HARD BAN
 - **Rule:** Verify every import, asset path, route, environment variable, endpoint, and third-party package before use.
 - **Failure signature:** Broken image, case-mismatched path, nonexistent API, invented environment variable, or uninstalled dependency.
@@ -929,6 +1027,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 I-06-I-07; R4 6.2-6.3.
 
 ### ENG-005 - Client-rendered monolith for mostly static content
+
 - **Level:** CONTEXTUAL WARNING
 - **Rule:** Do not move the application root or static marketing content to the client merely to support one interaction.
 - **Failure signature:** Root-level `use client`, spinner-first content, large bundle, and client-side fetch waterfall.
@@ -938,6 +1037,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 I-08; R4 6.4 and 6.6.
 
 ### ENG-006 - Asset delivery neglect
+
 - **Level:** HARD BAN when it breaks loading or layout; otherwise performance failure
 - **Rule:** Size, encode, prioritize, crop, and load media according to its rendered role.
 - **Failure signature:** Multi-megabyte hero, missing dimensions, eager below-fold images, lazy hero, repeated crop, blurry enlargement, or base64 bloat.
@@ -947,6 +1047,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 I-09; R4 6.1-6.2.
 
 ### ENG-007 - Font loading and dependency bloat
+
 - **Level:** CONTEXTUAL WARNING
 - **Rule:** Do not load unused font families, weights, icon packs, or whole libraries for a small feature.
 - **Failure signature:** Many font files, duplicate animation packages, barrel imports, dead dependencies, and blocking third-party scripts.
@@ -956,6 +1057,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 I-10 and I-12; R4 6.3.
 
 ### ENG-008 - Brittle CSS and stacking workarounds
+
 - **Level:** HARD BAN when content breaks; otherwise AVOID BY DEFAULT
 - **Rule:** Do not solve ordinary layout with magic fixed heights, fragile percentage `calc()` chains, escalating z-index, `!important` chains, or global selectors that override component boundaries.
 - **Failure signature:** Text clips after copy changes, flex widths require repeated arithmetic, overlays disappear under accidental stacking contexts, and theme values bypass tokens.
@@ -965,6 +1067,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R4 6.9-6.12.
 
 ### ENG-009 - Insecure client-side trust boundary
+
 - **Level:** HARD BAN
 - **Rule:** Never expose secrets, rely on client-only authorization, trust unvalidated input, or omit required database access controls.
 - **Failure signature:** Secret in bundle, authorization only in UI, direct privileged endpoint, or missing row-level policy.
@@ -974,6 +1077,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R1 I-13; R4 engineering findings.
 
 ### ENG-010 - Shipping without rendered and functional QA
+
 - **Level:** HARD BAN for completion claims
 - **Rule:** Do not declare a visual frontend complete after source review alone, and do not hide unfinished content, placeholders, static controls, or missing integrations from the handoff.
 - **Failure signature:** Broken crop, overflow, dead menu, invisible focus, console error, blank state, or metadata defect survives because no browser was used.
@@ -983,6 +1087,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R4 Validation and QA; R1 Executive Summary; prior Taste Skill A/B findings.
 
 ### ENG-011 - Design-system collision or needless reimplementation
+
 - **Level:** AVOID BY DEFAULT; HARD BAN when behavior, accessibility, or theming breaks
 - **Rule:** Do not mix unrelated component systems in one product surface or rebuild an official system's complex components from appearance alone when its maintained implementation is available and appropriate.
 - **Failure signature:** Material, Carbon, Fluent, Bootstrap, and shadcn conventions coexist; focus behavior differs by component; tokens are imported and then almost entirely overridden.
@@ -992,6 +1097,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 design-system and component-library audit; complements VIS-015.
 
 ### ENG-012 - Fragile production font delivery
+
 - **Level:** CONTEXTUAL WARNING; HARD BAN when text disappears or layout becomes unusable
 - **Rule:** Do not ship unverified external font links, missing weights, blocking loads, or fallbacks whose metrics cause severe layout shift.
 - **Failure signature:** Flash of invisible text, broken cross-origin request, synthetic weight, clipped fallback, or CTA and navigation reflow after font load.
@@ -1001,6 +1107,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 font-delivery audit; complements ENG-007.
 
 ### ENG-013 - Silent redesign damage
+
 - **Level:** HARD BAN
 - **Rule:** During a redesign, do not silently change URLs, route slugs, anchor IDs, information architecture, primary navigation labels, form field names or order, brand marks, legal or consent copy, analytics hooks, SEO metadata, structured data, or existing accessibility behavior.
 - **Failure signature:** Visual modernization breaks bookmarks, search ranking, autofill, tracking, consent, recognition, or keyboard access.
@@ -1010,6 +1117,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 redesign protocol audit.
 
 ### ENG-014 - Unnecessary framework or stack migration
+
 - **Level:** AVOID BY DEFAULT; HARD BAN when it destroys working behavior or data
 - **Rule:** Do not migrate frameworks, styling systems, state libraries, or build tools merely to make a visual redesign easier.
 - **Failure signature:** A targeted design task becomes a rewrite, dependencies multiply, working routes regress, and review scope expands without user value.
@@ -1019,6 +1127,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 redesign implementation audit.
 
 ### ENG-015 - Incomplete code disguised as delivery
+
 - **Level:** HARD BAN when complete implementation was requested
 - **Rule:** Do not replace requested files, components, repeated sections, or functional logic with ellipses, `TODO`, skeleton-only output, one example, or prose describing what remains.
 - **Failure signature:** `rest omitted`, missing middle sections, placeholder handlers, shortened later files, or a conclusion claiming completion after partial output.
@@ -1028,6 +1137,7 @@ Evidence references below point to report sections or pattern IDs. The source re
 - **Evidence:** R5 full-output enforcement audit; complements CNT-005 and ENG-010.
 
 ### ENG-016 - Required legal, privacy, and consent surfaces omitted
+
 - **Level:** HARD BAN when the project is legally or contractually required to provide them; otherwise CONTEXTUAL WARNING
 - **Rule:** Do not invent legal text, but do not silently omit required privacy, terms, consent, disclosure, or contact surfaces from a production-bound implementation.
 - **Failure signature:** Tracking or regulated collection is enabled without the required notice or control, or a redesign drops existing legal links and consent behavior.
