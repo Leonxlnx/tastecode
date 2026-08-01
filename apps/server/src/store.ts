@@ -147,7 +147,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS session_search USING fts5 (
 CREATE TABLE IF NOT EXISTS diff_decisions (
   thread_id TEXT NOT NULL,
   target_id TEXT NOT NULL,
-  decision  TEXT NOT NULL,
+  decision  TEXT NOT NULL CHECK (decision IN ('accept', 'reject')),
   PRIMARY KEY (thread_id, target_id)
 );
 

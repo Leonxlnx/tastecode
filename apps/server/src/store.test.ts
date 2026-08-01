@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DomainEvent } from '@harness/contracts'
+import type { DiffDecision, DomainEvent } from '@harness/contracts'
 import { Store } from './store.js'
 
 let store: Store
@@ -456,6 +456,12 @@ describe('diff review decisions', () => {
 
     store.deleteThread('t1')
     expect(store.diffDecision('t1', 'hunk:one')).toBeUndefined()
+  })
+
+  it('rejects invalid persisted decisions', () => {
+    expect(() => store.setDiffDecision('t1', 'hunk:one', 'invalid' as DiffDecision)).toThrow(
+      /CHECK constraint failed/,
+    )
   })
 })
 
