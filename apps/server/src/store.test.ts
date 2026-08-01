@@ -62,6 +62,9 @@ describe('opening a database written by an older build', () => {
     old
       .prepare(`INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .run('t1', '/repo', 'codex', null, 'Old session', 1, null)
+    old
+      .prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`)
+      .run('t1', 2, JSON.stringify(message('legacy regression')))
     old.close()
 
     const migrated = new Store(file)
@@ -74,6 +77,7 @@ describe('opening a database written by an older build', () => {
 
       migrated.setPinned('/repo', true)
       expect(migrated.project('/repo')?.pinned).toBe(true)
+      expect(migrated.searchSessions({ query: 'legacy' }).results[0]?.threadId).toBe('t1')
     } finally {
       migrated.close()
       rmSync(dir, { recursive: true, force: true })
@@ -243,6 +247,92 @@ describe('events', () => {
 
     const event = store.history('t1')[0]?.event
     expect(event?.type === 'item.completed' ? event.item.text : undefined).toBe(nasty)
+  })
+})
+
+describe('cross-session search', () => {
+  beforeEach(() => {
+    store.addProject('/repo', 'Harness')
+    store.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'Search work' })
+  })
+
+  it('indexes messages and useful tool output but not reasoning', () => {
+    store.append('t1', message('Find the regression'))
+    store.append('t1', {
+      type: 'item.completed',
+      item: {
+        id: 'command',
+        turnId: 't2',
+        type: 'command',
+        status: 'completed',
+        command: 'pnpm test',
+        text: 'regression suite passed',
+        createdAt: 2,
+      },
+    })
+    store.append('t1', {
+      type: 'item.completed',
+      item: {
+        id: 'reasoning',
+        turnId: 't3',
+        type: 'reasoning',
+        status: 'completed',
+        text: 'private-thought-marker',
+        createdAt: 3,
+      },
+    })
+
+    expect(store.searchSessions({ query: 'regression' }).results).toHaveLength(2)
+    expect(store.searchSessions({ query: 'pnpm' }).results[0]?.turnId).toBe('t2')
+    expect(store.searchSessions({ query: 'private-thought-marker' }).results).toEqual([])
+  })
+
+  it('filters and paginates without repeating results', () => {
+    store.addProject('/other', 'Other')
+    store.addThread({
+      id: 't2',
+      projectPath: '/other',
+      provider: 'claude-code',
+      title: 'Other work',
+    })
+    store.append('t1', message('shared marker'))
+    store.append('t2', message('shared marker'))
+
+    expect(store.searchSessions({ query: 'shared', provider: 'codex' }).results[0]?.threadId).toBe(
+      't1',
+    )
+    expect(
+      store.searchSessions({ query: 'shared', projectPath: '/other' }).results[0]?.threadId,
+    ).toBe('t2')
+
+    const first = store.searchSessions({ query: 'shared', limit: 1 })
+    expect(first.nextCursor).not.toBeNull()
+    const second = store.searchSessions({ query: 'shared', limit: 1, cursor: first.nextCursor! })
+    expect(second.results[0]?.threadId).not.toBe(first.results[0]?.threadId)
+    expect(second.nextCursor).toBeNull()
+  })
+
+  it('keeps rollback, undo and deletion consistent with the index', () => {
+    const keepSeq = store.append('t1', message('keep this result'))
+    store.append('t1', message('temporary marker'))
+
+    const undo = store.saveRestoreUndo('t1', keepSeq, 'snapshot')
+    expect(store.searchSessions({ query: 'temporary' }).results).toEqual([])
+    store.applyRestoreUndo('t1', undo)
+    expect(store.searchSessions({ query: 'temporary' }).results).toHaveLength(1)
+
+    store.deleteThread('t1')
+    expect(store.searchSessions({ query: 'temporary' }).results).toEqual([])
+  })
+
+  it('returns structured plain-text highlights without adding HTML', () => {
+    const dangerous = '<img src=x onerror=alert(1)> regression'
+    store.append('t1', message(dangerous))
+
+    const snippet = store.searchSessions({ query: 'regression' }).results[0]!.snippet
+    expect(snippet.map((part) => part.text).join('')).toContain(dangerous)
+    expect(snippet).toContainEqual({ text: 'regression', highlighted: true })
+    expect(snippet.map((part) => part.text).join('')).not.toContain('<mark>')
   })
 })
 

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { DomainEvent, ProviderId, Usage } from '@harness/contracts'
+import type { DomainEvent, ProviderId, SessionSearchResult, Usage } from '@harness/contracts'
 
 /**
  * Everything that has to survive a restart.
@@ -61,6 +61,22 @@ export type StoredCheckpoint = {
   createdAt: number
 }
 
+export type SessionSearchOptions = {
+  query: string
+  projectPath?: string | undefined
+  provider?: ProviderId | undefined
+  cursor?: string | undefined
+  limit?: number | undefined
+}
+
+export type SessionSearchPage = {
+  results: SessionSearchResult[]
+  nextCursor: string | null
+}
+
+const SNIPPET_START = '\u0001'
+const SNIPPET_END = '\u0002'
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
   path       TEXT PRIMARY KEY,
@@ -106,6 +122,15 @@ CREATE TABLE IF NOT EXISTS restore_undos (
   checkpoints_json TEXT NOT NULL
 );
 
+CREATE VIRTUAL TABLE IF NOT EXISTS session_search USING fts5 (
+  thread_id UNINDEXED,
+  event_seq UNINDEXED,
+  turn_id UNINDEXED,
+  created_at UNINDEXED,
+  text,
+  tokenize = 'unicode61'
+);
+
 CREATE INDEX IF NOT EXISTS checkpoints_by_thread ON checkpoints (thread_id, seq);
 CREATE INDEX IF NOT EXISTS events_by_thread ON events (thread_id, seq);
 CREATE INDEX IF NOT EXISTS threads_by_project ON threads (project_path);
@@ -139,8 +164,12 @@ export class Store {
     // Without WAL a reader blocks a writer, and we do both on every turn.
     this.#db.exec('PRAGMA journal_mode = WAL')
     this.#db.exec('PRAGMA foreign_keys = ON')
+    const hadSearchIndex = this.#db
+      .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_search'`)
+      .get()
     this.#db.exec(SCHEMA)
     this.#migrate()
+    if (!hadSearchIndex) this.#rebuildSearchIndex()
   }
 
   /** Bring a database written by an older build up to the current shape. */
@@ -300,6 +329,7 @@ export class Store {
     if (this.thread(id)?.worktreePath) {
       throw new Error('discard the isolated session checkout before deleting it')
     }
+    this.#db.prepare(`DELETE FROM session_search WHERE thread_id = ?`).run(id)
     this.#db.prepare(`DELETE FROM events WHERE thread_id = ?`).run(id)
     this.#db.prepare(`DELETE FROM checkpoints WHERE thread_id = ?`).run(id)
     this.#db.prepare(`DELETE FROM restore_undos WHERE thread_id = ?`).run(id)
@@ -310,10 +340,13 @@ export class Store {
 
   /** Returns the sequence number, which is what a client resumes from. */
   append(threadId: string, event: DomainEvent): number {
+    const at = Date.now()
     const result = this.#db
       .prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`)
-      .run(threadId, Date.now(), JSON.stringify(event))
-    return Number(result.lastInsertRowid)
+      .run(threadId, at, JSON.stringify(event))
+    const seq = Number(result.lastInsertRowid)
+    this.#indexEvent(seq, threadId, at, event)
+    return seq
   }
 
   /**
@@ -330,6 +363,80 @@ export class Store {
         const { seq, payload } = row as { seq: number; payload: string }
         return { seq: Number(seq), event: JSON.parse(payload) as DomainEvent }
       })
+  }
+
+  searchSessions(options: SessionSearchOptions): SessionSearchPage {
+    const limit = options.limit ?? 25
+    const offset = decodeCursor(options.cursor)
+    const clauses = ['session_search MATCH ?']
+    const parameters: Array<string | number> = [toFtsQuery(options.query)]
+
+    if (options.projectPath) {
+      clauses.push('threads.project_path = ?')
+      parameters.push(options.projectPath)
+    }
+    if (options.provider) {
+      clauses.push('threads.provider = ?')
+      parameters.push(options.provider)
+    }
+
+    const rows = this.#db
+      .prepare(
+        `SELECT projects.path AS project_path, projects.name AS project_name,
+                threads.id AS thread_id, threads.title AS thread_title,
+                threads.provider, session_search.turn_id, session_search.created_at,
+                snippet(session_search, 4, ?, ?, ' … ', 24) AS snippet
+         FROM session_search
+         JOIN threads ON threads.id = session_search.thread_id
+         JOIN projects ON projects.path = threads.project_path
+         WHERE ${clauses.join(' AND ')}
+         ORDER BY bm25(session_search), session_search.created_at DESC, session_search.rowid DESC
+         LIMIT ? OFFSET ?`,
+      )
+      .all(SNIPPET_START, SNIPPET_END, ...parameters, limit + 1, offset) as Array<{
+      project_path: string
+      project_name: string
+      thread_id: string
+      thread_title: string
+      provider: ProviderId
+      turn_id: string
+      created_at: number
+      snippet: string
+    }>
+
+    return {
+      results: rows.slice(0, limit).map((row) => ({
+        projectPath: row.project_path,
+        projectName: row.project_name,
+        threadId: row.thread_id,
+        threadTitle: row.thread_title,
+        turnId: row.turn_id,
+        provider: row.provider,
+        createdAt: Number(row.created_at),
+        snippet: parseSnippet(row.snippet),
+      })),
+      nextCursor: rows.length > limit ? encodeCursor(offset + limit) : null,
+    }
+  }
+
+  #rebuildSearchIndex(): void {
+    const rows = this.#db
+      .prepare(`SELECT seq, thread_id, at, payload FROM events ORDER BY seq`)
+      .all() as Array<{ seq: number; thread_id: string; at: number; payload: string }>
+    for (const row of rows) {
+      this.#indexEvent(row.seq, row.thread_id, row.at, JSON.parse(row.payload) as DomainEvent)
+    }
+  }
+
+  #indexEvent(seq: number, threadId: string, at: number, event: DomainEvent): void {
+    const entry = searchableEntry(event)
+    if (!entry) return
+    this.#db
+      .prepare(
+        `INSERT INTO session_search (rowid, thread_id, event_seq, turn_id, created_at, text)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(seq, threadId, seq, entry.turnId, entry.createdAt ?? at, entry.text)
   }
 
   /** Persistent totals derived from the event log that already owns usage. */
@@ -426,6 +533,12 @@ export class Store {
    * two different stories.
    */
   #truncateAfter(threadId: string, seq: number): void {
+    this.#db
+      .prepare(
+        `DELETE FROM session_search
+         WHERE rowid IN (SELECT seq FROM events WHERE thread_id = ? AND seq > ?)`,
+      )
+      .run(threadId, seq)
     this.#db.prepare(`DELETE FROM events WHERE thread_id = ? AND seq > ?`).run(threadId, seq)
     this.#db.prepare(`DELETE FROM checkpoints WHERE thread_id = ? AND seq > ?`).run(threadId, seq)
   }
@@ -504,6 +617,12 @@ export class Store {
       )
       for (const event of events) {
         insertEvent.run(event.seq, event.thread_id, event.at, event.payload)
+        this.#indexEvent(
+          event.seq,
+          event.thread_id,
+          event.at,
+          JSON.parse(event.payload) as DomainEvent,
+        )
       }
       const insertCheckpoint = this.#db.prepare(
         `INSERT INTO checkpoints (id, thread_id, seq, commit_sha, label, created_at)
@@ -534,6 +653,66 @@ export class Store {
     const seq = (row as { seq: number | null } | undefined)?.seq
     return seq ? Number(seq) : 0
   }
+}
+
+function searchableEntry(
+  event: DomainEvent,
+): { turnId: string; createdAt?: number | undefined; text: string } | undefined {
+  if (event.type !== 'item.completed') return undefined
+  const { item } = event
+  const text =
+    item.type === 'message'
+      ? item.text
+      : item.type === 'command'
+        ? [item.command, item.text].filter(Boolean).join('\n')
+        : item.type === 'tool_call' || item.type === 'error'
+          ? item.text
+          : undefined
+  if (!text?.trim()) return undefined
+  return { turnId: item.turnId, createdAt: item.createdAt, text }
+}
+
+function toFtsQuery(query: string): string {
+  const terms = query.trim().split(/\s+/).filter(Boolean)
+  if (terms.length === 0) throw new Error('search query cannot be empty')
+  return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(' ')
+}
+
+function encodeCursor(offset: number): string {
+  return Buffer.from(String(offset)).toString('base64url')
+}
+
+function decodeCursor(cursor: string | undefined): number {
+  if (!cursor) return 0
+  const decoded = Buffer.from(cursor, 'base64url').toString('utf8')
+  if (!/^(0|[1-9]\d*)$/.test(decoded)) throw new Error('invalid search cursor')
+  const offset = Number(decoded)
+  if (!Number.isSafeInteger(offset)) throw new Error('invalid search cursor')
+  return offset
+}
+
+function parseSnippet(value: string): SessionSearchResult['snippet'] {
+  const parts: SessionSearchResult['snippet'] = []
+  let highlighted = false
+  let text = ''
+  const push = () => {
+    if (!text) return
+    const previous = parts.at(-1)
+    if (previous?.highlighted === highlighted) previous.text += text
+    else parts.push({ text, highlighted })
+    text = ''
+  }
+
+  for (const character of value) {
+    if (character === SNIPPET_START || character === SNIPPET_END) {
+      push()
+      highlighted = character === SNIPPET_START
+    } else {
+      text += character
+    }
+  }
+  push()
+  return parts.length > 0 ? parts : [{ text: value, highlighted: false }]
 }
 
 type UsageTotal = Omit<Usage, 'contextWindow'>
