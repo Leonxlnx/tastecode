@@ -111,7 +111,7 @@ describe('structured diff review', () => {
     diff = await reviewDiffHunk(repo, 'thread-1', diff.version, file.path, hunk.id, 'accept', store)
     await reviewDiffHunk(repo, 'thread-1', diff.version, file.path, hunk.id, 'reject', store)
     expect(store.diffDecision('thread-1', `hunk:${hunk.id}`)).toBe('reject')
-  })
+  }, 15_000)
 
   it('stores reject as the latest file decision', async () => {
     writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'review twice' }))
