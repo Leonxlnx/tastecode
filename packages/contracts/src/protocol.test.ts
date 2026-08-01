@@ -397,6 +397,69 @@ describe('protocol envelopes', () => {
     expect(() => McpStartupStatusSchema.parse({ state: 'failed', message: '' })).toThrow()
   })
 
+  it('validates project-scoped MCP management methods', () => {
+    expect(
+      methods['mcp.list'].params.parse({ provider: 'codex', projectPath: 'D:\\project' }),
+    ).toEqual({ provider: 'codex', projectPath: 'D:\\project' })
+    expect(
+      methods['mcp.add'].params.parse({
+        provider: 'codex',
+        projectPath: 'D:\\project',
+        server: { id: 'github', enabled: false },
+      }).server,
+    ).toEqual({ id: 'github', enabled: false })
+    expect(
+      methods['mcp.update'].params.parse({
+        provider: 'codex',
+        projectPath: 'D:\\project',
+        server: {
+          id: 'remote-docs',
+          enabled: true,
+          transport: { type: 'http', url: 'https://mcp.example.test' },
+        },
+      }).server.id,
+    ).toBe('remote-docs')
+    expect(
+      methods['mcp.remove'].params.parse({
+        provider: 'codex',
+        projectPath: 'D:\\project',
+        serverId: 'remote-docs',
+      }).serverId,
+    ).toBe('remote-docs')
+    expect(
+      methods['mcp.reload'].params.parse({ provider: 'codex', projectPath: 'D:\\project' }),
+    ).toBeTruthy()
+
+    const login = methods['mcp.startOAuth'].result.parse({
+      loginId: 'mcp-login-1',
+      authUrl: 'https://auth.example.test/authorize',
+    })
+    expect(
+      methods['mcp.cancelOAuth'].params.parse({
+        provider: 'codex',
+        projectPath: 'D:\\project',
+        serverId: 'github',
+        loginId: login.loginId,
+      }).loginId,
+    ).toBe('mcp-login-1')
+    expect(
+      channels['mcp.oauth'].parse({
+        provider: 'codex',
+        projectPath: 'D:\\project',
+        serverId: 'github',
+        loginId: login.loginId,
+        success: true,
+        error: null,
+      }).success,
+    ).toBe(true)
+    expect(() =>
+      methods['mcp.startOAuth'].result.parse({
+        loginId: 'mcp-login-2',
+        authUrl: 'file:///tmp/token',
+      }),
+    ).toThrow()
+  })
+
   it('bounds normalized voice clips at the protocol boundary', () => {
     const valid = {
       requestId: '0dca4330-66f5-4f68-9287-c6b2bf4c6bf0',

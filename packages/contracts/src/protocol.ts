@@ -320,6 +320,58 @@ export const methods = {
     params: z.object({}),
     result: z.object({ providers: z.array(ProviderStatusSchema) }),
   },
+  'mcp.list': {
+    params: z.object({ provider: ProviderIdSchema, projectPath: z.string().min(1) }),
+    result: z.object({
+      capabilities: McpCapabilitiesSchema,
+      servers: z.array(McpServerSchema),
+    }),
+  },
+  'mcp.add': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      projectPath: z.string().min(1),
+      server: McpServerConfigSchema,
+    }),
+    result: z.object({}),
+  },
+  'mcp.update': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      projectPath: z.string().min(1),
+      server: McpServerConfigSchema,
+    }),
+    result: z.object({}),
+  },
+  'mcp.remove': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      projectPath: z.string().min(1),
+      serverId: z.string().min(1),
+    }),
+    result: z.object({}),
+  },
+  'mcp.reload': {
+    params: z.object({ provider: ProviderIdSchema, projectPath: z.string().min(1) }),
+    result: z.object({}),
+  },
+  'mcp.startOAuth': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      projectPath: z.string().min(1),
+      serverId: z.string().min(1),
+    }),
+    result: z.object({ loginId: z.string().min(1), authUrl: HttpUrlSchema }),
+  },
+  'mcp.cancelOAuth': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      projectPath: z.string().min(1),
+      serverId: z.string().min(1),
+      loginId: z.string().min(1),
+    }),
+    result: z.object({}),
+  },
   'search.sessions': {
     params: z.object({
       query: z.string().trim().min(1),
@@ -703,6 +755,14 @@ export const channels = {
   'auth.event': z.object({
     provider: ProviderIdSchema,
     loginId: z.string().nullable(),
+    success: z.boolean(),
+    error: z.string().nullable(),
+  }),
+  'mcp.oauth': z.object({
+    provider: ProviderIdSchema,
+    projectPath: z.string().min(1),
+    serverId: z.string().min(1),
+    loginId: z.string().min(1),
     success: z.boolean(),
     error: z.string().nullable(),
   }),
