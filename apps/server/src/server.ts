@@ -418,7 +418,7 @@ export function startServer(
           model?: string
           serviceTier?: string
           effort?: string
-          approval?: 'ask' | 'auto' | 'full'
+          approval?: 'ask' | 'auto' | 'auto-review' | 'full'
           isolate?: boolean
         }
         const thread = await orchestrator.startThread(p.provider, p.workspacePath, {
