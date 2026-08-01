@@ -31,6 +31,7 @@ import type {
 
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
+const PANIC_STOP_TIMEOUT_MS = 5_000
 
 /**
  * Owns every live agent session.
@@ -50,6 +51,8 @@ export class Orchestrator {
   #startingTurns = new Set<string>()
   #queuedTurns = new Map<string, QueuedTurnEntry[]>()
   #drainingQueues = new Set<string>()
+  #panicGeneration = 0
+  #panicStopping = false
   #store: Store
   #worktreeRoot: string
   #onEvent: (threadId: string, event: DomainEvent, seq: number) => void
@@ -199,11 +202,16 @@ export class Orchestrator {
     attachments: string[] = [],
     options: TurnOptions = {},
   ): Promise<string> {
+    if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
+    const panicGeneration = this.#panicGeneration
     this.#startingTurns.add(threadId)
     try {
       // Before the agent writes, not after. A checkpoint taken afterwards would
       // record the damage rather than the state worth returning to.
       await this.#checkpoint(threadId, text)
+      if (panicGeneration !== this.#panicGeneration) {
+        throw new Error('turn cancelled by panic stop')
+      }
       return await this.#get(threadId).session.sendTurn(threadId, text, attachments, options)
     } finally {
       this.#startingTurns.delete(threadId)
@@ -440,21 +448,43 @@ export class Orchestrator {
 
   async panicStop(): Promise<PanicStopResult> {
     const sessions = [...this.#threads.entries()]
-    return {
-      sessions: await Promise.all(
-        sessions.map(async ([threadId, entry]) => {
-          try {
-            await entry.session.interrupt(threadId)
-            return { threadId, status: 'interrupted' as const }
-          } catch (error) {
-            return {
-              threadId,
-              status: 'failed' as const,
-              error: (error instanceof Error ? error.message : String(error)) || 'Unknown error',
+    this.#panicStopping = true
+    this.#panicGeneration += 1
+    for (const [threadId] of sessions) {
+      if (this.#queuedTurns.delete(threadId)) this.#notifyQueue(threadId)
+    }
+
+    try {
+      return {
+        sessions: await Promise.all(
+          sessions.map(async ([threadId, entry]) => {
+            let timeout: NodeJS.Timeout | undefined
+            try {
+              await Promise.race([
+                entry.session.interrupt(threadId),
+                new Promise<never>((_, reject) => {
+                  timeout = setTimeout(
+                    () => reject(new Error('interrupt timed out; session was force-stopped')),
+                    PANIC_STOP_TIMEOUT_MS,
+                  )
+                }),
+              ])
+              return { threadId, status: 'interrupted' as const }
+            } catch (error) {
+              this.close(threadId)
+              return {
+                threadId,
+                status: 'failed' as const,
+                error: (error instanceof Error ? error.message : String(error)) || 'Unknown error',
+              }
+            } finally {
+              if (timeout) clearTimeout(timeout)
             }
-          }
-        }),
-      ),
+          }),
+        ),
+      }
+    } finally {
+      this.#panicStopping = false
     }
   }
 

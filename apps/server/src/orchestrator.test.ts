@@ -7,6 +7,7 @@ import type { Capabilities, DomainEvent, ProviderId } from '@harness/contracts'
 import type { AgentSession, ProviderRuntime } from './adapters.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
+import * as checkpoint from './checkpoint.js'
 
 /**
  * What must stay true when several sessions run at once.
@@ -53,7 +54,7 @@ class FakeSession implements AgentSession {
     this.steered.push(text)
   }
 
-  async interrupt(): Promise<void> {
+  async interrupt(_threadId: string): Promise<void> {
     this.interrupted = true
     await this.interruptBarrier
     if (this.interruptError) throw this.interruptError
@@ -227,6 +228,62 @@ describe('several sessions at once', () => {
         { threadId: 'thread-3', status: 'interrupted' },
       ],
     })
+  })
+
+  it('drops queued prompts so interrupted sessions do not restart', async () => {
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'running')
+    await orchestrator.submitTurn(thread.id, 'do not restart')
+
+    await orchestrator.panicStop()
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' })
+
+    await vi.waitFor(() => expect(orchestrator.queue(thread.id).items).toEqual([]))
+    expect(sessions[0]!.sent).toEqual(['running'])
+  })
+
+  it('cancels a turn still waiting for its checkpoint', async () => {
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    let release = (_value: checkpoint.Snapshot) => {}
+    vi.spyOn(checkpoint, 'takeSnapshot').mockReturnValueOnce(
+      new Promise<checkpoint.Snapshot>((resolve) => (release = resolve)),
+    )
+
+    const sending = orchestrator.submitTurn(thread.id, 'not after panic')
+    await vi.waitFor(() => expect(orchestrator.isTurnRunning(thread.id)).toBe(true))
+    await orchestrator.panicStop()
+    release({ commit: 'checkpoint', clean: true })
+
+    await expect(sending).rejects.toThrow('turn cancelled by panic stop')
+    expect(sessions[0]!.sent).toEqual([])
+  })
+
+  it('force-stops an adapter that does not acknowledge interruption', async () => {
+    vi.useFakeTimers()
+    try {
+      const { sessions, orchestrator } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      sessions[0]!.interruptBarrier = new Promise(() => {})
+
+      const stopping = orchestrator.panicStop()
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      await expect(stopping).resolves.toEqual({
+        sessions: [
+          {
+            threadId: thread.id,
+            status: 'failed',
+            error: 'interrupt timed out; session was force-stopped',
+          },
+        ],
+      })
+      expect(sessions[0]!.disposed).toBe(true)
+      expect(orchestrator.isRunning(thread.id)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
