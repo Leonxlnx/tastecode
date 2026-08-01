@@ -11,6 +11,7 @@ import {
   RequestSchema,
   type DiffDecision,
   type MethodName,
+  type McpServerConfig,
   type ProviderId,
 } from '@harness/contracts'
 import { StaleDiffSnapshotError } from './diff-review.js'
@@ -87,6 +88,8 @@ export function startServer(
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
     onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
+    onMcpOAuth: (provider, projectPath, result) =>
+      push.broadcast('mcp.oauth', { provider, projectPath, ...result }),
   })
 
   // A previous run killed mid-session leaves git believing in checkouts that
@@ -186,6 +189,48 @@ export function startServer(
       case 'mcp.list': {
         const p = params as { provider: ProviderId; projectPath: string }
         return orchestrator.listMcpServers(p.provider, p.projectPath)
+      }
+
+      case 'mcp.add': {
+        const p = params as {
+          provider: ProviderId
+          projectPath: string
+          server: McpServerConfig
+        }
+        orchestrator.addMcpServer(p.provider, p.projectPath, p.server)
+        return {}
+      }
+
+      case 'mcp.update': {
+        const p = params as {
+          provider: ProviderId
+          projectPath: string
+          server: McpServerConfig
+        }
+        orchestrator.updateMcpServer(p.provider, p.projectPath, p.server)
+        return {}
+      }
+
+      case 'mcp.remove': {
+        const p = params as { provider: ProviderId; projectPath: string; serverId: string }
+        orchestrator.removeMcpServer(p.provider, p.projectPath, p.serverId)
+        return {}
+      }
+
+      case 'mcp.reload': {
+        const p = params as { provider: ProviderId; projectPath: string }
+        await orchestrator.reloadMcpServers(p.provider, p.projectPath)
+        return {}
+      }
+
+      case 'mcp.startOAuth': {
+        const p = params as { provider: ProviderId; projectPath: string; serverId: string }
+        return orchestrator.startMcpOAuth(p.provider, p.projectPath, p.serverId)
+      }
+
+      case 'mcp.cancelOAuth': {
+        const p = params as { provider: ProviderId }
+        return orchestrator.cancelMcpOAuth(p.provider)
       }
 
       case 'auth.status': {
