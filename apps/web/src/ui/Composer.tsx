@@ -65,6 +65,13 @@ export const APPROVAL_MODES: {
     icon: ShieldCheck,
   },
   {
+    id: 'auto-review',
+    title: 'Auto-review',
+    short: 'Auto-review',
+    detail: 'Codex reviews elevated actions before they run',
+    icon: ShieldCheck,
+  },
+  {
     id: 'full',
     title: 'Full access',
     short: 'Full access',
@@ -135,6 +142,7 @@ export function Composer(props: {
   effort: string | undefined
   serviceTier: string | undefined
   approval: ApprovalMode
+  autoReviewSupported: boolean
   disabled: boolean
   running: boolean
   newSession: boolean
@@ -695,7 +703,9 @@ export function Composer(props: {
               >
                 {(close) => (
                   <>
-                    {APPROVAL_MODES.map((mode) => (
+                    {APPROVAL_MODES.filter(
+                      (mode) => mode.id !== 'auto-review' || props.autoReviewSupported,
+                    ).map((mode) => (
                       <MenuItem
                         key={mode.id}
                         title={mode.title}

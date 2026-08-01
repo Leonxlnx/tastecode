@@ -101,6 +101,7 @@ export function App() {
   const [canSteerQueue, setCanSteerQueue] = useState(false)
   const [models, setModels] = useState<Model[]>([])
   const [modelsLoaded, setModelsLoaded] = useState(false)
+  const [autoReviewSupported, setAutoReviewSupported] = useState(false)
   const [modelId, setModelId] = useState<string | undefined>(
     () => localStorage.getItem(MODEL_KEY) ?? undefined,
   )
@@ -112,7 +113,7 @@ export function App() {
   )
   const [approval, setApproval] = useState<ApprovalMode>(() => {
     const stored = localStorage.getItem(APPROVAL_KEY)
-    return stored === 'auto' || stored === 'full' ? stored : 'ask'
+    return stored === 'auto' || stored === 'auto-review' || stored === 'full' ? stored : 'ask'
   })
   const [collapsed, setCollapsed] = useState(
     () => globalThis.matchMedia?.('(max-width: 700px)').matches ?? false,
@@ -247,6 +248,26 @@ export function App() {
       .catch(() => {
         // A provider that cannot list models is a normal case, not an error.
         if (!cancelled) setModelsLoaded(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [transport, provider])
+
+  useEffect(() => {
+    if (!provider) return
+    let cancelled = false
+    setAutoReviewSupported(false)
+    void transport
+      .request('providers.list', {})
+      .then(({ providers }) => {
+        if (cancelled) return
+        setAutoReviewSupported(
+          providers.find((entry) => entry.id === provider)?.capabilities?.autoReview === true,
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setAutoReviewSupported(false)
       })
     return () => {
       cancelled = true
@@ -468,10 +489,12 @@ export function App() {
       setRollbackOpen(false)
       setActivePath(projectPath)
       try {
+        const sessionApproval =
+          approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval
         const { threadId } = await transport.request('thread.start', {
           provider,
           workspacePath: projectPath,
-          approval,
+          approval: sessionApproval,
           ...(provider === 'acp' && acpAgent ? { agent: acpAgent } : {}),
           ...(modelId ? { model: modelId } : {}),
           ...(serviceTier ? { serviceTier } : {}),
@@ -499,6 +522,7 @@ export function App() {
       serviceTier,
       effort,
       approval,
+      autoReviewSupported,
       isolateSession,
       refreshProjects,
     ],
@@ -1092,7 +1116,8 @@ export function App() {
               modelId={modelId}
               effort={effort}
               serviceTier={serviceTier}
-              approval={approval}
+              approval={approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval}
+              autoReviewSupported={autoReviewSupported}
               disabled={!activePath}
               running={thread.running}
               newSession={!activeId}

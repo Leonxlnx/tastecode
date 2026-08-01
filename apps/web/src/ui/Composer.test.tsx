@@ -141,6 +141,19 @@ describe('Composer queue', () => {
   })
 })
 
+describe('Composer permissions', () => {
+  it('offers auto-review only when the selected provider supports it', () => {
+    const unsupported = renderComposer(vi.fn())
+    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
+    expect(screen.queryByRole('menuitem', { name: /Auto-review/ })).toBeNull()
+
+    unsupported.unmount()
+    renderComposer(vi.fn(), { autoReviewSupported: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
+    expect(screen.getByRole('menuitem', { name: /Auto-review/ })).toBeTruthy()
+  })
+})
+
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,
   overrides: Partial<Parameters<typeof Composer>[0]> = {},
@@ -158,6 +171,7 @@ function renderComposer(
       effort={undefined}
       serviceTier={undefined}
       approval="ask"
+      autoReviewSupported={false}
       disabled={false}
       running={false}
       newSession
