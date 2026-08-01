@@ -52,6 +52,7 @@ export class Orchestrator {
   #threads = new Map<string, { thread: Thread; session: AgentSession; worktree?: Worktree }>()
   #activeTurns = new Set<string>()
   #startingTurns = new Set<string>()
+  #reviewingDiffs = new Set<string>()
   #queuedTurns = new Map<string, QueuedTurnEntry[]>()
   #drainingQueues = new Set<string>()
   #panicGeneration = 0
@@ -206,6 +207,9 @@ export class Orchestrator {
     options: TurnOptions = {},
   ): Promise<string> {
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
+    if (this.#reviewingDiffs.has(threadId)) {
+      throw new Error('cannot start a turn while a diff rejection is running')
+    }
     const panicGeneration = this.#panicGeneration
     this.#startingTurns.add(threadId)
     try {
@@ -312,7 +316,7 @@ export class Orchestrator {
   }
 
   async diff(threadId: string): Promise<SessionDiff> {
-    return readSessionDiff(this.#repoPath(threadId), threadId, this.#store)
+    return readSessionDiff(this.#diffRepoPath(threadId), threadId, this.#store)
   }
 
   async reviewHunk(
@@ -322,15 +326,17 @@ export class Orchestrator {
     hunkId: string,
     decision: DiffDecision,
   ): Promise<SessionDiff> {
-    return reviewDiffHunk(
-      this.#repoPath(threadId),
-      threadId,
-      version,
-      filePath,
-      hunkId,
-      decision,
-      this.#store,
-    )
+    const review = () =>
+      reviewDiffHunk(
+        this.#diffRepoPath(threadId),
+        threadId,
+        version,
+        filePath,
+        hunkId,
+        decision,
+        this.#store,
+      )
+    return decision === 'reject' ? this.#rejectDiff(threadId, review) : review()
   }
 
   async reviewFile(
@@ -339,14 +345,16 @@ export class Orchestrator {
     filePath: string,
     decision: DiffDecision,
   ): Promise<SessionDiff> {
-    return reviewDiffFile(
-      this.#repoPath(threadId),
-      threadId,
-      version,
-      filePath,
-      decision,
-      this.#store,
-    )
+    const review = () =>
+      reviewDiffFile(
+        this.#diffRepoPath(threadId),
+        threadId,
+        version,
+        filePath,
+        decision,
+        this.#store,
+      )
+    return decision === 'reject' ? this.#rejectDiff(threadId, review) : review()
   }
 
   /** Whether a session is still live, as opposed to merely on record. */
@@ -363,6 +371,24 @@ export class Orchestrator {
     const stored = this.#store.thread(threadId)
     if (!stored) throw new Error(`no such thread: ${threadId}`)
     return stored.worktreePath ?? stored.projectPath
+  }
+
+  #diffRepoPath(threadId: string): string {
+    const worktreePath = this.#store.thread(threadId)?.worktreePath
+    if (!worktreePath) throw new Error('diff review requires an isolated session')
+    return worktreePath
+  }
+
+  async #rejectDiff(threadId: string, review: () => Promise<SessionDiff>): Promise<SessionDiff> {
+    if (this.isTurnRunning(threadId)) {
+      throw new Error('cannot reject a diff while the agent turn is running')
+    }
+    this.#reviewingDiffs.add(threadId)
+    try {
+      return await review()
+    } finally {
+      this.#reviewingDiffs.delete(threadId)
+    }
   }
 
   async #drainQueue(threadId: string): Promise<void> {
@@ -542,6 +568,7 @@ export class Orchestrator {
     this.#threads.delete(threadId)
     this.#activeTurns.delete(threadId)
     this.#startingTurns.delete(threadId)
+    this.#reviewingDiffs.delete(threadId)
     this.#queuedTurns.delete(threadId)
     this.#drainingQueues.delete(threadId)
     // Marked closed, not deleted. Ending the process is not the same as
@@ -607,6 +634,7 @@ export class Orchestrator {
     this.#threads.clear()
     this.#activeTurns.clear()
     this.#startingTurns.clear()
+    this.#reviewingDiffs.clear()
     this.#queuedTurns.clear()
     this.#drainingQueues.clear()
     this.#control?.dispose()

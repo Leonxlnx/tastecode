@@ -390,6 +390,29 @@ describe('isolated sessions', () => {
     expect(store.thread(thread.id)?.worktreePath).toBeUndefined()
   })
 
+  it('refuses diff review in a shared project checkout', async () => {
+    const { orchestrator } = harness(trees)
+    const thread = await orchestrator.startThread('codex', repo)
+
+    await expect(orchestrator.diff(thread.id)).rejects.toThrow(/isolated session/)
+  })
+
+  it('does not reject work while the agent turn is running', async () => {
+    const { store, orchestrator } = harness(trees)
+    const thread = await orchestrator.startThread('codex', repo, { isolate: true })
+    const worktree = store.thread(thread.id)!.worktreePath!
+    writeFileSync(path.join(worktree, 'file.txt'), 'agent work\n')
+    const diff = await orchestrator.diff(thread.id)
+    const file = diff.files[0]!
+
+    await orchestrator.submitTurn(thread.id, 'keep working')
+
+    await expect(
+      orchestrator.reviewHunk(thread.id, diff.version, file.path, file.hunks[0]!.id, 'reject'),
+    ).rejects.toThrow(/turn is running/)
+    expect(readFileSync(path.join(worktree, 'file.txt'), 'utf8')).toBe('agent work\n')
+  })
+
   it('refuses to discard a checkout holding work nobody has committed', async () => {
     const { store, orchestrator } = harness(trees)
 
