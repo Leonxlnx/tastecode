@@ -113,7 +113,7 @@ describe('Codex MCP inventory', () => {
     })
   })
 
-  it('passes credential references through the app-server environment, not JSON config', () => {
+  it('uses Codex environment channels for credential references', () => {
     const result = prepareMcpConfig(
       [
         {
@@ -127,8 +127,19 @@ describe('Codex MCP inventory', () => {
             },
           },
         },
+        {
+          id: 'local',
+          enabled: true,
+          transport: {
+            type: 'stdio',
+            command: 'local-mcp',
+            environment: {
+              API_KEY: { source: 'credential', credentialRef: 'mcp/local/key' },
+            },
+          },
+        },
       ],
-      { 'mcp/docs/auth': 'Bearer secret-value' },
+      { 'mcp/docs/auth': 'Bearer secret-value', 'mcp/local/key': 'local-secret' },
     )
 
     expect(result.servers['docs']).toMatchObject({
@@ -137,6 +148,7 @@ describe('Codex MCP inventory', () => {
     })
     expect(Object.values(result.environment)).toEqual(['Bearer secret-value'])
     expect(JSON.stringify(result.servers)).not.toContain('secret-value')
+    expect(result.servers['local']).toMatchObject({ env: { API_KEY: 'local-secret' } })
   })
 
   it.each([
