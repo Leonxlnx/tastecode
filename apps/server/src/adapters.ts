@@ -6,6 +6,7 @@ import type {
   ApprovalMode,
   Capabilities,
   DomainEvent,
+  McpServer,
   Model,
   ProviderId,
   Thread,
@@ -45,6 +46,7 @@ export interface AgentSession {
   ): Promise<string>
   steer?(threadId: string, text: string, attachments?: string[]): Promise<void>
   interrupt(threadId: string): Promise<void>
+  listMcpServers?(threadId?: string): Promise<McpServer[]>
   respondToApproval(approvalId: string, decision: ApprovalDecision): void
   dispose(): void
   on(event: 'event', listener: (event: DomainEvent) => void): void

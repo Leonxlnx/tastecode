@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Capabilities, DomainEvent, ProviderId } from '@harness/contracts'
+import type { Capabilities, DomainEvent, McpServer, ProviderId } from '@harness/contracts'
 import type { AgentSession, ProviderRuntime } from './adapters.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
@@ -37,6 +37,7 @@ class FakeSession implements AgentSession {
   interruptError: Error | undefined
   sent: string[] = []
   steered: string[] = []
+  mcpServers: McpServer[] = []
   /** Resolves the pending sendTurn, letting a test hold one open. */
   release: (() => void) | undefined
 
@@ -58,6 +59,9 @@ class FakeSession implements AgentSession {
     this.interrupted = true
     await this.interruptBarrier
     if (this.interruptError) throw this.interruptError
+  }
+  async listMcpServers(): Promise<McpServer[]> {
+    return this.mcpServers
   }
   respondToApproval(): void {}
   dispose(): void {
@@ -122,6 +126,47 @@ const message = (text: string): DomainEvent => ({
     text,
     createdAt: 0,
   },
+})
+
+describe('MCP inventory', () => {
+  it('reports unsupported providers without starting one', async () => {
+    const { orchestrator } = harness()
+
+    await expect(orchestrator.listMcpServers('claude-code', '/repo')).resolves.toEqual({
+      capabilities: {
+        inventory: false,
+        add: false,
+        update: false,
+        remove: false,
+        reload: false,
+        startOAuth: false,
+        cancelOAuth: false,
+      },
+      servers: [],
+    })
+  })
+
+  it('reads live startup state from the project session', async () => {
+    const { orchestrator, sessions } = harness()
+    await orchestrator.startThread('codex', '/repo')
+    sessions[0]!.mcpServers = [
+      {
+        id: 'docs',
+        scope: 'global',
+        enabled: true,
+        auth: { status: 'not_required' },
+        startup: { state: 'failed', message: 'program not found' },
+        tools: [],
+        resources: [],
+        resourceTemplates: [],
+      },
+    ]
+
+    await expect(orchestrator.listMcpServers('codex', '/repo')).resolves.toMatchObject({
+      capabilities: { inventory: true },
+      servers: [{ id: 'docs', startup: { state: 'failed' } }],
+    })
+  })
 })
 
 describe('several sessions at once', () => {

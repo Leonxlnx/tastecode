@@ -1,4 +1,4 @@
-import { CodexAdapter } from '@harness/adapter-codex'
+import { CODEX_MCP_CAPABILITIES, CodexAdapter } from '@harness/adapter-codex'
 import {
   providerRuntime,
   type AgentSession,
@@ -23,6 +23,8 @@ import type {
   ApprovalDecision,
   DiffDecision,
   DomainEvent,
+  McpCapabilities,
+  McpServer,
   Model,
   PanicStopResult,
   ProviderId,
@@ -35,6 +37,15 @@ import { readSessionDiff, reviewDiffFile, reviewDiffHunk } from './diff-review.j
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 const PANIC_STOP_TIMEOUT_MS = 5_000
+const UNSUPPORTED_MCP_CAPABILITIES: McpCapabilities = {
+  inventory: false,
+  add: false,
+  update: false,
+  remove: false,
+  reload: false,
+  startOAuth: false,
+  cancelOAuth: false,
+}
 
 /**
  * Owns every live agent session.
@@ -122,6 +133,26 @@ export class Orchestrator {
     // own runtime, which is free to answer with nothing.
     if (provider === 'codex') return (await this.#controlAdapter()).listModels()
     return providerRuntime(provider, this.#onLog).listModels()
+  }
+
+  async listMcpServers(
+    provider: ProviderId,
+    projectPath: string,
+  ): Promise<{ capabilities: McpCapabilities; servers: McpServer[] }> {
+    if (provider !== 'codex') {
+      return { capabilities: UNSUPPORTED_MCP_CAPABILITIES, servers: [] }
+    }
+
+    const active = [...this.#threads.values()].find(
+      ({ thread, session }) =>
+        thread.provider === provider &&
+        this.#store.thread(thread.id)?.projectPath === projectPath &&
+        session.listMcpServers,
+    )
+    const servers = active?.session.listMcpServers
+      ? await active.session.listMcpServers(active.thread.id)
+      : await (await this.#controlAdapter()).listMcpServers()
+    return { capabilities: CODEX_MCP_CAPABILITIES, servers }
   }
 
   async account(provider: ProviderId): Promise<Account> {

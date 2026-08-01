@@ -183,6 +183,11 @@ export function startServer(
       case 'providers.list':
         return { providers: await detectProviders() }
 
+      case 'mcp.list': {
+        const p = params as { provider: ProviderId; projectPath: string }
+        return orchestrator.listMcpServers(p.provider, p.projectPath)
+      }
+
       case 'auth.status': {
         const p = params as { provider: ProviderId }
         return orchestrator.account(p.provider)
