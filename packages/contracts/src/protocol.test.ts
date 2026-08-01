@@ -125,6 +125,22 @@ describe('protocol envelopes', () => {
     ).toEqual({ path: 'D:\\x', branch: 'feature/shelf' })
   })
 
+  it('reports every panic-stop target as interrupted or failed', () => {
+    const result = methods['system.panicStop'].result.parse({
+      sessions: [
+        { threadId: 'thread-1', status: 'interrupted' },
+        { threadId: 'thread-2', status: 'failed', error: 'Adapter did not respond' },
+      ],
+    })
+
+    expect(result.sessions).toHaveLength(2)
+    expect(() =>
+      methods['system.panicStop'].result.parse({
+        sessions: [{ threadId: 'thread-2', status: 'failed' }],
+      }),
+    ).toThrow()
+  })
+
   it('keeps unreported usage cost absent', () => {
     const result = methods['usage.summary'].result.parse({
       session: {

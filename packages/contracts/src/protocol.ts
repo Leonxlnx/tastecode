@@ -52,6 +52,17 @@ export const QueuedTurnSchema = z.object({
 })
 export type QueuedTurn = z.infer<typeof QueuedTurnSchema>
 
+export const PanicStopSessionResultSchema = z.discriminatedUnion('status', [
+  z.object({ threadId: z.string(), status: z.literal('interrupted') }),
+  z.object({ threadId: z.string(), status: z.literal('failed'), error: z.string().min(1) }),
+])
+export type PanicStopSessionResult = z.infer<typeof PanicStopSessionResultSchema>
+
+export const PanicStopResultSchema = z.object({
+  sessions: z.array(PanicStopSessionResultSchema),
+})
+export type PanicStopResult = z.infer<typeof PanicStopResultSchema>
+
 export const ResponseSchema = z.union([
   z.object({ id: z.string(), result: z.unknown() }),
   z.object({
@@ -78,6 +89,10 @@ export const methods = {
       protocolVersion: z.number(),
       platform: z.enum(['win32', 'darwin', 'linux']),
     }),
+  },
+  'system.panicStop': {
+    params: z.object({}),
+    result: PanicStopResultSchema,
   },
   'providers.list': {
     params: z.object({}),
