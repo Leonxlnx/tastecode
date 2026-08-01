@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto'
 import type {
   McpAuth,
   McpCapabilities,
   McpServer,
+  McpServerConfig,
   McpStartupStatus,
   McpTool,
 } from '@harness/contracts'
@@ -12,12 +14,84 @@ import type { McpServerStatusUpdatedNotification } from './generated/v2/McpServe
 
 export const CODEX_MCP_CAPABILITIES: McpCapabilities = {
   inventory: true,
-  add: false,
-  update: false,
-  remove: false,
-  reload: false,
-  startOAuth: false,
+  add: true,
+  update: true,
+  remove: true,
+  reload: true,
+  startOAuth: true,
   cancelOAuth: false,
+}
+
+export function prepareMcpConfig(
+  servers: McpServerConfig[],
+  credentials: Record<string, string>,
+): { servers: Record<string, JsonValue>; environment: NodeJS.ProcessEnv } {
+  const result: Record<string, JsonValue> = {}
+  const environment: NodeJS.ProcessEnv = {}
+  const secret = (reference: string): string => {
+    const value = credentials[reference]
+    if (value === undefined) throw new Error(`MCP credential "${reference}" is unavailable`)
+    return value
+  }
+
+  for (const server of servers) {
+    if (!server.enabled) {
+      result[server.id] = { enabled: false }
+      continue
+    }
+
+    if (server.transport.type === 'stdio') {
+      const env: Record<string, string> = {}
+      const envVars: string[] = []
+      for (const [name, value] of Object.entries(server.transport.environment ?? {})) {
+        if (value.source === 'literal') {
+          env[name] = value.value
+        } else {
+          const resolved = secret(value.credentialRef)
+          if (environment[name] !== undefined && environment[name] !== resolved) {
+            throw new Error(
+              `MCP servers use different credentials for environment variable "${name}"`,
+            )
+          }
+          environment[name] = resolved
+          envVars.push(name)
+        }
+      }
+      result[server.id] = {
+        command: server.transport.command,
+        enabled: true,
+        ...(server.transport.args ? { args: server.transport.args } : {}),
+        ...(server.transport.cwd ? { cwd: server.transport.cwd } : {}),
+        ...(Object.keys(env).length ? { env } : {}),
+        ...(envVars.length ? { env_vars: envVars } : {}),
+      }
+      continue
+    }
+
+    const httpHeaders: Record<string, string> = {}
+    const envHttpHeaders: Record<string, string> = {}
+    for (const [name, value] of Object.entries(server.transport.headers ?? {})) {
+      if (value.source === 'literal') {
+        httpHeaders[name] = value.value
+      } else {
+        const variable = `HARNESS_MCP_${createHash('sha256')
+          .update(`${server.id}\0${name}`)
+          .digest('hex')
+          .slice(0, 16)
+          .toUpperCase()}`
+        environment[variable] = secret(value.credentialRef)
+        envHttpHeaders[name] = variable
+      }
+    }
+    result[server.id] = {
+      url: server.transport.url,
+      enabled: true,
+      ...(Object.keys(httpHeaders).length ? { http_headers: httpHeaders } : {}),
+      ...(Object.keys(envHttpHeaders).length ? { env_http_headers: envHttpHeaders } : {}),
+    }
+  }
+
+  return { servers: result, environment }
 }
 
 function auth(status: McpAuthStatus): McpAuth {

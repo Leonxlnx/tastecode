@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { methods, type McpStartupStatus } from '@harness/contracts'
 import type { ListMcpServerStatusResponse } from './generated/v2/ListMcpServerStatusResponse.js'
 import type { McpServerStatusUpdatedNotification } from './generated/v2/McpServerStatusUpdatedNotification.js'
-import { CODEX_MCP_CAPABILITIES, mapMcpServerStatus, mapMcpStartupStatus } from './mcp.js'
+import {
+  CODEX_MCP_CAPABILITIES,
+  mapMcpServerStatus,
+  mapMcpStartupStatus,
+  prepareMcpConfig,
+} from './mcp.js'
 
 /** Sanitized frames captured from Codex 0.146.0 against two process-local test servers. */
 const response: ListMcpServerStatusResponse = {
@@ -106,6 +111,32 @@ describe('Codex MCP inventory', () => {
       resources: [{ uri: 'capture://resource' }],
       resourceTemplates: [{ uriTemplate: 'capture://resource/{id}' }],
     })
+  })
+
+  it('passes credential references through the app-server environment, not JSON config', () => {
+    const result = prepareMcpConfig(
+      [
+        {
+          id: 'docs',
+          enabled: true,
+          transport: {
+            type: 'http',
+            url: 'https://example.com/mcp',
+            headers: {
+              Authorization: { source: 'credential', credentialRef: 'mcp/docs/auth' },
+            },
+          },
+        },
+      ],
+      { 'mcp/docs/auth': 'Bearer secret-value' },
+    )
+
+    expect(result.servers['docs']).toMatchObject({
+      url: 'https://example.com/mcp',
+      env_http_headers: { Authorization: expect.stringMatching(/^HARNESS_MCP_/) },
+    })
+    expect(Object.values(result.environment)).toEqual(['Bearer secret-value'])
+    expect(JSON.stringify(result.servers)).not.toContain('secret-value')
   })
 
   it.each([
