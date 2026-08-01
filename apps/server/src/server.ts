@@ -162,6 +162,17 @@ export function startServer(
       case 'system.panicStop':
         return orchestrator.panicStop()
 
+      case 'search.sessions':
+        return store.searchSessions(
+          params as {
+            query: string
+            projectPath?: string
+            provider?: ProviderId
+            cursor?: string
+            limit?: number
+          },
+        )
+
       case 'providers.list':
         return { providers: await detectProviders() }
 
