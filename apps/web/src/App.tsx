@@ -27,6 +27,7 @@ import { RollbackDialog, type Checkpoint } from './ui/RollbackDialog.js'
 import { Settings } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
 import { StageHeader } from './ui/StageHeader.js'
+import { TerminalPane } from './ui/TerminalPane.js'
 import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { serverUrl } from './server-url.js'
@@ -52,6 +53,8 @@ const EFFORT_KEY = 'harness.effort'
 const SERVICE_TIER_KEY = 'harness.serviceTier'
 const APPROVAL_KEY = 'harness.approval'
 const MACOS_FONT_SMOOTHING_KEY = 'harness.macosFontSmoothing'
+const TERMINAL_OPEN_KEY = 'harness.terminal.open'
+const TERMINAL_HEIGHT_KEY = 'harness.terminal.height'
 
 /**
  * Projects and sessions used to live here. The server owns them now, so this
@@ -145,6 +148,10 @@ export function App() {
   const [macOSFontSmoothing, setMacOSFontSmoothing] = useState(
     () => localStorage.getItem(MACOS_FONT_SMOOTHING_KEY) !== 'false',
   )
+  const [terminalOpen, setTerminalOpen] = useState(
+    () => localStorage.getItem(TERMINAL_OPEN_KEY) === 'true',
+  )
+  const [terminalHeight, setTerminalHeight] = useState(readTerminalHeight)
 
   // Syntax grammars load in the background from the first frame, so the first
   // code block an agent produces is already coloured.
@@ -185,6 +192,14 @@ export function App() {
   useEffect(() => {
     if (macOS) localStorage.setItem(MACOS_FONT_SMOOTHING_KEY, String(macOSFontSmoothing))
   }, [macOS, macOSFontSmoothing])
+
+  useEffect(() => {
+    localStorage.setItem(TERMINAL_OPEN_KEY, String(terminalOpen))
+  }, [terminalOpen])
+
+  useEffect(() => {
+    localStorage.setItem(TERMINAL_HEIGHT_KEY, String(terminalHeight))
+  }, [terminalHeight])
 
   const activeIdRef = useRef(activeId)
   activeIdRef.current = activeId
@@ -1075,14 +1090,18 @@ export function App() {
             usageSummary={usageSummary}
             checkpointCount={thread.running ? 0 : checkpoints.length}
             worktreeBranch={active?.session.worktreeBranch}
+            terminalOpen={terminalOpen}
             onSelectProject={selectProject}
             onOpenRollback={() => {
               setRollbackInspection(undefined)
               setRollbackOpen(true)
             }}
+            onToggleTerminal={() => setTerminalOpen((open) => !open)}
           />
 
-          <div className={`stage__body${activeId ? '' : ' is-new-session'}`}>
+          <div
+            className={`stage__body${activeId ? '' : ' is-new-session'}${activeId && terminalOpen ? ' has-terminal' : ''}`}
+          >
             {active ? (
               <Thread
                 key={activeId}
@@ -1105,6 +1124,18 @@ export function App() {
             ) : (
               <Empty projects={projects} activePath={activePath} />
             )}
+
+            {activeId && terminalOpen ? (
+              <TerminalPane
+                key={activeId}
+                transport={transport}
+                threadId={activeId}
+                height={terminalHeight}
+                theme={theme}
+                onHeightChange={setTerminalHeight}
+                onClose={() => setTerminalOpen(false)}
+              />
+            ) : null}
 
             <Composer
               projects={projects}
@@ -1317,6 +1348,12 @@ function statusFor(state: ThreadState, event: DomainEvent): Project['sessions'][
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] ?? path
+}
+
+function readTerminalHeight(): number {
+  const stored = Number(localStorage.getItem(TERMINAL_HEIGHT_KEY))
+  const height = Number.isFinite(stored) && stored >= 160 ? stored : 260
+  return Math.min(height, Math.max(160, Math.floor(window.innerHeight * 0.72)))
 }
 
 function displayName(project: Project): string {

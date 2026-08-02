@@ -1,5 +1,5 @@
 import type { ResultOf, Usage } from '@harness/contracts'
-import { ChevronDown, GitBranch, History } from 'lucide-react'
+import { ChevronDown, GitBranch, History, SquareTerminal } from 'lucide-react'
 import { isMacOS } from '../bridge.js'
 import { SHORTCUTS, shortcutAria, shortcutLabel } from '../shortcuts.js'
 import type { Project } from './Sidebar.js'
@@ -19,8 +19,10 @@ export function StageHeader(props: {
   usageSummary: ResultOf<'usage.summary'> | undefined
   checkpointCount: number
   worktreeBranch: string | undefined
+  terminalOpen: boolean
   onSelectProject: (path: string) => void
   onOpenRollback: () => void
+  onToggleTerminal: () => void
 }) {
   const switchProjectShortcut = shortcutLabel(SHORTCUTS.switchProject, isMacOS())
 
@@ -60,6 +62,16 @@ export function StageHeader(props: {
       {props.title ? <span className="stagehead__title">{props.title}</span> : null}
 
       <div className="stagehead__tools">
+        {props.title ? (
+          <button
+            className={`ghost terminal-trigger${props.terminalOpen ? ' is-open' : ''}`}
+            aria-pressed={props.terminalOpen}
+            onClick={props.onToggleTerminal}
+          >
+            <SquareTerminal size={13} aria-hidden />
+            Terminal
+          </button>
+        ) : null}
         {props.worktreeBranch ? (
           <span className="worktree-branch" title="Isolated checkout">
             <GitBranch size={12} aria-hidden />
