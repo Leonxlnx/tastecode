@@ -27,6 +27,7 @@ import type { ThreadStartedNotification } from './generated/v2/ThreadStartedNoti
 import type { ThreadTokenUsageUpdatedNotification } from './generated/v2/ThreadTokenUsageUpdatedNotification'
 import type { TurnPlanUpdatedNotification } from './generated/v2/TurnPlanUpdatedNotification'
 import type { ThreadStartResponse } from './generated/v2/ThreadStartResponse'
+import type { ThreadResumeResponse } from './generated/v2/ThreadResumeResponse'
 import type { TurnCompletedNotification } from './generated/v2/TurnCompletedNotification'
 import type { TurnStartedNotification } from './generated/v2/TurnStartedNotification'
 import type { TurnStartResponse } from './generated/v2/TurnStartResponse'
@@ -506,6 +507,22 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       provider: 'codex',
       workspacePath,
       createdAt: Date.now(),
+    }
+  }
+
+  async resumeThread(threadId: string, workspacePath: string): Promise<Thread> {
+    const response = await this.#call<ThreadResumeResponse>('thread/resume', {
+      threadId,
+      cwd: workspacePath,
+      ...(Object.keys(this.#mcpServers).length
+        ? { config: { mcp_servers: this.#mcpServers } }
+        : {}),
+    })
+    return {
+      id: response.thread.id,
+      provider: 'codex',
+      workspacePath,
+      createdAt: response.thread.createdAt * 1_000,
     }
   }
 

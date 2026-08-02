@@ -86,6 +86,7 @@ export class Orchestrator {
   #reviewingDiffs = new Set<string>()
   #queuedTurns = new Map<string, QueuedTurnEntry[]>()
   #drainingQueues = new Set<string>()
+  #resumingThreads = new Map<string, Promise<void>>()
   #panicGeneration = 0
   #panicStopping = false
   #store: Store
@@ -432,9 +433,6 @@ export class Orchestrator {
     }
 
     const { thread, session } = started
-    this.#threads.set(thread.id, { thread, session, ...(worktree ? { worktree } : {}) })
-    session.onMcpOAuth?.((result) => this.#onMcpOAuth(provider, workspacePath, result))
-
     this.#store.addProject(workspacePath)
     this.#store.addThread({
       id: thread.id,
@@ -447,9 +445,7 @@ export class Orchestrator {
       createdAt: thread.createdAt,
       ...(worktree ? { worktreePath: worktree.path, worktreeBranch: worktree.branch } : {}),
     })
-
-    // Wired after start so the thread id exists before any event fires.
-    session.on('event', (event) => this.#record(thread.id, event))
+    this.#attachThread(thread, session, workspacePath, worktree)
     return thread
   }
 
@@ -486,6 +482,7 @@ export class Orchestrator {
     attachments: string[] = [],
     options: TurnOptions = {},
   ): Promise<{ queued: false; turnId: string } | { queued: true; queuedTurn: QueuedTurn }> {
+    await this.#ensureThread(threadId)
     const queue = this.#queuedTurns.get(threadId) ?? []
     if (this.#activeTurns.has(threadId) || this.#startingTurns.has(threadId) || queue.length > 0) {
       const queuedTurn: QueuedTurnEntry = {
@@ -510,10 +507,10 @@ export class Orchestrator {
   }
 
   queue(threadId: string): QueueState {
-    const session = this.#get(threadId).session
+    const session = this.#threads.get(threadId)?.session
     return {
       items: (this.#queuedTurns.get(threadId) ?? []).map((item) => this.#publicQueuedTurn(item)),
-      canSteer: session.capabilities.steer && session.steer !== undefined,
+      canSteer: session?.capabilities.steer === true && session.steer !== undefined,
     }
   }
 
@@ -1025,6 +1022,7 @@ export class Orchestrator {
     this.#reviewingDiffs.clear()
     this.#queuedTurns.clear()
     this.#drainingQueues.clear()
+    this.#resumingThreads.clear()
     this.#control?.dispose()
     this.#control = undefined
   }
@@ -1033,5 +1031,48 @@ export class Orchestrator {
     const entry = this.#threads.get(threadId)
     if (!entry) throw new Error(`no such thread: ${threadId}`)
     return entry
+  }
+
+  async #ensureThread(threadId: string): Promise<void> {
+    if (this.#threads.has(threadId)) return
+    const existing = this.#resumingThreads.get(threadId)
+    if (existing) return existing
+
+    const pending = this.#resumeThread(threadId).finally(() =>
+      this.#resumingThreads.delete(threadId),
+    )
+    this.#resumingThreads.set(threadId, pending)
+    return pending
+  }
+
+  async #resumeThread(threadId: string): Promise<void> {
+    const stored = this.#store.thread(threadId)
+    if (!stored || stored.closedAt !== undefined) throw new Error(`no such thread: ${threadId}`)
+
+    const runtime = this.#runtimeFor(stored.provider, this.#onLog)
+    if (!runtime.resume) {
+      throw new Error(`${stored.provider} sessions cannot resume after Harness restarts yet`)
+    }
+    const workspacePath = stored.worktreePath ?? stored.projectPath
+    const result = await runtime.resume(threadId, workspacePath, {
+      ...(stored.agent ? { agent: stored.agent } : {}),
+      ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
+    })
+    if (result.thread.id !== threadId) {
+      result.session.dispose()
+      throw new Error(`provider resumed unexpected thread ${result.thread.id}`)
+    }
+    this.#attachThread(result.thread, result.session, stored.projectPath)
+  }
+
+  #attachThread(
+    thread: Thread,
+    session: AgentSession,
+    projectPath: string,
+    worktree?: Worktree,
+  ): void {
+    this.#threads.set(thread.id, { thread, session, ...(worktree ? { worktree } : {}) })
+    session.onMcpOAuth?.((result) => this.#onMcpOAuth(thread.provider, projectPath, result))
+    session.on('event', (event) => this.#record(thread.id, event))
   }
 }

@@ -83,8 +83,7 @@ class FakeSession implements AgentSession {
   }
 }
 
-function harness(worktreeRoot?: string) {
-  const store = new Store(':memory:')
+function harness(worktreeRoot?: string, store = new Store(':memory:')) {
   const sessions: FakeSession[] = []
   const received: Array<{ threadId: string; event: DomainEvent }> = []
   const lifecycles: Array<{ threadId: string; lifecycle: ThreadLifecycle }> = []
@@ -92,8 +91,10 @@ function harness(worktreeRoot?: string) {
   /** Where each session was actually told to run. */
   const startedIn: string[] = []
   const startedOptions: StartOptions[] = []
+  const resumedIds: string[] = []
+  const resumedIn: string[] = []
 
-  const runtimeFor = (): ProviderRuntime => ({
+  const runtimeFor = (provider: ProviderId): ProviderRuntime => ({
     async start(workspacePath, options) {
       startedIn.push(workspacePath)
       startedOptions.push(options)
@@ -112,6 +113,25 @@ function harness(worktreeRoot?: string) {
     async listModels() {
       return []
     },
+    ...(provider === 'codex'
+      ? {
+          async resume(threadId: string, workspacePath: string) {
+            resumedIds.push(threadId)
+            resumedIn.push(workspacePath)
+            const session = new FakeSession(`s${sessions.length + 1}`)
+            sessions.push(session)
+            return {
+              thread: {
+                id: threadId,
+                provider,
+                workspacePath,
+                createdAt: Date.now(),
+              },
+              session,
+            }
+          },
+        }
+      : {}),
   })
 
   const orchestrator = new Orchestrator(store, {
@@ -127,7 +147,17 @@ function harness(worktreeRoot?: string) {
     ...(worktreeRoot ? { worktreeRoot } : {}),
   })
 
-  return { store, sessions, received, lifecycles, orchestrator, startedIn, startedOptions }
+  return {
+    store,
+    sessions,
+    received,
+    lifecycles,
+    orchestrator,
+    startedIn,
+    startedOptions,
+    resumedIds,
+    resumedIn,
+  }
 }
 
 const message = (text: string): DomainEvent => ({
@@ -141,6 +171,54 @@ const message = (text: string): DomainEvent => ({
     text,
     createdAt: 0,
   },
+})
+
+describe('persisted threads', () => {
+  it('resumes a stored Codex thread once and preserves concurrent prompt order', async () => {
+    const store = new Store(':memory:')
+    store.addProject('/repo')
+    store.addThread({
+      id: 'persisted-thread',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Persisted',
+      worktreePath: '/worktrees/persisted',
+      worktreeBranch: 'harness/persisted',
+    })
+    const { orchestrator, sessions, resumedIds, resumedIn } = harness(undefined, store)
+
+    expect(orchestrator.queue('persisted-thread')).toEqual({ items: [], canSteer: false })
+    const first = orchestrator.submitTurn('persisted-thread', 'first')
+    const second = orchestrator.submitTurn('persisted-thread', 'second')
+
+    await expect(first).resolves.toMatchObject({ queued: false })
+    await expect(second).resolves.toMatchObject({ queued: true })
+    expect(resumedIds).toEqual(['persisted-thread'])
+    expect(resumedIn).toEqual(['/worktrees/persisted'])
+    expect(sessions[0]?.sent).toEqual(['first'])
+    expect(orchestrator.queue('persisted-thread').items.map((item) => item.text)).toEqual([
+      'second',
+    ])
+
+    sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    await vi.waitFor(() => expect(sessions[0]?.sent).toEqual(['first', 'second']))
+  })
+
+  it('does not invent continuity for a provider without resume support', async () => {
+    const store = new Store(':memory:')
+    store.addProject('/repo')
+    store.addThread({
+      id: 'claude-thread',
+      projectPath: '/repo',
+      provider: 'claude-code',
+      title: 'Persisted Claude',
+    })
+    const { orchestrator } = harness(undefined, store)
+
+    await expect(orchestrator.submitTurn('claude-thread', 'continue')).rejects.toThrow(
+      'claude-code sessions cannot resume after Harness restarts yet',
+    )
+  })
 })
 
 describe('MCP inventory', () => {

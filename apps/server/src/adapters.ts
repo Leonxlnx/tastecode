@@ -76,6 +76,11 @@ export type ProviderRuntime = {
     workspacePath: string,
     options: StartOptions,
   ): Promise<{ thread: Thread; session: AgentSession }>
+  resume?(
+    threadId: string,
+    workspacePath: string,
+    options: StartOptions,
+  ): Promise<{ thread: Thread; session: AgentSession }>
   listModels(): Promise<Model[]>
 }
 
@@ -106,6 +111,21 @@ function codexRuntime(onLog: (line: string) => void): ProviderRuntime {
       await adapter.start()
       const thread = await adapter.startThread(workspacePath, options)
       return { thread, session: adapter }
+    },
+    async resume(threadId, workspacePath, options) {
+      const adapter = new CodexAdapter({
+        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+        ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
+      })
+      adapter.on('log', onLog)
+      try {
+        await adapter.start()
+        const thread = await adapter.resumeThread(threadId, workspacePath)
+        return { thread, session: adapter }
+      } catch (error) {
+        adapter.dispose()
+        throw error
+      }
     },
     async listModels() {
       const adapter = new CodexAdapter()
