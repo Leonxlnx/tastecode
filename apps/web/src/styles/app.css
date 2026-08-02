@@ -3763,9 +3763,9 @@
   justify-content: flex-start;
   gap: 6px;
   min-width: 0;
-  min-height: 52px;
+  min-height: 36px;
   margin: 0;
-  padding: 11px 12px;
+  padding: 2px 12px;
   background: var(--bg-shelf);
   border-radius: var(--r-2xl) var(--r-2xl) 0 0;
   box-shadow:
