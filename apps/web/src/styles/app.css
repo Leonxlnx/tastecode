@@ -1339,7 +1339,7 @@
 
 .session-search__snippet mark {
   padding: 0 2px;
-  background: color-mix(in oklab, var(--accent) 24%, transparent);
+  background: color-mix(in oklab, var(--light) 18%, transparent);
   border-radius: 2px;
   color: var(--text);
 }
