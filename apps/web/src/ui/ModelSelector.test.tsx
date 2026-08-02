@@ -163,6 +163,7 @@ describe('ModelSelector', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
+    expect(screen.getByText('1.5× Speed · 2.5× Usage')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Enable fast mode' }))
     expect(onServiceTierChange).toHaveBeenCalledWith('priority')
@@ -216,6 +217,7 @@ describe('ModelSelector', () => {
     expect(slider.querySelector('.model-selector__slider-value')?.textContent).toBe('Extra High')
     expect(onEffortChange).not.toHaveBeenCalled()
     expect(slider.querySelectorAll('canvas')).toHaveLength(2)
+    expect(slider.querySelectorAll('.model-selector__slider-stop')).toHaveLength(4)
     expect(slider.querySelector('.model-selector__slider-thumb')).toBeNull()
 
     fireEvent.pointerUp(slider, { clientX: 350, pointerId: 4 })
@@ -237,27 +239,16 @@ describe('ModelSelector', () => {
     expect(onEffortChange).toHaveBeenNthCalledWith(3, 'low')
   })
 
-  it('expands advanced models and keeps fast intent when switching models', () => {
+  it('shows compact models immediately and keeps fast intent when switching models', () => {
     const { onModelChange, onEffortChange, onServiceTierChange } = renderSelector({
       effort: 'xhigh',
       serviceTier: 'priority',
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
-    const advancedToggle = screen.getByRole('button', { name: 'Show advanced model list' })
-    const modelsPanel = document.getElementById(advancedToggle.getAttribute('aria-controls') ?? '')
-    expect(modelsPanel?.getAttribute('aria-hidden')).toBe('true')
-    expect(modelsPanel?.hasAttribute('inert')).toBe(true)
-
-    fireEvent.click(advancedToggle)
-    expect(modelsPanel?.getAttribute('aria-hidden')).toBe('false')
-    expect(modelsPanel?.hasAttribute('inert')).toBe(false)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Hide advanced model list' }))
-    expect(modelsPanel?.getAttribute('aria-hidden')).toBe('true')
-    expect(modelsPanel?.hasAttribute('inert')).toBe(true)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Show advanced model list' }))
+    expect(screen.queryByText('Advanced')).toBeNull()
+    expect(screen.queryByText('Best for broad tasks')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Use GPT-5.6 Mini' }))
 
     expect(onModelChange).toHaveBeenCalledWith('gpt-5.6-mini')

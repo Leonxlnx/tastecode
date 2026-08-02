@@ -1,13 +1,6 @@
-import {
-  useId,
-  useRef,
-  useState,
-  type CSSProperties,
-  type KeyboardEvent,
-  type PointerEvent,
-} from 'react'
+import { useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react'
 import type { Model } from '@harness/contracts'
-import { ChevronDown, ChevronRight, Zap } from 'lucide-react'
+import { Check, ChevronDown, Zap } from 'lucide-react'
 import { DitherSlider } from './dither-kit/DitherSlider.js'
 import { Menu } from './Menu.js'
 
@@ -151,7 +144,6 @@ function DitherChoiceRow(props: {
   onCommitIndex: (index: number) => void
 }) {
   const [pointerIndex, setPointerIndex] = useState<number | null>(null)
-  const [pointerProgress, setPointerProgress] = useState<number | null>(null)
   const pointerIndexRef = useRef<number | null>(null)
 
   const displayIndex = pointerIndex ?? props.selectedIndex
@@ -161,10 +153,9 @@ function DitherChoiceRow(props: {
     displayIndex < 0 || props.optionLabels.length < 2
       ? 0.5
       : displayIndex / (props.optionLabels.length - 1)
-  const visualProgress = pointerProgress ?? selectedProgress
   const ditherWidthOffset =
-    (1 - visualProgress) * SLIDER_DITHER_MIN_WIDTH - visualProgress * SLIDER_DITHER_INSET * 2
-  const ditherWidth = `calc(${visualProgress * 100}% + ${ditherWidthOffset}px)`
+    (1 - selectedProgress) * SLIDER_DITHER_MIN_WIDTH - selectedProgress * SLIDER_DITHER_INSET * 2
+  const ditherWidth = `calc(${selectedProgress * 100}% + ${ditherWidthOffset}px)`
   const sliderVars = {
     '--model-selector-slider-width': ditherWidth,
     '--model-selector-slider-inset': `${SLIDER_DITHER_INSET}px`,
@@ -172,18 +163,12 @@ function DitherChoiceRow(props: {
 
   const previewFromPointer = (event: PointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect()
-    const nextProgress = getEffortProgressFromPointer({
-      clientX: event.clientX,
-      left: rect.left,
-      width: rect.width,
-    })
     const nextIndex = getEffortIndexFromPointer({
       clientX: event.clientX,
       left: rect.left,
       width: rect.width,
       stopCount: props.optionLabels.length,
     })
-    setPointerProgress(nextProgress)
     if (pointerIndexRef.current !== nextIndex) {
       pointerIndexRef.current = nextIndex
       setPointerIndex(nextIndex)
@@ -260,7 +245,6 @@ function DitherChoiceRow(props: {
         requestAnimationFrame(() => {
           commitIndex(nextIndex)
           setPointerIndex(null)
-          setPointerProgress(null)
         })
       }}
       onPointerCancel={(event) => {
@@ -269,12 +253,24 @@ function DitherChoiceRow(props: {
         }
         pointerIndexRef.current = null
         setPointerIndex(null)
-        setPointerProgress(null)
       }}
     >
       <div className="model-selector__slider-track">
         <div className="model-selector__slider-fill">
-          <DitherSlider active={!props.disabled && pointerProgress !== null} />
+          <DitherSlider active={!props.disabled && pointerIndex !== null} />
+        </div>
+        <div className="model-selector__slider-stops" aria-hidden>
+          {props.optionLabels.map((option, index) => (
+            <span
+              className={`model-selector__slider-stop${index <= displayIndex ? ' is-active' : ''}`}
+              style={
+                {
+                  '--model-selector-stop': index / Math.max(1, props.optionLabels.length - 1),
+                } as CSSProperties
+              }
+              key={option}
+            />
+          ))}
         </div>
       </div>
 
@@ -289,9 +285,6 @@ function DitherChoiceRow(props: {
 }
 
 export function ModelSelector(props: ModelSelectorProps) {
-  const [advancedOpen, setAdvancedOpen] = useState(false)
-  const modelsPanelId = useId()
-
   const model = getSelectedModel(props.models, props.modelId)
   const selectedEffort = getSelectedEffort(model, props.effort)
   const effortOptions = model?.reasoningEfforts ?? []
@@ -363,41 +356,52 @@ export function ModelSelector(props: ModelSelectorProps) {
     >
       {(close) => (
         <div className="model-selector">
-          <div className="model-selector__header">
-            <button
-              type="button"
-              className={`model-selector__advanced${advancedOpen ? ' is-open' : ''}`}
-              aria-controls={modelsPanelId}
-              aria-expanded={advancedOpen}
-              aria-label={advancedOpen ? 'Hide advanced model list' : 'Show advanced model list'}
-              onClick={() => setAdvancedOpen((current) => !current)}
-            >
-              <span>Advanced</span>
-              <span className="model-selector__advanced-chevron" aria-hidden>
-                <ChevronRight size={16} />
-              </span>
-            </button>
-
-            {fastTier ? (
-              <button
-                type="button"
-                className={`model-selector__fast${fastEnabled ? ' is-on' : ''}`}
-                aria-label={fastEnabled ? 'Disable fast mode' : 'Enable fast mode'}
-                aria-pressed={fastEnabled}
-                title={fastTier.description}
-                onClick={() =>
-                  props.onServiceTierChange(fastEnabled ? getFastModeOffValue(model) : fastTier.id)
-                }
-              >
-                <span className="model-selector__fast-icon" aria-hidden>
-                  <Zap size={16} />
-                </span>
-              </button>
-            ) : null}
+          <div className="model-selector__models" role="group" aria-label="Models">
+            {props.models.map((entry) => {
+              const selected = entry.id === model?.id
+              return (
+                <button
+                  key={entry.id}
+                  type="button"
+                  className={`model-selector__model${selected ? ' is-selected' : ''}`}
+                  aria-pressed={selected}
+                  aria-label={`Use ${entry.displayName}`}
+                  onClick={() => {
+                    handleModelSelect(entry)
+                    close()
+                  }}
+                >
+                  <span className="model-selector__model-name">{entry.displayName}</span>
+                  {selected ? <Check size={14} aria-hidden /> : null}
+                </button>
+              )
+            })}
           </div>
 
-          {effortOptions.length > 0 ? (
-            <div className="model-selector__section">
+          <div className="model-selector__controls">
+            {fastTier ? (
+              <div className="model-selector__fast-row">
+                <span className="model-selector__fast-meta">1.5× Speed · 2.5× Usage</span>
+                <button
+                  type="button"
+                  className={`model-selector__fast${fastEnabled ? ' is-on' : ''}`}
+                  aria-label={fastEnabled ? 'Disable fast mode' : 'Enable fast mode'}
+                  aria-pressed={fastEnabled}
+                  title={fastTier.description}
+                  onClick={() =>
+                    props.onServiceTierChange(
+                      fastEnabled ? getFastModeOffValue(model) : fastTier.id,
+                    )
+                  }
+                >
+                  <span className="model-selector__fast-icon" aria-hidden>
+                    <Zap size={15} />
+                  </span>
+                </button>
+              </div>
+            ) : null}
+
+            {effortOptions.length > 0 ? (
               <DitherChoiceRow
                 label="Effort"
                 ariaLabel="Reasoning effort"
@@ -406,44 +410,7 @@ export function ModelSelector(props: ModelSelectorProps) {
                 disabled={props.disabled || effortOptions.length <= 1}
                 onCommitIndex={commitEffortIndex}
               />
-            </div>
-          ) : null}
-
-          <div
-            id={modelsPanelId}
-            className={`model-selector__models${advancedOpen ? ' is-open' : ''}`}
-            aria-hidden={!advancedOpen}
-            inert={advancedOpen ? undefined : true}
-          >
-            <div className="model-selector__models-reveal">
-              <div className="model-selector__section" role="group" aria-label="Models">
-                {props.models.map((entry) => {
-                  const selected = entry.id === model?.id
-                  return (
-                    <button
-                      key={entry.id}
-                      type="button"
-                      className={`model-selector__model${selected ? ' is-selected' : ''}`}
-                      aria-pressed={selected}
-                      aria-label={`Use ${entry.displayName}`}
-                      onClick={() => {
-                        handleModelSelect(entry)
-                        close()
-                      }}
-                    >
-                      <span className="model-selector__model-copy">
-                        <span className="model-selector__model-name">{entry.displayName}</span>
-                        {entry.description ? (
-                          <span className="model-selector__model-description">
-                            {entry.description}
-                          </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
+            ) : null}
           </div>
         </div>
       )}
