@@ -3,7 +3,10 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { UserInput } from './UserInput.js'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  document.querySelector('.composer__box')?.remove()
+})
 
 const request = {
   id: 'brief-1',
@@ -48,6 +51,16 @@ const request = {
 }
 
 describe('briefing questions', () => {
+  it('attaches the question card directly to the composer', () => {
+    const composer = document.createElement('div')
+    composer.className = 'composer__box'
+    document.body.append(composer)
+
+    render(<UserInput request={request} onSubmit={vi.fn()} />)
+
+    expect(composer.querySelector('form[aria-label="Design brief questions"]')).toBeTruthy()
+  })
+
   it('pages through one question at a time and preserves earlier answers', () => {
     render(<UserInput request={request} onSubmit={vi.fn()} />)
 

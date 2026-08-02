@@ -1,4 +1,5 @@
 import { useRef, useState, type WheelEvent } from 'react'
+import { createPortal } from 'react-dom'
 import type { UserInputRequest } from '@harness/contracts'
 import './user-input.css'
 
@@ -14,14 +15,17 @@ export function UserInput(props: {
   const question = props.request.questions[step]
   const answer = question ? answers[question.id]?.trim() : undefined
   const lastStep = step === props.request.questions.length - 1
+  const composer =
+    typeof document === 'undefined' ? null : document.querySelector<HTMLElement>('.composer__box')
 
   if (submitting) {
-    return (
+    const status = (
       <div className="brief-input brief-input--status" role="status">
         <span className="brief-input__spinner" aria-hidden="true" />
         Submitting answers…
       </div>
     )
+    return composer ? createPortal(status, composer) : status
   }
 
   if (!question) return null
@@ -61,7 +65,7 @@ export function UserInput(props: {
     event.preventDefault()
   }
 
-  return (
+  const form = (
     <form
       className="brief-input"
       aria-label="Design brief questions"
@@ -159,4 +163,6 @@ export function UserInput(props: {
       </footer>
     </form>
   )
+
+  return composer ? createPortal(form, composer) : form
 }
