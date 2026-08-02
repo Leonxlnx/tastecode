@@ -22,7 +22,11 @@ describe('design briefing prompt', () => {
 
     expect(DESIGN_BRIEF_ATTACHMENT).toBe('personal-harness://design-brief-v1')
     expect(prompt).toContain('request_user_input')
-    expect(prompt).toContain('every remaining material question together in one batch')
+    expect(prompt).toContain(
+      'exactly one batch containing two or three short, high-value questions',
+    )
+    expect(prompt).toContain("Anything else you'd like us to know?")
+    expect(prompt).toContain("No, that's everything")
     expect(prompt).toContain('Only if an answer is genuinely ambiguous')
     expect(prompt).toContain('Design a launch page for a research tool.')
     expect(prompt).toContain('Do not use shell, patch, or filesystem tools')
