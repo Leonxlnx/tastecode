@@ -1,5 +1,6 @@
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal, type ITheme } from '@xterm/xterm'
+import '@xterm/xterm/css/xterm.css'
 import { Copy, RotateCcw, X } from 'lucide-react'
 import { memo, useLayoutEffect, useRef, useState, type PointerEvent } from 'react'
 import type { Transport, ConnectionState } from '../transport.js'

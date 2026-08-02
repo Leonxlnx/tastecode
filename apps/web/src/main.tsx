@@ -1,7 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import 'streamdown/styles.css'
-import '@xterm/xterm/css/xterm.css'
 import { App } from './App.js'
 import { applyTheme, readThemePreference, resolveTheme } from './theme.js'
 import './styles/tokens.css'

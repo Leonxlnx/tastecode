@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type {
   Account,
   ApprovalMode,
@@ -27,7 +36,6 @@ import { RollbackDialog, type Checkpoint } from './ui/RollbackDialog.js'
 import { Settings } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
 import { StageHeader } from './ui/StageHeader.js'
-import { TerminalPane } from './ui/TerminalPane.js'
 import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { serverUrl } from './server-url.js'
@@ -55,6 +63,9 @@ const APPROVAL_KEY = 'harness.approval'
 const MACOS_FONT_SMOOTHING_KEY = 'harness.macosFontSmoothing'
 const TERMINAL_OPEN_KEY = 'harness.terminal.open'
 const TERMINAL_HEIGHT_KEY = 'harness.terminal.height'
+const TerminalPane = lazy(() =>
+  import('./ui/TerminalPane.js').then((module) => ({ default: module.TerminalPane })),
+)
 
 /**
  * Projects and sessions used to live here. The server owns them now, so this
@@ -1126,15 +1137,17 @@ export function App() {
             )}
 
             {activeId && terminalOpen ? (
-              <TerminalPane
-                key={activeId}
-                transport={transport}
-                threadId={activeId}
-                height={terminalHeight}
-                theme={theme}
-                onHeightChange={setTerminalHeight}
-                onClose={() => setTerminalOpen(false)}
-              />
+              <Suspense fallback={null}>
+                <TerminalPane
+                  key={activeId}
+                  transport={transport}
+                  threadId={activeId}
+                  height={terminalHeight}
+                  theme={theme}
+                  onHeightChange={setTerminalHeight}
+                  onClose={() => setTerminalOpen(false)}
+                />
+              </Suspense>
             ) : null}
 
             <Composer
