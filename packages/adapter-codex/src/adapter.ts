@@ -11,6 +11,8 @@ import type {
   McpServerConfig,
   McpStartupStatus,
   Model,
+  Skill,
+  SkillDiscoveryError,
   Thread,
 } from '@harness/contracts'
 import type { LoginAccountResponse } from './generated/v2/LoginAccountResponse'
@@ -38,6 +40,9 @@ import type { ItemGuardianApprovalReviewCompletedNotification } from './generate
 import type { ItemGuardianApprovalReviewStartedNotification } from './generated/v2/ItemGuardianApprovalReviewStartedNotification'
 import type { JsonValue } from './generated/serde_json/JsonValue.js'
 import { mapMcpServerStatus, mapMcpStartupStatus, prepareMcpConfig } from './mcp.js'
+import type { SkillsListResponse } from './generated/v2/SkillsListResponse.js'
+import type { SkillsConfigWriteResponse } from './generated/v2/SkillsConfigWriteResponse.js'
+import { mapSkillList } from './skills.js'
 
 /**
  * Tier 1 adapter: drives `codex app-server` over JSON-RPC.
@@ -224,6 +229,7 @@ export type CodexAdapterEvents = {
   /** Emitted when the browser half of an OAuth flow finishes. */
   login: [{ loginId: string | null; success: boolean; error: string | null }]
   mcpOAuth: [{ serverId: string; loginId: string; success: boolean; error: string | null }]
+  skillsChanged: []
 }
 
 export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
@@ -410,6 +416,31 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     return servers
   }
 
+  async listSkills(projectPath: string): Promise<{
+    skills: Skill[]
+    errors: SkillDiscoveryError[]
+  }> {
+    const [response, configuredMcpIds] = await Promise.all([
+      this.#call<SkillsListResponse>('skills/list', {
+        cwds: [projectPath],
+        forceReload: true,
+      }),
+      this.listMcpServers()
+        .then((servers) => new Set(servers.map((server) => server.id)))
+        .catch(() => undefined),
+    ])
+    return mapSkillList(response, projectPath, configuredMcpIds)
+  }
+
+  async setSkillEnabled(skillId: string, enabled: boolean): Promise<boolean> {
+    const response = await this.#call<SkillsConfigWriteResponse>('skills/config/write', {
+      path: skillId,
+      name: null,
+      enabled,
+    })
+    return response.effectiveEnabled
+  }
+
   async reloadMcpServers(
     threadId: string,
     servers: McpServerConfig[],
@@ -592,6 +623,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const emit = (event: DomainEvent) => this.emit('event', event)
 
     switch (method) {
+      case 'skills/changed':
+        this.emit('skillsChanged')
+        return
+
       case 'thread/started': {
         const p = params as ThreadStartedNotification
         emit({

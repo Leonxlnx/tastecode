@@ -90,6 +90,8 @@ export function startServer(
     onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
     onMcpOAuth: (provider, projectPath, result) =>
       push.broadcast('mcp.oauth', { provider, projectPath, ...result }),
+    onSkillsChanged: (provider, projectPath) =>
+      push.broadcast('skills.changed', { provider, projectPath }),
     onTerminalOutput: (terminalId, data) => push.broadcast('terminal.output', { terminalId, data }),
     onTerminalExit: (terminalId, exitCode) =>
       push.broadcast('terminal.exit', { terminalId, exitCode }),
@@ -234,6 +236,28 @@ export function startServer(
       case 'mcp.cancelOAuth': {
         const p = params as { provider: ProviderId }
         return orchestrator.cancelMcpOAuth(p.provider)
+      }
+
+      case 'skills.list': {
+        const p = params as { provider: ProviderId; projectPath: string }
+        return orchestrator.listSkills(p.provider, p.projectPath)
+      }
+
+      case 'skills.setEnabled': {
+        const p = params as {
+          provider: ProviderId
+          projectPath: string
+          skillId: string
+          enabled: boolean
+        }
+        return {
+          enabled: await orchestrator.setSkillEnabled(
+            p.provider,
+            p.projectPath,
+            p.skillId,
+            p.enabled,
+          ),
+        }
       }
 
       case 'auth.status': {

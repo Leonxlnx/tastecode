@@ -1,4 +1,8 @@
-import { CODEX_MCP_CAPABILITIES, CodexAdapter } from '@harness/adapter-codex'
+import {
+  CODEX_MCP_CAPABILITIES,
+  CODEX_SKILL_CAPABILITIES,
+  CodexAdapter,
+} from '@harness/adapter-codex'
 import {
   providerRuntime,
   type AgentSession,
@@ -31,6 +35,9 @@ import type {
   ProviderId,
   QueuedTurn,
   SessionDiff,
+  Skill,
+  SkillCapabilities,
+  SkillDiscoveryError,
   Thread,
 } from '@harness/contracts'
 import { readSessionDiff, reviewDiffFile, reviewDiffHunk } from './diff-review.js'
@@ -49,6 +56,11 @@ const UNSUPPORTED_MCP_CAPABILITIES: McpCapabilities = {
   reload: false,
   startOAuth: false,
   cancelOAuth: false,
+}
+const UNSUPPORTED_SKILL_CAPABILITIES: SkillCapabilities = {
+  inventory: false,
+  configure: false,
+  install: false,
 }
 
 /**
@@ -86,6 +98,8 @@ export class Orchestrator {
     projectPath: string,
     result: { serverId: string; loginId: string; success: boolean; error: string | null },
   ) => void
+  #onSkillsChanged: (provider: ProviderId, projectPath: string) => void
+  #watchedSkillProjects = new Set<string>()
   #mcpConfig: McpConfigStore
   #readCredential: (reference: string) => string
   #terminals: TerminalManager
@@ -113,6 +127,7 @@ export class Orchestrator {
         projectPath: string,
         result: { serverId: string; loginId: string; success: boolean; error: string | null },
       ) => void
+      onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
       mcpConfig?: McpConfigStore
       readCredential?: (reference: string) => string
       onTerminalOutput?: (terminalId: string, data: string) => void
@@ -129,6 +144,7 @@ export class Orchestrator {
     this.#onLog = handlers.onLog
     this.#onLogin = handlers.onLogin
     this.#onMcpOAuth = handlers.onMcpOAuth ?? (() => {})
+    this.#onSkillsChanged = handlers.onSkillsChanged ?? (() => {})
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
     this.#readCredential = handlers.readCredential ?? readCredential
     this.#terminals = new TerminalManager({
@@ -151,6 +167,11 @@ export class Orchestrator {
     const adapter = new CodexAdapter()
     adapter.on('log', (line) => this.#onLog(line))
     adapter.on('login', (result) => this.#onLogin('codex', result))
+    adapter.on('skillsChanged', () => {
+      for (const projectPath of this.#watchedSkillProjects) {
+        this.#onSkillsChanged('codex', projectPath)
+      }
+    })
     await adapter.start()
     this.#control = adapter
     return adapter
@@ -206,6 +227,37 @@ export class Orchestrator {
       })
     }
     return { capabilities: CODEX_MCP_CAPABILITIES, servers: [...servers.values()] }
+  }
+
+  async listSkills(
+    provider: ProviderId,
+    projectPath: string,
+  ): Promise<{
+    capabilities: SkillCapabilities
+    skills: Skill[]
+    errors: SkillDiscoveryError[]
+  }> {
+    if (provider !== 'codex') {
+      return { capabilities: UNSUPPORTED_SKILL_CAPABILITIES, skills: [], errors: [] }
+    }
+    this.#watchedSkillProjects.add(projectPath)
+    return {
+      capabilities: CODEX_SKILL_CAPABILITIES,
+      ...(await (await this.#controlAdapter()).listSkills(projectPath)),
+    }
+  }
+
+  async setSkillEnabled(
+    provider: ProviderId,
+    projectPath: string,
+    skillId: string,
+    enabled: boolean,
+  ): Promise<boolean> {
+    if (provider !== 'codex') {
+      throw new Error(`provider "${provider}" cannot configure skills yet`)
+    }
+    this.#watchedSkillProjects.add(projectPath)
+    return (await this.#controlAdapter()).setSkillEnabled(skillId, enabled)
   }
 
   addMcpServer(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
