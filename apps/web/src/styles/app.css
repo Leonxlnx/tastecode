@@ -4471,12 +4471,12 @@
   opacity: 0.5;
 }
 
-.composer-voice-bar__button--cancel {
+.composer-voice-bar__button--stop {
   background: var(--surface-2);
   color: var(--text-2);
 }
 
-.composer-voice-bar__button--cancel:hover:not(:disabled) {
+.composer-voice-bar__button--stop:hover:not(:disabled) {
   background: var(--surface-3);
   color: var(--text);
 }

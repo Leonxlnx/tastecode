@@ -38,23 +38,23 @@ describe('Composer voice dictation', () => {
     textarea.setSelectionRange(5, 5)
 
     fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Send voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop and transcribe voice note' }))
 
     await waitFor(() => expect(textarea.value).toBe('hello spoken words world'))
     expect(onTranscribeVoice).toHaveBeenCalledTimes(1)
     expect(onSend).not.toHaveBeenCalled()
   })
 
-  it('cancels a recording before any audio is uploaded', async () => {
-    const onTranscribeVoice = vi.fn()
-    renderVoiceComposer({ onTranscribeVoice })
+  it('transcribes and sends from the arrow action', async () => {
+    const onSend = vi.fn()
+    const onTranscribeVoice = vi.fn(async () => 'spoken words')
+    renderVoiceComposer({ onSend, onTranscribeVoice })
 
     fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Cancel voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Transcribe and send voice note' }))
 
-    expect(recorder.cancel).toHaveBeenCalled()
-    expect(onTranscribeVoice).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: 'Record voice note' })).toBeTruthy()
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('spoken words', []))
+    expect(onTranscribeVoice).toHaveBeenCalledTimes(1)
   })
 
   it('cancels an in-flight transcription by request id', async () => {
@@ -63,7 +63,7 @@ describe('Composer voice dictation', () => {
     renderVoiceComposer({ onTranscribeVoice, onCancelVoice })
 
     fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Send voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop and transcribe voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel transcription' }))
 
     expect(onCancelVoice).toHaveBeenCalledWith(expect.any(String))

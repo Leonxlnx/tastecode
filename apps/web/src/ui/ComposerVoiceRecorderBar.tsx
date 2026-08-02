@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, LoaderCircle, Square } from 'lucide-react'
+import { ArrowUp, LoaderCircle, Square, X } from 'lucide-react'
 
 const BAR_WIDTH_PX = 2
 const BAR_GAP_PX = 2
@@ -12,6 +12,7 @@ export function ComposerVoiceRecorderBar(props: {
   isTranscribing: boolean
   waveformLevels: readonly number[]
   onCancel: () => void
+  onStop: () => void
   onSubmit: () => void
 }) {
   const track = useRef<HTMLDivElement>(null)
@@ -57,14 +58,16 @@ export function ComposerVoiceRecorderBar(props: {
 
       <button
         type="button"
-        className="composer-voice-bar__button composer-voice-bar__button--cancel"
-        aria-label={props.isTranscribing ? 'Cancel transcription' : 'Cancel voice note'}
-        title={props.isTranscribing ? 'Cancel transcription' : 'Cancel voice note'}
+        className="composer-voice-bar__button composer-voice-bar__button--stop"
+        aria-label={
+          props.isTranscribing ? 'Cancel transcription' : 'Stop and transcribe voice note'
+        }
+        title={props.isTranscribing ? 'Cancel transcription' : 'Stop and transcribe'}
         disabled={props.disabled}
-        onClick={props.onCancel}
+        onClick={props.isTranscribing ? props.onCancel : props.onStop}
       >
         {props.isTranscribing ? (
-          <LoaderCircle className="spinner" size={12} aria-hidden />
+          <X size={13} aria-hidden />
         ) : (
           <Square size={11} fill="currentColor" strokeWidth={0} aria-hidden />
         )}
@@ -73,8 +76,10 @@ export function ComposerVoiceRecorderBar(props: {
       <button
         type="button"
         className="composer-voice-bar__button composer-voice-bar__button--submit"
-        aria-label={props.isTranscribing ? 'Transcribing voice note' : 'Send voice note'}
-        title={props.isTranscribing ? 'Transcribing voice note' : 'Send voice note'}
+        aria-label={
+          props.isTranscribing ? 'Transcribing voice note' : 'Transcribe and send voice note'
+        }
+        title={props.isTranscribing ? 'Transcribing voice note' : 'Transcribe and send'}
         disabled={props.disabled || props.isTranscribing}
         onClick={props.onSubmit}
       >

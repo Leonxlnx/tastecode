@@ -355,17 +355,10 @@ export function Composer(props: {
     setAttachments([])
   }
 
-  const submit = () => {
-    const trimmed = text.trim()
+  const sendContent = (content: string) => {
+    const trimmed = content.trim()
     const paths = attachments.flatMap((attachment) => attachment.path ?? [])
-    if (
-      trimmed === '' ||
-      paths.length !== attachments.length ||
-      props.disabled ||
-      voiceState !== 'idle'
-    ) {
-      return
-    }
+    if (trimmed === '' || paths.length !== attachments.length || props.disabled) return
     const el = area.current
     const currentHeight = el?.offsetHeight ?? COMPOSER_MIN_HEIGHT
     previousComposerRect.current = composerAnchor.current?.getBoundingClientRect() ?? null
@@ -376,6 +369,7 @@ export function Composer(props: {
       setSending(false)
     }, SEND_MOTION_MS)
     props.onSend(trimmed, paths)
+    textRef.current = ''
     setText('')
     clearAttachments()
     setSlashOpen(false)
@@ -390,14 +384,21 @@ export function Composer(props: {
     }
   }
 
+  const submit = () => {
+    if (voiceState !== 'idle') return
+    sendContent(text)
+  }
+
   const editQueuedTurn = (queuedTurn: QueuedTurn) => {
     setValue(queuedTurn.text)
     addFiles(queuedTurn.attachments)
     props.onDeleteQueuedTurn(queuedTurn.id)
   }
 
-  const insertTranscript = (transcript: string) => {
-    const cursor = area.current?.selectionStart ?? textRef.current.length
+  const insertTranscript = (
+    transcript: string,
+    cursor = area.current?.selectionStart ?? textRef.current.length,
+  ) => {
     const inserted = insertTranscriptAtCursor(textRef.current, transcript, cursor)
     if (!inserted) return
     textRef.current = inserted.text
@@ -425,9 +426,10 @@ export function Composer(props: {
     }
   }
 
-  const transcribeVoice = async () => {
+  const transcribeVoice = async (sendAfter = false) => {
     if (voiceState !== 'recording') return
     const operation = voiceOperation.current
+    const cursor = area.current?.selectionStart ?? textRef.current.length
     setVoiceState('transcribing')
     setVoiceError(undefined)
     const recording = await recorder.stop()
@@ -446,7 +448,11 @@ export function Composer(props: {
         voiceOperation.current === operation &&
         voiceRequest.current === requestId
       ) {
-        insertTranscript(transcript)
+        const inserted = insertTranscriptAtCursor(textRef.current, transcript, cursor)
+        if (inserted) {
+          if (sendAfter) sendContent(inserted.text)
+          else insertTranscript(transcript, cursor)
+        }
       }
     } catch (error) {
       if (
@@ -897,7 +903,8 @@ export function Composer(props: {
                     durationLabel={formatRecordingDuration(recorder.durationMs)}
                     waveformLevels={recorder.levels}
                     onCancel={cancelVoice}
-                    onSubmit={() => void transcribeVoice()}
+                    onStop={() => void transcribeVoice()}
+                    onSubmit={() => void transcribeVoice(true)}
                   />
                 ) : (
                   <BorderBeam
