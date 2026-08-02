@@ -32,6 +32,7 @@ import { CommandPalette, type CommandScope, type PaletteCommand } from './ui/Com
 import { CheckoutDiscardDialog } from './ui/CheckoutDiscardDialog.js'
 import { Composer, type WorkspaceInfo } from './ui/Composer.js'
 import { Onboarding } from './ui/Onboarding.js'
+import { PanicStop } from './ui/PanicStop.js'
 import { RollbackDialog, type Checkpoint } from './ui/RollbackDialog.js'
 import { Settings } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
@@ -919,19 +920,22 @@ export function App() {
 
   if (!provider) {
     return (
-      <Onboarding
-        transport={transport}
-        onDone={(id, agent) => {
-          localStorage.setItem(SETUP_KEY, id)
-          if (agent) {
-            localStorage.setItem(AGENT_KEY, agent.id)
-            localStorage.setItem(AGENT_NAME_KEY, agent.name)
-          }
-          setAcpAgent(agent?.id)
-          setAcpAgentName(agent?.name)
-          setProvider(id)
-        }}
-      />
+      <>
+        <Onboarding
+          transport={transport}
+          onDone={(id, agent) => {
+            localStorage.setItem(SETUP_KEY, id)
+            if (agent) {
+              localStorage.setItem(AGENT_KEY, agent.id)
+              localStorage.setItem(AGENT_NAME_KEY, agent.name)
+            }
+            setAcpAgent(agent?.id)
+            setAcpAgentName(agent?.name)
+            setProvider(id)
+          }}
+        />
+        <PanicStop transport={transport} />
+      </>
     )
   }
 
@@ -1270,6 +1274,7 @@ export function App() {
           </button>
         </div>
       ) : null}
+      <PanicStop transport={transport} />
     </div>
   )
 }
