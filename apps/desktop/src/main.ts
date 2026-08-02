@@ -13,6 +13,7 @@ import {
   type WebContents,
 } from 'electron'
 import { allowsMicrophoneRequest } from './media-permissions.js'
+import { nextZoomFactor, zoomShortcut } from './zoom-shortcuts.js'
 
 /**
  * Electron shell. Deliberately thin: it opens a window and nothing else.
@@ -70,6 +71,14 @@ function createWindow(): void {
       event.preventDefault()
       void shell.openExternal(url)
     }
+  })
+
+  window.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    const action = zoomShortcut(input)
+    if (!action) return
+    event.preventDefault()
+    window.webContents.setZoomFactor(nextZoomFactor(window.webContents.getZoomFactor(), action))
   })
 
   if (devServer) {
