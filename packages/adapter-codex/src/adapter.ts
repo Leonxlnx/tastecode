@@ -292,7 +292,12 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   async start(): Promise<void> {
     if (this.#started) return
 
-    const child = spawnCli('codex', ['app-server'], { env: this.#mcpEnvironment })
+    // Structured questions are gated in Codex's default collaboration mode.
+    // Enable the native tool at process startup so every advertised user-input
+    // capability is real rather than a request the model can never make.
+    const child = spawnCli('codex', ['app-server', '--enable', 'default_mode_request_user_input'], {
+      env: this.#mcpEnvironment,
+    })
     const rpc = new StdioJsonRpc(child)
     this.#rpc = rpc
 
