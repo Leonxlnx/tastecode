@@ -210,6 +210,14 @@ describe('skills inventory', () => {
       errors: [],
     })
   })
+
+  it('rejects installation for unsupported providers before touching the folder', async () => {
+    const { orchestrator } = harness()
+
+    await expect(
+      orchestrator.installSkillFromFolder('claude-code', '/repo', '/selected-skill'),
+    ).rejects.toThrow('provider "claude-code" cannot install skills yet')
+  })
 })
 
 describe('several sessions at once', () => {
