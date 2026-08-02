@@ -290,6 +290,44 @@ describe('web client', () => {
   })
 })
 describe('new chats', () => {
+  it('shows consecutive prompts while the new session is still starting', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'thread.start') await startGate
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Start immediately' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(screen.getByTestId('thread').textContent).toContain('Start immediately')
+    expect(document.querySelector('.stage__body.is-new-session')).toBeNull()
+
+    fireEvent.change(composer, { target: { value: 'Then do this too' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(screen.getByTestId('thread').textContent).toContain('Then do this too')
+    expect(transport.request).not.toHaveBeenCalledWith('thread.sendTurn', expect.anything())
+
+    await act(async () => releaseStart?.())
+    await waitFor(() => {
+      expect(
+        transport.request.mock.calls.filter(([method]) => method === 'thread.sendTurn'),
+      ).toHaveLength(2)
+    })
+  })
+
   it('moves the composer from the centered new-chat layout after the first prompt', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
@@ -952,17 +990,13 @@ describe('live sessions', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
+    let resolveSend: ((result: unknown) => void) | undefined
+    const sendResult = new Promise((resolve) => {
+      resolveSend = resolve
+    })
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'thread.sendTurn') {
-        return Promise.resolve({
-          queued: true,
-          queuedTurn: {
-            id: 'queued-1',
-            text: 'Queue this next',
-            attachments: [],
-            createdAt: 1,
-          },
-        })
+        return sendResult
       }
       return request(method, params)
     })
@@ -979,23 +1013,26 @@ describe('live sessions', () => {
     fireEvent.change(composer, { target: { value: 'Queue this next' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
 
+    expect(screen.getByLabelText('Queued prompts').textContent).toContain('Queue this next')
+    expect(screen.getByTestId('thread').textContent).not.toContain('Queue this next')
+
+    await act(async () =>
+      resolveSend?.({
+        queued: true,
+        queuedTurn: {
+          id: 'queued-1',
+          text: 'Queue this next',
+          attachments: [],
+          createdAt: 1,
+        },
+      }),
+    )
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'thread-1',
         text: 'Queue this next',
       })
     })
-    expect(screen.getByTestId('thread').textContent).not.toContain('Queue this next')
-
-    emitQueue('thread-1', [
-      {
-        id: 'queued-1',
-        text: 'Queue this next',
-        attachments: [],
-        createdAt: 1,
-      },
-    ])
-    expect(screen.getByLabelText('Queued prompts').textContent).toContain('Queue this next')
     fireEvent.click(screen.getByRole('button', { name: 'Remove Queue this next from queue' }))
     expect(transport.request).toHaveBeenCalledWith('thread.deleteQueuedTurn', {
       threadId: 'thread-1',

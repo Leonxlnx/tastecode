@@ -115,6 +115,14 @@ export function App() {
   // the active thread, while selecting it still gets the latest state at once.
   const threadStates = useRef(new Map<string, ThreadState>())
   const queueStates = useRef(new Map<string, { items: QueuedTurn[]; canSteer: boolean }>())
+  const pendingSession = useRef<
+    | {
+        id: string
+        promise: Promise<string | undefined>
+        threadId?: string | undefined
+      }
+    | undefined
+  >(undefined)
   const [queuedTurns, setQueuedTurns] = useState<QueuedTurn[]>([])
   const [canSteerQueue, setCanSteerQueue] = useState(false)
   const [models, setModels] = useState<Model[]>([])
@@ -560,7 +568,11 @@ export function App() {
   }, [transport, refreshProjects])
 
   const createSession = useCallback(
-    async (projectPath: string): Promise<string | undefined> => {
+    async (
+      projectPath: string,
+      provisionalId: string,
+      title: string,
+    ): Promise<string | undefined> => {
       if (!provider) return undefined
       setNotice(undefined)
       setUndoRestore(undefined)
@@ -579,15 +591,51 @@ export function App() {
           ...(effort ? { effort } : {}),
           ...(isolateSession ? { isolate: true } : {}),
         })
-        threadStates.current.set(threadId, emptyThread)
-        activeIdRef.current = threadId
-        setActiveId(threadId)
-        setThread(emptyThread)
-        // The server recorded the session when it started it; this is asking
-        // what it now knows rather than guessing alongside it.
-        await refreshProjects()
+        const provisional = threadStates.current.get(provisionalId) ?? emptyThread
+        threadStates.current.delete(provisionalId)
+        threadStates.current.set(threadId, provisional)
+        if (pendingSession.current?.id === provisionalId) pendingSession.current.threadId = threadId
+        setProjects((current) =>
+          current.map((project) =>
+            project.path !== projectPath ||
+            project.sessions.some((session) => session.id === threadId)
+              ? project
+              : {
+                  ...project,
+                  sessions: [
+                    {
+                      id: threadId,
+                      title,
+                      provider,
+                      ...(provider === 'acp' && acpAgent ? { agent: acpAgent } : {}),
+                      createdAt: Date.now(),
+                      status: 'starting',
+                      lifecycle: { state: 'active', keepActive: false },
+                      unread: false,
+                    },
+                    ...project.sessions,
+                  ],
+                },
+          ),
+        )
+        if (activeIdRef.current === provisionalId) {
+          activeIdRef.current = threadId
+          setActiveId(threadId)
+          setThread(provisional)
+        }
+        void transport
+          .request('thread.rename', { threadId, title })
+          .catch(() => undefined)
+          .then(() => refreshProjects())
+          .catch(() => undefined)
         return threadId
       } catch (error) {
+        threadStates.current.delete(provisionalId)
+        if (activeIdRef.current === provisionalId) {
+          activeIdRef.current = undefined
+          setActiveId(undefined)
+          setThread(emptyThread)
+        }
         setNotice(error instanceof Error ? error.message : String(error))
         return undefined
       }
@@ -641,18 +689,51 @@ export function App() {
     [projects, transport, refreshProjects],
   )
 
+  const updateQueue = useCallback(
+    (threadId: string, update: (items: QueuedTurn[]) => QueuedTurn[]) => {
+      const current = queueStates.current.get(threadId) ?? { items: [], canSteer: false }
+      const next = { ...current, items: update(current.items) }
+      queueStates.current.set(threadId, next)
+      if (activeIdRef.current === threadId) setQueuedTurns(next.items)
+    },
+    [],
+  )
+
   const send = useCallback(
     async (text: string, attachments: string[] = []) => {
       // Typing first and having the session appear is the natural order. Making
       // the user press "new session" before they are allowed to type is the
       // app's bookkeeping leaking into their way of working.
       let threadId = activeId
-      let justCreated = false
+      let optimisticAdded = false
+      let titledOnCreate = false
       if (!threadId) {
         if (!activePath) return
-        threadId = await createSession(activePath)
+        const provisionalId = `pending:${crypto.randomUUID()}`
+        const provisional = appendUserMessage(emptyThread, text)
+        threadStates.current.set(provisionalId, provisional)
+        activeIdRef.current = provisionalId
+        setActiveId(provisionalId)
+        setThread(provisional)
+        const promise = createSession(activePath, provisionalId, titleFrom(text))
+        pendingSession.current = { id: provisionalId, promise }
+        threadId = await promise
+        if (pendingSession.current?.id === provisionalId) pendingSession.current = undefined
         if (!threadId) return
-        justCreated = true
+        optimisticAdded = true
+        titledOnCreate = true
+      } else if (pendingSession.current?.id === threadId) {
+        const pending = pendingSession.current
+        const targetId = pending.threadId ?? pending.id
+        const provisional = appendUserMessage(
+          threadStates.current.get(targetId) ?? emptyThread,
+          text,
+        )
+        threadStates.current.set(targetId, provisional)
+        if (activeIdRef.current === targetId) setThread(provisional)
+        threadId = await pending.promise
+        if (!threadId) return
+        optimisticAdded = true
       }
 
       setNotice(undefined)
@@ -661,10 +742,17 @@ export function App() {
       const before = threadStates.current.get(threadId) ?? emptyThread
       const wasRunning = before.running
       const beforeItemIds = new Set(before.items.map((item) => item.id))
-      if (!wasRunning) {
+      const optimisticQueueId = wasRunning ? `pending:${crypto.randomUUID()}` : undefined
+      if (!wasRunning && !optimisticAdded) {
         const next = appendUserMessage(before, text)
         threadStates.current.set(threadId, next)
         if (threadId === activeIdRef.current) setThread(next)
+      }
+      if (optimisticQueueId) {
+        updateQueue(threadId, (items) => [
+          ...items,
+          { id: optimisticQueueId, text, attachments, createdAt: Date.now() },
+        ])
       }
 
       // A session named after what was asked of it is findable a week later;
@@ -674,7 +762,7 @@ export function App() {
       // here is still the value from this render and cannot know about it yet,
       // so asking it would answer no every time and nothing would be named.
       const untitled =
-        justCreated || findSession(projects, threadId)?.session.title === 'New session'
+        !titledOnCreate && findSession(projects, threadId)?.session.title === 'New session'
       if (untitled) {
         const title = titleFrom(text)
         setProjects((current) => promoteSession(renameSession(current, threadId, title), threadId))
@@ -690,11 +778,24 @@ export function App() {
           ...(serviceTier ? { serviceTier } : {}),
         })
         const current = threadStates.current.get(threadId) ?? emptyThread
-        if (result.queued && !wasRunning) {
-          const reconciled = removeQueuedOptimisticMessage(current, text)
-          threadStates.current.set(threadId, reconciled)
-          if (threadId === activeIdRef.current) setThread(reconciled)
+        if (result.queued) {
+          updateQueue(threadId, (items) => {
+            const withoutOptimistic = optimisticQueueId
+              ? items.filter((item) => item.id !== optimisticQueueId)
+              : items
+            return withoutOptimistic.some((item) => item.id === result.queuedTurn.id)
+              ? withoutOptimistic
+              : [...withoutOptimistic, result.queuedTurn]
+          })
+          if (!wasRunning) {
+            const reconciled = removeQueuedOptimisticMessage(current, text)
+            threadStates.current.set(threadId, reconciled)
+            if (threadId === activeIdRef.current) setThread(reconciled)
+          }
         } else if (!result.queued && wasRunning) {
+          if (optimisticQueueId) {
+            updateQueue(threadId, (items) => items.filter((item) => item.id !== optimisticQueueId))
+          }
           const canonicalArrived = current.items.some(
             (item) =>
               !beforeItemIds.has(item.id) && item.role === 'user' && item.text?.trim() === text,
@@ -706,10 +807,23 @@ export function App() {
           }
         }
       } catch (error) {
+        if (optimisticQueueId) {
+          updateQueue(threadId, (items) => items.filter((item) => item.id !== optimisticQueueId))
+        }
         setNotice(error instanceof Error ? error.message : String(error))
       }
     },
-    [transport, activeId, activePath, createSession, projects, modelId, effort, serviceTier],
+    [
+      transport,
+      activeId,
+      activePath,
+      createSession,
+      projects,
+      modelId,
+      effort,
+      serviceTier,
+      updateQueue,
+    ],
   )
 
   const interrupt = useCallback(() => {
@@ -1288,9 +1402,9 @@ export function App() {
           />
 
           <div
-            className={`stage__body${activeId ? '' : ' is-new-session'}${activeId && terminalOpen ? ' has-terminal' : ''}`}
+            className={`stage__body${activeId ? '' : ' is-new-session'}${active && terminalOpen ? ' has-terminal' : ''}`}
           >
-            {active ? (
+            {activeId ? (
               <Thread
                 key={activeId}
                 items={thread.items}
@@ -1316,12 +1430,12 @@ export function App() {
               <Empty projects={projects} activePath={activePath} />
             )}
 
-            {activeId && terminalOpen ? (
+            {active && terminalOpen ? (
               <Suspense fallback={null}>
                 <TerminalPane
                   key={activeId}
                   transport={transport}
-                  threadId={activeId}
+                  threadId={active.session.id}
                   height={terminalHeight}
                   theme={theme}
                   onHeightChange={setTerminalHeight}
