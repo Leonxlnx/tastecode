@@ -36,6 +36,7 @@ import type {
 import { readSessionDiff, reviewDiffFile, reviewDiffHunk } from './diff-review.js'
 import { McpConfigStore } from './mcp-config.js'
 import { readCredential } from './credentials.js'
+import { TerminalManager } from './terminal.js'
 
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
@@ -87,6 +88,7 @@ export class Orchestrator {
   ) => void
   #mcpConfig: McpConfigStore
   #readCredential: (reference: string) => string
+  #terminals: TerminalManager
 
   /**
    * How a provider is turned into a running session. Injectable so the
@@ -113,6 +115,8 @@ export class Orchestrator {
       ) => void
       mcpConfig?: McpConfigStore
       readCredential?: (reference: string) => string
+      onTerminalOutput?: (terminalId: string, data: string) => void
+      onTerminalExit?: (terminalId: string, exitCode: number | null) => void
       runtimeFor?: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
       /** Where isolated checkouts live. Outside any repository, on purpose. */
       worktreeRoot?: string
@@ -127,6 +131,10 @@ export class Orchestrator {
     this.#onMcpOAuth = handlers.onMcpOAuth ?? (() => {})
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
     this.#readCredential = handlers.readCredential ?? readCredential
+    this.#terminals = new TerminalManager({
+      onOutput: handlers.onTerminalOutput ?? (() => {}),
+      onExit: handlers.onTerminalExit ?? (() => {}),
+    })
     this.#runtimeFor = handlers.runtimeFor ?? providerRuntime
   }
 
@@ -523,6 +531,22 @@ export class Orchestrator {
     return this.#activeTurns.has(threadId) || this.#startingTurns.has(threadId)
   }
 
+  openTerminal(threadId: string, columns: number, rows: number): string {
+    return this.#terminals.open(threadId, this.#repoPath(threadId), columns, rows)
+  }
+
+  writeTerminal(terminalId: string, data: string): void {
+    this.#terminals.write(terminalId, data)
+  }
+
+  resizeTerminal(terminalId: string, columns: number, rows: number): void {
+    this.#terminals.resize(terminalId, columns, rows)
+  }
+
+  closeTerminal(terminalId: string): void {
+    this.#terminals.close(terminalId)
+  }
+
   #repoPath(threadId: string): string {
     const stored = this.#store.thread(threadId)
     if (!stored) throw new Error(`no such thread: ${threadId}`)
@@ -718,6 +742,7 @@ export class Orchestrator {
   }
 
   close(threadId: string): void {
+    this.#terminals.closeThread(threadId)
     const entry = this.#threads.get(threadId)
     if (!entry) return
     entry.session.dispose()
@@ -758,6 +783,8 @@ export class Orchestrator {
     const stored = this.#store.thread(threadId)
     if (!stored?.worktreePath || !stored.worktreeBranch) return
 
+    this.#terminals.closeThread(threadId)
+
     await removeWorktree(
       { path: stored.worktreePath, branch: stored.worktreeBranch, repoPath: stored.projectPath },
       force,
@@ -786,6 +813,7 @@ export class Orchestrator {
   }
 
   disposeAll(): void {
+    this.#terminals.closeAll()
     for (const [, entry] of this.#threads) entry.session.dispose()
     this.#threads.clear()
     this.#activeTurns.clear()

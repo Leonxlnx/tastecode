@@ -90,6 +90,9 @@ export function startServer(
     onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
     onMcpOAuth: (provider, projectPath, result) =>
       push.broadcast('mcp.oauth', { provider, projectPath, ...result }),
+    onTerminalOutput: (terminalId, data) => push.broadcast('terminal.output', { terminalId, data }),
+    onTerminalExit: (terminalId, exitCode) =>
+      push.broadcast('terminal.exit', { terminalId, exitCode }),
   })
 
   // A previous run killed mid-session leaves git believing in checkouts that
@@ -341,6 +344,29 @@ export function startServer(
         // outlive the thing that owned them.
         for (const thread of store.threads(p.path)) orchestrator.close(thread.id)
         store.removeProject(p.path)
+        return {}
+      }
+
+      case 'terminal.open': {
+        const p = params as { threadId: string; columns: number; rows: number }
+        return { terminalId: orchestrator.openTerminal(p.threadId, p.columns, p.rows) }
+      }
+
+      case 'terminal.input': {
+        const p = params as { terminalId: string; data: string }
+        orchestrator.writeTerminal(p.terminalId, p.data)
+        return {}
+      }
+
+      case 'terminal.resize': {
+        const p = params as { terminalId: string; columns: number; rows: number }
+        orchestrator.resizeTerminal(p.terminalId, p.columns, p.rows)
+        return {}
+      }
+
+      case 'terminal.close': {
+        const p = params as { terminalId: string }
+        orchestrator.closeTerminal(p.terminalId)
         return {}
       }
 
