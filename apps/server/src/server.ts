@@ -618,6 +618,16 @@ export function startServer(
         return {}
       }
 
+      case 'thread.respondToUserInput': {
+        const p = params as {
+          threadId: string
+          requestId: string
+          answers: Record<string, string[]>
+        }
+        orchestrator.respondToUserInput(p.threadId, p.requestId, p.answers)
+        return {}
+      }
+
       case 'thread.interrupt': {
         const p = params as { threadId: string }
         await orchestrator.interrupt(p.threadId)

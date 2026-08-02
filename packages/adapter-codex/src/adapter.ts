@@ -14,6 +14,7 @@ import type {
   Skill,
   SkillDiscoveryError,
   Thread,
+  UserInputRequest,
 } from '@harness/contracts'
 import type { LoginAccountResponse } from './generated/v2/LoginAccountResponse'
 import type { GetAccountRateLimitsResponse } from './generated/v2/GetAccountRateLimitsResponse'
@@ -43,6 +44,7 @@ import type { JsonValue } from './generated/serde_json/JsonValue.js'
 import { mapMcpServerStatus, mapMcpStartupStatus, prepareMcpConfig } from './mcp.js'
 import type { SkillsListResponse } from './generated/v2/SkillsListResponse.js'
 import type { SkillsConfigWriteResponse } from './generated/v2/SkillsConfigWriteResponse.js'
+import type { ToolRequestUserInputParams } from './generated/v2/ToolRequestUserInputParams.js'
 import { mapSkillList } from './skills.js'
 
 /**
@@ -85,6 +87,7 @@ export const CODEX_CAPABILITIES: Capabilities = {
   interrupt: true,
   reasoningItems: true,
   approvals: true,
+  userInput: true,
   autoReview: true,
   images: true,
 }
@@ -124,6 +127,23 @@ const REVIEW_STATUS: Record<GuardianApprovalReviewStatus, ApprovalReview['status
   denied: 'denied',
   timedOut: 'timed_out',
   aborted: 'aborted',
+}
+
+export function mapUserInputRequest(params: ToolRequestUserInputParams): UserInputRequest {
+  return {
+    id: params.itemId,
+    turnId: params.turnId,
+    questions: params.questions.map((question) => ({
+      id: question.id,
+      header: question.header,
+      question: question.question,
+      allowOther: question.isOther,
+      secret: question.isSecret,
+      options: question.options,
+    })),
+    autoResolutionMs: params.autoResolutionMs,
+    createdAt: Date.now(),
+  }
 }
 
 function describeApprovalReviewAction(action: GuardianApprovalReviewAction): string {
@@ -248,6 +268,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     string,
     { kind: ApprovalRequest['kind']; respond: (result: unknown) => void }
   >()
+  #userInputs = new Map<string, (result: unknown) => void>()
 
   constructor(
     options: {
@@ -571,6 +592,18 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.emit('event', { type: 'approval.resolved', id: approvalId })
   }
 
+  respondToUserInput(requestId: string, answers: Record<string, string[]>): void {
+    const respond = this.#userInputs.get(requestId)
+    if (!respond) return
+    this.#userInputs.delete(requestId)
+    respond({
+      answers: Object.fromEntries(
+        Object.entries(answers).map(([questionId, values]) => [questionId, { answers: values }]),
+      ),
+    })
+    this.emit('event', { type: 'user_input.resolved', id: requestId })
+  }
+
   /** Inject input without restarting the turn. Codex is one of the few engines that can. */
   async steer(threadId: string, text: string, attachments: string[] = []): Promise<void> {
     await this.#call('turn/steer', {
@@ -604,6 +637,13 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
    * could not even parse is the worst possible default.
    */
   #onServerRequest(method: string, params: unknown, respond: (result: unknown) => void): void {
+    if (method === 'item/tool/requestUserInput') {
+      const request = mapUserInputRequest(params as ToolRequestUserInputParams)
+      this.#userInputs.set(request.id, respond)
+      this.emit('event', { type: 'user_input.requested', request })
+      return
+    }
+
     const kind = APPROVAL_KIND[method]
     if (!kind) {
       this.emit('log', `declined unhandled server request: ${method}`)

@@ -66,6 +66,7 @@ export interface AgentSession {
     }) => void,
   ): void
   respondToApproval(approvalId: string, decision: ApprovalDecision): void
+  respondToUserInput?(requestId: string, answers: Record<string, string[]>): void
   dispose(): void
   on(event: 'event', listener: (event: DomainEvent) => void): void
   on(event: 'log', listener: (line: string) => void): void
@@ -173,6 +174,7 @@ function claudeRuntime(onLog: (line: string) => void): ProviderRuntime {
           // Claude Code decides permissions from the mode it was launched
           // with; there is no mid-turn callback to answer.
           respondToApproval: () => {},
+          respondToUserInput: () => {},
           dispose: () => adapter.dispose(),
           on: (event: 'event' | 'log', listener: never) => adapter.on(event, listener),
         },

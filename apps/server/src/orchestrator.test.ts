@@ -44,6 +44,7 @@ class FakeSession implements AgentSession {
   interruptError: Error | undefined
   sent: string[] = []
   steered: string[] = []
+  userInputs: Array<{ requestId: string; answers: Record<string, string[]> }> = []
   mcpServers: McpServer[] = []
   /** Resolves the pending sendTurn, letting a test hold one open. */
   release: (() => void) | undefined
@@ -71,6 +72,9 @@ class FakeSession implements AgentSession {
     return this.mcpServers
   }
   respondToApproval(): void {}
+  respondToUserInput(requestId: string, answers: Record<string, string[]>): void {
+    this.userInputs.push({ requestId, answers })
+  }
   dispose(): void {
     this.disposed = true
   }
@@ -171,6 +175,21 @@ const message = (text: string): DomainEvent => ({
     text,
     createdAt: 0,
   },
+})
+
+describe('structured user input', () => {
+  it('returns answers to the session that owns the waiting request', async () => {
+    const { orchestrator, sessions } = harness()
+    const thread = await orchestrator.startThread('codex', process.cwd(), {})
+
+    orchestrator.respondToUserInput(thread.id, 'brief-1', {
+      palette: ['Decide for me'],
+    })
+
+    expect(sessions[0]?.userInputs).toEqual([
+      { requestId: 'brief-1', answers: { palette: ['Decide for me'] } },
+    ])
+  })
 })
 
 describe('persisted threads', () => {

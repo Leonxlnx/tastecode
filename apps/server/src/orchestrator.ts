@@ -896,6 +896,12 @@ export class Orchestrator {
     this.#get(threadId).session.respondToApproval(approvalId, decision)
   }
 
+  respondToUserInput(threadId: string, requestId: string, answers: Record<string, string[]>): void {
+    const session = this.#get(threadId).session
+    if (!session.respondToUserInput) throw new Error('this agent does not support structured input')
+    session.respondToUserInput(requestId, answers)
+  }
+
   async interrupt(threadId: string): Promise<void> {
     await this.#get(threadId).session.interrupt(threadId)
   }

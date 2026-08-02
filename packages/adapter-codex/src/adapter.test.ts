@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 import type { GuardianApprovalReviewAction } from './generated/v2/GuardianApprovalReviewAction'
 import type { ItemGuardianApprovalReviewCompletedNotification } from './generated/v2/ItemGuardianApprovalReviewCompletedNotification'
 import type { ItemGuardianApprovalReviewStartedNotification } from './generated/v2/ItemGuardianApprovalReviewStartedNotification'
-import { CODEX_APPROVAL, CODEX_CAPABILITIES, mapAutoApprovalReview } from './adapter.js'
+import {
+  CODEX_APPROVAL,
+  CODEX_CAPABILITIES,
+  mapAutoApprovalReview,
+  mapUserInputRequest,
+} from './adapter.js'
 
 /** Sanitized frames captured from Codex 0.146.0 on Windows. */
 const capturedStarted = {
@@ -105,4 +110,42 @@ describe('Codex auto-review', () => {
       expect(mapAutoApprovalReview({ ...capturedStarted, action })).toMatchObject({ description })
     },
   )
+})
+
+describe('Codex structured user input', () => {
+  it('advertises support and maps the captured wire shape', () => {
+    expect(CODEX_CAPABILITIES.userInput).toBe(true)
+    expect(
+      mapUserInputRequest({
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'questions-1',
+        autoResolutionMs: null,
+        questions: [
+          {
+            id: 'palette',
+            header: 'Colour',
+            question: 'Do you already have a palette?',
+            isOther: true,
+            isSecret: false,
+            options: [{ label: 'Decide for me', description: 'Infer the strongest direction.' }],
+          },
+        ],
+      }),
+    ).toMatchObject({
+      id: 'questions-1',
+      turnId: 'turn-1',
+      autoResolutionMs: null,
+      questions: [
+        {
+          id: 'palette',
+          header: 'Colour',
+          question: 'Do you already have a palette?',
+          allowOther: true,
+          secret: false,
+          options: [{ label: 'Decide for me', description: 'Infer the strongest direction.' }],
+        },
+      ],
+    })
+  })
 })
