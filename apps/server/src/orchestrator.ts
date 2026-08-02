@@ -11,6 +11,7 @@ import {
   type TurnOptions,
 } from './adapters.js'
 import { existsSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { changedSince, restoreSnapshot, takeSnapshot } from './checkpoint.js'
@@ -44,6 +45,7 @@ import { readSessionDiff, reviewDiffFile, reviewDiffHunk } from './diff-review.j
 import { McpConfigStore } from './mcp-config.js'
 import { readCredential } from './credentials.js'
 import { TerminalManager } from './terminal.js'
+import { installLocalSkill } from './skill-install.js'
 
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
@@ -258,6 +260,36 @@ export class Orchestrator {
     }
     this.#watchedSkillProjects.add(projectPath)
     return (await this.#controlAdapter()).setSkillEnabled(skillId, enabled)
+  }
+
+  async installSkillFromFolder(
+    provider: ProviderId,
+    projectPath: string,
+    folderPath: string,
+  ): Promise<Skill> {
+    if (provider !== 'codex') {
+      throw new Error(`provider "${provider}" cannot install skills yet`)
+    }
+
+    const destination = await installLocalSkill(projectPath, folderPath)
+    try {
+      this.#watchedSkillProjects.add(projectPath)
+      const inventory = await (await this.#controlAdapter()).listSkills(projectPath)
+      const installed = inventory.skills.find(
+        (skill) =>
+          skill.source.type === 'folder' &&
+          path.resolve(skill.source.path) === path.resolve(destination),
+      )
+      if (installed) return installed
+
+      const discoveryError = inventory.errors.find((error) =>
+        path.resolve(error.path).startsWith(`${path.resolve(destination)}${path.sep}`),
+      )
+      throw new Error(discoveryError?.message ?? 'Codex did not discover the installed skill')
+    } catch (error) {
+      await rm(destination, { recursive: true, force: true })
+      throw error
+    }
   }
 
   addMcpServer(provider: ProviderId, projectPath: string, server: McpServerConfig): void {

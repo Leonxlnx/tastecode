@@ -5,7 +5,7 @@ import type { SkillsListResponse } from './generated/v2/SkillsListResponse.js'
 export const CODEX_SKILL_CAPABILITIES: SkillCapabilities = {
   inventory: true,
   configure: true,
-  install: false,
+  install: true,
 }
 
 export type SkillInventory = {

@@ -260,6 +260,17 @@ export function startServer(
         }
       }
 
+      case 'skills.installFromFolder': {
+        const p = params as {
+          provider: ProviderId
+          projectPath: string
+          folderPath: string
+        }
+        return {
+          skill: await orchestrator.installSkillFromFolder(p.provider, p.projectPath, p.folderPath),
+        }
+      }
+
       case 'auth.status': {
         const p = params as { provider: ProviderId }
         return orchestrator.account(p.provider)
