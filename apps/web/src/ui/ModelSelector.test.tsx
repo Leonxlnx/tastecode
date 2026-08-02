@@ -214,7 +214,9 @@ describe('ModelSelector', () => {
     fireEvent.pointerDown(slider, { clientX: 110, pointerId: 4 })
     fireEvent.pointerMove(slider, { clientX: 350, pointerId: 4 })
     expect(slider.getAttribute('aria-valuetext')).toBe('Extra High')
-    expect(slider.querySelector('.model-selector__slider-value')?.textContent).toBe('Extra High')
+    expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
+      'Effort: Extra High',
+    )
     expect(onEffortChange).not.toHaveBeenCalled()
     expect(slider.querySelectorAll('canvas')).toHaveLength(2)
     expect(slider.querySelectorAll('.model-selector__slider-stop')).toHaveLength(4)

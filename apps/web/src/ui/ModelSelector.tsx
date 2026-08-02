@@ -141,6 +141,7 @@ function DitherChoiceRow(props: {
   optionLabels: string[]
   selectedIndex: number
   disabled: boolean
+  onPreviewIndex: (index: number | null) => void
   onCommitIndex: (index: number) => void
 }) {
   const [pointerIndex, setPointerIndex] = useState<number | null>(null)
@@ -172,6 +173,7 @@ function DitherChoiceRow(props: {
     if (pointerIndexRef.current !== nextIndex) {
       pointerIndexRef.current = nextIndex
       setPointerIndex(nextIndex)
+      props.onPreviewIndex(nextIndex)
     }
   }
 
@@ -245,6 +247,7 @@ function DitherChoiceRow(props: {
         requestAnimationFrame(() => {
           commitIndex(nextIndex)
           setPointerIndex(null)
+          props.onPreviewIndex(null)
         })
       }}
       onPointerCancel={(event) => {
@@ -253,6 +256,7 @@ function DitherChoiceRow(props: {
         }
         pointerIndexRef.current = null
         setPointerIndex(null)
+        props.onPreviewIndex(null)
       }}
     >
       <div className="model-selector__slider-track">
@@ -273,15 +277,12 @@ function DitherChoiceRow(props: {
           ))}
         </div>
       </div>
-
-      <span className="model-selector__slider-value" aria-hidden>
-        {displayedLabel}
-      </span>
     </div>
   )
 }
 
 export function ModelSelector(props: ModelSelectorProps) {
+  const [previewEffortIndex, setPreviewEffortIndex] = useState<number | null>(null)
   const model = getSelectedModel(props.models, props.modelId)
   const selectedEffort = getSelectedEffort(model, props.effort)
   const effortOptions = model?.reasoningEfforts ?? []
@@ -291,6 +292,8 @@ export function ModelSelector(props: ModelSelectorProps) {
     selectedEffort === undefined ? -1 : Math.max(0, effortOptions.indexOf(selectedEffort))
   const fastTier = getFastServiceTier(model)
   const fastEnabled = isFastModeEnabled(model, props.serviceTier)
+  const displayedEffortLabel =
+    effortLabels[previewEffortIndex ?? selectedEffortIndex] ?? effortLabel
 
   const commitEffortIndex = (nextIndex: number) => {
     const nextValue = effortOptions[nextIndex]
@@ -377,7 +380,9 @@ export function ModelSelector(props: ModelSelectorProps) {
 
           <div className="model-selector__controls">
             <div className="model-selector__controls-head">
-              <span className="model-selector__effort-title">Effort</span>
+              <span className="model-selector__effort-title">
+                Effort: <span>{displayedEffortLabel}</span>
+              </span>
               {fastTier ? (
                 <div className="model-selector__fast-row">
                   <span className="model-selector__fast-meta">1.5× Speed · 2.5× Usage</span>
@@ -408,6 +413,7 @@ export function ModelSelector(props: ModelSelectorProps) {
                 optionLabels={effortLabels}
                 selectedIndex={selectedEffortIndex}
                 disabled={props.disabled || effortOptions.length <= 1}
+                onPreviewIndex={setPreviewEffortIndex}
                 onCommitIndex={commitEffortIndex}
               />
             ) : null}
