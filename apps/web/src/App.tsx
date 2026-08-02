@@ -1223,6 +1223,13 @@ export function App() {
 
   const active = findSession(projects, activeId)
   const activeProject = projects.find((project) => project.path === activePath)
+  const searching = thread.items.some(
+    (item) =>
+      item.turnId === thread.activeTurn?.id &&
+      item.type === 'tool_call' &&
+      item.status === 'started' &&
+      `${item.text ?? ''} ${item.command ?? ''}`.toLowerCase().includes('search'),
+  )
   const labels = {
     newChat: shortcutLabel(SHORTCUTS.newChat, macOS),
     switchProject: shortcutLabel(SHORTCUTS.switchProject, macOS),
@@ -1484,6 +1491,7 @@ export function App() {
               autoReviewSupported={autoReviewSupported}
               disabled={!activePath}
               running={thread.running}
+              searching={searching}
               newSession={!activeId}
               isolate={active?.session.worktreeBranch ? true : isolateSession}
               designMode={designMode}

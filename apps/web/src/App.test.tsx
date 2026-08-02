@@ -572,15 +572,17 @@ describe('new chats', () => {
 
   it('tracks OS appearance while System is selected', async () => {
     const originalMatchMedia = window.matchMedia.bind(window)
-    const listeners = new Set<() => void>()
+    const listeners = new Set<(event: MediaQueryListEvent) => void>()
     let systemIsDark = false
     const systemThemeMedia = {
       get matches() {
         return systemIsDark
       },
       media: '(prefers-color-scheme: dark)',
-      addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
-      removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+      addEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) =>
+        listeners.add(listener),
+      removeEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) =>
+        listeners.delete(listener),
     } as unknown as MediaQueryList
 
     vi.spyOn(window, 'matchMedia').mockImplementation((query) =>
@@ -599,7 +601,9 @@ describe('new chats', () => {
     })
 
     systemIsDark = true
-    act(() => listeners.forEach((listener) => listener()))
+    act(() =>
+      listeners.forEach((listener) => listener({ matches: systemIsDark } as MediaQueryListEvent)),
+    )
 
     expect(document.documentElement.dataset.theme).toBe('dark')
   })
@@ -1063,6 +1067,23 @@ describe('live sessions', () => {
 
     const composer = screen.getByPlaceholderText('Do anything')
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
+    expect(document.querySelector('.orb__icon--stop canvas')?.getAttribute('aria-label')).toBe(
+      'Working…',
+    )
+    emitThreadEvent('thread-1', {
+      type: 'item.started',
+      item: {
+        id: 'search-1',
+        turnId: 'turn-1',
+        type: 'tool_call',
+        status: 'started',
+        text: 'Searching the web',
+        createdAt: 1,
+      },
+    })
+    expect(document.querySelector('.orb__icon--stop canvas')?.getAttribute('aria-label')).toBe(
+      'Searching…',
+    )
     fireEvent.change(composer, { target: { value: 'Queue this next' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
 

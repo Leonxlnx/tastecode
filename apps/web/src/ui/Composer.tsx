@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ApprovalMode, Model, QueuedTurn } from '@harness/contracts'
 import { BorderBeam } from 'border-beam'
+import { ThinkingOrb } from 'thinking-orbs'
 import {
   ArrowUp,
   CornerDownRight,
@@ -17,7 +18,6 @@ import {
   Plus,
   ShieldCheck,
   ShieldQuestion,
-  Square,
   Trash2,
   type LucideIcon,
   X,
@@ -147,6 +147,7 @@ export function Composer(props: {
   autoReviewSupported: boolean
   disabled: boolean
   running: boolean
+  searching?: boolean
   newSession: boolean
   isolate: boolean
   designMode: boolean
@@ -783,7 +784,11 @@ export function Composer(props: {
                     <ArrowUp size={15} aria-hidden />
                   </span>
                   <span className="orb__icon orb__icon--stop">
-                    <Square size={9} fill="currentColor" strokeWidth={0} aria-hidden />
+                    <ThinkingOrb
+                      state={props.searching ? 'searching' : 'working'}
+                      size={20}
+                      aria-hidden
+                    />
                   </span>
                 </button>
               </BorderBeam>
