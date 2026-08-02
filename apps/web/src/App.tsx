@@ -34,6 +34,7 @@ import { Composer, type WorkspaceInfo } from './ui/Composer.js'
 import { Onboarding } from './ui/Onboarding.js'
 import { PanicStop } from './ui/PanicStop.js'
 import { RollbackDialog, type Checkpoint } from './ui/RollbackDialog.js'
+import { SessionSearch } from './ui/SessionSearch.js'
 import { Settings } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
 import { StageHeader } from './ui/StageHeader.js'
@@ -138,6 +139,12 @@ export function App() {
   const [account, setAccount] = useState<Account | undefined>()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [paletteScope, setPaletteScope] = useState<CommandScope | null>(null)
+  const [sessionSearchOpen, setSessionSearchOpen] = useState(false)
+  const [searchJump, setSearchJump] = useState<{
+    threadId: string
+    turnId: string
+    request: number
+  }>()
   const [composerFocusRequest, setComposerFocusRequest] = useState(0)
   const [notice, setNotice] = useState<string | undefined>()
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([])
@@ -872,7 +879,16 @@ export function App() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!provider) return
-      if (event.defaultPrevented || event.repeat || isEditableTarget(event.target)) return
+      if (event.defaultPrevented || event.repeat) return
+
+      if (matchesShortcut(event, SHORTCUTS.searchSessions)) {
+        event.preventDefault()
+        setSettingsOpen(false)
+        setPaletteScope(null)
+        setSessionSearchOpen(true)
+        return
+      }
+      if (isEditableTarget(event.target)) return
 
       if (matchesShortcut(event, SHORTCUTS.commandPalette)) {
         event.preventDefault()
@@ -946,10 +962,19 @@ export function App() {
     switchProject: shortcutLabel(SHORTCUTS.switchProject, macOS),
     newProject: shortcutLabel(SHORTCUTS.newProject, macOS),
     settings: shortcutLabel(SHORTCUTS.settings, macOS),
+    searchSessions: shortcutLabel(SHORTCUTS.searchSessions, macOS),
     focusComposer: shortcutLabel(SHORTCUTS.focusComposer, macOS),
     toggleSidebar: shortcutLabel(SHORTCUTS.toggleSidebar, macOS),
   }
   const commands: PaletteCommand[] = [
+    {
+      id: 'search-sessions',
+      title: 'Search all chats',
+      detail: 'Messages and tool output across projects',
+      group: 'Actions',
+      shortcut: labels.searchSessions,
+      run: () => setSessionSearchOpen(true),
+    },
     {
       id: 'new-chat',
       title: 'New chat',
@@ -1093,6 +1118,7 @@ export function App() {
               }),
             )
           }
+          onOpenSearch={() => setSessionSearchOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
         />
 
@@ -1127,6 +1153,7 @@ export function App() {
                 diff={thread.diff}
                 threadId={activeId}
                 transport={transport}
+                searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
                 approvals={thread.approvals}
                 reviews={Object.values(thread.reviews)}
                 onDecide={(approvalId, decision) => {
@@ -1224,6 +1251,23 @@ export function App() {
           commands={commands}
           scope={paletteScope}
           onClose={() => setPaletteScope(null)}
+        />
+      ) : null}
+
+      {sessionSearchOpen ? (
+        <SessionSearch
+          transport={transport}
+          projects={projects}
+          onSelect={(threadId, turnId) => {
+            setSessionSearchOpen(false)
+            setSearchJump((current) => ({
+              threadId,
+              turnId,
+              request: (current?.request ?? 0) + 1,
+            }))
+            void selectSession(threadId)
+          }}
+          onClose={() => setSessionSearchOpen(false)}
         />
       ) : null}
 

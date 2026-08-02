@@ -12,6 +12,7 @@ export const SHORTCUTS = {
   focusComposer: { key: 'l' },
   toggleSidebar: { key: 'b' },
   panicStop: { key: '.', shift: true },
+  searchSessions: { key: 'f', shift: true },
 } satisfies Record<string, Shortcut>
 
 export function matchesShortcut(event: KeyboardEvent, shortcut: Shortcut): boolean {

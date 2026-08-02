@@ -9,7 +9,6 @@ import {
   Pencil,
   Plus,
   Search,
-  X,
 } from 'lucide-react'
 import { isMacOS } from '../bridge.js'
 import { SHORTCUTS, shortcutAria, shortcutLabel } from '../shortcuts.js'
@@ -64,9 +63,9 @@ export function Sidebar(props: {
     targetId: string,
     position: DropPosition,
   ) => void
+  onOpenSearch: () => void
   onOpenSettings: () => void
 }) {
-  const [query, setQuery] = useState('')
   const [edgeRevealed, setEdgeRevealed] = useState(false)
   const macOS = isMacOS()
 
@@ -74,21 +73,8 @@ export function Sidebar(props: {
     if (!props.collapsed) setEdgeRevealed(false)
   }, [props.collapsed])
 
-  const term = query.trim().toLowerCase()
-  const visible = term
-    ? props.projects
-        .map((project) => ({
-          ...project,
-          sessions: project.sessions.filter((s) => s.title.toLowerCase().includes(term)),
-        }))
-        .filter(
-          (project) =>
-            project.sessions.length > 0 || displayName(project).toLowerCase().includes(term),
-        )
-    : props.projects
-
-  const pinned = visible.filter((p) => p.pinned)
-  const rest = visible.filter((p) => !p.pinned)
+  const pinned = props.projects.filter((project) => project.pinned)
+  const rest = props.projects.filter((project) => !project.pinned)
 
   return (
     <div
@@ -137,20 +123,16 @@ export function Sidebar(props: {
             <span>New project</span>
             <ShortcutHint>{shortcutLabel(SHORTCUTS.newProject, macOS)}</ShortcutHint>
           </button>
-          <div className="search">
+          <button
+            type="button"
+            className="search search--button"
+            onClick={props.onOpenSearch}
+            aria-keyshortcuts={shortcutAria(SHORTCUTS.searchSessions)}
+          >
             <Search size={13} aria-hidden />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search chats"
-              spellCheck={false}
-            />
-            {query ? (
-              <button className="chip__x" onClick={() => setQuery('')} title="Clear">
-                <X size={10} aria-hidden />
-              </button>
-            ) : null}
-          </div>
+            <span>Search chats</span>
+            <ShortcutHint>{shortcutLabel(SHORTCUTS.searchSessions, macOS)}</ShortcutHint>
+          </button>
         </div>
 
         <div className="rail__body">
@@ -158,22 +140,17 @@ export function Sidebar(props: {
             <>
               <p className="section">Pinned</p>
               {pinned.map((project) => (
-                <ProjectRow
-                  key={project.path}
-                  project={project}
-                  {...props}
-                  forceOpen={term !== ''}
-                />
+                <ProjectRow key={project.path} project={project} {...props} forceOpen={false} />
               ))}
             </>
           ) : null}
 
           <p className="section">Projects</p>
           {rest.length === 0 ? (
-            <p className="rail__hint">{term ? 'Nothing matches.' : 'Nothing here yet.'}</p>
+            <p className="rail__hint">Nothing here yet.</p>
           ) : (
             rest.map((project) => (
-              <ProjectRow key={project.path} project={project} {...props} forceOpen={term !== ''} />
+              <ProjectRow key={project.path} project={project} {...props} forceOpen={false} />
             ))
           )}
         </div>

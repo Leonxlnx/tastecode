@@ -39,6 +39,7 @@ describe('Sidebar chat actions', () => {
         onRenameSession={onRenameSession}
         onDeleteSession={onDeleteSession}
         onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     )
@@ -85,6 +86,7 @@ describe('Sidebar chat actions', () => {
         onRenameSession={vi.fn()}
         onDeleteSession={vi.fn()}
         onReorderSession={onReorderSession}
+        onOpenSearch={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     )
@@ -137,6 +139,7 @@ describe('Sidebar chat actions', () => {
         onRenameSession={vi.fn()}
         onDeleteSession={vi.fn()}
         onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     )
@@ -165,6 +168,7 @@ describe('Sidebar chat actions', () => {
         onRenameSession={vi.fn()}
         onDeleteSession={vi.fn()}
         onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     )

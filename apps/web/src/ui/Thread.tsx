@@ -53,6 +53,7 @@ export function Thread(props: {
   diff: string | undefined
   threadId?: string | undefined
   transport?: Transport | undefined
+  searchJump?: { turnId: string; request: number } | undefined
   approvals: ApprovalRequest[]
   reviews: ApprovalReview[]
   onDecide: (id: string, decision: ApprovalDecision) => void
@@ -60,6 +61,7 @@ export function Thread(props: {
   const scroller = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<ScrollMode>('follow-end')
   const [finding, setFinding] = useState(false)
+  const completedSearchJump = useRef(0)
   const modeRef = useRef(mode)
   modeRef.current = mode
 
@@ -154,6 +156,17 @@ export function Thread(props: {
   const turns = useMemo(() => findTurns(props.items), [props.items])
   const presentations = useMemo(() => presentTurns(props.items), [props.items])
   const activePresentation = props.activeTurn ? presentations.get(props.activeTurn.id) : undefined
+
+  useEffect(() => {
+    const target = props.searchJump
+    if (!target || completedSearchJump.current === target.request) return
+    const index = props.items.findIndex((item) => item.turnId === target.turnId)
+    if (index < 0) return
+    completedSearchJump.current = target.request
+    setFinding(false)
+    setMode('free')
+    virtualizer.scrollToIndex(index, { align: 'center' })
+  }, [props.items, props.searchJump, virtualizer])
 
   // Alt+Up/Down moves a turn at a time. Scrolling by pixel through a long
   // session to find where an exchange began is the slow way to do it.
