@@ -52,13 +52,13 @@ merge. A checkbox someone forgot to tick is worse than no checkbox.
 Soft ownership, so two people do not rewrite the same file on the same afternoon. Nobody is
 locked out of anything — this says who is expected to pick it up, not who is permitted to.
 
-| Area                                                 | Owner                                                                        |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Server, adapters, protocol, tests                    | Claude                                                                       |
-| UI implementation, visual polish                     | Blueemi                                                                      |
-| Product direction, what gets built, design review    | Both humans                                                                  |
-| Desktop shell, installer, updater, Windows specifics | Leon (Windows)                                                               |
-| macOS specifics, notarization                        | Blueemi (macOS)                                                              |
+| Area                                                 | Owner                                                                               |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Server, adapters, protocol, tests                    | Claude                                                                              |
+| UI implementation, visual polish                     | Blueemi                                                                             |
+| Product direction, what gets built, design review    | Both humans                                                                         |
+| Desktop shell, installer, updater, Windows specifics | Leon (Windows)                                                                      |
+| macOS specifics, notarization                        | Blueemi (macOS)                                                                     |
 | `packages/contracts`                                 | **Shared and high impact.** Its own PR; Leon approves. A second review is optional. |
 
 If you are about to work outside your area, that is fine — open the draft PR first so the
