@@ -672,6 +672,7 @@ export function Composer(props: {
                 <Menu
                   label="Add"
                   disabled={props.disabled}
+                  triggerClassName="composer__add"
                   trigger={() => (
                     <span className="tool tool--icon">
                       <Plus size={15} aria-hidden />
@@ -708,6 +709,7 @@ export function Composer(props: {
                 <Menu
                   label="Permissions"
                   disabled={props.running}
+                  triggerClassName="composer__permission"
                   trigger={() => (
                     <span className={`tool ${props.approval === 'full' ? 'tool--danger' : ''}`}>
                       <ApprovalIcon size={13} aria-hidden />

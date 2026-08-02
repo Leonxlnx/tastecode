@@ -3684,10 +3684,13 @@
   gap: 6px;
   min-width: 0;
   min-height: 44px;
-  margin: 0 28px;
-  padding: 3px 10px 12px;
+  margin: 0;
+  padding: 4px 12px 13px;
   background: var(--bg-shelf);
   border-radius: var(--r-2xl) var(--r-2xl) 0 0;
+  box-shadow:
+    inset 0 1px color-mix(in srgb, white 7%, transparent),
+    inset 0 -1px color-mix(in srgb, black 18%, transparent);
 }
 
 .composer__shelf .menuwrap {
@@ -3802,14 +3805,25 @@
   width: auto;
   max-width: 100%;
   padding: 4px 8px;
-  background: none;
-  border: 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-3) 62%, transparent),
+    color-mix(in srgb, var(--surface-2) 44%, transparent)
+  );
+  border: 1px solid color-mix(in srgb, var(--line-strong) 72%, transparent);
   border-radius: var(--r-md);
   color: var(--text);
   cursor: pointer;
   font: inherit;
   font-size: var(--t-md);
-  transition: background var(--dur-fast) var(--ease-out);
+  box-shadow:
+    inset 0 1px color-mix(in srgb, white 8%, transparent),
+    0 1px 1px color-mix(in srgb, black 16%, transparent);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
 }
 
 .shelf-control--mode {
@@ -3817,8 +3831,9 @@
   max-width: 150px;
 }
 
-.shelf-control:hover:not(:disabled) {
-  background: var(--control-hover);
+.shelf-control:active:not(:disabled) {
+  box-shadow: inset 0 1px 2px color-mix(in srgb, black 24%, transparent);
+  transform: scale(0.97);
 }
 
 .shelf-control__content {
@@ -4287,6 +4302,59 @@
   border-radius: var(--r-md);
 }
 
+.composer__add,
+.composer__permission,
+.composer__design,
+.menutrigger--model-selector,
+.composer__dictation {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-3) 58%, transparent),
+    color-mix(in srgb, var(--surface-2) 38%, transparent)
+  );
+  border: 1px solid color-mix(in srgb, var(--line-strong) 70%, transparent);
+  box-shadow:
+    inset 0 1px color-mix(in srgb, white 9%, transparent),
+    0 1px 1px color-mix(in srgb, black 18%, transparent);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+}
+
+.composer__add {
+  width: 30px;
+  height: 30px;
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.composer__permission,
+.composer__design,
+.menutrigger--model-selector {
+  min-height: 30px;
+}
+
+.composer__dictation {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+}
+
+:is(
+  .composer__add,
+  .composer__permission,
+  .composer__design,
+  .menutrigger--model-selector,
+  .composer__dictation
+):active:not(:disabled) {
+  box-shadow: inset 0 1px 2px color-mix(in srgb, black 24%, transparent);
+  transform: scale(0.97);
+}
+
 .composer__design.is-active,
 .composer__design.is-active svg {
   background: var(--surface-3);
@@ -4435,13 +4503,11 @@
 .menutrigger--model-selector {
   max-width: min(270px, 42vw);
   padding: 5px 9px 5px 8px;
-  background: none;
-  border: 0;
 }
 
 .menutrigger--model-selector:hover:not(:disabled),
 .menutrigger--model-selector[aria-expanded='true'] {
-  background: none;
+  border-color: color-mix(in srgb, var(--text-3) 58%, transparent);
 }
 
 .model-selector__trigger {
@@ -4844,6 +4910,27 @@
   transition:
     opacity var(--dur-fast) var(--ease-out),
     transform var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .shelf-control:hover:not(:disabled),
+  :is(
+    .composer__add,
+    .composer__permission,
+    .composer__design,
+    .menutrigger--model-selector,
+    .composer__dictation
+  ):hover:not(:disabled) {
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface-3) 82%, transparent),
+      color-mix(in srgb, var(--surface-2) 58%, transparent)
+    );
+    border-color: color-mix(in srgb, var(--text-3) 52%, transparent);
+    box-shadow:
+      inset 0 1px color-mix(in srgb, white 12%, transparent),
+      0 2px 4px color-mix(in srgb, black 20%, transparent);
+  }
 }
 
 .icon-btn:hover,
