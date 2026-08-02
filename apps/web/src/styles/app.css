@@ -1448,6 +1448,345 @@
   padding: 2px 8px;
 }
 
+/* ---------- inbox sidebar ---------- */
+
+.inbox {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 100%;
+}
+
+.inbox__scope {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 8px;
+  padding: 0 8px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.inbox__scope select {
+  min-width: 0;
+  padding: 4px 7px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--t-sm);
+}
+
+.inbox__heading {
+  margin: 0;
+  padding: 2px 8px 4px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 500;
+}
+
+.inbox__list,
+.inbox-shelf__list,
+.inbox-projects ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inbox__list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.inbox__empty {
+  margin: 0 0 8px;
+  padding: 7px 8px 10px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.inbox-card {
+  --inbox-card-bg: transparent;
+  position: relative;
+  min-height: 57px;
+  background: var(--inbox-card-bg);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+}
+
+.inbox-card:hover {
+  --inbox-card-bg: var(--surface);
+}
+
+.inbox-card.is-selected {
+  --inbox-card-bg: var(--surface-2);
+  border-color: var(--line-strong);
+}
+
+.inbox-card__main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  padding: 9px 8px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.inbox-card__topline,
+.inbox-card__meta {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.inbox-card__topline {
+  gap: 7px;
+  width: 100%;
+}
+
+.inbox-card__title {
+  flex: 1;
+  overflow: hidden;
+  font-size: var(--t-sm);
+  font-weight: 510;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-card__meta {
+  gap: 5px;
+  max-width: calc(100% - 2px);
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+}
+
+.inbox-card__meta > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inbox-card__woke {
+  flex: none;
+  color: var(--attention);
+}
+
+.inbox-status {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 99px;
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 520;
+}
+
+.inbox-status.is-working,
+.inbox-status.is-starting {
+  color: var(--running);
+}
+
+.inbox-status.is-approval,
+.inbox-status.is-input,
+.inbox-status.is-queued {
+  color: var(--attention);
+  background: color-mix(in oklab, var(--attention) 10%, transparent);
+}
+
+.inbox-status.is-failed {
+  color: var(--error);
+  background: color-mix(in oklab, var(--error) 10%, transparent);
+}
+
+.inbox-status.is-ready {
+  color: var(--success);
+  background: color-mix(in oklab, var(--success) 10%, transparent);
+}
+
+.inbox-card__actions {
+  position: absolute;
+  z-index: 1;
+  right: 5px;
+  bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding-left: 10px;
+  background: var(--inbox-card-bg);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.inbox-card:hover .inbox-card__actions,
+.inbox-card:focus-within .inbox-card__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.inbox-card__settle,
+.inbox-card__actions .menutrigger,
+.inbox-shelf__row > button:last-child,
+.inbox-projects li > button,
+.inbox-projects li > .menuwrap .menutrigger {
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.inbox-card__settle:hover,
+.inbox-card__actions .menutrigger:hover,
+.inbox-shelf__row > button:last-child:hover,
+.inbox-projects li > button:hover,
+.inbox-projects li > .menuwrap .menutrigger:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.inbox-shelf {
+  margin-top: 3px;
+  border-top: 1px solid var(--line);
+  padding-top: 3px;
+}
+
+.inbox-shelf__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+  text-align: left;
+}
+
+.inbox-shelf__toggle:hover {
+  background: var(--surface);
+  color: var(--text-2);
+}
+
+.inbox-shelf__toggle svg {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.inbox-shelf__toggle[aria-expanded='true'] svg {
+  transform: rotate(90deg);
+}
+
+.inbox-shelf__toggle span:last-child {
+  margin-left: auto;
+}
+
+.inbox-shelf__row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: var(--r-md);
+}
+
+.inbox-shelf__row:hover,
+.inbox-shelf__row.is-selected {
+  background: var(--surface);
+}
+
+.inbox-shelf__row > button:first-child {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding: 5px 8px;
+  background: none;
+  border: 0;
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+  text-align: left;
+}
+
+.inbox-shelf__row > button:first-child span,
+.inbox-shelf__row > button:first-child small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-shelf__row > button:first-child small {
+  color: var(--text-3);
+  font-size: 10.5px;
+}
+
+.inbox__more {
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: 0;
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+}
+
+.inbox-projects {
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+.inbox-projects summary {
+  padding: 5px 8px;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: var(--t-xs);
+}
+
+.inbox-projects summary:hover {
+  background: var(--surface);
+}
+
+.inbox-projects li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding-left: 8px;
+}
+
+.inbox-projects li > span {
+  flex: 1;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inbox-shelf__toggle svg {
+    transition: none;
+  }
+}
+
 /* ---------- projects & sessions ---------- */
 
 .proj {
@@ -4796,6 +5135,7 @@
   }
 
   .sessrow .sess__actions,
+  .inbox-card__actions,
   .proj__head .dots {
     opacity: 1;
     pointer-events: auto;
