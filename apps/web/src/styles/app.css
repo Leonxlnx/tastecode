@@ -3664,7 +3664,7 @@
     margin-top var(--dur-slow) var(--ease-out);
 }
 
-.composer__prompt.is-shelved {
+.composer__design-beam.is-shelved {
   margin-top: -9px;
 }
 
@@ -4271,6 +4271,13 @@
 }
 
 .composer__design-beam {
+  display: block;
+  width: 100%;
+  border-radius: var(--r-2xl);
+}
+
+.composer__design-button-beam {
+  display: flex;
   flex: none;
   border-radius: var(--r-md);
 }
@@ -4282,9 +4289,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .composer__design-beam::before,
-  .composer__design-beam::after,
-  .composer__design-beam [data-beam-bloom] {
+  :is(.composer__design-beam, .composer__design-button-beam)::before,
+  :is(.composer__design-beam, .composer__design-button-beam)::after,
+  :is(.composer__design-beam, .composer__design-button-beam) [data-beam-bloom] {
     animation: none !important;
   }
 }

@@ -539,265 +539,277 @@ export function Composer(props: {
             </div>
           ) : null}
 
-          <div className={`composer__prompt${props.newSession ? ' is-shelved' : ''}`}>
-            <div className="chips">
-              {attachments.map((attachment) =>
-                attachment.previewUrl ? (
-                  <span
-                    className={`attachment-preview ${attachment.path ? '' : 'is-loading'}`}
-                    key={attachment.id}
-                    title={attachment.name}
-                  >
-                    <button
-                      className="attachment-preview__open"
-                      type="button"
-                      onClick={() =>
-                        setViewingImage({ src: attachment.previewUrl!, name: attachment.name })
-                      }
-                      aria-label={`Open ${attachment.name}`}
+          <BorderBeam
+            className={`composer__design-beam${props.newSession ? ' is-shelved' : ''}`}
+            size="md"
+            colorVariant="colorful"
+            strength={0.9}
+            brightness={1.5}
+            duration={2.4}
+            active={props.designMode}
+            borderRadius={20}
+          >
+            <div className="composer__prompt">
+              <div className="chips">
+                {attachments.map((attachment) =>
+                  attachment.previewUrl ? (
+                    <span
+                      className={`attachment-preview ${attachment.path ? '' : 'is-loading'}`}
+                      key={attachment.id}
+                      title={attachment.name}
                     >
-                      <img src={attachment.previewUrl} alt="" />
-                    </button>
-                    <button
-                      className="attachment-preview__remove"
-                      onClick={() => removeAttachment(attachment.id)}
-                      title="Remove"
-                      aria-label={`Remove ${attachment.name}`}
-                    >
-                      <X size={13} aria-hidden />
-                    </button>
-                    {attachment.path ? null : <span className="attachment-preview__loading" />}
+                      <button
+                        className="attachment-preview__open"
+                        type="button"
+                        onClick={() =>
+                          setViewingImage({ src: attachment.previewUrl!, name: attachment.name })
+                        }
+                        aria-label={`Open ${attachment.name}`}
+                      >
+                        <img src={attachment.previewUrl} alt="" />
+                      </button>
+                      <button
+                        className="attachment-preview__remove"
+                        onClick={() => removeAttachment(attachment.id)}
+                        title="Remove"
+                        aria-label={`Remove ${attachment.name}`}
+                      >
+                        <X size={13} aria-hidden />
+                      </button>
+                      {attachment.path ? null : <span className="attachment-preview__loading" />}
+                    </span>
+                  ) : (
+                    <span className="chip chip--file" key={attachment.id} title={attachment.path}>
+                      {attachment.path && IMAGE_RE.test(attachment.path) ? (
+                        <ImageIcon size={13} aria-hidden />
+                      ) : (
+                        <FileIcon size={13} aria-hidden />
+                      )}
+                      <span className="chip__label">{attachment.name}</span>
+                      <button
+                        className="chip__x"
+                        onClick={() => removeAttachment(attachment.id)}
+                        title="Remove"
+                        aria-label={`Remove ${attachment.name}`}
+                      >
+                        <X size={10} aria-hidden />
+                      </button>
+                    </span>
+                  ),
+                )}
+                {attachmentError ? (
+                  <span className="chip chip--error" role="alert">
+                    {attachmentError}
                   </span>
-                ) : (
-                  <span className="chip chip--file" key={attachment.id} title={attachment.path}>
-                    {attachment.path && IMAGE_RE.test(attachment.path) ? (
-                      <ImageIcon size={13} aria-hidden />
-                    ) : (
-                      <FileIcon size={13} aria-hidden />
-                    )}
-                    <span className="chip__label">{attachment.name}</span>
-                    <button
-                      className="chip__x"
-                      onClick={() => removeAttachment(attachment.id)}
-                      title="Remove"
-                      aria-label={`Remove ${attachment.name}`}
-                    >
-                      <X size={10} aria-hidden />
-                    </button>
-                  </span>
-                ),
-              )}
-              {attachmentError ? (
-                <span className="chip chip--error" role="alert">
-                  {attachmentError}
-                </span>
-              ) : null}
-            </div>
+                ) : null}
+              </div>
 
-            <div className="composer__field">
-              <textarea
-                ref={area}
-                value={text}
-                rows={1}
-                spellCheck={false}
-                disabled={props.disabled}
-                aria-keyshortcuts={shortcutAria(SHORTCUTS.focusComposer)}
-                onChange={(e) => {
-                  const value = e.target.value
-                  setText(value)
-                  setSlashOpen(value.startsWith('/') && !value.includes(' '))
-                  grow()
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape' && slashOpen) {
-                    setSlashOpen(false)
-                    return
-                  }
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    if (slashOpen && matches[0]) {
-                      setValue(matches[0].text)
+              <div className="composer__field">
+                <textarea
+                  ref={area}
+                  value={text}
+                  rows={1}
+                  spellCheck={false}
+                  disabled={props.disabled}
+                  aria-keyshortcuts={shortcutAria(SHORTCUTS.focusComposer)}
+                  onChange={(e) => {
+                    const value = e.target.value
+                    setText(value)
+                    setSlashOpen(value.startsWith('/') && !value.includes(' '))
+                    grow()
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape' && slashOpen) {
                       setSlashOpen(false)
                       return
                     }
-                    submit()
-                  }
-                }}
-                onPaste={(e) => {
-                  const files = Array.from(e.clipboardData.files)
-                  const images = files.filter((file) => PASTEABLE_IMAGE_TYPES.has(file.type))
-                  const paths = files
-                    .filter((file) => !PASTEABLE_IMAGE_TYPES.has(file.type))
-                    .map((file) => (file as File & { path?: string }).path)
-                    .filter((path): path is string => typeof path === 'string' && path !== '')
-                  if (images.length > 0 || paths.length > 0) {
-                    e.preventDefault()
-                    addFiles(paths)
-                    addPastedImages(images)
-                  }
-                }}
-                placeholder={props.disabled ? 'Add a project folder first' : 'Do anything'}
-              />
-
-              {slashOpen && matches.length > 0 ? (
-                <div className="slash" role="listbox">
-                  {matches.map((command) => (
-                    <button
-                      key={command.name}
-                      className="menu__item"
-                      onClick={() => {
-                        setValue(command.text)
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      if (slashOpen && matches[0]) {
+                        setValue(matches[0].text)
                         setSlashOpen(false)
-                      }}
-                    >
-                      <span className="menu__name">{command.name}</span>
-                      <span className="menu__desc">{command.detail}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+                        return
+                      }
+                      submit()
+                    }
+                  }}
+                  onPaste={(e) => {
+                    const files = Array.from(e.clipboardData.files)
+                    const images = files.filter((file) => PASTEABLE_IMAGE_TYPES.has(file.type))
+                    const paths = files
+                      .filter((file) => !PASTEABLE_IMAGE_TYPES.has(file.type))
+                      .map((file) => (file as File & { path?: string }).path)
+                      .filter((path): path is string => typeof path === 'string' && path !== '')
+                    if (images.length > 0 || paths.length > 0) {
+                      e.preventDefault()
+                      addFiles(paths)
+                      addPastedImages(images)
+                    }
+                  }}
+                  placeholder={props.disabled ? 'Add a project folder first' : 'Do anything'}
+                />
 
-            <div className="tools">
-              <Menu
-                label="Add"
-                disabled={props.disabled}
-                trigger={() => (
-                  <span className="tool tool--icon">
-                    <Plus size={15} aria-hidden />
-                  </span>
-                )}
-              >
-                {(close) => (
-                  <>
-                    <MenuItem
-                      title="Attach files"
-                      detail="Or drag them onto the box"
-                      onClick={() => {
-                        close()
-                        void pickFiles().then(addFiles)
-                      }}
-                    />
-                    <div className="menu__rule" />
-                    <p className="menu__group">Commands</p>
-                    {SLASH_COMMANDS.map((command) => (
-                      <MenuItem
+                {slashOpen && matches.length > 0 ? (
+                  <div className="slash" role="listbox">
+                    {matches.map((command) => (
+                      <button
                         key={command.name}
-                        title={command.name}
-                        detail={command.detail}
+                        className="menu__item"
                         onClick={() => {
                           setValue(command.text)
-                          close()
+                          setSlashOpen(false)
                         }}
-                      />
+                      >
+                        <span className="menu__name">{command.name}</span>
+                        <span className="menu__desc">{command.detail}</span>
+                      </button>
                     ))}
-                  </>
-                )}
-              </Menu>
+                  </div>
+                ) : null}
+              </div>
 
-              <Menu
-                label="Permissions"
-                disabled={props.running}
-                trigger={() => (
-                  <span className={`tool ${props.approval === 'full' ? 'tool--danger' : ''}`}>
-                    <ApprovalIcon size={13} aria-hidden />
-                    <span>{approval.short}</span>
-                  </span>
-                )}
-              >
-                {(close) => (
-                  <>
-                    {APPROVAL_MODES.filter(
-                      (mode) => mode.id !== 'auto-review' || props.autoReviewSupported,
-                    ).map((mode) => (
-                      <MenuItem
-                        key={mode.id}
-                        title={mode.title}
-                        detail={mode.detail}
-                        active={mode.id === props.approval}
-                        onClick={() => {
-                          props.onApprovalChange(mode.id)
-                          close()
-                        }}
-                      />
-                    ))}
-                  </>
-                )}
-              </Menu>
-
-              <BorderBeam
-                className="composer__design-beam"
-                size="sm"
-                colorVariant="colorful"
-                strength={0.7}
-                active={props.designMode}
-                borderRadius={8}
-              >
-                <button
-                  type="button"
-                  className={`menutrigger tool composer__design${props.designMode ? ' is-active' : ''}`}
-                  aria-pressed={props.designMode}
-                  onClick={() => props.onDesignModeChange(!props.designMode)}
-                  title={props.designMode ? 'Turn off Design mode' : 'Turn on Design mode'}
-                >
-                  <Palette size={13} aria-hidden />
-                  <span>Design</span>
-                </button>
-              </BorderBeam>
-
-              <span className="tools__spacer" />
-
-              {props.models.length > 0 ? (
-                <ModelSelector
-                  models={props.models}
-                  modelId={props.modelId}
-                  effort={props.effort}
-                  serviceTier={props.serviceTier}
-                  disabled={props.running}
-                  onModelChange={props.onModelChange}
-                  onEffortChange={props.onEffortChange}
-                  onServiceTierChange={props.onServiceTierChange}
-                />
-              ) : showModelPlaceholder ? (
-                <span className="tool tool--quiet">Loading models…</span>
-              ) : null}
-
-              {canDictate ? (
-                <button
-                  className={`icon-btn icon-btn--always composer__dictation ${dictating ? 'is-live' : ''}`}
-                  onClick={toggleDictation}
+              <div className="tools">
+                <Menu
+                  label="Add"
                   disabled={props.disabled}
-                  title={dictating ? 'Stop dictation' : 'Dictate'}
+                  trigger={() => (
+                    <span className="tool tool--icon">
+                      <Plus size={15} aria-hidden />
+                    </span>
+                  )}
                 >
-                  <Mic size={15} aria-hidden />
-                </button>
-              ) : null}
+                  {(close) => (
+                    <>
+                      <MenuItem
+                        title="Attach files"
+                        detail="Or drag them onto the box"
+                        onClick={() => {
+                          close()
+                          void pickFiles().then(addFiles)
+                        }}
+                      />
+                      <div className="menu__rule" />
+                      <p className="menu__group">Commands</p>
+                      {SLASH_COMMANDS.map((command) => (
+                        <MenuItem
+                          key={command.name}
+                          title={command.name}
+                          detail={command.detail}
+                          onClick={() => {
+                            setValue(command.text)
+                            close()
+                          }}
+                        />
+                      ))}
+                    </>
+                  )}
+                </Menu>
 
-              <BorderBeam
-                className="composer__send-beam"
-                size="sm"
-                colorVariant="ocean"
-                strength={0.72}
-                active={showStop}
-                borderRadius={15}
-              >
-                <button
-                  className={`orb${showStop ? ' orb--stop' : ''}${sending ? ' is-sending' : ''}`}
-                  onClick={showStop ? props.onInterrupt : submit}
-                  disabled={!showStop && sendDisabled}
-                  title={showStop ? 'Stop' : 'Send'}
-                  aria-label={showStop ? 'Stop' : 'Send'}
+                <Menu
+                  label="Permissions"
+                  disabled={props.running}
+                  trigger={() => (
+                    <span className={`tool ${props.approval === 'full' ? 'tool--danger' : ''}`}>
+                      <ApprovalIcon size={13} aria-hidden />
+                      <span>{approval.short}</span>
+                    </span>
+                  )}
                 >
-                  <span className="orb__icon orb__icon--send">
-                    <ArrowUp size={15} aria-hidden />
-                  </span>
-                  <span className="orb__icon orb__icon--stop">
-                    <Square size={9} fill="currentColor" aria-hidden />
-                  </span>
-                </button>
-              </BorderBeam>
+                  {(close) => (
+                    <>
+                      {APPROVAL_MODES.filter(
+                        (mode) => mode.id !== 'auto-review' || props.autoReviewSupported,
+                      ).map((mode) => (
+                        <MenuItem
+                          key={mode.id}
+                          title={mode.title}
+                          detail={mode.detail}
+                          active={mode.id === props.approval}
+                          onClick={() => {
+                            props.onApprovalChange(mode.id)
+                            close()
+                          }}
+                        />
+                      ))}
+                    </>
+                  )}
+                </Menu>
+
+                <BorderBeam
+                  className="composer__design-button-beam"
+                  size="sm"
+                  colorVariant="colorful"
+                  strength={0.58}
+                  duration={2.4}
+                  active={props.designMode}
+                  borderRadius={8}
+                >
+                  <button
+                    type="button"
+                    className={`menutrigger tool composer__design${props.designMode ? ' is-active' : ''}`}
+                    aria-pressed={props.designMode}
+                    onClick={() => props.onDesignModeChange(!props.designMode)}
+                    title={props.designMode ? 'Turn off Design mode' : 'Turn on Design mode'}
+                  >
+                    <Palette size={13} aria-hidden />
+                    <span>Design</span>
+                  </button>
+                </BorderBeam>
+
+                <span className="tools__spacer" />
+
+                {props.models.length > 0 ? (
+                  <ModelSelector
+                    models={props.models}
+                    modelId={props.modelId}
+                    effort={props.effort}
+                    serviceTier={props.serviceTier}
+                    disabled={props.running}
+                    onModelChange={props.onModelChange}
+                    onEffortChange={props.onEffortChange}
+                    onServiceTierChange={props.onServiceTierChange}
+                  />
+                ) : showModelPlaceholder ? (
+                  <span className="tool tool--quiet">Loading models…</span>
+                ) : null}
+
+                {canDictate ? (
+                  <button
+                    className={`icon-btn icon-btn--always composer__dictation ${dictating ? 'is-live' : ''}`}
+                    onClick={toggleDictation}
+                    disabled={props.disabled}
+                    title={dictating ? 'Stop dictation' : 'Dictate'}
+                  >
+                    <Mic size={15} aria-hidden />
+                  </button>
+                ) : null}
+
+                <BorderBeam
+                  className="composer__send-beam"
+                  size="sm"
+                  colorVariant="ocean"
+                  strength={0.72}
+                  active={showStop}
+                  borderRadius={15}
+                >
+                  <button
+                    className={`orb${showStop ? ' orb--stop' : ''}${sending ? ' is-sending' : ''}`}
+                    onClick={showStop ? props.onInterrupt : submit}
+                    disabled={!showStop && sendDisabled}
+                    title={showStop ? 'Stop' : 'Send'}
+                    aria-label={showStop ? 'Stop' : 'Send'}
+                  >
+                    <span className="orb__icon orb__icon--send">
+                      <ArrowUp size={15} aria-hidden />
+                    </span>
+                    <span className="orb__icon orb__icon--stop">
+                      <Square size={9} fill="currentColor" strokeWidth={0} aria-hidden />
+                    </span>
+                  </button>
+                </BorderBeam>
+              </div>
             </div>
-          </div>
+          </BorderBeam>
         </div>
       </div>
       {viewingImage ? (
