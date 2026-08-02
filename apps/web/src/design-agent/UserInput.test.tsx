@@ -52,6 +52,8 @@ describe('briefing questions', () => {
     render(<UserInput request={request} onSubmit={vi.fn()} />)
 
     expect(screen.getByText('Do you already have a palette?')).toBeTruthy()
+    expect(screen.queryByText('Colour')).toBeNull()
+    expect(screen.queryByText('Infer the strongest direction.')).toBeNull()
     expect(screen.queryByText('How should the page feel?')).toBeNull()
     expect(screen.getByRole('button', { name: 'Next' }).hasAttribute('disabled')).toBe(true)
 
@@ -64,6 +66,24 @@ describe('briefing questions', () => {
     expect((screen.getByRole('radio', { name: /Decide for me/ }) as HTMLInputElement).checked).toBe(
       true,
     )
+  })
+
+  it('uses the wheel to move only after the current question is answered', () => {
+    const now = vi.spyOn(Date, 'now')
+    now.mockReturnValueOnce(1_000).mockReturnValueOnce(1_500)
+    render(<UserInput request={request} onSubmit={vi.fn()} />)
+
+    const form = screen.getByRole('form', { name: 'Design brief questions' })
+    fireEvent.wheel(form, { deltaY: 80 })
+    expect(screen.getByText('Do you already have a palette?')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Decide for me' }))
+    fireEvent.wheel(form, { deltaY: 80 })
+    expect(screen.getByText('How should the page feel?')).toBeTruthy()
+
+    fireEvent.wheel(form, { deltaY: -80 })
+    expect(screen.getByText('Do you already have a palette?')).toBeTruthy()
+    now.mockRestore()
   })
 
   it('submits the complete batch only after the last question', () => {
@@ -94,6 +114,8 @@ describe('briefing questions', () => {
       />,
     )
 
+    fireEvent.click(screen.getByRole('radio', { name: 'Write your own answer' }))
+    expect(screen.getByRole('button', { name: 'Submit' }).hasAttribute('disabled')).toBe(true)
     fireEvent.change(screen.getByRole('textbox', { name: /Custom answer/ }), {
       target: { value: 'Deep green with warm ivory' },
     })
