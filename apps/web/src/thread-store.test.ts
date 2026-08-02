@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DomainEvent, Item } from '@harness/contracts'
-import { appendUserMessage, emptyThread, reduce } from './thread-store.js'
+import { appendUserMessage, beginOptimisticTurn, emptyThread, reduce } from './thread-store.js'
 
 const item = (over: Partial<Item> = {}): Item => ({
   id: 'i1',
@@ -58,6 +58,19 @@ describe('thread reducer', () => {
     expect(state.items[0]?.id).toBe('server-1')
   })
 
+  it('keeps later optimistic prompts when the first canonical message arrives', () => {
+    const echoed = appendUserMessage(
+      appendUserMessage(emptyThread, 'first prompt'),
+      'second prompt',
+    )
+    const state = reduce(echoed, {
+      type: 'item.started',
+      item: item({ id: 'server-1', role: 'user', text: 'first prompt' }),
+    })
+
+    expect(state.items.map((entry) => entry.text)).toEqual(['first prompt', 'second prompt'])
+  })
+
   it('echoes a message when randomUUID is unavailable in an insecure mobile context', () => {
     vi.stubGlobal('crypto', {})
 
@@ -67,6 +80,14 @@ describe('thread reducer', () => {
     expect(second.items.map((entry) => entry.text)).toEqual(['sent from mobile', 'sent again'])
     expect(second.items[0]?.id).toMatch(/^local:/)
     expect(second.items[1]?.id).not.toBe(second.items[0]?.id)
+  })
+
+  it('starts working locally before the server confirms a turn', () => {
+    const state = beginOptimisticTurn(emptyThread, 'resume this chat')
+
+    expect(state.items[0]?.text).toBe('resume this chat')
+    expect(state.running).toBe(true)
+    expect(state.activeTurn?.id).toMatch(/^local-turn:/)
   })
 
   it('rebuilds a whole conversation from a stored event log', () => {

@@ -24,6 +24,7 @@ import { warmHighlighter } from './ui/highlighter.js'
 import { Transport } from './transport.js'
 import {
   appendUserMessage,
+  beginOptimisticTurn,
   emptyThread,
   reduce,
   removeQueuedOptimisticMessage,
@@ -158,6 +159,7 @@ export function App() {
     request: number
   }>()
   const [composerFocusRequest, setComposerFocusRequest] = useState(0)
+  const [threadRevealRequest, setThreadRevealRequest] = useState(0)
   const [notice, setNotice] = useState<string | undefined>()
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([])
   const [rollbackOpen, setRollbackOpen] = useState(false)
@@ -707,20 +709,31 @@ export function App() {
       // app's bookkeeping leaking into their way of working.
       let threadId = activeId
       let optimisticAdded = false
+      let optimisticTurnId: string | undefined
       let titledOnCreate = false
       if (!threadId) {
         if (!activePath) return
         const provisionalId = `pending:${crypto.randomUUID()}`
-        const provisional = appendUserMessage(emptyThread, text)
+        const provisional = beginOptimisticTurn(emptyThread, text)
+        optimisticTurnId = provisional.activeTurn?.id
         threadStates.current.set(provisionalId, provisional)
         activeIdRef.current = provisionalId
         setActiveId(provisionalId)
         setThread(provisional)
+        setThreadRevealRequest((request) => request + 1)
         const promise = createSession(activePath, provisionalId, titleFrom(text))
         pendingSession.current = { id: provisionalId, promise }
         threadId = await promise
         if (pendingSession.current?.id === provisionalId) pendingSession.current = undefined
-        if (!threadId) return
+        if (!threadId) {
+          const current = threadStates.current.get(provisionalId)
+          if (current !== undefined && current.activeTurn?.id === optimisticTurnId) {
+            const next: ThreadState = { ...current, running: false, activeTurn: undefined }
+            threadStates.current.set(provisionalId, next)
+            if (activeIdRef.current === provisionalId) setThread(next)
+          }
+          return
+        }
         optimisticAdded = true
         titledOnCreate = true
       } else if (pendingSession.current?.id === threadId) {
@@ -732,6 +745,7 @@ export function App() {
         )
         threadStates.current.set(targetId, provisional)
         if (activeIdRef.current === targetId) setThread(provisional)
+        setThreadRevealRequest((request) => request + 1)
         threadId = await pending.promise
         if (!threadId) return
         optimisticAdded = true
@@ -741,13 +755,17 @@ export function App() {
       setUndoRestore(undefined)
 
       const before = threadStates.current.get(threadId) ?? emptyThread
-      const wasRunning = before.running
+      const wasRunning = before.running && !optimisticAdded
       const beforeItemIds = new Set(before.items.map((item) => item.id))
       const optimisticQueueId = wasRunning ? `pending:${crypto.randomUUID()}` : undefined
       if (!wasRunning && !optimisticAdded) {
-        const next = appendUserMessage(before, text)
+        const next = beginOptimisticTurn(before, text)
+        optimisticTurnId = next.activeTurn?.id
         threadStates.current.set(threadId, next)
-        if (threadId === activeIdRef.current) setThread(next)
+        if (threadId === activeIdRef.current) {
+          setThread(next)
+          setThreadRevealRequest((request) => request + 1)
+        }
       }
       if (optimisticQueueId) {
         updateQueue(threadId, (items) => [
@@ -810,6 +828,12 @@ export function App() {
       } catch (error) {
         if (optimisticQueueId) {
           updateQueue(threadId, (items) => items.filter((item) => item.id !== optimisticQueueId))
+        }
+        const current = threadStates.current.get(threadId)
+        if (current !== undefined && current.activeTurn?.id === optimisticTurnId) {
+          const next: ThreadState = { ...current, running: false, activeTurn: undefined }
+          threadStates.current.set(threadId, next)
+          if (threadId === activeIdRef.current) setThread(next)
         }
         setNotice(error instanceof Error ? error.message : String(error))
       }
@@ -1416,6 +1440,7 @@ export function App() {
                 threadId={activeId}
                 transport={transport}
                 searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
+                revealRequest={threadRevealRequest}
                 approvals={thread.approvals}
                 reviews={Object.values(thread.reviews)}
                 onDecide={(approvalId, decision) => {

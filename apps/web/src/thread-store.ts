@@ -98,11 +98,18 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
     case 'item.started': {
       // The agent echoes the user's message back as a canonical item. Drop our
       // optimistic copy when it arrives, so the message does not appear twice.
-      const items =
+      const optimisticIndex =
         event.item.role === 'user'
-          ? state.items.filter((i) => !i.id.startsWith(OPTIMISTIC_PREFIX))
-          : state.items
-      return { ...state, items: [...items, event.item] }
+          ? state.items.findIndex(
+              (item) =>
+                item.id.startsWith(OPTIMISTIC_PREFIX) &&
+                (event.item.text === undefined || item.text === event.item.text),
+            )
+          : -1
+      if (optimisticIndex < 0) return { ...state, items: [...state.items, event.item] }
+      const items = state.items.slice()
+      items[optimisticIndex] = event.item
+      return { ...state, items }
     }
 
     case 'item.delta': {
@@ -165,6 +172,17 @@ export function appendUserMessage(state: ThreadState, text: string): ThreadState
         createdAt: Date.now(),
       },
     ],
+  }
+}
+
+/** Immediate local turn state while the server resumes or starts the real turn. */
+export function beginOptimisticTurn(state: ThreadState, text: string): ThreadState {
+  return {
+    ...appendUserMessage(state, text),
+    running: true,
+    activeTurn: { id: localId('local-turn:'), startedAt: Date.now() },
+    plan: [],
+    diff: undefined,
   }
 }
 

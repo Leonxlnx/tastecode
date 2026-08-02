@@ -42,11 +42,16 @@ vi.mock('./ui/highlighter.js', () => ({
 // App tests exercise session routing, while Thread's own tests cover its
 // virtualized renderer. happy-dom intentionally renders no virtual rows.
 vi.mock('./ui/Thread.js', () => ({
-  Thread: (props: { items: { id: string; text?: string }[] }) => (
+  Thread: (props: {
+    items: { id: string; text?: string }[]
+    running: boolean
+    activeTurn?: { id: string }
+  }) => (
     <div data-testid="thread">
       {props.items.map((item) => (
         <span key={item.id}>{item.text}</span>
       ))}
+      {props.running && props.activeTurn ? <span>Working</span> : null}
     </div>
   ),
 }))
@@ -312,6 +317,8 @@ describe('new chats', () => {
     fireEvent.keyDown(composer, { key: 'Enter' })
 
     expect(screen.getByTestId('thread').textContent).toContain('Start immediately')
+    expect(screen.getByText('Working')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
     expect(document.querySelector('.stage__body.is-new-session')).toBeNull()
 
     fireEvent.change(composer, { target: { value: 'Then do this too' } })
@@ -980,6 +987,34 @@ describe('global shortcuts', () => {
 })
 
 describe('live sessions', () => {
+  it('shows an old-chat submission and working controls before the server resumes it', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Old chat', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const pendingSend = new Promise(() => {})
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn' ? pendingSend : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Old chat' }))
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Continue immediately' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(screen.getByTestId('thread').textContent).toContain('Continue immediately')
+    expect(screen.getByText('Working')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
+  })
+
   it('queues Enter submissions while the active session is running', async () => {
     serverProjects = [
       {

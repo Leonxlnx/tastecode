@@ -54,6 +54,7 @@ export function Thread(props: {
   threadId?: string | undefined
   transport?: Transport | undefined
   searchJump?: { turnId: string; request: number } | undefined
+  revealRequest?: number | undefined
   approvals: ApprovalRequest[]
   reviews: ApprovalReview[]
   onDecide: (id: string, decision: ApprovalDecision) => void
@@ -62,6 +63,7 @@ export function Thread(props: {
   const [mode, setMode] = useState<ScrollMode>('follow-end')
   const [finding, setFinding] = useState(false)
   const completedSearchJump = useRef(0)
+  const completedRevealRequest = useRef(props.revealRequest ?? 0)
   const modeRef = useRef(mode)
   modeRef.current = mode
 
@@ -102,6 +104,15 @@ export function Thread(props: {
     const el = scroller.current
     if (!el) return
 
+    const revealRequest = props.revealRequest ?? 0
+    if (completedRevealRequest.current !== revealRequest) {
+      completedRevealRequest.current = revealRequest
+      modeRef.current = 'follow-end'
+      setMode('follow-end')
+      el.scrollTop = el.scrollHeight
+      return
+    }
+
     if (modeRef.current === 'follow-end') {
       el.scrollTop = el.scrollHeight
       return
@@ -117,7 +128,7 @@ export function Thread(props: {
       }
       el.scrollTop = start
     }
-  }, [props.items, virtualizer])
+  }, [props.items, props.revealRequest, virtualizer])
 
   const onScroll = useCallback(() => {
     const el = scroller.current
