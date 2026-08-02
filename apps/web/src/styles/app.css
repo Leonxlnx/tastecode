@@ -4278,6 +4278,12 @@
   color: var(--text-2);
 }
 
+.composer__design.is-active,
+.composer__design.is-active svg {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
 .icon-btn.is-live {
   opacity: 1;
   color: var(--error);

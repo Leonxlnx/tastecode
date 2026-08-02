@@ -335,6 +335,7 @@ describe('new chats', () => {
     render(<App />)
 
     expect(document.querySelector('.stage__body.is-new-session .composer')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Design' }))
 
     const composer = await screen.findByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Start building' } })
@@ -344,6 +345,7 @@ describe('new chats', () => {
       expect(document.querySelector('.stage__body.is-new-session')).toBeNull()
     })
     expect(document.querySelector('.stage__body > .composer')).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe('true')
   })
 
   it('starts a new session in an isolated checkout when selected', async () => {

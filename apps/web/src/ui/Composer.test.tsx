@@ -154,6 +154,22 @@ describe('Composer permissions', () => {
   })
 })
 
+describe('Composer Design mode', () => {
+  it('exposes a pressed toggle through its callback', () => {
+    const onDesignModeChange = vi.fn()
+    const view = renderComposer(vi.fn(), { onDesignModeChange })
+
+    const design = screen.getByRole('button', { name: 'Design' })
+    expect(design.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(design)
+    expect(onDesignModeChange).toHaveBeenCalledWith(true)
+
+    view.unmount()
+    renderComposer(vi.fn(), { designMode: true })
+    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe('true')
+  })
+})
+
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,
   overrides: Partial<Parameters<typeof Composer>[0]> = {},
@@ -176,6 +192,7 @@ function renderComposer(
       running={false}
       newSession
       isolate={false}
+      designMode={false}
       focusRequest={0}
       queuedTurns={[]}
       canSteerQueue={false}
@@ -184,6 +201,7 @@ function renderComposer(
       onServiceTierChange={vi.fn()}
       onApprovalChange={vi.fn()}
       onIsolateChange={vi.fn()}
+      onDesignModeChange={vi.fn()}
       onProjectChange={vi.fn()}
       onBranchChange={vi.fn()}
       onSend={onSend}

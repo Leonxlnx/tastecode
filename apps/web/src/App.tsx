@@ -168,6 +168,7 @@ export function App() {
   const [rollbackRestoring, setRollbackRestoring] = useState(false)
   const [undoRestore, setUndoRestore] = useState<{ threadId: string; token: string } | undefined>()
   const [isolateSession, setIsolateSession] = useState(false)
+  const [designMode, setDesignMode] = useState(false)
   const [checkoutDelete, setCheckoutDelete] = useState<
     { id: string; title: string; branch: string } | undefined
   >()
@@ -1461,6 +1462,7 @@ export function App() {
               running={thread.running}
               newSession={!activeId}
               isolate={active?.session.worktreeBranch ? true : isolateSession}
+              designMode={designMode}
               focusRequest={composerFocusRequest}
               queuedTurns={queuedTurns}
               canSteerQueue={canSteerQueue}
@@ -1469,6 +1471,7 @@ export function App() {
               onServiceTierChange={setServiceTier}
               onApprovalChange={setApproval}
               onIsolateChange={setIsolateSession}
+              onDesignModeChange={setDesignMode}
               onProjectChange={selectProject}
               onBranchChange={(branch) => void selectBranch(branch)}
               onSend={(t, files) => void send(t, files)}

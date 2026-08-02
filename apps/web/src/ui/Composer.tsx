@@ -12,6 +12,7 @@ import {
   ListRestart,
   LockOpen,
   Mic,
+  Palette,
   Plus,
   ShieldCheck,
   ShieldQuestion,
@@ -147,6 +148,7 @@ export function Composer(props: {
   running: boolean
   newSession: boolean
   isolate: boolean
+  designMode: boolean
   focusRequest: number
   queuedTurns: QueuedTurn[]
   canSteerQueue: boolean
@@ -155,6 +157,7 @@ export function Composer(props: {
   onServiceTierChange: (serviceTier: string | undefined) => void
   onApprovalChange: (mode: ApprovalMode) => void
   onIsolateChange: (isolate: boolean) => void
+  onDesignModeChange: (enabled: boolean) => void
   onProjectChange: (path: string) => void
   onBranchChange: (branch: string) => void
   onSend: (text: string, attachments: string[]) => void
@@ -720,6 +723,17 @@ export function Composer(props: {
                   </>
                 )}
               </Menu>
+
+              <button
+                type="button"
+                className={`menutrigger tool composer__design${props.designMode ? ' is-active' : ''}`}
+                aria-pressed={props.designMode}
+                onClick={() => props.onDesignModeChange(!props.designMode)}
+                title={props.designMode ? 'Turn off Design mode' : 'Turn on Design mode'}
+              >
+                <Palette size={13} aria-hidden />
+                <span>Design</span>
+              </button>
 
               <span className="tools__spacer" />
 
