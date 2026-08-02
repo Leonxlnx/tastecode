@@ -4872,6 +4872,15 @@
   opacity: 1;
 }
 
+.composer__send-beam {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  margin-left: 4px;
+  border-radius: 50%;
+}
+
 .orb {
   position: relative;
   display: grid;
@@ -4879,7 +4888,6 @@
   width: 30px;
   height: 30px;
   flex: none;
-  margin-left: 4px;
   background: var(--composer-orb);
   border: 0;
   border-radius: 50%;
@@ -4965,6 +4973,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .composer__send-beam {
+    animation: none !important;
+  }
+
   .orb,
   .orb__icon {
     transition-duration: 0.01ms;

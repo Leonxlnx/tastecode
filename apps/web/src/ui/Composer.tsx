@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ApprovalMode, Model, QueuedTurn } from '@harness/contracts'
+import { BorderBeam } from 'border-beam'
 import {
   ArrowUp,
   CornerDownRight,
@@ -763,20 +764,29 @@ export function Composer(props: {
                 </button>
               ) : null}
 
-              <button
-                className={`orb${showStop ? ' orb--stop' : ''}${sending ? ' is-sending' : ''}`}
-                onClick={showStop ? props.onInterrupt : submit}
-                disabled={!showStop && sendDisabled}
-                title={showStop ? 'Stop' : 'Send'}
-                aria-label={showStop ? 'Stop' : 'Send'}
+              <BorderBeam
+                className="composer__send-beam"
+                size="sm"
+                colorVariant="ocean"
+                strength={0.72}
+                active={showStop}
+                borderRadius={15}
               >
-                <span className="orb__icon orb__icon--send">
-                  <ArrowUp size={15} aria-hidden />
-                </span>
-                <span className="orb__icon orb__icon--stop">
-                  <Square size={9} fill="currentColor" strokeWidth={0} aria-hidden />
-                </span>
-              </button>
+                <button
+                  className={`orb${showStop ? ' orb--stop' : ''}${sending ? ' is-sending' : ''}`}
+                  onClick={showStop ? props.onInterrupt : submit}
+                  disabled={!showStop && sendDisabled}
+                  title={showStop ? 'Stop' : 'Send'}
+                  aria-label={showStop ? 'Stop' : 'Send'}
+                >
+                  <span className="orb__icon orb__icon--send">
+                    <ArrowUp size={15} aria-hidden />
+                  </span>
+                  <span className="orb__icon orb__icon--stop">
+                    <Square size={9} fill="currentColor" strokeWidth={0} aria-hidden />
+                  </span>
+                </button>
+              </BorderBeam>
             </div>
           </div>
         </div>
