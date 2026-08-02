@@ -2,6 +2,7 @@ import {
   CODEX_MCP_CAPABILITIES,
   CODEX_SKILL_CAPABILITIES,
   CodexAdapter,
+  DESIGN_BRIEF_ATTACHMENT,
 } from '@harness/adapter-codex'
 import {
   providerRuntime,
@@ -809,7 +810,7 @@ export class Orchestrator {
     return {
       id: item.id,
       text: item.text,
-      attachments: item.attachments,
+      attachments: item.attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT),
       createdAt: item.createdAt,
     }
   }

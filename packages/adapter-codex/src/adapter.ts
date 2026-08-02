@@ -46,6 +46,7 @@ import type { SkillsListResponse } from './generated/v2/SkillsListResponse.js'
 import type { SkillsConfigWriteResponse } from './generated/v2/SkillsConfigWriteResponse.js'
 import type { ToolRequestUserInputParams } from './generated/v2/ToolRequestUserInputParams.js'
 import { mapSkillList } from './skills.js'
+import { DESIGN_BRIEF_ATTACHMENT, designBriefingPrompt } from './design-briefing.js'
 
 /**
  * Tier 1 adapter: drives `codex app-server` over JSON-RPC.
@@ -269,6 +270,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     { kind: ApprovalRequest['kind']; respond: (result: unknown) => void }
   >()
   #userInputs = new Map<string, (result: unknown) => void>()
+  #displayUserMessages = new Map<string, string>()
 
   constructor(
     options: {
@@ -553,21 +555,27 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     attachments: string[] = [],
     options: TurnOptions = {},
   ): Promise<string> {
+    const briefing = attachments.includes(DESIGN_BRIEF_ATTACHMENT)
+    const clientUserMessageId = briefing ? crypto.randomUUID() : undefined
+    if (clientUserMessageId) this.#displayUserMessages.set(clientUserMessageId, text)
     const response = await this.#call<TurnStartResponse>('turn/start', {
       threadId,
+      ...(clientUserMessageId ? { clientUserMessageId } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
       input: [
-        { type: 'text', text, text_elements: [] },
+        { type: 'text', text: briefing ? designBriefingPrompt(text) : text, text_elements: [] },
         // Images go in as images so the model can actually see them; anything
         // else becomes a mention, which is Codex's way of saying "this path is
         // relevant" without pushing the whole file into context.
-        ...attachments.map((path) =>
-          isImage(path)
-            ? { type: 'localImage', path }
-            : { type: 'mention', name: basename(path), path },
-        ),
+        ...attachments
+          .filter((path) => path !== DESIGN_BRIEF_ATTACHMENT)
+          .map((path) =>
+            isImage(path)
+              ? { type: 'localImage', path }
+              : { type: 'mention', name: basename(path), path },
+          ),
       ],
     })
     return response.turn.id
@@ -725,26 +733,35 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'item/started': {
         const p = params as ItemStartedNotification
+        const item = mapThreadItem(p.item, {
+          turnId: p.turnId,
+          status: 'started',
+          createdAt: p.startedAtMs,
+        })
+        if (p.item.type === 'userMessage' && p.item.clientId) {
+          item.text = this.#displayUserMessages.get(p.item.clientId) ?? item.text
+        }
         emit({
           type: 'item.started',
-          item: mapThreadItem(p.item, {
-            turnId: p.turnId,
-            status: 'started',
-            createdAt: p.startedAtMs,
-          }),
+          item,
         })
         return
       }
 
       case 'item/completed': {
         const p = params as ItemCompletedNotification
+        const item = mapThreadItem(p.item, {
+          turnId: p.turnId,
+          status: 'completed',
+          createdAt: p.completedAtMs,
+        })
+        if (p.item.type === 'userMessage' && p.item.clientId) {
+          item.text = this.#displayUserMessages.get(p.item.clientId) ?? item.text
+          this.#displayUserMessages.delete(p.item.clientId)
+        }
         emit({
           type: 'item.completed',
-          item: mapThreadItem(p.item, {
-            turnId: p.turnId,
-            status: 'completed',
-            createdAt: p.completedAtMs,
-          }),
+          item,
         })
         return
       }
