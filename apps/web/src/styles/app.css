@@ -182,6 +182,18 @@
   white-space: nowrap;
 }
 
+.rail__actions .shortcut,
+.stagehead .picker .shortcut {
+  visibility: hidden;
+  opacity: 0;
+}
+
+.rail__actions :is(.navitem, .search--button):is(:hover, :focus-visible) .shortcut,
+.stagehead button:is(:hover, :focus-visible) .picker .shortcut {
+  visibility: visible;
+  opacity: 1;
+}
+
 .rail__body {
   overflow-y: auto;
   padding: 0 8px 14px;
