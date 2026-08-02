@@ -75,6 +75,10 @@
   animation-delay: 64ms;
 }
 
+.brief-input__option:nth-child(4) {
+  animation-delay: 96ms;
+}
+
 .brief-input__option:hover {
   border-color: var(--line-strong);
   background: var(--control-hover);
