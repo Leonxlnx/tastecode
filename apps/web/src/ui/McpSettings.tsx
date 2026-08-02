@@ -122,18 +122,13 @@ function ServerRow(props: {
     props.canSignIn &&
     props.server.auth.status === 'sign_in_required' &&
     props.server.auth.method === 'oauth'
-  const startup =
-    props.server.startup.state === 'failed'
-      ? props.server.startup.message
-      : props.server.startup.state
-
   return (
     <article className={`settings__row mcp-row${props.server.enabled ? '' : ' is-disabled'}`}>
       <div className="settings__row-copy">
         <div className="mcp-row__heading">
           <h2>{props.server.displayName ?? props.server.id}</h2>
           <span>{props.server.scope}</span>
-          <span>{props.server.enabled ? startup : 'disabled'}</span>
+          <span>{props.server.enabled ? props.server.startup.state : 'disabled'}</span>
         </div>
         <p className="mcp-row__transport">{transportLabel(props.server.transport)}</p>
         {props.server.startup.state === 'failed' ? (
