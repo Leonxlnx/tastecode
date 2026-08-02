@@ -6,7 +6,9 @@ import type {
   DiffDecision,
   DomainEvent,
   ProviderId,
+  SidebarSettings,
   SessionSearchResult,
+  ThreadLifecycle,
   Usage,
 } from '@harness/contracts'
 
@@ -54,6 +56,9 @@ export type StoredThread = {
    */
   worktreePath?: string | undefined
   worktreeBranch?: string | undefined
+  lifecycle: ThreadLifecycle
+  unread: boolean
+  lastActiveAt: number
 }
 
 export type StoredCheckpoint = {
@@ -103,8 +108,25 @@ CREATE TABLE IF NOT EXISTS threads (
   created_at   INTEGER NOT NULL,
   closed_at    INTEGER,
   worktree_path   TEXT,
-  worktree_branch TEXT
+  worktree_branch TEXT,
+  lifecycle_state  TEXT NOT NULL DEFAULT 'active'
+    CHECK (lifecycle_state IN ('active', 'settled', 'snoozed')),
+  lifecycle_at     INTEGER,
+  lifecycle_reason TEXT,
+  wake_at          INTEGER,
+  keep_active      INTEGER NOT NULL DEFAULT 0,
+  woke_at          INTEGER,
+  unread           INTEGER NOT NULL DEFAULT 0,
+  last_active_at   INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS sidebar_settings (
+  id               INTEGER PRIMARY KEY CHECK (id = 1),
+  mode             TEXT NOT NULL CHECK (mode IN ('classic', 'inbox')),
+  auto_settle_days INTEGER CHECK (auto_settle_days BETWEEN 1 AND 90)
+);
+
+INSERT OR IGNORE INTO sidebar_settings (id, mode, auto_settle_days) VALUES (1, 'inbox', 3);
 
 CREATE TABLE IF NOT EXISTS events (
   seq       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -172,6 +194,18 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'projects', column: 'pinned', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'worktree_path', definition: 'TEXT' },
   { table: 'threads', column: 'worktree_branch', definition: 'TEXT' },
+  {
+    table: 'threads',
+    column: 'lifecycle_state',
+    definition: `TEXT NOT NULL DEFAULT 'active' CHECK (lifecycle_state IN ('active', 'settled', 'snoozed'))`,
+  },
+  { table: 'threads', column: 'lifecycle_at', definition: 'INTEGER' },
+  { table: 'threads', column: 'lifecycle_reason', definition: 'TEXT' },
+  { table: 'threads', column: 'wake_at', definition: 'INTEGER' },
+  { table: 'threads', column: 'keep_active', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'threads', column: 'woke_at', definition: 'INTEGER' },
+  { table: 'threads', column: 'unread', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'threads', column: 'last_active_at', definition: 'INTEGER NOT NULL DEFAULT 0' },
 ]
 
 export class Store {
@@ -202,6 +236,7 @@ export class Store {
       if (columns.includes(column)) continue
       this.#db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
     }
+    this.#db.exec(`UPDATE threads SET last_active_at = created_at WHERE last_active_at = 0`)
   }
 
   close(): void {
@@ -262,13 +297,19 @@ export class Store {
 
   // ---- threads -----------------------------------------------------------
 
-  addThread(thread: Omit<StoredThread, 'createdAt'> & { createdAt?: number }): StoredThread {
-    const stored: StoredThread = { ...thread, createdAt: thread.createdAt ?? Date.now() }
+  addThread(
+    thread: Omit<StoredThread, 'createdAt' | 'lifecycle' | 'unread' | 'lastActiveAt'> & {
+      createdAt?: number
+    },
+  ): StoredThread {
+    const stored = { ...thread, createdAt: thread.createdAt ?? Date.now() }
+    const lifecycle = { state: 'active', keepActive: false } as const
     this.#db
       .prepare(
         `INSERT INTO threads
-           (id, project_path, provider, agent, title, created_at, worktree_path, worktree_branch)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, project_path, provider, agent, title, created_at, worktree_path, worktree_branch,
+            lifecycle_state, keep_active, unread, last_active_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?)`,
       )
       .run(
         stored.id,
@@ -279,8 +320,9 @@ export class Store {
         stored.createdAt,
         stored.worktreePath ?? null,
         stored.worktreeBranch ?? null,
+        stored.createdAt,
       )
-    return stored
+    return { ...stored, lifecycle, unread: false, lastActiveAt: stored.createdAt }
   }
 
   /**
@@ -335,6 +377,114 @@ export class Store {
 
   renameThread(id: string, title: string): void {
     this.#db.prepare(`UPDATE threads SET title = ? WHERE id = ?`).run(title, id)
+  }
+
+  settleThread(
+    id: string,
+    reason: 'manual' | 'inactivity' | 'change_request',
+    at = Date.now(),
+  ): ThreadLifecycle {
+    this.#updateThread(
+      `UPDATE threads SET lifecycle_state = 'settled', lifecycle_at = ?, lifecycle_reason = ?,
+       wake_at = NULL, keep_active = 0, woke_at = NULL WHERE id = ?`,
+      at,
+      reason,
+      id,
+    )
+    return { state: 'settled', settledAt: at, reason }
+  }
+
+  snoozeThread(id: string, wakeAt: number, at = Date.now()): ThreadLifecycle {
+    this.#updateThread(
+      `UPDATE threads SET lifecycle_state = 'snoozed', lifecycle_at = ?,
+       lifecycle_reason = NULL, wake_at = ?, keep_active = 0, woke_at = NULL WHERE id = ?`,
+      at,
+      wakeAt,
+      id,
+    )
+    return { state: 'snoozed', snoozedAt: at, wakeAt }
+  }
+
+  activateThread(id: string, at = Date.now()): ThreadLifecycle {
+    const before = this.thread(id)
+    if (!before) throw new Error('thread not found')
+    const wokeAt = before.lifecycle.state === 'active' ? before.lifecycle.wokeAt : at
+    const keepActive = before.lifecycle.state === 'active' ? before.lifecycle.keepActive : false
+    this.#db
+      .prepare(
+        `UPDATE threads SET lifecycle_state = 'active', lifecycle_at = NULL,
+         lifecycle_reason = NULL, wake_at = NULL, woke_at = ? WHERE id = ?`,
+      )
+      .run(wokeAt ?? null, id)
+    return { state: 'active', keepActive, ...(wokeAt === undefined ? {} : { wokeAt }) }
+  }
+
+  setThreadKeepActive(id: string, keepActive: boolean, at = Date.now()): ThreadLifecycle {
+    const lifecycle = this.activateThread(id, at)
+    this.#db.prepare(`UPDATE threads SET keep_active = ? WHERE id = ?`).run(keepActive ? 1 : 0, id)
+    return {
+      state: 'active',
+      keepActive,
+      ...(lifecycle.state === 'active' && lifecycle.wokeAt !== undefined
+        ? { wokeAt: lifecycle.wokeAt }
+        : {}),
+    }
+  }
+
+  touchThread(id: string, unread = false, at = Date.now()): ThreadLifecycle {
+    const lifecycle = this.activateThread(id, at)
+    this.#db
+      .prepare(`UPDATE threads SET last_active_at = ?, unread = MAX(unread, ?) WHERE id = ?`)
+      .run(at, unread ? 1 : 0, id)
+    return lifecycle
+  }
+
+  markThreadRead(id: string): void {
+    this.#updateThread(`UPDATE threads SET unread = 0, woke_at = NULL WHERE id = ?`, id)
+  }
+
+  dueSnoozedThreads(now = Date.now()): StoredThread[] {
+    return this.#db
+      .prepare(
+        `SELECT * FROM threads WHERE closed_at IS NULL AND lifecycle_state = 'snoozed'
+         AND wake_at <= ? ORDER BY wake_at`,
+      )
+      .all(now)
+      .map(toThread)
+  }
+
+  inactiveThreads(cutoff: number): StoredThread[] {
+    return this.#db
+      .prepare(
+        `SELECT * FROM threads WHERE closed_at IS NULL AND lifecycle_state = 'active'
+         AND keep_active = 0 AND last_active_at <= ? ORDER BY last_active_at`,
+      )
+      .all(cutoff)
+      .map(toThread)
+  }
+
+  sidebarSettings(): SidebarSettings {
+    const row = this.#db
+      .prepare(`SELECT mode, auto_settle_days FROM sidebar_settings WHERE id = 1`)
+      .get() as {
+      mode: 'classic' | 'inbox'
+      auto_settle_days: number | null
+    }
+    return { mode: row.mode, autoSettleDays: row.auto_settle_days }
+  }
+
+  updateSidebarSettings(settings: Partial<SidebarSettings>): SidebarSettings {
+    const current = this.sidebarSettings()
+    const next = { ...current, ...settings }
+    this.#db
+      .prepare(`UPDATE sidebar_settings SET mode = ?, auto_settle_days = ? WHERE id = 1`)
+      .run(next.mode, next.autoSettleDays)
+    return next
+  }
+
+  #updateThread(sql: string, ...params: Array<string | number>): void {
+    const result = this.#db.prepare(sql).run(...params)
+    if (result.changes === 0) throw new Error('thread not found')
   }
 
   /**
@@ -871,7 +1021,33 @@ function toThread(row: unknown): StoredThread {
     closed_at: number | null
     worktree_path: string | null
     worktree_branch: string | null
+    lifecycle_state: 'active' | 'settled' | 'snoozed'
+    lifecycle_at: number | null
+    lifecycle_reason: 'manual' | 'inactivity' | 'change_request' | null
+    wake_at: number | null
+    keep_active: number
+    woke_at: number | null
+    unread: number
+    last_active_at: number
   }
+  const lifecycle: ThreadLifecycle =
+    r.lifecycle_state === 'settled'
+      ? {
+          state: 'settled',
+          settledAt: Number(r.lifecycle_at),
+          reason: r.lifecycle_reason ?? 'manual',
+        }
+      : r.lifecycle_state === 'snoozed'
+        ? {
+            state: 'snoozed',
+            snoozedAt: Number(r.lifecycle_at),
+            wakeAt: Number(r.wake_at),
+          }
+        : {
+            state: 'active',
+            keepActive: r.keep_active === 1,
+            ...(r.woke_at === null ? {} : { wokeAt: Number(r.woke_at) }),
+          }
   return {
     id: r.id,
     projectPath: r.project_path,
@@ -882,5 +1058,8 @@ function toThread(row: unknown): StoredThread {
     ...(r.closed_at === null ? {} : { closedAt: Number(r.closed_at) }),
     ...(r.worktree_path === null ? {} : { worktreePath: r.worktree_path }),
     ...(r.worktree_branch === null ? {} : { worktreeBranch: r.worktree_branch }),
+    lifecycle,
+    unread: r.unread === 1,
+    lastActiveAt: Number(r.last_active_at),
   }
 }

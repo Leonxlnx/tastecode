@@ -74,6 +74,7 @@ describe('opening a database written by an older build', () => {
       expect(migrated.project('/repo')?.pinned).toBe(false)
       expect(migrated.thread('t1')?.title).toBe('Old session')
       expect(migrated.thread('t1')?.worktreePath).toBeUndefined()
+      expect(migrated.thread('t1')?.lifecycle).toEqual({ state: 'active', keepActive: false })
 
       migrated.setPinned('/repo', true)
       expect(migrated.project('/repo')?.pinned).toBe(true)
@@ -245,6 +246,39 @@ describe('threads', () => {
         .map((t) => t.id)
         .sort(),
     ).toEqual(['a', 'b'])
+  })
+
+  it('persists inbox shelves and settings across a restart without closing the thread', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-inbox-'))
+    const file = path.join(dir, 'inbox.db')
+    const persistent = new Store(file)
+    persistent.addProject('/persisted')
+    persistent.addThread({
+      id: 'persisted',
+      projectPath: '/persisted',
+      provider: 'codex',
+      title: 'Persisted',
+      createdAt: 10,
+    })
+    persistent.snoozeThread('persisted', 100, 20)
+    persistent.updateSidebarSettings({ mode: 'classic', autoSettleDays: null })
+    persistent.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.thread('persisted')?.closedAt).toBeUndefined()
+      expect(reopened.thread('persisted')?.lifecycle).toEqual({
+        state: 'snoozed',
+        snoozedAt: 20,
+        wakeAt: 100,
+      })
+      expect(reopened.sidebarSettings()).toEqual({ mode: 'classic', autoSettleDays: null })
+      expect(reopened.dueSnoozedThreads(99)).toEqual([])
+      expect(reopened.dueSnoozedThreads(100).map((thread) => thread.id)).toEqual(['persisted'])
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
