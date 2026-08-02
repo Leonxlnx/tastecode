@@ -53,6 +53,7 @@ describe('thread at scale', () => {
       plan: [],
       diff: undefined,
       approvals: [],
+      reviews: [],
       onDecide: () => {},
     }
     const rendered = render(<Thread {...props} searching={false} />)
