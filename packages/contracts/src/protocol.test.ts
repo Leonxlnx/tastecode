@@ -64,6 +64,37 @@ describe('domain events', () => {
       review,
     })
   })
+
+  it('accepts structured user-input requests', () => {
+    const request = {
+      id: 'brief-questions-1',
+      turnId: 'turn-1',
+      questions: [
+        {
+          id: 'palette',
+          header: 'Colour',
+          question: 'Do you already have a palette?',
+          allowOther: true,
+          secret: false,
+          options: [
+            { label: 'Decide for me', description: 'Choose from the inferred direction.' },
+            { label: 'I have colours', description: 'Add the colours as a custom answer.' },
+          ],
+        },
+      ],
+      autoResolutionMs: null,
+      createdAt: 10,
+    }
+
+    expect(DomainEventSchema.parse({ type: 'user_input.requested', request })).toEqual({
+      type: 'user_input.requested',
+      request,
+    })
+    expect(DomainEventSchema.parse({ type: 'user_input.resolved', id: request.id })).toEqual({
+      type: 'user_input.resolved',
+      id: request.id,
+    })
+  })
 })
 
 describe('protocol envelopes', () => {
@@ -108,6 +139,24 @@ describe('protocol envelopes', () => {
       items: [],
       canSteer: true,
     })
+    expect(
+      methods['thread.respondToUserInput'].params.parse({
+        threadId: 'th1',
+        requestId: 'brief-questions-1',
+        answers: { palette: ['Decide for me'] },
+      }),
+    ).toEqual({
+      threadId: 'th1',
+      requestId: 'brief-questions-1',
+      answers: { palette: ['Decide for me'] },
+    })
+    expect(() =>
+      methods['thread.respondToUserInput'].params.parse({
+        threadId: 'th1',
+        requestId: 'brief-questions-1',
+        answers: { palette: [] },
+      }),
+    ).toThrow()
     expect(() => methods['thread.start'].params.parse({ provider: 'nope' })).toThrow()
     const { undo } = methods['thread.restore'].result.parse({ undo: 'restore-token' })
     expect(methods['thread.undoRestore'].params.parse({ threadId: 'th1', undo })).toEqual({

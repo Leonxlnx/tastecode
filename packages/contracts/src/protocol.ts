@@ -875,6 +875,14 @@ export const methods = {
     }),
     result: z.object({}),
   },
+  'thread.respondToUserInput': {
+    params: z.object({
+      threadId: z.string(),
+      requestId: z.string().min(1),
+      answers: z.record(z.string().min(1), z.array(z.string().min(1)).min(1)),
+    }),
+    result: z.object({}),
+  },
   'thread.interrupt': {
     params: z.object({ threadId: z.string() }),
     result: z.object({}),

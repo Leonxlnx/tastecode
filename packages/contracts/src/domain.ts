@@ -112,6 +112,32 @@ export const ApprovalReviewSchema = z.object({
 })
 export type ApprovalReview = z.infer<typeof ApprovalReviewSchema>
 
+export const UserInputOptionSchema = z.object({
+  label: z.string().min(1),
+  description: z.string().min(1),
+})
+export type UserInputOption = z.infer<typeof UserInputOptionSchema>
+
+export const UserInputQuestionSchema = z.object({
+  id: z.string().min(1),
+  header: z.string().min(1),
+  question: z.string().min(1),
+  allowOther: z.boolean(),
+  secret: z.boolean(),
+  options: z.array(UserInputOptionSchema).nullable(),
+})
+export type UserInputQuestion = z.infer<typeof UserInputQuestionSchema>
+
+/** A provider-neutral question set that blocks the current agent turn. */
+export const UserInputRequestSchema = z.object({
+  id: z.string().min(1),
+  turnId: z.string().min(1),
+  questions: z.array(UserInputQuestionSchema).min(1),
+  autoResolutionMs: z.number().int().min(60_000).max(240_000).nullable(),
+  createdAt: z.number(),
+})
+export type UserInputRequest = z.infer<typeof UserInputRequestSchema>
+
 /** A step in the agent's own plan for the current turn. */
 export const PlanStepSchema = z.object({
   text: z.string(),
@@ -165,6 +191,8 @@ export const DomainEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('approval.requested'), request: ApprovalRequestSchema }),
   /** Resolved — by the user, or because the turn ended without an answer. */
   z.object({ type: z.literal('approval.resolved'), id: z.string() }),
+  z.object({ type: z.literal('user_input.requested'), request: UserInputRequestSchema }),
+  z.object({ type: z.literal('user_input.resolved'), id: z.string() }),
   z.object({ type: z.literal('approval.review.started'), review: ApprovalReviewSchema }),
   z.object({ type: z.literal('approval.review.completed'), review: ApprovalReviewSchema }),
 ])
@@ -181,6 +209,8 @@ export const CapabilitiesSchema = z.object({
   interrupt: z.boolean(),
   reasoningItems: z.boolean(),
   approvals: z.boolean(),
+  /** Can pause a turn for structured questions and resume it with the user's answers. */
+  userInput: z.boolean().optional(),
   /** Can route elevated approval requests through an automatic risk reviewer. */
   autoReview: z.boolean().optional(),
   images: z.boolean(),
