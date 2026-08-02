@@ -376,40 +376,40 @@ export function ModelSelector(props: ModelSelectorProps) {
           </div>
 
           <div className="model-selector__controls">
-            {fastTier ? (
-              <div className="model-selector__fast-row">
-                <span className="model-selector__fast-meta">1.5× Speed · 2.5× Usage</span>
-                <button
-                  type="button"
-                  className={`model-selector__fast${fastEnabled ? ' is-on' : ''}`}
-                  aria-label={fastEnabled ? 'Disable fast mode' : 'Enable fast mode'}
-                  aria-pressed={fastEnabled}
-                  title={fastTier.description}
-                  onClick={() =>
-                    props.onServiceTierChange(
-                      fastEnabled ? getFastModeOffValue(model) : fastTier.id,
-                    )
-                  }
-                >
-                  <span className="model-selector__fast-icon" aria-hidden>
-                    <Zap size={15} />
-                  </span>
-                </button>
-              </div>
-            ) : null}
+            <div className="model-selector__controls-head">
+              <span className="model-selector__effort-title">Effort</span>
+              {fastTier ? (
+                <div className="model-selector__fast-row">
+                  <span className="model-selector__fast-meta">1.5× Speed · 2.5× Usage</span>
+                  <button
+                    type="button"
+                    className={`model-selector__fast${fastEnabled ? ' is-on' : ''}`}
+                    aria-label={fastEnabled ? 'Disable fast mode' : 'Enable fast mode'}
+                    aria-pressed={fastEnabled}
+                    title={fastTier.description}
+                    onClick={() =>
+                      props.onServiceTierChange(
+                        fastEnabled ? getFastModeOffValue(model) : fastTier.id,
+                      )
+                    }
+                  >
+                    <span className="model-selector__fast-icon" aria-hidden>
+                      <Zap size={15} />
+                    </span>
+                  </button>
+                </div>
+              ) : null}
+            </div>
 
             {effortOptions.length > 0 ? (
-              <div className="model-selector__effort">
-                <span className="model-selector__effort-title">Effort</span>
-                <DitherChoiceRow
-                  label="Effort"
-                  ariaLabel="Reasoning effort"
-                  optionLabels={effortLabels}
-                  selectedIndex={selectedEffortIndex}
-                  disabled={props.disabled || effortOptions.length <= 1}
-                  onCommitIndex={commitEffortIndex}
-                />
-              </div>
+              <DitherChoiceRow
+                label="Effort"
+                ariaLabel="Reasoning effort"
+                optionLabels={effortLabels}
+                selectedIndex={selectedEffortIndex}
+                disabled={props.disabled || effortOptions.length <= 1}
+                onCommitIndex={commitEffortIndex}
+              />
             ) : null}
           </div>
         </div>

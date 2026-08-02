@@ -3665,7 +3665,7 @@
 }
 
 .composer__design-beam.is-shelved {
-  margin-top: -10px;
+  margin-top: -14px;
 }
 
 .composer__prompt:focus-within {
@@ -3683,9 +3683,9 @@
   justify-content: flex-start;
   gap: 6px;
   min-width: 0;
-  min-height: 52px;
+  min-height: 58px;
   margin: 0;
-  padding: 8px 12px 14px;
+  padding: 12px 12px 16px;
   background: var(--bg-shelf);
   border-radius: var(--r-2xl) var(--r-2xl) 0 0;
   box-shadow:
@@ -4635,6 +4635,14 @@
   border-top: 1px solid var(--line-strong);
 }
 
+.model-selector__controls-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 30px;
+  padding-left: 6px;
+}
+
 .model-selector__fast-row {
   position: relative;
   display: flex;
@@ -4774,7 +4782,6 @@
 
 .model-selector__effort-title {
   display: block;
-  margin: 1px 6px 5px;
   color: var(--text-3);
   font-size: var(--t-xs);
   font-weight: 520;
