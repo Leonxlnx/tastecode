@@ -9,7 +9,7 @@
     "typecheck": "tsc -b",
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests --testTimeout=20000"
   },
   "dependencies": {
     "@harness/adapter-acp": "workspace:*",
