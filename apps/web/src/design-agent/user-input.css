@@ -264,7 +264,7 @@
 }
 
 .shell:has(.composer__design.is-active) .aux--reasoning.aux--live,
-.thread__col:has(.brief-input) .activity--working {
+.stage__body:has(.brief-input) .activity--working {
   display: none;
 }
 
