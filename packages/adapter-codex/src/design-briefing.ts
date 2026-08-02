@@ -3,6 +3,13 @@ import path from 'node:path'
 
 export const DESIGN_BRIEF_ATTACHMENT = 'personal-harness://design-brief-v1'
 
+export function shouldEmitBriefingAgentMessage(
+  lifecycle: 'started' | 'delta' | 'completed',
+  phase?: string | null,
+): boolean {
+  return lifecycle === 'completed' && phase !== 'commentary'
+}
+
 export const DESIGN_BRIEF_OUTPUT_SCHEMA = {
   type: 'object',
   additionalProperties: false,

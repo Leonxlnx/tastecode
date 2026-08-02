@@ -56,6 +56,7 @@ import {
   DESIGN_BRIEF_OUTPUT_SCHEMA,
   designBriefingPrompt,
   persistDesignBriefing,
+  shouldEmitBriefingAgentMessage,
 } from './design-briefing.js'
 
 /**
@@ -772,6 +773,14 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'item/started': {
         const p = params as ItemStartedNotification
+        // Structured briefing output is an internal persistence payload. Do not
+        // stream its JSON into the conversation before the friendly final item.
+        if (
+          p.item.type === 'agentMessage' &&
+          this.#briefingTurns.has(p.turnId) &&
+          !shouldEmitBriefingAgentMessage('started')
+        )
+          return
         const item = mapThreadItem(p.item, {
           turnId: p.turnId,
           status: 'started',
@@ -798,10 +807,12 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
           item.text = this.#displayUserMessages.get(p.item.clientId) ?? item.text
           this.#displayUserMessages.delete(p.item.clientId)
         }
-        if (p.item.type === 'agentMessage' && p.item.phase !== 'commentary') {
+        if (p.item.type === 'agentMessage') {
           const workspacePath = this.#briefingTurns.get(p.turnId)
-          if (workspacePath && item.text)
-            item.text = persistDesignBriefing(item.text, workspacePath)
+          if (workspacePath) {
+            if (!shouldEmitBriefingAgentMessage('completed', p.item.phase)) return
+            if (item.text) item.text = persistDesignBriefing(item.text, workspacePath)
+          }
         }
         emit({
           type: 'item.completed',
@@ -828,6 +839,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'item/agentMessage/delta': {
         const p = params as AgentMessageDeltaNotification
+        if (this.#briefingTurns.has(p.turnId) && !shouldEmitBriefingAgentMessage('delta')) return
         emit({ type: 'item.delta', turnId: p.turnId, itemId: p.itemId, textDelta: p.delta })
         return
       }

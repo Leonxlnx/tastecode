@@ -6,9 +6,17 @@ import {
   DESIGN_BRIEF_ATTACHMENT,
   designBriefingPrompt,
   persistDesignBriefing,
+  shouldEmitBriefingAgentMessage,
 } from './design-briefing.js'
 
 describe('design briefing prompt', () => {
+  it('keeps structured output hidden until the friendly final item', () => {
+    expect(shouldEmitBriefingAgentMessage('started')).toBe(false)
+    expect(shouldEmitBriefingAgentMessage('delta')).toBe(false)
+    expect(shouldEmitBriefingAgentMessage('completed', 'commentary')).toBe(false)
+    expect(shouldEmitBriefingAgentMessage('completed', 'final_answer')).toBe(true)
+  })
+
   it('keeps the workflow in briefing mode and preserves the user request', () => {
     const prompt = designBriefingPrompt('Design a launch page for a research tool.')
 
