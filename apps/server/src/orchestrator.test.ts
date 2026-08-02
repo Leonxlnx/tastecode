@@ -200,6 +200,18 @@ describe('MCP inventory', () => {
   })
 })
 
+describe('skills inventory', () => {
+  it('capability-gates unsupported providers', async () => {
+    const { orchestrator } = harness()
+
+    await expect(orchestrator.listSkills('claude-code', '/repo')).resolves.toEqual({
+      capabilities: { inventory: false, configure: false, install: false },
+      skills: [],
+      errors: [],
+    })
+  })
+})
+
 describe('several sessions at once', () => {
   it('gives each session its own agent rather than sharing one', async () => {
     const { sessions, orchestrator } = harness()
