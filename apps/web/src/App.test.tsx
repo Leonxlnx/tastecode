@@ -143,6 +143,28 @@ beforeEach(() => {
         return Promise.resolve({ events: [], running: false })
       case 'thread.queue':
         return Promise.resolve({ items: [], canSteer: true })
+      case 'thread.settle':
+        return Promise.resolve({
+          lifecycle: { state: 'settled', settledAt: 100, reason: 'manual' },
+        })
+      case 'thread.unsettle':
+      case 'thread.unsnooze':
+        return Promise.resolve({ lifecycle: { state: 'active', keepActive: false } })
+      case 'thread.snooze':
+        return Promise.resolve({
+          lifecycle: {
+            state: 'snoozed',
+            snoozedAt: 100,
+            wakeAt: (params as { wakeAt: number }).wakeAt,
+          },
+        })
+      case 'thread.setKeepActive':
+        return Promise.resolve({
+          lifecycle: {
+            state: 'active',
+            keepActive: (params as { keepActive: boolean }).keepActive,
+          },
+        })
       case 'usage.summary':
         return Promise.resolve({
           session: {
@@ -749,6 +771,38 @@ describe('sidebar chat ordering', () => {
       >
       expect(order['/work/project']).toEqual(['thread-3', 'thread-1', 'thread-2'])
     })
+  })
+})
+
+describe('inbox lifecycle', () => {
+  it('settles the selected chat and advances to the next active chat', async () => {
+    serverSidebarSettings.mode = 'inbox'
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'newest', title: 'Newest chat', provider: 'codex', createdAt: 2, running: false },
+          { id: 'older', title: 'Older chat', provider: 'codex', createdAt: 1, running: false },
+        ],
+      },
+    ]
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Newest chat,/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Settle Newest chat' }))
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.settle', { threadId: 'newest' })
+      expect(
+        screen.getByRole('button', { name: /^Older chat,/ }).closest('li')?.classList,
+      ).toContain('is-selected')
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Settled/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Unsettle Newest chat' }))
+    expect(transport.request).toHaveBeenCalledWith('thread.unsettle', { threadId: 'newest' })
   })
 })
 

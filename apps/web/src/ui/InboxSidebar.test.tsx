@@ -141,4 +141,21 @@ describe('InboxSidebar', () => {
     fireEvent.click(within(projects).getByText('Projects · 1'))
     expect(within(projects).getByRole('button', { name: 'New chat in Alpha' })).toBeTruthy()
   })
+
+  it('offers snooze and keep-active presets from the keyboard-accessible row menu', () => {
+    const project: Project = {
+      path: '/alpha',
+      name: 'Alpha',
+      sessions: [active('alpha', 'Alpha task', 1)],
+    }
+    render(<InboxSidebar {...props([project])} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Chat options for Alpha task' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Snooze for 1 hour' }))
+    expect(actions.onSnooze).toHaveBeenCalledWith('alpha', expect.any(Number))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Chat options for Alpha task' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Keep active' }))
+    expect(actions.onKeepActive).toHaveBeenCalledWith('alpha', true)
+  })
 })
