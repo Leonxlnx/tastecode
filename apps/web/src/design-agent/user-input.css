@@ -21,14 +21,6 @@
   border-color: var(--line-strong);
 }
 
-.brief-input__stage {
-  animation: brief-question-forward 180ms var(--ease-out) both;
-}
-
-.brief-input__stage[data-direction='back'] {
-  animation-name: brief-question-back;
-}
-
 .brief-input__question {
   padding: 16px 18px 14px;
 }
@@ -67,30 +59,12 @@
     0 1px 1px color-mix(in srgb, black 16%, transparent);
   color: var(--text-2);
   cursor: pointer;
-  opacity: 0;
-  animation: brief-option-in 180ms var(--ease-out) forwards;
   transition:
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out),
     transform var(--dur-press) var(--ease-out);
-}
-
-.brief-input__option:nth-child(2) {
-  animation-delay: 24ms;
-}
-
-.brief-input__option:nth-child(3) {
-  animation-delay: 48ms;
-}
-
-.brief-input__option:nth-child(4) {
-  animation-delay: 72ms;
-}
-
-.brief-input__option:nth-child(5) {
-  animation-delay: 96ms;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -274,31 +248,6 @@
   }
 }
 
-@keyframes brief-question-forward {
-  from {
-    opacity: 0;
-    transform: translateY(7px);
-  }
-}
-
-@keyframes brief-question-back {
-  from {
-    opacity: 0;
-    transform: translateY(-7px);
-  }
-}
-
-@keyframes brief-option-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 @keyframes brief-spin {
   to {
     transform: rotate(360deg);
@@ -307,14 +256,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .brief-input,
-  .brief-input__stage,
-  .brief-input__option,
   .brief-input__spinner {
     animation: none;
-  }
-
-  .brief-input__option {
-    opacity: 1;
   }
 
   .brief-input__option,

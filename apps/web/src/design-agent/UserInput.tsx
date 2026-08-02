@@ -9,7 +9,6 @@ export function UserInput(props: {
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [step, setStep] = useState(0)
-  const [direction, setDirection] = useState<'back' | 'forward'>('forward')
   const [submitting, setSubmitting] = useState(false)
   const lastWheelAt = useRef(0)
   const question = props.request.questions[step]
@@ -38,13 +37,11 @@ export function UserInput(props: {
 
   const goBack = () => {
     if (step === 0) return
-    setDirection('back')
     setStep((current) => current - 1)
   }
 
   const goForward = () => {
     if (!answer || lastStep) return
-    setDirection('forward')
     setStep((current) => current + 1)
   }
 
@@ -85,12 +82,7 @@ export function UserInput(props: {
         )
       }}
     >
-      <div
-        className="brief-input__stage"
-        aria-live="polite"
-        key={question.id}
-        data-direction={direction}
-      >
+      <div className="brief-input__stage" aria-live="polite">
         <section
           className="brief-input__question"
           aria-labelledby={`brief-question-${question.id}`}
