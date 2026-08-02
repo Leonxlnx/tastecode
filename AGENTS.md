@@ -65,8 +65,8 @@ controls, a real terminal, MCP and Agent Skills. M4 (the design agent) is next. 
 
 Each of these cost someone hours. They are not preferences.
 
-- **TypeScript is pinned to 5.9.3.** 7.x cannot resolve `@types/node` under pnpm. Do not
-  "upgrade" it.
+- **TypeScript is pinned to 6.0.3.** Expo SDK 57 expects the 6.0 line; do not upgrade it
+  independently of the Expo and React Native toolchain.
 - **Use `127.0.0.1`, never `localhost`.** On Windows `localhost` resolves to IPv6 first and
   Electron gets a blank window.
 - **Shiki runs the JavaScript regex engine, not WASM**, because our CSP blocks

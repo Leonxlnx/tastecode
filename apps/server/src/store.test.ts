@@ -168,6 +168,26 @@ describe('projects', () => {
   })
 })
 
+describe('paired mobile devices', () => {
+  it('persists only token verifiers and revokes a device by deleting its verifier', () => {
+    store.setMobileAccessEnabled(true)
+    const paired = store.pairDevice('Karol’s iPhone', 'sha256-verifier')
+
+    expect(store.mobileAccessEnabled()).toBe(true)
+    expect(store.pairedDeviceForTokenHash('sha256-verifier')).toMatchObject({
+      id: paired.id,
+      name: 'Karol’s iPhone',
+    })
+    expect(store.pairedDeviceForTokenHash('plaintext-token')).toBeUndefined()
+
+    store.touchPairedDevice(paired.id, paired.lastSeenAt + 1_000)
+    expect(store.pairedDevices()[0]?.lastSeenAt).toBe(paired.lastSeenAt + 1_000)
+
+    store.revokePairedDevice(paired.id)
+    expect(store.pairedDeviceForTokenHash('sha256-verifier')).toBeUndefined()
+  })
+})
+
 describe('threads', () => {
   beforeEach(() => {
     store.addProject('/repo')

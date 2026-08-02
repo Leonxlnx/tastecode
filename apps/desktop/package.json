@@ -14,7 +14,7 @@
     "@types/node": "^26.1.1",
     "electron": "^43.2.0",
     "esbuild": "^0.28.1",
-    "typescript": "^5.9.3",
+    "typescript": "6.0.3",
     "vitest": "^4.1.10"
   },
   "build": {

@@ -258,11 +258,13 @@ if (mobile) {
   console.log(`\nOpen on your Tailscale-connected phone:\n${webUrl}\n`)
 } else {
   await requireFreePorts('127.0.0.1')
-  run('server', 'apps/server', ['run', 'dev'])
+  const accessToken = randomBytes(24).toString('base64url')
+  const desktopUrl = `${VITE_URL}/#access_token=${accessToken}`
+  run('server', 'apps/server', ['run', 'dev'], { HARNESS_ACCESS_TOKEN: accessToken })
   run('web', 'apps/web', ['run', 'dev'])
 
   // Electron must not load before Vite is serving, or it shows a blank window
   // and the user thinks the app is broken.
   await waitForPort(5183)
-  run('desktop', 'apps/desktop', ['run', 'start'], { HARNESS_DEV_SERVER: VITE_URL })
+  run('desktop', 'apps/desktop', ['run', 'start'], { HARNESS_DEV_SERVER: desktopUrl })
 }

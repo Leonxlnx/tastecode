@@ -11,6 +11,7 @@ import {
 import type {
   Account,
   ApprovalMode,
+  ConnectionsStatus,
   DomainEvent,
   Model,
   ProviderId,
@@ -152,6 +153,18 @@ export function App() {
   const [branches, setBranches] = useState<string[]>([])
   const [account, setAccount] = useState<Account | undefined>()
   const [voiceAvailable, setVoiceAvailable] = useState(false)
+  const [connectionsStatus, setConnectionsStatus] = useState<ConnectionsStatus | undefined>()
+  const [connectionsLoading, setConnectionsLoading] = useState(false)
+  const [connectionsError, setConnectionsError] = useState<string | undefined>()
+  const [connectionsPairing, setConnectionsPairing] = useState<
+    | (Pick<ResultOf<'connections.startPairing'>, 'pairingUri' | 'expiresAt'> & {
+        knownDeviceIds: string[]
+      })
+    | undefined
+  >()
+  const [connectionsAction, setConnectionsAction] = useState<
+    { kind: 'pairing' | 'stop' } | { kind: 'revoke'; deviceId: string } | undefined
+  >()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sidebarSettings, setSidebarSettings] = useState(DEFAULT_SIDEBAR_SETTINGS)
   const [paletteScope, setPaletteScope] = useState<CommandScope | null>(null)
@@ -424,6 +437,43 @@ export function App() {
       .catch(() => setAccount(undefined))
   }, [transport, provider])
 
+  const refreshConnections = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!opts?.silent) setConnectionsLoading(true)
+      try {
+        const status = await transport.request('connections.status', {})
+        setConnectionsStatus(status)
+        setConnectionsError(undefined)
+        setConnectionsPairing((pairing) => {
+          if (!status.enabled) return undefined
+          if (
+            pairing &&
+            status.devices.some((device) => !pairing.knownDeviceIds.includes(device.id))
+          ) {
+            return undefined
+          }
+          return pairing
+        })
+        return status
+      } catch (error) {
+        setConnectionsError(error instanceof Error ? error.message : String(error))
+        return undefined
+      } finally {
+        if (!opts?.silent) setConnectionsLoading(false)
+      }
+    },
+    [transport],
+  )
+
+  useEffect(() => {
+    if (!settingsOpen) return
+    void refreshConnections()
+    const refreshTimer = window.setInterval(() => {
+      void refreshConnections({ silent: true })
+    }, 2_000)
+    return () => window.clearInterval(refreshTimer)
+  }, [settingsOpen, refreshConnections])
+
   const refreshProjects = useCallback(async () => {
     const { projects: list } = await transport.request('projects.list', {})
     const savedOrder = loadSessionOrder()
@@ -588,6 +638,55 @@ export function App() {
     [models],
   )
 
+  const startConnectionsPairing = useCallback(async () => {
+    setConnectionsAction({ kind: 'pairing' })
+    setConnectionsError(undefined)
+    try {
+      const result = await transport.request('connections.startPairing', {})
+      const { pairingUri, expiresAt, ...status } = result
+      setConnectionsStatus(status)
+      setConnectionsPairing({
+        pairingUri,
+        expiresAt,
+        knownDeviceIds: status.devices.map((device) => device.id),
+      })
+    } catch (error) {
+      setConnectionsError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setConnectionsAction(undefined)
+    }
+  }, [transport])
+
+  const stopConnections = useCallback(async () => {
+    setConnectionsAction({ kind: 'stop' })
+    setConnectionsError(undefined)
+    try {
+      await transport.request('connections.stop', {})
+      setConnectionsPairing(undefined)
+      await refreshConnections({ silent: true })
+    } catch (error) {
+      setConnectionsError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setConnectionsAction(undefined)
+    }
+  }, [transport, refreshConnections])
+
+  const revokeConnection = useCallback(
+    async (deviceId: string) => {
+      setConnectionsAction({ kind: 'revoke', deviceId })
+      setConnectionsError(undefined)
+      try {
+        await transport.request('connections.revoke', { deviceId })
+        await refreshConnections({ silent: true })
+      } catch (error) {
+        setConnectionsError(error instanceof Error ? error.message : String(error))
+      } finally {
+        setConnectionsAction(undefined)
+      }
+    },
+    [transport, refreshConnections],
+  )
+
   const addProject = useCallback(async () => {
     const path = await pickFolder()
     if (!path) return
@@ -717,6 +816,7 @@ export function App() {
       activeIdRef.current = undefined
       setActiveId(undefined)
       setThread(emptyThread)
+      setComposerFocusRequest((request) => request + 1)
     },
     [projects, transport, refreshProjects],
   )
@@ -1363,7 +1463,7 @@ export function App() {
     {
       id: 'open-settings',
       title: 'Settings',
-      detail: 'Providers, appearance, storage',
+      detail: 'Account, mobile access, appearance',
       group: 'Actions',
       shortcut: labels.settings,
       run: () => setSettingsOpen(true),
@@ -1596,6 +1696,15 @@ export function App() {
           projectPath={activePath}
           projectName={activeProject ? displayName(activeProject) : undefined}
           account={account}
+          connectionsStatus={connectionsStatus}
+          connectionsLoading={connectionsLoading}
+          connectionsError={connectionsError}
+          connectionsPairing={connectionsPairing}
+          pairingBusy={connectionsAction?.kind === 'pairing'}
+          stoppingConnections={connectionsAction?.kind === 'stop'}
+          revokingDeviceId={
+            connectionsAction?.kind === 'revoke' ? connectionsAction.deviceId : undefined
+          }
           projectCount={projects.length}
           sidebarSettings={sidebarSettings}
           onSidebarSettingsChange={updateSidebarSettings}
@@ -1604,6 +1713,9 @@ export function App() {
           showMacOSFontSmoothing={macOS}
           macOSFontSmoothing={macOSFontSmoothing}
           onMacOSFontSmoothingChange={setMacOSFontSmoothing}
+          onGeneratePairing={() => void startConnectionsPairing()}
+          onStopConnections={() => void stopConnections()}
+          onRevokeDevice={(deviceId) => void revokeConnection(deviceId)}
           onSignOut={() => {
             void transport.request('auth.signOut', { provider }).then(() => {
               setAccount({ signedIn: false })

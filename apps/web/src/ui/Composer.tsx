@@ -11,14 +11,10 @@ import {
   Image as ImageIcon,
   Laptop,
   ListRestart,
-  LockOpen,
   Palette,
   Plus,
-  ShieldCheck,
-  ShieldQuestion,
   Square,
   Trash2,
-  type LucideIcon,
   X,
 } from 'lucide-react'
 import { pickFiles, savePastedImage } from '../bridge.js'
@@ -52,43 +48,6 @@ export type WorkspaceInfo = {
   removed: number
   dirtyFiles: number
 }
-
-export const APPROVAL_MODES: {
-  id: ApprovalMode
-  title: string
-  short: string
-  detail: string
-  icon: LucideIcon
-}[] = [
-  {
-    id: 'ask',
-    title: 'Ask first',
-    short: 'Ask first',
-    detail: 'Read-only until you approve each action',
-    icon: ShieldQuestion,
-  },
-  {
-    id: 'auto',
-    title: 'Auto-approve',
-    short: 'Auto',
-    detail: 'Edits and commands inside this folder',
-    icon: ShieldCheck,
-  },
-  {
-    id: 'auto-review',
-    title: 'Auto-review',
-    short: 'Auto-review',
-    detail: 'Codex reviews elevated actions before they run',
-    icon: ShieldCheck,
-  },
-  {
-    id: 'full',
-    title: 'Full access',
-    short: 'Full access',
-    detail: 'No sandbox, no prompts, no undo. Use with care.',
-    icon: LockOpen,
-  },
-]
 
 const SLASH_COMMANDS: { name: string; detail: string; text: string }[] = [
   {
@@ -261,8 +220,6 @@ export function Composer(props: {
   // A provider that cannot enumerate models shows nothing. Sitting on
   // "Loading models…" forever is the UI lying about what it is doing.
   const showModelPlaceholder = props.models.length === 0 && !props.modelsLoaded
-  const approval = APPROVAL_MODES.find((m) => m.id === props.approval) ?? APPROVAL_MODES[0]!
-  const ApprovalIcon = approval.icon
 
   const matches = slashOpen
     ? SLASH_COMMANDS.filter((c) => c.name.startsWith(text.trim().toLowerCase()))
@@ -780,73 +737,18 @@ export function Composer(props: {
               </div>
 
               <div className="tools">
-                <Menu
-                  label="Add"
+                <button
+                  className="menutrigger composer__attach"
+                  type="button"
                   disabled={props.disabled}
-                  triggerClassName="composer__add"
-                  trigger={() => (
-                    <span className="tool tool--icon">
-                      <Plus size={15} aria-hidden />
-                    </span>
-                  )}
+                  aria-label="Attach files"
+                  title="Attach files or photos"
+                  onClick={() => void pickFiles().then(addFiles)}
                 >
-                  {(close) => (
-                    <>
-                      <MenuItem
-                        title="Attach files"
-                        detail="Or drag them onto the box"
-                        onClick={() => {
-                          close()
-                          void pickFiles().then(addFiles)
-                        }}
-                      />
-                      <div className="menu__rule" />
-                      <p className="menu__group">Commands</p>
-                      {SLASH_COMMANDS.map((command) => (
-                        <MenuItem
-                          key={command.name}
-                          title={command.name}
-                          detail={command.detail}
-                          onClick={() => {
-                            setValue(command.text)
-                            close()
-                          }}
-                        />
-                      ))}
-                    </>
-                  )}
-                </Menu>
-
-                <Menu
-                  label="Permissions"
-                  disabled={props.running}
-                  triggerClassName="composer__permission"
-                  trigger={() => (
-                    <span className={`tool ${props.approval === 'full' ? 'tool--danger' : ''}`}>
-                      <ApprovalIcon size={13} aria-hidden />
-                      <span>{approval.short}</span>
-                    </span>
-                  )}
-                >
-                  {(close) => (
-                    <>
-                      {APPROVAL_MODES.filter(
-                        (mode) => mode.id !== 'auto-review' || props.autoReviewSupported,
-                      ).map((mode) => (
-                        <MenuItem
-                          key={mode.id}
-                          title={mode.title}
-                          detail={mode.detail}
-                          active={mode.id === props.approval}
-                          onClick={() => {
-                            props.onApprovalChange(mode.id)
-                            close()
-                          }}
-                        />
-                      ))}
-                    </>
-                  )}
-                </Menu>
+                  <span className="tool tool--icon">
+                    <Plus size={15} aria-hidden />
+                  </span>
+                </button>
 
                 <BorderBeam
                   className="composer__design-button-beam"
@@ -871,19 +773,23 @@ export function Composer(props: {
 
                 {voiceState === 'idle' ? <span className="tools__spacer" /> : null}
 
-                {voiceState === 'idle' && props.models.length > 0 ? (
+                {voiceState === 'idle' ? (
                   <ModelSelector
                     models={props.models}
                     modelId={props.modelId}
                     effort={props.effort}
                     serviceTier={props.serviceTier}
+                    approval={props.approval}
+                    autoReviewSupported={props.autoReviewSupported}
+                    commands={SLASH_COMMANDS}
                     disabled={props.running}
+                    loadingModels={showModelPlaceholder}
                     onModelChange={props.onModelChange}
                     onEffortChange={props.onEffortChange}
                     onServiceTierChange={props.onServiceTierChange}
+                    onApprovalChange={props.onApprovalChange}
+                    onCommandSelect={setValue}
                   />
-                ) : voiceState === 'idle' && showModelPlaceholder ? (
-                  <span className="tool tool--quiet">Loading models…</span>
                 ) : null}
 
                 {props.voiceAvailable && voiceState === 'idle' && !props.running ? (

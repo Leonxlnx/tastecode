@@ -121,7 +121,7 @@ export function presentTurns(items: Item[]): ReadonlyMap<string, TurnPresentatio
 }
 
 function isActivity(item: Item): boolean {
-  return item.type !== 'message' && item.type !== 'error'
+  return item.type !== 'message'
 }
 
 function isAssistantMessage(item: Item): boolean {

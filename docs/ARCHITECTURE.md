@@ -39,6 +39,45 @@ to a TypeScript client).
 
 ---
 
+## Mobile access
+
+**The loopback server remains the desktop control plane. Mobile access is a separate,
+on-demand listener using the same typed protocol.** Generating a QR code starts that
+listener on the next port, advertises Tailscale first and private LAN addresses second, and
+rejects handshakes that arrive through any other interface. A 100.64/10 address is called
+Tailscale only after the installed Tailscale CLI reports that exact address; generic CGNAT
+interfaces are not treated as encrypted tailnet routes. Turning mobile access off closes the
+listener and every connected phone.
+
+The QR contains a 256-bit, five-minute, single-use ticket. The server holds only its digest
+in memory and lets that bootstrap connection call only `connections.claim`; it cannot read
+projects, threads or push events. Claiming mints a separate 256-bit device token, returns it
+once to the device's secure credential store, and persists only its digest in SQLite.
+Revocation deletes that digest and closes the device's active socket. Desktop-only connection
+management methods are denied to paired phones, and paired devices get an explicit allowlist
+of the protocol methods the mobile UI uses. The loopback admin socket also rejects arbitrary
+browser origins when no admin token is configured, so a webpage cannot turn local access into
+persistent enrollment.
+
+Tailscale is the preferred transport because the tailnet already provides encrypted reach
+across networks. A plain WebSocket over RFC 1918 LAN is a trusted-local-network fallback, not
+an Internet endpoint. There is no Harness cloud service or relay in this design; any future
+relay remains opt-in and end-to-end encrypted as planned in M8.
+
+Headless hosts run the same core through the `harness` CLI. `harness serve` leaves the
+loopback administration socket private, while `harness pair` asks that socket for a fresh
+ticket and renders it as a terminal QR plus a pasteable link. If no server is running,
+`pair` starts one and keeps it alive, so the pairing path and credential boundary are
+identical to the desktop app rather than a second enrollment protocol. An originless native
+CLI may use a token-protected control socket only when its TCP peer is loopback; browsers and
+native clients arriving over LAN or Tailscale still need the configured admin token.
+
+_Rejected:_ putting a reusable access token in the QR (a photographed code would remain a
+credential) · persisting plaintext device tokens on the server · exposing the desktop admin
+socket to the network.
+
+---
+
 ## Desktop shell: Electron, not Tauri
 
 Tauri wins on size — ~10MB vs ~150MB, and much lower idle memory. We choose Electron anyway.
@@ -270,8 +309,10 @@ registry entry, which is deliberately a good first outside contribution.
 
 ## Change log
 
-| Date       | Change                                                                 |
-| ---------- | ---------------------------------------------------------------------- |
-| 2026-07-28 | Initial decisions.                                                     |
-| 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration. |
-| 2026-08-02 | Added Codex-backed voice dictation.                                    |
+| Date       | Change                                                                                       |
+| ---------- | -------------------------------------------------------------------------------------------- |
+| 2026-08-02 | Added Codex-backed voice dictation.                                                          |
+| 2026-08-01 | Added a headless server CLI that mints the existing secure mobile pairing offers.            |
+| 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration.                       |
+| 2026-07-31 | Added mobile access with one-time QR pairing and revocable Tailscale/LAN device credentials. |
+| 2026-07-28 | Initial decisions.                                                                           |

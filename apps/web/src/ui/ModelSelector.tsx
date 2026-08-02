@@ -1,6 +1,14 @@
 import { useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react'
-import type { Model } from '@harness/contracts'
-import { Check, ChevronDown, Zap } from 'lucide-react'
+import type { ApprovalMode, Model } from '@harness/contracts'
+import {
+  Check,
+  ChevronDown,
+  LockOpen,
+  ShieldCheck,
+  ShieldQuestion,
+  Zap,
+  type LucideIcon,
+} from 'lucide-react'
 import { DitherSlider } from './dither-kit/DitherSlider.js'
 import { Menu } from './Menu.js'
 
@@ -14,11 +22,49 @@ type ModelSelectorProps = {
   modelId: string | undefined
   effort: string | undefined
   serviceTier: string | undefined
+  approval: ApprovalMode
+  autoReviewSupported: boolean
+  commands: ReadonlyArray<{ name: string; detail: string; text: string }>
   disabled: boolean
+  loadingModels: boolean
   onModelChange: (id: string) => void
   onEffortChange: (value: string) => void
   onServiceTierChange: (value: string | undefined) => void
+  onApprovalChange: (value: ApprovalMode) => void
+  onCommandSelect: (text: string) => void
 }
+
+const APPROVAL_MODES: ReadonlyArray<{
+  id: ApprovalMode
+  title: string
+  detail: string
+  icon: LucideIcon
+}> = [
+  {
+    id: 'ask',
+    title: 'Ask first',
+    detail: 'Read-only until you approve each action',
+    icon: ShieldQuestion,
+  },
+  {
+    id: 'auto',
+    title: 'Auto-approve',
+    detail: 'Edits and commands inside this folder',
+    icon: ShieldCheck,
+  },
+  {
+    id: 'auto-review',
+    title: 'Auto-review',
+    detail: 'Codex reviews elevated actions before they run',
+    icon: ShieldCheck,
+  },
+  {
+    id: 'full',
+    title: 'Full access',
+    detail: 'No sandbox, no prompts, no undo. Use with care.',
+    icon: LockOpen,
+  },
+]
 
 export function getCompactModelName(displayName: string | undefined): string {
   if (!displayName) return 'Model'
@@ -337,6 +383,11 @@ export function ModelSelector(props: ModelSelectorProps) {
       panelClassName="model-selector__menu"
       trigger={(open) => (
         <span className={`model-selector__trigger${open ? ' is-open' : ''}`}>
+          {props.approval === 'full' ? (
+            <span className="model-selector__trigger-permission" aria-hidden>
+              <LockOpen size={13} />
+            </span>
+          ) : null}
           {fastEnabled ? (
             <span className="model-selector__trigger-fast" aria-hidden>
               <Zap size={13} fill="currentColor" />
@@ -344,7 +395,7 @@ export function ModelSelector(props: ModelSelectorProps) {
           ) : null}
           <span className="model-selector__trigger-copy">
             <span className="model-selector__trigger-model">
-              {getCompactModelName(model?.displayName)}
+              {props.loadingModels ? 'Loading models…' : getCompactModelName(model?.displayName)}
             </span>
             <span className="model-selector__trigger-effort">{effortLabel}</span>
           </span>
@@ -417,6 +468,64 @@ export function ModelSelector(props: ModelSelectorProps) {
                 onCommitIndex={commitEffortIndex}
               />
             ) : null}
+          </div>
+
+          <div className="model-selector__extra-controls">
+            <section className="model-selector__control-group" aria-label="Permissions">
+              <p className="model-selector__control-label">Permissions</p>
+              <div className="model-selector__approval-options">
+                {APPROVAL_MODES.filter(
+                  (mode) => mode.id !== 'auto-review' || props.autoReviewSupported,
+                ).map((mode) => {
+                  const ModeIcon = mode.icon
+                  const selected = mode.id === props.approval
+                  return (
+                    <button
+                      key={mode.id}
+                      type="button"
+                      className={`model-selector__approval${selected ? ' is-selected' : ''}${mode.id === 'full' ? ' is-danger' : ''}`}
+                      disabled={props.disabled}
+                      aria-pressed={selected}
+                      onClick={() => {
+                        props.onApprovalChange(mode.id)
+                        close()
+                      }}
+                    >
+                      <span className="model-selector__approval-icon" aria-hidden>
+                        <ModeIcon size={14} />
+                      </span>
+                      <span className="model-selector__approval-copy">
+                        <span className="model-selector__approval-name">{mode.title}</span>
+                        <span className="model-selector__approval-detail">{mode.detail}</span>
+                      </span>
+                      {selected ? (
+                        <Check className="model-selector__approval-check" size={14} aria-hidden />
+                      ) : null}
+                    </button>
+                  )
+                })}
+              </div>
+            </section>
+
+            <section className="model-selector__control-group" aria-label="Commands">
+              <p className="model-selector__control-label">Commands</p>
+              <div className="model-selector__commands">
+                {props.commands.map((command) => (
+                  <button
+                    key={command.name}
+                    type="button"
+                    className="model-selector__command"
+                    onClick={() => {
+                      props.onCommandSelect(command.text)
+                      close()
+                    }}
+                  >
+                    <span className="model-selector__command-name">{command.name}</span>
+                    <span className="model-selector__command-detail">{command.detail}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
           </div>
         </div>
       )}

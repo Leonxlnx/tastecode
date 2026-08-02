@@ -593,6 +593,12 @@
   border-radius: 0;
 }
 
+.settings__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
 .theme-picker {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -877,6 +883,149 @@
 
 .settings__action:active {
   transform: scale(0.97);
+}
+
+.settings__action:disabled {
+  opacity: 0.6;
+  cursor: default;
+  transform: none;
+}
+
+.settings__action--danger {
+  background: color-mix(in oklab, var(--error) 16%, var(--surface-2));
+  color: var(--error);
+}
+
+.settings__action--danger:hover {
+  background: color-mix(in oklab, var(--error) 22%, var(--surface-3));
+  color: var(--error);
+}
+
+.settings__subsection {
+  padding: 14px 16px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.settings__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings__pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.settings__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: 1;
+}
+
+.settings__pill-kind {
+  color: var(--text-3);
+}
+
+.settings__pill-label {
+  color: var(--text);
+}
+
+.settings__status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 92px;
+  padding: 7px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings__status-badge.is-on {
+  background: color-mix(in oklab, var(--attention) 12%, var(--surface));
+  border-color: color-mix(in oklab, var(--attention) 26%, var(--line));
+  color: var(--text);
+}
+
+.settings__status-badge.is-off {
+  color: var(--text-2);
+}
+
+.settings__status-badge.is-loading,
+.settings__status-badge.is-unavailable {
+  color: var(--text-3);
+}
+
+.settings__inline-error {
+  margin: 0;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  color: var(--error);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+.settings__inline-error--quiet {
+  padding: 0;
+  border: 0;
+}
+
+.settings__empty-state {
+  margin: 0;
+  padding: 16px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+}
+
+.settings__qr-card {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  gap: 20px;
+  align-items: center;
+  padding: 16px;
+}
+
+.settings__qr-frame {
+  display: grid;
+  place-items: center;
+  min-height: 176px;
+  padding: 12px;
+  margin: 0 auto;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+}
+
+.settings__qr-art {
+  width: 100%;
+}
+
+.settings__qr-art svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.settings__qr-copy {
+  min-width: 0;
+}
+
+.settings__qr-copy .settings__action {
+  margin-top: 12px;
 }
 
 .settings .switch {
@@ -2339,11 +2488,17 @@
 
 /* ---------- thread ---------- */
 
+.thread-shell {
+  position: relative;
+  min-height: 0;
+}
+
 .thread {
   position: relative;
+  height: 100%;
   overflow-y: auto;
   min-height: 0;
-  padding: 2px 0 4px;
+  padding: 2px 0 16px;
   font-size: var(--t-lg);
 }
 
@@ -2383,6 +2538,13 @@
   padding-bottom: 10px;
 }
 
+/* Completion compacts several virtual rows into one disclosure. Let the
+   answer follow that new position instead of snapping there in one frame. */
+.thread__row.is-settling:not(.is-suppressed) {
+  transition: transform 520ms var(--ease-out);
+  will-change: transform;
+}
+
 .thread__row.is-entering > :is(.reply, .aux, .activity) {
   animation: thread-item-in 280ms var(--ease-out) both;
 }
@@ -2410,6 +2572,10 @@
   position: absolute;
   bottom: 14px;
   left: 50%;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   transform: translateX(-50%);
   background: var(--surface-2);
   border: 1px solid var(--line-strong);
@@ -2420,11 +2586,34 @@
   font-size: var(--t-sm);
   padding: 5px 13px;
   box-shadow: var(--shadow-flyout);
-  animation: menu-in var(--dur-fast) var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+  animation: jump-in 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .jump:hover {
   background: var(--surface-3);
+}
+
+.jump > svg {
+  flex: none;
+  transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.jump:hover > svg {
+  transform: translateY(2px);
+}
+
+.jump:active {
+  transform: translateX(-50%) scale(0.96);
+}
+
+@keyframes jump-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px) scale(0.94);
+  }
 }
 
 .aux__code {
@@ -2458,8 +2647,8 @@
   word-break: break-word;
 }
 
-/* Completed work folds into the same quiet narrative Codex uses: commentary
-   and edit milestones remain readable, while raw operational noise stays out. */
+/* Completed work follows the same hierarchy as the native client: one elapsed
+   disclosure, prose in reading order, and compact groups for every tool call. */
 .activity__summary {
   display: flex;
   align-items: center;
@@ -2493,7 +2682,7 @@
 }
 
 .activity--working {
-  margin-bottom: 18px;
+  margin: 18px 0 0;
   animation: activity-in 260ms var(--ease-out) both;
 }
 
@@ -2554,20 +2743,142 @@
   line-height: 1.52;
 }
 
-.activity__file-change {
+.activity__message--reasoning {
+  color: var(--text-2);
+}
+
+.activity__tool-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.activity__tool-row > summary,
+.activity__tool-row > div {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   min-width: 0;
-  min-height: 24px;
-  color: var(--text-3);
+  min-height: 32px;
+  color: var(--text-2);
   font-family: var(--font-ui);
   font-size: var(--t-lg);
   letter-spacing: -0.012em;
+  list-style: none;
 }
 
-.activity__file-change svg {
+.activity__tool-row > summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.activity__tool-row > summary::-webkit-details-marker {
+  display: none;
+}
+
+.activity__tool-glyph,
+.activity__tool-status,
+.activity__tool-chevron {
   flex: none;
+}
+
+.activity__tool-glyph {
+  display: grid;
+  width: 17px;
+  place-items: center;
+  color: color-mix(in oklab, var(--text-3) 78%, var(--bg));
+}
+
+.activity__tool-glyph svg {
+  width: 14px;
+  height: 14px;
+}
+
+.activity__tool-row strong {
+  color: var(--text);
+  font-weight: 540;
+  white-space: nowrap;
+}
+
+.activity__tool-detail {
+  min-width: 0;
+  overflow: hidden;
+  color: color-mix(in oklab, var(--text-3) 64%, var(--bg));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity__tool-detail.is-command {
+  font-family: var(--font-mono);
+}
+
+.activity__tool-spacer {
+  min-width: 0;
+  flex: 1;
+}
+
+.activity__tool-chevron,
+.activity__tool-status {
+  width: 15px;
+  height: 15px;
+  color: color-mix(in oklab, var(--text-3) 72%, var(--bg));
+  stroke-width: 1.8;
+}
+
+.activity__tool-chevron {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.activity__tool-row[open] .activity__tool-chevron {
+  transform: rotate(180deg);
+}
+
+.activity__tool-status.is-failed {
+  color: var(--error);
+}
+
+.activity__tool-row > pre {
+  margin: 5px 0 5px 26px;
+  padding: 3px 0 3px 18px;
+  overflow: visible;
+  background: transparent;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--text-2);
+  font-family: var(--font-ui);
+  font-size: var(--t-lg);
+  line-height: 1.52;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.activity__previous-toggle {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  min-height: 32px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--text-2);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: var(--t-lg);
+  line-height: 1;
+}
+
+.activity__previous-toggle svg {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.activity__previous-toggle.is-expanded svg {
+  transform: rotate(180deg);
 }
 
 .reply > .activity {
@@ -2685,7 +2996,7 @@
   width: 1em;
   height: 1em;
   margin-right: 3px;
-  vertical-align: -0.13em;
+  vertical-align: middle;
 }
 
 .md .md-file-ref__icon > svg {
@@ -3216,6 +3527,8 @@
 /* ---------- diff ---------- */
 
 .diff {
+  /* The hidden response actions already reserve room below the final answer. */
+  margin-top: -20px;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   overflow: hidden;
@@ -3738,9 +4051,7 @@
   border: 1px solid var(--line);
   border-radius: var(--r-2xl);
   box-shadow: var(--composer-shadow);
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    margin-top var(--dur-slow) var(--ease-out);
+  transition: border-color var(--dur-fast) var(--ease-out);
 }
 
 .composer__design-beam.is-shelved {
@@ -3798,12 +4109,8 @@
 }
 
 .composer__queue {
-  position: absolute;
-  right: 28px;
-  bottom: calc(100% - 9px);
-  left: 28px;
   min-width: 0;
-  margin: 0;
+  margin: 0 28px;
   padding: 5px 9px 14px;
   overflow: hidden;
   background: var(--bg-queue);
@@ -3811,6 +4118,10 @@
   border-bottom: 0;
   border-radius: var(--r-2xl) var(--r-2xl) 0 0;
   animation: fade-in var(--dur-fast) var(--ease-out) both;
+}
+
+.composer__queue + .composer__prompt {
+  margin-top: -9px;
 }
 
 .queue-row {
@@ -4307,7 +4618,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 8px 8px 8px;
+  padding: 4px 12px 12px 8px;
   /* Never wraps. Send has to stay on the row at every width, so the labels in
      the middle shrink and truncate instead. */
   flex-wrap: nowrap;
@@ -4543,6 +4854,15 @@
   color: var(--text-2);
 }
 
+.composer__attach {
+  flex: none;
+}
+
+.icon-btn.is-live {
+  opacity: 1;
+  color: var(--error);
+}
+
 .composer-voice-bar__button--stop:hover:not(:disabled) {
   background: var(--surface-3);
   color: var(--text);
@@ -4709,11 +5029,19 @@
   color: var(--text);
 }
 
-.model-selector__trigger-fast {
+.model-selector__trigger-fast,
+.model-selector__trigger-permission {
   display: grid;
   place-items: center;
   flex: none;
+}
+
+.model-selector__trigger-fast {
   color: var(--light);
+}
+
+.model-selector__trigger-permission {
+  color: var(--composer-danger);
 }
 
 .model-selector__trigger-copy {
@@ -4753,7 +5081,8 @@
 }
 
 .model-selector__menu {
-  width: min(330px, calc(100vw - 16px));
+  width: min(390px, calc(100vw - 16px));
+  max-height: min(520px, calc(100vh - 16px));
   padding: 0;
   overflow: hidden;
   background: var(--surface-2);
@@ -4792,6 +5121,13 @@
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
     transform var(--dur-press) var(--ease-out);
+}
+
+.model-selector__fast:disabled,
+.model-selector__model:disabled,
+.model-selector__approval:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .model-selector__fast.is-on {
@@ -5015,6 +5351,106 @@
     background: var(--surface-3);
     color: var(--text);
   }
+}
+
+.model-selector__controls {
+  border-top: 1px solid var(--line-strong);
+  padding: 8px 4px 4px;
+}
+
+.model-selector__extra-controls {
+  padding: 4px;
+  border-top: 1px solid var(--line-strong);
+}
+
+.model-selector__control-group + .model-selector__control-group {
+  margin-top: 8px;
+}
+
+.model-selector__control-label {
+  margin: 0;
+  padding: 2px 9px 5px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.model-selector__approval-options,
+.model-selector__commands {
+  display: grid;
+  gap: 2px;
+}
+
+.model-selector__commands {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.model-selector__approval,
+.model-selector__command {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  padding: 7px 9px;
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.model-selector__approval {
+  gap: 9px;
+}
+
+.model-selector__approval:hover:not(:disabled),
+.model-selector__approval.is-selected,
+.model-selector__command:hover {
+  background: var(--surface-3);
+}
+
+.model-selector__approval-icon,
+.model-selector__approval-check {
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--text-3);
+}
+
+.model-selector__approval.is-danger .model-selector__approval-icon {
+  color: var(--composer-danger);
+}
+
+.model-selector__approval-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.model-selector__approval-name,
+.model-selector__command-name {
+  font-size: var(--t-md);
+}
+
+.model-selector__approval-detail,
+.model-selector__command-detail {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-selector__command {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.model-selector__command-name {
+  color: var(--text);
+  font-family: var(--font-mono);
 }
 
 /* ---------- buttons ---------- */
@@ -5445,6 +5881,18 @@
 
   .settings__row-control {
     align-self: flex-end;
+  }
+
+  .settings__actions {
+    justify-content: flex-end;
+  }
+
+  .settings__qr-card {
+    grid-template-columns: 1fr;
+  }
+
+  .settings__qr-frame {
+    width: min(100%, 220px);
   }
 }
 

@@ -3,6 +3,7 @@
   "compilerOptions": {
     "rootDir": "./src",
     "outDir": "./dist",
+    "types": ["node"],
     // The generated bindings use extensionless relative imports, which NodeNext
     // resolution rejects. They are type-only and erased at emit, so bundler
     // resolution is safe here — our own imports still carry .js extensions and

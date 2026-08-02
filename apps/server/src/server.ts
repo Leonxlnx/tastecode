@@ -1,4 +1,4 @@
-import os from 'node:os'
+import os, { type NetworkInterfaceInfo } from 'node:os'
 import path from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
@@ -10,21 +10,26 @@ import {
   PROTOCOL_VERSION,
   RequestSchema,
   type DiffDecision,
+  type ApprovalMode,
   type MethodName,
   type McpServerConfig,
   type ParamsOf,
   type ProviderId,
   type SidebarSettings,
+  type ResultOf,
 } from '@harness/contracts'
 import { StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator } from './orchestrator.js'
 import { detectProviders } from './providers.js'
 import { PushBus } from './push-bus.js'
+import { MobileAccess, type MobileConnectionAccess } from './mobile-access.js'
+import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
+import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
 
 export const SERVER_VERSION = '0.0.0'
-export const DEFAULT_PORT = 4311
+export { DEFAULT_PORT } from './server-config.js'
 
 /**
  * Where the database lives.
@@ -61,10 +66,14 @@ export function startServer(
     port?: number
     host?: string
     accessToken?: string | undefined
+    mobilePort?: number
+    mobileNetworkInterfaces?: () => NodeJS.Dict<NetworkInterfaceInfo[]>
+    resolveTailscaleAddresses?: () => Promise<ReadonlySet<string>>
   } = {},
 ) {
   const port = options.port ?? DEFAULT_PORT
   const host = options.host ?? '127.0.0.1'
+  const mobilePort = options.mobilePort ?? (port === 0 ? 0 : port + 1)
   assertSafeBind(host, options.accessToken)
   const wss = new WebSocketServer({ port, host })
   const push = new PushBus()
@@ -103,28 +112,78 @@ export function startServer(
   orchestrator.refreshLifecycle()
   const lifecycleTimer = setInterval(() => orchestrator.refreshLifecycle(), 30_000)
   lifecycleTimer.unref()
+  const mobileAccess = new MobileAccess({
+    store,
+    port: mobilePort,
+    onConnection: (socket, request, access) => acceptConnection(socket, request, access),
+    ...(options.mobileNetworkInterfaces
+      ? { networkInterfaces: options.mobileNetworkInterfaces }
+      : {}),
+    ...(options.resolveTailscaleAddresses
+      ? { resolveTailscaleAddresses: options.resolveTailscaleAddresses }
+      : {}),
+  })
 
   // A previous run killed mid-session leaves git believing in checkouts that
   // are gone. Clearing that up at startup means the next session on that path
   // starts instead of failing with a message about our own leftovers.
   void orchestrator.recoverWorktrees().catch(() => undefined)
 
+  if (store.mobileAccessEnabled()) {
+    void mobileAccess
+      .start()
+      .catch((error) =>
+        console.error(`[server] could not restore mobile access: ${messageOf(error)}`),
+      )
+  }
+
+  async function startPairing(): Promise<ResultOf<'connections.startPairing'>> {
+    const offer = await mobileAccess.startPairing()
+    store.setMobileAccessEnabled(true)
+    return offer
+  }
+
   wss.on('connection', (socket, request) => {
-    if (!hasAccess(request.url, options.accessToken)) {
+    if (
+      !hasAccess(
+        request.url,
+        options.accessToken,
+        request.headers.origin,
+        request.headers['user-agent'],
+        request.socket.remoteAddress,
+      )
+    ) {
       socket.close(1008, 'Access denied')
       return
     }
-    push.add(socket)
-    push.send(socket, 'server.welcome', {
-      serverVersion: SERVER_VERSION,
-      protocolVersion: PROTOCOL_VERSION,
-    })
-
-    socket.on('message', (raw) => void handleMessage(socket, raw.toString()))
-    socket.on('close', () => push.remove(socket))
+    acceptConnection(socket, request, { kind: 'admin' })
   })
 
-  async function handleMessage(socket: WebSocket, raw: string): Promise<void> {
+  function acceptConnection(socket: WebSocket, _request: unknown, access: ConnectionAccess): void {
+    const welcome = {
+      serverVersion: SERVER_VERSION,
+      protocolVersion: PROTOCOL_VERSION,
+    }
+
+    if (access.kind === 'pairing') {
+      // A QR ticket may only be exchanged for a device credential. Keeping its
+      // socket out of the broadcast pool prevents an unclaimed code from
+      // observing thread or account events while it waits to be claimed.
+      socket.send(JSON.stringify({ channel: 'server.welcome', sequence: 1, data: welcome }))
+    } else {
+      push.add(socket)
+      push.send(socket, 'server.welcome', welcome)
+    }
+
+    socket.on('message', (raw) => void handleMessage(socket, raw.toString(), access))
+    if (access.kind !== 'pairing') socket.on('close', () => push.remove(socket))
+  }
+
+  async function handleMessage(
+    socket: WebSocket,
+    raw: string,
+    access: ConnectionAccess,
+  ): Promise<void> {
     let parsed: unknown
     try {
       parsed = JSON.parse(raw)
@@ -139,9 +198,20 @@ export function startServer(
     }
     const { id, method, params } = envelope.data
 
+    if (access.kind === 'device' && !mobileAccess.isDeviceActive(access.deviceId)) {
+      respondError(socket, id, ErrorCode.FORBIDDEN, 'This device has been revoked')
+      socket.terminate()
+      return
+    }
+
     const spec = methods[method as MethodName]
     if (!spec) {
       respondError(socket, id, ErrorCode.BAD_REQUEST, `unknown method: ${method}`)
+      return
+    }
+
+    if (!methodAllowed(access, method as MethodName)) {
+      respondError(socket, id, ErrorCode.FORBIDDEN, 'This connection cannot perform that action')
       return
     }
 
@@ -159,7 +229,7 @@ export function startServer(
     }
 
     try {
-      const result = await route(method as MethodName, decoded.data)
+      const result = await route(method as MethodName, decoded.data, access)
       socket.send(JSON.stringify({ id, result }))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -172,7 +242,11 @@ export function startServer(
     }
   }
 
-  async function route(method: MethodName, params: unknown): Promise<unknown> {
+  async function route(
+    method: MethodName,
+    params: unknown,
+    access: ConnectionAccess,
+  ): Promise<unknown> {
     switch (method) {
       case 'system.info':
         return {
@@ -305,6 +379,35 @@ export function startServer(
         return {}
       }
 
+      case 'connections.status':
+        return mobileAccess.status()
+
+      case 'connections.startPairing': {
+        return startPairing()
+      }
+
+      case 'connections.stop':
+        store.setMobileAccessEnabled(false)
+        await mobileAccess.stop()
+        return {}
+
+      case 'connections.revoke': {
+        const p = params as { deviceId: string }
+        mobileAccess.revoke(p.deviceId)
+        return {}
+      }
+
+      case 'connections.deviceStatus': {
+        const status = mobileAccess.status()
+        return { serverName: status.serverName, addresses: status.addresses }
+      }
+
+      case 'connections.claim': {
+        const p = params as { name: string }
+        if (access.kind !== 'pairing') throw new Error('A current pairing ticket is required')
+        return mobileAccess.claim(access, p.name)
+      }
+
       case 'workspace.info': {
         const p = params as { path: string }
         return readWorkspace(p.path)
@@ -428,6 +531,18 @@ export function startServer(
         const p = params as { terminalId: string }
         orchestrator.closeTerminal(p.terminalId)
         return {}
+      }
+
+      case 'attachments.saveImage': {
+        const p = params as { mimeType: string; data: string }
+        return {
+          path: await materializeAttachment({ name: imageFileName(p.mimeType), data: p.data }),
+        }
+      }
+
+      case 'attachments.saveFile': {
+        const p = params as { name: string; mimeType: string; data: string }
+        return { path: await materializeAttachment({ name: p.name, data: p.data }) }
       }
 
       case 'thread.rename': {
@@ -596,12 +711,14 @@ export function startServer(
           model?: string
           effort?: string
           serviceTier?: string
+          approval?: ApprovalMode
         }
         return {
           ...(await orchestrator.submitTurn(p.threadId, p.text, p.attachments, {
             model: p.model,
             effort: p.effort,
             serviceTier: p.serviceTier,
+            approval: p.approval,
           })),
         }
       }
@@ -681,17 +798,68 @@ export function startServer(
 
   return {
     port,
-    close: () => {
+    startPairing,
+    close: async () => {
       clearInterval(lifecycleTimer)
       orchestrator.disposeAll()
+      for (const socket of wss.clients) socket.terminate()
+      await Promise.all([
+        mobileAccess.stop(),
+        new Promise<void>((resolve) => wss.close(() => resolve())),
+      ])
       store.close()
-      wss.close()
     },
   }
 }
 
-export function hasAccess(requestUrl: string | undefined, expected: string | undefined): boolean {
-  if (!expected) return true
+type ConnectionAccess = { kind: 'admin' } | MobileConnectionAccess
+
+const DEVICE_METHODS = new Set<MethodName>([
+  'system.info',
+  'providers.list',
+  'auth.status',
+  'connections.deviceStatus',
+  'workspace.branches',
+  'workspace.switchBranch',
+  'models.list',
+  'projects.list',
+  'attachments.saveFile',
+  'thread.history',
+  'thread.rename',
+  'thread.start',
+  'thread.sendTurn',
+  'thread.queue',
+  'thread.deleteQueuedTurn',
+  'thread.steerQueuedTurn',
+  'thread.respondToApproval',
+  'thread.interrupt',
+  'thread.settle',
+  'thread.unsettle',
+  'thread.close',
+])
+
+function methodAllowed(access: ConnectionAccess, method: MethodName): boolean {
+  if (access.kind === 'admin') return method !== 'connections.claim'
+  if (access.kind === 'pairing') return method === 'connections.claim'
+  return DEVICE_METHODS.has(method)
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+export function hasAccess(
+  requestUrl: string | undefined,
+  expected: string | undefined,
+  origin?: string,
+  userAgent?: string,
+  remoteAddress?: string,
+): boolean {
+  // Local native clients such as the headless CLI cannot inherit the dev
+  // launcher's ephemeral browser token. Originless access is safe only across
+  // loopback; native connections arriving over LAN or Tailscale still need it.
+  if (origin === undefined && isLoopbackAddress(remoteAddress)) return true
+  if (!expected) return trustedAdminOrigin(origin, userAgent)
   const supplied = new URL(requestUrl ?? '/', 'ws://harness.local').searchParams.get('token')
   if (!supplied) return false
 
@@ -700,6 +868,26 @@ export function hasAccess(requestUrl: string | undefined, expected: string | und
   return (
     expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes)
   )
+}
+
+function isLoopbackAddress(address: string | undefined): boolean {
+  if (!address) return false
+  const normalized = address.replace(/^::ffff:/, '')
+  return normalized === '::1' || (isIPv4(normalized) && normalized.startsWith('127.'))
+}
+
+function trustedAdminOrigin(origin: string | undefined, userAgent: string | undefined): boolean {
+  // Native clients do not send Origin. Browser clients must come from our
+  // loopback Vite server or the packaged Electron file renderer.
+  if (origin === undefined || origin === 'file://') return true
+  if (origin === 'null') return /\bElectron\/\d/.test(userAgent ?? '')
+  try {
+    const url = new URL(origin)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
+    return url.hostname === '::1' || (isIPv4(url.hostname) && url.hostname.startsWith('127.'))
+  } catch {
+    return false
+  }
 }
 
 export function assertSafeBind(host: string, accessToken: string | undefined): void {

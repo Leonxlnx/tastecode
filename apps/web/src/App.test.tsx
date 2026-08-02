@@ -646,14 +646,17 @@ describe('new chats', () => {
   it('keeps full access selected after the app restarts', () => {
     const first = render(<App />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: /Full access/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    fireEvent.click(screen.getByRole('button', { name: /Full access/ }))
 
     expect(localStorage.getItem('harness.approval')).toBe('full')
     first.unmount()
     render(<App />)
 
-    expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain('Full access')
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    expect(screen.getByRole('button', { name: /Full access/ }).getAttribute('aria-pressed')).toBe(
+      'true',
+    )
   })
 
   it('starts Codex sessions with its advertised auto-review mode', async () => {
@@ -665,8 +668,8 @@ describe('new chats', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('providers.list', {})
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
-    fireEvent.click(await screen.findByRole('menuitem', { name: /Auto-review/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Auto-review/ }))
 
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Check this safely' } })

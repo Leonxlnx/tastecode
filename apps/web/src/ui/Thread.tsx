@@ -32,6 +32,7 @@ import { Diff } from './Diff.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
 import { ThreadSearch } from './ThreadSearch.js'
+import { visibleWorkedItems, WorkedTranscript } from './WorkedTranscript.js'
 import { findTurns, neighbourTurn, presentTurns } from './turns.js'
 import { isAtBottom, modeForNewTurn, shouldReleaseAnchor, type ScrollMode } from './scroll-mode.js'
 import { UserInput } from '../design-agent/UserInput.js'
@@ -423,10 +424,6 @@ function isActivity(item: Item): boolean {
   return item.type !== 'message' && item.type !== 'error'
 }
 
-function isAssistantMessage(item: Item): boolean {
-  return item.type === 'message' && item.role === 'assistant'
-}
-
 function Row({
   item,
   hidden,
@@ -526,7 +523,7 @@ function CompletionRail({
   settling: boolean
 }) {
   const label = `Worked for ${workedFor(elapsedMs)}`
-  const visibleActivity = activity.filter(isVisibleWorkedItem)
+  const visibleActivity = visibleWorkedItems(activity)
 
   if (visibleActivity.length === 0) {
     return (
@@ -542,28 +539,8 @@ function CompletionRail({
         <span>{label}</span>
         <ChevronRight size={15} strokeWidth={1.8} aria-hidden />
       </summary>
-      <div className="activity__body">
-        {visibleActivity.map((item) =>
-          item.type === 'message' ? (
-            <div className="activity__message" key={item.id}>
-              <Markdown text={item.text ?? ''} />
-            </div>
-          ) : (
-            <div className="activity__file-change" key={item.id}>
-              <FilePenLine size={15} strokeWidth={1.8} aria-hidden />
-              <span>Edited files</span>
-            </div>
-          ),
-        )}
-      </div>
+      <WorkedTranscript items={visibleActivity} />
     </details>
-  )
-}
-
-function isVisibleWorkedItem(item: Item): boolean {
-  return (
-    item.type === 'file_change' ||
-    (isAssistantMessage(item) && item.status === 'completed' && Boolean(item.text?.trim()))
   )
 }
 

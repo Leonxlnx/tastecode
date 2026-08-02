@@ -4,15 +4,17 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { Composer } from './Composer.js'
 
 const bridge = vi.hoisted(() => ({
+  pickFiles: vi.fn(),
   savePastedImage: vi.fn(),
 }))
 
 vi.mock('../bridge.js', () => ({
-  pickFiles: vi.fn(async () => []),
+  pickFiles: bridge.pickFiles,
   savePastedImage: bridge.savePastedImage,
 }))
 
 beforeEach(() => {
+  bridge.pickFiles.mockResolvedValue([])
   bridge.savePastedImage.mockResolvedValue('/tmp/pasted-image.png')
   Object.defineProperty(URL, 'createObjectURL', {
     configurable: true,
@@ -30,6 +32,17 @@ afterEach(() => {
 })
 
 describe('Composer image paste', () => {
+  it('opens the attachment picker directly from the plus button', async () => {
+    bridge.pickFiles.mockResolvedValue(['/tmp/Reference photo.png'])
+    renderComposer(vi.fn())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
+
+    await waitFor(() => expect(bridge.pickFiles).toHaveBeenCalledOnce())
+    expect(screen.getByText('Reference photo.png')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Add' })).toBeNull()
+  })
+
   it('previews a pasted image and sends its materialized path', async () => {
     const onSend = vi.fn()
     renderComposer(onSend)
@@ -142,13 +155,13 @@ describe('Composer queue', () => {
 describe('Composer permissions', () => {
   it('offers auto-review only when the selected provider supports it', () => {
     const unsupported = renderComposer(vi.fn())
-    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
-    expect(screen.queryByRole('menuitem', { name: /Auto-review/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    expect(screen.queryByRole('button', { name: /Auto-review/ })).toBeNull()
 
     unsupported.unmount()
     renderComposer(vi.fn(), { autoReviewSupported: true })
-    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
-    expect(screen.getByRole('menuitem', { name: /Auto-review/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    expect(screen.getByRole('button', { name: /Auto-review/ })).toBeTruthy()
   })
 })
 

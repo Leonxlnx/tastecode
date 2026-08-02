@@ -38,7 +38,7 @@ export type StartOptions = {
   mcpCredentials?: Record<string, string> | undefined
 }
 
-export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>
+export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort' | 'approval'>
 
 export interface AgentSession {
   readonly capabilities: Capabilities

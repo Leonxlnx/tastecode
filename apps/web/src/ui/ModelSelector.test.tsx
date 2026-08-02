@@ -81,6 +81,8 @@ function renderSelector(overrides: RenderOverrides = {}) {
   const onModelChange = vi.fn()
   const onEffortChange = vi.fn()
   const onServiceTierChange = vi.fn()
+  const onApprovalChange = vi.fn()
+  const onCommandSelect = vi.fn()
 
   render(
     <ModelSelector
@@ -88,15 +90,27 @@ function renderSelector(overrides: RenderOverrides = {}) {
       modelId="gpt-5.6-sol"
       effort="xhigh"
       serviceTier="standard"
+      approval="ask"
+      autoReviewSupported
+      commands={[]}
       disabled={false}
+      loadingModels={false}
       onModelChange={onModelChange}
       onEffortChange={onEffortChange}
       onServiceTierChange={onServiceTierChange}
+      onApprovalChange={onApprovalChange}
+      onCommandSelect={onCommandSelect}
       {...overrides}
     />,
   )
 
-  return { onModelChange, onEffortChange, onServiceTierChange }
+  return {
+    onModelChange,
+    onEffortChange,
+    onServiceTierChange,
+    onApprovalChange,
+    onCommandSelect,
+  }
 }
 
 beforeEach(() => {
@@ -181,10 +195,16 @@ describe('ModelSelector', () => {
         modelId={fastDefaultModel.id}
         effort="low"
         serviceTier="fast"
+        approval="ask"
+        autoReviewSupported
+        commands={[]}
         disabled={false}
+        loadingModels={false}
         onModelChange={vi.fn()}
         onEffortChange={vi.fn()}
         onServiceTierChange={toggleFastOff}
+        onApprovalChange={vi.fn()}
+        onCommandSelect={vi.fn()}
       />,
     )
 
@@ -192,6 +212,26 @@ describe('ModelSelector', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Disable fast mode' }))
     expect(toggleFastOff).toHaveBeenCalledWith(undefined)
     expect(getFastModeOffValue(fastDefaultModel)).toBeUndefined()
+  })
+
+  it('keeps permissions and prompt commands in the combined control', () => {
+    const { onApprovalChange, onCommandSelect } = renderSelector({
+      commands: [
+        {
+          name: '/review',
+          detail: 'Review the current diff',
+          text: 'Review my current changes.',
+        },
+      ],
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    fireEvent.click(screen.getByRole('button', { name: /Full access/ }))
+    expect(onApprovalChange).toHaveBeenCalledWith('full')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    fireEvent.click(screen.getByRole('button', { name: /\/review/ }))
+    expect(onCommandSelect).toHaveBeenCalledWith('Review my current changes.')
   })
 
   it('uses pointer capture for the effort slider preview and commits on release', () => {
