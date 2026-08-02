@@ -55,4 +55,26 @@ describe('Menu', () => {
     fireEvent.mouseDown(menu)
     expect(screen.getByRole('menu')).toBeTruthy()
   })
+
+  it('does not reposition when its own content scrolls', () => {
+    let menuWidth = 100
+    vi.mocked(Element.prototype.getBoundingClientRect).mockImplementation(function (this: Element) {
+      if (this.classList.contains('menutrigger')) return rect(215, 170, 24, 24)
+      if (this.classList.contains('menu')) return rect(0, 0, menuWidth, 142)
+      return rect(0, 0, 0, 0)
+    })
+
+    render(
+      <Menu align="right" label="Models" trigger={() => <span>Open</span>}>
+        {() => <div>Scrollable models</div>}
+      </Menu>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Models' }))
+
+    const menu = screen.getByRole('menu')
+    expect(menu.style.left).toBe('139px')
+    menuWidth = 80
+    fireEvent.scroll(menu)
+    expect(menu.style.left).toBe('139px')
+  })
 })

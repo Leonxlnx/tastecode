@@ -274,9 +274,6 @@ function DitherChoiceRow(props: {
         </div>
       </div>
 
-      <span className="model-selector__slider-label" aria-hidden>
-        {props.label}
-      </span>
       <span className="model-selector__slider-value" aria-hidden>
         {displayedLabel}
       </span>
@@ -402,14 +399,17 @@ export function ModelSelector(props: ModelSelectorProps) {
             ) : null}
 
             {effortOptions.length > 0 ? (
-              <DitherChoiceRow
-                label="Effort"
-                ariaLabel="Reasoning effort"
-                optionLabels={effortLabels}
-                selectedIndex={selectedEffortIndex}
-                disabled={props.disabled || effortOptions.length <= 1}
-                onCommitIndex={commitEffortIndex}
-              />
+              <div className="model-selector__effort">
+                <span className="model-selector__effort-title">Effort</span>
+                <DitherChoiceRow
+                  label="Effort"
+                  ariaLabel="Reasoning effort"
+                  optionLabels={effortLabels}
+                  selectedIndex={selectedEffortIndex}
+                  disabled={props.disabled || effortOptions.length <= 1}
+                  onCommitIndex={commitEffortIndex}
+                />
+              </div>
             ) : null}
           </div>
         </div>

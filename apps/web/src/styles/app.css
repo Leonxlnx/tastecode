@@ -3665,7 +3665,7 @@
 }
 
 .composer__design-beam.is-shelved {
-  margin-top: -9px;
+  margin-top: -10px;
 }
 
 .composer__prompt:focus-within {
@@ -3683,9 +3683,9 @@
   justify-content: flex-start;
   gap: 6px;
   min-width: 0;
-  min-height: 44px;
+  min-height: 52px;
   margin: 0;
-  padding: 4px 12px 13px;
+  padding: 8px 12px 14px;
   background: var(--bg-shelf);
   border-radius: var(--r-2xl) var(--r-2xl) 0 0;
   box-shadow:
@@ -4753,7 +4753,6 @@
   mix-blend-mode: var(--dither-bloom-blend);
 }
 
-.model-selector__slider-label,
 .model-selector__slider-value {
   position: absolute;
   top: 50%;
@@ -4768,14 +4767,17 @@
   line-height: 16px;
 }
 
-.model-selector__slider-label {
-  left: 14px;
-  color: color-mix(in oklab, var(--text-2) 70%, var(--text-3));
-}
-
 .model-selector__slider-value {
   right: 14px;
   color: var(--effort-value);
+}
+
+.model-selector__effort-title {
+  display: block;
+  margin: 1px 6px 5px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 520;
 }
 
 .model-selector__models {
@@ -4901,6 +4903,21 @@
     transform var(--dur-press) var(--ease-out);
 }
 
+.icon-btn.composer__dictation {
+  width: 30px;
+  height: 30px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-3) 58%, transparent),
+    color-mix(in srgb, var(--surface-2) 38%, transparent)
+  );
+  border: 1px solid color-mix(in srgb, var(--line-strong) 70%, transparent);
+  border-radius: 50%;
+  box-shadow:
+    inset 0 1px color-mix(in srgb, white 9%, transparent),
+    0 1px 1px color-mix(in srgb, black 18%, transparent);
+}
+
 @media (hover: hover) and (pointer: fine) {
   .shelf-control:hover:not(:disabled),
   :is(
@@ -4944,7 +4961,7 @@
   width: 30px;
   height: 30px;
   flex: none;
-  margin-left: 4px;
+  margin-left: 2px;
   border-radius: 50%;
 }
 

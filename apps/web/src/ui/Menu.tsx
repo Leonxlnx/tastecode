@@ -108,14 +108,18 @@ export function Menu(props: {
     }
 
     updatePosition()
+    const onScroll = (event: Event) => {
+      if (event.target instanceof Node && panel.current?.contains(event.target)) return
+      updatePosition()
+    }
     const resizeObserver =
       typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(updatePosition)
     if (panel.current) resizeObserver?.observe(panel.current)
     window.addEventListener('resize', updatePosition)
-    document.addEventListener('scroll', updatePosition, true)
+    document.addEventListener('scroll', onScroll, true)
     return () => {
       window.removeEventListener('resize', updatePosition)
-      document.removeEventListener('scroll', updatePosition, true)
+      document.removeEventListener('scroll', onScroll, true)
       resizeObserver?.disconnect()
     }
   }, [open, props.align, props.drop])
