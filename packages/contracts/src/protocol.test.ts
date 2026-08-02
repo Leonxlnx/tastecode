@@ -12,6 +12,8 @@ import {
   PushSchema,
   RequestSchema,
   ResponseSchema,
+  SkillCapabilitiesSchema,
+  SkillSchema,
 } from './protocol.js'
 
 describe('domain events', () => {
@@ -490,6 +492,68 @@ describe('protocol envelopes', () => {
       methods['mcp.startOAuth'].result.parse({
         loginId: 'mcp-login-2',
         authUrl: 'file:///tmp/token',
+      }),
+    ).toThrow()
+  })
+
+  it('validates provider-neutral Agent Skills inventory and mutations', () => {
+    const skill = SkillSchema.parse({
+      id: 'project-design',
+      name: 'design-taste',
+      displayName: 'Design taste',
+      description: 'Review interface decisions.',
+      source: { type: 'folder', path: 'D:\\project\\.agents\\skills\\design-taste' },
+      scope: 'project',
+      enabled: true,
+      dependencyErrors: [{ dependency: 'figma', message: 'The Figma connector is not installed.' }],
+      vendorExtension: 'must not cross the contract',
+    })
+
+    expect(skill.source.type).toBe('folder')
+    expect('vendorExtension' in skill).toBe(false)
+    expect(
+      SkillCapabilitiesSchema.parse({ inventory: true, configure: true, install: false }),
+    ).toEqual({ inventory: true, configure: true, install: false })
+
+    expect(
+      methods['skills.list'].params.parse({
+        provider: 'codex',
+        projectPath: 'D:\\project',
+      }),
+    ).toEqual({ provider: 'codex', projectPath: 'D:\\project' })
+    expect(
+      methods['skills.list'].result.parse({
+        capabilities: { inventory: true, configure: true, install: true },
+        skills: [skill],
+        errors: [{ path: 'D:\\broken\\SKILL.md', message: 'Missing frontmatter.' }],
+      }).skills[0]?.name,
+    ).toBe('design-taste')
+    expect(
+      methods['skills.setEnabled'].params.parse({
+        provider: 'codex',
+        projectPath: 'D:\\project',
+        skillId: skill.id,
+        enabled: false,
+      }).enabled,
+    ).toBe(false)
+    expect(
+      methods['skills.installFromFolder'].params.parse({
+        provider: 'codex',
+        projectPath: 'D:\\project',
+        folderPath: 'D:\\downloads\\my-skill',
+      }).folderPath,
+    ).toBe('D:\\downloads\\my-skill')
+    expect(
+      channels['skills.changed'].parse({ provider: 'codex', projectPath: 'D:\\project' }),
+    ).toEqual({ provider: 'codex', projectPath: 'D:\\project' })
+
+    expect(() => SkillSchema.parse({ ...skill, source: { type: 'folder', path: '' } })).toThrow()
+    expect(() =>
+      methods['skills.setEnabled'].params.parse({
+        provider: 'codex',
+        projectPath: 'D:\\project',
+        skillId: '',
+        enabled: true,
       }),
     ).toThrow()
   })
