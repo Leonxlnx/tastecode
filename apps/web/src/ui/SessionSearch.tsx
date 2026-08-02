@@ -14,11 +14,12 @@ const PROVIDERS: Array<{ id: ProviderId; label: string }> = [
 export function SessionSearch(props: {
   transport: Transport
   projects: Array<{ path: string; name?: string | undefined }>
+  initialProjectPath?: string | undefined
   onSelect: (threadId: string, turnId: string) => void
   onClose: () => void
 }) {
   const [query, setQuery] = useState('')
-  const [projectPath, setProjectPath] = useState('')
+  const [projectPath, setProjectPath] = useState(props.initialProjectPath ?? '')
   const [provider, setProvider] = useState<ProviderId | ''>('')
   const [results, setResults] = useState<SessionSearchResult[]>([])
   const [nextCursor, setNextCursor] = useState<string | null>(null)

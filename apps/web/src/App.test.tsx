@@ -62,7 +62,7 @@ let serverUnsavedWork = { isolated: false, uncommitted: false }
 let serverSidebarSettings: {
   mode: 'classic' | 'inbox'
   autoSettleDays: number | null
-} = { mode: 'inbox', autoSettleDays: 3 }
+} = { mode: 'classic', autoSettleDays: 3 }
 
 beforeEach(() => {
   transport.listeners.clear()
@@ -90,7 +90,7 @@ beforeEach(() => {
     },
   ]
   serverUnsavedWork = { isolated: false, uncommitted: false }
-  serverSidebarSettings = { mode: 'inbox', autoSettleDays: 3 }
+  serverSidebarSettings = { mode: 'classic', autoSettleDays: 3 }
 
   transport.request.mockImplementation((method: string, params: unknown) => {
     switch (method) {
@@ -435,6 +435,7 @@ describe('new chats', () => {
   })
 
   it('persists inbox mode and bounded inactivity settings on the server', async () => {
+    serverSidebarSettings.mode = 'inbox'
     render(<App />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))

@@ -143,6 +143,7 @@ export function App() {
   const [sidebarSettings, setSidebarSettings] = useState(DEFAULT_SIDEBAR_SETTINGS)
   const [paletteScope, setPaletteScope] = useState<CommandScope | null>(null)
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false)
+  const [sessionSearchProject, setSessionSearchProject] = useState<string>()
   const [searchJump, setSearchJump] = useState<{
     threadId: string
     turnId: string
@@ -936,6 +937,77 @@ export function App() {
     [transport],
   )
 
+  const hideSession = useCallback(
+    async (id: string, action: 'settle' | 'snooze', wakeAt?: number) => {
+      try {
+        const pending =
+          action === 'settle'
+            ? transport.request('thread.settle', { threadId: id })
+            : wakeAt === undefined
+              ? undefined
+              : transport.request('thread.snooze', { threadId: id, wakeAt })
+        if (!pending) return
+        const result = await pending
+        setProjects((current) =>
+          updateSession(current, id, (session) => ({
+            ...session,
+            lifecycle: result.lifecycle,
+          })),
+        )
+        if (activeIdRef.current !== id) return
+        const current = findSession(projects, id)
+        const next = projects
+          .flatMap((project) => project.sessions)
+          .filter((session) => session.id !== id && session.lifecycle.state === 'active')
+          .sort((a, b) => b.createdAt - a.createdAt)[0]
+        if (next) await selectSession(next.id)
+        else if (current) beginSession(current.project.path)
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : String(error))
+        await refreshProjects().catch(() => undefined)
+      }
+    },
+    [transport, projects, selectSession, beginSession, refreshProjects],
+  )
+
+  const restoreSession = useCallback(
+    async (id: string, action: 'unsettle' | 'unsnooze') => {
+      try {
+        const result =
+          action === 'unsettle'
+            ? await transport.request('thread.unsettle', { threadId: id })
+            : await transport.request('thread.unsnooze', { threadId: id })
+        setProjects((current) =>
+          updateSession(current, id, (session) => ({
+            ...session,
+            lifecycle: result.lifecycle,
+          })),
+        )
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : String(error))
+        await refreshProjects().catch(() => undefined)
+      }
+    },
+    [transport, refreshProjects],
+  )
+
+  const keepSessionActive = useCallback(
+    async (id: string, keepActive: boolean) => {
+      try {
+        const { lifecycle } = await transport.request('thread.setKeepActive', {
+          threadId: id,
+          keepActive,
+        })
+        setProjects((current) =>
+          updateSession(current, id, (session) => ({ ...session, lifecycle })),
+        )
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : String(error))
+      }
+    },
+    [transport],
+  )
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!provider) return
@@ -945,6 +1017,7 @@ export function App() {
         event.preventDefault()
         setSettingsOpen(false)
         setPaletteScope(null)
+        setSessionSearchProject(undefined)
         setSessionSearchOpen(true)
         return
       }
@@ -1033,7 +1106,10 @@ export function App() {
       detail: 'Messages and tool output across projects',
       group: 'Actions',
       shortcut: labels.searchSessions,
-      run: () => setSessionSearchOpen(true),
+      run: () => {
+        setSessionSearchProject(undefined)
+        setSessionSearchOpen(true)
+      },
     },
     {
       id: 'new-chat',
@@ -1131,11 +1207,23 @@ export function App() {
           activeProjectPath={activePath}
           activeSessionId={activeId}
           providerName={providerName(provider, acpAgentName)}
+          mode={sidebarSettings.mode}
+          inbox={{
+            onSettle: (id) => void hideSession(id, 'settle'),
+            onUnsettle: (id) => void restoreSession(id, 'unsettle'),
+            onSnooze: (id, wakeAt) => void hideSession(id, 'snooze', wakeAt),
+            onUnsnooze: (id) => void restoreSession(id, 'unsnooze'),
+            onKeepActive: (id, keepActive) => void keepSessionActive(id, keepActive),
+          }}
           collapsed={collapsed}
           account={account}
           onClose={() => setCollapsed(true)}
           onAddProject={() => void addProject()}
-          onNewSession={beginSession}
+          onNewSession={(path) => {
+            if (path) beginSession(path)
+            else if (projects.length === 1 && projects[0]) beginSession(projects[0].path)
+            else setPaletteScope('projects')
+          }}
           onSelectSession={(id) => void selectSession(id)}
           onRenameProject={(path, name) => {
             setProjects((c) => c.map((p) => (p.path === path ? { ...p, name } : p)))
@@ -1178,7 +1266,10 @@ export function App() {
               }),
             )
           }
-          onOpenSearch={() => setSessionSearchOpen(true)}
+          onOpenSearch={(projectPath) => {
+            setSessionSearchProject(projectPath)
+            setSessionSearchOpen(true)
+          }}
           onOpenSettings={() => setSettingsOpen(true)}
         />
 
@@ -1320,6 +1411,7 @@ export function App() {
         <SessionSearch
           transport={transport}
           projects={projects}
+          initialProjectPath={sessionSearchProject}
           onSelect={(threadId, turnId) => {
             setSessionSearchOpen(false)
             setSearchJump((current) => ({

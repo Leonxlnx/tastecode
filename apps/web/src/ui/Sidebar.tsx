@@ -14,6 +14,7 @@ import { isMacOS } from '../bridge.js'
 import { SHORTCUTS, shortcutAria, shortcutLabel } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
 import { ShortcutHint } from './ShortcutHint.js'
+import { InboxSidebar, type InboxActions } from './InboxSidebar.js'
 
 /**
  * The rail. Collapsible, searchable, and everything in it can be renamed.
@@ -52,10 +53,12 @@ export function Sidebar(props: {
   activeSessionId: string | undefined
   account: Account | undefined
   providerName: string
+  mode?: 'classic' | 'inbox'
+  inbox?: InboxActions | undefined
   collapsed: boolean
   onClose: () => void
   onAddProject: () => void
-  onNewSession: (projectPath: string) => void
+  onNewSession: (projectPath?: string) => void
   onSelectSession: (id: string) => void
   onRenameProject: (path: string, name: string) => void
   onRemoveProject: (path: string) => void
@@ -68,15 +71,21 @@ export function Sidebar(props: {
     targetId: string,
     position: DropPosition,
   ) => void
-  onOpenSearch: () => void
+  onOpenSearch: (projectPath?: string) => void
   onOpenSettings: () => void
 }) {
   const [edgeRevealed, setEdgeRevealed] = useState(false)
+  const [scope, setScope] = useState('')
   const macOS = isMacOS()
+  const inbox = props.mode === 'inbox' && props.inbox !== undefined
 
   useEffect(() => {
     if (!props.collapsed) setEdgeRevealed(false)
   }, [props.collapsed])
+
+  useEffect(() => {
+    if (scope && !props.projects.some((project) => project.path === scope)) setScope('')
+  }, [props.projects, scope])
 
   const pinned = props.projects.filter((project) => project.pinned)
   const rest = props.projects.filter((project) => !project.pinned)
@@ -108,6 +117,12 @@ export function Sidebar(props: {
             className="navitem"
             aria-keyshortcuts={shortcutAria(SHORTCUTS.newChat)}
             onClick={() => {
+              if (inbox) {
+                props.onNewSession(
+                  scope || (props.projects.length === 1 ? props.projects[0]?.path : undefined),
+                )
+                return
+              }
               const project =
                 props.projects.find((candidate) => candidate.path === props.activeProjectPath) ??
                 props.projects[0]
@@ -131,7 +146,7 @@ export function Sidebar(props: {
           <button
             type="button"
             className="search search--button"
-            onClick={props.onOpenSearch}
+            onClick={() => props.onOpenSearch(inbox && scope ? scope : undefined)}
             aria-keyshortcuts={shortcutAria(SHORTCUTS.searchSessions)}
           >
             <Search size={13} aria-hidden />
@@ -141,22 +156,40 @@ export function Sidebar(props: {
         </div>
 
         <div className="rail__body">
-          {pinned.length > 0 ? (
-            <>
-              <p className="section">Pinned</p>
-              {pinned.map((project) => (
-                <ProjectRow key={project.path} project={project} {...props} forceOpen={false} />
-              ))}
-            </>
-          ) : null}
-
-          <p className="section">Projects</p>
-          {rest.length === 0 ? (
-            <p className="rail__hint">Nothing here yet.</p>
+          {inbox ? (
+            <InboxSidebar
+              projects={props.projects}
+              scope={scope}
+              activeSessionId={props.activeSessionId}
+              actions={props.inbox!}
+              onScopeChange={setScope}
+              onNewSession={(path) => props.onNewSession(path)}
+              onSelectSession={props.onSelectSession}
+              onRenameProject={props.onRenameProject}
+              onRemoveProject={props.onRemoveProject}
+              onTogglePin={props.onTogglePin}
+              onRenameSession={props.onRenameSession}
+              onArchiveSession={props.onDeleteSession}
+            />
           ) : (
-            rest.map((project) => (
-              <ProjectRow key={project.path} project={project} {...props} forceOpen={false} />
-            ))
+            <>
+              {pinned.length > 0 ? (
+                <>
+                  <p className="section">Pinned</p>
+                  {pinned.map((project) => (
+                    <ProjectRow key={project.path} project={project} {...props} forceOpen={false} />
+                  ))}
+                </>
+              ) : null}
+              <p className="section">Projects</p>
+              {rest.length === 0 ? (
+                <p className="rail__hint">Nothing here yet.</p>
+              ) : (
+                rest.map((project) => (
+                  <ProjectRow key={project.path} project={project} {...props} forceOpen={false} />
+                ))
+              )}
+            </>
           )}
         </div>
 
