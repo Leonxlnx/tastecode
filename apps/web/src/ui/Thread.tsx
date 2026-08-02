@@ -7,6 +7,7 @@ import type {
   Item,
   PlanStep,
 } from '@harness/contracts'
+import { ThinkingOrb } from 'thinking-orbs'
 import {
   BookOpen,
   Brain,
@@ -48,6 +49,7 @@ import { isAtBottom, modeForNewTurn, shouldReleaseAnchor, type ScrollMode } from
 export function Thread(props: {
   items: Item[]
   running: boolean
+  searching?: boolean
   activeTurn: { id: string; startedAt: number } | undefined
   plan: PlanStep[]
   diff: string | undefined
@@ -238,6 +240,7 @@ export function Thread(props: {
                   responseText={responseLead ? presentation.responseText : undefined}
                   settling={settling}
                   showWorkingRail={live && presentation?.firstResponseIndex === row.index}
+                  searching={props.searching}
                   startedAt={props.activeTurn?.startedAt}
                   showCompletionRail={
                     !live &&
@@ -254,7 +257,7 @@ export function Thread(props: {
         {props.running &&
         props.activeTurn &&
         activePresentation?.firstResponseIndex === undefined ? (
-          <WorkingRail startedAt={props.activeTurn.startedAt} />
+          <WorkingRail startedAt={props.activeTurn.startedAt} searching={props.searching} />
         ) : null}
 
         {/* Above the plan and the diff: it is the only thing here that blocks
@@ -421,6 +424,7 @@ function Row({
   responseText,
   settling,
   showWorkingRail,
+  searching,
   startedAt,
   showCompletionRail,
 }: {
@@ -432,6 +436,7 @@ function Row({
   responseText: string | undefined
   settling: boolean
   showWorkingRail: boolean
+  searching: boolean | undefined
   startedAt: number | undefined
   showCompletionRail: boolean
 }) {
@@ -455,7 +460,9 @@ function Row({
     const text = responseText ?? item.text ?? ''
     return (
       <>
-        {showWorkingRail && startedAt !== undefined ? <WorkingRail startedAt={startedAt} /> : null}
+        {showWorkingRail && startedAt !== undefined ? (
+          <WorkingRail startedAt={startedAt} searching={searching} />
+        ) : null}
         <div className={`reply${live ? ' is-streaming' : ''}`}>
           {showCompletionRail ? (
             <CompletionRail activity={[]} elapsedMs={elapsedMs ?? 0} settling={settling} />
@@ -471,7 +478,9 @@ function Row({
 
   return (
     <>
-      {showWorkingRail && startedAt !== undefined ? <WorkingRail startedAt={startedAt} /> : null}
+      {showWorkingRail && startedAt !== undefined ? (
+        <WorkingRail startedAt={startedAt} searching={searching} />
+      ) : null}
       <details className={`aux aux--${item.type} ${live ? 'aux--live' : ''}`}>
         <summary className="aux__row">
           <span className="aux__glyph" aria-hidden>
@@ -571,14 +580,18 @@ function ResponseActions({ text, createdAt }: { text: string; createdAt: number 
   )
 }
 
-function WorkingRail({ startedAt }: { startedAt: number }) {
+function WorkingRail({
+  startedAt,
+  searching,
+}: {
+  startedAt: number
+  searching: boolean | undefined
+}) {
   return (
     <div className="activity activity--working">
       <div className="activity__summary">
-        <span className="activity__working-dots" aria-hidden>
-          <span />
-          <span />
-          <span />
+        <span className="activity__working-orb">
+          <ThinkingOrb state={searching ? 'searching' : 'working'} size={20} aria-hidden />
         </span>
         <span>
           Working for <WorkingTimer startedAt={startedAt} />

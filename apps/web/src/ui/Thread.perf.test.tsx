@@ -45,6 +45,27 @@ function timeMount(count: number): number {
 }
 
 describe('thread at scale', () => {
+  it('shows working and searching states in the activity rail', () => {
+    const props = {
+      items: [],
+      running: true,
+      activeTurn: { id: 'turn-1', startedAt: 0 },
+      plan: [],
+      diff: undefined,
+      approvals: [],
+      onDecide: () => {},
+    }
+    const rendered = render(<Thread {...props} searching={false} />)
+    expect(
+      document.querySelector('.activity__working-orb canvas')?.getAttribute('aria-label'),
+    ).toBe('Working…')
+
+    rendered.rerender(<Thread {...props} searching />)
+    expect(
+      document.querySelector('.activity__working-orb canvas')?.getAttribute('aria-label'),
+    ).toBe('Searching…')
+  })
+
   it('costs about the same at a thousand items as at a hundred', () => {
     // The property virtualisation buys us. Rendering every row makes this ratio
     // track the item count instead — a tenfold difference, not a small one.

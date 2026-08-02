@@ -1440,6 +1440,7 @@ export function App() {
                 key={activeId}
                 items={thread.items}
                 running={thread.running}
+                searching={searching}
                 activeTurn={thread.activeTurn}
                 plan={thread.plan}
                 diff={thread.diff}
@@ -1491,7 +1492,6 @@ export function App() {
               autoReviewSupported={autoReviewSupported}
               disabled={!activePath}
               running={thread.running}
-              searching={searching}
               newSession={!activeId}
               isolate={active?.session.worktreeBranch ? true : isolateSession}
               designMode={designMode}

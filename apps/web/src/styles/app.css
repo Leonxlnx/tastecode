@@ -2427,27 +2427,12 @@
   font-variant-numeric: tabular-nums;
 }
 
-.activity__working-dots {
+.activity__working-orb {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-}
-
-.activity__working-dots span {
-  width: 4px;
-  height: 4px;
-  background: var(--text-3);
-  border-radius: 50%;
-  opacity: 0.45;
-  animation: activity-status-pulse 2s infinite;
-}
-
-.activity__working-dots span:nth-child(2) {
-  animation-delay: 200ms;
-}
-
-.activity__working-dots span:nth-child(3) {
-  animation-delay: 400ms;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
 }
 
 .activity.is-settling {
@@ -2468,30 +2453,11 @@
   }
 }
 
-@keyframes activity-status-pulse {
-  0%,
-  40% {
-    opacity: 1;
-    animation-timing-function: steps(6);
-  }
-
-  50%,
-  90% {
-    opacity: 0.45;
-    animation-timing-function: steps(6);
-  }
-
-  100% {
-    opacity: 1;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .thread__row.is-entering > :is(.reply, .aux, .activity),
   .thread__row.is-entering > .said,
   .activity--working,
-  .activity.is-settling,
-  .activity__working-dots span {
+  .activity.is-settling {
     animation: none;
   }
 }

@@ -1067,23 +1067,6 @@ describe('live sessions', () => {
 
     const composer = screen.getByPlaceholderText('Do anything')
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
-    expect(document.querySelector('.orb__icon--stop canvas')?.getAttribute('aria-label')).toBe(
-      'Working…',
-    )
-    emitThreadEvent('thread-1', {
-      type: 'item.started',
-      item: {
-        id: 'search-1',
-        turnId: 'turn-1',
-        type: 'tool_call',
-        status: 'started',
-        text: 'Searching the web',
-        createdAt: 1,
-      },
-    })
-    expect(document.querySelector('.orb__icon--stop canvas')?.getAttribute('aria-label')).toBe(
-      'Searching…',
-    )
     fireEvent.change(composer, { target: { value: 'Queue this next' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
 
