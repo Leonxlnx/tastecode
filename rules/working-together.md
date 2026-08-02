@@ -39,7 +39,9 @@ a draft PR, not an issue — the PR already says what you are doing.
   bar, so the roadmap stays honest without anyone editing the roadmap.
 - **Label the area** — `area:server`, `area:ui`, `area:adapters`, `area:desktop`. That is
   how you see at a glance whether something is yours.
-- **Assign it when you start**, not when you file it. An unassigned issue is available.
+- **Assign exactly one owner when you file it.** The assignee owns the next action; update
+  the assignment before handing work to someone else. Assignment signals ownership, not
+  necessarily active implementation.
 - **One issue, one PR**, where possible. If a PR closes three issues it was too big.
 
 Close issues from the PR, never by hand: put `Closes #12` in the PR body and it closes on

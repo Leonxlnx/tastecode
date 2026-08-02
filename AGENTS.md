@@ -32,9 +32,9 @@ controls, a real terminal, MCP and Agent Skills. M4 (the design agent) is next. 
 
 - **Many small commits**, one logical change each. Push after every one — unpushed work is
   invisible to the other two.
-- **Assign an issue before starting it.** The assignee says who owns active work; the first
-  draft PR says which files they are changing. Work starting immediately may use only the
-  draft PR, per [rules/working-together.md](./rules/working-together.md).
+- **Every issue has exactly one directly responsible assignee from creation.** The
+  assignee owns the next action; update it before handing work to someone else. The first
+  draft PR says which files active work changes.
 - **Open a draft PR on the first commit**, not when the work is finished. That draft is how
   everyone else sees which files you are in.
 - **One PR does one thing.** Never fold a design change into a PR about logic; the reviewer
