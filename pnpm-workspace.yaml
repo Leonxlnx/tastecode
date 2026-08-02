@@ -8,3 +8,5 @@ allowBuilds:
   # Downloads the Electron binary for the current platform. Without this the
   # desktop app installs but cannot start.
   electron: true
+  # Builds the official PTY native binding for this platform.
+  node-pty: true
