@@ -62,13 +62,13 @@ CI.
 
 ### M3 — Review & control ✅
 
-Diff review with per-hunk accept/reject, mode indicator, panic stop, terminal pane,
+Diff review with per-hunk accept/reject, mode indicator, terminal pane,
 MCP management, Agent Skills, cross-session search. _(Approval cards landed early
 in M1.)_
 → _We let an agent run autonomously and feel fine about it._ **Done.**
 
-Shipped: per-hunk diff review, explicit permission modes, a global panic stop, a real PTY
-terminal, MCP and Agent Skills management, cross-session search, queued prompts and the
+Shipped: per-hunk diff review, explicit permission modes, a real PTY terminal, MCP and
+Agent Skills management, cross-session search, queued prompts and the
 inbox session lifecycle. The milestone closed with 23/23 issues complete after green
 Windows and macOS CI.
 

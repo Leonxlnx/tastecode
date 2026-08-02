@@ -46,7 +46,6 @@ build it. This exists so nothing gets forgotten and so we can argue about scope 
 - [ ] `v1` "What changed this session" summary
 - [ ] `v1` Approval cards: command + working dir + allow once / session / pattern / deny
 - [ ] `v1` Mode indicator: read-only, ask, autonomous
-- [ ] `v1` Global panic stop
 - [ ] `v2` Diff-first review mode
 - [ ] `v2` Cost guardrail before an expensive turn
 

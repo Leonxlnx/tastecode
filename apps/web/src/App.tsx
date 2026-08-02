@@ -34,7 +34,6 @@ import { CommandPalette, type CommandScope, type PaletteCommand } from './ui/Com
 import { CheckoutDiscardDialog } from './ui/CheckoutDiscardDialog.js'
 import { Composer, type WorkspaceInfo } from './ui/Composer.js'
 import { Onboarding } from './ui/Onboarding.js'
-import { PanicStop } from './ui/PanicStop.js'
 import { RollbackDialog, type Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearch } from './ui/SessionSearch.js'
 import { Settings } from './ui/Settings.js'
@@ -1218,7 +1217,6 @@ export function App() {
             setProvider(id)
           }}
         />
-        <PanicStop transport={transport} />
       </>
     )
   }
@@ -1611,7 +1609,6 @@ export function App() {
           </button>
         </div>
       ) : null}
-      <PanicStop transport={transport} />
     </div>
   )
 }

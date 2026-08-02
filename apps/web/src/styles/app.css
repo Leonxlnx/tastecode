@@ -5012,67 +5012,6 @@
   text-align: center;
 }
 
-.panic-stop {
-  position: fixed;
-  z-index: 120;
-  top: calc(var(--titlebar-h) + 10px);
-  right: 12px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 7px;
-  pointer-events: none;
-}
-
-.panic-stop__button {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 34px;
-  padding: 0 12px;
-  background: color-mix(in oklab, var(--error) 14%, var(--surface-2));
-  border: 1px solid color-mix(in oklab, var(--error) 55%, var(--line));
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-flyout);
-  color: var(--error);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--t-sm);
-  font-weight: 560;
-  pointer-events: auto;
-}
-
-.panic-stop__button:hover:not(:disabled),
-.panic-stop__button:focus-visible {
-  background: var(--error);
-  color: var(--on-danger);
-}
-
-.panic-stop__button:disabled {
-  cursor: default;
-  opacity: 0.7;
-}
-
-.panic-stop__button svg {
-  width: 15px;
-  height: 15px;
-}
-
-.panic-stop__result {
-  width: min(420px, calc(100vw - 24px));
-  margin: 0;
-  padding: 9px 11px;
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong);
-  border-left: 2px solid var(--error);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-flyout);
-  color: var(--text-2);
-  font-size: var(--t-sm);
-  line-height: 1.45;
-  pointer-events: auto;
-}
-
 .notice {
   position: fixed;
   bottom: 18px;

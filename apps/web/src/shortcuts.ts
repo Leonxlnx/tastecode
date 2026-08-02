@@ -11,7 +11,6 @@ export const SHORTCUTS = {
   settings: { key: ',' },
   focusComposer: { key: 'l' },
   toggleSidebar: { key: 'b' },
-  panicStop: { key: '.', shift: true },
   searchSessions: { key: 'f', shift: true },
 } satisfies Record<string, Shortcut>
 
