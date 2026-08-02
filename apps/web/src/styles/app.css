@@ -2131,6 +2131,73 @@
   flex: none;
 }
 
+.zoom-hud {
+  position: fixed;
+  z-index: 40;
+  top: calc(var(--titlebar-h) + 10px);
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-flyout);
+  color: var(--text-2);
+}
+
+.zoom-hud button {
+  display: inline-flex;
+  min-width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-md);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  transition: transform var(--dur-press) var(--ease-out);
+}
+
+.zoom-hud button:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.zoom-hud button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.zoom-hud button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.zoom-hud output {
+  min-width: 48px;
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.zoom-hud__rule {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--line-strong);
+}
+
+.zoom-hud .zoom-hud__reset {
+  padding-inline: 9px;
+}
+
 .terminal-trigger {
   display: inline-flex;
   align-items: center;

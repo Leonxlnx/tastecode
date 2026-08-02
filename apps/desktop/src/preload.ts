@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 /**
  * The entire native surface exposed to the renderer.
@@ -14,6 +14,15 @@ const api = {
   pickFiles: (): Promise<string[]> => ipcRenderer.invoke('harness:pickFiles'),
   savePastedImage: (image: { type: string; bytes: ArrayBuffer }): Promise<string> =>
     ipcRenderer.invoke('harness:savePastedImage', image),
+  setZoom: (action: 'in' | 'out' | 'reset'): Promise<void> =>
+    ipcRenderer.invoke('harness:setZoom', action),
+  onZoomChange: (listener: (factor: number) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, factor: unknown) => {
+      if (typeof factor === 'number' && Number.isFinite(factor)) listener(factor)
+    }
+    ipcRenderer.on('harness:zoomChanged', handler)
+    return () => ipcRenderer.removeListener('harness:zoomChanged', handler)
+  },
   isDesktop: true,
 }
 

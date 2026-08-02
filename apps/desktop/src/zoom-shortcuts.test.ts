@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nextZoomFactor, zoomShortcut } from './zoom-shortcuts.js'
+import { isZoomAction, nextZoomFactor, zoomShortcut } from './zoom-shortcuts.js'
 
 describe('desktop zoom shortcuts', () => {
   it('maps control and command zoom keys without stealing unrelated shortcuts', () => {
@@ -16,5 +16,11 @@ describe('desktop zoom shortcuts', () => {
     expect(nextZoomFactor(1.7, 'reset')).toBe(1)
     expect(nextZoomFactor(2, 'in')).toBe(2)
     expect(nextZoomFactor(0.5, 'out')).toBe(0.5)
+  })
+
+  it('rejects invalid renderer actions', () => {
+    expect(isZoomAction('reset')).toBe(true)
+    expect(isZoomAction('larger')).toBe(false)
+    expect(isZoomAction({ action: 'in' })).toBe(false)
   })
 })

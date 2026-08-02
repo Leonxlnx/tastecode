@@ -13,7 +13,12 @@ import {
   type WebContents,
 } from 'electron'
 import { allowsMicrophoneRequest } from './media-permissions.js'
-import { nextZoomFactor, zoomShortcut } from './zoom-shortcuts.js'
+import {
+  isZoomAction,
+  nextZoomFactor,
+  type ZoomAction,
+  zoomShortcut,
+} from './zoom-shortcuts.js'
 
 /**
  * Electron shell. Deliberately thin: it opens a window and nothing else.
@@ -78,7 +83,7 @@ function createWindow(): void {
     const action = zoomShortcut(input)
     if (!action) return
     event.preventDefault()
-    window.webContents.setZoomFactor(nextZoomFactor(window.webContents.getZoomFactor(), action))
+    applyZoom(window, action)
   })
 
   if (devServer) {
@@ -86,6 +91,19 @@ function createWindow(): void {
   } else {
     void window.loadFile(path.join(here, '../../web/dist/index.html'))
   }
+}
+
+ipcMain.handle('harness:setZoom', (event, action: unknown) => {
+  if (!isZoomAction(action)) throw new Error('Invalid zoom action')
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window) throw new Error('No window for zoom action')
+  applyZoom(window, action)
+})
+
+function applyZoom(window: BrowserWindow, action: ZoomAction): void {
+  const factor = nextZoomFactor(window.webContents.getZoomFactor(), action)
+  window.webContents.setZoomFactor(factor)
+  window.webContents.send('harness:zoomChanged', factor)
 }
 
 /**

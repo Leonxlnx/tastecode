@@ -1,5 +1,9 @@
 export type ZoomAction = 'in' | 'out' | 'reset'
 
+export function isZoomAction(value: unknown): value is ZoomAction {
+  return value === 'in' || value === 'out' || value === 'reset'
+}
+
 export function zoomShortcut(input: {
   key: string
   control: boolean

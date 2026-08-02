@@ -41,6 +41,7 @@ import { Sidebar, type Project } from './ui/Sidebar.js'
 import { StageHeader } from './ui/StageHeader.js'
 import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
+import { ZoomHud } from './ui/ZoomHud.js'
 import { serverUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-recorder.js'
@@ -1399,6 +1400,7 @@ export function App() {
   return (
     <div className={`shell ${collapsed ? 'is-narrow' : ''}`}>
       <TitleBar collapsed={collapsed} onToggleRail={() => setCollapsed((c) => !c)} />
+      {isDesktop ? <ZoomHud /> : null}
 
       <div className="shell__body">
         <Sidebar

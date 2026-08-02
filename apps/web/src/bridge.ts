@@ -10,8 +10,12 @@ type Bridge = {
   pickSkillFolder: () => Promise<string | undefined>
   pickFiles: () => Promise<string[]>
   savePastedImage: (image: { type: string; bytes: ArrayBuffer }) => Promise<string>
+  setZoom: (action: ZoomAction) => Promise<void>
+  onZoomChange: (listener: (factor: number) => void) => () => void
   isDesktop: true
 }
+
+export type ZoomAction = 'in' | 'out' | 'reset'
 
 const bridge = (globalThis as { harness?: Bridge }).harness
 
@@ -40,4 +44,12 @@ export async function pickFiles(): Promise<string[]> {
 export async function savePastedImage(file: File): Promise<string | undefined> {
   if (!bridge) return undefined
   return bridge.savePastedImage({ type: file.type, bytes: await file.arrayBuffer() })
+}
+
+export function setAppZoom(action: ZoomAction): Promise<void> {
+  return bridge?.setZoom(action) ?? Promise.resolve()
+}
+
+export function onAppZoomChange(listener: (factor: number) => void): () => void {
+  return bridge?.onZoomChange(listener) ?? (() => undefined)
 }
