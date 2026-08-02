@@ -53,6 +53,15 @@ controls, a real terminal, MCP and Agent Skills. M4 (the design agent) is next. 
 - Platform-specific code **run** on both, not just reviewed
 - Anything visual has a screenshot in the PR body
 
+## When hosted CI is unavailable
+
+- Run `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm typecheck`, `pnpm test` and
+  `pnpm build` from the repository root.
+- For UI or server work, run `pnpm dev` and exercise the affected flow manually. Keep
+  local binds on `127.0.0.1`.
+- Record those commands and results in the PR body. Local checks do not prove cross-
+  platform compatibility: keep the PR unmerged until Windows and macOS CI run clean.
+
 ## Traps in this repo
 
 Each of these cost someone hours. They are not preferences.
