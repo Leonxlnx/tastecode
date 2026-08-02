@@ -1070,6 +1070,75 @@
   margin-top: 5px;
 }
 
+.mcp-row__actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+  max-width: 230px;
+}
+
+.settings__action.is-danger {
+  color: var(--error);
+}
+
+.mcp-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+  padding: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--bg-rail);
+}
+
+.mcp-editor label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+}
+
+.mcp-editor small {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.mcp-editor input,
+.mcp-editor textarea {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  outline: none;
+  background: var(--surface-1);
+  color: var(--text);
+  font: inherit;
+}
+
+.mcp-editor input:focus,
+.mcp-editor textarea:focus {
+  border-color: var(--text-3);
+}
+
+.mcp-editor textarea {
+  min-height: 130px;
+  resize: vertical;
+}
+
+.mcp-editor__wide,
+.mcp-editor footer {
+  grid-column: 1 / -1;
+}
+
+.mcp-editor footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* ---------- command palette ---------- */
 
 .command-palette {

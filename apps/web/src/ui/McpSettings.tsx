@@ -1,9 +1,16 @@
-import { useCallback, useEffect, useState } from 'react'
-import type { McpServer, McpTransport, ProviderId, ResultOf } from '@harness/contracts'
-import { AlertTriangle } from 'lucide-react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import type {
+  McpServer,
+  McpServerConfig,
+  McpTransport,
+  ProviderId,
+  ResultOf,
+} from '@harness/contracts'
+import { AlertTriangle, Plus, Trash2 } from 'lucide-react'
 import type { Transport } from '../transport.js'
 
 type Inventory = ResultOf<'mcp.list'>
+type Editor = { mode: 'add' | 'edit'; id: string; displayName: string; transport: string }
 
 export function McpSettings(props: {
   transport: Transport
@@ -13,6 +20,7 @@ export function McpSettings(props: {
   projectName: string | undefined
 }) {
   const [inventory, setInventory] = useState<Inventory>()
+  const [editor, setEditor] = useState<Editor>()
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
@@ -49,6 +57,95 @@ export function McpSettings(props: {
     })
   }, [props.transport, props.provider, props.projectPath, refresh])
 
+  async function applyChange(action: () => Promise<unknown>, success: string): Promise<boolean> {
+    setError(undefined)
+    setNotice(undefined)
+    try {
+      await action()
+      setNotice(success)
+      if (inventory?.capabilities.reload && props.projectPath) {
+        try {
+          await props.transport.request('mcp.reload', {
+            provider: props.provider,
+            projectPath: props.projectPath,
+          })
+          setNotice(`${success} Active sessions reloaded.`)
+        } catch (cause) {
+          setNotice(`${success} ${message(cause)}`)
+        }
+      }
+      await refresh()
+      return true
+    } catch (cause) {
+      setError(message(cause))
+      return false
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  async function save(event: FormEvent): Promise<void> {
+    event.preventDefault()
+    if (!editor || !props.projectPath) return
+    let server: McpServerConfig
+    try {
+      server = {
+        id: editor.id.trim(),
+        enabled: true,
+        ...(editor.displayName.trim() ? { displayName: editor.displayName.trim() } : {}),
+        transport: JSON.parse(editor.transport) as McpTransport,
+      }
+    } catch {
+      setError('Transport must be valid JSON.')
+      return
+    }
+    setBusy('editor')
+    const saved = await applyChange(
+      () =>
+        props.transport.request(editor.mode === 'add' ? 'mcp.add' : 'mcp.update', {
+          provider: props.provider,
+          projectPath: props.projectPath!,
+          server,
+        }),
+      editor.mode === 'add' ? 'Server added.' : 'Server updated.',
+    )
+    if (saved) setEditor(undefined)
+  }
+
+  function toggle(server: McpServer): void {
+    if (!props.projectPath) return
+    setBusy(server.id)
+    void applyChange(
+      () =>
+        server.enabled
+          ? props.transport.request('mcp.add', {
+              provider: props.provider,
+              projectPath: props.projectPath!,
+              server: { id: server.id, enabled: false },
+            })
+          : props.transport.request('mcp.remove', {
+              provider: props.provider,
+              projectPath: props.projectPath!,
+              serverId: server.id,
+            }),
+      server.enabled ? 'Server disabled for this project.' : 'Project override removed.',
+    )
+  }
+
+  function remove(server: McpServer): void {
+    if (!props.projectPath || !window.confirm(`Remove ${name(server)} from this project?`)) return
+    setBusy(server.id)
+    void applyChange(
+      () =>
+        props.transport.request('mcp.remove', {
+          provider: props.provider,
+          projectPath: props.projectPath!,
+          serverId: server.id,
+        }),
+      'Server removed.',
+    )
+  }
+
   async function signIn(server: McpServer): Promise<void> {
     if (!props.projectPath) return
     setBusy(server.id)
@@ -82,10 +179,30 @@ export function McpSettings(props: {
   return (
     <section className="settings__panel mcp-settings" aria-labelledby="settings-mcp">
       <header className="mcp-settings__header">
-        <h1 className="settings__title" id="settings-mcp">
-          MCP servers
-        </h1>
-        <p>{project ? `Available in ${project}` : 'Choose a project to inspect its servers.'}</p>
+        <div>
+          <h1 className="settings__title" id="settings-mcp">
+            MCP servers
+          </h1>
+          <p>{project ? `Available in ${project}` : 'Choose a project to inspect its servers.'}</p>
+        </div>
+        {props.projectPath && inventory?.capabilities.add ? (
+          <button
+            className="settings__action"
+            type="button"
+            disabled={busy !== undefined}
+            onClick={() =>
+              setEditor({
+                mode: 'add',
+                id: '',
+                displayName: '',
+                transport: '{\n  "type": "http",\n  "url": "https://example.com/mcp"\n}',
+              })
+            }
+          >
+            <Plus size={14} aria-hidden />
+            Add server
+          </button>
+        ) : null}
       </header>
 
       {error ? (
@@ -95,15 +212,34 @@ export function McpSettings(props: {
       ) : null}
       {notice ? <p className="mcp-settings__message">{notice}</p> : null}
       {status ? <p className="mcp-settings__empty">{status}</p> : null}
+      {editor ? (
+        <ServerEditor
+          editor={editor}
+          busy={busy === 'editor'}
+          onChange={setEditor}
+          onCancel={() => setEditor(undefined)}
+          onSubmit={(event) => void save(event)}
+        />
+      ) : null}
       {inventory?.capabilities.inventory && inventory.servers.length ? (
         <div className="settings__group">
           {inventory.servers.map((server) => (
             <ServerRow
               key={server.id}
               server={server}
-              canSignIn={inventory.capabilities.startOAuth}
+              capabilities={inventory.capabilities}
               busy={busy === server.id}
               onSignIn={() => void signIn(server)}
+              onToggle={() => toggle(server)}
+              onEdit={() =>
+                setEditor({
+                  mode: 'edit',
+                  id: server.id,
+                  displayName: server.displayName ?? '',
+                  transport: JSON.stringify(server.transport, null, 2),
+                })
+              }
+              onRemove={() => remove(server)}
             />
           ))}
         </div>
@@ -114,14 +250,25 @@ export function McpSettings(props: {
 
 function ServerRow(props: {
   server: McpServer
-  canSignIn: boolean
+  capabilities: Inventory['capabilities']
   busy: boolean
   onSignIn: () => void
+  onToggle: () => void
+  onEdit: () => void
+  onRemove: () => void
 }) {
   const needsOAuth =
-    props.canSignIn &&
+    props.capabilities.startOAuth &&
     props.server.auth.status === 'sign_in_required' &&
     props.server.auth.method === 'oauth'
+  const canToggle =
+    props.capabilities.remove &&
+    ((!props.server.enabled && props.server.scope === 'project') ||
+      (props.capabilities.add && props.server.scope === 'global'))
+  const canEdit =
+    props.capabilities.update && props.server.scope === 'project' && props.server.transport
+  const canRemove =
+    props.capabilities.remove && props.server.scope === 'project' && props.server.enabled
   return (
     <article className={`settings__row mcp-row${props.server.enabled ? '' : ' is-disabled'}`}>
       <div className="settings__row-copy">
@@ -156,18 +303,118 @@ function ServerRow(props: {
           )}
         </details>
       </div>
-      {needsOAuth ? (
+      <div className="mcp-row__actions">
+        {needsOAuth ? (
+          <button
+            className="settings__action"
+            type="button"
+            disabled={props.busy}
+            onClick={props.onSignIn}
+          >
+            Sign in
+          </button>
+        ) : null}
+        {canToggle ? (
+          <button
+            className={`switch${props.server.enabled ? ' is-on' : ''}`}
+            type="button"
+            role="switch"
+            aria-label={`${props.server.enabled ? 'Disable' : 'Enable'} ${name(props.server)} for this project`}
+            aria-checked={props.server.enabled}
+            disabled={props.busy}
+            onClick={props.onToggle}
+          >
+            <span className="switch__thumb" />
+          </button>
+        ) : null}
+        {canEdit ? (
+          <button
+            className="settings__action"
+            type="button"
+            disabled={props.busy}
+            onClick={props.onEdit}
+          >
+            Edit
+          </button>
+        ) : null}
+        {canRemove ? (
+          <button
+            className="settings__action is-danger"
+            type="button"
+            disabled={props.busy}
+            onClick={props.onRemove}
+          >
+            <Trash2 size={13} aria-hidden />
+            Remove
+          </button>
+        ) : null}
+      </div>
+    </article>
+  )
+}
+
+function ServerEditor(props: {
+  editor: Editor
+  busy: boolean
+  onChange: (editor: Editor) => void
+  onCancel: () => void
+  onSubmit: (event: FormEvent) => void
+}) {
+  const update = (change: Partial<Editor>) => props.onChange({ ...props.editor, ...change })
+  return (
+    <form
+      className="mcp-editor"
+      aria-label={`${props.editor.mode === 'add' ? 'Add' : 'Edit'} MCP server`}
+      onSubmit={props.onSubmit}
+    >
+      <label>
+        Server ID
+        <input
+          required
+          disabled={props.editor.mode === 'edit'}
+          value={props.editor.id}
+          onChange={(event) => update({ id: event.target.value })}
+        />
+      </label>
+      <label>
+        Display name
+        <input
+          value={props.editor.displayName}
+          onChange={(event) => update({ displayName: event.target.value })}
+        />
+      </label>
+      <label className="mcp-editor__wide">
+        Transport JSON
+        <textarea
+          required
+          spellCheck={false}
+          value={props.editor.transport}
+          onChange={(event) => update({ transport: event.target.value })}
+        />
+        <small>
+          Use stdio or HTTP transport fields. Reference secrets as
+          {' { "source": "credential", "credentialRef": "…" }'}.
+        </small>
+      </label>
+      <footer>
         <button
           className="settings__action"
           type="button"
           disabled={props.busy}
-          onClick={props.onSignIn}
+          onClick={props.onCancel}
         >
-          Sign in
+          Cancel
         </button>
-      ) : null}
-    </article>
+        <button className="settings__action" type="submit" disabled={props.busy}>
+          {props.busy ? 'Saving…' : 'Save server'}
+        </button>
+      </footer>
+    </form>
   )
+}
+
+function name(server: McpServer): string {
+  return server.displayName ?? server.id
 }
 
 function transportLabel(transport: McpTransport | undefined): string {
