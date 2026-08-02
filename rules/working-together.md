@@ -59,7 +59,7 @@ locked out of anything — this says who is expected to pick it up, not who is p
 | Product direction, what gets built, design review    | Both humans                                                                  |
 | Desktop shell, installer, updater, Windows specifics | Leon (Windows)                                                               |
 | macOS specifics, notarization                        | Blueemi (macOS)                                                              |
-| `packages/contracts`                                 | **Shared — both humans review.** A change here breaks three clients at once. |
+| `packages/contracts`                                 | **Shared and high impact.** Its own PR; Leon approves. A second review is optional. |
 
 If you are about to work outside your area, that is fine — open the draft PR first so the
 owner sees it early rather than in a finished diff.
@@ -77,9 +77,8 @@ If you want something to look or behave differently:
 2. Show **before and after** — screenshot, clip, whatever makes it visible.
 3. Say what you think is wrong with the current one. "Cleaner" is not a reason.
 
-**Both humans decide together.** Neither of us overrules the other; we talk until one of us
-is convinced. If neither is, the existing design stays — not because it is better, but
-because churn is worse than an imperfect button.
+Both humans may weigh in, but Leon decides when a design PR may merge. His explicit
+approval in chat or on GitHub is sufficient; a missing second review does not block it.
 
 The reason this matters more than it sounds: a PR that mixes a design change into a logic
 change forces the reviewer to accept both or neither. **One PR does one thing** is the rule
@@ -97,7 +96,7 @@ What a normal piece of work looks like, start to finish:
 5. Push after every commit. Unpushed work is invisible work.
 6. Keep it short — under two days, under ~400 lines. Long branches are what actually cause
    conflicts, not parallel work.
-7. Mark ready. One approval from the other human.
+7. Mark ready. Leon explicitly approves in chat or on GitHub.
 8. Rebase-merge. Delete the branch.
 
 Conflicts almost never come from two people editing at once. They come from a branch that
@@ -112,7 +111,8 @@ Recorded so nobody re-litigates them from memory.
 | 2026-07-28 | Rebase-merge only. Squash disabled in the ruleset.                                  |
 | 2026-07-28 | Draft PR from the first commit, not when the work is done.                          |
 | 2026-07-30 | GitHub Issues for tasks. No `TODO.md`, no external tracker while we are two.        |
-| 2026-07-30 | Design changes ship as their own PR with before/after. Both humans decide.          |
+| 2026-07-30 | Design changes ship as their own PR with before/after.                              |
+| 2026-08-02 | Leon's explicit approval is sufficient to merge; a second review is optional.       |
 | 2026-07-30 | Admin bypass on `main` stays for now, revisited when both humans are pushing daily. |
 
 ## Things that are true about this repo

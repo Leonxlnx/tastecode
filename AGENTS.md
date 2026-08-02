@@ -25,7 +25,8 @@ controls, a real terminal, MCP and Agent Skills. M4 (the design agent) is next. 
 - **Never commit a secret**, including in fixtures and examples.
 - **Never write a `.sh` script.** Node/TypeScript only — we are a Windows + macOS team.
 - **Never assume POSIX paths.** Use `node:path`.
-- **Never push to `main`.** Branch, PR, one human approval.
+- **Never push to `main`.** Branch, PR, then explicit approval from Leon in chat or on
+  GitHub. A second human review is optional.
 - **Never mix a refactor with a behavior change** in one commit.
 
 ## How to work
@@ -71,7 +72,8 @@ Each of these cost someone hours. They are not preferences.
 - **Shiki runs the JavaScript regex engine, not WASM**, because our CSP blocks
   `wasm-unsafe-eval`. Do not weaken the CSP to fix a highlighting problem.
 - **`packages/contracts` is shared.** A change there breaks three clients at once — it ships
-  as its own PR, reviewed by both humans, before anyone builds against it.
+  as its own PR before anyone builds against it. Leon's approval is sufficient; a second
+  human review is optional.
 - **Windows CLI shims are `.cmd` files.** `spawn('claude')` fails with EINVAL; use
   `spawnCli` from `@harness/proc`, which routes through `cmd.exe`.
 - **Adapters are written against captured output**, not against published schemas. When a

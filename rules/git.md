@@ -4,7 +4,8 @@ Two people, two operating systems, one trunk.
 
 ## Branches
 
-Trunk is `main`. Protected: PR required, 1 approval, rebase-merge only, no force-push.
+Trunk is `main`. Protected: PR required, Leon's explicit approval, rebase-merge only, no
+force-push.
 
 ```
 <type>/<area>-<short-description>
@@ -55,7 +56,8 @@ own branch while working — clean them up before marking the PR ready, since th
 - **Draft early** — open it when the branch exists, not when the work is finished. Cheapest
   way to keep the other person oriented.
 - Body says _why_ and _how it was verified_. Screenshots or a clip for anything visual.
-- **One approval** from the other human. The agent opens and updates PRs; it never approves.
+- **Leon's explicit approval** in chat or on GitHub is sufficient. A second human review is
+  optional. The agent opens and updates PRs; it never self-approves.
 - **Rebase-merge, never squash.** Every commit on the branch lands on `main` individually
   and keeps its own message. This is why commits have to be clean and self-contained: on
   `main` they are the permanent record, not scratch work that gets collapsed away.
@@ -69,7 +71,7 @@ Agreed 2026-07-28.
 
 |                 |                                                                                                                          |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| **Approval**    | Either human approves. Neither approves their own PR.                                                                    |
+| **Approval**    | Leon explicitly approves in chat or on GitHub. A second human review is optional.                                        |
 | **Visibility**  | Claude opens a **draft PR from the first commit** — not when the work is finished. Redirect early; that's what it's for. |
 | **Merging**     | Claude merges once approved. Nothing lands without a human sign-off anyway.                                              |
 | **Merge style** | **Rebase, never squash.** Squash is disabled in the branch ruleset.                                                      |
@@ -78,10 +80,9 @@ Agreed 2026-07-28.
 Who owns which area, how tasks are tracked, and what happens when two people want the same
 screen to look different: [working-together.md](./working-together.md).
 
-`main` is protected: PR required, 1 approval, rebase-merge only, no force-push, no deletion.
-There is an **admin bypass** so a solo owner isn't deadlocked. The second collaborator has
-now joined, and the agreed position as of 2026-07-30 is to keep the bypass until both humans
-are pushing daily — at which point it should go, or the rule is decorative.
+`main` is protected: PR required, rebase-merge only, no force-push, no deletion. The
+ruleset may still report a missing GitHub review; the owner bypass may be used after Leon
+has explicitly approved the PR in chat or on GitHub.
 
 ## Verification gates
 
