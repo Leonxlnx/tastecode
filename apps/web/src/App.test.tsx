@@ -59,6 +59,10 @@ vi.mock('./bridge.js', async (importOriginal) => ({
 /** What the server reports. Projects live there now, not in localStorage. */
 let serverProjects: unknown[] = []
 let serverUnsavedWork = { isolated: false, uncommitted: false }
+let serverSidebarSettings: {
+  mode: 'classic' | 'inbox'
+  autoSettleDays: number | null
+} = { mode: 'inbox', autoSettleDays: 3 }
 
 beforeEach(() => {
   transport.listeners.clear()
@@ -86,6 +90,7 @@ beforeEach(() => {
     },
   ]
   serverUnsavedWork = { isolated: false, uncommitted: false }
+  serverSidebarSettings = { mode: 'inbox', autoSettleDays: 3 }
 
   transport.request.mockImplementation((method: string, params: unknown) => {
     switch (method) {
@@ -126,6 +131,14 @@ beforeEach(() => {
         return Promise.resolve({ signedIn: true })
       case 'projects.list':
         return Promise.resolve({ projects: serverProjects })
+      case 'sidebar.settings':
+        return Promise.resolve(serverSidebarSettings)
+      case 'sidebar.updateSettings':
+        serverSidebarSettings = {
+          ...serverSidebarSettings,
+          ...(params as Partial<typeof serverSidebarSettings>),
+        }
+        return Promise.resolve(serverSidebarSettings)
       case 'thread.history':
         return Promise.resolve({ events: [], running: false })
       case 'thread.queue':
@@ -418,6 +431,30 @@ describe('new chats', () => {
     await waitFor(() => {
       expect(localStorage.getItem('harness.macosFontSmoothing')).toBe('false')
       expect(document.documentElement.classList.contains('is-macos-font-smoothing')).toBe(false)
+    })
+  })
+
+  it('persists inbox mode and bounded inactivity settings on the server', async () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Workflows' }))
+
+    const inbox = screen.getByRole('switch', { name: 'Inbox sidebar' })
+    expect(inbox.getAttribute('aria-checked')).toBe('true')
+    fireEvent.click(inbox)
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Auto-settle days' }), {
+      target: { value: '7' },
+    })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('sidebar.updateSettings', {
+        mode: 'classic',
+      })
+      expect(transport.request).toHaveBeenCalledWith('sidebar.updateSettings', {
+        autoSettleDays: 7,
+      })
     })
   })
 
@@ -885,6 +922,7 @@ describe('live sessions', () => {
   })
 
   it('shows the most recently active session first', async () => {
+    serverSidebarSettings.mode = 'classic'
     serverProjects = [
       {
         path: '/work/project',
@@ -963,7 +1001,9 @@ describe('live sessions', () => {
       },
     })
 
-    const attention = screen.getByRole('button', { name: 'Second session, needs attention' })
+    const attention = screen.getByRole('button', {
+      name: 'Second session, waiting for approval',
+    })
     expect(attention.querySelector('.sess__status-dot.is-attention')).not.toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'First session, working' }))

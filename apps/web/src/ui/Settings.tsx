@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import type { Account, ProviderId } from '@harness/contracts'
+import type { Account, ProviderId, SidebarSettings } from '@harness/contracts'
 import {
   ArrowLeft,
   Blocks,
@@ -8,6 +8,7 @@ import {
   LogOut,
   Network,
   Palette,
+  PanelLeft,
   RotateCcw,
   UserRound,
 } from 'lucide-react'
@@ -17,7 +18,7 @@ import type { ThemePreference } from '../theme.js'
 import { McpSettings } from './McpSettings.js'
 import { SkillsSettings } from './SkillsSettings.js'
 
-type SettingsSection = 'account' | 'mcp' | 'skills' | 'appearance' | 'data' | 'about'
+type SettingsSection = 'account' | 'mcp' | 'skills' | 'workflows' | 'appearance' | 'data' | 'about'
 
 const THEME_OPTIONS = [
   { value: 'system', label: 'System' },
@@ -37,6 +38,8 @@ export function Settings(props: {
   projectName: string | undefined
   account: Account | undefined
   projectCount: number
+  sidebarSettings: SidebarSettings
+  onSidebarSettingsChange: (settings: Partial<SidebarSettings>) => void
   themePreference: ThemePreference
   onThemePreferenceChange: (theme: ThemePreference) => void
   showMacOSFontSmoothing: boolean
@@ -79,6 +82,12 @@ export function Settings(props: {
             onClick={() => setSection('skills')}
           />
           <SettingsNavItem
+            active={section === 'workflows'}
+            icon={<PanelLeft size={15} aria-hidden />}
+            label="Workflows"
+            onClick={() => setSection('workflows')}
+          />
+          <SettingsNavItem
             active={section === 'appearance'}
             icon={<Palette size={15} aria-hidden />}
             label="Appearance"
@@ -104,12 +113,73 @@ export function Settings(props: {
           {section === 'account' ? <AccountSettings {...props} /> : null}
           {section === 'mcp' ? <McpSettings {...props} /> : null}
           {section === 'skills' ? <SkillsSettings {...props} /> : null}
+          {section === 'workflows' ? <WorkflowSettings {...props} /> : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
           {section === 'data' ? <DataSettings {...props} /> : null}
           {section === 'about' ? <AboutSettings /> : null}
         </div>
       </main>
     </div>
+  )
+}
+
+function WorkflowSettings(props: {
+  sidebarSettings: SidebarSettings
+  onSidebarSettingsChange: (settings: Partial<SidebarSettings>) => void
+}) {
+  const inbox = props.sidebarSettings.mode === 'inbox'
+  const autoSettle = props.sidebarSettings.autoSettleDays !== null
+
+  return (
+    <SettingsPanel title="Workflows" groupTitle="Sidebar">
+      <SettingsRow
+        title="Inbox sidebar"
+        note="Show one work queue across projects, with snoozed and settled shelves."
+      >
+        <button
+          className={`switch${inbox ? ' is-on' : ''}`}
+          type="button"
+          role="switch"
+          aria-label="Inbox sidebar"
+          aria-checked={inbox}
+          onClick={() => props.onSidebarSettingsChange({ mode: inbox ? 'classic' : 'inbox' })}
+        >
+          <span className="switch__thumb" />
+        </button>
+      </SettingsRow>
+      <SettingsRow
+        title="Settle inactive chats"
+        note="Move eligible inactive work out of the queue after this many days."
+      >
+        <div className="settings__inline-controls">
+          <input
+            className="settings__number"
+            type="number"
+            aria-label="Auto-settle days"
+            min={1}
+            max={90}
+            disabled={!autoSettle}
+            value={props.sidebarSettings.autoSettleDays ?? 3}
+            onChange={(event) => {
+              const days = event.currentTarget.valueAsNumber
+              if (Number.isInteger(days) && days >= 1 && days <= 90) {
+                props.onSidebarSettingsChange({ autoSettleDays: days })
+              }
+            }}
+          />
+          <button
+            className={`switch${autoSettle ? ' is-on' : ''}`}
+            type="button"
+            role="switch"
+            aria-label="Automatic settling"
+            aria-checked={autoSettle}
+            onClick={() => props.onSidebarSettingsChange({ autoSettleDays: autoSettle ? null : 3 })}
+          >
+            <span className="switch__thumb" />
+          </button>
+        </div>
+      </SettingsRow>
+    </SettingsPanel>
   )
 }
 

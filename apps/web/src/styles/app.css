@@ -791,6 +791,28 @@
   flex: none;
 }
 
+.settings__inline-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings__number {
+  width: 64px;
+  padding: 5px 7px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+}
+
+.settings__number:disabled {
+  color: var(--text-3);
+  opacity: 0.6;
+}
+
 .settings__action {
   display: inline-flex;
   align-items: center;

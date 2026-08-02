@@ -1,5 +1,5 @@
 import { type DragEvent, useEffect, useRef, useState } from 'react'
-import type { Account } from '@harness/contracts'
+import type { Account, ProviderId, ThreadInboxStatus, ThreadLifecycle } from '@harness/contracts'
 import {
   Archive,
   ChevronRight,
@@ -25,7 +25,12 @@ import { ShortcutHint } from './ShortcutHint.js'
 export type Session = {
   id: string
   title: string
-  status: 'running' | 'attention' | 'idle' | 'failed'
+  provider: ProviderId
+  agent?: string | undefined
+  createdAt: number
+  status: ThreadInboxStatus
+  lifecycle: ThreadLifecycle
+  unread: boolean
   worktreeBranch?: string | undefined
 }
 
@@ -441,7 +446,7 @@ function SessionRow(props: {
 }
 
 function SessionStatus(props: { status: Session['status'] }) {
-  if (props.status === 'running') {
+  if (props.status === 'starting' || props.status === 'working') {
     return (
       <span className="sess__spinner" aria-hidden>
         {BRAILLE_SPINNER_FRAMES.map((frame) => (
@@ -451,7 +456,7 @@ function SessionStatus(props: { status: Session['status'] }) {
     )
   }
 
-  if (props.status === 'attention') {
+  if (props.status === 'approval' || props.status === 'input' || props.status === 'queued') {
     return <span className="sess__status-dot is-attention" aria-hidden />
   }
 
@@ -465,12 +470,19 @@ function SessionStatus(props: { status: Session['status'] }) {
 function sessionLabel(session: Session): string {
   const branch = session.worktreeBranch ? `, isolated on ${session.worktreeBranch}` : ''
   switch (session.status) {
-    case 'running':
+    case 'starting':
+    case 'working':
       return `${session.title}, working${branch}`
-    case 'attention':
+    case 'queued':
+      return `${session.title}, queued${branch}`
+    case 'approval':
+      return `${session.title}, waiting for approval${branch}`
+    case 'input':
       return `${session.title}, needs attention${branch}`
     case 'failed':
       return `${session.title}, failed${branch}`
+    case 'ready':
+      return `${session.title}, ready${branch}`
     default:
       return `${session.title}${branch}`
   }

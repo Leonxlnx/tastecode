@@ -10,6 +10,16 @@ vi.mock('../bridge.js', async (importOriginal) => ({
 
 afterEach(cleanup)
 
+const session = (id: string, title: string) => ({
+  id,
+  title,
+  provider: 'codex' as const,
+  createdAt: 1,
+  status: 'idle' as const,
+  lifecycle: { state: 'active' as const, keepActive: false },
+  unread: false,
+})
+
 describe('Sidebar chat actions', () => {
   it('shows direct rename and archive actions without a chat options menu', () => {
     const onRenameSession = vi.fn()
@@ -21,7 +31,7 @@ describe('Sidebar chat actions', () => {
           {
             path: '/work/harness',
             name: 'Harness',
-            sessions: [{ id: 'thread-1', title: 'Polish the sidebar', status: 'idle' }],
+            sessions: [session('thread-1', 'Polish the sidebar')],
           },
         ]}
         activeProjectPath="/work/harness"
@@ -65,10 +75,7 @@ describe('Sidebar chat actions', () => {
           {
             path: '/work/harness',
             name: 'Harness',
-            sessions: [
-              { id: 'thread-1', title: 'First chat', status: 'idle' },
-              { id: 'thread-2', title: 'Second chat', status: 'idle' },
-            ],
+            sessions: [session('thread-1', 'First chat'), session('thread-2', 'Second chat')],
           },
         ]}
         activeProjectPath="/work/harness"

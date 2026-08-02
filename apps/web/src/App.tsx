@@ -16,6 +16,7 @@ import type {
   ProviderId,
   QueuedTurn,
   ResultOf,
+  SidebarSettings,
 } from '@harness/contracts'
 import { isMacOS, pickFolder } from './bridge.js'
 import { isEditableTarget, matchesShortcut, SHORTCUTS, shortcutLabel } from './shortcuts.js'
@@ -65,6 +66,7 @@ const APPROVAL_KEY = 'harness.approval'
 const MACOS_FONT_SMOOTHING_KEY = 'harness.macosFontSmoothing'
 const TERMINAL_OPEN_KEY = 'harness.terminal.open'
 const TERMINAL_HEIGHT_KEY = 'harness.terminal.height'
+const DEFAULT_SIDEBAR_SETTINGS: SidebarSettings = { mode: 'inbox', autoSettleDays: 3 }
 const TerminalPane = lazy(() =>
   import('./ui/TerminalPane.js').then((module) => ({ default: module.TerminalPane })),
 )
@@ -138,6 +140,7 @@ export function App() {
   const [branches, setBranches] = useState<string[]>([])
   const [account, setAccount] = useState<Account | undefined>()
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [sidebarSettings, setSidebarSettings] = useState(DEFAULT_SIDEBAR_SETTINGS)
   const [paletteScope, setPaletteScope] = useState<CommandScope | null>(null)
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false)
   const [searchJump, setSearchJump] = useState<{
@@ -222,6 +225,8 @@ export function App() {
 
   const activeIdRef = useRef(activeId)
   activeIdRef.current = activeId
+  const sidebarSettingsRef = useRef(sidebarSettings)
+  sidebarSettingsRef.current = sidebarSettings
 
   useEffect(() => {
     const offEvents = transport.on('thread.event', ({ threadId, event }) => {
@@ -232,9 +237,20 @@ export function App() {
 
       if (affectsSessionStatus(event)) {
         setProjects((current) => {
-          const updated = markStatus(current, threadId, statusFor(next, event))
-          return event.type === 'turn.started' ? promoteSession(updated, threadId) : updated
+          const updated = updateSession(current, threadId, (session) => ({
+            ...session,
+            status: statusFor(next, event, threadId !== activeIdRef.current),
+            ...(event.type === 'turn.completed'
+              ? { unread: threadId !== activeIdRef.current }
+              : {}),
+          }))
+          return event.type === 'turn.started' && sidebarSettingsRef.current.mode === 'classic'
+            ? promoteSession(updated, threadId)
+            : updated
         })
+        if (event.type === 'turn.completed' && threadId === activeIdRef.current) {
+          void transport.request('thread.history', { threadId }).catch(() => undefined)
+        }
       }
     })
     const offQueue = transport.on('thread.queue', ({ threadId, items, canSteer }) => {
@@ -243,11 +259,32 @@ export function App() {
       setQueuedTurns(items)
       setCanSteerQueue(canSteer)
     })
+    const offLifecycle = transport.on('thread.lifecycle', ({ threadId, lifecycle }) => {
+      setProjects((current) =>
+        updateSession(current, threadId, (session) => ({ ...session, lifecycle })),
+      )
+    })
+    const offSidebarSettings = transport.on('sidebar.settings', setSidebarSettings)
     transport.connect()
     return () => {
       offEvents()
       offQueue()
+      offLifecycle()
+      offSidebarSettings()
       transport.close()
+    }
+  }, [transport])
+
+  useEffect(() => {
+    let cancelled = false
+    void transport
+      .request('sidebar.settings', {})
+      .then((settings) => {
+        if (!cancelled) setSidebarSettings(settings)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
     }
   }, [transport])
 
@@ -359,7 +396,12 @@ export function App() {
           project.sessions.map((session) => ({
             id: session.id,
             title: session.title,
-            status: session.running ? ('running' as const) : ('idle' as const),
+            provider: session.provider,
+            ...(session.agent ? { agent: session.agent } : {}),
+            createdAt: session.createdAt,
+            status: session.status ?? (session.running ? 'working' : 'idle'),
+            lifecycle: session.lifecycle ?? { state: 'active', keepActive: false },
+            unread: session.unread ?? false,
             ...(session.worktreeBranch ? { worktreeBranch: session.worktreeBranch } : {}),
           })),
           savedOrder,
@@ -382,6 +424,9 @@ export function App() {
       const { events } = await transport.request('thread.history', { threadId })
       const restored = events.reduce((state, entry) => reduce(state, entry.event), emptyThread)
       threadStates.current.set(threadId, restored)
+      setProjects((current) =>
+        updateSession(current, threadId, (session) => ({ ...session, unread: false })),
+      )
       if (activeIdRef.current === threadId) setThread(restored)
     },
     [transport],
@@ -734,6 +779,10 @@ export function App() {
       const cached = threadStates.current.get(id)
       if (cached) {
         setThread(cached)
+        setProjects((current) =>
+          updateSession(current, id, (session) => ({ ...session, unread: false })),
+        )
+        void transport.request('thread.history', { threadId: id }).catch(() => undefined)
         return
       }
 
@@ -744,7 +793,7 @@ export function App() {
         setNotice(error instanceof Error ? error.message : String(error))
       }
     },
-    [projects, loadHistory],
+    [projects, loadHistory, transport],
   )
 
   const inspectCheckpoint = useCallback(
@@ -875,6 +924,17 @@ export function App() {
     if (path) beginSession(path)
     else void addProject()
   }, [activePath, projects, beginSession, addProject])
+
+  const updateSidebarSettings = useCallback(
+    (updates: Partial<SidebarSettings>) => {
+      setSidebarSettings((current) => ({ ...current, ...updates }))
+      void transport
+        .request('sidebar.updateSettings', updates)
+        .then(setSidebarSettings)
+        .catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
+    },
+    [transport],
+  )
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -1228,6 +1288,8 @@ export function App() {
           projectName={activeProject ? displayName(activeProject) : undefined}
           account={account}
           projectCount={projects.length}
+          sidebarSettings={sidebarSettings}
+          onSidebarSettingsChange={updateSidebarSettings}
           themePreference={themePreference}
           onThemePreferenceChange={setThemePreference}
           showMacOSFontSmoothing={macOS}
@@ -1372,15 +1434,15 @@ function findSession(projects: Project[], id: string | undefined) {
   return undefined
 }
 
-function markStatus(
+function updateSession(
   projects: Project[],
   threadId: string,
-  status: Project['sessions'][number]['status'],
+  update: (session: Project['sessions'][number]) => Project['sessions'][number],
 ): Project[] {
   return projects.map((project) => ({
     ...project,
     sessions: project.sessions.map((session) =>
-      session.id === threadId ? { ...session, status } : session,
+      session.id === threadId ? update(session) : session,
     ),
   }))
 }
@@ -1405,11 +1467,16 @@ function affectsSessionStatus(event: DomainEvent): boolean {
   )
 }
 
-function statusFor(state: ThreadState, event: DomainEvent): Project['sessions'][number]['status'] {
+function statusFor(
+  state: ThreadState,
+  event: DomainEvent,
+  background: boolean,
+): Project['sessions'][number]['status'] {
   if (event.type === 'thread.error') return 'failed'
-  if (event.type === 'turn.completed') return event.status === 'failed' ? 'failed' : 'idle'
-  if (state.approvals.length > 0) return 'attention'
-  return state.running ? 'running' : 'idle'
+  if (event.type === 'turn.completed')
+    return event.status === 'failed' ? 'failed' : background ? 'ready' : 'idle'
+  if (state.approvals.length > 0) return 'approval'
+  return state.running ? 'working' : 'idle'
 }
 
 function basename(path: string): string {
