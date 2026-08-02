@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown, FileDiff } from 'lucide-react'
+import type { Transport } from '../transport.js'
+import { DiffReview } from './DiffReview.js'
 
 /**
  * Everything the current turn changed, as one unified diff.
@@ -8,15 +10,22 @@ import { ChevronDown, FileDiff } from 'lucide-react'
  * repo" is a different question from "what did it do next", and answering it
  * should never mean scrolling back through a transcript.
  *
- * This is a reading view, not the review surface — accept/reject per hunk is
- * M3. Showing the change now is still worth it, because an agent editing files
- * you cannot see is the thing people distrust most.
+ * The summary stays cheap; opening Review fetches the authoritative structured
+ * snapshot so decisions always carry the server's current version.
  */
 
 type Line = { text: string; kind: 'add' | 'del' | 'meta' | 'hunk' | 'ctx' }
 type FileEntry = { path: string; added: number; removed: number }
 
-export function Diff({ diff }: { diff: string | undefined }) {
+export function Diff({
+  diff,
+  threadId,
+  transport,
+}: {
+  diff: string | undefined
+  threadId?: string | undefined
+  transport?: Transport | undefined
+}) {
   const parsed = useMemo(() => (diff ? parseDiff(diff) : null), [diff])
   const [reviewing, setReviewing] = useState(false)
   const [showAllFiles, setShowAllFiles] = useState(false)
@@ -77,7 +86,9 @@ export function Diff({ diff }: { diff: string | undefined }) {
         ) : null}
       </ul>
 
-      {reviewing ? (
+      {reviewing && threadId && transport ? (
+        <DiffReview transport={transport} threadId={threadId} />
+      ) : reviewing ? (
         <pre className="diff__body">
           {parsed.lines.map((line, index) => (
             <span key={index} className={`dline dline--${line.kind}`}>

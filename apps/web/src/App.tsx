@@ -1121,6 +1121,8 @@ export function App() {
                 activeTurn={thread.activeTurn}
                 plan={thread.plan}
                 diff={thread.diff}
+                threadId={activeId}
+                transport={transport}
                 approvals={thread.approvals}
                 reviews={Object.values(thread.reviews)}
                 onDecide={(approvalId, decision) => {

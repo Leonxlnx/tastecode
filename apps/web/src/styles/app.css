@@ -10,7 +10,8 @@
   .md,
   .aux__out,
   .approval__command,
-  .diff__body
+  .diff__body,
+  .diff-review
 ) {
   user-select: text;
 }
@@ -2750,6 +2751,11 @@
   background: var(--surface);
 }
 
+.diff__review:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .diff__file-list {
   display: flex;
   flex-direction: column;
@@ -2860,6 +2866,145 @@
 
 .dline--ctx {
   color: var(--text-2);
+}
+
+.diff-review {
+  max-height: 520px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+}
+
+.diff-review__toolbar,
+.diff-file__head,
+.diff-hunk__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 14px;
+}
+
+.diff-review__toolbar {
+  min-height: 42px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.diff-review__status {
+  margin: 0;
+  padding: 12px 14px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.diff-file {
+  border-top: 1px solid var(--line);
+}
+
+.diff-file__head {
+  min-height: 54px;
+}
+
+.diff-file__head strong {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-file__head span {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.diff-decisions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.diff-decisions .is-selected {
+  border-color: color-mix(in oklab, var(--success) 45%, var(--line));
+  background: color-mix(in oklab, var(--success) 12%, transparent);
+  color: var(--success);
+  opacity: 1;
+}
+
+.diff-decisions .is-reject {
+  border-color: color-mix(in oklab, var(--error) 45%, var(--line));
+  background: color-mix(in oklab, var(--error) 12%, transparent);
+  color: var(--error);
+}
+
+.diff-hunk {
+  border-top: 1px solid var(--line);
+}
+
+.diff-hunk.is-reviewed {
+  box-shadow: inset 3px 0 var(--line-strong);
+}
+
+.diff-hunk__head {
+  min-height: 42px;
+  background: var(--surface-2);
+}
+
+.diff-hunk__head code {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 38px 38px minmax(0, 1fr);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  line-height: 22px;
+}
+
+.diff-line > span {
+  padding-right: 8px;
+  color: var(--text-3);
+  text-align: right;
+  user-select: none;
+}
+
+.diff-line code {
+  overflow-x: auto;
+  padding: 0 10px;
+  white-space: pre;
+}
+
+.diff-line code i {
+  display: inline-block;
+  width: 16px;
+  font-style: normal;
+  user-select: none;
+}
+
+.diff-line.is-addition {
+  background: color-mix(in oklab, var(--success) 10%, transparent);
+}
+
+.diff-line.is-deletion {
+  background: color-mix(in oklab, var(--error) 10%, transparent);
+}
+
+.diff-line mark {
+  color: inherit;
+}
+
+.diff-line mark.is-new {
+  background: color-mix(in oklab, var(--success) 28%, transparent);
+}
+
+.diff-line mark.is-old {
+  background: color-mix(in oklab, var(--error) 28%, transparent);
 }
 
 /* ---------- find in thread ---------- */

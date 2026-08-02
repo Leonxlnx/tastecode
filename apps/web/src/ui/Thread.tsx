@@ -24,6 +24,7 @@ import {
   Wrench,
 } from 'lucide-react'
 import { isEditableTarget } from '../shortcuts.js'
+import type { Transport } from '../transport.js'
 import { Approval, AutomaticApprovalReview } from './Approval.js'
 import { Diff } from './Diff.js'
 import { Markdown } from './Markdown.js'
@@ -50,6 +51,8 @@ export function Thread(props: {
   activeTurn: { id: string; startedAt: number } | undefined
   plan: PlanStep[]
   diff: string | undefined
+  threadId?: string | undefined
+  transport?: Transport | undefined
   approvals: ApprovalRequest[]
   reviews: ApprovalReview[]
   onDecide: (id: string, decision: ApprovalDecision) => void
@@ -245,7 +248,9 @@ export function Thread(props: {
         ))}
 
         {props.running ? <Plan steps={props.plan} compact /> : null}
-        {!props.running ? <Diff diff={props.diff} /> : null}
+        {!props.running ? (
+          <Diff diff={props.diff} threadId={props.threadId} transport={props.transport} />
+        ) : null}
       </div>
 
       {mode === 'free' ? (
