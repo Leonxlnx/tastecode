@@ -725,16 +725,25 @@ export function Composer(props: {
                 )}
               </Menu>
 
-              <button
-                type="button"
-                className={`menutrigger tool composer__design${props.designMode ? ' is-active' : ''}`}
-                aria-pressed={props.designMode}
-                onClick={() => props.onDesignModeChange(!props.designMode)}
-                title={props.designMode ? 'Turn off Design mode' : 'Turn on Design mode'}
+              <BorderBeam
+                className="composer__design-beam"
+                size="sm"
+                colorVariant="colorful"
+                strength={0.7}
+                active={props.designMode}
+                borderRadius={8}
               >
-                <Palette size={13} aria-hidden />
-                <span>Design</span>
-              </button>
+                <button
+                  type="button"
+                  className={`menutrigger tool composer__design${props.designMode ? ' is-active' : ''}`}
+                  aria-pressed={props.designMode}
+                  onClick={() => props.onDesignModeChange(!props.designMode)}
+                  title={props.designMode ? 'Turn off Design mode' : 'Turn on Design mode'}
+                >
+                  <Palette size={13} aria-hidden />
+                  <span>Design</span>
+                </button>
+              </BorderBeam>
 
               <span className="tools__spacer" />
 

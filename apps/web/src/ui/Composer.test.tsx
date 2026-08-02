@@ -161,12 +161,15 @@ describe('Composer Design mode', () => {
 
     const design = screen.getByRole('button', { name: 'Design' })
     expect(design.getAttribute('aria-pressed')).toBe('false')
+    expect(design.closest('.composer__design-beam')?.hasAttribute('data-active')).toBe(false)
     fireEvent.click(design)
     expect(onDesignModeChange).toHaveBeenCalledWith(true)
 
     view.unmount()
     renderComposer(vi.fn(), { designMode: true })
-    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe('true')
+    const activeDesign = screen.getByRole('button', { name: 'Design' })
+    expect(activeDesign.getAttribute('aria-pressed')).toBe('true')
+    expect(activeDesign.closest('.composer__design-beam')?.hasAttribute('data-active')).toBe(true)
   })
 })
 
