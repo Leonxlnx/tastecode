@@ -1,10 +1,21 @@
 import { useState, type ReactNode } from 'react'
 import type { Account, ProviderId } from '@harness/contracts'
-import { ArrowLeft, Database, Info, LogOut, Palette, RotateCcw, UserRound } from 'lucide-react'
+import {
+  ArrowLeft,
+  Blocks,
+  Database,
+  Info,
+  LogOut,
+  Palette,
+  RotateCcw,
+  UserRound,
+} from 'lucide-react'
 import { isDesktop } from '../bridge.js'
+import type { Transport } from '../transport.js'
 import type { ThemePreference } from '../theme.js'
+import { SkillsSettings } from './SkillsSettings.js'
 
-type SettingsSection = 'account' | 'appearance' | 'data' | 'about'
+type SettingsSection = 'account' | 'skills' | 'appearance' | 'data' | 'about'
 
 const THEME_OPTIONS = [
   { value: 'system', label: 'System' },
@@ -19,6 +30,9 @@ const THEME_OPTIONS = [
 export function Settings(props: {
   provider: ProviderId
   providerName: string
+  transport: Transport
+  projectPath: string | undefined
+  projectName: string | undefined
   account: Account | undefined
   projectCount: number
   themePreference: ThemePreference
@@ -51,6 +65,12 @@ export function Settings(props: {
             onClick={() => setSection('account')}
           />
           <SettingsNavItem
+            active={section === 'skills'}
+            icon={<Blocks size={15} aria-hidden />}
+            label="Skills"
+            onClick={() => setSection('skills')}
+          />
+          <SettingsNavItem
             active={section === 'appearance'}
             icon={<Palette size={15} aria-hidden />}
             label="Appearance"
@@ -74,6 +94,7 @@ export function Settings(props: {
       <main className="settings__main">
         <div className="settings__content">
           {section === 'account' ? <AccountSettings {...props} /> : null}
+          {section === 'skills' ? <SkillsSettings {...props} /> : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
           {section === 'data' ? <DataSettings {...props} /> : null}
           {section === 'about' ? <AboutSettings /> : null}

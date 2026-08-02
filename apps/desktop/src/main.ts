@@ -81,6 +81,14 @@ ipcMain.handle('harness:pickFolder', async () => {
   return result.canceled ? undefined : result.filePaths[0]
 })
 
+ipcMain.handle('harness:pickSkillFolder', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory'],
+    title: 'Choose an Agent Skill folder',
+  })
+  return result.canceled ? undefined : result.filePaths[0]
+})
+
 ipcMain.handle('harness:pickFiles', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile', 'multiSelections'],

@@ -7,6 +7,7 @@
  */
 type Bridge = {
   pickFolder: () => Promise<string | undefined>
+  pickSkillFolder: () => Promise<string | undefined>
   pickFiles: () => Promise<string[]>
   savePastedImage: (image: { type: string; bytes: ArrayBuffer }) => Promise<string>
   isDesktop: true
@@ -23,6 +24,11 @@ export function isMacOS(): boolean {
 export async function pickFolder(): Promise<string | undefined> {
   if (bridge) return bridge.pickFolder()
   return window.prompt('Folder to work in')?.trim() || undefined
+}
+
+export async function pickSkillFolder(): Promise<string | undefined> {
+  if (bridge) return bridge.pickSkillFolder()
+  return window.prompt('Full path of an Agent Skill folder')?.trim() || undefined
 }
 
 export async function pickFiles(): Promise<string[]> {

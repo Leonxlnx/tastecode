@@ -1190,6 +1190,9 @@ export function App() {
         <Settings
           provider={provider}
           providerName={providerName(provider, acpAgentName)}
+          transport={transport}
+          projectPath={activePath}
+          projectName={activeProject ? displayName(activeProject) : undefined}
           account={account}
           projectCount={projects.length}
           themePreference={themePreference}

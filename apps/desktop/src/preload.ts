@@ -10,6 +10,7 @@ import { contextBridge, ipcRenderer } from 'electron'
  */
 const api = {
   pickFolder: (): Promise<string | undefined> => ipcRenderer.invoke('harness:pickFolder'),
+  pickSkillFolder: (): Promise<string | undefined> => ipcRenderer.invoke('harness:pickSkillFolder'),
   pickFiles: (): Promise<string[]> => ipcRenderer.invoke('harness:pickFiles'),
   savePastedImage: (image: { type: string; bytes: ArrayBuffer }): Promise<string> =>
     ipcRenderer.invoke('harness:savePastedImage', image),
