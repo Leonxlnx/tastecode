@@ -528,6 +528,22 @@ describe('new chats', () => {
     })
   })
 
+  it('switches sidebar versions directly from the rail', async () => {
+    serverSidebarSettings.mode = 'classic'
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'V2 Inbox' }))
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('sidebar.updateSettings', {
+        mode: 'inbox',
+      })
+      expect(screen.getByRole('button', { name: 'V2 Inbox' }).getAttribute('aria-pressed')).toBe(
+        'true',
+      )
+    })
+  })
+
   it('persists a selected appearance across app restarts', async () => {
     const first = render(<App />)
 

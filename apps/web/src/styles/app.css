@@ -115,6 +115,32 @@
   gap: 1px;
 }
 
+.rail__version {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  margin-top: 5px;
+  padding: 2px;
+  background: var(--surface);
+  border-radius: var(--r-md);
+}
+
+.rail__version button {
+  padding: 4px;
+  background: none;
+  border: 0;
+  border-radius: calc(var(--r-md) - 2px);
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+}
+
+.rail__version button[aria-pressed='true'] {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
 .navitem {
   display: flex;
   align-items: center;

@@ -54,6 +54,7 @@ export function Sidebar(props: {
   account: Account | undefined
   providerName: string
   mode?: 'classic' | 'inbox'
+  onModeChange?: ((mode: 'classic' | 'inbox') => void) | undefined
   inbox?: InboxActions | undefined
   collapsed: boolean
   onClose: () => void
@@ -153,6 +154,22 @@ export function Sidebar(props: {
             <span>Search chats</span>
             <ShortcutHint>{shortcutLabel(SHORTCUTS.searchSessions, macOS)}</ShortcutHint>
           </button>
+          <div className="rail__version" role="group" aria-label="Sidebar version">
+            <button
+              type="button"
+              aria-pressed={!inbox}
+              onClick={() => props.onModeChange?.('classic')}
+            >
+              V1 Classic
+            </button>
+            <button
+              type="button"
+              aria-pressed={inbox}
+              onClick={() => props.onModeChange?.('inbox')}
+            >
+              V2 Inbox
+            </button>
+          </div>
         </div>
 
         <div className="rail__body">

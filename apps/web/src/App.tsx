@@ -1343,6 +1343,7 @@ export function App() {
           activeSessionId={activeId}
           providerName={providerName(provider, acpAgentName)}
           mode={sidebarSettings.mode}
+          onModeChange={(mode) => updateSidebarSettings({ mode })}
           inbox={{
             onSettle: (id) => void hideSession(id, 'settle'),
             onUnsettle: (id) => void restoreSession(id, 'unsettle'),

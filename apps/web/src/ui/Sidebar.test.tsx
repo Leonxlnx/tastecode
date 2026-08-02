@@ -21,6 +21,45 @@ const session = (id: string, title: string) => ({
 })
 
 describe('Sidebar chat actions', () => {
+  it('switches directly between the classic and inbox sidebars', () => {
+    const onModeChange = vi.fn()
+    render(
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        mode="inbox"
+        inbox={{
+          onSettle: vi.fn(),
+          onUnsettle: vi.fn(),
+          onSnooze: vi.fn(),
+          onUnsnooze: vi.fn(),
+          onKeepActive: vi.fn(),
+        }}
+        collapsed={false}
+        onModeChange={onModeChange}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'V1 Classic' }))
+    fireEvent.click(screen.getByRole('button', { name: 'V2 Inbox' }))
+    expect(onModeChange.mock.calls).toEqual([['classic'], ['inbox']])
+  })
+
   it('shows direct rename and archive actions without a chat options menu', () => {
     const onRenameSession = vi.fn()
     const onDeleteSession = vi.fn()
