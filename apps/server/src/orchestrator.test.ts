@@ -3,7 +3,13 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Capabilities, DomainEvent, McpServer, ProviderId } from '@harness/contracts'
+import type {
+  Capabilities,
+  DomainEvent,
+  McpServer,
+  ProviderId,
+  ThreadLifecycle,
+} from '@harness/contracts'
 import type { AgentSession, ProviderRuntime, StartOptions } from './adapters.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
@@ -81,6 +87,7 @@ function harness(worktreeRoot?: string) {
   const store = new Store(':memory:')
   const sessions: FakeSession[] = []
   const received: Array<{ threadId: string; event: DomainEvent }> = []
+  const lifecycles: Array<{ threadId: string; lifecycle: ThreadLifecycle }> = []
 
   /** Where each session was actually told to run. */
   const startedIn: string[] = []
@@ -109,6 +116,7 @@ function harness(worktreeRoot?: string) {
 
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event) => received.push({ threadId, event }),
+    onLifecycle: (threadId, lifecycle) => lifecycles.push({ threadId, lifecycle }),
     onLog: () => {},
     onLogin: () => {},
     mcpConfig: new McpConfigStore(
@@ -119,7 +127,7 @@ function harness(worktreeRoot?: string) {
     ...(worktreeRoot ? { worktreeRoot } : {}),
   })
 
-  return { store, sessions, received, orchestrator, startedIn, startedOptions }
+  return { store, sessions, received, lifecycles, orchestrator, startedIn, startedOptions }
 }
 
 const message = (text: string): DomainEvent => ({
@@ -380,6 +388,81 @@ describe('several sessions at once', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('sidebar inbox lifecycle', () => {
+  it('supports every manual transition and rejects hidden active work', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+
+    expect(orchestrator.settleThread(thread.id).state).toBe('settled')
+    expect(() => orchestrator.unsnoozeThread(thread.id)).toThrow(/expected snoozed/)
+    expect(orchestrator.unsettleThread(thread.id)).toMatchObject({ state: 'active' })
+    expect(orchestrator.snoozeThread(thread.id, Date.now() + 60_000).state).toBe('snoozed')
+    expect(orchestrator.unsnoozeThread(thread.id)).toMatchObject({ state: 'active' })
+    expect(orchestrator.setThreadKeepActive(thread.id, true)).toMatchObject({
+      state: 'active',
+      keepActive: true,
+    })
+
+    await orchestrator.submitTurn(thread.id, 'working')
+    expect(() => orchestrator.settleThread(thread.id)).toThrow(/status is working/)
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+    expect(orchestrator.inboxStatus(thread.id)).toBe('ready')
+    expect(store.thread(thread.id)?.unread).toBe(true)
+
+    sessions[0]!.emit({
+      type: 'approval.requested',
+      request: { id: 'approval-1', kind: 'command', command: 'pnpm test', createdAt: 1 },
+    })
+    expect(orchestrator.inboxStatus(thread.id)).toBe('approval')
+    expect(() => orchestrator.snoozeThread(thread.id, Date.now() + 60_000)).toThrow(
+      /status is approval/,
+    )
+  })
+
+  it('automatically wakes activity and settles only eligible inactive work', async () => {
+    const { orchestrator, sessions, store, lifecycles } = harness()
+    const wakes = await orchestrator.startThread('codex', '/repo')
+    const settles = await orchestrator.startThread('codex', '/repo')
+    const kept = await orchestrator.startThread('codex', '/repo')
+    const now = Date.now()
+
+    orchestrator.snoozeThread(wakes.id, now + 1_000)
+    orchestrator.setThreadKeepActive(kept.id, true)
+    orchestrator.refreshLifecycle(now + 4 * 24 * 60 * 60 * 1_000)
+
+    expect(store.thread(wakes.id)?.lifecycle).toMatchObject({ state: 'active' })
+    expect(store.thread(settles.id)?.lifecycle).toMatchObject({
+      state: 'settled',
+      reason: 'inactivity',
+    })
+    expect(store.thread(kept.id)?.lifecycle).toMatchObject({ state: 'active', keepActive: true })
+
+    orchestrator.settleThread(wakes.id)
+    sessions[0]!.emit({
+      type: 'turn.started',
+      turn: { id: 'resumed', threadId: wakes.id, status: 'running', createdAt: now },
+    })
+    expect(store.thread(wakes.id)?.lifecycle).toMatchObject({ state: 'active' })
+    expect(lifecycles.at(-1)).toMatchObject({
+      threadId: wakes.id,
+      lifecycle: { state: 'active' },
+    })
+  })
+
+  it('keeps archived state separate and honors the Off setting', async () => {
+    const { orchestrator, store } = harness()
+    const archived = await orchestrator.startThread('codex', '/repo')
+    const inactive = await orchestrator.startThread('codex', '/repo')
+    orchestrator.close(archived.id)
+
+    expect(() => orchestrator.settleThread(archived.id)).toThrow(/archived/)
+    store.updateSidebarSettings({ autoSettleDays: null })
+    orchestrator.refreshLifecycle(Date.now() + 100 * 24 * 60 * 60 * 1_000)
+    expect(store.thread(inactive.id)?.lifecycle).toMatchObject({ state: 'active' })
+    expect(store.thread(archived.id)?.closedAt).toBeDefined()
   })
 })
 
