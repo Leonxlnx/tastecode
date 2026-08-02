@@ -1,5 +1,12 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { DESIGN_BRIEF_ATTACHMENT, designBriefingPrompt } from './design-briefing.js'
+import {
+  DESIGN_BRIEF_ATTACHMENT,
+  designBriefingPrompt,
+  persistDesignBriefing,
+} from './design-briefing.js'
 
 describe('design briefing prompt', () => {
   it('keeps the workflow in briefing mode and preserves the user request', () => {
@@ -8,7 +15,31 @@ describe('design briefing prompt', () => {
     expect(DESIGN_BRIEF_ATTACHMENT).toBe('personal-harness://design-brief-v1')
     expect(prompt).toContain('request_user_input')
     expect(prompt).toContain('Design a launch page for a research tool.')
-    expect(prompt).toContain('DEBUG FINISHED · NO WEBSITE BUILT')
-    expect(prompt).toContain('Create no other file.')
+    expect(prompt).toContain('Do not use shell, patch, or filesystem tools')
+    expect(prompt).toContain('Personal Harness will write .taste/brief.json')
+  })
+
+  it('persists only the structured brief and returns the debug stop', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-brief-'))
+    try {
+      const message = persistDesignBriefing(
+        JSON.stringify({
+          status: 'complete',
+          message: 'Brief complete.',
+          brief: { subject: 'Research workspace', assumptions: ['Creative direction is open.'] },
+        }),
+        workspace,
+      )
+
+      expect(message).toBe('Brief complete.\nDEBUG FINISHED · NO WEBSITE BUILT')
+      expect(
+        JSON.parse(readFileSync(path.join(workspace, '.taste', 'brief.json'), 'utf8')),
+      ).toEqual({
+        subject: 'Research workspace',
+        assumptions: ['Creative direction is open.'],
+      })
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
   })
 })

@@ -46,7 +46,12 @@ import type { SkillsListResponse } from './generated/v2/SkillsListResponse.js'
 import type { SkillsConfigWriteResponse } from './generated/v2/SkillsConfigWriteResponse.js'
 import type { ToolRequestUserInputParams } from './generated/v2/ToolRequestUserInputParams.js'
 import { mapSkillList } from './skills.js'
-import { DESIGN_BRIEF_ATTACHMENT, designBriefingPrompt } from './design-briefing.js'
+import {
+  DESIGN_BRIEF_ATTACHMENT,
+  DESIGN_BRIEF_OUTPUT_SCHEMA,
+  designBriefingPrompt,
+  persistDesignBriefing,
+} from './design-briefing.js'
 
 /**
  * Tier 1 adapter: drives `codex app-server` over JSON-RPC.
@@ -271,6 +276,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   >()
   #userInputs = new Map<string, (result: unknown) => void>()
   #displayUserMessages = new Map<string, string>()
+  #threadWorkspacePaths = new Map<string, string>()
+  #briefingTurns = new Map<string, string>()
 
   constructor(
     options: {
@@ -530,6 +537,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       ...(Object.keys(config).length ? { config } : {}),
       ...(approval ?? {}),
     })
+    this.#threadWorkspacePaths.set(response.thread.id, workspacePath)
     return {
       id: response.thread.id,
       provider: 'codex',
@@ -546,6 +554,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         ? { config: { mcp_servers: this.#mcpServers } }
         : {}),
     })
+    this.#threadWorkspacePaths.set(response.thread.id, workspacePath)
     return {
       id: response.thread.id,
       provider: 'codex',
@@ -569,6 +578,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       ...(options.model ? { model: options.model } : {}),
       ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
+      ...(briefing ? { outputSchema: DESIGN_BRIEF_OUTPUT_SCHEMA } : {}),
       input: [
         { type: 'text', text: briefing ? designBriefingPrompt(text) : text, text_elements: [] },
         // Images go in as images so the model can actually see them; anything
@@ -583,6 +593,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
           ),
       ],
     })
+    if (briefing) {
+      const workspacePath = this.#threadWorkspacePaths.get(threadId)
+      if (!workspacePath) throw new Error('design briefing workspace is unavailable')
+      this.#briefingTurns.set(response.turn.id, workspacePath)
+    }
     return response.turn.id
   }
 
@@ -637,6 +652,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#rpc = undefined
     this.#started = false
     this.#mcpStartup.clear()
+    this.#threadWorkspacePaths.clear()
+    this.#briefingTurns.clear()
   }
 
   #call<T>(method: string, params: unknown): Promise<T> {
@@ -733,6 +750,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
           // `inProgress` should not reach us here, but map it rather than crash.
           status: p.turn.status === 'inProgress' ? 'completed' : p.turn.status,
         })
+        this.#briefingTurns.delete(p.turn.id)
         return
       }
 
@@ -763,6 +781,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         if (p.item.type === 'userMessage' && p.item.clientId) {
           item.text = this.#displayUserMessages.get(p.item.clientId) ?? item.text
           this.#displayUserMessages.delete(p.item.clientId)
+        }
+        if (p.item.type === 'agentMessage' && p.item.phase !== 'commentary') {
+          const workspacePath = this.#briefingTurns.get(p.turnId)
+          if (workspacePath && item.text)
+            item.text = persistDesignBriefing(item.text, workspacePath)
         }
         emit({
           type: 'item.completed',
