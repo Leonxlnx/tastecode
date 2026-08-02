@@ -5,6 +5,7 @@ import { memo, useLayoutEffect, useRef, useState, type PointerEvent } from 'reac
 import type { Transport, ConnectionState } from '../transport.js'
 
 const MIN_HEIGHT = 160
+const owners = new Map<string, symbol>()
 
 type TerminalStatus =
   | { state: 'connecting' }
@@ -33,6 +34,8 @@ export const TerminalPane = memo(function TerminalPane(props: {
   useLayoutEffect(() => {
     const container = host.current
     if (!container) return
+    const owner = Symbol(props.threadId)
+    owners.set(props.threadId, owner)
 
     const instance = new Terminal({
       cursorBlink: true,
@@ -88,9 +91,11 @@ export const TerminalPane = memo(function TerminalPane(props: {
         .then(({ terminalId: openedId }) => {
           opening = false
           if (disposed) {
-            void props.transport
-              .request('terminal.close', { terminalId: openedId })
-              .catch(() => undefined)
+            if (!owners.has(props.threadId)) {
+              void props.transport
+                .request('terminal.close', { terminalId: openedId })
+                .catch(() => undefined)
+            }
             return
           }
           terminalId = openedId
@@ -162,7 +167,10 @@ export const TerminalPane = memo(function TerminalPane(props: {
       offState()
       offOutput()
       offExit()
-      if (terminalId) {
+      if (owners.get(props.threadId) === owner) {
+        owners.delete(props.threadId)
+      }
+      if (terminalId && !owners.has(props.threadId)) {
         void props.transport.request('terminal.close', { terminalId }).catch(() => undefined)
       }
       terminal.current = null

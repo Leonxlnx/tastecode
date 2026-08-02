@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConnectionState, Transport } from '../transport.js'
@@ -82,14 +83,16 @@ describe('TerminalPane', () => {
     })
     const onClose = vi.fn()
     const view = render(
-      <TerminalPane
-        transport={harness.transport}
-        threadId="thread-1"
-        height={260}
-        theme="dark"
-        onHeightChange={vi.fn()}
-        onClose={onClose}
-      />,
+      <StrictMode>
+        <TerminalPane
+          transport={harness.transport}
+          threadId="thread-1"
+          height={260}
+          theme="dark"
+          onHeightChange={vi.fn()}
+          onClose={onClose}
+        />
+      </StrictMode>,
     )
 
     await waitFor(() =>
@@ -99,7 +102,10 @@ describe('TerminalPane', () => {
         rows: 24,
       }),
     )
-    const instance = xterm.instances[0]
+    const initialOpenCount = harness.request.mock.calls.filter(
+      ([method]) => method === 'terminal.open',
+    ).length
+    const instance = xterm.instances.at(-1)
     expect(instance).toBeTruthy()
 
     act(() => harness.emit('terminal.output', { terminalId: 'terminal-1', data: 'ready\r\n' }))
@@ -122,7 +128,7 @@ describe('TerminalPane', () => {
     await waitFor(() =>
       expect(
         harness.request.mock.calls.filter(([method]) => method === 'terminal.open'),
-      ).toHaveLength(2),
+      ).toHaveLength(initialOpenCount + 1),
     )
 
     act(() => harness.emit('terminal.exit', { terminalId: 'terminal-1', exitCode: 0 }))
@@ -131,7 +137,7 @@ describe('TerminalPane', () => {
     await waitFor(() =>
       expect(
         harness.request.mock.calls.filter(([method]) => method === 'terminal.open'),
-      ).toHaveLength(3),
+      ).toHaveLength(initialOpenCount + 2),
     )
     fireEvent.click(screen.getByTitle('Close terminal'))
     expect(onClose).toHaveBeenCalledOnce()
@@ -140,6 +146,9 @@ describe('TerminalPane', () => {
     expect(harness.request).toHaveBeenCalledWith('terminal.close', {
       terminalId: 'terminal-1',
     })
+    expect(
+      harness.request.mock.calls.filter(([method]) => method === 'terminal.close'),
+    ).toHaveLength(1)
   })
 })
 
