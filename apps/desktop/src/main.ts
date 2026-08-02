@@ -13,12 +13,7 @@ import {
   type WebContents,
 } from 'electron'
 import { allowsMicrophoneRequest } from './media-permissions.js'
-import {
-  isZoomAction,
-  nextZoomFactor,
-  type ZoomAction,
-  zoomShortcut,
-} from './zoom-shortcuts.js'
+import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './zoom-shortcuts.js'
 
 /**
  * Electron shell. Deliberately thin: it opens a window and nothing else.
