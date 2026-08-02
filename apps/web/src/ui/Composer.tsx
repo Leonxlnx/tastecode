@@ -543,8 +543,8 @@ export function Composer(props: {
             className={`composer__design-beam${props.newSession ? ' is-shelved' : ''}`}
             size="md"
             colorVariant="colorful"
-            strength={0.9}
-            brightness={1.5}
+            strength={1}
+            brightness={1.7}
             duration={2.4}
             active={props.designMode}
             borderRadius={20}

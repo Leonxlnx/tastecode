@@ -4276,6 +4276,11 @@
   border-radius: var(--r-2xl);
 }
 
+.composer__design-beam[data-active]::after,
+.composer__design-beam[data-active] [data-beam-bloom] {
+  padding: 2px !important;
+}
+
 .composer__design-button-beam {
   display: flex;
   flex: none;
