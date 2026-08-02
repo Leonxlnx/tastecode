@@ -17,6 +17,30 @@ const apply = (events: DomainEvent[]) => events.reduce(reduce, emptyThread)
 afterEach(() => vi.unstubAllGlobals())
 
 describe('thread reducer', () => {
+  it('holds generated questions until their exact request is answered', () => {
+    const request = {
+      id: 'brief-1',
+      turnId: 't1',
+      questions: [
+        {
+          id: 'palette',
+          header: 'Colour',
+          question: 'Do you already have a palette?',
+          allowOther: true,
+          secret: false,
+          options: [{ label: 'Decide for me', description: 'Infer it from the brief.' }],
+        },
+      ],
+      autoResolutionMs: null,
+      createdAt: 1,
+    }
+    const waiting = reduce(emptyThread, { type: 'user_input.requested', request })
+    const resolved = reduce(waiting, { type: 'user_input.resolved', id: request.id })
+
+    expect(waiting.userInputs).toEqual([request])
+    expect(resolved.userInputs).toEqual([])
+  })
+
   it('appends streamed text to the item being written', () => {
     const state = apply([
       { type: 'item.started', item: item({ text: '' }) },

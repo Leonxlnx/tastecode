@@ -1,0 +1,177 @@
+.brief-input {
+  width: min(100%, 720px);
+  margin: 18px auto 8px;
+  padding: 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-flyout);
+  animation: brief-input-in var(--dur-slow) var(--ease-out) both;
+}
+
+.brief-input__head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.brief-input__head > span {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--text);
+}
+
+.brief-input h2 {
+  margin: 1px 0 3px;
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+
+.brief-input p,
+.brief-input__footer > span {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+}
+
+.brief-input__question {
+  position: relative;
+  margin: 0;
+  padding: 16px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.brief-input__question legend {
+  padding: 0;
+  color: var(--text);
+  font-size: var(--t-md);
+  font-weight: 550;
+}
+
+.brief-input__label {
+  position: absolute;
+  top: 17px;
+  right: 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.brief-input__options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.brief-input__option {
+  display: flex;
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+}
+
+.brief-input__option:hover {
+  border-color: var(--line-strong);
+  background: var(--control-hover);
+}
+
+.brief-input__option:active {
+  transform: scale(0.99);
+}
+
+.brief-input__option:has(input:checked) {
+  border-color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.brief-input__option input {
+  margin: 2px 0 0;
+  accent-color: var(--text);
+}
+
+.brief-input__option span,
+.brief-input__option small {
+  display: block;
+}
+
+.brief-input__option strong {
+  font-size: var(--t-sm);
+  font-weight: 570;
+}
+
+.brief-input__option small {
+  margin-top: 2px;
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  line-height: 1.35;
+}
+
+.brief-input__custom {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  outline: none;
+  background: var(--bg-prompt);
+  color: var(--text);
+  font: inherit;
+}
+
+.brief-input__custom:focus {
+  border-color: var(--text-2);
+}
+
+.brief-input__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.brief-input__footer button {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--light);
+  color: var(--on-light);
+  font: inherit;
+  font-weight: 570;
+  cursor: pointer;
+}
+
+.brief-input__footer button:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+@keyframes brief-input-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brief-input {
+    animation: none;
+  }
+
+  .brief-input__option {
+    transition: none;
+  }
+}

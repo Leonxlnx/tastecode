@@ -42,6 +42,7 @@ import { StageHeader } from './ui/StageHeader.js'
 import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { serverUrl } from './server-url.js'
+import { addDesignBriefing } from './design-agent/briefing.js'
 import {
   applyTheme,
   DARK_THEME_QUERY,
@@ -128,6 +129,7 @@ export function App() {
   const [models, setModels] = useState<Model[]>([])
   const [modelsLoaded, setModelsLoaded] = useState(false)
   const [autoReviewSupported, setAutoReviewSupported] = useState(false)
+  const [userInputSupported, setUserInputSupported] = useState(false)
   const [modelId, setModelId] = useState<string | undefined>(
     () => localStorage.getItem(MODEL_KEY) ?? undefined,
   )
@@ -245,6 +247,7 @@ export function App() {
       threadStates.current.set(threadId, next)
 
       if (threadId === activeIdRef.current) setThread(next)
+      if (threadId === activeIdRef.current && endsDesignBriefing(event)) setDesignMode(false)
 
       if (affectsSessionStatus(event)) {
         setProjects((current) => {
@@ -340,6 +343,7 @@ export function App() {
     if (!provider) return
     let cancelled = false
     setAutoReviewSupported(false)
+    setUserInputSupported(false)
     void transport
       .request('providers.list', {})
       .then(({ providers }) => {
@@ -347,9 +351,13 @@ export function App() {
         setAutoReviewSupported(
           providers.find((entry) => entry.id === provider)?.capabilities?.autoReview === true,
         )
+        setUserInputSupported(
+          providers.find((entry) => entry.id === provider)?.capabilities?.userInput === true,
+        )
       })
       .catch(() => {
         if (!cancelled) setAutoReviewSupported(false)
+        if (!cancelled) setUserInputSupported(false)
       })
     return () => {
       cancelled = true
@@ -703,6 +711,15 @@ export function App() {
 
   const send = useCallback(
     async (text: string, attachments: string[] = []) => {
+      const briefing = designMode
+      if (briefing) {
+        if (!userInputSupported) {
+          setDesignMode(false)
+          setNotice('Design briefing requires an agent that supports structured questions.')
+          return
+        }
+      }
+      const turnAttachments = briefing ? addDesignBriefing(attachments) : attachments
       // Typing first and having the session appear is the natural order. Making
       // the user press "new session" before they are allowed to type is the
       // app's bookkeeping leaking into their way of working.
@@ -790,7 +807,7 @@ export function App() {
         const result = await transport.request('thread.sendTurn', {
           threadId,
           text,
-          ...(attachments.length > 0 ? { attachments } : {}),
+          ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
           ...(modelId ? { model: modelId } : {}),
           ...(effort ? { effort } : {}),
           ...(serviceTier ? { serviceTier } : {}),
@@ -847,6 +864,8 @@ export function App() {
       effort,
       serviceTier,
       updateQueue,
+      designMode,
+      userInputSupported,
     ],
   )
 
@@ -1449,6 +1468,7 @@ export function App() {
                 searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
                 revealRequest={threadRevealRequest}
                 approvals={thread.approvals}
+                userInputs={thread.userInputs}
                 reviews={Object.values(thread.reviews)}
                 onDecide={(approvalId, decision) => {
                   if (!activeId) return
@@ -1456,6 +1476,14 @@ export function App() {
                     threadId: activeId,
                     approvalId,
                     decision,
+                  })
+                }}
+                onAnswerUserInput={(requestId, answers) => {
+                  if (!activeId) return
+                  void transport.request('thread.respondToUserInput', {
+                    threadId: activeId,
+                    requestId,
+                    answers,
                   })
                 }}
               />
@@ -1699,6 +1727,16 @@ function promoteSession(projects: Project[], threadId: string): Project[] {
     const [session] = sessions.splice(index, 1)
     return session ? { ...project, sessions: [session, ...sessions] } : project
   })
+}
+
+function endsDesignBriefing(event: DomainEvent): boolean {
+  if (event.type !== 'item.completed' || event.item.role !== 'assistant') return false
+  const text = event.item.text ?? ''
+  return (
+    text.trim() ===
+      'Design mode was turned off because this request is not a website design task.' ||
+    text.includes('DEBUG FINISHED · NO WEBSITE BUILT')
+  )
 }
 
 function affectsSessionStatus(event: DomainEvent): boolean {

@@ -6,6 +6,7 @@ import type {
   ApprovalReview,
   Item,
   PlanStep,
+  UserInputRequest,
 } from '@harness/contracts'
 import { ThinkingOrb } from 'thinking-orbs'
 import {
@@ -33,6 +34,7 @@ import { Plan } from './Plan.js'
 import { ThreadSearch } from './ThreadSearch.js'
 import { findTurns, neighbourTurn, presentTurns } from './turns.js'
 import { isAtBottom, modeForNewTurn, shouldReleaseAnchor, type ScrollMode } from './scroll-mode.js'
+import { UserInput } from '../design-agent/UserInput.js'
 
 /**
  * The thread.
@@ -58,8 +60,10 @@ export function Thread(props: {
   searchJump?: { turnId: string; request: number } | undefined
   revealRequest?: number | undefined
   approvals: ApprovalRequest[]
+  userInputs: UserInputRequest[]
   reviews: ApprovalReview[]
   onDecide: (id: string, decision: ApprovalDecision) => void
+  onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void
 }) {
   const scroller = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<ScrollMode>('follow-end')
@@ -262,6 +266,14 @@ export function Thread(props: {
 
         {/* Above the plan and the diff: it is the only thing here that blocks
             the agent, so it should be the first thing the eye lands on. */}
+        {props.userInputs.map((request) => (
+          <UserInput
+            key={request.id}
+            request={request}
+            onSubmit={(answers) => props.onAnswerUserInput(request.id, answers)}
+          />
+        ))}
+
         {props.approvals.map((request) => (
           <Approval
             key={request.id}

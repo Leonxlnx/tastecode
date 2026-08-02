@@ -5,6 +5,7 @@ import type {
   Item,
   PlanStep,
   Usage,
+  UserInputRequest,
 } from '@harness/contracts'
 
 /**
@@ -26,6 +27,8 @@ export type ThreadState = {
   diff?: string | undefined
   /** Permission requests still waiting on an answer. */
   approvals: ApprovalRequest[]
+  /** Structured questions still blocking the current agent turn. */
+  userInputs: UserInputRequest[]
   /** Automatic approval reviews, upserted by their stable provider id. */
   reviews: Record<string, ApprovalReview>
 }
@@ -36,6 +39,7 @@ export const emptyThread: ThreadState = {
   activeTurn: undefined,
   plan: [],
   approvals: [],
+  userInputs: [],
   reviews: {},
 }
 
@@ -72,7 +76,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       }
 
     case 'turn.completed':
-      return { ...state, running: false, activeTurn: undefined }
+      return { ...state, running: false, activeTurn: undefined, userInputs: [] }
 
     case 'plan.updated':
       return { ...state, plan: event.steps }
@@ -90,6 +94,12 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
 
     case 'approval.resolved':
       return { ...state, approvals: state.approvals.filter((a) => a.id !== event.id) }
+
+    case 'user_input.requested':
+      return { ...state, userInputs: [...state.userInputs, event.request] }
+
+    case 'user_input.resolved':
+      return { ...state, userInputs: state.userInputs.filter((request) => request.id !== event.id) }
 
     case 'approval.review.started':
     case 'approval.review.completed':
@@ -138,6 +148,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
         ...state,
         running: false,
         activeTurn: undefined,
+        userInputs: [],
         items: [
           ...state.items,
           {

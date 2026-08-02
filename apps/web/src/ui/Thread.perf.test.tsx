@@ -30,8 +30,10 @@ const view = (items: ReturnType<typeof makeFixtureThread>) => (
     plan={[]}
     diff={undefined}
     approvals={[]}
+    userInputs={[]}
     reviews={[]}
     onDecide={() => {}}
+    onAnswerUserInput={() => {}}
   />
 )
 
@@ -53,8 +55,10 @@ describe('thread at scale', () => {
       plan: [],
       diff: undefined,
       approvals: [],
+      userInputs: [],
       reviews: [],
       onDecide: () => {},
+      onAnswerUserInput: () => {},
     }
     const rendered = render(<Thread {...props} searching={false} />)
     expect(

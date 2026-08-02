@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { DomainEvent } from '@harness/contracts'
 import { App } from './App.js'
+import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 
 const transport = vi.hoisted(() => ({
   request: vi.fn(),
@@ -113,6 +114,7 @@ beforeEach(() => {
                 interrupt: true,
                 reasoningItems: true,
                 approvals: true,
+                userInput: true,
                 autoReview: true,
                 images: true,
               },
@@ -351,8 +353,28 @@ describe('new chats', () => {
     await waitFor(() => {
       expect(document.querySelector('.stage__body.is-new-session')).toBeNull()
     })
+    expect(transport.request).toHaveBeenCalledWith(
+      'thread.sendTurn',
+      expect.objectContaining({ attachments: [DESIGN_BRIEF_ATTACHMENT] }),
+    )
     expect(document.querySelector('.stage__body > .composer')).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe('true')
+
+    emitThreadEvent('thread-1', {
+      type: 'item.completed',
+      item: {
+        id: 'design-guard',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: 'Design mode was turned off because this request is not a website design task.',
+        createdAt: 1,
+      },
+    })
+    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
+      'false',
+    )
   })
 
   it('starts a new session in an isolated checkout when selected', async () => {
