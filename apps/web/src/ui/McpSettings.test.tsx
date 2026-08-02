@@ -110,4 +110,74 @@ describe('MCP settings', () => {
     expect(await screen.findByText(/does not expose MCP servers/)).toBeTruthy()
     expect(screen.queryAllByRole('button')).toHaveLength(0)
   })
+
+  it('adds a project server and disables an inherited server', async () => {
+    const transport = client(async (method) => {
+      if (method === 'mcp.list') {
+        return {
+          capabilities: {
+            inventory: true,
+            add: true,
+            update: true,
+            remove: true,
+            reload: true,
+            startOAuth: true,
+            cancelOAuth: false,
+          },
+          servers: [
+            {
+              id: 'github',
+              scope: 'global',
+              enabled: true,
+              auth: { status: 'not_required' },
+              startup: { state: 'ready' },
+              tools: [],
+              resources: [],
+              resourceTemplates: [],
+            },
+          ],
+        }
+      }
+      if (method === 'mcp.add' || method === 'mcp.reload') return {}
+      throw new Error(`unexpected ${method}`)
+    })
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect(await screen.findByText('github')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Add server' }))
+    fireEvent.change(screen.getByLabelText('Server ID'), { target: { value: 'docs' } })
+    fireEvent.change(screen.getByLabelText('Transport JSON', { exact: false }), {
+      target: { value: '{"type":"http","url":"https://docs.example.test/mcp"}' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save server' }))
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('mcp.add', {
+        provider: 'codex',
+        projectPath: '/work/project',
+        server: {
+          id: 'docs',
+          enabled: true,
+          transport: { type: 'http', url: 'https://docs.example.test/mcp' },
+        },
+      })
+    })
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Disable github for this project' }))
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('mcp.add', {
+        provider: 'codex',
+        projectPath: '/work/project',
+        server: { id: 'github', enabled: false },
+      })
+    })
+  })
 })
