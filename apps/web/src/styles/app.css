@@ -4881,6 +4881,11 @@
   border-radius: 50%;
 }
 
+.composer__send-beam[data-active]::after,
+.composer__send-beam[data-active] [data-beam-bloom] {
+  padding: 2px !important;
+}
+
 .orb {
   position: relative;
   display: grid;
