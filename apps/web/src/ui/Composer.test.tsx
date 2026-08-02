@@ -196,6 +196,31 @@ describe('Composer project requirement', () => {
   })
 })
 
+describe('Composer height', () => {
+  it('starts at two lines and scrolls only after ten lines', async () => {
+    renderComposer(vi.fn())
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    let contentHeight = 120
+    Object.defineProperty(composer, 'offsetHeight', { configurable: true, value: 68 })
+    Object.defineProperty(composer, 'scrollHeight', {
+      configurable: true,
+      get: () => contentHeight,
+    })
+
+    expect(composer.getAttribute('rows')).toBe('2')
+    fireEvent.change(composer, { target: { value: 'one\ntwo\nthree' } })
+    await waitFor(() => expect(composer.style.height).toBe('120px'))
+    expect(composer.style.overflowY).toBe('hidden')
+
+    contentHeight = 300
+    fireEvent.change(composer, {
+      target: { value: Array.from({ length: 11 }, () => 'line').join('\n') },
+    })
+    await waitFor(() => expect(composer.style.height).toBe('242px'))
+    expect(composer.style.overflowY).toBe('auto')
+  })
+})
+
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,
   overrides: Partial<Parameters<typeof Composer>[0]> = {},

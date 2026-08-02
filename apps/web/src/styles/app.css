@@ -3724,6 +3724,10 @@
   padding: 4px 24px 8px;
 }
 
+.composer:not(.is-new-session) {
+  padding-bottom: 12px;
+}
+
 .composer__box {
   position: relative;
   max-width: var(--chat-w);
@@ -3983,12 +3987,14 @@
   border: 0;
   color: var(--text);
   font: inherit;
-  line-height: 1.6;
-  min-height: 86px;
-  padding: 17px 18px 4px;
+  font-size: 14px;
+  line-height: 1.55;
+  min-height: 68px;
+  padding: 16px 18px 8px;
   resize: none;
   outline: none;
-  max-height: 220px;
+  max-height: 242px;
+  overflow-y: hidden;
   transition: height var(--dur-fast) var(--ease-out);
 }
 
@@ -5391,6 +5397,10 @@
 
   .composer {
     padding: 4px 10px max(8px, env(safe-area-inset-bottom));
+  }
+
+  .composer:not(.is-new-session) {
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
 
   .composer textarea {

@@ -119,7 +119,8 @@ const SLASH_COMMANDS: { name: string; detail: string; text: string }[] = [
 ]
 
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i
-const COMPOSER_MIN_HEIGHT = 86
+const COMPOSER_MIN_HEIGHT = 68
+const COMPOSER_MAX_HEIGHT = 242
 const COMPOSER_DOCK_ANIMATION_ID = 'harness-composer-dock'
 const COMPOSER_DOCK_MOTION_MS = 180
 const COMPOSER_DOCK_EASING = 'cubic-bezier(0.4, 0, 0.2, 1)'
@@ -274,8 +275,10 @@ export function Composer(props: {
     if (!el) return
     const currentHeight = el.offsetHeight
     el.style.height = 'auto'
-    const nextHeight = Math.max(COMPOSER_MIN_HEIGHT, Math.min(el.scrollHeight, 220))
+    const contentHeight = el.scrollHeight
+    const nextHeight = Math.max(COMPOSER_MIN_HEIGHT, Math.min(contentHeight, COMPOSER_MAX_HEIGHT))
     el.style.height = `${currentHeight}px`
+    el.style.overflowY = contentHeight > COMPOSER_MAX_HEIGHT ? 'auto' : 'hidden'
     if (resizeFrame.current !== undefined) window.cancelAnimationFrame(resizeFrame.current)
     resizeFrame.current = window.requestAnimationFrame(() => {
       resizeFrame.current = undefined
@@ -384,6 +387,7 @@ export function Composer(props: {
       resizeFrame.current = window.requestAnimationFrame(() => {
         resizeFrame.current = undefined
         el.style.height = `${COMPOSER_MIN_HEIGHT}px`
+        el.style.overflowY = 'hidden'
       })
       el.focus()
     }
@@ -506,7 +510,7 @@ export function Composer(props: {
 
   return (
     <>
-      <div className="composer" ref={transitionGroup}>
+      <div className={`composer${props.newSession ? ' is-new-session' : ''}`} ref={transitionGroup}>
         <div
           ref={composerAnchor}
           className={`composer__box ${dragging ? 'is-dropping' : ''}`}
@@ -724,7 +728,7 @@ export function Composer(props: {
                 <textarea
                   ref={area}
                   value={text}
-                  rows={1}
+                  rows={2}
                   spellCheck={false}
                   disabled={props.disabled}
                   aria-keyshortcuts={shortcutAria(SHORTCUTS.focusComposer)}
