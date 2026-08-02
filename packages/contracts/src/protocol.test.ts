@@ -153,6 +153,40 @@ describe('protocol envelopes', () => {
     ).toThrow()
   })
 
+  it('defines a platform-neutral terminal stream', () => {
+    const opened = methods['terminal.open'].params.parse({
+      threadId: 'thread-1',
+      columns: 120,
+      rows: 40,
+    })
+    expect(opened).toEqual({ threadId: 'thread-1', columns: 120, rows: 40 })
+
+    const { terminalId } = methods['terminal.open'].result.parse({ terminalId: 'terminal-1' })
+    expect(methods['terminal.input'].params.parse({ terminalId, data: '\u0003' })).toEqual({
+      terminalId,
+      data: '\u0003',
+    })
+    expect(methods['terminal.resize'].params.parse({ terminalId, columns: 80, rows: 24 })).toEqual({
+      terminalId,
+      columns: 80,
+      rows: 24,
+    })
+    expect(methods['terminal.close'].params.parse({ terminalId })).toEqual({ terminalId })
+
+    expect(channels['terminal.output'].parse({ terminalId, data: 'ready\r\n' })).toEqual({
+      terminalId,
+      data: 'ready\r\n',
+    })
+    expect(channels['terminal.exit'].parse({ terminalId, exitCode: 0 })).toEqual({
+      terminalId,
+      exitCode: 0,
+    })
+    expect(channels['terminal.exit'].parse({ terminalId, exitCode: null }).exitCode).toBeNull()
+    expect(() =>
+      methods['terminal.resize'].params.parse({ terminalId, columns: 0, rows: 24 }),
+    ).toThrow()
+  })
+
   it('keeps unreported usage cost absent', () => {
     const result = methods['usage.summary'].result.parse({
       session: {

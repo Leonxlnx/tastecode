@@ -71,6 +71,15 @@ export const PanicStopResultSchema = z.object({
 })
 export type PanicStopResult = z.infer<typeof PanicStopResultSchema>
 
+export const TerminalIdSchema = z.string().min(1)
+export type TerminalId = z.infer<typeof TerminalIdSchema>
+
+export const TerminalSizeSchema = z.object({
+  columns: z.number().int().min(1).max(1_000),
+  rows: z.number().int().min(1).max(1_000),
+})
+export type TerminalSize = z.infer<typeof TerminalSizeSchema>
+
 export const ResponseSchema = z.union([
   z.object({ id: z.string(), result: z.unknown() }),
   z.object({
@@ -539,6 +548,23 @@ export const methods = {
     params: z.object({ path: z.string() }),
     result: z.object({}),
   },
+  /** Open the session's platform-selected shell in its actual checkout. */
+  'terminal.open': {
+    params: z.object({ threadId: z.string().min(1), ...TerminalSizeSchema.shape }),
+    result: z.object({ terminalId: TerminalIdSchema }),
+  },
+  'terminal.input': {
+    params: z.object({ terminalId: TerminalIdSchema, data: z.string().max(65_536) }),
+    result: z.object({}),
+  },
+  'terminal.resize': {
+    params: z.object({ terminalId: TerminalIdSchema, ...TerminalSizeSchema.shape }),
+    result: z.object({}),
+  },
+  'terminal.close': {
+    params: z.object({ terminalId: TerminalIdSchema }),
+    result: z.object({}),
+  },
   /** Materialize a browser clipboard image where the local agents can read it. */
   'attachments.saveImage': {
     params: z.object({
@@ -774,6 +800,15 @@ export const channels = {
     threadId: z.string(),
     items: z.array(QueuedTurnSchema),
     canSteer: z.boolean(),
+  }),
+  'terminal.output': z.object({
+    terminalId: TerminalIdSchema,
+    data: z.string(),
+  }),
+  'terminal.exit': z.object({
+    terminalId: TerminalIdSchema,
+    /** Null when the platform reports termination without a numeric status. */
+    exitCode: z.number().int().nullable(),
   }),
 } as const
 
