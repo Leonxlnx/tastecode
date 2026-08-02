@@ -282,6 +282,43 @@ export const SessionSearchResultSchema = z.object({
 })
 export type SessionSearchResult = z.infer<typeof SessionSearchResultSchema>
 
+export const ThreadInboxStatusSchema = z.enum([
+  'starting',
+  'working',
+  'queued',
+  'approval',
+  'input',
+  'failed',
+  'ready',
+  'idle',
+])
+export type ThreadInboxStatus = z.infer<typeof ThreadInboxStatusSchema>
+
+export const ThreadLifecycleSchema = z.discriminatedUnion('state', [
+  z.object({
+    state: z.literal('active'),
+    keepActive: z.boolean(),
+    wokeAt: z.number().int().nonnegative().optional(),
+  }),
+  z.object({
+    state: z.literal('settled'),
+    settledAt: z.number().int().nonnegative(),
+    reason: z.enum(['manual', 'inactivity', 'change_request']),
+  }),
+  z.object({
+    state: z.literal('snoozed'),
+    snoozedAt: z.number().int().nonnegative(),
+    wakeAt: z.number().int().nonnegative(),
+  }),
+])
+export type ThreadLifecycle = z.infer<typeof ThreadLifecycleSchema>
+
+export const SidebarSettingsSchema = z.object({
+  mode: z.enum(['classic', 'inbox']),
+  autoSettleDays: z.number().int().min(1).max(90).nullable(),
+})
+export type SidebarSettings = z.infer<typeof SidebarSettingsSchema>
+
 export const DiffLineSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('context'),
@@ -585,6 +622,11 @@ export const methods = {
               createdAt: z.number(),
               /** True while the agent is actively working on a turn. */
               running: z.boolean(),
+              /** Richer server-derived state for the inbox sidebar. */
+              status: ThreadInboxStatusSchema.optional(),
+              unread: z.boolean().optional(),
+              /** Absent until the server supports the inbox lifecycle. */
+              lifecycle: ThreadLifecycleSchema.optional(),
               closedAt: z.number().optional(),
               /** The private checkout branch, when this session is isolated. */
               worktreeBranch: z.string().optional(),
@@ -643,6 +685,29 @@ export const methods = {
   'thread.rename': {
     params: z.object({ threadId: z.string(), title: z.string() }),
     result: z.object({}),
+  },
+  'thread.settle': {
+    params: z.object({ threadId: z.string().min(1) }),
+    result: z.object({ lifecycle: ThreadLifecycleSchema }),
+  },
+  'thread.unsettle': {
+    params: z.object({ threadId: z.string().min(1) }),
+    result: z.object({ lifecycle: ThreadLifecycleSchema }),
+  },
+  'thread.snooze': {
+    params: z.object({
+      threadId: z.string().min(1),
+      wakeAt: z.number().int().nonnegative(),
+    }),
+    result: z.object({ lifecycle: ThreadLifecycleSchema }),
+  },
+  'thread.unsnooze': {
+    params: z.object({ threadId: z.string().min(1) }),
+    result: z.object({ lifecycle: ThreadLifecycleSchema }),
+  },
+  'thread.setKeepActive': {
+    params: z.object({ threadId: z.string().min(1), keepActive: z.boolean() }),
+    result: z.object({ lifecycle: ThreadLifecycleSchema }),
   },
   'thread.delete': {
     params: z.object({ threadId: z.string() }),
@@ -818,6 +883,14 @@ export const methods = {
     params: z.object({ threadId: z.string() }),
     result: z.object({}),
   },
+  'sidebar.settings': {
+    params: z.object({}),
+    result: SidebarSettingsSchema,
+  },
+  'sidebar.updateSettings': {
+    params: SidebarSettingsSchema.partial(),
+    result: SidebarSettingsSchema,
+  },
 } as const
 
 export type MethodName = keyof typeof methods
@@ -872,6 +945,11 @@ export const channels = {
     items: z.array(QueuedTurnSchema),
     canSteer: z.boolean(),
   }),
+  'thread.lifecycle': z.object({
+    threadId: z.string().min(1),
+    lifecycle: ThreadLifecycleSchema,
+  }),
+  'sidebar.settings': SidebarSettingsSchema,
   'terminal.output': z.object({
     terminalId: TerminalIdSchema,
     data: z.string(),

@@ -12,8 +12,10 @@ import {
   PushSchema,
   RequestSchema,
   ResponseSchema,
+  SidebarSettingsSchema,
   SkillCapabilitiesSchema,
   SkillSchema,
+  ThreadLifecycleSchema,
 } from './protocol.js'
 
 describe('domain events', () => {
@@ -339,6 +341,29 @@ describe('protocol envelopes', () => {
     expect(() =>
       methods['search.sessions'].params.parse({ query: 'regression', limit: 101 }),
     ).toThrow()
+  })
+
+  it('validates the persisted inbox lifecycle without conflating archive state', () => {
+    const settled = methods['thread.settle'].result.parse({
+      lifecycle: { state: 'settled', settledAt: 20, reason: 'manual' },
+    })
+    expect(settled.lifecycle.state).toBe('settled')
+    expect(methods['thread.snooze'].params.parse({ threadId: 'thread-1', wakeAt: 60_000 })).toEqual(
+      { threadId: 'thread-1', wakeAt: 60_000 },
+    )
+    expect(ThreadLifecycleSchema.parse({ state: 'active', keepActive: true, wokeAt: 30 })).toEqual({
+      state: 'active',
+      keepActive: true,
+      wokeAt: 30,
+    })
+    expect(SidebarSettingsSchema.parse({ mode: 'inbox', autoSettleDays: null })).toEqual({
+      mode: 'inbox',
+      autoSettleDays: null,
+    })
+    expect(() =>
+      ThreadLifecycleSchema.parse({ state: 'snoozed', snoozedAt: 20, wakeAt: -1 }),
+    ).toThrow()
+    expect(() => SidebarSettingsSchema.parse({ mode: 'inbox', autoSettleDays: 91 })).toThrow()
   })
 
   it('validates provider-neutral MCP inventory', () => {
