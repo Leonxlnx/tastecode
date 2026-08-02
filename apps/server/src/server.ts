@@ -13,6 +13,7 @@ import {
   type MethodName,
   type McpServerConfig,
   type ProviderId,
+  type SidebarSettings,
 } from '@harness/contracts'
 import { StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator } from './orchestrator.js'
@@ -92,10 +93,15 @@ export function startServer(
       push.broadcast('mcp.oauth', { provider, projectPath, ...result }),
     onSkillsChanged: (provider, projectPath) =>
       push.broadcast('skills.changed', { provider, projectPath }),
+    onLifecycle: (threadId, lifecycle) =>
+      push.broadcast('thread.lifecycle', { threadId, lifecycle }),
     onTerminalOutput: (terminalId, data) => push.broadcast('terminal.output', { terminalId, data }),
     onTerminalExit: (terminalId, exitCode) =>
       push.broadcast('terminal.exit', { terminalId, exitCode }),
   })
+  orchestrator.refreshLifecycle()
+  const lifecycleTimer = setInterval(() => orchestrator.refreshLifecycle(), 30_000)
+  lifecycleTimer.unref()
 
   // A previous run killed mid-session leaves git believing in checkouts that
   // are gone. Clearing that up at startup means the next session on that path
@@ -338,6 +344,7 @@ export function startServer(
       }
 
       case 'projects.list':
+        orchestrator.refreshLifecycle()
         return {
           projects: store.projects().map((project) => ({
             ...project,
@@ -348,6 +355,9 @@ export function startServer(
               ...(thread.agent === undefined ? {} : { agent: thread.agent }),
               createdAt: thread.createdAt,
               running: orchestrator.isTurnRunning(thread.id),
+              status: orchestrator.inboxStatus(thread.id),
+              unread: thread.unread,
+              lifecycle: thread.lifecycle,
               ...(thread.worktreeBranch === undefined
                 ? {}
                 : { worktreeBranch: thread.worktreeBranch }),
@@ -411,6 +421,31 @@ export function startServer(
         return {}
       }
 
+      case 'thread.settle': {
+        const p = params as { threadId: string }
+        return { lifecycle: orchestrator.settleThread(p.threadId) }
+      }
+
+      case 'thread.unsettle': {
+        const p = params as { threadId: string }
+        return { lifecycle: orchestrator.unsettleThread(p.threadId) }
+      }
+
+      case 'thread.snooze': {
+        const p = params as { threadId: string; wakeAt: number }
+        return { lifecycle: orchestrator.snoozeThread(p.threadId, p.wakeAt) }
+      }
+
+      case 'thread.unsnooze': {
+        const p = params as { threadId: string }
+        return { lifecycle: orchestrator.unsnoozeThread(p.threadId) }
+      }
+
+      case 'thread.setKeepActive': {
+        const p = params as { threadId: string; keepActive: boolean }
+        return { lifecycle: orchestrator.setThreadKeepActive(p.threadId, p.keepActive) }
+      }
+
       case 'thread.delete': {
         const p = params as { threadId: string }
         if (store.thread(p.threadId)?.worktreePath) {
@@ -423,10 +458,12 @@ export function startServer(
 
       case 'thread.history': {
         const p = params as { threadId: string; afterSeq?: number }
-        return {
+        const result = {
           events: orchestrator.history(p.threadId, p.afterSeq ?? 0),
           running: orchestrator.isTurnRunning(p.threadId),
         }
+        orchestrator.markThreadRead(p.threadId)
+        return result
       }
 
       case 'thread.diff': {
@@ -592,6 +629,16 @@ export function startServer(
         orchestrator.close(p.threadId)
         return {}
       }
+
+      case 'sidebar.settings':
+        return store.sidebarSettings()
+
+      case 'sidebar.updateSettings': {
+        const settings = store.updateSidebarSettings(params as Partial<SidebarSettings>)
+        push.broadcast('sidebar.settings', settings)
+        orchestrator.refreshLifecycle()
+        return settings
+      }
     }
   }
 
@@ -610,6 +657,7 @@ export function startServer(
   return {
     port,
     close: () => {
+      clearInterval(lifecycleTimer)
       orchestrator.disposeAll()
       store.close()
       wss.close()

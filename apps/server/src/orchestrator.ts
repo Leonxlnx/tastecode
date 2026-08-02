@@ -40,6 +40,8 @@ import type {
   SkillCapabilities,
   SkillDiscoveryError,
   Thread,
+  ThreadInboxStatus,
+  ThreadLifecycle,
 } from '@harness/contracts'
 import { readSessionDiff, reviewDiffFile, reviewDiffHunk } from './diff-review.js'
 import { McpConfigStore } from './mcp-config.js'
@@ -101,6 +103,7 @@ export class Orchestrator {
     result: { serverId: string; loginId: string; success: boolean; error: string | null },
   ) => void
   #onSkillsChanged: (provider: ProviderId, projectPath: string) => void
+  #onLifecycle: (threadId: string, lifecycle: ThreadLifecycle) => void
   #watchedSkillProjects = new Set<string>()
   #mcpConfig: McpConfigStore
   #readCredential: (reference: string) => string
@@ -130,6 +133,7 @@ export class Orchestrator {
         result: { serverId: string; loginId: string; success: boolean; error: string | null },
       ) => void
       onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
+      onLifecycle?: (threadId: string, lifecycle: ThreadLifecycle) => void
       mcpConfig?: McpConfigStore
       readCredential?: (reference: string) => string
       onTerminalOutput?: (terminalId: string, data: string) => void
@@ -147,6 +151,7 @@ export class Orchestrator {
     this.#onLogin = handlers.onLogin
     this.#onMcpOAuth = handlers.onMcpOAuth ?? (() => {})
     this.#onSkillsChanged = handlers.onSkillsChanged ?? (() => {})
+    this.#onLifecycle = handlers.onLifecycle ?? (() => {})
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
     this.#readCredential = handlers.readCredential ?? readCredential
     this.#terminals = new TerminalManager({
@@ -458,6 +463,7 @@ export class Orchestrator {
     if (this.#reviewingDiffs.has(threadId)) {
       throw new Error('cannot start a turn while a diff rejection is running')
     }
+    this.#wakeForActivity(threadId)
     const panicGeneration = this.#panicGeneration
     this.#startingTurns.add(threadId)
     try {
@@ -554,6 +560,12 @@ export class Orchestrator {
       this.#activeTurns.delete(threadId)
     }
     const seq = this.#store.append(threadId, event)
+    if (event.type === 'turn.started' || event.type === 'approval.requested') {
+      this.#wakeForActivity(threadId)
+    }
+    if (event.type === 'turn.completed' || event.type === 'thread.error') {
+      this.#wakeForActivity(threadId, true)
+    }
     this.#onEvent(threadId, event, seq)
     if (event.type === 'turn.completed') void this.#drainQueue(threadId)
   }
@@ -613,6 +625,114 @@ export class Orchestrator {
   /** Whether the agent is inside a turn, rather than merely attached to the session. */
   isTurnRunning(threadId: string): boolean {
     return this.#activeTurns.has(threadId) || this.#startingTurns.has(threadId)
+  }
+
+  inboxStatus(threadId: string): ThreadInboxStatus {
+    if (this.#startingTurns.has(threadId)) return 'starting'
+    if (this.#activeTurns.has(threadId)) return 'working'
+    if ((this.#queuedTurns.get(threadId)?.length ?? 0) > 0) return 'queued'
+
+    // ponytail: replay the durable log here; add a status projection only if large histories
+    // make project-list latency measurable.
+    const approvals = new Set<string>()
+    let last: ThreadInboxStatus = 'idle'
+    for (const { event } of this.#store.history(threadId)) {
+      if (event.type === 'approval.requested') approvals.add(event.request.id)
+      if (event.type === 'approval.resolved') approvals.delete(event.id)
+      if (event.type === 'thread.error') last = 'failed'
+      if (event.type === 'turn.completed') {
+        last = event.status === 'failed' ? 'failed' : 'idle'
+      }
+    }
+    if (approvals.size > 0) return 'approval'
+    if (last === 'failed') return 'failed'
+    return this.#store.thread(threadId)?.unread ? 'ready' : last
+  }
+
+  settleThread(threadId: string): ThreadLifecycle {
+    this.#assertLifecycleState(threadId, 'active')
+    this.#assertCanHide(threadId)
+    return this.#notifyLifecycle(threadId, this.#store.settleThread(threadId, 'manual'))
+  }
+
+  unsettleThread(threadId: string): ThreadLifecycle {
+    this.#assertLifecycleState(threadId, 'settled')
+    return this.#notifyLifecycle(threadId, this.#store.activateThread(threadId))
+  }
+
+  snoozeThread(threadId: string, wakeAt: number): ThreadLifecycle {
+    if (wakeAt <= Date.now()) throw new Error('wake time must be in the future')
+    this.#assertLifecycleState(threadId, 'active')
+    this.#assertCanHide(threadId)
+    return this.#notifyLifecycle(threadId, this.#store.snoozeThread(threadId, wakeAt))
+  }
+
+  unsnoozeThread(threadId: string): ThreadLifecycle {
+    this.#assertLifecycleState(threadId, 'snoozed')
+    return this.#notifyLifecycle(threadId, this.#store.activateThread(threadId))
+  }
+
+  setThreadKeepActive(threadId: string, keepActive: boolean): ThreadLifecycle {
+    this.#assertLifecycleState(threadId, 'active')
+    return this.#notifyLifecycle(threadId, this.#store.setThreadKeepActive(threadId, keepActive))
+  }
+
+  markThreadRead(threadId: string): void {
+    this.#store.markThreadRead(threadId)
+  }
+
+  refreshLifecycle(now = Date.now()): void {
+    for (const thread of this.#store.dueSnoozedThreads(now)) {
+      this.#notifyLifecycle(thread.id, this.#store.touchThread(thread.id, false, now))
+    }
+
+    const days = this.#store.sidebarSettings().autoSettleDays
+    if (days === null) return
+    const cutoff = now - days * 24 * 60 * 60 * 1_000
+    for (const thread of this.#store.inactiveThreads(cutoff)) {
+      if (!this.#canHide(thread.id)) continue
+      this.#notifyLifecycle(thread.id, this.#store.settleThread(thread.id, 'inactivity', now))
+    }
+  }
+
+  #wakeForActivity(threadId: string, unread = false): void {
+    const before = this.#store.thread(threadId)
+    if (!before) return
+    const lifecycle = this.#store.touchThread(threadId, unread)
+    if (before.lifecycle.state !== 'active') this.#notifyLifecycle(threadId, lifecycle)
+  }
+
+  #assertCanHide(threadId: string): void {
+    const thread = this.#store.thread(threadId)
+    if (!thread) throw new Error('thread not found')
+    if (thread.closedAt !== undefined) throw new Error('archived threads cannot change inbox shelf')
+    const status = this.inboxStatus(threadId)
+    if (['starting', 'working', 'queued', 'approval', 'input'].includes(status)) {
+      throw new Error(`cannot hide a thread while its status is ${status}`)
+    }
+  }
+
+  #assertLifecycleState(threadId: string, expected: 'active' | 'settled' | 'snoozed'): void {
+    const thread = this.#store.thread(threadId)
+    if (!thread) throw new Error('thread not found')
+    if (thread.closedAt !== undefined) throw new Error('archived threads cannot change inbox shelf')
+    if (thread.lifecycle.state !== expected) {
+      throw new Error(`thread is ${thread.lifecycle.state}, expected ${expected}`)
+    }
+  }
+
+  #canHide(threadId: string): boolean {
+    try {
+      this.#assertCanHide(threadId)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  #notifyLifecycle(threadId: string, lifecycle: ThreadLifecycle): ThreadLifecycle {
+    this.#onLifecycle(threadId, lifecycle)
+    return lifecycle
   }
 
   openTerminal(threadId: string, columns: number, rows: number): string {
