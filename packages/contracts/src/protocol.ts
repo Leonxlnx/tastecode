@@ -222,6 +222,48 @@ export const McpCapabilitiesSchema = z.object({
 })
 export type McpCapabilities = z.infer<typeof McpCapabilitiesSchema>
 
+export const SkillScopeSchema = z.enum(['project', 'user', 'system', 'admin'])
+export type SkillScope = z.infer<typeof SkillScopeSchema>
+
+/** Where the provider discovered the skill without exposing vendor internals. */
+export const SkillSourceSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('folder'), path: z.string().min(1) }),
+  z.object({ type: z.literal('provider') }),
+])
+export type SkillSource = z.infer<typeof SkillSourceSchema>
+
+export const SkillDependencyErrorSchema = z.object({
+  dependency: z.string().min(1),
+  message: z.string().min(1),
+})
+export type SkillDependencyError = z.infer<typeof SkillDependencyErrorSchema>
+
+export const SkillSchema = z.object({
+  /** Opaque provider-owned identity used by mutations. */
+  id: z.string().min(1),
+  name: z.string().min(1),
+  displayName: z.string().min(1).optional(),
+  description: z.string(),
+  source: SkillSourceSchema,
+  scope: SkillScopeSchema,
+  enabled: z.boolean(),
+  dependencyErrors: z.array(SkillDependencyErrorSchema),
+})
+export type Skill = z.infer<typeof SkillSchema>
+
+export const SkillDiscoveryErrorSchema = z.object({
+  path: z.string().min(1),
+  message: z.string().min(1),
+})
+export type SkillDiscoveryError = z.infer<typeof SkillDiscoveryErrorSchema>
+
+export const SkillCapabilitiesSchema = z.object({
+  inventory: z.boolean(),
+  configure: z.boolean(),
+  install: z.boolean(),
+})
+export type SkillCapabilities = z.infer<typeof SkillCapabilitiesSchema>
+
 export const SearchSnippetPartSchema = z.object({
   text: z.string(),
   highlighted: z.boolean(),
@@ -380,6 +422,31 @@ export const methods = {
       loginId: z.string().min(1),
     }),
     result: z.object({}),
+  },
+  'skills.list': {
+    params: z.object({ provider: ProviderIdSchema, projectPath: z.string().min(1) }),
+    result: z.object({
+      capabilities: SkillCapabilitiesSchema,
+      skills: z.array(SkillSchema),
+      errors: z.array(SkillDiscoveryErrorSchema),
+    }),
+  },
+  'skills.setEnabled': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      projectPath: z.string().min(1),
+      skillId: z.string().min(1),
+      enabled: z.boolean(),
+    }),
+    result: z.object({ enabled: z.boolean() }),
+  },
+  'skills.installFromFolder': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      projectPath: z.string().min(1),
+      folderPath: z.string().min(1),
+    }),
+    result: z.object({ skill: SkillSchema }),
   },
   'search.sessions': {
     params: z.object({
@@ -791,6 +858,10 @@ export const channels = {
     loginId: z.string().min(1),
     success: z.boolean(),
     error: z.string().nullable(),
+  }),
+  'skills.changed': z.object({
+    provider: ProviderIdSchema,
+    projectPath: z.string().min(1),
   }),
   'thread.event': z.object({
     threadId: z.string(),
