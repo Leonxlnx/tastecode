@@ -83,12 +83,13 @@ There is an **admin bypass** so a solo owner isn't deadlocked. The second collab
 now joined, and the agreed position as of 2026-07-30 is to keep the bypass until both humans
 are pushing daily — at which point it should go, or the rule is decorative.
 
-## CI gates
+## Verification gates
 
-Green on **both** `windows-latest` and `macos-latest` before merge:
-typecheck · lint + format · unit tests · desktop build.
+Run locally before merge: typecheck · lint + format · unit tests · desktop build.
+Record the commands and results in the PR body.
 
-A broken Windows build blocks the merge even if macOS is green, and vice versa.
+GitHub Actions are manual to preserve included minutes. Do not start the Windows/macOS
+matrix unless Leon explicitly asks for it.
 
-**Platform-specific code must be _run_ on both OSes before merge — not just reviewed.**
-This is the rule most likely to save us.
+Platform-specific code must be run locally on the affected OS before release, not merely
+reviewed.

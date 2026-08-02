@@ -1,21 +1,17 @@
 name: CI
 
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
-# A new push supersedes the run in flight — reviewing against a stale result is
-# worse than waiting.
+# Hosted CI is manual to preserve the account's included Actions minutes. Local
+# verification is the default; start this workflow only when Leon asks for it.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   check:
-    # Both, always. A broken Windows build blocks the merge even if macOS is
-    # green, and the reverse. fail-fast off so one platform's failure does not
-    # hide the other's.
+    # When manually requested, check both platforms in one run.
     strategy:
       fail-fast: false
       matrix:

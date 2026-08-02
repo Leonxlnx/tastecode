@@ -48,19 +48,17 @@ controls, a real terminal, MCP and Agent Skills. M4 (the design agent) is next. 
 
 ## Before you mark a PR ready
 
-- `pnpm typecheck`, `pnpm test`, `pnpm lint` all clean
-- CI green on **both** `windows-latest` and `macos-latest`
-- Platform-specific code **run** on both, not just reviewed
+- `pnpm lint`, `pnpm typecheck`, `pnpm test` and `pnpm build` all clean locally
+- Exercise the affected flow with `pnpm dev` for UI or server changes
 - Anything visual has a screenshot in the PR body
+- Record the local commands and results in the PR body
 
-## When hosted CI is unavailable
+## Hosted CI
 
-- Run `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm typecheck`, `pnpm test` and
-  `pnpm build` from the repository root.
-- For UI or server work, run `pnpm dev` and exercise the affected flow manually. Keep
-  local binds on `127.0.0.1`.
-- Record those commands and results in the PR body. Local checks do not prove cross-
-  platform compatibility: keep the PR unmerged until Windows and macOS CI run clean.
+- GitHub Actions are manual to preserve included minutes. **Never start a hosted CI run
+  unless Leon explicitly asks for it.**
+- Platform-specific changes still need a local run on the affected OS before release.
+- Keep local binds on `127.0.0.1`.
 
 ## Traps in this repo
 
