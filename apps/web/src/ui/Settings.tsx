@@ -6,6 +6,7 @@ import {
   Database,
   Info,
   LogOut,
+  Network,
   Palette,
   RotateCcw,
   UserRound,
@@ -13,9 +14,10 @@ import {
 import { isDesktop } from '../bridge.js'
 import type { Transport } from '../transport.js'
 import type { ThemePreference } from '../theme.js'
+import { McpSettings } from './McpSettings.js'
 import { SkillsSettings } from './SkillsSettings.js'
 
-type SettingsSection = 'account' | 'skills' | 'appearance' | 'data' | 'about'
+type SettingsSection = 'account' | 'mcp' | 'skills' | 'appearance' | 'data' | 'about'
 
 const THEME_OPTIONS = [
   { value: 'system', label: 'System' },
@@ -65,6 +67,12 @@ export function Settings(props: {
             onClick={() => setSection('account')}
           />
           <SettingsNavItem
+            active={section === 'mcp'}
+            icon={<Network size={15} aria-hidden />}
+            label="MCP"
+            onClick={() => setSection('mcp')}
+          />
+          <SettingsNavItem
             active={section === 'skills'}
             icon={<Blocks size={15} aria-hidden />}
             label="Skills"
@@ -94,6 +102,7 @@ export function Settings(props: {
       <main className="settings__main">
         <div className="settings__content">
           {section === 'account' ? <AccountSettings {...props} /> : null}
+          {section === 'mcp' ? <McpSettings {...props} /> : null}
           {section === 'skills' ? <SkillsSettings {...props} /> : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
           {section === 'data' ? <DataSettings {...props} /> : null}
