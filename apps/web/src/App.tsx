@@ -425,9 +425,7 @@ export function App() {
       const { events } = await transport.request('thread.history', { threadId })
       const restored = events.reduce((state, entry) => reduce(state, entry.event), emptyThread)
       threadStates.current.set(threadId, restored)
-      setProjects((current) =>
-        updateSession(current, threadId, (session) => ({ ...session, unread: false })),
-      )
+      setProjects((current) => updateSession(current, threadId, markSessionRead))
       if (activeIdRef.current === threadId) setThread(restored)
     },
     [transport],
@@ -780,9 +778,7 @@ export function App() {
       const cached = threadStates.current.get(id)
       if (cached) {
         setThread(cached)
-        setProjects((current) =>
-          updateSession(current, id, (session) => ({ ...session, unread: false })),
-        )
+        setProjects((current) => updateSession(current, id, markSessionRead))
         void transport.request('thread.history', { threadId: id }).catch(() => undefined)
         return
       }
@@ -1537,6 +1533,14 @@ function updateSession(
       session.id === threadId ? update(session) : session,
     ),
   }))
+}
+
+function markSessionRead(session: Project['sessions'][number]): Project['sessions'][number] {
+  return {
+    ...session,
+    unread: false,
+    status: session.status === 'ready' ? 'idle' : session.status,
+  }
 }
 
 function promoteSession(projects: Project[], threadId: string): Project[] {

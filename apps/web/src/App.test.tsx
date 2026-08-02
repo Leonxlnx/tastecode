@@ -804,6 +804,33 @@ describe('inbox lifecycle', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Unsettle Newest chat' }))
     expect(transport.request).toHaveBeenCalledWith('thread.unsettle', { threadId: 'newest' })
   })
+
+  it('stops emphasizing completed work after it is opened', async () => {
+    serverSidebarSettings.mode = 'inbox'
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          {
+            id: 'ready',
+            title: 'Ready chat',
+            provider: 'codex',
+            createdAt: 1,
+            running: false,
+            status: 'ready',
+            unread: true,
+          },
+        ],
+      },
+    ]
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Ready chat, project, Ready' }))
+    expect(await screen.findByRole('button', { name: 'Ready chat, project, Idle' })).toBeTruthy()
+  })
 })
 
 describe('global shortcuts', () => {
