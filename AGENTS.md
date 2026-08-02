@@ -4,10 +4,10 @@ For any coding agent working in this repo — Claude Code, Codex, Cursor, an ACP
 
 `pnpm dev` starts the server, renderer and desktop shell together.
 
-**Where the project is:** M0, M1 and M2 are done — Codex, Claude Code and any ACP agent
-(Gemini, Kimi, Qwen) all run with parallel sessions, isolated worktrees and rollback;
-Codex and Claude also expose persistent usage. M3 (review and control) is next. See
-[docs/ROADMAP.md](./docs/ROADMAP.md) and the open issues.
+**Where the project is:** M0 through M3 are done. Codex, Claude Code and any ACP agent
+(Gemini, Kimi, Qwen) run with parallel sessions, isolated worktrees, rollback, review
+controls, a real terminal, MCP and Agent Skills. M4 (the design agent) is next. See
+[docs/ROADMAP.md](./docs/ROADMAP.md) for durable status and GitHub issues/PRs for live work.
 
 ## Read first
 
@@ -32,6 +32,9 @@ Codex and Claude also expose persistent usage. M3 (review and control) is next. 
 
 - **Many small commits**, one logical change each. Push after every one — unpushed work is
   invisible to the other two.
+- **Assign an issue before starting it.** The assignee says who owns active work; the first
+  draft PR says which files they are changing. Work starting immediately may use only the
+  draft PR, per [rules/working-together.md](./rules/working-together.md).
 - **Open a draft PR on the first commit**, not when the work is finished. That draft is how
   everyone else sees which files you are in.
 - **One PR does one thing.** Never fold a design change into a PR about logic; the reviewer
@@ -40,6 +43,8 @@ Codex and Claude also expose persistent usage. M3 (review and control) is next. 
   from working at the same time.
 - Put `Closes #<issue>` in the PR body rather than closing issues by hand.
 - Conventional Commits. The body says _why_, not what the diff already shows.
+- Do not create a handoff snapshot. Keep durable facts in `docs/`, current ownership in
+  assigned issues and active changes in draft PRs so a restarted agent reads live state.
 
 ## Before you mark a PR ready
 

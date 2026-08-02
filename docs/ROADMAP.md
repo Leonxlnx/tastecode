@@ -60,17 +60,23 @@ The risky paths were verified against real agents and repositories as well as th
 suite. The GitHub milestone closed with 9/9 issues complete after green Windows and macOS
 CI.
 
-### M3 — Review & control
+### M3 — Review & control ✅
 
 Diff review with per-hunk accept/reject, mode indicator, panic stop, terminal pane,
 MCP management, Agent Skills, cross-session search. _(Approval cards landed early
 in M1.)_
-→ _We let an agent run autonomously and feel fine about it._
+→ _We let an agent run autonomously and feel fine about it._ **Done.**
+
+Shipped: per-hunk diff review, explicit permission modes, a global panic stop, a real PTY
+terminal, MCP and Agent Skills management, cross-session search, queued prompts and the
+inbox session lifecycle. The milestone closed with 23/23 issues complete after green
+Windows and macOS CI.
 
 ### M4 — Design agent
 
 TasteSkill integrated, preview pane, screenshot + critique loop, direction gallery, token
-editor, reference board. **Blocked on TasteSkill v2 being ready.**
+editor, reference board. The provider-neutral Design mode entry point is already in the
+prompt bar; TasteSkill v2 runtime work continues separately.
 → _It builds our own landing page. If it can't, it isn't done._
 
 ### M5 — Visual pass
@@ -122,6 +128,6 @@ end-to-end encrypted.
 2. **Product name + domain.** Blocks M5 and M6.
 3. **Any commercial intent, ever?** Decides the license, and it's irreversible once outside
    contributors arrive.
-4. **When is TasteSkill v2 ready?** Only M4 depends on it.
+4. **What is the final TasteSkill v2 runtime contract?** M4 depends on it.
 5. **Web / self-host surface at launch?** Nearly free architecturally, but doubles the
    support and security surface.
