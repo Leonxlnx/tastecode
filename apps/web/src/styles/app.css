@@ -4567,6 +4567,7 @@
   overflow: hidden;
   background: var(--surface-2);
   border-radius: var(--r-xl);
+  translate: -28px 0;
 }
 
 .model-selector {
