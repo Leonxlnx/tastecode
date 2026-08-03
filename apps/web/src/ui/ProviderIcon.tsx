@@ -10,6 +10,9 @@ const PATHS: Partial<Record<ProviderMark, string>> = {
   opencode: 'M22 24H2V0h20zM17 4.8H7v14.4h10z',
   openrouter:
     'M16.778 1.844v1.919q-.569-.026-1.138-.032-.708-.008-1.415.037c-1.93.126-4.023.728-6.149 2.237-2.911 2.066-2.731 1.95-4.14 2.75-.396.223-1.342.574-2.185.798-.841.225-1.753.333-1.751.333v4.229s.768.108 1.61.333c.842.224 1.789.575 2.185.799 1.41.798 1.228.683 4.14 2.75 2.126 1.509 4.22 2.11 6.148 2.236.88.058 1.716.041 2.555.005v1.918l7.222-4.168-7.222-4.17v2.176c-.86.038-1.611.065-2.278.021-1.364-.09-2.417-.357-3.979-1.465-2.244-1.593-2.866-2.027-3.68-2.508.889-.518 1.449-.906 3.822-2.59 1.56-1.109 2.614-1.377 3.978-1.466.667-.044 1.418-.017 2.278.02v2.176L24 6.014Z',
+  gemini:
+    'M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81',
+  qwen: 'M23.919 14.545 20.817 9.17l1.47-2.544a.56.56 0 0 0 0-.566l-1.633-2.83a.57.57 0 0 0-.49-.283h-6.207L12.487.402a.57.57 0 0 0-.49-.284H8.732a.56.56 0 0 0-.49.284L5.139 5.775h-2.94a.56.56 0 0 0-.49.284L.077 8.887a.56.56 0 0 0 0 .567L3.18 14.83l-1.47 2.545a.56.56 0 0 0 0 .566l1.634 2.83a.57.57 0 0 0 .49.283h6.205l1.47 2.545a.57.57 0 0 0 .49.284h3.266a.57.57 0 0 0 .49-.284l3.104-5.375h2.94a.57.57 0 0 0 .49-.283l1.634-2.828a.55.55 0 0 0-.004-.568M8.733.686l1.634 2.828-1.634 2.828H21.8L20.164 9.17H7.425L5.63 6.06Zm1.306 19.801-6.205-.002 1.634-2.83h3.265L2.201 6.344h3.267q3.182 5.517 6.367 11.032zm10.124-5.66L18.53 12l-6.532 11.315-1.634-2.83c2.129-3.673 4.25-7.351 6.373-11.028h3.592l3.102 5.374z',
 }
 
 export function ProviderIcon(props: { mark: ProviderMark; size?: number; className?: string }) {
@@ -29,6 +32,17 @@ export function ProviderIcon(props: { mark: ProviderMark; size?: number; classNa
       </svg>
     )
   }
+  if (props.mark === 'zai') {
+    return (
+      <svg className={props.className} width={size} height={size} viewBox="0 0 30 30" aria-hidden>
+        <rect x="1.5" y="1.5" width="27" height="27" rx="4" fill="currentColor" />
+        <path
+          d="M6.16 7.1h9.31l-1.3 1.85a1.1 1.1 0 0 1-.9.47h-7.1Zm18.14 0L13.14 22.91H5.7L16.86 7.1Zm-9.77 15.81 1.31-1.86c.2-.29.54-.47.9-.47h7.09v2.33Z"
+          fill="white"
+        />
+      </svg>
+    )
+  }
   if (path) {
     return (
       <svg className={props.className} width={size} height={size} viewBox="0 0 24 24" aria-hidden>
@@ -36,13 +50,25 @@ export function ProviderIcon(props: { mark: ProviderMark; size?: number; classNa
       </svg>
     )
   }
-  const label = props.mark === 'zai' ? 'Z' : props.mark === 'acp' ? 'A' : '↗'
   return (
     <svg className={props.className} width={size} height={size} viewBox="0 0 24 24" aria-hidden>
-      <rect x="2" y="2" width="20" height="20" rx="5" fill="currentColor" opacity=".14" />
-      <text x="12" y="16" textAnchor="middle" fill="currentColor" fontSize="11" fontWeight="700">
-        {label}
-      </text>
+      {props.mark === 'acp' ? (
+        <path
+          d="M7 6.5h10M7 17.5h10M6 9.5v5M18 9.5v5M9.5 12h5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+      ) : (
+        <path
+          d="M8.5 7.5h-2A2.5 2.5 0 0 0 4 10v4a2.5 2.5 0 0 0 2.5 2.5h2m7-9h2A2.5 2.5 0 0 1 20 10v4a2.5 2.5 0 0 1-2.5 2.5h-2M9 12h6"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+      )}
     </svg>
   )
 }

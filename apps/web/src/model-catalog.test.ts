@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { choicesFor } from './model-catalog.js'
+import { agentMark, choicesFor } from './model-catalog.js'
 
 const model = {
   id: 'shared-model',
@@ -21,5 +21,14 @@ describe('model catalog', () => {
     )[0]
 
     expect(first?.key).not.toBe(second?.key)
+  })
+
+  it.each([
+    ['gemini', 'gemini'],
+    ['kimi', 'kimi'],
+    ['qwen', 'qwen'],
+    ['another-agent', 'acp'],
+  ] as const)('uses the correct mark for %s', (agent, mark) => {
+    expect(agentMark(agent)).toBe(mark)
   })
 })

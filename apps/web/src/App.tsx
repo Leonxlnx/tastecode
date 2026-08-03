@@ -47,6 +47,7 @@ import { serverUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-recorder.js'
 import {
+  agentMark,
   choicesFor,
   connectionMark,
   providerMark,
@@ -219,7 +220,7 @@ export function App() {
           {
             provider,
             sourceName: providerName(provider, acpAgentName),
-            mark: provider === 'acp' && acpAgent === 'kimi' ? 'kimi' : providerMark(provider),
+            mark: provider === 'acp' && acpAgent ? agentMark(acpAgent) : providerMark(provider),
             ...(provider === 'acp' && acpAgent
               ? { agent: { id: acpAgent, name: acpAgentName ?? acpAgent } }
               : {}),
@@ -383,7 +384,7 @@ export function App() {
             {
               provider: 'acp',
               sourceName: agent.name,
-              mark: agent.id === 'kimi' ? 'kimi' : 'acp',
+              mark: agentMark(agent.id),
               agent: { id: agent.id, name: agent.name },
             },
             [],

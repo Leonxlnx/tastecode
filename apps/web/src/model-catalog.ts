@@ -1,7 +1,17 @@
 import type { Model, ModelConnectionPreset, ProviderId } from '@harness/contracts'
 
 export type ProviderMark =
-  'openai' | 'anthropic' | 'cursor' | 'opencode' | 'openrouter' | 'kimi' | 'zai' | 'acp' | 'custom'
+  | 'openai'
+  | 'anthropic'
+  | 'cursor'
+  | 'opencode'
+  | 'openrouter'
+  | 'kimi'
+  | 'gemini'
+  | 'qwen'
+  | 'zai'
+  | 'acp'
+  | 'custom'
 
 export type ModelChoice = {
   key: string
@@ -49,6 +59,11 @@ export function connectionMark(preset: ModelConnectionPreset): ProviderMark {
   if (preset === 'openai') return 'openai'
   if (preset === 'anthropic') return 'anthropic'
   return preset
+}
+
+export function agentMark(agentId: string): ProviderMark {
+  if (agentId === 'gemini' || agentId === 'kimi' || agentId === 'qwen') return agentId
+  return 'acp'
 }
 
 export function choicesFor(

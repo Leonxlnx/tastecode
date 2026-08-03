@@ -28,9 +28,10 @@ TanStack Virtual, xterm.js, Lucide, Geist, node-pty, Zod, and ws. Visual details
 Border Beam and Thinking Orbs by Jakub Antalik.
 
 Provider marks are reproduced only to identify their corresponding services. OpenAI,
-Anthropic, Cursor, OpenCode, and OpenRouter paths come from
+Anthropic, Cursor, OpenCode, OpenRouter, Google Gemini, and Qwen paths come from
 [Simple Icons](https://simpleicons.org/) (CC0); the Kimi mark comes from Kimi's official
-[brand guidelines](https://moonshotai.github.io/Branding-Guide/). All marks remain
-trademarks of their respective owners.
+[brand guidelines](https://moonshotai.github.io/Branding-Guide/), and the Z.ai mark comes
+from the official [Z.ai web app](https://chat.z.ai/). All marks remain trademarks of their
+respective owners.
 
 See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) for source and license information.
