@@ -49,6 +49,14 @@
   --shadow-flyout: 0 8px 24px -14px rgb(0 0 0 / 46%);
   --shadow-modal: 0 20px 56px -24px rgb(0 0 0 / 52%);
   --shadow-rail: 12px 0 30px -18px rgb(0 0 0 / 40%);
+  --chrome-raised: linear-gradient(180deg, #242424, #1b1b1b);
+  --chrome-recessed: #101010;
+  --chrome-border: #303030;
+  --chrome-highlight: rgb(255 255 255 / 5%);
+  --chrome-shadow: inset 0 1px var(--chrome-highlight), 0 1px 2px rgb(0 0 0 / 28%);
+  --chrome-inset-shadow: inset 0 1px 3px rgb(0 0 0 / 34%);
+  --titlebar-bg: #151515;
+  --titlebar-symbol: #f4f4f5;
 
   /* Interactive emphasis is a light surface, not a hue. */
   --on-light: #101010;
@@ -152,6 +160,14 @@
   --shadow-flyout: 0 8px 24px -16px rgb(24 24 27 / 20%);
   --shadow-modal: 0 20px 48px -28px rgb(24 24 27 / 22%);
   --shadow-rail: 12px 0 24px -18px rgb(24 24 27 / 18%);
+  --chrome-raised: linear-gradient(180deg, #ffffff, #f1f1f2);
+  --chrome-recessed: #eeeeef;
+  --chrome-border: #d9d9dc;
+  --chrome-highlight: rgb(255 255 255 / 85%);
+  --chrome-shadow: inset 0 1px var(--chrome-highlight), 0 1px 2px rgb(24 24 27 / 12%);
+  --chrome-inset-shadow: inset 0 1px 3px rgb(24 24 27 / 10%);
+  --titlebar-bg: #202020;
+  --titlebar-symbol: #ffffff;
 
   --on-light: #fefefe;
   --light: #27272a;

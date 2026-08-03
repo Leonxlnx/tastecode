@@ -46,19 +46,23 @@
   padding-left: max(12px, env(titlebar-area-x, 12px));
   padding-right: 12px;
   width: env(titlebar-area-width, 100%);
-  background: var(--bg-rail);
+  background: var(--titlebar-bg);
+  border-bottom: 1px solid var(--line);
+  box-shadow: inset 0 1px var(--chrome-highlight);
   -webkit-app-region: drag;
   user-select: none;
 }
 
 .titlebar__toggle {
+  color: var(--titlebar-symbol);
   -webkit-app-region: no-drag;
 }
 
 .titlebar__name {
   font-size: var(--t-sm);
   font-weight: 500;
-  color: var(--text-2);
+  color: var(--titlebar-symbol);
+  opacity: 0.78;
 }
 
 /* ---------- rail ---------- */
@@ -76,6 +80,7 @@
   min-height: 0;
   background: var(--bg-rail);
   border-right: 1px solid var(--line);
+  box-shadow: inset -1px 0 var(--chrome-highlight);
 }
 
 .rail-slot.is-collapsed {
@@ -109,7 +114,7 @@
 }
 
 .rail__actions {
-  padding: 10px 8px 10px;
+  padding: 12px 10px 10px;
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -121,8 +126,10 @@
   gap: 2px;
   margin-top: 5px;
   padding: 2px;
-  background: var(--surface);
+  background: var(--chrome-recessed);
+  border: 1px solid var(--chrome-border);
   border-radius: var(--r-md);
+  box-shadow: var(--chrome-inset-shadow);
 }
 
 .rail__version button {
@@ -134,11 +141,21 @@
   cursor: pointer;
   font: inherit;
   font-size: var(--t-xs);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
 }
 
 .rail__version button[aria-pressed='true'] {
-  background: var(--surface-3);
+  background: var(--chrome-raised);
+  box-shadow: var(--chrome-shadow);
   color: var(--text);
+}
+
+.rail__version button:active {
+  transform: translateY(1px);
 }
 
 .navitem {
@@ -152,14 +169,27 @@
   cursor: pointer;
   font: inherit;
   font-size: var(--t-md);
+  min-height: 32px;
   padding: 6px 8px;
   text-align: left;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
   width: 100%;
 }
 
-.navitem:hover {
-  background: var(--surface);
+.navitem:hover,
+.navitem:focus-visible {
+  background: var(--chrome-raised);
+  box-shadow: var(--chrome-shadow);
   color: var(--text);
+}
+
+.navitem:active {
+  box-shadow: var(--chrome-inset-shadow);
+  transform: translateY(1px);
 }
 
 .navitem svg {
@@ -196,12 +226,12 @@
 
 .rail__body {
   overflow-y: auto;
-  padding: 0 8px 14px;
+  padding: 0 10px 14px;
 }
 
 .rail__foot {
   border-top: 1px solid var(--line);
-  padding: 6px 8px;
+  padding: 8px 10px 10px;
 }
 
 .search {
@@ -210,14 +240,15 @@
   gap: 7px;
   margin-top: 6px;
   padding: 0 8px;
-  background: var(--surface);
-  border: 1px solid transparent;
+  background: var(--chrome-recessed);
+  border: 1px solid var(--chrome-border);
   border-radius: var(--r-md);
+  box-shadow: var(--chrome-inset-shadow);
   color: var(--text-3);
 }
 
 .search:focus-within {
-  border-color: var(--line-strong);
+  border-color: var(--text-3);
 }
 
 .search--button {
@@ -227,6 +258,20 @@
   font: inherit;
   font-size: var(--t-sm);
   text-align: left;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+}
+
+.search--button:hover,
+.search--button:focus-visible {
+  border-color: var(--text-3);
+  color: var(--text-2);
+}
+
+.search--button:active {
+  transform: translateY(1px);
 }
 
 .search--button > span:first-of-type {
@@ -276,6 +321,19 @@
 
 .rail__foot .menutrigger {
   width: 100%;
+  min-height: 38px;
+  background: var(--chrome-raised);
+  border: 1px solid var(--chrome-border);
+  box-shadow: var(--chrome-shadow);
+}
+
+.rail__foot .menutrigger:hover:not(:disabled) {
+  background: var(--chrome-raised);
+}
+
+.rail__foot .menutrigger:active {
+  box-shadow: var(--chrome-inset-shadow);
+  transform: translateY(1px);
 }
 
 /* Inline rename, sized to sit exactly where the label was. */
@@ -309,6 +367,30 @@
 
 .sessrow.is-active {
   --sess-bg: var(--surface-2);
+  box-shadow: inset 0 1px var(--chrome-highlight);
+}
+
+.inbox-card.is-selected::before,
+.settings__nav-item.is-active::before {
+  content: '';
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 0;
+  width: 2px;
+  background: var(--text-2);
+  border-radius: 99px;
+}
+
+.sessrow.is-active::after {
+  content: '';
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 0;
+  width: 2px;
+  background: var(--text-2);
+  border-radius: 99px;
 }
 
 .sessrow.is-reorderable .sess {
@@ -467,11 +549,13 @@
   padding: calc(var(--titlebar-h) + 14px) 8px 16px;
   background: var(--bg-rail);
   border-right: 1px solid var(--line);
+  box-shadow: inset -1px 0 var(--chrome-highlight);
   -webkit-app-region: no-drag;
 }
 
 .settings__back,
 .settings__nav-item {
+  position: relative;
   display: flex;
   align-items: center;
   width: 100%;
@@ -482,7 +566,9 @@
   text-align: left;
   transition:
     background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
+    box-shadow var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
 }
 
 .settings__back {
@@ -494,7 +580,8 @@
 }
 
 .settings__back:hover {
-  background: var(--surface);
+  background: var(--chrome-raised);
+  box-shadow: var(--chrome-shadow);
   color: var(--text);
 }
 
@@ -517,6 +604,7 @@
   background: none;
   border-radius: var(--r-md);
   font-size: var(--t-md);
+  min-height: 32px;
 }
 
 .settings__nav-item svg {
@@ -525,13 +613,21 @@
 }
 
 .settings__nav-item:hover {
-  background: var(--surface);
+  background: var(--chrome-raised);
+  box-shadow: var(--chrome-shadow);
   color: var(--text);
 }
 
 .settings__nav-item.is-active {
-  background: var(--surface-2);
+  background: var(--chrome-raised);
+  box-shadow: var(--chrome-shadow);
   color: var(--text);
+}
+
+.settings__back:active,
+.settings__nav-item:active {
+  box-shadow: var(--chrome-inset-shadow);
+  transform: translateY(1px);
 }
 
 .settings__nav-item.is-active svg {
@@ -582,8 +678,9 @@
 .settings__group {
   overflow: hidden;
   background: var(--bg-rail);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--chrome-border);
   border-radius: var(--r-lg);
+  box-shadow: var(--chrome-shadow);
 }
 
 .settings__group--plain {
@@ -591,6 +688,7 @@
   background: none;
   border: 0;
   border-radius: 0;
+  box-shadow: none;
 }
 
 .theme-picker {
@@ -787,6 +885,11 @@
   gap: 20px;
   min-height: 66px;
   padding: 12px 16px;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.settings__row:hover {
+  background: var(--surface);
 }
 
 .settings__row + .settings__row {
@@ -838,12 +941,13 @@
 .settings__number {
   width: 64px;
   padding: 5px 7px;
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong);
+  background: var(--chrome-recessed);
+  border: 1px solid var(--chrome-border);
   border-radius: var(--r-md);
   color: var(--text);
   font: inherit;
   font-size: var(--t-sm);
+  box-shadow: var(--chrome-inset-shadow);
 }
 
 .settings__number:disabled {
@@ -856,13 +960,14 @@
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  background: var(--surface-2);
-  border: 0;
+  background: var(--chrome-raised);
+  border: 1px solid var(--chrome-border);
   border-radius: var(--r-md);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
   font-size: var(--t-sm);
+  box-shadow: var(--chrome-shadow);
   white-space: nowrap;
   transition:
     background var(--dur-fast) var(--ease-out),
@@ -876,7 +981,8 @@
 }
 
 .settings__action:active {
-  transform: scale(0.97);
+  box-shadow: var(--chrome-inset-shadow);
+  transform: translateY(1px);
 }
 
 .settings .switch {
@@ -1224,9 +1330,9 @@
   width: min(560px, 100%);
   overflow: hidden;
   background: var(--bg-rail);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--chrome-border);
   border-radius: var(--r-lg);
-  box-shadow: var(--shadow-modal);
+  box-shadow: var(--chrome-shadow), var(--shadow-modal);
   animation: step-in 220ms var(--ease-out);
 }
 
@@ -1237,6 +1343,7 @@
   padding: 11px 12px;
   border-bottom: 1px solid var(--line);
   color: var(--text-3);
+  box-shadow: var(--chrome-inset-shadow);
 }
 
 .command-palette__search input {
@@ -1344,11 +1451,12 @@
 .session-search__filters select {
   max-width: 180px;
   padding: 4px 24px 4px 7px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  background: var(--chrome-raised);
+  border: 1px solid var(--chrome-border);
   border-radius: var(--r-sm);
   color: var(--text-2);
   font: inherit;
+  box-shadow: var(--chrome-shadow);
 }
 
 .session-search__results {
@@ -1370,11 +1478,21 @@
   cursor: pointer;
   font: inherit;
   text-align: left;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
 }
 
 .session-search__result:hover,
 .session-search__result:focus-visible {
-  background: var(--surface-2);
+  background: var(--chrome-raised);
+  box-shadow: var(--chrome-shadow);
+}
+
+.session-search__result:active {
+  box-shadow: var(--chrome-inset-shadow);
+  transform: translateY(1px);
 }
 
 .session-search__title {
@@ -1509,12 +1627,13 @@
 .inbox__scope select {
   min-width: 0;
   padding: 4px 7px;
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--chrome-recessed);
+  border: 1px solid var(--chrome-border);
   border-radius: var(--r-md);
   color: var(--text-2);
   font: inherit;
   font-size: var(--t-sm);
+  box-shadow: var(--chrome-inset-shadow);
 }
 
 .inbox__heading {
@@ -1556,12 +1675,14 @@
 }
 
 .inbox-card:hover {
-  --inbox-card-bg: var(--surface);
+  --inbox-card-bg: var(--chrome-raised);
+  box-shadow: var(--chrome-shadow);
 }
 
 .inbox-card.is-selected {
-  --inbox-card-bg: var(--surface-2);
-  border-color: var(--line-strong);
+  --inbox-card-bg: var(--chrome-raised);
+  border-color: var(--chrome-border);
+  box-shadow: var(--chrome-shadow);
 }
 
 .inbox-card__main {
@@ -1859,7 +1980,8 @@
 }
 
 .proj__toggle:hover {
-  background: var(--surface);
+  background: var(--chrome-raised);
+  box-shadow: var(--chrome-shadow);
 }
 
 .proj__mark {
