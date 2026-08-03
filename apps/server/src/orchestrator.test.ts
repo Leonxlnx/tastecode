@@ -211,12 +211,9 @@ describe('provider-neutral design briefing', () => {
       const { orchestrator, sessions, received } = harness()
       try {
         const thread = await orchestrator.startThread(provider, workspace, {})
-        await orchestrator.sendTurn(
-          thread.id,
-          'Create a website.',
-          [DESIGN_BRIEF_ATTACHMENT],
-          { model },
-        )
+        await orchestrator.sendTurn(thread.id, 'Create a website.', [DESIGN_BRIEF_ATTACHMENT], {
+          model,
+        })
 
         expect(sessions[0]?.sent[0]).toContain('Personal Harness Design Briefing mode')
         sessions[0]?.emit(
