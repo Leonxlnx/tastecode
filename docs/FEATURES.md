@@ -52,13 +52,18 @@ build it. This exists so nothing gets forgotten and so we can argue about scope 
 ## Providers
 
 - [ ] `v1` Setup wizard: detect CLIs, detect auth state, guide install
-- [ ] `v1` Claude (subscription + API key)
-- [ ] `v1` Codex / ChatGPT (subscription + API key)
-- [ ] `v1` Cursor
-- [ ] `v1` OpenCode
+- [ ] `v1` Claude Code subscription
+- [ ] `v1` Codex / ChatGPT subscription
+- [ ] `v1` Cursor Agent
+- [ ] `v1` OpenCode agent
 - [ ] `v1` Kimi Code
 - [ ] `v1` GLM / Z.ai coding plan
+- [ ] `v1` Harness direct API agent runtime
+- [ ] `v1` OpenAI API
+- [ ] `v1` Anthropic API
 - [ ] `v1` OpenRouter
+- [ ] `v1` Kimi API
+- [ ] `v1` GLM / Z.ai API
 - [ ] `v1` Custom OpenAI-compatible endpoint
 - [ ] `v1` Local models (Ollama / LM Studio)
 - [ ] `v1` Per-session model + provider selection
@@ -66,6 +71,8 @@ build it. This exists so nothing gets forgotten and so we can argue about scope 
 - [ ] `v2` Grok / xAI
 - [ ] `v2` Gemini CLI
 - [ ] `v2` Automatic fallback when a provider hits its limit
+
+Implementation lanes and release criteria: [PROVIDERS.md](./PROVIDERS.md).
 
 ## Extensions
 
