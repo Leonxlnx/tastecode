@@ -9,6 +9,7 @@ type Bridge = {
   pickFolder: () => Promise<string | undefined>
   pickSkillFolder: () => Promise<string | undefined>
   pickFiles: () => Promise<string[]>
+  revealPath: (path: string) => Promise<void>
   savePastedImage: (image: { type: string; bytes: ArrayBuffer }) => Promise<string>
   setZoom: (action: ZoomAction) => Promise<void>
   onZoomChange: (listener: (factor: number) => void) => () => void
@@ -39,6 +40,10 @@ export async function pickFiles(): Promise<string[]> {
   if (bridge) return bridge.pickFiles()
   const typed = window.prompt('Full path of a file to attach')?.trim()
   return typed ? [typed] : []
+}
+
+export function revealPath(path: string): Promise<void> {
+  return bridge?.revealPath(path) ?? Promise.resolve()
 }
 
 export async function savePastedImage(file: File): Promise<string | undefined> {

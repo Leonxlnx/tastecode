@@ -13,6 +13,7 @@ import {
   type WebContents,
 } from 'electron'
 import { allowsMicrophoneRequest } from './media-permissions.js'
+import { revealablePath } from './reveal-path.js'
 import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './zoom-shortcuts.js'
 
 /**
@@ -127,6 +128,10 @@ ipcMain.handle('harness:pickFiles', async () => {
     title: 'Attach files',
   })
   return result.canceled ? [] : result.filePaths
+})
+
+ipcMain.handle('harness:revealPath', (_event, value: unknown) => {
+  shell.showItemInFolder(revealablePath(value))
 })
 
 ipcMain.handle('harness:savePastedImage', async (_event, payload: unknown) => {
