@@ -8,7 +8,7 @@ import { z } from 'zod'
  * engine-specific may leak past an adapter.
  */
 
-export const ProviderIdSchema = z.enum(['codex', 'claude-code', 'cursor', 'opencode', 'acp'])
+export const ProviderIdSchema = z.enum(['codex', 'claude-code', 'cursor', 'opencode', 'acp', 'api'])
 export type ProviderId = z.infer<typeof ProviderIdSchema>
 
 /**
@@ -61,14 +61,26 @@ export const TurnSchema = z.object({
 })
 export type Turn = z.infer<typeof TurnSchema>
 
-export const ThreadSchema = z.object({
-  id: z.string(),
-  provider: ProviderIdSchema,
-  /** Absolute path to the workspace this thread operates on. */
-  workspacePath: z.string(),
-  title: z.string().optional(),
-  createdAt: z.number(),
-})
+export const ThreadSchema = z
+  .object({
+    id: z.string(),
+    provider: ProviderIdSchema,
+    /** Selects a server-owned model connection for the Harness API runtime. */
+    connectionId: z.string().min(1).optional(),
+    /** Absolute path to the workspace this thread operates on. */
+    workspacePath: z.string(),
+    title: z.string().optional(),
+    createdAt: z.number(),
+  })
+  .superRefine((thread, context) => {
+    if ((thread.provider === 'api') !== Boolean(thread.connectionId)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['connectionId'],
+        message: 'connectionId is required only for api threads',
+      })
+    }
+  })
 export type Thread = z.infer<typeof ThreadSchema>
 
 /**
