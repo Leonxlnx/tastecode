@@ -12,3 +12,23 @@ export function readCredential(reference: string): string {
   }
   throw new Error(`credential "${reference}" was not found in the OS credential store`)
 }
+
+export function hasCredential(reference: string): boolean {
+  try {
+    return new Entry(SERVICE, reference).getPassword() !== null
+  } catch {
+    return false
+  }
+}
+
+export function writeCredential(reference: string, value: string): void {
+  new Entry(SERVICE, reference).setPassword(value)
+}
+
+export function removeCredential(reference: string): void {
+  try {
+    new Entry(SERVICE, reference).deletePassword()
+  } catch {
+    // Removing an already absent credential is idempotent.
+  }
+}
