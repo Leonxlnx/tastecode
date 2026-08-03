@@ -1195,6 +1195,9 @@ describe('live sessions', () => {
 
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.queue', { threadId: 'thread-1' }),
+    )
     act(() => {
       transport.listeners.get('thread.queue')?.({
         threadId: 'thread-1',
@@ -1202,9 +1205,7 @@ describe('live sessions', () => {
         canSteer: true,
       })
     })
-    await waitFor(() =>
-      expect(screen.getByLabelText('Running turn shortcuts').textContent).toContain('Steer'),
-    )
+    expect(screen.queryByText('Next message')).toBeNull()
 
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Use this direction now' } })
