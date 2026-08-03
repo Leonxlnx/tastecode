@@ -131,9 +131,17 @@ first, then mapped through every adapter. A missing provider capability hides or
 only that capability, never the surrounding workflow. Behavioral provider-name branches
 belong inside adapters, not the server or renderer.
 
+**Direct model APIs use one small Harness-owned agent runtime.** OpenAI, Anthropic and
+OpenAI-compatible endpoints provide inference and tool calls, not a complete coding-agent
+session. The API runtime drives the same server-owned tools, approvals, persistence and
+checkpoints as every other adapter; only request and stream translation varies by API
+transport. This is the fallback that keeps Harness functional with only an API key. It is
+not used when a richer vendor agent surface is available. The concrete transport matrix and
+delivery order live in [PROVIDERS.md](./PROVIDERS.md).
+
 _Rejected:_ ACP-only (gives up Codex's richest-in-class surface) · native-only (caps us at
-4 engines) · our own agent loop for everything (competing with Anthropic's and OpenAI's
-harness teams while also building a UI) · a `switch` on provider in the orchestrator.
+4 engines) · a Harness agent loop as the only integration path (throws away richer vendor
+agent features) · a `switch` on provider in the orchestrator.
 
 ### Voice dictation uses the active Codex ChatGPT session
 
@@ -286,3 +294,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-07-28 | Initial decisions.                                                     |
 | 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration. |
 | 2026-08-02 | Added Codex-backed voice dictation.                                    |
+| 2026-08-03 | Added the provider-neutral direct API runtime decision.                |
