@@ -218,8 +218,27 @@ function acpRuntime(onLog: (line: string) => void): ProviderRuntime {
       if (!options.agent) throw new Error('no ACP agent chosen')
       const adapter = new AcpAdapter(options.agent)
       adapter.on('log', onLog)
-      const thread = await adapter.startThread(workspacePath, { approval: options.approval })
-      return { thread, session: adapter }
+      try {
+        const thread = await adapter.startThread(workspacePath, { approval: options.approval })
+        return { thread, session: adapter }
+      } catch (error) {
+        adapter.dispose()
+        throw error
+      }
+    },
+    async resume(threadId, workspacePath, options) {
+      if (!options.agent) throw new Error('no ACP agent chosen')
+      const adapter = new AcpAdapter(options.agent)
+      adapter.on('log', onLog)
+      try {
+        const thread = await adapter.resumeThread(threadId, workspacePath, {
+          approval: options.approval,
+        })
+        return { thread, session: adapter }
+      } catch (error) {
+        adapter.dispose()
+        throw error
+      }
     },
     // ACP has no model listing. The picker hides itself when this is empty.
     async listModels() {

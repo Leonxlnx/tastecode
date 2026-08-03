@@ -52,6 +52,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   #turnCounter = 0
   #approval: ApprovalMode = 'ask'
   #images = false
+  #loadSession = false
   /**
    * Permission requests waiting on the user.
    *
@@ -84,35 +85,8 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   }
 
   async startThread(workspacePath: string, options: AcpStartOptions = {}): Promise<Thread> {
-    if (options.approval === 'auto-review') {
-      throw new Error('ACP agents do not support automatic approval review')
-    }
-    this.#approval = options.approval ?? 'ask'
-
-    const child = spawnCli(this.#spec.command, this.#spec.args, { cwd: workspacePath })
-    const rpc = new StdioJsonRpc(child, this.#spec.name)
-    this.#rpc = rpc
-
-    rpc.onStderr((text) => this.emit('log', text.trimEnd()))
-    rpc.onNotification((method, params) => this.#onNotification(method, params))
-    rpc.onServerRequest((method, params, respond) => this.#onRequest(method, params, respond))
-
-    const init = await rpc.request<InitializeResult>('initialize', {
-      protocolVersion: PROTOCOL_VERSION,
-      // We do not offer the agent our filesystem. Every ACP agent ships its own
-      // file tools, and declining here keeps arbitrary reads and writes on the
-      // agent's own side of the boundary rather than ours.
-      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-      clientInfo: { name: 'personal-harness', version: '0.0.0' },
-    })
-
-    if (init.protocolVersion !== undefined && init.protocolVersion !== PROTOCOL_VERSION) {
-      this.emit(
-        'log',
-        `${this.#spec.name} speaks ACP ${init.protocolVersion}, this adapter was written for ${PROTOCOL_VERSION}`,
-      )
-    }
-    this.#images = init.agentCapabilities?.promptCapabilities?.image ?? false
+    this.#setApproval(options.approval)
+    const rpc = await this.#connect(workspacePath)
 
     const session = await rpc
       .request<NewSessionResult>('session/new', { cwd: workspacePath, mcpServers: [] })
@@ -134,6 +108,28 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
 
     return {
       id: `acp-${this.#spec.id}-${session.sessionId}`,
+      provider: 'acp',
+      workspacePath,
+      createdAt: Date.now(),
+    }
+  }
+
+  async resumeThread(
+    threadId: string,
+    workspacePath: string,
+    options: AcpStartOptions = {},
+  ): Promise<Thread> {
+    this.#setApproval(options.approval)
+    const sessionId = parseAcpThreadId(threadId, this.#spec.id)
+    const rpc = await this.#connect(workspacePath)
+    if (!this.#loadSession) {
+      this.dispose()
+      throw new Error(`${this.#spec.name} does not support session resume`)
+    }
+    await rpc.request('session/load', { sessionId, cwd: workspacePath, mcpServers: [] })
+    this.#sessionId = sessionId
+    return {
+      id: `acp-${this.#spec.id}-${sessionId}`,
       provider: 'acp',
       workspacePath,
       createdAt: Date.now(),
@@ -207,7 +203,49 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#rpc?.dispose()
     this.#rpc = undefined
     this.#sessionId = undefined
+    this.#loadSession = false
     this.#pendingApprovals.clear()
+  }
+
+  async #connect(workspacePath: string): Promise<StdioJsonRpc> {
+    const child = spawnCli(this.#spec.command, this.#spec.args, { cwd: workspacePath })
+    const rpc = new StdioJsonRpc(child, this.#spec.name)
+    this.#rpc = rpc
+    rpc.onStderr((text) => this.emit('log', text.trimEnd()))
+    rpc.onNotification((method, params) => this.#onNotification(method, params))
+    rpc.onServerRequest((method, params, respond) => this.#onRequest(method, params, respond))
+    const init = await rpc.request<InitializeResult>('initialize', {
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
+      clientInfo: { name: 'personal-harness', version: '0.0.0' },
+    })
+    if (init.protocolVersion !== undefined && init.protocolVersion !== PROTOCOL_VERSION) {
+      this.emit(
+        'log',
+        `${this.#spec.name} speaks ACP ${init.protocolVersion}, this adapter was written for ${PROTOCOL_VERSION}`,
+      )
+    }
+    const version = init.agentInfo?.version
+    if (
+      version &&
+      this.#spec.supportedVersion &&
+      !version.startsWith(this.#spec.supportedVersion)
+    ) {
+      this.emit(
+        'log',
+        `${this.#spec.name} ${version} is outside verified ${this.#spec.supportedVersion}.x`,
+      )
+    }
+    this.#images = init.agentCapabilities?.promptCapabilities?.image ?? false
+    this.#loadSession = init.agentCapabilities?.loadSession ?? false
+    return rpc
+  }
+
+  #setApproval(approval: ApprovalMode | undefined): void {
+    if (approval === 'auto-review') {
+      throw new Error('ACP agents do not support automatic approval review')
+    }
+    this.#approval = approval ?? 'ask'
   }
 
   #onNotification(method: string, params: unknown): void {
@@ -310,4 +348,12 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       status: stopReason === 'cancelled' ? 'interrupted' : 'completed',
     })
   }
+}
+
+export function parseAcpThreadId(threadId: string, agentId: string): string {
+  const prefix = `acp-${agentId}-`
+  if (!threadId.startsWith(prefix) || threadId.length === prefix.length) {
+    throw new Error(`thread does not belong to ACP agent "${agentId}"`)
+  }
+  return threadId.slice(prefix.length)
 }

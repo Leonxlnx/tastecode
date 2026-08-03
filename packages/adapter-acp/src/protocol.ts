@@ -20,6 +20,7 @@ export type ContentBlock = {
 
 export type InitializeResult = {
   protocolVersion?: number
+  agentInfo?: { name?: string; version?: string }
   agentCapabilities?: {
     loadSession?: boolean
     promptCapabilities?: {

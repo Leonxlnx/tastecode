@@ -21,6 +21,8 @@ export type AcpAgentSpec = {
   args: string[]
   /** True when frames from this agent were captured and read by us. */
   verified: boolean
+  /** Wire version captured while verifying this agent. */
+  supportedVersion?: string
   /** Shown when the binary is missing, so the user knows what to install. */
   install?: string
 }
@@ -40,6 +42,7 @@ export const ACP_AGENTS: AcpAgentSpec[] = [
     command: 'kimi',
     args: ['acp'],
     verified: true,
+    supportedVersion: '0.29',
   },
   {
     id: 'qwen',
