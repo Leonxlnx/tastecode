@@ -115,6 +115,38 @@ describe('Anthropic Messages transport', () => {
       { id: 'claude-c', displayName: 'Claude C', isDefault: true },
     ])
   })
+
+  it('keeps provider error bodies and credentials private', async () => {
+    const secret = 'sk-ant-secret'
+    const server = createServer((_request, response) => {
+      response.writeHead(401)
+      response.end(`rejected ${secret}`)
+    })
+    servers.push(server)
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('test server did not bind')
+    const transport = createAnthropicMessagesTransport({
+      apiKey: secret,
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+    })
+
+    const request = transport({
+      model: 'claude-test',
+      messages: [{ role: 'user', content: 'Hello' }],
+      tools: [],
+      signal: new AbortController().signal,
+    })
+    let message = ''
+    try {
+      await request.next()
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+    expect(message).toBe('Anthropic request failed with HTTP 401')
+    expect(message).not.toContain(secret)
+  })
 })
 
 async function serve(
