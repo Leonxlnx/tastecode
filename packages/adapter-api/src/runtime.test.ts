@@ -14,6 +14,7 @@ describe('ApiAgentSession', () => {
       transport: transport(
         { type: 'text', delta: 'Hello ' },
         { type: 'text', delta: 'world' },
+        { type: 'state', value: [{ type: 'provider-state' }] },
         { type: 'finish', reason: 'stop' },
       ),
     })
@@ -30,7 +31,12 @@ describe('ApiAgentSession', () => {
     })
     expect(session.snapshot().messages).toEqual([
       { role: 'user', content: 'Hi' },
-      { role: 'assistant', content: 'Hello world', toolCalls: [] },
+      {
+        role: 'assistant',
+        content: 'Hello world',
+        toolCalls: [],
+        transportState: [{ type: 'provider-state' }],
+      },
     ])
 
     const resumed = new ApiAgentSession({

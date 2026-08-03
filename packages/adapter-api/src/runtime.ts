@@ -12,7 +12,7 @@ export type ApiToolCall = { id: string; name: string; input: unknown }
 
 export type ApiMessage =
   | { role: 'user'; content: string }
-  | { role: 'assistant'; content: string; toolCalls: ApiToolCall[] }
+  | { role: 'assistant'; content: string; toolCalls: ApiToolCall[]; transportState?: unknown }
   | { role: 'tool'; content: string; toolCallId: string; isError: boolean }
 
 export type ApiTool = {
@@ -26,6 +26,7 @@ export type ApiStreamEvent =
   | { type: 'reasoning'; delta: string }
   | { type: 'tool_call'; call: ApiToolCall }
   | { type: 'usage'; usage: Usage }
+  | { type: 'state'; value: unknown }
   | { type: 'finish'; reason: 'stop' | 'tool_calls' }
 
 export type ApiTransport = (request: {
@@ -170,6 +171,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
           role: 'assistant',
           content: response.text,
           toolCalls: response.calls,
+          ...(response.state === undefined ? {} : { transportState: response.state }),
         })
         if (response.finish === 'stop') break
         if (response.calls.length === 0) throw new Error('missing tool calls')
@@ -205,7 +207,12 @@ export class ApiAgentSession extends EventEmitter<Events> {
   async #stream(
     turnId: string,
     signal: AbortSignal,
-  ): Promise<{ text: string; calls: ApiToolCall[]; finish: 'stop' | 'tool_calls' }> {
+  ): Promise<{
+    text: string
+    calls: ApiToolCall[]
+    finish: 'stop' | 'tool_calls'
+    state: unknown
+  }> {
     const itemId = `${turnId}-assistant-${this.#messages.length}`
     const reasoningId = `${itemId}-reasoning`
     let started = false
@@ -213,6 +220,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
     let text = ''
     let reasoning = ''
     let finish: 'stop' | 'tool_calls' | undefined
+    let state: unknown
     const calls: ApiToolCall[] = []
     for await (const event of this.#transport({
       model: this.#model,
@@ -266,6 +274,8 @@ export class ApiAgentSession extends EventEmitter<Events> {
         calls.push(event.call)
       } else if (event.type === 'usage') {
         this.emit('event', { type: 'usage.updated', usage: event.usage })
+      } else if (event.type === 'state') {
+        state = event.value
       } else if (event.type === 'finish') {
         finish = event.reason
       }
@@ -298,7 +308,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
         },
       })
     }
-    return { text, calls, finish }
+    return { text, calls, finish, state }
   }
 
   async #runTool(turnId: string, call: ApiToolCall, signal: AbortSignal): Promise<void> {
