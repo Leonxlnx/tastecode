@@ -35,7 +35,7 @@ export type ApiTransport = (request: {
   signal: AbortSignal
 }) => AsyncIterable<ApiStreamEvent>
 
-export type ApiSessionState = { thread: Thread; messages: ApiMessage[] }
+export type ApiSessionState = { thread: Thread; messages: ApiMessage[]; turnCounter: number }
 export type ApiToolResult = { content: string; isError?: boolean }
 
 export const API_CAPABILITIES: Capabilities = {
@@ -107,12 +107,17 @@ export class ApiAgentSession extends EventEmitter<Events> {
     if (state.thread.provider !== 'api') throw new Error('only API threads can resume here')
     this.#thread = structuredClone(state.thread)
     this.#messages = structuredClone(state.messages)
+    this.#turnCounter = state.turnCounter
     return this.#thread
   }
 
   snapshot(): ApiSessionState {
     if (!this.#thread) throw new Error('session has not started')
-    return structuredClone({ thread: this.#thread, messages: this.#messages })
+    return structuredClone({
+      thread: this.#thread,
+      messages: this.#messages,
+      turnCounter: this.#turnCounter,
+    })
   }
 
   async sendTurn(threadId: string, text: string, attachments: string[] = []): Promise<string> {
@@ -159,6 +164,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
     try {
       let toolCalls = 0
       while (true) {
+        signal.throwIfAborted()
         const response = await this.#stream(turnId, signal)
         this.#messages.push({
           role: 'assistant',
@@ -173,9 +179,11 @@ export class ApiAgentSession extends EventEmitter<Events> {
           await this.#runTool(turnId, call, signal)
         }
       }
-      if (!signal.aborted) {
-        this.emit('event', { type: 'turn.completed', turnId, status: 'completed' })
-      }
+      this.emit('event', {
+        type: 'turn.completed',
+        turnId,
+        status: signal.aborted ? 'interrupted' : 'completed',
+      })
     } catch (error) {
       const interrupted = signal.aborted
       if (!interrupted) {

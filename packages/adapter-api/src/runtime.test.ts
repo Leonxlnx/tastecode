@@ -33,8 +33,14 @@ describe('ApiAgentSession', () => {
       { role: 'assistant', content: 'Hello world', toolCalls: [] },
     ])
 
-    const resumed = new ApiAgentSession({ model: 'test-model', transport: transport() })
+    const resumed = new ApiAgentSession({
+      model: 'test-model',
+      transport: transport({ type: 'finish', reason: 'stop' }),
+    })
     expect(resumed.resumeThread(session.snapshot())).toEqual(thread)
+    const resumedTurn = await resumed.sendTurn(thread.id, 'Again')
+    expect(resumedTurn).toBe(`${thread.id}-turn-2`)
+    await resumed.waitForTurn(resumedTurn)
   })
 
   it('runs approved tools through the injected Harness executor', async () => {
