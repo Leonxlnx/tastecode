@@ -1,5 +1,6 @@
 import { ModelEndpointSchema, type Model } from '@harness/contracts'
 import type { ApiMessage, ApiStreamEvent, ApiTool, ApiToolCall, ApiTransport } from './runtime.js'
+import { serverSentEvents } from './sse.js'
 
 type JsonObject = Record<string, unknown>
 
@@ -155,27 +156,6 @@ function toTool(tool: ApiTool): JsonObject {
     description: tool.description,
     parameters: tool.inputSchema,
     strict: false,
-  }
-}
-
-async function* serverSentEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<JsonObject> {
-  const reader = body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  while (true) {
-    const { done, value } = await reader.read()
-    buffer += decoder.decode(value, { stream: !done })
-    const blocks = buffer.split(/\r?\n\r?\n/)
-    buffer = blocks.pop() ?? ''
-    for (const block of blocks) {
-      const data = block
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.slice(5).trimStart())
-        .join('\n')
-      if (data && data !== '[DONE]') yield object(JSON.parse(data))
-    }
-    if (done) break
   }
 }
 
