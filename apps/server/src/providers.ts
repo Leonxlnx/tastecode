@@ -1,6 +1,7 @@
 import { detectAgents } from '@harness/adapter-acp'
 import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex'
+import { CURSOR_CAPABILITIES, CURSOR_SUPPORTED_VERSION } from '@harness/adapter-cursor'
 import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode'
 import type { ProviderStatus } from '@harness/contracts'
 import { commandVersion, isInstalled } from '@harness/proc'
@@ -24,6 +25,7 @@ type Probe = {
   displayName: string
   command?: string
   capabilities?: ProviderStatus['capabilities']
+  supportedVersion?: string
   /** Set when the adapter does not exist yet, in words we can show the user. */
   unbuilt?: string
 }
@@ -36,7 +38,13 @@ const PROBES: Probe[] = [
     command: 'claude',
     capabilities: CLAUDE_CAPABILITIES,
   },
-  { id: 'cursor', displayName: 'Cursor', unbuilt: 'Not supported yet' },
+  {
+    id: 'cursor',
+    displayName: 'Cursor',
+    command: 'cursor-agent',
+    capabilities: CURSOR_CAPABILITIES,
+    supportedVersion: CURSOR_SUPPORTED_VERSION,
+  },
   {
     id: 'opencode',
     displayName: 'OpenCode',
@@ -94,6 +102,7 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
   }
 
   const version = await system.version(entry.command)
+  const unsupported = version && entry.supportedVersion && !version.includes(entry.supportedVersion)
   return {
     id: entry.id,
     displayName: entry.displayName,
@@ -101,6 +110,9 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
     auth: 'unknown',
     ...(version ? { version } : {}),
     ...(entry.capabilities ? { capabilities: entry.capabilities } : {}),
+    ...(unsupported
+      ? { problem: `Adapter supports ${entry.supportedVersion}.x; installed version is ${version}` }
+      : {}),
   }
 }
 

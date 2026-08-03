@@ -43,15 +43,14 @@ describe('detectProviders', () => {
     expect(claude.problem).toContain('claude')
   })
 
-  it('keeps unbuilt providers in the list, distinguishable from missing ones', async () => {
-    const providers = await detectProviders(system({ isInstalled: async () => true }))
+  it('reports when the installed Cursor wire version is unsupported', async () => {
+    const providers = await detectProviders(
+      system({ isInstalled: async () => true, version: async () => '2025.12.1' }),
+    )
 
     const cursor = find(providers, 'cursor')
-    // Dropping it would leave the UI unable to tell "we have not built this"
-    // from "you have not installed it".
-    expect(cursor).toBeDefined()
-    expect(cursor.installed).toBe(false)
-    expect(cursor.problem).toBe('Not supported yet')
+    expect(cursor.installed).toBe(true)
+    expect(cursor.problem).toContain('supports 2026.07')
   })
 
   it('omits the version when the binary would not say', async () => {

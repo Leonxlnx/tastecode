@@ -1,6 +1,7 @@
 import { AcpAdapter } from '@harness/adapter-acp'
 import { CodexAdapter } from '@harness/adapter-codex'
 import { ClaudeCodeAdapter } from '@harness/adapter-claude-code'
+import { CursorAdapter } from '@harness/adapter-cursor'
 import { OpenCodeAdapter } from '@harness/adapter-opencode'
 import type {
   ApprovalDecision,
@@ -97,10 +98,38 @@ export function providerRuntime(
       return claudeRuntime(onLog)
     case 'acp':
       return acpRuntime(onLog)
+    case 'cursor':
+      return cursorRuntime(onLog)
     case 'opencode':
       return openCodeRuntime(onLog)
     default:
       throw new Error(`provider "${provider}" is not implemented yet`)
+  }
+}
+
+function cursorRuntime(onLog: (line: string) => void): ProviderRuntime {
+  return {
+    async start(workspacePath, options) {
+      const adapter = new CursorAdapter()
+      adapter.on('log', onLog)
+      const thread = await adapter.startThread(workspacePath, {
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.approval ? { approval: options.approval } : {}),
+      })
+      return { thread, session: adapter }
+    },
+    async resume(threadId, workspacePath, options) {
+      const adapter = new CursorAdapter()
+      adapter.on('log', onLog)
+      const thread = await adapter.resumeThread(threadId, workspacePath, {
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.approval ? { approval: options.approval } : {}),
+      })
+      return { thread, session: adapter }
+    },
+    async listModels() {
+      return []
+    },
   }
 }
 
