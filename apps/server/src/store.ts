@@ -47,6 +47,7 @@ export type StoredThread = {
   /** Which ACP agent, when the provider is `acp`. */
   agent?: string | undefined
   title: string
+  pinned: boolean
   createdAt: number
   /** Set when the session was closed. Kept, not deleted — history outlives use. */
   closedAt?: number | undefined
@@ -105,6 +106,7 @@ CREATE TABLE IF NOT EXISTS threads (
   provider     TEXT NOT NULL,
   agent        TEXT,
   title        TEXT NOT NULL,
+  pinned       INTEGER NOT NULL DEFAULT 0,
   created_at   INTEGER NOT NULL,
   closed_at    INTEGER,
   worktree_path   TEXT,
@@ -192,6 +194,7 @@ CREATE INDEX IF NOT EXISTS threads_by_project ON threads (project_path);
  */
 const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }> = [
   { table: 'projects', column: 'pinned', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'threads', column: 'pinned', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'worktree_path', definition: 'TEXT' },
   { table: 'threads', column: 'worktree_branch', definition: 'TEXT' },
   {
@@ -290,7 +293,7 @@ export class Store {
   // ---- threads -----------------------------------------------------------
 
   addThread(
-    thread: Omit<StoredThread, 'createdAt' | 'lifecycle' | 'unread' | 'lastActiveAt'> & {
+    thread: Omit<StoredThread, 'createdAt' | 'pinned' | 'lifecycle' | 'unread' | 'lastActiveAt'> & {
       createdAt?: number
     },
   ): StoredThread {
@@ -314,7 +317,7 @@ export class Store {
         stored.worktreeBranch ?? null,
         stored.createdAt,
       )
-    return { ...stored, lifecycle, unread: false, lastActiveAt: stored.createdAt }
+    return { ...stored, pinned: false, lifecycle, unread: false, lastActiveAt: stored.createdAt }
   }
 
   /**
@@ -369,6 +372,10 @@ export class Store {
 
   renameThread(id: string, title: string): void {
     this.#db.prepare(`UPDATE threads SET title = ? WHERE id = ?`).run(title, id)
+  }
+
+  setThreadPinned(id: string, pinned: boolean): void {
+    this.#db.prepare(`UPDATE threads SET pinned = ? WHERE id = ?`).run(pinned ? 1 : 0, id)
   }
 
   settleThread(
@@ -1009,6 +1016,7 @@ function toThread(row: unknown): StoredThread {
     provider: string
     agent: string | null
     title: string
+    pinned: number
     created_at: number
     closed_at: number | null
     worktree_path: string | null
@@ -1046,6 +1054,7 @@ function toThread(row: unknown): StoredThread {
     provider: r.provider as ProviderId,
     ...(r.agent === null ? {} : { agent: r.agent }),
     title: r.title,
+    pinned: r.pinned === 1,
     createdAt: Number(r.created_at),
     ...(r.closed_at === null ? {} : { closedAt: Number(r.closed_at) }),
     ...(r.worktree_path === null ? {} : { worktreePath: r.worktree_path }),

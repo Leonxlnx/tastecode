@@ -391,6 +391,7 @@ export function startServer(
             sessions: store.threads(project.path).map((thread) => ({
               id: thread.id,
               title: thread.title,
+              pinned: thread.pinned,
               provider: thread.provider,
               ...(thread.agent === undefined ? {} : { agent: thread.agent }),
               createdAt: thread.createdAt,
@@ -458,6 +459,12 @@ export function startServer(
       case 'thread.rename': {
         const p = params as { threadId: string; title: string }
         store.renameThread(p.threadId, p.title)
+        return {}
+      }
+
+      case 'thread.pin': {
+        const p = params as { threadId: string; pinned: boolean }
+        store.setThreadPinned(p.threadId, p.pinned)
         return {}
       }
 

@@ -73,11 +73,14 @@ describe('opening a database written by an older build', () => {
       expect(migrated.project('/repo')?.name).toBe('Old project')
       expect(migrated.project('/repo')?.pinned).toBe(false)
       expect(migrated.thread('t1')?.title).toBe('Old session')
+      expect(migrated.thread('t1')?.pinned).toBe(false)
       expect(migrated.thread('t1')?.worktreePath).toBeUndefined()
       expect(migrated.thread('t1')?.lifecycle).toEqual({ state: 'active', keepActive: false })
 
       migrated.setPinned('/repo', true)
       expect(migrated.project('/repo')?.pinned).toBe(true)
+      migrated.setThreadPinned('t1', true)
+      expect(migrated.thread('t1')?.pinned).toBe(true)
       expect(migrated.searchSessions({ query: 'legacy' }).results[0]?.threadId).toBe('t1')
     } finally {
       migrated.close()
