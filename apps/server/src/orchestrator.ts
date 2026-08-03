@@ -2,8 +2,16 @@ import {
   CODEX_MCP_CAPABILITIES,
   CODEX_SKILL_CAPABILITIES,
   CodexAdapter,
-  DESIGN_BRIEF_ATTACHMENT,
 } from '@harness/adapter-codex'
+import {
+  DESIGN_BRIEF_ATTACHMENT,
+  FINAL_BRIEFING_QUESTION,
+  designBriefingContinuation,
+  designBriefingPrompt,
+  parseBriefingOutput,
+  writeDesignBrief,
+  type BriefingQuestion,
+} from '@harness/design-agent'
 import {
   providerRuntime,
   type AgentSession,
@@ -44,6 +52,7 @@ import type {
   Thread,
   ThreadInboxStatus,
   ThreadLifecycle,
+  UserInputQuestion,
 } from '@harness/contracts'
 import { readSessionDiff, reviewDiffFile, reviewDiffHunk } from './diff-review.js'
 import { McpConfigStore } from './mcp-config.js'
@@ -53,6 +62,19 @@ import { installLocalSkill } from './skill-install.js'
 
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
+type DesignFlow = {
+  workspacePath: string
+  options: TurnOptions
+  askedQuestions: boolean
+  finalAsked: boolean
+  pendingBrief?: unknown
+}
+type DesignInput = {
+  threadId: string
+  turnId: string
+  questions: BriefingQuestion[]
+  final: boolean
+}
 const PANIC_STOP_TIMEOUT_MS = 5_000
 const UNSUPPORTED_MCP_CAPABILITIES: McpCapabilities = {
   inventory: false,
@@ -88,6 +110,12 @@ export class Orchestrator {
   #reviewingDiffs = new Set<string>()
   #queuedTurns = new Map<string, QueuedTurnEntry[]>()
   #drainingQueues = new Set<string>()
+  #designFlows = new Map<string, DesignFlow>()
+  #designTurns = new Map<string, string>()
+  #designStartingThreads = new Set<string>()
+  #designMessageItems = new Set<string>()
+  #designInputs = new Map<string, DesignInput>()
+  #designInputByThread = new Map<string, string>()
   #resumingThreads = new Map<string, Promise<void>>()
   #panicGeneration = 0
   #panicStopping = false
@@ -508,7 +536,20 @@ export class Orchestrator {
       if (panicGeneration !== this.#panicGeneration) {
         throw new Error('turn cancelled by panic stop')
       }
-      return await this.#get(threadId).session.sendTurn(threadId, text, attachments, options)
+      const design = attachments.includes(DESIGN_BRIEF_ATTACHMENT)
+      if (design) {
+        this.#designFlows.set(threadId, {
+          workspacePath: this.#repoPath(threadId),
+          options,
+          askedQuestions: false,
+          finalAsked: false,
+        })
+      }
+      const prompt = design ? designBriefingPrompt(text) : text
+      const visibleAttachments = attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT)
+      return await (design
+        ? this.#sendDesignTurn(threadId, prompt, visibleAttachments, options)
+        : this.#get(threadId).session.sendTurn(threadId, prompt, visibleAttachments, options))
     } finally {
       this.#startingTurns.delete(threadId)
     }
@@ -523,7 +564,12 @@ export class Orchestrator {
   ): Promise<{ queued: false; turnId: string } | { queued: true; queuedTurn: QueuedTurn }> {
     await this.#ensureThread(threadId)
     const queue = this.#queuedTurns.get(threadId) ?? []
-    if (this.#activeTurns.has(threadId) || this.#startingTurns.has(threadId) || queue.length > 0) {
+    if (
+      this.#activeTurns.has(threadId) ||
+      this.#startingTurns.has(threadId) ||
+      this.#designInputByThread.has(threadId) ||
+      queue.length > 0
+    ) {
       const queuedTurn: QueuedTurnEntry = {
         id: crypto.randomUUID(),
         text,
@@ -605,14 +651,20 @@ export class Orchestrator {
       this.#activeTurns.delete(threadId)
     }
     const seq = this.#store.append(threadId, event)
-    if (event.type === 'turn.started' || event.type === 'approval.requested') {
+    if (
+      event.type === 'turn.started' ||
+      event.type === 'approval.requested' ||
+      event.type === 'user_input.requested'
+    ) {
       this.#wakeForActivity(threadId)
     }
     if (event.type === 'turn.completed' || event.type === 'thread.error') {
       this.#wakeForActivity(threadId, true)
     }
     this.#onEvent(threadId, event, seq)
-    if (event.type === 'turn.completed') void this.#drainQueue(threadId)
+    if (event.type === 'turn.completed' && !this.#designInputByThread.has(threadId)) {
+      void this.#drainQueue(threadId)
+    }
   }
 
   /** A thread's history, for a client opening or reattaching to it. */
@@ -680,16 +732,20 @@ export class Orchestrator {
     // ponytail: replay the durable log here; add a status projection only if large histories
     // make project-list latency measurable.
     const approvals = new Set<string>()
+    const inputs = new Set<string>()
     let last: ThreadInboxStatus = 'idle'
     for (const { event } of this.#store.history(threadId)) {
       if (event.type === 'approval.requested') approvals.add(event.request.id)
       if (event.type === 'approval.resolved') approvals.delete(event.id)
+      if (event.type === 'user_input.requested') inputs.add(event.request.id)
+      if (event.type === 'user_input.resolved') inputs.delete(event.id)
       if (event.type === 'thread.error') last = 'failed'
       if (event.type === 'turn.completed') {
         last = event.status === 'failed' ? 'failed' : 'idle'
       }
     }
     if (approvals.size > 0) return 'approval'
+    if (inputs.size > 0) return 'input'
     if (last === 'failed') return 'failed'
     return this.#store.thread(threadId)?.unread ? 'ready' : last
   }
@@ -824,7 +880,8 @@ export class Orchestrator {
     if (
       this.#drainingQueues.has(threadId) ||
       this.#activeTurns.has(threadId) ||
-      this.#startingTurns.has(threadId)
+      this.#startingTurns.has(threadId) ||
+      this.#designInputByThread.has(threadId)
     ) {
       return
     }
@@ -945,6 +1002,34 @@ export class Orchestrator {
   }
 
   respondToUserInput(threadId: string, requestId: string, answers: Record<string, string[]>): void {
+    const designInput = this.#designInputs.get(requestId)
+    if (designInput?.threadId === threadId) {
+      this.#designInputs.delete(requestId)
+      this.#designInputByThread.delete(threadId)
+      this.#record(threadId, { type: 'user_input.resolved', id: requestId })
+      const flow = this.#designFlows.get(threadId)
+      if (!flow) return
+
+      const noMoreDetails =
+        designInput.final &&
+        (answers[FINAL_BRIEFING_QUESTION.id] ?? []).some((answer) =>
+          answer.startsWith("No, that's everything"),
+        )
+      if (noMoreDetails && flow.pendingBrief) {
+        this.#completeDesignBrief(threadId, designInput.turnId, flow.pendingBrief)
+        void this.#drainQueue(threadId)
+        return
+      }
+
+      void this.#sendDesignTurn(
+        threadId,
+        designBriefingContinuation(designInput.questions, answers),
+        [],
+        flow.options,
+      ).catch((error: unknown) => this.#failDesignFlow(threadId, error))
+      return
+    }
+
     const session = this.#get(threadId).session
     if (!session.respondToUserInput) throw new Error('this agent does not support structured input')
     session.respondToUserInput(requestId, answers)
@@ -1007,6 +1092,7 @@ export class Orchestrator {
     this.#reviewingDiffs.delete(threadId)
     this.#queuedTurns.delete(threadId)
     this.#drainingQueues.delete(threadId)
+    this.#clearDesignFlow(threadId)
     // Marked closed, not deleted. Ending the process is not the same as
     // wanting the transcript gone.
     //
@@ -1078,6 +1164,12 @@ export class Orchestrator {
     this.#reviewingDiffs.clear()
     this.#queuedTurns.clear()
     this.#drainingQueues.clear()
+    this.#designFlows.clear()
+    this.#designTurns.clear()
+    this.#designStartingThreads.clear()
+    this.#designMessageItems.clear()
+    this.#designInputs.clear()
+    this.#designInputByThread.clear()
     this.#resumingThreads.clear()
     this.#control?.dispose()
     this.#control = undefined
@@ -1121,6 +1213,174 @@ export class Orchestrator {
     this.#attachThread(result.thread, result.session, stored.projectPath)
   }
 
+  async #sendDesignTurn(
+    threadId: string,
+    prompt: string,
+    attachments: string[],
+    options: TurnOptions,
+  ): Promise<string> {
+    this.#designStartingThreads.add(threadId)
+    try {
+      const turnId = await this.#get(threadId).session.sendTurn(
+        threadId,
+        prompt,
+        attachments,
+        options,
+      )
+      this.#designTurns.set(turnId, threadId)
+      return turnId
+    } finally {
+      this.#designStartingThreads.delete(threadId)
+    }
+  }
+
+  #handleSessionEvent(threadId: string, event: DomainEvent): void {
+    if (event.type === 'turn.started' && this.#designStartingThreads.has(threadId)) {
+      this.#designTurns.set(event.turn.id, threadId)
+    }
+
+    const turnId =
+      event.type === 'turn.started'
+        ? event.turn.id
+        : 'turnId' in event
+          ? event.turnId
+          : event.type === 'item.started' || event.type === 'item.completed'
+            ? event.item.turnId
+            : undefined
+    if (!turnId || this.#designTurns.get(turnId) !== threadId) {
+      this.#record(threadId, event)
+      return
+    }
+
+    if (
+      event.type === 'item.started' &&
+      event.item.type === 'message' &&
+      event.item.role === 'assistant'
+    ) {
+      this.#designMessageItems.add(event.item.id)
+      return
+    }
+    if (event.type === 'item.delta' && this.#designMessageItems.has(event.itemId)) return
+    if (
+      event.type === 'item.completed' &&
+      event.item.type === 'message' &&
+      event.item.role === 'assistant'
+    ) {
+      this.#designMessageItems.delete(event.item.id)
+      this.#handleDesignOutput(threadId, turnId, event.item.text ?? '')
+      return
+    }
+    if (event.type === 'turn.completed') this.#designTurns.delete(turnId)
+    this.#record(threadId, event)
+  }
+
+  #handleDesignOutput(threadId: string, turnId: string, text: string): void {
+    const flow = this.#designFlows.get(threadId)
+    if (!flow) return
+
+    try {
+      const output = parseBriefingOutput(text)
+      if (output.status === 'questions') {
+        flow.askedQuestions = true
+        flow.finalAsked = false
+        flow.pendingBrief = undefined
+        this.#requestDesignInput(threadId, turnId, output.questions, false)
+        return
+      }
+      if (output.status === 'not_design') {
+        this.#clearDesignFlow(threadId)
+        this.#record(threadId, {
+          type: 'item.completed',
+          item: {
+            id: `design-not-applicable-${crypto.randomUUID()}`,
+            turnId,
+            type: 'message',
+            role: 'assistant',
+            status: 'completed',
+            text: 'Design mode was turned off because this request is not a website design task.',
+            createdAt: Date.now(),
+          },
+        })
+        return
+      }
+      if (flow.askedQuestions && !flow.finalAsked) {
+        flow.pendingBrief = output.brief
+        flow.finalAsked = true
+        this.#requestDesignInput(threadId, turnId, [FINAL_BRIEFING_QUESTION], true)
+        return
+      }
+      this.#completeDesignBrief(threadId, turnId, output.brief)
+    } catch (error) {
+      this.#failDesignFlow(threadId, error)
+    }
+  }
+
+  #requestDesignInput(
+    threadId: string,
+    turnId: string,
+    questions: BriefingQuestion[],
+    final: boolean,
+  ): void {
+    const id = crypto.randomUUID()
+    this.#designInputs.set(id, { threadId, turnId, questions, final })
+    this.#designInputByThread.set(threadId, id)
+    this.#record(threadId, {
+      type: 'user_input.requested',
+      request: {
+        id,
+        turnId,
+        questions: questions.map((question): UserInputQuestion => ({
+          id: question.id,
+          header: question.header,
+          question: question.question,
+          allowOther: question.allowOther,
+          secret: false,
+          options: question.options,
+        })),
+        autoResolutionMs: null,
+        createdAt: Date.now(),
+      },
+    })
+  }
+
+  #completeDesignBrief(threadId: string, turnId: string, brief: unknown): void {
+    const flow = this.#designFlows.get(threadId)
+    if (!flow) return
+    writeDesignBrief(flow.workspacePath, brief)
+    this.#clearDesignFlow(threadId)
+    this.#record(threadId, {
+      type: 'item.completed',
+      item: {
+        id: `design-complete-${crypto.randomUUID()}`,
+        turnId,
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: 'Brief complete.\nDEBUG FINISHED · NO WEBSITE BUILT',
+        createdAt: Date.now(),
+      },
+    })
+  }
+
+  #failDesignFlow(threadId: string, error: unknown): void {
+    this.#clearDesignFlow(threadId)
+    this.#record(threadId, {
+      type: 'thread.error',
+      threadId,
+      message: `Design briefing failed: ${error instanceof Error ? error.message : String(error)}`,
+    })
+  }
+
+  #clearDesignFlow(threadId: string): void {
+    this.#designFlows.delete(threadId)
+    const requestId = this.#designInputByThread.get(threadId)
+    if (requestId) this.#designInputs.delete(requestId)
+    this.#designInputByThread.delete(threadId)
+    for (const [turnId, owner] of this.#designTurns) {
+      if (owner === threadId) this.#designTurns.delete(turnId)
+    }
+  }
+
   #attachThread(
     thread: Thread,
     session: AgentSession,
@@ -1129,6 +1389,6 @@ export class Orchestrator {
   ): void {
     this.#threads.set(thread.id, { thread, session, ...(worktree ? { worktree } : {}) })
     session.onMcpOAuth?.((result) => this.#onMcpOAuth(thread.provider, projectPath, result))
-    session.on('event', (event) => this.#record(thread.id, event))
+    session.on('event', (event) => this.#handleSessionEvent(thread.id, event))
   }
 }

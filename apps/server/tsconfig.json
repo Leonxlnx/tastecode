@@ -8,6 +8,7 @@
   "exclude": ["src/**/*.test.ts"],
   "references": [
     { "path": "../../packages/contracts" },
+    { "path": "../../packages/design-agent" },
     { "path": "../../packages/adapter-acp" },
     { "path": "../../packages/proc" },
     { "path": "../../packages/adapter-codex" },

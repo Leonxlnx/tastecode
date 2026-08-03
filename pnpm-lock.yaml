@@ -56,6 +56,9 @@ importers:
       '@harness/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@harness/design-agent':
+        specifier: workspace:*
+        version: link:../../packages/design-agent
       '@harness/proc':
         specifier: workspace:*
         version: link:../../packages/proc

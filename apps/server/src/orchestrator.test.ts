@@ -11,6 +11,7 @@ import type {
   ThreadLifecycle,
 } from '@harness/contracts'
 import type { AgentSession, ProviderRuntime, StartOptions } from './adapters.js'
+import { DESIGN_BRIEF_ATTACHMENT } from '@harness/design-agent'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
@@ -107,7 +108,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
       return {
         thread: {
           id: `thread-${sessions.length}`,
-          provider: 'codex' as ProviderId,
+          provider,
           workspacePath,
           createdAt: Date.now(),
         },
@@ -164,11 +165,11 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
   }
 }
 
-const message = (text: string): DomainEvent => ({
+const message = (text: string, turnId = 't1'): DomainEvent => ({
   type: 'item.completed',
   item: {
     id: `i-${text}`,
-    turnId: 't1',
+    turnId,
     type: 'message',
     role: 'assistant',
     status: 'completed',
@@ -190,6 +191,133 @@ describe('structured user input', () => {
       { requestId: 'brief-1', answers: { palette: ['Decide for me'] } },
     ])
   })
+})
+
+describe('provider-neutral design briefing', () => {
+  it.each(['codex', 'claude-code', 'acp'] satisfies ProviderId[])(
+    'runs the same adaptive question loop with %s',
+    async (provider) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-flow-'))
+      const { orchestrator, sessions, received } = harness()
+      try {
+        const thread = await orchestrator.startThread(provider, workspace, {})
+        await orchestrator.sendTurn(thread.id, 'Create a website.', [DESIGN_BRIEF_ATTACHMENT])
+
+        expect(sessions[0]?.sent[0]).toContain('Personal Harness Design Briefing mode')
+        sessions[0]?.emit(
+          message(
+            JSON.stringify({
+              status: 'questions',
+              message: 'Preparing questions.',
+              questions: Array.from({ length: 5 }, (_, index) => ({
+                id: `field_${index}`,
+                header: `Field ${index + 1}`,
+                question: `What should field ${index + 1} be?`,
+                allowOther: true,
+                options: [{ label: 'Decide for me', description: 'Let the Design Agent decide.' }],
+              })),
+              brief: null,
+            }),
+            's1-turn',
+          ),
+        )
+
+        const firstRequest = received.find(
+          ({ event }) => event.type === 'user_input.requested',
+        )?.event
+        expect(firstRequest?.type).toBe('user_input.requested')
+        if (firstRequest?.type !== 'user_input.requested') throw new Error('missing questions')
+        expect(firstRequest.request.questions).toHaveLength(5)
+
+        orchestrator.respondToUserInput(thread.id, firstRequest.request.id, {
+          field_0: ['Something vague'],
+        })
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+        expect(sessions[0]?.sent[1]).toContain('Something vague')
+
+        sessions[0]?.emit(
+          message(
+            JSON.stringify({
+              status: 'questions',
+              message: 'Preparing questions.',
+              questions: [
+                {
+                  id: 'field_0_clarification',
+                  header: 'Clarify',
+                  question: 'Could you clarify that answer?',
+                  allowOther: true,
+                  options: [
+                    { label: 'Decide for me', description: 'Let the Design Agent decide.' },
+                  ],
+                },
+              ],
+              brief: null,
+            }),
+            's1-turn',
+          ),
+        )
+        const followUp = received
+          .filter(({ event }) => event.type === 'user_input.requested')
+          .at(-1)?.event
+        if (followUp?.type !== 'user_input.requested') throw new Error('missing follow-up')
+        orchestrator.respondToUserInput(thread.id, followUp.request.id, {
+          field_0_clarification: ['Decide for me'],
+        })
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
+
+        sessions[0]?.emit(
+          message(
+            JSON.stringify({
+              status: 'complete',
+              message: 'Brief complete.',
+              questions: [],
+              brief: {
+                originalRequest: 'Create a website.',
+                subject: 'Independent studio',
+                pageType: 'Marketing site',
+                scope: 'Single responsive page',
+                primaryGoal: 'Generate enquiries',
+                audience: 'Prospective clients',
+                offer: 'Design services',
+                primaryAction: 'Start a project',
+                requiredContent: ['Selected work'],
+                constraints: [],
+                brandInputs: [],
+                creativeControl: 'Agent-led',
+                explicitAnswers: [],
+                assumptions: ['The agent chose unresolved details.'],
+                unresolved: [],
+              },
+            }),
+            's1-turn',
+          ),
+        )
+        const finalRequest = received
+          .filter(({ event }) => event.type === 'user_input.requested')
+          .at(-1)?.event
+        if (finalRequest?.type !== 'user_input.requested') throw new Error('missing final question')
+        expect(finalRequest.request.questions).toHaveLength(1)
+        expect(finalRequest.request.questions[0]?.id).toBe('final_note')
+
+        orchestrator.respondToUserInput(thread.id, finalRequest.request.id, {
+          final_note: ["No, that's everything (Recommended)"],
+        })
+        expect(
+          JSON.parse(readFileSync(path.join(workspace, '.taste', 'brief.json'), 'utf8')).subject,
+        ).toBe('Independent studio')
+        expect(sessions[0]?.userInputs).toEqual([])
+        expect(
+          received.some(
+            ({ event }) =>
+              event.type === 'item.completed' &&
+              event.item.text === 'Brief complete.\nDEBUG FINISHED · NO WEBSITE BUILT',
+          ),
+        ).toBe(true)
+      } finally {
+        rmSync(workspace, { recursive: true, force: true })
+      }
+    },
+  )
 })
 
 describe('persisted threads', () => {
