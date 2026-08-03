@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
 import type { Account, ProviderId } from '@harness/contracts'
-import { LoaderCircle } from 'lucide-react'
+import {
+  ArrowRight,
+  Check,
+  GitBranch,
+  LoaderCircle,
+  LockKeyhole,
+  PanelsTopLeft,
+} from 'lucide-react'
 import type { Transport } from '../transport.js'
 
 /**
@@ -138,9 +145,14 @@ export function Onboarding(props: {
         )}
       </div>
 
-      <ol className="steps" aria-label="Progress">
-        {(['welcome', 'provider', afterProvider, 'done'] as Step[]).map((entry) => (
-          <li key={entry} className={`steps__dot ${entry === step ? 'is-on' : ''}`} />
+      <ol className="steps" aria-label="Setup progress">
+        {(['welcome', 'provider', afterProvider, 'done'] as Step[]).map((entry, index) => (
+          <li
+            key={entry}
+            className={`steps__dot ${entry === step ? 'is-on' : ''}`}
+            aria-label={`Step ${index + 1} of 4`}
+            aria-current={entry === step ? 'step' : undefined}
+          />
         ))}
       </ol>
     </div>
@@ -149,28 +161,47 @@ export function Onboarding(props: {
 
 function Welcome({ onNext }: { onNext: () => void }) {
   return (
-    <div className="pane">
-      <h1 className="pane__title">Personal Harness</h1>
+    <div className="pane pane--welcome">
+      <div className="welcome__mark" aria-hidden>
+        <PanelsTopLeft size={22} strokeWidth={1.7} />
+      </div>
+      <h1 className="pane__title">Set up Personal Harness</h1>
       <p className="pane__lede">
-        One window for every coding agent you use, and every plan you already pay for. Nothing you
-        write, run, or open leaves this machine.
+        Connect one coding agent now. You can add the rest later from Settings.
       </p>
       <ul className="facts">
         <li>
-          <strong>Bring what you have.</strong> Your subscription stays with its vendor. We drive
-          their tool; we never ask for a password.
+          <span className="facts__icon" aria-hidden>
+            <PanelsTopLeft size={16} />
+          </span>
+          <span>
+            <strong>Use your current accounts</strong>
+            Your subscriptions stay with their providers.
+          </span>
         </li>
         <li>
-          <strong>Local by default.</strong> No account with us, no telemetry, no cloud in the
-          middle.
+          <span className="facts__icon" aria-hidden>
+            <LockKeyhole size={16} />
+          </span>
+          <span>
+            <strong>Your work stays local</strong>
+            No Harness account, telemetry, or cloud relay.
+          </span>
         </li>
         <li>
-          <strong>Yours to change.</strong> Open source, and built to be forked.
+          <span className="facts__icon" aria-hidden>
+            <GitBranch size={16} />
+          </span>
+          <span>
+            <strong>Keep control</strong>
+            Open source and built around your local projects.
+          </span>
         </li>
       </ul>
       <div className="pane__foot">
-        <button className="btn" onClick={onNext}>
-          Get started
+        <button className="btn onboard__primary" onClick={onNext}>
+          Continue
+          <ArrowRight size={15} aria-hidden />
         </button>
       </div>
     </div>
@@ -185,8 +216,8 @@ function PickProvider(props: {
 }) {
   return (
     <div className="pane">
-      <h1 className="pane__title">Which agent do you want first?</h1>
-      <p className="pane__lede">You can add the others whenever you like.</p>
+      <h1 className="pane__title">Choose your first agent</h1>
+      <p className="pane__lede">Choose one to finish setup. You can connect others later.</p>
 
       <ul className="cards">
         {PROVIDER_CARDS.map((card) => (
@@ -198,7 +229,15 @@ function PickProvider(props: {
             >
               <span className="card__head">
                 <span className="card__name">{card.name}</span>
-                {card.ready ? null : <span className="card__state">Coming soon</span>}
+                {card.ready ? (
+                  props.selected === card.id ? (
+                    <span className="card__check" aria-label="Selected">
+                      <Check size={14} />
+                    </span>
+                  ) : null
+                ) : (
+                  <span className="card__state">Coming soon</span>
+                )}
               </span>
               <span className="card__blurb">{card.blurb}</span>
               <span className="card__plans">
@@ -219,6 +258,7 @@ function PickProvider(props: {
         </button>
         <button className="btn" onClick={props.onNext}>
           Continue
+          <ArrowRight size={15} aria-hidden />
         </button>
       </div>
     </div>
@@ -266,11 +306,8 @@ function PickAcpAgent(props: {
 
   return (
     <div className="pane">
-      <h1 className="pane__title">Which ACP agent?</h1>
-      <p className="pane__lede">
-        These all speak the same open protocol, so Personal Harness drives them through one
-        integration. Each signs in with its own account, on its own.
-      </p>
+      <h1 className="pane__title">Choose an ACP agent</h1>
+      <p className="pane__lede">Personal Harness found these compatible agents on this computer.</p>
 
       {agents === undefined ? (
         <p className="pane__lede">Looking for agents on this machine…</p>
@@ -312,6 +349,7 @@ function PickAcpAgent(props: {
         </button>
         <button className="btn" disabled={!props.selected} onClick={props.onNext}>
           Continue
+          <ArrowRight size={15} aria-hidden />
         </button>
       </div>
     </div>
@@ -407,6 +445,7 @@ function SignIn(props: {
         </p>
         <div className="alt__row">
           <input
+            aria-label={`${props.card.name} API key`}
             type={showKey ? 'text' : 'password'}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
@@ -454,15 +493,18 @@ function Done(props: {
 }) {
   return (
     <div className="pane">
-      <h1 className="pane__title">You’re set</h1>
+      <div className="done__mark" aria-hidden>
+        <Check size={20} strokeWidth={2} />
+      </div>
+      <h1 className="pane__title">Ready to start</h1>
       <div className="signed">
         <span className="signed__name">{props.agentName ?? props.card.name}</span>
         {props.account?.plan ? <span className="chiplet">{props.account.plan}</span> : null}
         {props.account?.email ? <span className="signed__email">{props.account.email}</span> : null}
       </div>
       <p className="pane__lede">
-        Add a project folder and start a session. Everything else — more agents, models, permissions
-        — is a click away and changeable later.
+        Open a project folder and start a session. Agents, models, and permissions stay available in
+        Settings.
       </p>
       <div className="pane__foot">
         <button className="btn" onClick={props.onFinish}>
