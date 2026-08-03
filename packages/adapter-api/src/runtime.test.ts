@@ -79,4 +79,48 @@ describe('ApiAgentSession', () => {
       { role: 'tool', content: 'hello', toolCallId: 'call-1', isError: false },
     ])
   })
+
+  it('interrupts an active request without leaking transport errors', async () => {
+    const secret = 'sk-test-secret'
+    const events: unknown[] = []
+    const logs: string[] = []
+    let release: (() => void) | undefined
+    const entered = new Promise<void>((resolve) => (release = resolve))
+    const session = new ApiAgentSession({
+      model: 'test-model',
+      secrets: [secret],
+      transport: async function* ({ signal }) {
+        release?.()
+        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()))
+        throw new Error(secret)
+      },
+    })
+    session.on('event', (event) => events.push(event))
+    session.on('log', (line) => logs.push(line))
+    const thread = session.startThread('C:\\repo', 'connection-1')
+    const turnId = await session.sendTurn(thread.id, 'Wait')
+    await entered
+    await session.interrupt(thread.id)
+
+    expect(events).toContainEqual({ type: 'turn.completed', turnId, status: 'interrupted' })
+    expect(JSON.stringify({ events, logs })).not.toContain(secret)
+  })
+
+  it('fails safely when a transport exceeds the tool-call bound', async () => {
+    const events: unknown[] = []
+    const session = new ApiAgentSession({
+      model: 'test-model',
+      maxToolCalls: 1,
+      transport: async function* () {
+        yield { type: 'tool_call', call: { id: crypto.randomUUID(), name: 'loop', input: {} } }
+        yield { type: 'finish', reason: 'tool_calls' }
+      },
+    })
+    session.on('event', (event) => events.push(event))
+    const thread = session.startThread('C:\\repo', 'connection-1')
+    const turnId = await session.sendTurn(thread.id, 'Loop')
+    await session.waitForTurn(turnId)
+
+    expect(events).toContainEqual({ type: 'turn.completed', turnId, status: 'failed' })
+  })
 })

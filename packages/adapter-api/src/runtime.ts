@@ -199,8 +199,11 @@ export class ApiAgentSession extends EventEmitter<Events> {
     signal: AbortSignal,
   ): Promise<{ text: string; calls: ApiToolCall[]; finish: 'stop' | 'tool_calls' }> {
     const itemId = `${turnId}-assistant-${this.#messages.length}`
+    const reasoningId = `${itemId}-reasoning`
     let started = false
+    let reasoningStarted = false
     let text = ''
+    let reasoning = ''
     let finish: 'stop' | 'tool_calls' | undefined
     const calls: ApiToolCall[] = []
     for await (const event of this.#transport({
@@ -228,6 +231,29 @@ export class ApiAgentSession extends EventEmitter<Events> {
         const delta = this.#redact(event.delta)
         text += delta
         this.emit('event', { type: 'item.delta', turnId, itemId, textDelta: delta })
+      } else if (event.type === 'reasoning') {
+        if (!reasoningStarted) {
+          reasoningStarted = true
+          this.emit('event', {
+            type: 'item.started',
+            item: {
+              id: reasoningId,
+              turnId,
+              type: 'reasoning',
+              status: 'started',
+              text: '',
+              createdAt: Date.now(),
+            },
+          })
+        }
+        const delta = this.#redact(event.delta)
+        reasoning += delta
+        this.emit('event', {
+          type: 'item.delta',
+          turnId,
+          itemId: reasoningId,
+          textDelta: delta,
+        })
       } else if (event.type === 'tool_call') {
         calls.push(event.call)
       } else if (event.type === 'usage') {
@@ -247,6 +273,19 @@ export class ApiAgentSession extends EventEmitter<Events> {
           role: 'assistant',
           status: 'completed',
           text,
+          createdAt: Date.now(),
+        },
+      })
+    }
+    if (reasoningStarted) {
+      this.emit('event', {
+        type: 'item.completed',
+        item: {
+          id: reasoningId,
+          turnId,
+          type: 'reasoning',
+          status: 'completed',
+          text: reasoning,
           createdAt: Date.now(),
         },
       })
