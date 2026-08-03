@@ -51,13 +51,6 @@ import {
   type VoiceCapability,
   type VoiceTranscriptionInput,
 } from './voice.js'
-import {
-  DESIGN_BRIEF_ATTACHMENT,
-  DESIGN_BRIEF_OUTPUT_SCHEMA,
-  designBriefingPrompt,
-  persistDesignBriefing,
-  shouldEmitBriefingAgentMessage,
-} from './design-briefing.js'
 
 /**
  * Tier 1 adapter: drives `codex app-server` over JSON-RPC.
@@ -284,9 +277,6 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     { kind: ApprovalRequest['kind']; respond: (result: unknown) => void }
   >()
   #userInputs = new Map<string, (result: unknown) => void>()
-  #displayUserMessages = new Map<string, string>()
-  #threadWorkspacePaths = new Map<string, string>()
-  #briefingTurns = new Map<string, string>()
 
   constructor(
     options: {
@@ -554,7 +544,6 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       ...(Object.keys(config).length ? { config } : {}),
       ...(approval ?? {}),
     })
-    this.#threadWorkspacePaths.set(response.thread.id, workspacePath)
     return {
       id: response.thread.id,
       provider: 'codex',
@@ -571,7 +560,6 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         ? { config: { mcp_servers: this.#mcpServers } }
         : {}),
     })
-    this.#threadWorkspacePaths.set(response.thread.id, workspacePath)
     return {
       id: response.thread.id,
       provider: 'codex',
@@ -586,35 +574,23 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     attachments: string[] = [],
     options: TurnOptions = {},
   ): Promise<string> {
-    const briefing = attachments.includes(DESIGN_BRIEF_ATTACHMENT)
-    const clientUserMessageId = briefing ? crypto.randomUUID() : undefined
-    if (clientUserMessageId) this.#displayUserMessages.set(clientUserMessageId, text)
     const response = await this.#call<TurnStartResponse>('turn/start', {
       threadId,
-      ...(clientUserMessageId ? { clientUserMessageId } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
-      ...(briefing ? { outputSchema: DESIGN_BRIEF_OUTPUT_SCHEMA } : {}),
       input: [
-        { type: 'text', text: briefing ? designBriefingPrompt(text) : text, text_elements: [] },
+        { type: 'text', text, text_elements: [] },
         // Images go in as images so the model can actually see them; anything
         // else becomes a mention, which is Codex's way of saying "this path is
         // relevant" without pushing the whole file into context.
-        ...attachments
-          .filter((path) => path !== DESIGN_BRIEF_ATTACHMENT)
-          .map((path) =>
-            isImage(path)
-              ? { type: 'localImage', path }
-              : { type: 'mention', name: basename(path), path },
-          ),
+        ...attachments.map((path) =>
+          isImage(path)
+            ? { type: 'localImage', path }
+            : { type: 'mention', name: basename(path), path },
+        ),
       ],
     })
-    if (briefing) {
-      const workspacePath = this.#threadWorkspacePaths.get(threadId)
-      if (!workspacePath) throw new Error('design briefing workspace is unavailable')
-      this.#briefingTurns.set(response.turn.id, workspacePath)
-    }
     return response.turn.id
   }
 
@@ -669,8 +645,6 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#rpc = undefined
     this.#started = false
     this.#mcpStartup.clear()
-    this.#threadWorkspacePaths.clear()
-    this.#briefingTurns.clear()
   }
 
   #call<T>(method: string, params: unknown): Promise<T> {
@@ -767,28 +741,16 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
           // `inProgress` should not reach us here, but map it rather than crash.
           status: p.turn.status === 'inProgress' ? 'completed' : p.turn.status,
         })
-        this.#briefingTurns.delete(p.turn.id)
         return
       }
 
       case 'item/started': {
         const p = params as ItemStartedNotification
-        // Structured briefing output is an internal persistence payload. Do not
-        // stream its JSON into the conversation before the friendly final item.
-        if (
-          p.item.type === 'agentMessage' &&
-          this.#briefingTurns.has(p.turnId) &&
-          !shouldEmitBriefingAgentMessage('started')
-        )
-          return
         const item = mapThreadItem(p.item, {
           turnId: p.turnId,
           status: 'started',
           createdAt: p.startedAtMs,
         })
-        if (p.item.type === 'userMessage' && p.item.clientId) {
-          item.text = this.#displayUserMessages.get(p.item.clientId) ?? item.text
-        }
         emit({
           type: 'item.started',
           item,
@@ -803,17 +765,6 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
           status: 'completed',
           createdAt: p.completedAtMs,
         })
-        if (p.item.type === 'userMessage' && p.item.clientId) {
-          item.text = this.#displayUserMessages.get(p.item.clientId) ?? item.text
-          this.#displayUserMessages.delete(p.item.clientId)
-        }
-        if (p.item.type === 'agentMessage') {
-          const workspacePath = this.#briefingTurns.get(p.turnId)
-          if (workspacePath) {
-            if (!shouldEmitBriefingAgentMessage('completed', p.item.phase)) return
-            if (item.text) item.text = persistDesignBriefing(item.text, workspacePath)
-          }
-        }
         emit({
           type: 'item.completed',
           item,
@@ -839,7 +790,6 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'item/agentMessage/delta': {
         const p = params as AgentMessageDeltaNotification
-        if (this.#briefingTurns.has(p.turnId) && !shouldEmitBriefingAgentMessage('delta')) return
         emit({ type: 'item.delta', turnId: p.turnId, itemId: p.itemId, textDelta: p.delta })
         return
       }

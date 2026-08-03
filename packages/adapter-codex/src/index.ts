@@ -1,5 +1,4 @@
 export { CodexAdapter, CODEX_CAPABILITIES, type StartOptions } from './adapter.js'
-export { DESIGN_BRIEF_ATTACHMENT } from './design-briefing.js'
 export {
   CodexVoiceTranscriber,
   VoiceTranscriptionError,

@@ -64,6 +64,7 @@ type QueuedTurnEntry = QueuedTurn & { options: TurnOptions }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type DesignFlow = {
   workspacePath: string
+  originalRequest: string
   options: TurnOptions
   askedQuestions: boolean
   finalAsked: boolean
@@ -540,6 +541,7 @@ export class Orchestrator {
       if (design) {
         this.#designFlows.set(threadId, {
           workspacePath: this.#repoPath(threadId),
+          originalRequest: text,
           options,
           askedQuestions: false,
           finalAsked: false,
@@ -1249,6 +1251,18 @@ export class Orchestrator {
             : undefined
     if (!turnId || this.#designTurns.get(turnId) !== threadId) {
       this.#record(threadId, event)
+      return
+    }
+
+    if (
+      (event.type === 'item.started' || event.type === 'item.completed') &&
+      event.item.type === 'message' &&
+      event.item.role === 'user'
+    ) {
+      const flow = this.#designFlows.get(threadId)
+      if (flow && !flow.askedQuestions) {
+        this.#record(threadId, { ...event, item: { ...event.item, text: flow.originalRequest } })
+      }
       return
     }
 
