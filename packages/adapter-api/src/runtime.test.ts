@@ -36,4 +36,47 @@ describe('ApiAgentSession', () => {
     const resumed = new ApiAgentSession({ model: 'test-model', transport: transport() })
     expect(resumed.resumeThread(session.snapshot())).toEqual(thread)
   })
+
+  it('runs approved tools through the injected Harness executor', async () => {
+    let request = 0
+    const seenMessages: unknown[] = []
+    const session = new ApiAgentSession({
+      model: 'test-model',
+      tools: [{ name: 'read_file', description: 'Read a file', inputSchema: { type: 'object' } }],
+      transport: async function* (input) {
+        seenMessages.push(structuredClone(input.messages))
+        if (request++ === 0) {
+          yield {
+            type: 'tool_call',
+            call: { id: 'call-1', name: 'read_file', input: { path: 'README.md' } },
+          }
+          yield { type: 'finish', reason: 'tool_calls' }
+        } else {
+          yield { type: 'text', delta: 'The file says hello.' }
+          yield { type: 'finish', reason: 'stop' }
+        }
+      },
+      reviewTool: () => ({ kind: 'permissions', path: 'README.md' }),
+      executeTool: async () => ({ content: 'hello' }),
+    })
+    session.on('event', (event) => {
+      if (event.type === 'approval.requested') {
+        session.respondToApproval(event.request.id, 'approve')
+      }
+    })
+
+    const thread = session.startThread('C:\\repo', 'connection-1')
+    const turnId = await session.sendTurn(thread.id, 'Read it')
+    await session.waitForTurn(turnId)
+
+    expect(seenMessages[1]).toEqual([
+      { role: 'user', content: 'Read it' },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'call-1', name: 'read_file', input: { path: 'README.md' } }],
+      },
+      { role: 'tool', content: 'hello', toolCallId: 'call-1', isError: false },
+    ])
+  })
 })
