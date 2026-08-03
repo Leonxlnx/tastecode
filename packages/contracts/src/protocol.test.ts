@@ -178,6 +178,7 @@ describe('protocol envelopes', () => {
               provider: 'codex',
               createdAt: 0,
               running: true,
+              pinned: true,
               worktreeBranch: 'harness/th1',
             },
           ],
@@ -185,6 +186,11 @@ describe('protocol envelopes', () => {
       ],
     })
     expect(projects.projects[0]?.sessions[0]?.worktreeBranch).toBe('harness/th1')
+    expect(projects.projects[0]?.sessions[0]?.pinned).toBe(true)
+    expect(methods['thread.pin'].params.parse({ threadId: 'th1', pinned: true })).toEqual({
+      threadId: 'th1',
+      pinned: true,
+    })
     expect(
       methods['workspace.switchBranch'].params.parse({ path: 'D:\\x', branch: 'feature/shelf' }),
     ).toEqual({ path: 'D:\\x', branch: 'feature/shelf' })

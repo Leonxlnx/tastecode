@@ -651,6 +651,8 @@ export const methods = {
               createdAt: z.number(),
               /** True while the agent is actively working on a turn. */
               running: z.boolean(),
+              /** Pinned chats appear in the rail's shared Pinned section. */
+              pinned: z.boolean().optional(),
               /** Richer server-derived state for the inbox sidebar. */
               status: ThreadInboxStatusSchema.optional(),
               unread: z.boolean().optional(),
@@ -713,6 +715,10 @@ export const methods = {
   },
   'thread.rename': {
     params: z.object({ threadId: z.string(), title: z.string() }),
+    result: z.object({}),
+  },
+  'thread.pin': {
+    params: z.object({ threadId: z.string().min(1), pinned: z.boolean() }),
     result: z.object({}),
   },
   'thread.settle': {
