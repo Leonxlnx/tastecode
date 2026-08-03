@@ -1,0 +1,10 @@
+data: {"choices":[{"delta":{"reasoning_content":"Checking.","content":"Hello"},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"content":" from compatible."},"finish_reason":null}]}
+
+data: {"choices":[],"usage":{"prompt_tokens":10,"prompt_tokens_details":{"cached_tokens":3},"completion_tokens":6,"completion_tokens_details":{"reasoning_tokens":1},"total_tokens":16}}
+
+data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+
