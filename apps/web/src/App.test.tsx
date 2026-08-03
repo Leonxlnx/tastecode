@@ -991,7 +991,7 @@ describe('global shortcuts', () => {
     )
   })
 
-  it('opens the project switcher directly and shows shortcuts beside matching actions', async () => {
+  it('opens the project switcher directly and keeps its shortcut out of the picker', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -1015,7 +1015,7 @@ describe('global shortcuts', () => {
     await screen.findByRole('button', { name: 'New session' })
     expect(within(actions!).getByText('⌘N')).toBeTruthy()
     expect(within(actions!).getByText('⌘⇧O')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Project' }).textContent).toContain('⌘P')
+    expect(screen.getByRole('button', { name: 'Project' }).textContent).not.toContain('⌘P')
 
     fireEvent.keyDown(window, { key: 'p', metaKey: true })
 
