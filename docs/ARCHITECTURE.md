@@ -123,11 +123,22 @@ degradation to an `unknown` item (never a crash, never silent loss), and a visib
 Checkpoints, worktrees, cost accounting and search live **above** the adapters, implemented
 once. Git checkpoints work identically regardless of which engine made the change.
 
+**The product must work with only a direct API provider configured.** Harness owns the
+shared session model, persistence, orchestration, queueing, review, worktrees, terminal and
+UI. Provider integrations supply inference and declare optional capabilities; they do not
+own shared product behavior. New features are designed against the internal contracts
+first, then mapped through every adapter. A missing provider capability hides or degrades
+only that capability, never the surrounding workflow. Behavioral provider-name branches
+belong inside adapters, not the server or renderer.
+
 _Rejected:_ ACP-only (gives up Codex's richest-in-class surface) · native-only (caps us at
 4 engines) · our own agent loop for everything (competing with Anthropic's and OpenAI's
 harness teams while also building a UI) · a `switch` on provider in the orchestrator.
 
 ### Voice dictation uses the active Codex ChatGPT session
+
+Voice dictation is the explicit exception to provider independence because it reuses the
+user's existing ChatGPT entitlement instead of making transcription a shared agent feature.
 
 The shared renderer records mono 24 kHz PCM WAV, then sends the bounded clip through the
 local server. The Codex adapter asks app-server for the current ChatGPT session token and

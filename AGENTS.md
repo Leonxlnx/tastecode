@@ -28,6 +28,13 @@ controls, a real terminal, MCP and Agent Skills. M4 (the design agent) is next. 
 - **Never push to `main`.** Branch, PR, then explicit approval from the human responsible
   for the work. Approval from the other human is optional.
 - **Never mix a refactor with a behavior change** in one commit.
+- **Build shared features for every provider.** Contracts, persistence, orchestration and UI
+  must still work when the user has only a direct API provider configured. A vendor CLI,
+  SDK or app-server may add capabilities, but must never become the foundation for shared
+  product behavior.
+- **Keep provider behavior checks inside adapters.** Shared code reads declared capabilities
+  and degrades honestly when an engine lacks one; it never branches behavior on a provider name.
+  Codex-backed voice dictation is the only approved exception.
 
 ## How to work
 
