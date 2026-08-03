@@ -12,6 +12,7 @@
     { "path": "../../packages/adapter-acp" },
     { "path": "../../packages/proc" },
     { "path": "../../packages/adapter-codex" },
+    { "path": "../../packages/adapter-opencode" },
     { "path": "../../packages/adapter-claude-code" }
   ]
 }

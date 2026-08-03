@@ -1,6 +1,7 @@
 import { detectAgents } from '@harness/adapter-acp'
 import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex'
+import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode'
 import type { ProviderStatus } from '@harness/contracts'
 import { commandVersion, isInstalled } from '@harness/proc'
 
@@ -36,7 +37,12 @@ const PROBES: Probe[] = [
     capabilities: CLAUDE_CAPABILITIES,
   },
   { id: 'cursor', displayName: 'Cursor', unbuilt: 'Not supported yet' },
-  { id: 'opencode', displayName: 'OpenCode', unbuilt: 'Not supported yet' },
+  {
+    id: 'opencode',
+    displayName: 'OpenCode',
+    command: 'opencode',
+    capabilities: OPENCODE_CAPABILITIES,
+  },
 ]
 
 /**

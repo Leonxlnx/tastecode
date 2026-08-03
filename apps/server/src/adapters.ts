@@ -1,6 +1,7 @@
 import { AcpAdapter } from '@harness/adapter-acp'
 import { CodexAdapter } from '@harness/adapter-codex'
 import { ClaudeCodeAdapter } from '@harness/adapter-claude-code'
+import { OpenCodeAdapter } from '@harness/adapter-opencode'
 import type {
   ApprovalDecision,
   ApprovalMode,
@@ -96,8 +97,50 @@ export function providerRuntime(
       return claudeRuntime(onLog)
     case 'acp':
       return acpRuntime(onLog)
+    case 'opencode':
+      return openCodeRuntime(onLog)
     default:
       throw new Error(`provider "${provider}" is not implemented yet`)
+  }
+}
+
+function openCodeRuntime(onLog: (line: string) => void): ProviderRuntime {
+  return {
+    async start(workspacePath, options) {
+      const adapter = new OpenCodeAdapter()
+      adapter.on('log', onLog)
+      try {
+        await adapter.start()
+        const thread = await adapter.startThread(workspacePath, {
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.approval ? { approval: options.approval } : {}),
+        })
+        return { thread, session: adapter }
+      } catch (error) {
+        adapter.dispose()
+        throw error
+      }
+    },
+    async resume(threadId, workspacePath) {
+      const adapter = new OpenCodeAdapter()
+      adapter.on('log', onLog)
+      try {
+        await adapter.start()
+        const thread = await adapter.resumeThread(threadId, workspacePath)
+        return { thread, session: adapter }
+      } catch (error) {
+        adapter.dispose()
+        throw error
+      }
+    },
+    async listModels() {
+      const adapter = new OpenCodeAdapter()
+      try {
+        return await adapter.listModels()
+      } finally {
+        adapter.dispose()
+      }
+    },
   }
 }
 

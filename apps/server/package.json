@@ -15,6 +15,7 @@
     "@harness/adapter-acp": "workspace:*",
     "@harness/adapter-claude-code": "workspace:*",
     "@harness/adapter-codex": "workspace:*",
+    "@harness/adapter-opencode": "workspace:*",
     "@harness/contracts": "workspace:*",
     "@harness/design-agent": "workspace:*",
     "@harness/proc": "workspace:*",
