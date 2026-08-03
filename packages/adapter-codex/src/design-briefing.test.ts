@@ -45,7 +45,23 @@ describe('design briefing prompt', () => {
         JSON.stringify({
           status: 'complete',
           message: 'Brief complete.',
-          brief: { subject: 'Research workspace', assumptions: ['Creative direction is open.'] },
+          brief: {
+            originalRequest: 'Design a research workspace.',
+            subject: 'Research workspace',
+            pageType: 'Product interface',
+            scope: 'Single responsive workspace',
+            primaryGoal: 'Help researchers organize evidence',
+            audience: 'Independent researchers',
+            offer: 'A focused research workspace',
+            primaryAction: 'Create a workspace',
+            requiredContent: [],
+            constraints: [],
+            brandInputs: [],
+            creativeControl: 'Agent-led',
+            explicitAnswers: [],
+            assumptions: ['Creative direction is open.'],
+            unresolved: [],
+          },
         }),
         workspace,
       )
@@ -54,8 +70,21 @@ describe('design briefing prompt', () => {
       expect(
         JSON.parse(readFileSync(path.join(workspace, '.taste', 'brief.json'), 'utf8')),
       ).toEqual({
+        originalRequest: 'Design a research workspace.',
         subject: 'Research workspace',
+        pageType: 'Product interface',
+        scope: 'Single responsive workspace',
+        primaryGoal: 'Help researchers organize evidence',
+        audience: 'Independent researchers',
+        offer: 'A focused research workspace',
+        primaryAction: 'Create a workspace',
+        requiredContent: [],
+        constraints: [],
+        brandInputs: [],
+        creativeControl: 'Agent-led',
+        explicitAnswers: [],
         assumptions: ['Creative direction is open.'],
+        unresolved: [],
       })
     } finally {
       rmSync(workspace, { recursive: true, force: true })

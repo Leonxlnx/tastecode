@@ -1,5 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
-import path from 'node:path'
+import { writeDesignBrief } from '@harness/design-agent'
 
 export const DESIGN_BRIEF_ATTACHMENT = 'personal-harness://design-brief-v1'
 
@@ -106,12 +105,6 @@ export function persistDesignBriefing(output: string, workspacePath: string): st
   if (parsed.status !== 'complete' || parsed.brief === null || typeof parsed.brief !== 'object') {
     throw new Error('design briefing returned an invalid result')
   }
-  const directory = path.join(workspacePath, '.taste')
-  mkdirSync(directory, { recursive: true })
-  writeFileSync(
-    path.join(directory, 'brief.json'),
-    `${JSON.stringify(parsed.brief, null, 2)}\n`,
-    'utf8',
-  )
+  writeDesignBrief(workspacePath, parsed.brief)
   return 'Brief complete.\nDEBUG FINISHED · NO WEBSITE BUILT'
 }

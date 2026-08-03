@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@harness/contracts": "workspace:*",
+    "@harness/design-agent": "workspace:*",
     "@harness/proc": "workspace:*"
   },
   "devDependencies": {
