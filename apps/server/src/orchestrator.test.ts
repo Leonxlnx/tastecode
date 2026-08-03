@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ProviderIdSchema } from '@harness/contracts'
 import type {
   Capabilities,
   DomainEvent,
@@ -10,7 +11,7 @@ import type {
   ProviderId,
   ThreadLifecycle,
 } from '@harness/contracts'
-import type { AgentSession, ProviderRuntime, StartOptions } from './adapters.js'
+import type { AgentSession, ProviderRuntime, StartOptions, TurnOptions } from './adapters.js'
 import { DESIGN_BRIEF_ATTACHMENT } from '@harness/design-agent'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
@@ -44,6 +45,7 @@ class FakeSession implements AgentSession {
   interruptBarrier: Promise<void> | undefined
   interruptError: Error | undefined
   sent: string[] = []
+  sentOptions: Array<TurnOptions | undefined> = []
   steered: string[] = []
   userInputs: Array<{ requestId: string; answers: Record<string, string[]> }> = []
   mcpServers: McpServer[] = []
@@ -54,8 +56,14 @@ class FakeSession implements AgentSession {
 
   constructor(readonly id: string) {}
 
-  async sendTurn(_threadId: string, text: string): Promise<string> {
+  async sendTurn(
+    _threadId: string,
+    text: string,
+    _attachments?: string[],
+    options?: TurnOptions,
+  ): Promise<string> {
     this.sent.push(text)
+    this.sentOptions.push(options)
     if (this.release) await new Promise<void>((resolve) => (this.release = resolve))
     return `${this.id}-turn`
   }
@@ -109,6 +117,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
         thread: {
           id: `thread-${sessions.length}`,
           provider,
+          ...(provider === 'api' ? { connectionId: 'test-connection' } : {}),
           workspacePath,
           createdAt: Date.now(),
         },
@@ -194,14 +203,20 @@ describe('structured user input', () => {
 })
 
 describe('provider-neutral design briefing', () => {
-  it.each(['codex', 'claude-code', 'acp'] satisfies ProviderId[])(
+  it.each(ProviderIdSchema.options)(
     'runs the same adaptive question loop with %s',
     async (provider) => {
+      const model = 'future-provider/model-that-needs-no-design-code'
       const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-flow-'))
       const { orchestrator, sessions, received } = harness()
       try {
         const thread = await orchestrator.startThread(provider, workspace, {})
-        await orchestrator.sendTurn(thread.id, 'Create a website.', [DESIGN_BRIEF_ATTACHMENT])
+        await orchestrator.sendTurn(
+          thread.id,
+          'Create a website.',
+          [DESIGN_BRIEF_ATTACHMENT],
+          { model },
+        )
 
         expect(sessions[0]?.sent[0]).toContain('Personal Harness Design Briefing mode')
         sessions[0]?.emit(
@@ -306,6 +321,7 @@ describe('provider-neutral design briefing', () => {
           JSON.parse(readFileSync(path.join(workspace, '.taste', 'brief.json'), 'utf8')).subject,
         ).toBe('Independent studio')
         expect(sessions[0]?.userInputs).toEqual([])
+        expect(sessions[0]?.sentOptions).toEqual([{ model }, { model }, { model }])
         expect(
           received.some(
             ({ event }) =>
