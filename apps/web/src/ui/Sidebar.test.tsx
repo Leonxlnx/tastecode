@@ -49,6 +49,7 @@ describe('Sidebar chat actions', () => {
         onTogglePin={vi.fn()}
         onRenameSession={vi.fn()}
         onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
         onReorderSession={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenSettings={vi.fn()}
@@ -60,7 +61,7 @@ describe('Sidebar chat actions', () => {
     expect(onModeChange.mock.calls).toEqual([['classic'], ['inbox']])
   })
 
-  it('shows direct rename and archive actions without a chat options menu', () => {
+  it('keeps rename and archive actions in the chat options menu', () => {
     const onRenameSession = vi.fn()
     const onDeleteSession = vi.fn()
 
@@ -87,22 +88,72 @@ describe('Sidebar chat actions', () => {
         onTogglePin={vi.fn()}
         onRenameSession={onRenameSession}
         onDeleteSession={onDeleteSession}
+        onArchiveProject={vi.fn()}
         onReorderSession={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     )
 
-    expect(screen.queryByRole('button', { name: 'Chat options' })).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Rename Polish the sidebar' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Options for Polish the sidebar' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
     const input = screen.getByDisplayValue('Polish the sidebar')
     fireEvent.change(input, { target: { value: 'Wider sidebar chats' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onRenameSession).toHaveBeenCalledWith('thread-1', 'Wider sidebar chats')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Archive Polish the sidebar' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Options for Polish the sidebar' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive chat' }))
     expect(onDeleteSession).toHaveBeenCalledWith('thread-1')
+  })
+
+  it('confirms bulk archive and sidebar removal before acting', () => {
+    const onArchiveProject = vi.fn()
+    const onRemoveProject = vi.fn()
+    render(
+      <Sidebar
+        projects={[
+          {
+            path: '/work/harness',
+            name: 'Harness',
+            sessions: [session('thread-1', 'First chat'), session('thread-2', 'Second chat')],
+          },
+        ]}
+        activeProjectPath="/work/harness"
+        activeSessionId="thread-1"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={onRemoveProject}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={onArchiveProject}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project options' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive chats' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Archive chats' }))
+    expect(onArchiveProject).toHaveBeenCalledWith(['thread-1', 'thread-2'])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project options' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from sidebar' }))
+    expect(
+      screen.getByText(
+        "This removes the project from the app. Files on your computer and existing chats won't be deleted.",
+      ),
+    ).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove project' }))
+    expect(onRemoveProject).toHaveBeenCalledWith('/work/harness')
   })
 
   it('reorders chats when one is dragged between sidebar rows', () => {
@@ -131,6 +182,7 @@ describe('Sidebar chat actions', () => {
         onTogglePin={vi.fn()}
         onRenameSession={vi.fn()}
         onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
         onReorderSession={onReorderSession}
         onOpenSearch={vi.fn()}
         onOpenSettings={vi.fn()}
@@ -184,6 +236,7 @@ describe('Sidebar chat actions', () => {
         onTogglePin={vi.fn()}
         onRenameSession={vi.fn()}
         onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
         onReorderSession={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenSettings={vi.fn()}
@@ -213,6 +266,7 @@ describe('Sidebar chat actions', () => {
         onTogglePin={vi.fn()}
         onRenameSession={vi.fn()}
         onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
         onReorderSession={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenSettings={vi.fn()}

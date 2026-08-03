@@ -1,16 +1,7 @@
 import { type DragEvent, useEffect, useRef, useState } from 'react'
 import type { Account, ProviderId, ThreadInboxStatus, ThreadLifecycle } from '@harness/contracts'
-import {
-  Archive,
-  ChevronRight,
-  Ellipsis,
-  Folder,
-  FolderPen,
-  Pencil,
-  Plus,
-  Search,
-} from 'lucide-react'
-import { isMacOS } from '../bridge.js'
+import { Ellipsis, Folder, FolderPen, Plus, Search, X } from 'lucide-react'
+import { isDesktop, isMacOS, revealPath } from '../bridge.js'
 import { SHORTCUTS, shortcutAria, shortcutLabel } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
 import { ShortcutHint } from './ShortcutHint.js'
@@ -66,6 +57,7 @@ export function Sidebar(props: {
   onTogglePin: (path: string) => void
   onRenameSession: (id: string, title: string) => void
   onDeleteSession: (id: string) => void
+  onArchiveProject: (sessionIds: string[]) => void
   onReorderSession: (
     projectPath: string,
     sourceId: string,
@@ -262,6 +254,7 @@ function ProjectRow(props: {
   onTogglePin: (path: string) => void
   onRenameSession: (id: string, title: string) => void
   onDeleteSession: (id: string) => void
+  onArchiveProject: (sessionIds: string[]) => void
   onReorderSession: (
     projectPath: string,
     sourceId: string,
@@ -271,6 +264,7 @@ function ProjectRow(props: {
 }) {
   const [open, setOpen] = useState(true)
   const [renaming, setRenaming] = useState(false)
+  const [confirming, setConfirming] = useState<'archive' | 'remove'>()
   const [draggedSessionId, setDraggedSessionId] = useState<string>()
   const [dropTarget, setDropTarget] = useState<{
     id: string
@@ -314,9 +308,6 @@ function ProjectRow(props: {
               onDoubleClick={() => setRenaming(true)}
               title={props.project.path}
             >
-              <span className="proj__chev" data-open={expanded}>
-                <ChevronRight size={10} aria-hidden />
-              </span>
               <Folder className="proj__mark" size={12} aria-hidden />
               <span className="proj__name">{displayName(props.project)}</span>
             </button>
@@ -325,6 +316,7 @@ function ProjectRow(props: {
               drop="down"
               align="right"
               label="Project options"
+              panelClassName="menu--sidebar"
               trigger={() => (
                 <span className="dots">
                   <Ellipsis size={14} aria-hidden />
@@ -334,25 +326,39 @@ function ProjectRow(props: {
               {(close) => (
                 <>
                   <MenuItem
-                    title="Rename"
-                    onClick={() => {
-                      setRenaming(true)
-                      close()
-                    }}
-                  />
-                  <MenuItem
                     title={props.project.pinned ? 'Unpin' : 'Pin to top'}
                     onClick={() => {
                       props.onTogglePin(props.project.path)
                       close()
                     }}
                   />
-                  <div className="menu__rule" />
+                  {isDesktop ? (
+                    <MenuItem
+                      title="Open in Explorer"
+                      onClick={() => {
+                        void revealPath(props.project.path)
+                        close()
+                      }}
+                    />
+                  ) : null}
+                  <MenuItem
+                    title="Edit name"
+                    onClick={() => {
+                      setRenaming(true)
+                      close()
+                    }}
+                  />
+                  <MenuItem
+                    title="Archive chats"
+                    onClick={() => {
+                      setConfirming('archive')
+                      close()
+                    }}
+                  />
                   <MenuItem
                     title="Remove from sidebar"
-                    detail="The folder on disk is untouched"
                     onClick={() => {
-                      props.onRemoveProject(props.project.path)
+                      setConfirming('remove')
                       close()
                     }}
                   />
@@ -371,6 +377,27 @@ function ProjectRow(props: {
         )}
       </div>
 
+      {confirming ? (
+        <SidebarConfirmDialog
+          title={confirming === 'archive' ? 'Archive all chats?' : 'Remove project from sidebar?'}
+          body={
+            confirming === 'archive'
+              ? `This archives every chat in ${displayName(props.project)}. Files on your computer won't be deleted.`
+              : "This removes the project from the app. Files on your computer and existing chats won't be deleted."
+          }
+          action={confirming === 'archive' ? 'Archive chats' : 'Remove project'}
+          onConfirm={() => {
+            if (confirming === 'archive') {
+              props.onArchiveProject(props.project.sessions.map((session) => session.id))
+            } else {
+              props.onRemoveProject(props.project.path)
+            }
+            setConfirming(undefined)
+          }}
+          onClose={() => setConfirming(undefined)}
+        />
+      ) : null}
+
       <div
         className="proj__drawer"
         data-open={expanded && count > 0}
@@ -385,6 +412,7 @@ function ProjectRow(props: {
               onSelect={() => props.onSelectSession(session.id)}
               onRename={(title) => props.onRenameSession(session.id, title)}
               onDelete={() => props.onDeleteSession(session.id)}
+              onOpenInExplorer={() => void revealPath(props.project.path)}
               reorderable={reorderable}
               dragging={session.id === draggedSessionId}
               dropPosition={dropTarget?.id === session.id ? dropTarget.position : undefined}
@@ -425,6 +453,7 @@ function SessionRow(props: {
   onSelect: () => void
   onRename: (title: string) => void
   onDelete: () => void
+  onOpenInExplorer: () => void
   reorderable: boolean
   dragging: boolean
   dropPosition: DropPosition | undefined
@@ -473,25 +502,76 @@ function SessionRow(props: {
         <SessionStatus status={props.session.status} />
       </button>
 
-      <span className="sess__actions">
-        <button
-          className="sess__action"
-          onClick={() => setRenaming(true)}
-          aria-label={`Rename ${props.session.title}`}
-          title="Rename"
-        >
-          <Pencil size={13} aria-hidden />
-        </button>
-        <button
-          className="sess__action"
-          onClick={props.onDelete}
-          aria-label={`Archive ${props.session.title}`}
-          title="Archive"
-        >
-          <Archive size={14} aria-hidden />
-        </button>
-      </span>
+      <Menu
+        drop="down"
+        align="right"
+        label={`Options for ${props.session.title}`}
+        triggerClassName="sess__menu"
+        panelClassName="menu--sidebar"
+        trigger={() => <Ellipsis size={14} aria-hidden />}
+      >
+        {(close) => (
+          <>
+            <MenuItem
+              title="Rename chat"
+              onClick={() => {
+                setRenaming(true)
+                close()
+              }}
+            />
+            <MenuItem
+              title="Archive chat"
+              onClick={() => {
+                props.onDelete()
+                close()
+              }}
+            />
+            {isDesktop ? (
+              <MenuItem
+                title="Open in Explorer"
+                onClick={() => {
+                  props.onOpenInExplorer()
+                  close()
+                }}
+              />
+            ) : null}
+          </>
+        )}
+      </Menu>
     </li>
+  )
+}
+
+function SidebarConfirmDialog(props: {
+  title: string
+  body: string
+  action: string
+  onConfirm: () => void
+  onClose: () => void
+}) {
+  return (
+    <div className="sheet" role="dialog" aria-modal="true" aria-label={props.title}>
+      <button className="sheet__scrim" onClick={props.onClose} aria-label="Cancel" />
+      <div className="sheet__panel sidebar-confirm">
+        <header className="sheet__head">
+          <h2 className="sheet__title">{props.title}</h2>
+          <button className="icon-btn icon-btn--always" onClick={props.onClose} title="Close">
+            <X size={13} aria-hidden />
+          </button>
+        </header>
+        <section className="sheet__section">
+          <p>{props.body}</p>
+          <div className="sidebar-confirm__actions">
+            <button className="ghost" onClick={props.onClose}>
+              Cancel
+            </button>
+            <button className="btn btn--danger" onClick={props.onConfirm}>
+              {props.action}
+            </button>
+          </div>
+        </section>
+      </div>
+    </div>
   )
 }
 

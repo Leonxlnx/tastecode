@@ -423,8 +423,8 @@
   bottom: -1px;
 }
 
-.sessrow:hover .sess__actions,
-.sessrow:focus-within .sess__actions,
+.sessrow:hover > .menuwrap,
+.sessrow:focus-within > .menuwrap,
 .proj__head:hover .dots {
   opacity: 1;
   pointer-events: auto;
@@ -444,6 +444,13 @@
 .menutrigger:hover .dots {
   color: var(--text);
   opacity: 1;
+}
+
+.proj__head > .menuwrap .menutrigger,
+.sess__menu {
+  padding: 0;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 /* ---------- settings sheet ---------- */
@@ -1997,18 +2004,6 @@
   white-space: nowrap;
 }
 
-.proj__chev {
-  display: grid;
-  place-items: center;
-  color: var(--text-3);
-  flex: none;
-  transition: transform var(--dur-fast) var(--ease-out);
-}
-
-.proj__chev[data-open='true'] {
-  transform: rotate(90deg);
-}
-
 /* Height-capped drawer: 'auto' cannot be transitioned, and rows are a known
    height, so the cap is exact rather than a guess. */
 .proj__drawer {
@@ -2042,7 +2037,7 @@
   cursor: pointer;
   font: inherit;
   font-size: var(--t-sm);
-  padding: 0 61px 0 32px;
+  padding: 0 8px 0 32px;
   text-align: left;
   min-width: 0;
   /* Nothing in the rail wraps. Titles are arbitrary user text and a row that
@@ -2065,44 +2060,27 @@
   white-space: nowrap;
 }
 
-.sess__actions {
-  position: absolute;
-  right: 4px;
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  padding-left: 12px;
-  background: linear-gradient(90deg, transparent, var(--sess-bg) 10px);
+.sessrow > .menuwrap {
+  flex: none;
+  margin-right: 4px;
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--dur-fast) var(--ease-out);
 }
 
-.sess__action {
+.sess__menu {
   display: grid;
   place-items: center;
   width: 22px;
   height: 22px;
-  padding: 0;
-  background: none;
-  border: 0;
   border-radius: var(--r-sm);
   color: var(--text-3);
-  cursor: pointer;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+  transition: color var(--dur-fast) var(--ease-out);
 }
 
-.sess__action:hover,
-.sess__action:focus-visible {
-  background: var(--surface-3);
+.sess__menu:hover,
+.sess__menu:focus-visible {
   color: var(--text);
-}
-
-.sess__action:active {
-  transform: scale(0.94);
 }
 
 .sess__spinner {
@@ -4763,6 +4741,30 @@
 
 .menu--settings {
   min-width: min(176px, calc(100vw - 16px));
+}
+
+.menu--sidebar {
+  min-width: min(210px, calc(100vw - 16px));
+}
+
+.menu--sidebar .menu__item {
+  padding-block: 6px;
+}
+
+.sidebar-confirm {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.sidebar-confirm .sheet__section > p {
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.sidebar-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
 }
 
 .menu--settings .shortcut {

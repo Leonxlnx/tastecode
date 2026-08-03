@@ -1100,7 +1100,7 @@ export function App() {
   const archiveSession = useCallback(
     async (id: string) => {
       const found = findSession(projects, id)
-      if (!found) return
+      if (!found) return false
       try {
         const work = await transport.request('thread.unsavedWork', { threadId: id })
         if (work.isolated && work.uncommitted) {
@@ -1109,16 +1109,18 @@ export function App() {
             title: found.session.title,
             branch: found.session.worktreeBranch ?? 'isolated checkout',
           })
-          return
+          return false
         }
         if (work.isolated) {
           await transport.request('thread.close', { threadId: id })
           await transport.request('thread.discardWorktree', { threadId: id })
         }
         await deleteSession(id)
+        return true
       } catch (error) {
         setNotice(error instanceof Error ? error.message : String(error))
         await refreshProjects().catch(() => undefined)
+        return false
       }
     },
     [transport, projects, deleteSession, refreshProjects],
@@ -1481,6 +1483,13 @@ export function App() {
             void transport.request('thread.rename', { threadId: id, title }).catch(() => undefined)
           }}
           onDeleteSession={(id) => void archiveSession(id)}
+          onArchiveProject={(sessionIds) => {
+            void (async () => {
+              for (const id of sessionIds) {
+                if (!(await archiveSession(id))) break
+              }
+            })()
+          }}
           onReorderSession={(projectPath, sourceId, targetId, position) =>
             setProjects((current) =>
               current.map((project) => {
