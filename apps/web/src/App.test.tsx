@@ -1147,6 +1147,86 @@ describe('live sessions', () => {
     })
   })
 
+  it('steers the active turn with Ctrl+Enter instead of leaving a queued prompt', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Existing work', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.history') {
+        return Promise.resolve({
+          events: [
+            {
+              seq: 1,
+              event: {
+                type: 'turn.started',
+                turn: {
+                  id: 'turn-1',
+                  threadId: 'thread-1',
+                  status: 'running',
+                  createdAt: 0,
+                },
+              },
+            },
+          ],
+          running: true,
+        })
+      }
+      if (method === 'thread.sendTurn') {
+        return Promise.resolve({
+          queued: true,
+          queuedTurn: {
+            id: 'queued-steer',
+            text: 'Use this direction now',
+            attachments: [],
+            createdAt: 1,
+          },
+        })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
+    act(() => {
+      transport.listeners.get('thread.queue')?.({
+        threadId: 'thread-1',
+        items: [],
+        canSteer: true,
+      })
+    })
+    await waitFor(() =>
+      expect(screen.getByLabelText('Running turn shortcuts').textContent).toContain('Steer'),
+    )
+
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Use this direction now' } })
+    fireEvent.keyDown(composer, { key: 'Enter', ctrlKey: true })
+    expect(screen.queryByLabelText('Queued prompts')).toBeNull()
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
+        threadId: 'thread-1',
+        text: 'Use this direction now',
+      }),
+    )
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.steerQueuedTurn', {
+        threadId: 'thread-1',
+        queuedTurnId: 'queued-steer',
+      })
+    })
+    expect(screen.getByTestId('thread').textContent).toContain('Use this direction now')
+    expect(screen.queryByLabelText('Queued prompts')).toBeNull()
+  })
+
   it('shows the most recently active session first', async () => {
     serverSidebarSettings.mode = 'classic'
     serverProjects = [

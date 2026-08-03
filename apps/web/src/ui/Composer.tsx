@@ -140,6 +140,8 @@ type ComposerAttachment = {
   previewUrl?: string
 }
 
+type RunningSubmission = 'queue' | 'steer'
+
 export function Composer(props: {
   projects: Project[]
   projectPath: string | undefined
@@ -175,6 +177,7 @@ export function Composer(props: {
   onBranchChange: (branch: string) => void
   onProjectRequired: () => void
   onSend: (text: string, attachments: string[]) => void
+  onSteer: (text: string, attachments: string[]) => void
   onInterrupt: () => void
   onDeleteQueuedTurn: (id: string) => void
   onSteerQueuedTurn: (id: string) => void
@@ -359,7 +362,7 @@ export function Composer(props: {
     setAttachments([])
   }
 
-  const sendContent = (content: string) => {
+  const sendContent = (content: string, submission: RunningSubmission = 'queue') => {
     const trimmed = content.trim()
     const paths = attachments.flatMap((attachment) => attachment.path ?? [])
     if (trimmed === '' || paths.length !== attachments.length || props.disabled) return
@@ -376,7 +379,8 @@ export function Composer(props: {
       sendTimer.current = undefined
       setSending(false)
     }, SEND_MOTION_MS)
-    props.onSend(trimmed, paths)
+    if (submission === 'steer') props.onSteer(trimmed, paths)
+    else props.onSend(trimmed, paths)
     textRef.current = ''
     setText('')
     clearAttachments()
@@ -393,9 +397,9 @@ export function Composer(props: {
     }
   }
 
-  const submit = () => {
+  const submit = (submission: RunningSubmission = 'queue') => {
     if (voiceState !== 'idle') return
-    sendContent(text)
+    sendContent(text, submission)
   }
 
   const editQueuedTurn = (queuedTurn: QueuedTurn) => {
@@ -505,6 +509,7 @@ export function Composer(props: {
   }, [props.voiceAvailable])
 
   const showStop = props.running && text.trim() === '' && attachments.length === 0
+  const submitLabel = props.running ? 'Queue' : 'Send'
   const sendDisabled =
     text.trim() === '' || attachments.some((attachment) => !attachment.path) || props.disabled
 
@@ -750,7 +755,11 @@ export function Composer(props: {
                         setSlashOpen(false)
                         return
                       }
-                      submit()
+                      submit(
+                        props.running && props.canSteerQueue && (e.ctrlKey || e.metaKey)
+                          ? 'steer'
+                          : 'queue',
+                      )
                     }
                   }}
                   onPaste={(e) => {
@@ -787,6 +796,22 @@ export function Composer(props: {
                   </div>
                 ) : null}
               </div>
+
+              {props.running ? (
+                <div className="composer__running-submit" aria-label="Running turn shortcuts">
+                  <span className="composer__running-submit-label">Next message</span>
+                  <span>
+                    <kbd>Enter</kbd>
+                    Queue
+                  </span>
+                  {props.canSteerQueue ? (
+                    <span>
+                      <kbd>Ctrl/⌘ Enter</kbd>
+                      Steer
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div className="tools">
                 <Menu
@@ -926,10 +951,10 @@ export function Composer(props: {
                   >
                     <button
                       className={`orb${showStop ? ' orb--stop' : ''}${sending ? ' is-sending' : ''}`}
-                      onClick={showStop ? props.onInterrupt : submit}
+                      onClick={showStop ? props.onInterrupt : () => submit()}
                       disabled={!showStop && sendDisabled}
-                      title={showStop ? 'Stop' : 'Send'}
-                      aria-label={showStop ? 'Stop' : 'Send'}
+                      title={showStop ? 'Stop' : submitLabel}
+                      aria-label={showStop ? 'Stop' : submitLabel}
                     >
                       <span className="orb__icon orb__icon--send">
                         <ArrowUp size={15} aria-hidden />

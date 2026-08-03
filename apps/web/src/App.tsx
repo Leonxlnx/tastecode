@@ -732,7 +732,7 @@ export function App() {
   )
 
   const send = useCallback(
-    async (text: string, attachments: string[] = []) => {
+    async (text: string, attachments: string[] = [], submission: 'queue' | 'steer' = 'queue') => {
       const briefing = designMode
       if (briefing) {
         if (!userInputSupported) {
@@ -794,8 +794,10 @@ export function App() {
 
       const before = threadStates.current.get(threadId) ?? emptyThread
       const wasRunning = before.running && !optimisticAdded
+      const steering = submission === 'steer'
       const beforeItemIds = new Set(before.items.map((item) => item.id))
-      const optimisticQueueId = wasRunning ? `pending:${crypto.randomUUID()}` : undefined
+      const optimisticQueueId =
+        wasRunning && !steering ? `pending:${crypto.randomUUID()}` : undefined
       if (!wasRunning && !optimisticAdded) {
         const next = beginOptimisticTurn(before, text)
         optimisticTurnId = next.activeTurn?.id
@@ -836,18 +838,35 @@ export function App() {
         })
         const current = threadStates.current.get(threadId) ?? emptyThread
         if (result.queued) {
-          updateQueue(threadId, (items) => {
-            const withoutOptimistic = optimisticQueueId
-              ? items.filter((item) => item.id !== optimisticQueueId)
-              : items
-            return withoutOptimistic.some((item) => item.id === result.queuedTurn.id)
-              ? withoutOptimistic
-              : [...withoutOptimistic, result.queuedTurn]
-          })
-          if (!wasRunning) {
-            const reconciled = removeQueuedOptimisticMessage(current, text)
-            threadStates.current.set(threadId, reconciled)
-            if (threadId === activeIdRef.current) setThread(reconciled)
+          if (steering) {
+            await transport.request('thread.steerQueuedTurn', {
+              threadId,
+              queuedTurnId: result.queuedTurn.id,
+            })
+            const afterSteer = threadStates.current.get(threadId) ?? emptyThread
+            const canonicalArrived = afterSteer.items.some(
+              (item) =>
+                !beforeItemIds.has(item.id) && item.role === 'user' && item.text?.trim() === text,
+            )
+            if (!canonicalArrived) {
+              const next = appendUserMessage(afterSteer, text)
+              threadStates.current.set(threadId, next)
+              if (threadId === activeIdRef.current) setThread(next)
+            }
+          } else {
+            updateQueue(threadId, (items) => {
+              const withoutOptimistic = optimisticQueueId
+                ? items.filter((item) => item.id !== optimisticQueueId)
+                : items
+              return withoutOptimistic.some((item) => item.id === result.queuedTurn.id)
+                ? withoutOptimistic
+                : [...withoutOptimistic, result.queuedTurn]
+            })
+            if (!wasRunning) {
+              const reconciled = removeQueuedOptimisticMessage(current, text)
+              threadStates.current.set(threadId, reconciled)
+              if (threadId === activeIdRef.current) setThread(reconciled)
+            }
           }
         } else if (!result.queued && wasRunning) {
           if (optimisticQueueId) {
@@ -1581,6 +1600,7 @@ export function App() {
               onBranchChange={(branch) => void selectBranch(branch)}
               onProjectRequired={() => setNotice('Choose a project before sending.')}
               onSend={(t, files) => void send(t, files)}
+              onSteer={(t, files) => void send(t, files, 'steer')}
               onInterrupt={interrupt}
               onDeleteQueuedTurn={deleteQueuedTurn}
               onSteerQueuedTurn={steerQueuedTurn}

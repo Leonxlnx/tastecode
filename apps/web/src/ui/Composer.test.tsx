@@ -92,7 +92,7 @@ describe('Composer image paste', () => {
 })
 
 describe('Composer queue', () => {
-  it('changes Stop back to Send when a running session has a draft and Enter queues it', () => {
+  it('changes Stop to Queue when a running session has a draft and Enter queues it', () => {
     const onSend = vi.fn()
     const onInterrupt = vi.fn()
     renderComposer(onSend, { running: true, onInterrupt })
@@ -100,13 +100,28 @@ describe('Composer queue', () => {
 
     const action = screen.getByRole('button', { name: 'Stop' })
     fireEvent.change(composer, { target: { value: 'Do this next' } })
-    expect(screen.getByRole('button', { name: 'Send' })).toBe(action)
+    expect(screen.getByRole('button', { name: 'Queue' })).toBe(action)
     fireEvent.keyDown(composer, { key: 'Enter' })
 
     expect(onSend).toHaveBeenCalledWith('Do this next', [])
     expect(onInterrupt).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Stop' })).toBe(action)
     expect(action.classList.contains('is-sending')).toBe(true)
+  })
+
+  it('steers a running session with Ctrl+Enter', () => {
+    const onSend = vi.fn()
+    const onSteer = vi.fn()
+    renderComposer(onSend, { running: true, canSteerQueue: true, onSteer })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: 'Use this direction now' } })
+    fireEvent.keyDown(composer, { key: 'Enter', ctrlKey: true })
+
+    expect(onSteer).toHaveBeenCalledWith('Use this direction now', [])
+    expect(onSend).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Running turn shortcuts').textContent).toContain('Queue')
+    expect(screen.getByLabelText('Running turn shortcuts').textContent).toContain('Steer')
   })
 
   it('offers steer, remove, and edit actions for queued prompts', () => {
@@ -260,6 +275,7 @@ function renderComposer(
       onBranchChange={vi.fn()}
       onProjectRequired={vi.fn()}
       onSend={onSend}
+      onSteer={vi.fn()}
       onInterrupt={vi.fn()}
       onDeleteQueuedTurn={vi.fn()}
       onSteerQueuedTurn={vi.fn()}
