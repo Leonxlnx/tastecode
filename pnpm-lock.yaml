@@ -47,6 +47,9 @@ importers:
       '@harness/adapter-acp':
         specifier: workspace:*
         version: link:../../packages/adapter-acp
+      '@harness/adapter-api':
+        specifier: workspace:*
+        version: link:../../packages/adapter-api
       '@harness/adapter-claude-code':
         specifier: workspace:*
         version: link:../../packages/adapter-claude-code

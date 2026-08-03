@@ -1,4 +1,13 @@
 import { AcpAdapter } from '@harness/adapter-acp'
+import {
+  ApiAgentSession,
+  createAnthropicMessagesTransport,
+  createOpenAiCompatibleTransport,
+  createOpenAiResponsesTransport,
+  listAnthropicModels,
+  listOpenAiCompatibleModels,
+  listOpenAiModels,
+} from '@harness/adapter-api'
 import { CodexAdapter } from '@harness/adapter-codex'
 import { ClaudeCodeAdapter } from '@harness/adapter-claude-code'
 import { CursorAdapter } from '@harness/adapter-cursor'
@@ -11,6 +20,7 @@ import type {
   McpServer,
   McpServerConfig,
   Model,
+  StoredModelConnection,
   ProviderId,
   Thread,
 } from '@harness/contracts'
@@ -30,6 +40,8 @@ export type StartOptions = {
   approval?: ApprovalMode | undefined
   /** Which ACP agent to launch. Ignored by providers that are one engine. */
   agent?: string | undefined
+  /** Server-owned direct API connection. Required only by the API runtime. */
+  connectionId?: string | undefined
   /**
    * Run this session in a private git worktree rather than in the project
    * folder itself, so two agents cannot overwrite each other.
@@ -38,6 +50,57 @@ export type StartOptions = {
   /** Internal project overrides and their already-resolved OS credentials. */
   mcpServers?: McpServerConfig[] | undefined
   mcpCredentials?: Record<string, string> | undefined
+}
+
+export function apiRuntime(
+  connection: StoredModelConnection,
+  apiKey: string,
+  onLog: (line: string) => void,
+): ProviderRuntime {
+  const transport =
+    connection.transport === 'openai-responses'
+      ? createOpenAiResponsesTransport({ apiKey, baseUrl: connection.baseUrl })
+      : connection.transport === 'anthropic-messages'
+        ? createAnthropicMessagesTransport({ apiKey, baseUrl: connection.baseUrl })
+        : createOpenAiCompatibleTransport({
+            apiKey,
+            provider:
+              connection.preset === 'openrouter' ||
+              connection.preset === 'kimi' ||
+              connection.preset === 'zai'
+                ? connection.preset
+                : 'custom',
+            baseUrl: connection.baseUrl,
+          })
+
+  return {
+    async start(workspacePath, options) {
+      const model = options.model ?? connection.defaultModel
+      if (!model) throw new Error(`choose a model for "${connection.displayName}"`)
+      const session = new ApiAgentSession({ model, transport, secrets: [apiKey] })
+      session.on('log', onLog)
+      const thread = session.startThread(workspacePath, connection.id)
+      return { thread, session }
+    },
+    async listModels() {
+      const options = {
+        apiKey,
+        baseUrl: connection.baseUrl,
+        ...(connection.defaultModel ? { defaultModel: connection.defaultModel } : {}),
+      }
+      if (connection.transport === 'openai-responses') return listOpenAiModels(options)
+      if (connection.transport === 'anthropic-messages') return listAnthropicModels(options)
+      return listOpenAiCompatibleModels({
+        ...options,
+        provider:
+          connection.preset === 'openrouter' ||
+          connection.preset === 'kimi' ||
+          connection.preset === 'zai'
+            ? connection.preset
+            : 'custom',
+      })
+    },
+  }
 }
 
 export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>

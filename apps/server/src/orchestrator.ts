@@ -14,6 +14,7 @@ import {
 } from '@harness/design-agent'
 import {
   providerRuntime,
+  apiRuntime,
   type AgentSession,
   type ProviderRuntime,
   type StartOptions,
@@ -57,6 +58,7 @@ import type {
 import { readSessionDiff, reviewDiffFile, reviewDiffHunk } from './diff-review.js'
 import { McpConfigStore } from './mcp-config.js'
 import { readCredential } from './credentials.js'
+import { ModelConnectionStore } from './model-connections.js'
 import { TerminalManager } from './terminal.js'
 import { installLocalSkill } from './skill-install.js'
 
@@ -138,6 +140,7 @@ export class Orchestrator {
   #onLifecycle: (threadId: string, lifecycle: ThreadLifecycle) => void
   #watchedSkillProjects = new Set<string>()
   #mcpConfig: McpConfigStore
+  #modelConnections: ModelConnectionStore
   #readCredential: (reference: string) => string
   #terminals: TerminalManager
 
@@ -167,6 +170,7 @@ export class Orchestrator {
       onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
       onLifecycle?: (threadId: string, lifecycle: ThreadLifecycle) => void
       mcpConfig?: McpConfigStore
+      modelConnections?: ModelConnectionStore
       readCredential?: (reference: string) => string
       onTerminalOutput?: (terminalId: string, data: string) => void
       onTerminalExit?: (terminalId: string, exitCode: number | null) => void
@@ -185,6 +189,7 @@ export class Orchestrator {
     this.#onSkillsChanged = handlers.onSkillsChanged ?? (() => {})
     this.#onLifecycle = handlers.onLifecycle ?? (() => {})
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
+    this.#modelConnections = handlers.modelConnections ?? new ModelConnectionStore()
     this.#readCredential = handlers.readCredential ?? readCredential
     this.#terminals = new TerminalManager({
       onOutput: handlers.onTerminalOutput ?? (() => {}),
@@ -222,6 +227,28 @@ export class Orchestrator {
     // own runtime, which is free to answer with nothing.
     if (provider === 'codex') return (await this.#controlAdapter()).listModels()
     return providerRuntime(provider, this.#onLog).listModels()
+  }
+
+  listModelConnections() {
+    return this.#modelConnections.list()
+  }
+
+  upsertModelConnection(connection: Parameters<ModelConnectionStore['upsert']>[0]) {
+    return this.#modelConnections.upsert(connection)
+  }
+
+  setModelConnectionCredential(connectionId: string, apiKey: string): void {
+    this.#modelConnections.setCredential(connectionId, apiKey)
+  }
+
+  removeModelConnection(connectionId: string): void {
+    this.#modelConnections.remove(connectionId)
+  }
+
+  async listConnectionModels(connectionId: string): Promise<Model[]> {
+    const connection = this.#modelConnections.get(connectionId)
+    const apiKey = this.#readCredential(connection.credentialRef)
+    return apiRuntime(connection, apiKey, this.#onLog).listModels()
   }
 
   async listMcpServers(
@@ -488,7 +515,10 @@ export class Orchestrator {
       ? await createWorktree(workspacePath, threadId, this.#worktreeRoot)
       : undefined
 
-    const runtime = this.#runtimeFor(provider, this.#onLog)
+    const runtime =
+      provider === 'api'
+        ? this.#apiRuntime(options.connectionId)
+        : this.#runtimeFor(provider, this.#onLog)
     const runtimeOptions = { ...options, ...this.#mcpRuntimeOptions(provider, workspacePath) }
     let started
     try {
@@ -515,6 +545,14 @@ export class Orchestrator {
     })
     this.#attachThread(thread, session, workspacePath, worktree)
     return thread
+  }
+
+  #apiRuntime(connectionId: string | undefined): ProviderRuntime {
+    if (!connectionId) throw new Error('connectionId is required for direct API sessions')
+    const connection = this.#modelConnections.get(connectionId)
+    if (!connection.enabled) throw new Error(`model connection "${connectionId}" is disabled`)
+    const apiKey = this.#readCredential(connection.credentialRef)
+    return apiRuntime(connection, apiKey, this.#onLog)
   }
 
   async sendTurn(

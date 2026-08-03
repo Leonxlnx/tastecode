@@ -198,6 +198,31 @@ export function startServer(
       case 'providers.list':
         return { providers: await detectProviders() }
 
+      case 'connections.list':
+        return { connections: orchestrator.listModelConnections() }
+
+      case 'connections.upsert':
+        return {
+          connection: orchestrator.upsertModelConnection(params as ParamsOf<'connections.upsert'>),
+        }
+
+      case 'connections.setCredential': {
+        const p = params as { connectionId: string; apiKey: string }
+        orchestrator.setModelConnectionCredential(p.connectionId, p.apiKey)
+        return { credentialConfigured: true }
+      }
+
+      case 'connections.remove': {
+        const p = params as { connectionId: string }
+        orchestrator.removeModelConnection(p.connectionId)
+        return {}
+      }
+
+      case 'connections.models': {
+        const p = params as { connectionId: string }
+        return { models: await orchestrator.listConnectionModels(p.connectionId) }
+      }
+
       case 'mcp.list': {
         const p = params as { provider: ProviderId; projectPath: string }
         return orchestrator.listMcpServers(p.provider, p.projectPath)
@@ -527,6 +552,7 @@ export function startServer(
         const p = params as {
           provider: ProviderId
           agent?: string
+          connectionId?: string
           workspacePath: string
           model?: string
           serviceTier?: string
@@ -540,6 +566,7 @@ export function startServer(
           effort: p.effort,
           approval: p.approval,
           agent: p.agent,
+          connectionId: p.connectionId,
           isolate: p.isolate,
         })
         return { threadId: thread.id }
