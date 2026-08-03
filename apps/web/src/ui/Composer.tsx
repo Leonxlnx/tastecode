@@ -2,17 +2,17 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ApprovalMode, Model, QueuedTurn } from '@harness/contracts'
 import { BorderBeam } from 'border-beam'
 import {
+  ArrowDown,
   ArrowUp,
   CornerDownRight,
-  Ellipsis,
   File as FileIcon,
   Folder,
   GitBranch,
   Image as ImageIcon,
   Laptop,
-  ListRestart,
   LockOpen,
   Palette,
+  Pencil,
   Plus,
   ShieldCheck,
   ShieldQuestion,
@@ -180,6 +180,7 @@ export function Composer(props: {
   onSteer: (text: string, attachments: string[]) => void
   onInterrupt: () => void
   onDeleteQueuedTurn: (id: string) => void
+  onMoveQueuedTurn: (id: string, direction: 'up' | 'down') => void
   onSteerQueuedTurn: (id: string) => void
 }) {
   const [text, setText] = useState('')
@@ -617,9 +618,26 @@ export function Composer(props: {
 
           {props.queuedTurns.length > 0 ? (
             <div className="composer__queue" aria-label="Queued prompts">
-              {props.queuedTurns.map((queuedTurn) => (
+              {props.queuedTurns.map((queuedTurn, index) => (
                 <div className="queue-row" key={queuedTurn.id}>
-                  <ListRestart className="queue-row__icon" size={15} aria-hidden />
+                  <div className="queue-row__order" aria-label={`Reorder ${queuedTurn.text}`}>
+                    <button
+                      type="button"
+                      onClick={() => props.onMoveQueuedTurn(queuedTurn.id, 'up')}
+                      disabled={index === 0}
+                      aria-label={`Move ${queuedTurn.text} up`}
+                    >
+                      <ArrowUp size={12} aria-hidden />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => props.onMoveQueuedTurn(queuedTurn.id, 'down')}
+                      disabled={index === props.queuedTurns.length - 1}
+                      aria-label={`Move ${queuedTurn.text} down`}
+                    >
+                      <ArrowDown size={12} aria-hidden />
+                    </button>
+                  </div>
                   <span className="queue-row__text" title={queuedTurn.text}>
                     {queuedTurn.text}
                   </span>
@@ -637,28 +655,21 @@ export function Composer(props: {
                   <button
                     type="button"
                     className="queue-row__action"
+                    onClick={() => editQueuedTurn(queuedTurn)}
+                    title="Edit prompt"
+                    aria-label={`Edit ${queuedTurn.text}`}
+                  >
+                    <Pencil size={14} aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    className="queue-row__action"
                     onClick={() => props.onDeleteQueuedTurn(queuedTurn.id)}
                     title="Remove from queue"
                     aria-label={`Remove ${queuedTurn.text} from queue`}
                   >
                     <Trash2 size={15} aria-hidden />
                   </button>
-                  <Menu
-                    label={`More actions for ${queuedTurn.text}`}
-                    align="right"
-                    triggerClassName="queue-row__action"
-                    trigger={() => <Ellipsis size={15} aria-hidden />}
-                  >
-                    {(close) => (
-                      <MenuItem
-                        title="Edit prompt"
-                        onClick={() => {
-                          close()
-                          editQueuedTurn(queuedTurn)
-                        }}
-                      />
-                    )}
-                  </Menu>
                 </div>
               ))}
             </div>
@@ -796,22 +807,6 @@ export function Composer(props: {
                   </div>
                 ) : null}
               </div>
-
-              {props.running ? (
-                <div className="composer__running-submit" aria-label="Running turn shortcuts">
-                  <span className="composer__running-submit-label">Next message</span>
-                  <span>
-                    <kbd>Enter</kbd>
-                    Queue
-                  </span>
-                  {props.canSteerQueue ? (
-                    <span>
-                      <kbd>Ctrl/⌘ Enter</kbd>
-                      Steer
-                    </span>
-                  ) : null}
-                </div>
-              ) : null}
 
               <div className="tools">
                 <Menu

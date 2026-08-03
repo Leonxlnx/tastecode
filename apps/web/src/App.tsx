@@ -943,6 +943,16 @@ export function App() {
     [transport, activeId],
   )
 
+  const moveQueuedTurn = useCallback(
+    (queuedTurnId: string, direction: 'up' | 'down') => {
+      if (!activeId) return
+      void transport
+        .request('thread.moveQueuedTurn', { threadId: activeId, queuedTurnId, direction })
+        .catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
+    },
+    [transport, activeId],
+  )
+
   const steerQueuedTurn = useCallback(
     (queuedTurnId: string) => {
       if (!activeId) return
@@ -1603,6 +1613,7 @@ export function App() {
               onSteer={(t, files) => void send(t, files, 'steer')}
               onInterrupt={interrupt}
               onDeleteQueuedTurn={deleteQueuedTurn}
+              onMoveQueuedTurn={moveQueuedTurn}
               onSteerQueuedTurn={steerQueuedTurn}
             />
           </div>

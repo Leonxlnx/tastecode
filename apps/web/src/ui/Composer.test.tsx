@@ -120,12 +120,12 @@ describe('Composer queue', () => {
 
     expect(onSteer).toHaveBeenCalledWith('Use this direction now', [])
     expect(onSend).not.toHaveBeenCalled()
-    expect(screen.getByLabelText('Running turn shortcuts').textContent).toContain('Queue')
-    expect(screen.getByLabelText('Running turn shortcuts').textContent).toContain('Steer')
+    expect(screen.queryByText('Next message')).toBeNull()
   })
 
-  it('offers steer, remove, and edit actions for queued prompts', () => {
+  it('offers reorder, steer, remove, and edit actions for queued prompts', () => {
     const onDeleteQueuedTurn = vi.fn()
+    const onMoveQueuedTurn = vi.fn()
     const onSteerQueuedTurn = vi.fn()
     renderComposer(vi.fn(), {
       running: true,
@@ -137,16 +137,25 @@ describe('Composer queue', () => {
           attachments: ['/work/reference.png'],
           createdAt: 1,
         },
+        {
+          id: 'queued-2',
+          text: 'Run the tests',
+          attachments: [],
+          createdAt: 2,
+        },
       ],
       onDeleteQueuedTurn,
+      onMoveQueuedTurn,
       onSteerQueuedTurn,
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Steer' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Steer' })[0]!)
     expect(onSteerQueuedTurn).toHaveBeenCalledWith('queued-1')
 
-    fireEvent.click(screen.getByRole('button', { name: 'More actions for Polish the queue' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit prompt' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Move Run the tests up' }))
+    expect(onMoveQueuedTurn).toHaveBeenCalledWith('queued-2', 'up')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Polish the queue' }))
     expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
       'Polish the queue',
     )
@@ -278,6 +287,7 @@ function renderComposer(
       onSteer={vi.fn()}
       onInterrupt={vi.fn()}
       onDeleteQueuedTurn={vi.fn()}
+      onMoveQueuedTurn={vi.fn()}
       onSteerQueuedTurn={vi.fn()}
       {...overrides}
     />,

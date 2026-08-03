@@ -132,6 +132,7 @@ function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>>
       onSteer={vi.fn()}
       onInterrupt={vi.fn()}
       onDeleteQueuedTurn={vi.fn()}
+      onMoveQueuedTurn={vi.fn()}
       onSteerQueuedTurn={vi.fn()}
       {...overrides}
     />,
