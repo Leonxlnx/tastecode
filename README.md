@@ -57,6 +57,8 @@ pin and search.
 | [ROADMAP](./docs/ROADMAP.md)           | M0–M8 and the open questions         |
 | [ARCHITECTURE](./docs/ARCHITECTURE.md) | How it's built, and what we rejected |
 | [DESIGN-AGENT](./docs/DESIGN-AGENT.md) | The differentiator _(written at M4)_ |
+| [CREDITS](./CREDITS.md)                | Contributors and project references  |
+| [LICENSING](./docs/LICENSING.md)       | License status and release checklist |
 
 ## Layout
 
@@ -88,4 +90,4 @@ platforms are first-class and that nobody has to leave their OS to review a chan
 ## License
 
 Undecided while private. Apache-2.0 proposed — see
-[ROADMAP → M7](./docs/ROADMAP.md#m7--open-source). Intended to be open sourced.
+[LICENSING](./docs/LICENSING.md). Intended to be open sourced.
