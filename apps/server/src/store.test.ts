@@ -152,7 +152,7 @@ describe('projects', () => {
     expect(store.project('/repo')?.name).toBe('My thing')
   })
 
-  it('removes a project together with its threads, events and checkpoints', () => {
+  it('removes a project from the sidebar without deleting its chat history', () => {
     store.addProject('/repo')
     store.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'One' })
     store.append('t1', message('hello'))
@@ -161,10 +161,12 @@ describe('projects', () => {
     store.removeProject('/repo')
 
     expect(store.project('/repo')).toBeUndefined()
-    expect(store.thread('t1')).toBeUndefined()
-    expect(store.history('t1')).toEqual([])
-    // Rows nothing points at any more are a leak that grows with use.
-    expect(store.checkpoints('t1')).toEqual([])
+    expect(store.thread('t1')).toBeDefined()
+    expect(store.history('t1')).toHaveLength(1)
+    expect(store.checkpoints('t1')).toHaveLength(1)
+
+    store.addProject('/repo')
+    expect(store.threads('/repo')).toHaveLength(1)
   })
 })
 
@@ -189,7 +191,7 @@ describe('threads', () => {
     expect(store.thread('t1')?.agent).toBeUndefined()
   })
 
-  it('refuses to forget an isolated checkout before it is discarded', () => {
+  it('refuses to delete an isolated checkout before it is discarded', () => {
     store.addThread({
       id: 'isolated',
       projectPath: '/repo',
@@ -200,7 +202,6 @@ describe('threads', () => {
     })
 
     expect(() => store.deleteThread('isolated')).toThrow('discard the isolated session checkout')
-    expect(() => store.removeProject('/repo')).toThrow('discard isolated session checkouts')
     expect(store.thread('isolated')).toBeDefined()
   })
 

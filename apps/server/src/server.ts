@@ -400,8 +400,8 @@ export function startServer(
 
       case 'projects.remove': {
         const p = params as { path: string }
-        // Close anything still running under it first, or the processes
-        // outlive the thing that owned them.
+        // The sidebar entry can disappear while its history remains available
+        // when the project is added again. Running processes still need an owner.
         for (const thread of store.threads(p.path)) orchestrator.close(thread.id)
         store.removeProject(p.path)
         return {}

@@ -282,16 +282,8 @@ export class Store {
     this.#db.prepare(`UPDATE projects SET name = ? WHERE path = ?`).run(name, projectPath)
   }
 
-  /** Removes the project and every thread and event under it. */
+  /** Hides the project from the sidebar. Re-adding it restores its chat history. */
   removeProject(projectPath: string): void {
-    const ids = this.#db
-      .prepare(`SELECT id FROM threads WHERE project_path = ?`)
-      .all(projectPath)
-      .map((row) => String((row as { id: unknown }).id))
-    if (ids.some((id) => this.thread(id)?.worktreePath)) {
-      throw new Error('discard isolated session checkouts before removing the project')
-    }
-    for (const id of ids) this.deleteThread(id)
     this.#db.prepare(`DELETE FROM projects WHERE path = ?`).run(projectPath)
   }
 
