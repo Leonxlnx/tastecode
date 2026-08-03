@@ -34,14 +34,14 @@ function createWindow(): void {
     height: 820,
     minWidth: 720,
     minHeight: 520,
-    backgroundColor: '#131313',
+    backgroundColor: '#202020',
     // Draw our own top bar, but keep native window controls on Windows.
     titleBarStyle: 'hidden',
-    // Height and colour must match --titlebar-h and --bg-rail in the renderer's
+    // Height and colour must match --titlebar-h and --titlebar-bg in the renderer's
     // tokens. Windows sizes the caption buttons from this number, so if the two
     // drift the buttons stand taller than the bar they sit in — which is
     // invisible until someone screenshots it.
-    titleBarOverlay: { color: '#131313', symbolColor: '#a3a3a3', height: 34 },
+    titleBarOverlay: { color: '#202020', symbolColor: '#ffffff', height: 34 },
     show: false,
     webPreferences: {
       // Hardened from the first commit, not "later". The renderer gets no
