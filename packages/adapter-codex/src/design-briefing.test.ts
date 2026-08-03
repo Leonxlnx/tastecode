@@ -27,6 +27,7 @@ describe('design briefing prompt', () => {
     expect(prompt).toContain('reassess what remains')
     expect(prompt).toContain("Anything else you'd like us to know?")
     expect(prompt).toContain("No, that's everything")
+    expect(prompt).toContain('do not add it merely to satisfy a fixed question count')
     expect(prompt).not.toContain('exactly one batch')
     expect(prompt).toContain('Design a launch page for a research tool.')
     expect(prompt).toContain('Do not use shell, patch, or filesystem tools')
