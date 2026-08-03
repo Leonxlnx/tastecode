@@ -617,6 +617,16 @@ export function startServer(
         return {}
       }
 
+      case 'thread.moveQueuedTurn': {
+        const p = params as {
+          threadId: string
+          queuedTurnId: string
+          direction: 'up' | 'down'
+        }
+        orchestrator.moveQueuedTurn(p.threadId, p.queuedTurnId, p.direction)
+        return {}
+      }
+
       case 'thread.steerQueuedTurn': {
         const p = params as { threadId: string; queuedTurnId: string }
         await orchestrator.steerQueuedTurn(p.threadId, p.queuedTurnId)

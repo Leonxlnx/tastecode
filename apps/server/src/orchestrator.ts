@@ -561,6 +561,15 @@ export class Orchestrator {
     this.#notifyQueue(threadId)
   }
 
+  moveQueuedTurn(threadId: string, queuedTurnId: string, direction: 'up' | 'down'): void {
+    const queue = this.#queuedTurns.get(threadId) ?? []
+    const from = queue.findIndex((item) => item.id === queuedTurnId)
+    const to = from + (direction === 'up' ? -1 : 1)
+    if (from < 0 || to < 0 || to >= queue.length) return
+    ;[queue[from], queue[to]] = [queue[to]!, queue[from]!]
+    this.#notifyQueue(threadId)
+  }
+
   async steerQueuedTurn(threadId: string, queuedTurnId: string): Promise<void> {
     const session = this.#get(threadId).session
     if (!this.#activeTurns.has(threadId)) throw new Error('there is no running turn to steer')

@@ -863,6 +863,14 @@ export const methods = {
     params: z.object({ threadId: z.string(), queuedTurnId: z.string() }),
     result: z.object({}),
   },
+  'thread.moveQueuedTurn': {
+    params: z.object({
+      threadId: z.string(),
+      queuedTurnId: z.string(),
+      direction: z.enum(['up', 'down']),
+    }),
+    result: z.object({}),
+  },
   'thread.steerQueuedTurn': {
     params: z.object({ threadId: z.string(), queuedTurnId: z.string() }),
     result: z.object({}),

@@ -614,6 +614,23 @@ describe('queued turns', () => {
     expect(sessions[0]!.steered).toEqual(['steer with this'])
     expect(orchestrator.queue(thread.id).items).toEqual([])
   })
+
+  it('moves a queued prompt without changing its contents', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'running')
+    await orchestrator.submitTurn(thread.id, 'first queued')
+    const second = await orchestrator.submitTurn(thread.id, 'second queued', ['/reference.png'])
+    if (!second.queued) throw new Error('expected the prompt to queue')
+
+    orchestrator.moveQueuedTurn(thread.id, second.queuedTurn.id, 'up')
+
+    expect(orchestrator.queue(thread.id).items.map((item) => item.text)).toEqual([
+      'second queued',
+      'first queued',
+    ])
+    expect(orchestrator.queue(thread.id).items[0]?.attachments).toEqual(['/reference.png'])
+  })
 })
 
 describe('isolated sessions', () => {
