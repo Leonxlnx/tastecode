@@ -105,6 +105,33 @@ describe('OpenAI-compatible transport', () => {
     ).resolves.toEqual([])
   })
 
+  it.each(['openrouter', 'kimi', 'zai'] as const)(
+    'completes a streamed %s preset smoke session',
+    async (provider) => {
+      const { baseUrl, requests } = await serve([TEXT])
+      const events: ApiStreamEvent[] = []
+      for await (const event of createOpenAiCompatibleTransport({
+        apiKey: 'test-key',
+        provider,
+        baseUrl,
+      })({
+        model: 'provider-model',
+        messages: [{ role: 'user', content: 'Hello' }],
+        tools: [],
+        signal: new AbortController().signal,
+      })) {
+        events.push(event)
+      }
+
+      expect(events.at(-1)).toEqual({ type: 'finish', reason: 'stop' })
+      expect(requests[0]).toMatchObject(
+        provider === 'zai'
+          ? { tool_stream: true, stream: true }
+          : { stream_options: { include_usage: true }, stream: true },
+      )
+    },
+  )
+
   it('discovers models for endpoints that expose a catalog', async () => {
     const { baseUrl } = await serve([], { data: [{ id: 'model-b' }, { id: 'model-a' }] })
     await expect(
