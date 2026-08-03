@@ -1,0 +1,8 @@
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","output_index":0,"summary_index":0,"delta":"Checking the request.","sequence_number":1}
+
+data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":1,"content_index":0,"delta":"Hello from OpenAI.","sequence_number":2}
+
+data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"id":"rs_1","type":"reasoning","encrypted_content":"encrypted-state","summary":[{"type":"summary_text","text":"Checking the request."}]},{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello from OpenAI.","annotations":[]}]}],"usage":{"input_tokens":12,"input_tokens_details":{"cached_tokens":4},"output_tokens":7,"output_tokens_details":{"reasoning_tokens":2},"total_tokens":19}},"sequence_number":3}
+
+data: [DONE]
+
