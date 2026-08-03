@@ -91,6 +91,39 @@ describe('OpenAI Responses transport', () => {
       { id: 'gpt-b', isDefault: true },
     ])
   })
+
+  it('keeps provider error bodies and credentials private', async () => {
+    const secret = 'sk-provider-secret'
+    const server = createServer((_request, response) => {
+      response.writeHead(401, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ error: `rejected ${secret}` }))
+    })
+    servers.push(server)
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('test server did not bind')
+    const transport = createOpenAiResponsesTransport({
+      apiKey: secret,
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+    })
+
+    let message = ''
+    try {
+      for await (const _event of transport({
+        model: 'gpt-test',
+        messages: [{ role: 'user', content: 'Hello' }],
+        tools: [],
+        signal: new AbortController().signal,
+      })) {
+        // The request fails before any event can be emitted.
+      }
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+    expect(message).toBe('OpenAI request failed with HTTP 401')
+    expect(message).not.toContain(secret)
+  })
 })
 
 async function serve(
