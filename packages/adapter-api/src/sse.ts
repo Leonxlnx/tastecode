@@ -11,6 +11,10 @@ export async function* serverSentEvents(
     buffer += decoder.decode(value, { stream: !done })
     const blocks = buffer.split(/\r?\n\r?\n/)
     buffer = blocks.pop() ?? ''
+    if (done && buffer.trim()) {
+      blocks.push(buffer)
+      buffer = ''
+    }
     for (const block of blocks) {
       const data = block
         .split(/\r?\n/)
