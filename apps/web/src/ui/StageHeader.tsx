@@ -1,10 +1,8 @@
 import type { ResultOf, Usage } from '@harness/contracts'
 import { ChevronDown, GitBranch, History, SquareTerminal } from 'lucide-react'
-import { isMacOS } from '../bridge.js'
-import { SHORTCUTS, shortcutAria, shortcutLabel } from '../shortcuts.js'
+import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
 import type { Project } from './Sidebar.js'
 import { Menu, MenuItem } from './Menu.js'
-import { ShortcutHint } from './ShortcutHint.js'
 
 /**
  * Header above the thread: which project this session belongs to, and the
@@ -24,8 +22,6 @@ export function StageHeader(props: {
   onOpenRollback: () => void
   onToggleTerminal: () => void
 }) {
-  const switchProjectShortcut = shortcutLabel(SHORTCUTS.switchProject, isMacOS())
-
   return (
     <header className="stagehead">
       <Menu
@@ -36,7 +32,6 @@ export function StageHeader(props: {
         trigger={() => (
           <span className="picker">
             <span>{props.activePath ? basename(props.activePath) : 'No project'}</span>
-            <ShortcutHint>{switchProjectShortcut}</ShortcutHint>
             <ChevronDown size={11} aria-hidden />
           </span>
         )}

@@ -214,6 +214,7 @@ export function Sidebar(props: {
           <Menu
             drop="up"
             label="Account"
+            panelClassName="menu--settings"
             trigger={() => (
               <span className="account">
                 <span className="account__avatar">
@@ -234,7 +235,6 @@ export function Sidebar(props: {
               <>
                 <MenuItem
                   title="Settings"
-                  detail="Providers, appearance, storage"
                   shortcut={shortcutLabel(SHORTCUTS.settings, macOS)}
                   shortcutAria={shortcutAria(SHORTCUTS.settings)}
                   onClick={() => {

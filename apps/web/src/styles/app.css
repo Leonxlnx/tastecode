@@ -212,14 +212,12 @@
   white-space: nowrap;
 }
 
-.rail__actions .shortcut,
-.stagehead .picker .shortcut {
+.rail__actions .shortcut {
   visibility: hidden;
   opacity: 0;
 }
 
-.rail__actions :is(.navitem, .search--button):is(:hover, :focus-visible) .shortcut,
-.stagehead button:is(:hover, :focus-visible) .picker .shortcut {
+.rail__actions :is(.navitem, .search--button):is(:hover, :focus-visible) .shortcut {
   visibility: visible;
   opacity: 1;
 }
@@ -4761,6 +4759,20 @@
   border: 1px solid var(--menu-line);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-flyout);
+}
+
+.menu--settings {
+  min-width: min(176px, calc(100vw - 16px));
+}
+
+.menu--settings .shortcut {
+  visibility: hidden;
+  opacity: 0;
+}
+
+.menu--settings .menu__item:is(:hover, :focus-visible) .shortcut {
+  visibility: visible;
+  opacity: 1;
 }
 
 .menu.is-positioned {
