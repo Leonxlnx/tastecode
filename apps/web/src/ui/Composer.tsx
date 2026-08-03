@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { ApprovalMode, Model, QueuedTurn } from '@harness/contracts'
+import type { ApprovalMode, QueuedTurn } from '@harness/contracts'
+import type { ModelChoice } from '../model-catalog.js'
 import { BorderBeam } from 'border-beam'
 import {
   ArrowDown,
@@ -148,7 +149,7 @@ export function Composer(props: {
   projectName: string | undefined
   branch: string | undefined
   branches: string[]
-  models: Model[]
+  models: ModelChoice[]
   /** Whether the list has come back yet, so an empty list is not read as pending. */
   modelsLoaded: boolean
   modelId: string | undefined

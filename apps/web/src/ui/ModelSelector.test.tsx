@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { Model } from '@harness/contracts'
 import { useState, type ReactNode } from 'react'
+import type { ModelChoice } from '../model-catalog.js'
 
 vi.mock('./Menu.js', () => ({
   Menu(props: {
@@ -49,7 +50,7 @@ import {
   getFriendlyEffortLabel,
 } from './ModelSelector.js'
 
-const MODELS: Model[] = [
+const RAW_MODELS: Model[] = [
   {
     id: 'gpt-5.6-sol',
     displayName: 'GPT-5.6 Sol',
@@ -74,6 +75,13 @@ const MODELS: Model[] = [
     defaultServiceTier: 'fast',
   },
 ]
+const MODELS: ModelChoice[] = RAW_MODELS.map((model) => ({
+  key: `codex:${model.id}`,
+  provider: 'codex',
+  sourceName: 'Codex',
+  mark: 'openai',
+  model,
+}))
 
 type RenderOverrides = Partial<React.ComponentProps<typeof ModelSelector>>
 
@@ -85,7 +93,7 @@ function renderSelector(overrides: RenderOverrides = {}) {
   render(
     <ModelSelector
       models={MODELS}
-      modelId="gpt-5.6-sol"
+      modelId="codex:gpt-5.6-sol"
       effort="xhigh"
       serviceTier="standard"
       disabled={false}
@@ -171,14 +179,14 @@ describe('ModelSelector', () => {
     cleanup()
     const fastDefaultModel = {
       ...MODELS[1]!,
-      defaultServiceTier: 'fast',
+      model: { ...MODELS[1]!.model, defaultServiceTier: 'fast' },
     }
     const toggleFastOff = vi.fn()
 
     render(
       <ModelSelector
         models={[fastDefaultModel]}
-        modelId={fastDefaultModel.id}
+        modelId={fastDefaultModel.key}
         effort="low"
         serviceTier="fast"
         disabled={false}
@@ -191,7 +199,7 @@ describe('ModelSelector', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
     fireEvent.click(screen.getByRole('button', { name: 'Disable fast mode' }))
     expect(toggleFastOff).toHaveBeenCalledWith(undefined)
-    expect(getFastModeOffValue(fastDefaultModel)).toBeUndefined()
+    expect(getFastModeOffValue(fastDefaultModel.model)).toBeUndefined()
   })
 
   it('uses pointer capture for the effort slider preview and commits on release', () => {
@@ -250,10 +258,10 @@ describe('ModelSelector', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
     expect(screen.queryByText('Advanced')).toBeNull()
     expect(screen.queryByText('Best for broad tasks')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Use GPT-5.6 Mini' }))
+    expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Use GPT-5.6 Mini through Codex' }))
 
-    expect(onModelChange).toHaveBeenCalledWith('gpt-5.6-mini')
+    expect(onModelChange).toHaveBeenCalledWith('codex:gpt-5.6-mini')
     expect(onEffortChange).toHaveBeenCalledWith('low')
     expect(onServiceTierChange).toHaveBeenCalledWith('fast')
   })

@@ -1,24 +1,37 @@
 import { useState, type ReactNode } from 'react'
-import type { Account, ProviderId, SidebarSettings } from '@harness/contracts'
+import type {
+  Account,
+  ModelConnection,
+  ModelConnectionPreset,
+  ModelTransport,
+  ProviderId,
+  ProviderStatus,
+  SidebarSettings,
+} from '@harness/contracts'
 import {
   ArrowLeft,
   Blocks,
   Database,
   Info,
   LogOut,
+  Boxes,
+  KeyRound,
   Network,
   Palette,
   PanelLeft,
   RotateCcw,
   UserRound,
 } from 'lucide-react'
+import { connectionMark, providerMark, type ModelChoice } from '../model-catalog.js'
 import { isDesktop } from '../bridge.js'
 import type { Transport } from '../transport.js'
 import type { ThemePreference } from '../theme.js'
 import { McpSettings } from './McpSettings.js'
 import { SkillsSettings } from './SkillsSettings.js'
+import { ProviderIcon } from './ProviderIcon.js'
 
-type SettingsSection = 'account' | 'mcp' | 'skills' | 'workflows' | 'appearance' | 'data' | 'about'
+type SettingsSection =
+  'providers' | 'models' | 'mcp' | 'skills' | 'workflows' | 'appearance' | 'data' | 'about'
 
 const THEME_OPTIONS = [
   { value: 'system', label: 'System' },
@@ -37,6 +50,12 @@ export function Settings(props: {
   projectPath: string | undefined
   projectName: string | undefined
   account: Account | undefined
+  providerStatuses: ProviderStatus[]
+  modelConnections: ModelConnection[]
+  models: ModelChoice[]
+  hiddenModels: Set<string>
+  onModelVisibilityChange: (key: string, visible: boolean) => void
+  onConnectionsChanged: () => void
   projectCount: number
   sidebarSettings: SidebarSettings
   onSidebarSettingsChange: (settings: Partial<SidebarSettings>) => void
@@ -49,7 +68,7 @@ export function Settings(props: {
   onReset: () => void
   onClose: () => void
 }) {
-  const [section, setSection] = useState<SettingsSection>('account')
+  const [section, setSection] = useState<SettingsSection>('providers')
 
   return (
     <div className="settings" role="dialog" aria-modal="true" aria-label="Settings">
@@ -64,10 +83,16 @@ export function Settings(props: {
         <p className="settings__nav-label">Settings</p>
         <nav className="settings__nav" aria-label="Settings categories">
           <SettingsNavItem
-            active={section === 'account'}
+            active={section === 'providers'}
             icon={<UserRound size={15} aria-hidden />}
-            label="Account"
-            onClick={() => setSection('account')}
+            label="Providers"
+            onClick={() => setSection('providers')}
+          />
+          <SettingsNavItem
+            active={section === 'models'}
+            icon={<Boxes size={15} aria-hidden />}
+            label="Models"
+            onClick={() => setSection('models')}
           />
           <SettingsNavItem
             active={section === 'mcp'}
@@ -110,7 +135,8 @@ export function Settings(props: {
 
       <main className="settings__main">
         <div className="settings__content">
-          {section === 'account' ? <AccountSettings {...props} /> : null}
+          {section === 'providers' ? <ProviderSettings {...props} /> : null}
+          {section === 'models' ? <ModelSettings {...props} /> : null}
           {section === 'mcp' ? <McpSettings {...props} /> : null}
           {section === 'skills' ? <SkillsSettings {...props} /> : null}
           {section === 'workflows' ? <WorkflowSettings {...props} /> : null}
@@ -202,29 +228,275 @@ function SettingsNavItem(props: {
   )
 }
 
-function AccountSettings(props: {
+const CONNECTION_PRESETS: Record<
+  ModelConnectionPreset,
+  { label: string; transport: ModelTransport; baseUrl: string; placeholder: string }
+> = {
+  openai: {
+    label: 'OpenAI API',
+    transport: 'openai-responses',
+    baseUrl: 'https://api.openai.com/v1',
+    placeholder: 'gpt-5.6',
+  },
+  anthropic: {
+    label: 'Anthropic API',
+    transport: 'anthropic-messages',
+    baseUrl: 'https://api.anthropic.com/v1',
+    placeholder: 'claude-sonnet-4-6',
+  },
+  openrouter: {
+    label: 'OpenRouter',
+    transport: 'openai-compatible',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    placeholder: 'anthropic/claude-sonnet-4.6',
+  },
+  kimi: {
+    label: 'Kimi API',
+    transport: 'openai-compatible',
+    baseUrl: 'https://api.moonshot.ai/v1',
+    placeholder: 'kimi-k2.5',
+  },
+  zai: {
+    label: 'Z.ai API',
+    transport: 'openai-compatible',
+    baseUrl: 'https://api.z.ai/api/paas/v4',
+    placeholder: 'glm-5',
+  },
+  custom: {
+    label: 'Custom endpoint',
+    transport: 'openai-compatible',
+    baseUrl: 'http://127.0.0.1:11434/v1',
+    placeholder: 'model-id',
+  },
+}
+
+function ProviderSettings(props: {
+  provider: ProviderId
   providerName: string
   account: Account | undefined
+  providerStatuses: ProviderStatus[]
+  modelConnections: ModelConnection[]
+  transport: Transport
+  onConnectionsChanged: () => void
   onSignOut: () => void
 }) {
+  const [adding, setAdding] = useState(false)
+  const [preset, setPreset] = useState<ModelConnectionPreset>('openai')
+  const [name, setName] = useState('OpenAI API')
+  const [baseUrl, setBaseUrl] = useState(CONNECTION_PRESETS.openai.baseUrl)
+  const [defaultModel, setDefaultModel] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [error, setError] = useState<string>()
+  const [saving, setSaving] = useState(false)
   const accountStatus = props.account?.signedIn
     ? [props.account.email, props.account.plan].filter(Boolean).join(' · ') || 'Signed in'
     : 'Not signed in'
 
+  const choosePreset = (next: ModelConnectionPreset) => {
+    const config = CONNECTION_PRESETS[next]
+    setPreset(next)
+    setName(config.label)
+    setBaseUrl(config.baseUrl)
+    setDefaultModel('')
+  }
+
+  const addConnection = async () => {
+    setSaving(true)
+    setError(undefined)
+    try {
+      const id = `${preset}-${crypto.randomUUID()}`
+      await props.transport.request('connections.upsert', {
+        id,
+        displayName: name.trim(),
+        preset,
+        transport: CONNECTION_PRESETS[preset].transport,
+        baseUrl: baseUrl.trim(),
+        ...(defaultModel.trim() ? { defaultModel: defaultModel.trim() } : {}),
+        enabled: true,
+      })
+      await props.transport.request('connections.setCredential', {
+        connectionId: id,
+        apiKey: apiKey.trim(),
+      })
+      setAdding(false)
+      setApiKey('')
+      props.onConnectionsChanged()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
-    <SettingsPanel title="Account" groupTitle="Provider">
-      <SettingsRow title={props.providerName} note={accountStatus}>
-        {props.account?.signedIn ? (
+    <SettingsPanel title="Providers" groupTitle="Agent subscriptions">
+      {props.providerStatuses.map((status) => (
+        <SettingsRow
+          key={status.id}
+          title={status.displayName}
+          note={
+            status.id === props.provider
+              ? accountStatus
+              : status.installed
+                ? status.version || 'Available on this computer'
+                : status.problem || 'Not installed'
+          }
+        >
+          <div className="provider-settings__status">
+            <ProviderIcon mark={providerMark(status.id)} size={17} />
+            <span className={status.installed ? 'is-ready' : ''}>
+              {status.installed ? 'Ready' : 'Unavailable'}
+            </span>
+          </div>
+        </SettingsRow>
+      ))}
+      {props.account?.signedIn ? (
+        <SettingsRow title={props.providerName} note={accountStatus}>
           <button className="settings__action" type="button" onClick={props.onSignOut}>
             <LogOut size={13} aria-hidden />
             <span>Sign out</span>
           </button>
-        ) : null}
-      </SettingsRow>
-      <p className="settings__group-note">
-        Signing out is handled by {props.providerName} itself. Personal Harness holds no credential
-        to discard.
+        </SettingsRow>
+      ) : null}
+
+      <h2 className="settings__group-title settings__group-title--inside">API connections</h2>
+      {props.modelConnections.map((connection) => (
+        <SettingsRow
+          key={connection.id}
+          title={connection.displayName}
+          note={`${CONNECTION_PRESETS[connection.preset].label} · ${connection.credentialConfigured ? 'Key stored securely' : 'Key missing'}`}
+        >
+          <div className="provider-settings__actions">
+            <ProviderIcon mark={connectionMark(connection.preset)} size={17} />
+            <button
+              className="settings__action is-danger"
+              type="button"
+              onClick={() => {
+                void props.transport
+                  .request('connections.remove', { connectionId: connection.id })
+                  .then(props.onConnectionsChanged)
+              }}
+            >
+              Remove
+            </button>
+          </div>
+        </SettingsRow>
+      ))}
+      {adding ? (
+        <div className="provider-form">
+          <label>
+            <span>Provider</span>
+            <select
+              value={preset}
+              onChange={(event) => choosePreset(event.target.value as ModelConnectionPreset)}
+            >
+              {Object.entries(CONNECTION_PRESETS).map(([value, config]) => (
+                <option key={value} value={value}>
+                  {config.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Name</span>
+            <input value={name} onChange={(event) => setName(event.target.value)} />
+          </label>
+          <label>
+            <span>Base URL</span>
+            <input
+              value={baseUrl}
+              onChange={(event) => setBaseUrl(event.target.value)}
+              spellCheck={false}
+            />
+          </label>
+          <label>
+            <span>Default model</span>
+            <input
+              value={defaultModel}
+              onChange={(event) => setDefaultModel(event.target.value)}
+              placeholder={CONNECTION_PRESETS[preset].placeholder}
+              spellCheck={false}
+            />
+          </label>
+          <label>
+            <span>API key</span>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+              autoComplete="off"
+            />
+          </label>
+          {error ? <p className="provider-form__error">{error}</p> : null}
+          <div className="provider-form__actions">
+            <button className="ghost" type="button" onClick={() => setAdding(false)}>
+              Cancel
+            </button>
+            <button
+              className="btn"
+              type="button"
+              disabled={saving || !name.trim() || !baseUrl.trim() || !apiKey.trim()}
+              onClick={() => void addConnection()}
+            >
+              {saving ? 'Connecting…' : 'Connect'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button className="provider-settings__add" type="button" onClick={() => setAdding(true)}>
+          <KeyRound size={15} aria-hidden />
+          Connect another plan or API
+        </button>
+      )}
+    </SettingsPanel>
+  )
+}
+
+function ModelSettings(props: {
+  models: ModelChoice[]
+  hiddenModels: Set<string>
+  onModelVisibilityChange: (key: string, visible: boolean) => void
+}) {
+  const sources = props.models.reduce((groups, choice) => {
+    const group = groups.get(choice.sourceName) ?? []
+    group.push(choice)
+    groups.set(choice.sourceName, group)
+    return groups
+  }, new Map<string, ModelChoice[]>())
+  return (
+    <SettingsPanel title="Models" groupTitle="Composer model list">
+      <p className="settings__group-note settings__group-note--top">
+        Show only the models you actually use. This does not disconnect the provider.
       </p>
+      {[...sources.entries()].map(([source, choices]) => (
+        <div className="model-visibility" key={source}>
+          <div className="model-visibility__source">
+            {choices[0] ? <ProviderIcon mark={choices[0].mark} size={17} /> : null}
+            <span>{source}</span>
+          </div>
+          {choices.map((choice) => {
+            const visible = !props.hiddenModels.has(choice.key)
+            return (
+              <SettingsRow
+                key={choice.key}
+                title={choice.model.displayName}
+                note={choice.model.description ?? 'Available from this provider'}
+              >
+                <button
+                  className={`switch${visible ? ' is-on' : ''}`}
+                  type="button"
+                  role="switch"
+                  aria-label={`Show ${choice.model.displayName}`}
+                  aria-checked={visible}
+                  onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
+                >
+                  <span className="switch__thumb" />
+                </button>
+              </SettingsRow>
+            )
+          })}
+        </div>
+      ))}
     </SettingsPanel>
   )
 }

@@ -1,8 +1,9 @@
 import { useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react'
-import type { Model } from '@harness/contracts'
 import { Check, ChevronDown, Zap } from 'lucide-react'
+import type { ModelChoice } from '../model-catalog.js'
 import { DitherSlider } from './dither-kit/DitherSlider.js'
 import { Menu } from './Menu.js'
+import { ProviderIcon } from './ProviderIcon.js'
 
 const SLIDER_DITHER_MIN_WIDTH = 44
 const SLIDER_DITHER_INSET = 2
@@ -10,7 +11,7 @@ const TRIGGER_LABEL = 'Model and reasoning'
 const DIALOG_LABEL = 'Model and reasoning'
 
 type ModelSelectorProps = {
-  models: Model[]
+  models: ModelChoice[]
   modelId: string | undefined
   effort: string | undefined
   serviceTier: string | undefined
@@ -64,7 +65,7 @@ export function getEffortProgressFromPointer(input: {
 }
 
 export function getFastServiceTier(
-  model: Model | undefined,
+  model: ModelChoice['model'] | undefined,
 ): { id: string; name: string; description: string } | undefined {
   return model?.serviceTiers.find((tier) => {
     const id = tier.id.trim().toLowerCase()
@@ -73,22 +74,25 @@ export function getFastServiceTier(
   })
 }
 
-export function getFastModeOffValue(model: Model | undefined): string | undefined {
+export function getFastModeOffValue(model: ModelChoice['model'] | undefined): string | undefined {
   const defaultTier = model?.defaultServiceTier ?? undefined
   if (!defaultTier) return undefined
   return defaultTier === getFastServiceTier(model)?.id ? undefined : defaultTier
 }
 
-function getSelectedModel(models: Model[], modelId: string | undefined): Model | undefined {
+function getSelectedChoice(
+  models: ModelChoice[],
+  modelId: string | undefined,
+): ModelChoice | undefined {
   return (
-    models.find((entry) => entry.id === modelId) ??
-    models.find((entry) => entry.isDefault) ??
+    models.find((entry) => entry.key === modelId) ??
+    models.find((entry) => entry.model.isDefault) ??
     models[0]
   )
 }
 
 function getSelectedEffort(
-  model: Model | undefined,
+  model: ModelChoice['model'] | undefined,
   effort: string | undefined,
 ): string | undefined {
   if (!model) return undefined
@@ -96,17 +100,23 @@ function getSelectedEffort(
   return model.defaultReasoningEffort ?? model.reasoningEfforts[0]
 }
 
-function isFastModeEnabled(model: Model | undefined, serviceTier: string | undefined): boolean {
+function isFastModeEnabled(
+  model: ModelChoice['model'] | undefined,
+  serviceTier: string | undefined,
+): boolean {
   return Boolean(serviceTier && getFastServiceTier(model)?.id === serviceTier)
 }
 
-function supportsServiceTier(model: Model | undefined, serviceTier: string | undefined): boolean {
+function supportsServiceTier(
+  model: ModelChoice['model'] | undefined,
+  serviceTier: string | undefined,
+): boolean {
   return Boolean(serviceTier && model?.serviceTiers.some((tier) => tier.id === serviceTier))
 }
 
 function getNextServiceTierForModel(input: {
-  nextModel: Model
-  currentModel: Model | undefined
+  nextModel: ModelChoice['model']
+  currentModel: ModelChoice['model'] | undefined
   currentServiceTier: string | undefined
 }): string | undefined {
   const { nextModel, currentModel, currentServiceTier } = input
@@ -283,7 +293,8 @@ function DitherChoiceRow(props: {
 
 export function ModelSelector(props: ModelSelectorProps) {
   const [previewEffortIndex, setPreviewEffortIndex] = useState<number | null>(null)
-  const model = getSelectedModel(props.models, props.modelId)
+  const choice = getSelectedChoice(props.models, props.modelId)
+  const model = choice?.model
   const selectedEffort = getSelectedEffort(model, props.effort)
   const effortOptions = model?.reasoningEfforts ?? []
   const effortLabel = getFriendlyEffortLabel(selectedEffort)
@@ -301,9 +312,10 @@ export function ModelSelector(props: ModelSelectorProps) {
     props.onEffortChange(nextValue)
   }
 
-  const handleModelSelect = (nextModel: Model) => {
-    if (nextModel.id !== model?.id) {
-      props.onModelChange(nextModel.id)
+  const handleModelSelect = (nextChoice: ModelChoice) => {
+    const nextModel = nextChoice.model
+    if (nextChoice.key !== choice?.key) {
+      props.onModelChange(nextChoice.key)
     }
 
     if (
@@ -344,6 +356,7 @@ export function ModelSelector(props: ModelSelectorProps) {
           ) : null}
           <span className="model-selector__trigger-copy">
             <span className="model-selector__trigger-model">
+              {choice ? <ProviderIcon mark={choice.mark} size={13} /> : null}
               {getCompactModelName(model?.displayName)}
             </span>
             <span className="model-selector__trigger-effort">{effortLabel}</span>
@@ -358,20 +371,24 @@ export function ModelSelector(props: ModelSelectorProps) {
         <div className="model-selector">
           <div className="model-selector__models" role="group" aria-label="Models">
             {props.models.map((entry) => {
-              const selected = entry.id === model?.id
+              const selected = entry.key === choice?.key
               return (
                 <button
-                  key={entry.id}
+                  key={entry.key}
                   type="button"
                   className={`model-selector__model${selected ? ' is-selected' : ''}`}
                   aria-pressed={selected}
-                  aria-label={`Use ${entry.displayName}`}
+                  aria-label={`Use ${entry.model.displayName} through ${entry.sourceName}`}
                   onClick={() => {
                     handleModelSelect(entry)
                     close()
                   }}
                 >
-                  <span className="model-selector__model-name">{entry.displayName}</span>
+                  <ProviderIcon mark={entry.mark} size={16} />
+                  <span className="model-selector__model-copy">
+                    <span className="model-selector__model-name">{entry.model.displayName}</span>
+                    <span className="model-selector__model-source">{entry.sourceName}</span>
+                  </span>
                   {selected ? <Check size={14} aria-hidden /> : null}
                 </button>
               )

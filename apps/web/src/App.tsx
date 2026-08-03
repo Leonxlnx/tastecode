@@ -12,8 +12,9 @@ import type {
   Account,
   ApprovalMode,
   DomainEvent,
-  Model,
+  ModelConnection,
   ProviderId,
+  ProviderStatus,
   QueuedTurn,
   ResultOf,
   SidebarSettings,
@@ -46,6 +47,13 @@ import { serverUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-recorder.js'
 import {
+  choicesFor,
+  connectionMark,
+  providerMark,
+  sourceKey,
+  type ModelChoice,
+} from './model-catalog.js'
+import {
   applyTheme,
   DARK_THEME_QUERY,
   readSystemTheme,
@@ -63,6 +71,7 @@ const AGENT_NAME_KEY = 'harness.acpAgentName'
 const PROJECTS_KEY = 'harness.projects'
 const SESSION_ORDER_KEY = 'harness.sessionOrder'
 const MODEL_KEY = 'harness.model'
+const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
 const EFFORT_KEY = 'harness.effort'
 const SERVICE_TIER_KEY = 'harness.serviceTier'
 const APPROVAL_KEY = 'harness.approval'
@@ -128,8 +137,18 @@ export function App() {
   >(undefined)
   const [queuedTurns, setQueuedTurns] = useState<QueuedTurn[]>([])
   const [canSteerQueue, setCanSteerQueue] = useState(false)
-  const [models, setModels] = useState<Model[]>([])
+  const [models, setModels] = useState<ModelChoice[]>([])
   const [modelsLoaded, setModelsLoaded] = useState(false)
+  const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([])
+  const [modelConnections, setModelConnections] = useState<ModelConnection[]>([])
+  const [catalogRequest, setCatalogRequest] = useState(0)
+  const [hiddenModels, setHiddenModels] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(HIDDEN_MODELS_KEY) ?? '[]') as string[])
+    } catch {
+      return new Set()
+    }
+  })
   const [autoReviewSupported, setAutoReviewSupported] = useState(false)
   const [userInputSupported, setUserInputSupported] = useState(false)
   const [modelId, setModelId] = useState<string | undefined>(
@@ -190,6 +209,29 @@ export function App() {
     () => localStorage.getItem(TERMINAL_OPEN_KEY) === 'true',
   )
   const [terminalHeight, setTerminalHeight] = useState(readTerminalHeight)
+  const visibleModels = useMemo(
+    () => models.filter((choice) => !hiddenModels.has(choice.key)),
+    [models, hiddenModels],
+  )
+  const implicitChoice =
+    provider && provider !== 'api'
+      ? choicesFor(
+          {
+            provider,
+            sourceName: providerName(provider, acpAgentName),
+            mark: provider === 'acp' && acpAgent === 'kimi' ? 'kimi' : providerMark(provider),
+            ...(provider === 'acp' && acpAgent
+              ? { agent: { id: acpAgent, name: acpAgentName ?? acpAgent } }
+              : {}),
+          },
+          [],
+        )[0]
+      : undefined
+  const selectedModelChoice =
+    models.find((choice) => choice.key === modelId) ??
+    visibleModels[0] ??
+    models[0] ??
+    implicitChoice
 
   // Syntax grammars load in the background from the first frame, so the first
   // code block an agent produces is already coloured.
@@ -305,42 +347,114 @@ export function App() {
     }
   }, [transport])
 
-  // Ask the provider what it can run, rather than shipping a list that goes
-  // stale the week after release.
+  // Build one catalog from every connected source. Model ids are not globally
+  // unique, so each choice keeps the provider/connection that will pay for it.
   useEffect(() => {
-    if (!provider) return
     let cancelled = false
-    void transport
-      .request('models.list', { provider })
-      .then(({ models: list }) => {
-        if (cancelled) return
-        setModels(list)
-        setModelsLoaded(true)
-        const storedModel = localStorage.getItem(MODEL_KEY)
-        const chosen =
-          list.find((model) => model.id === storedModel) ?? list.find((m) => m.isDefault)
-        const selected = chosen ?? list[0]
-        if (!selected) return
-        setModelId(selected.id)
-        setEffort((current) =>
-          current && selected.reasoningEfforts.includes(current)
-            ? current
-            : (selected.defaultReasoningEffort ?? selected.reasoningEfforts[0]),
+    void (async () => {
+      const [providersResult, connectionsResult, agentsResult] = await Promise.all([
+        transport.request('providers.list', {}),
+        transport.request('connections.list', {}).catch(() => ({ connections: [] })),
+        transport.request('acp.agents', {}).catch(() => ({ agents: [] })),
+      ])
+      const providers = providersResult?.providers ?? []
+      const connections = connectionsResult?.connections ?? []
+      const direct = await Promise.all(
+        providers
+          .filter((entry) => entry.installed && entry.id !== 'acp' && entry.id !== 'api')
+          .map(async (entry) => {
+            const result = await transport
+              .request('models.list', { provider: entry.id })
+              .catch(() => ({ models: [] }))
+            return choicesFor(
+              {
+                provider: entry.id,
+                sourceName: entry.displayName,
+                mark: providerMark(entry.id),
+              },
+              result.models,
+            )
+          }),
+      )
+      const acp = (agentsResult?.agents ?? [])
+        .filter((agent) => agent.installed)
+        .flatMap((agent) =>
+          choicesFor(
+            {
+              provider: 'acp',
+              sourceName: agent.name,
+              mark: agent.id === 'kimi' ? 'kimi' : 'acp',
+              agent: { id: agent.id, name: agent.name },
+            },
+            [],
+          ),
         )
-        setServiceTier((current) =>
-          current && selected.serviceTiers.some((tier) => tier.id === current)
-            ? current
-            : (selected.defaultServiceTier ?? undefined),
+      const api = (
+        await Promise.all(
+          connections
+            .filter((connection) => connection.enabled && connection.credentialConfigured)
+            .map(async (connection) => {
+              const result = await transport
+                .request('connections.models', { connectionId: connection.id })
+                .catch(() => ({ models: [] }))
+              return choicesFor(
+                {
+                  provider: 'api',
+                  connectionId: connection.id,
+                  sourceName: connection.displayName,
+                  mark: connectionMark(connection.preset),
+                },
+                result.models.length > 0
+                  ? result.models
+                  : connection.defaultModel
+                    ? [
+                        {
+                          id: connection.defaultModel,
+                          displayName: connection.defaultModel,
+                          isDefault: true,
+                          reasoningEfforts: [],
+                          serviceTiers: [],
+                        },
+                      ]
+                    : [],
+              )
+            }),
         )
-      })
-      .catch(() => {
-        // A provider that cannot list models is a normal case, not an error.
-        if (!cancelled) setModelsLoaded(true)
-      })
+      ).flat()
+      if (cancelled) return
+      const catalog = [...direct.flat(), ...acp, ...api]
+      setProviderStatuses(providers)
+      setModelConnections(connections)
+      setModels(catalog)
+      setModelsLoaded(true)
+      const stored = localStorage.getItem(MODEL_KEY)
+      const selected =
+        catalog.find((choice) => choice.key === stored) ??
+        catalog.find((choice) => choice.model.id === stored) ??
+        catalog.find((choice) => choice.model.isDefault) ??
+        catalog[0]
+      if (!selected) return
+      setModelId(selected.key)
+      setProvider(selected.provider)
+      setAcpAgent(selected.agent?.id)
+      setAcpAgentName(selected.agent?.name)
+      setEffort((current) =>
+        current && selected.model.reasoningEfforts.includes(current)
+          ? current
+          : (selected.model.defaultReasoningEffort ?? selected.model.reasoningEfforts[0]),
+      )
+      setServiceTier((current) =>
+        current && selected.model.serviceTiers.some((tier) => tier.id === current)
+          ? current
+          : (selected.model.defaultServiceTier ?? undefined),
+      )
+    })().catch(() => {
+      if (!cancelled) setModelsLoaded(true)
+    })
     return () => {
       cancelled = true
     }
-  }, [transport, provider])
+  }, [transport, catalogRequest])
 
   useEffect(() => {
     if (!isDesktop || !provider || !canCaptureVoice()) {
@@ -550,6 +664,14 @@ export function App() {
   }, [modelId])
 
   useEffect(() => {
+    localStorage.setItem(HIDDEN_MODELS_KEY, JSON.stringify([...hiddenModels]))
+    if (selectedModelChoice && hiddenModels.has(selectedModelChoice.key)) {
+      const fallback = visibleModels[0]
+      if (fallback) setModelId(fallback.key)
+    }
+  }, [hiddenModels, selectedModelChoice, visibleModels])
+
+  useEffect(() => {
     if (effort) {
       localStorage.setItem(EFFORT_KEY, effort)
     } else {
@@ -571,18 +693,26 @@ export function App() {
 
   const selectModel = useCallback(
     (id: string) => {
-      const selected = models.find((model) => model.id === id)
+      const selected = models.find((model) => model.key === id)
       if (!selected) return
-      setModelId(id)
+      setModelId(selected.key)
+      setProvider(selected.provider)
+      setAcpAgent(selected.agent?.id)
+      setAcpAgentName(selected.agent?.name)
+      localStorage.setItem(SETUP_KEY, selected.provider)
+      if (selected.agent) {
+        localStorage.setItem(AGENT_KEY, selected.agent.id)
+        localStorage.setItem(AGENT_NAME_KEY, selected.agent.name)
+      }
       setEffort((current) =>
-        current && selected.reasoningEfforts.includes(current)
+        current && selected.model.reasoningEfforts.includes(current)
           ? current
-          : (selected.defaultReasoningEffort ?? selected.reasoningEfforts[0]),
+          : (selected.model.defaultReasoningEffort ?? selected.model.reasoningEfforts[0]),
       )
       setServiceTier((current) =>
-        current && selected.serviceTiers.some((tier) => tier.id === current)
+        current && selected.model.serviceTiers.some((tier) => tier.id === current)
           ? current
-          : (selected.defaultServiceTier ?? undefined),
+          : (selected.model.defaultServiceTier ?? undefined),
       )
     },
     [models],
@@ -605,7 +735,8 @@ export function App() {
       provisionalId: string,
       title: string,
     ): Promise<string | undefined> => {
-      if (!provider) return undefined
+      const choice = selectedModelChoice
+      if (!choice) return undefined
       setNotice(undefined)
       setUndoRestore(undefined)
       setRollbackOpen(false)
@@ -614,11 +745,12 @@ export function App() {
         const sessionApproval =
           approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval
         const { threadId } = await transport.request('thread.start', {
-          provider,
+          provider: choice.provider,
           workspacePath: projectPath,
           approval: sessionApproval,
-          ...(provider === 'acp' && acpAgent ? { agent: acpAgent } : {}),
-          ...(modelId ? { model: modelId } : {}),
+          ...(choice.agent ? { agent: choice.agent.id } : {}),
+          ...(choice.connectionId ? { connectionId: choice.connectionId } : {}),
+          ...(choice.model.id ? { model: choice.model.id } : {}),
           ...(serviceTier ? { serviceTier } : {}),
           ...(effort ? { effort } : {}),
           ...(isolateSession ? { isolate: true } : {}),
@@ -638,8 +770,8 @@ export function App() {
                     {
                       id: threadId,
                       title,
-                      provider,
-                      ...(provider === 'acp' && acpAgent ? { agent: acpAgent } : {}),
+                      provider: choice.provider,
+                      ...(choice.agent ? { agent: choice.agent.id } : {}),
                       createdAt: Date.now(),
                       status: 'starting',
                       lifecycle: { state: 'active', keepActive: false },
@@ -674,9 +806,7 @@ export function App() {
     },
     [
       transport,
-      provider,
-      acpAgent,
-      modelId,
+      selectedModelChoice,
       serviceTier,
       effort,
       approval,
@@ -832,7 +962,7 @@ export function App() {
           threadId,
           text,
           ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
-          ...(modelId ? { model: modelId } : {}),
+          ...(selectedModelChoice?.model.id ? { model: selectedModelChoice.model.id } : {}),
           ...(effort ? { effort } : {}),
           ...(serviceTier ? { serviceTier } : {}),
         })
@@ -901,7 +1031,7 @@ export function App() {
       activePath,
       createSession,
       projects,
-      modelId,
+      selectedModelChoice,
       effort,
       serviceTier,
       updateQueue,
@@ -996,12 +1126,23 @@ export function App() {
 
   const selectSession = useCallback(
     async (id: string) => {
+      const found = findSession(projects, id)
+      if (found?.session.provider) {
+        setProvider(found.session.provider)
+        setAcpAgent(found.session.agent)
+        const source = sourceKey({
+          provider: found.session.provider,
+          agentId: found.session.agent,
+        })
+        const matchingChoice = models.find((choice) => choice.key.startsWith(`${source}:`))
+        if (matchingChoice) setModelId(matchingChoice.key)
+      }
       setNotice(undefined)
       setUndoRestore(undefined)
       setRollbackOpen(false)
       activeIdRef.current = id
       setActiveId(id)
-      setActivePath(findSession(projects, id)?.project.path)
+      setActivePath(found?.project.path)
       const cached = threadStates.current.get(id)
       if (cached) {
         setThread(cached)
@@ -1017,7 +1158,7 @@ export function App() {
         setNotice(error instanceof Error ? error.message : String(error))
       }
     },
-    [projects, loadHistory, transport],
+    [projects, models, loadHistory, transport],
   )
 
   const inspectCheckpoint = useCallback(
@@ -1295,6 +1436,17 @@ export function App() {
       <>
         <Onboarding
           transport={transport}
+          models={models}
+          hiddenModels={hiddenModels}
+          onModelVisibilityChange={(key, visible) => {
+            setHiddenModels((current) => {
+              const next = new Set(current)
+              if (visible) next.delete(key)
+              else next.add(key)
+              return next
+            })
+          }}
+          onRefreshModels={() => setCatalogRequest((request) => request + 1)}
           onDone={(id, agent) => {
             localStorage.setItem(SETUP_KEY, id)
             if (agent) {
@@ -1582,7 +1734,7 @@ export function App() {
               projectName={activeProject ? displayName(activeProject) : undefined}
               branch={active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]}
               branches={branches}
-              models={models}
+              models={visibleModels}
               modelsLoaded={modelsLoaded}
               modelId={modelId}
               effort={effort}
@@ -1628,6 +1780,19 @@ export function App() {
           projectPath={activePath}
           projectName={activeProject ? displayName(activeProject) : undefined}
           account={account}
+          providerStatuses={providerStatuses}
+          modelConnections={modelConnections}
+          models={models}
+          hiddenModels={hiddenModels}
+          onModelVisibilityChange={(key, visible) => {
+            setHiddenModels((current) => {
+              const next = new Set(current)
+              if (visible) next.delete(key)
+              else next.add(key)
+              return next
+            })
+          }}
+          onConnectionsChanged={() => setCatalogRequest((request) => request + 1)}
           projectCount={projects.length}
           sidebarSettings={sidebarSettings}
           onSidebarSettingsChange={updateSidebarSettings}

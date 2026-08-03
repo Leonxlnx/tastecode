@@ -765,7 +765,9 @@ describe('new chats', () => {
   })
 
   it('forwards model, effort, and the provider fast tier on every turn', async () => {
-    transport.request.mockImplementation((method: string) => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
       switch (method) {
         case 'models.list':
           return Promise.resolve({
@@ -806,7 +808,7 @@ describe('new chats', () => {
         case 'thread.sendTurn':
           return Promise.resolve({ queued: false, turnId: 'turn-1' })
         default:
-          return Promise.resolve({})
+          return request(method, params)
       }
     })
 

@@ -9,6 +9,8 @@ import {
   PanelsTopLeft,
 } from 'lucide-react'
 import type { Transport } from '../transport.js'
+import type { ModelChoice, ProviderMark } from '../model-catalog.js'
+import { ProviderIcon } from './ProviderIcon.js'
 
 /**
  * First run: welcome, pick an agent, sign in, done.
@@ -19,7 +21,7 @@ import type { Transport } from '../transport.js'
  * both the compliant design and the honest thing to say on this screen.
  */
 
-type Step = 'welcome' | 'provider' | 'agent' | 'signin' | 'done'
+type Step = 'welcome' | 'provider' | 'agent' | 'signin' | 'models' | 'done'
 
 /** One row of `acp.agents`, as the server reports it. */
 type AcpAgent = {
@@ -36,6 +38,7 @@ export type ProviderCard = {
   blurb: string
   plans: string[]
   ready: boolean
+  mark: ProviderMark
 }
 
 export const PROVIDER_CARDS: ProviderCard[] = [
@@ -45,6 +48,7 @@ export const PROVIDER_CARDS: ProviderCard[] = [
     blurb: 'OpenAI’s agent, signed in with your ChatGPT account',
     plans: ['Plus', 'Pro', 'Business', 'API key'],
     ready: true,
+    mark: 'openai',
   },
   {
     id: 'claude-code',
@@ -52,6 +56,7 @@ export const PROVIDER_CARDS: ProviderCard[] = [
     blurb: 'Anthropic’s agent, signed in with your Claude account',
     plans: ['Pro', 'Max', 'API key'],
     ready: true,
+    mark: 'anthropic',
   },
   {
     id: 'acp',
@@ -59,25 +64,32 @@ export const PROVIDER_CARDS: ProviderCard[] = [
     blurb: 'Gemini, Kimi, Qwen — anything speaking the open protocol',
     plans: ['Your own account', 'API key'],
     ready: true,
+    mark: 'acp',
   },
   {
     id: 'cursor',
     name: 'Cursor',
     blurb: 'The Cursor agent, outside the editor',
     plans: ['Pro', 'Pro+', 'Ultra'],
-    ready: false,
+    ready: true,
+    mark: 'cursor',
   },
   {
     id: 'opencode',
     name: 'OpenCode',
     blurb: 'Open source, any model you like',
     plans: ['Any provider', 'Local models'],
-    ready: false,
+    ready: true,
+    mark: 'opencode',
   },
 ]
 
 export function Onboarding(props: {
   transport: Transport
+  models: ModelChoice[]
+  hiddenModels: Set<string>
+  onModelVisibilityChange: (key: string, visible: boolean) => void
+  onRefreshModels: () => void
   onDone: (provider: ProviderId, agent?: { id: string; name: string }) => void
 }) {
   const [step, setStep] = useState<Step>('welcome')
@@ -88,7 +100,15 @@ export function Onboarding(props: {
   const card = PROVIDER_CARDS.find((entry) => entry.id === provider)!
   // ACP agents sign themselves in on first run, so there is no sign-in step to
   // show — asking for one would be inventing a screen with nothing behind it.
-  const afterProvider: Step = provider === 'acp' ? 'agent' : 'signin'
+  const afterProvider: Step =
+    provider === 'acp' ? 'agent' : provider === 'codex' ? 'signin' : 'models'
+  const progressSteps: Step[] = [
+    'welcome',
+    'provider',
+    ...(afterProvider === 'models' ? [] : [afterProvider]),
+    'models',
+    'done',
+  ]
 
   // Someone who already ran `codex login` should not be asked to do it again.
   useEffect(() => {
@@ -97,7 +117,7 @@ export function Onboarding(props: {
       .request('auth.status', { provider })
       .then((status) => {
         setAccount(status)
-        if (status.signedIn) setStep('done')
+        if (status.signedIn) setStep('models')
       })
       .catch(() => setAccount({ signedIn: false }))
   }, [props.transport, provider, step])
@@ -120,7 +140,7 @@ export function Onboarding(props: {
             selected={agent}
             onSelect={setAgent}
             onBack={() => setStep('provider')}
-            onNext={() => setStep('done')}
+            onNext={() => setStep('models')}
           />
         ) : step === 'signin' ? (
           <SignIn
@@ -130,8 +150,21 @@ export function Onboarding(props: {
             onBack={() => setStep('provider')}
             onDone={(next) => {
               setAccount(next)
-              setStep('done')
+              props.onRefreshModels()
+              setStep('models')
             }}
+          />
+        ) : step === 'models' ? (
+          <PickModels
+            models={props.models.filter(
+              (choice) =>
+                choice.provider === provider &&
+                (provider !== 'acp' || choice.agent?.id === agent?.id),
+            )}
+            hiddenModels={props.hiddenModels}
+            onModelVisibilityChange={props.onModelVisibilityChange}
+            onBack={() => setStep(afterProvider)}
+            onNext={() => setStep('done')}
           />
         ) : (
           <Done
@@ -146,11 +179,11 @@ export function Onboarding(props: {
       </div>
 
       <ol className="steps" aria-label="Setup progress">
-        {(['welcome', 'provider', afterProvider, 'done'] as Step[]).map((entry, index) => (
+        {progressSteps.map((entry, index) => (
           <li
             key={entry}
             className={`steps__dot ${entry === step ? 'is-on' : ''}`}
-            aria-label={`Step ${index + 1} of 4`}
+            aria-label={`Step ${index + 1} of ${progressSteps.length}`}
             aria-current={entry === step ? 'step' : undefined}
           />
         ))}
@@ -228,7 +261,10 @@ function PickProvider(props: {
               disabled={!card.ready}
             >
               <span className="card__head">
-                <span className="card__name">{card.name}</span>
+                <span className="card__identity">
+                  <ProviderIcon mark={card.mark} size={18} />
+                  <span className="card__name">{card.name}</span>
+                </span>
                 {card.ready ? (
                   props.selected === card.id ? (
                     <span className="card__check" aria-label="Selected">
@@ -252,6 +288,60 @@ function PickProvider(props: {
         ))}
       </ul>
 
+      <div className="pane__foot">
+        <button className="ghost" onClick={props.onBack}>
+          Back
+        </button>
+        <button className="btn" onClick={props.onNext}>
+          Continue
+          <ArrowRight size={15} aria-hidden />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function PickModels(props: {
+  models: ModelChoice[]
+  hiddenModels: Set<string>
+  onModelVisibilityChange: (key: string, visible: boolean) => void
+  onBack: () => void
+  onNext: () => void
+}) {
+  return (
+    <div className="pane">
+      <h1 className="pane__title">Choose your model list</h1>
+      <p className="pane__lede">
+        Keep the composer focused. You can change this any time in Settings.
+      </p>
+      <ul className="cards cards--models">
+        {props.models.map((choice) => {
+          const visible = !props.hiddenModels.has(choice.key)
+          return (
+            <li key={choice.key}>
+              <button
+                className={`card card--model${visible ? ' is-selected' : ''}`}
+                type="button"
+                aria-pressed={visible}
+                onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
+              >
+                <span className="card__identity">
+                  <ProviderIcon mark={choice.mark} size={18} />
+                  <span>
+                    <span className="card__name">{choice.model.displayName}</span>
+                    <span className="card__blurb">{choice.sourceName}</span>
+                  </span>
+                </span>
+                {visible ? (
+                  <span className="card__check" aria-label="Visible">
+                    <Check size={14} />
+                  </span>
+                ) : null}
+              </button>
+            </li>
+          )
+        })}
+      </ul>
       <div className="pane__foot">
         <button className="ghost" onClick={props.onBack}>
           Back

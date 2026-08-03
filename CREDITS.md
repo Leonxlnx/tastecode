@@ -27,4 +27,10 @@ The interface and runtime rely on projects including React, Electron, Streamdown
 TanStack Virtual, xterm.js, Lucide, Geist, node-pty, Zod, and ws. Visual details also use
 Border Beam and Thinking Orbs by Jakub Antalik.
 
+Provider marks are reproduced only to identify their corresponding services. OpenAI,
+Anthropic, Cursor, OpenCode, and OpenRouter paths come from
+[Simple Icons](https://simpleicons.org/) (CC0); the Kimi mark comes from Kimi's official
+[brand guidelines](https://moonshotai.github.io/Branding-Guide/). All marks remain
+trademarks of their respective owners.
+
 See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) for source and license information.
