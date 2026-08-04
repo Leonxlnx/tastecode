@@ -1763,8 +1763,6 @@ export function App() {
             projects={projects}
             activePath={activePath}
             title={active?.session.title}
-            usage={thread.usage}
-            usageSummary={usageSummary}
             checkpointCount={thread.running ? 0 : checkpoints.length}
             worktreeBranch={active?.session.worktreeBranch}
             terminalOpen={terminalOpen}
