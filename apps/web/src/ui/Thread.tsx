@@ -568,6 +568,17 @@ function isVisibleWorkedItem(item: Item): boolean {
 }
 
 function ResponseActions({ text, createdAt }: { text: string; createdAt: number }) {
+  return (
+    <div className="response-actions" aria-label="Response actions">
+      <CopyAction text={text} label="Copy response" />
+      <time dateTime={new Date(createdAt).toISOString()}>
+        {new Date(createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+      </time>
+    </div>
+  )
+}
+
+function CopyAction({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false)
 
   const copy = async () => {
@@ -581,14 +592,9 @@ function ResponseActions({ text, createdAt }: { text: string; createdAt: number 
   }
 
   return (
-    <div className="response-actions" aria-label="Response actions">
-      <button type="button" onClick={() => void copy()} aria-label="Copy response" title="Copy">
-        {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
-      </button>
-      <time dateTime={new Date(createdAt).toISOString()}>
-        {new Date(createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-      </time>
-    </div>
+    <button type="button" onClick={() => void copy()} aria-label={label} title="Copy">
+      {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
+    </button>
   )
 }
 
