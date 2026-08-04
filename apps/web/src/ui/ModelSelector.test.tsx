@@ -172,7 +172,8 @@ describe('ModelSelector', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
-    expect(screen.getByText('1.5× Speed · 2.5× Usage')).toBeTruthy()
+    expect(screen.getByText('1.5x speed')).toBeTruthy()
+    expect(screen.queryByText('1.5× Speed · 2.5× Usage')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Enable fast mode' }))
     expect(onServiceTierChange).toHaveBeenCalledWith('priority')
@@ -180,7 +181,11 @@ describe('ModelSelector', () => {
     cleanup()
     const fastDefaultModel = {
       ...MODELS[1]!,
-      model: { ...MODELS[1]!.model, defaultServiceTier: 'fast' },
+      model: {
+        ...MODELS[1]!.model,
+        defaultServiceTier: 'fast',
+        serviceTiers: [{ id: 'fast', name: 'Fast', description: '' }],
+      },
     }
     const toggleFastOff = vi.fn()
 
@@ -198,6 +203,7 @@ describe('ModelSelector', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    expect(document.querySelector('.model-selector__fast-meta')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Disable fast mode' }))
     expect(toggleFastOff).toHaveBeenCalledWith(undefined)
     expect(getFastModeOffValue(fastDefaultModel.model)).toBeUndefined()

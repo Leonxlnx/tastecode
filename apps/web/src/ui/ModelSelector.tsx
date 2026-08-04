@@ -422,7 +422,9 @@ export function ModelSelector(props: ModelSelectorProps) {
               </span>
               {fastTier ? (
                 <div className="model-selector__fast-row">
-                  <span className="model-selector__fast-meta">1.5× Speed · 2.5× Usage</span>
+                  {fastTier.description ? (
+                    <span className="model-selector__fast-meta">{fastTier.description}</span>
+                  ) : null}
                   <button
                     type="button"
                     className={`model-selector__fast${fastEnabled ? ' is-on' : ''}`}
