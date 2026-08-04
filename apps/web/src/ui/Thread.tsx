@@ -22,6 +22,7 @@ import {
   ListChecks,
   LoaderCircle,
   Pencil,
+  RotateCcw,
   Search,
   SquareTerminal,
   Wrench,
@@ -36,6 +37,7 @@ import { ThreadSearch } from './ThreadSearch.js'
 import { findTurns, neighbourTurn, presentTurns } from './turns.js'
 import { isAtBottom, modeForNewTurn, shouldReleaseAnchor, type ScrollMode } from './scroll-mode.js'
 import { UserInput } from '../design-agent/UserInput.js'
+import type { Checkpoint } from './RollbackDialog.js'
 
 /**
  * The thread.
@@ -63,7 +65,9 @@ export function Thread(props: {
   approvals: ApprovalRequest[]
   userInputs: UserInputRequest[]
   reviews: ApprovalReview[]
+  checkpoints?: Checkpoint[] | undefined
   onEditMessage?: ((text: string) => void) | undefined
+  onRevertCheckpoint?: ((checkpoint: Checkpoint) => void) | undefined
   onDecide: (id: string, decision: ApprovalDecision) => void
   onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void
 }) {
@@ -255,6 +259,8 @@ export function Thread(props: {
                     presentation.finalAnswerIndex === row.index
                   }
                   onEditMessage={props.onEditMessage}
+                  checkpoint={checkpointFor(item, props.checkpoints ?? [])}
+                  onRevertCheckpoint={props.onRevertCheckpoint}
                 />
               </div>
             )
@@ -443,6 +449,8 @@ function Row({
   startedAt,
   showCompletionRail,
   onEditMessage,
+  checkpoint,
+  onRevertCheckpoint,
 }: {
   item: Item
   hidden: boolean
@@ -456,6 +464,8 @@ function Row({
   startedAt: number | undefined
   showCompletionRail: boolean
   onEditMessage: ((text: string) => void) | undefined
+  checkpoint: Checkpoint | undefined
+  onRevertCheckpoint: ((checkpoint: Checkpoint) => void) | undefined
 }) {
   if (hidden) return null
 
@@ -480,6 +490,16 @@ function Row({
                 title="Edit"
               >
                 <Pencil aria-hidden />
+              </button>
+            ) : null}
+            {checkpoint && onRevertCheckpoint ? (
+              <button
+                type="button"
+                onClick={() => onRevertCheckpoint(checkpoint)}
+                aria-label="Revert to before prompt"
+                title="Revert"
+              >
+                <RotateCcw aria-hidden />
               </button>
             ) : null}
           </div>
@@ -533,6 +553,13 @@ function Row({
         {item.text ? <pre className="aux__out">{item.text}</pre> : null}
       </details>
     </>
+  )
+}
+
+function checkpointFor(item: Item, checkpoints: Checkpoint[]): Checkpoint | undefined {
+  if (item.type !== 'message' || item.role !== 'user' || !item.text) return undefined
+  return checkpoints.findLast(
+    (checkpoint) => checkpoint.label === item.text && checkpoint.createdAt <= item.createdAt,
   )
 }
 

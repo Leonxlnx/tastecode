@@ -1798,6 +1798,7 @@ export function App() {
                 approvals={thread.approvals}
                 userInputs={thread.userInputs}
                 reviews={Object.values(thread.reviews)}
+                checkpoints={thread.running ? [] : checkpoints}
                 onDecide={(approvalId, decision) => {
                   if (!activeId) return
                   void transport.request('thread.respondToApproval', {
@@ -1817,6 +1818,11 @@ export function App() {
                 onEditMessage={(text) => {
                   setComposerDraft((current) => ({ text, request: (current?.request ?? 0) + 1 }))
                   setComposerFocusRequest((request) => request + 1)
+                }}
+                onRevertCheckpoint={(checkpoint) => {
+                  setRollbackInspection(undefined)
+                  setRollbackOpen(true)
+                  void inspectCheckpoint(checkpoint)
                 }}
               />
             ) : (

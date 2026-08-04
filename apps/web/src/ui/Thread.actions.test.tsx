@@ -85,4 +85,43 @@ describe('thread message actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit prompt' }))
     expect(onEditMessage).toHaveBeenCalledWith('Revise this prompt')
   })
+
+  it('opens the checkpoint attached to that exact prompt', () => {
+    const onRevertCheckpoint = vi.fn()
+    const checkpoint = {
+      id: 7,
+      seq: 1,
+      label: 'Undo this turn',
+      createdAt: 50,
+    }
+    render(
+      <Thread
+        items={[
+          {
+            id: 'prompt-1',
+            turnId: 'turn-1',
+            type: 'message',
+            role: 'user',
+            status: 'completed',
+            text: 'Undo this turn',
+            createdAt: 100,
+          },
+        ]}
+        running={false}
+        activeTurn={undefined}
+        plan={[]}
+        diff={undefined}
+        approvals={[]}
+        userInputs={[]}
+        reviews={[]}
+        checkpoints={[checkpoint]}
+        onRevertCheckpoint={onRevertCheckpoint}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Revert to before prompt' }))
+    expect(onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
+  })
 })
