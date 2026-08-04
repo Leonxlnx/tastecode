@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import type {
   Account,
   ModelConnection,
@@ -64,7 +64,7 @@ export function Settings(props: {
   showMacOSFontSmoothing: boolean
   macOSFontSmoothing: boolean
   onMacOSFontSmoothingChange: (enabled: boolean) => void
-  onSignOut: () => void
+  onAccountChange: (provider: ProviderId, account: Account) => void
   onReset: () => void
   onClose: () => void
 }) {
@@ -278,7 +278,7 @@ function ProviderSettings(props: {
   modelConnections: ModelConnection[]
   transport: Transport
   onConnectionsChanged: () => void
-  onSignOut: () => void
+  onAccountChange: (provider: ProviderId, account: Account) => void
 }) {
   const [adding, setAdding] = useState(false)
   const [preset, setPreset] = useState<ModelConnectionPreset>('openai')
@@ -288,9 +288,67 @@ function ProviderSettings(props: {
   const [apiKey, setApiKey] = useState('')
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
-  const accountStatus = props.account?.signedIn
-    ? [props.account.email, props.account.plan].filter(Boolean).join(' · ') || 'Signed in'
-    : 'Not signed in'
+  const [accounts, setAccounts] = useState<Partial<Record<ProviderId, Account>>>({})
+  const [authBusy, setAuthBusy] = useState<ProviderId>()
+  const [authError, setAuthError] = useState<string>()
+
+  const refreshAccount = useCallback(
+    async (provider: ProviderId) => {
+      const account = await props.transport.request('auth.status', { provider })
+      setAccounts((current) => ({ ...current, [provider]: account }))
+      props.onAccountChange(provider, account)
+    },
+    [props.transport, props.onAccountChange],
+  )
+
+  useEffect(() => {
+    for (const status of props.providerStatuses) {
+      if (status.installed && status.id !== 'acp') {
+        void refreshAccount(status.id).catch(() =>
+          setAccounts((current) => ({ ...current, [status.id]: { signedIn: false } })),
+        )
+      }
+    }
+    return props.transport.on('auth.event', (event) => {
+      if (event.agent) return
+      setAuthBusy((current) => (current === event.provider ? undefined : current))
+      if (event.success) {
+        setAuthError(undefined)
+        void refreshAccount(event.provider).catch((cause) =>
+          setAuthError(cause instanceof Error ? cause.message : String(cause)),
+        )
+      } else {
+        setAuthError(event.error ?? 'Sign-in was cancelled.')
+      }
+    })
+  }, [props.transport, props.providerStatuses, refreshAccount])
+
+  const signIn = async (provider: ProviderId) => {
+    setAuthBusy(provider)
+    setAuthError(undefined)
+    try {
+      const result = await props.transport.request('auth.startLogin', { provider })
+      if (result.authUrl) window.open(result.authUrl, '_blank', 'noopener,noreferrer')
+    } catch (cause) {
+      setAuthBusy(undefined)
+      setAuthError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
+  const signOut = async (provider: ProviderId) => {
+    setAuthBusy(provider)
+    setAuthError(undefined)
+    try {
+      await props.transport.request('auth.signOut', { provider })
+      const account = { signedIn: false }
+      setAccounts((current) => ({ ...current, [provider]: account }))
+      props.onAccountChange(provider, account)
+    } catch (cause) {
+      setAuthError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setAuthBusy(undefined)
+    }
+  }
 
   const choosePreset = (next: ModelConnectionPreset) => {
     const config = CONNECTION_PRESETS[next]
@@ -330,34 +388,52 @@ function ProviderSettings(props: {
 
   return (
     <SettingsPanel title="Providers" groupTitle="Agent subscriptions">
-      {props.providerStatuses.map((status) => (
-        <SettingsRow
-          key={status.id}
-          title={status.displayName}
-          note={
-            status.id === props.provider
-              ? accountStatus
-              : status.installed
-                ? status.version || 'Available on this computer'
-                : status.problem || 'Not installed'
-          }
-        >
-          <div className="provider-settings__status">
-            <ProviderIcon mark={providerMark(status.id)} size={17} />
-            <span className={status.installed ? 'is-ready' : ''}>
-              {status.installed ? 'Ready' : 'Unavailable'}
-            </span>
-          </div>
-        </SettingsRow>
-      ))}
-      {props.account?.signedIn ? (
-        <SettingsRow title={props.providerName} note={accountStatus}>
-          <button className="settings__action" type="button" onClick={props.onSignOut}>
-            <LogOut size={13} aria-hidden />
-            <span>Sign out</span>
-          </button>
-        </SettingsRow>
+      {authError ? (
+        <p className="provider-form__error" role="alert">
+          {authError}
+        </p>
       ) : null}
+      {props.providerStatuses.map((status) => {
+        const account =
+          accounts[status.id] ?? (status.id === props.provider ? props.account : undefined)
+        const accountStatus = account?.signedIn
+          ? [account.email, account.plan].filter(Boolean).join(' · ') || 'Signed in'
+          : status.installed
+            ? 'Not signed in'
+            : 'Install the provider CLI to sign in.'
+        const busy = authBusy === status.id
+        return (
+          <SettingsRow key={status.id} title={status.displayName} note={accountStatus}>
+            <div className="provider-settings__actions">
+              <ProviderIcon mark={providerMark(status.id)} size={17} />
+              {status.id === 'acp' ? (
+                <span className={status.installed ? 'is-ready' : ''}>
+                  {status.installed ? 'Available' : 'Not installed'}
+                </span>
+              ) : account?.signedIn ? (
+                <button
+                  className="settings__action"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void signOut(status.id)}
+                >
+                  <LogOut size={13} aria-hidden />
+                  {busy ? 'Signing out…' : 'Sign out'}
+                </button>
+              ) : (
+                <button
+                  className="settings__action"
+                  type="button"
+                  disabled={!status.installed || busy}
+                  onClick={() => void signIn(status.id)}
+                >
+                  {busy ? 'Signing in…' : 'Sign in'}
+                </button>
+              )}
+            </div>
+          </SettingsRow>
+        )
+      })}
 
       <h2 className="settings__group-title settings__group-title--inside">API connections</h2>
       {props.modelConnections.map((connection) => (

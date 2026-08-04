@@ -1110,6 +1110,13 @@ export function App() {
     [transport],
   )
 
+  const handleAccountChange = useCallback(
+    (changedProvider: ProviderId, changedAccount: Account) => {
+      if (changedProvider === provider) setAccount(changedAccount)
+    },
+    [provider],
+  )
+
   const deleteQueuedTurn = useCallback(
     (queuedTurnId: string) => {
       if (!activeId) return
@@ -1864,11 +1871,7 @@ export function App() {
           showMacOSFontSmoothing={macOS}
           macOSFontSmoothing={macOSFontSmoothing}
           onMacOSFontSmoothingChange={setMacOSFontSmoothing}
-          onSignOut={() => {
-            void transport.request('auth.signOut', { provider }).then(() => {
-              setAccount({ signedIn: false })
-            })
-          }}
+          onAccountChange={handleAccountChange}
           onReset={() => {
             localStorage.clear()
             location.reload()
