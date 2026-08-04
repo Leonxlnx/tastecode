@@ -8,7 +8,7 @@ import type {
   Thread,
 } from '@harness/contracts'
 import { spawnCli, StdioJsonRpc } from '@harness/proc'
-import { findAgentSpec, type AcpAgentSpec } from './agents.js'
+import { discoverAgentModels, findAgentSpec, type AcpAgentSpec } from './agents.js'
 import { optionFor, type PermissionOption } from './approvals.js'
 import { Streamer } from './events.js'
 import {
@@ -42,6 +42,7 @@ export type AcpAdapterEvents = {
 
 export type AcpStartOptions = {
   approval?: ApprovalMode | undefined
+  model?: string | undefined
 }
 
 export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
@@ -86,7 +87,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
 
   async startThread(workspacePath: string, options: AcpStartOptions = {}): Promise<Thread> {
     this.#setApproval(options.approval)
-    const rpc = await this.#connect(workspacePath)
+    const rpc = await this.#connect(workspacePath, options.model)
 
     const session = await rpc
       .request<NewSessionResult>('session/new', { cwd: workspacePath, mcpServers: [] })
@@ -105,6 +106,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       })
     if (!session.sessionId) throw new Error(`${this.#spec.name} started no session`)
     this.#sessionId = session.sessionId
+    await this.#selectSessionModel(options.model)
 
     return {
       id: `acp-${this.#spec.id}-${session.sessionId}`,
@@ -121,13 +123,14 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   ): Promise<Thread> {
     this.#setApproval(options.approval)
     const sessionId = parseAcpThreadId(threadId, this.#spec.id)
-    const rpc = await this.#connect(workspacePath)
+    const rpc = await this.#connect(workspacePath, options.model)
     if (!this.#loadSession) {
       this.dispose()
       throw new Error(`${this.#spec.name} does not support session resume`)
     }
     await rpc.request('session/load', { sessionId, cwd: workspacePath, mcpServers: [] })
     this.#sessionId = sessionId
+    await this.#selectSessionModel(options.model)
     return {
       id: `acp-${this.#spec.id}-${sessionId}`,
       provider: 'acp',
@@ -194,9 +197,8 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     if (decision === 'abort') void this.interrupt()
   }
 
-  /** ACP has no model listing. The picker hides itself when this is empty. */
   async listModels(): Promise<Model[]> {
-    return []
+    return discoverAgentModels(this.#spec.id)
   }
 
   dispose(): void {
@@ -207,8 +209,12 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#pendingApprovals.clear()
   }
 
-  async #connect(workspacePath: string): Promise<StdioJsonRpc> {
-    const child = spawnCli(this.#spec.command, this.#spec.args, { cwd: workspacePath })
+  async #connect(workspacePath: string, model: string | undefined): Promise<StdioJsonRpc> {
+    const args =
+      model && this.#spec.modelArg
+        ? [...this.#spec.args, this.#spec.modelArg, model]
+        : this.#spec.args
+    const child = spawnCli(this.#spec.command, args, { cwd: workspacePath })
     const rpc = new StdioJsonRpc(child, this.#spec.name)
     this.#rpc = rpc
     rpc.onStderr((text) => this.emit('log', text.trimEnd()))
@@ -239,6 +245,15 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#images = init.agentCapabilities?.promptCapabilities?.image ?? false
     this.#loadSession = init.agentCapabilities?.loadSession ?? false
     return rpc
+  }
+
+  async #selectSessionModel(model: string | undefined): Promise<void> {
+    if (!model || !this.#spec.modelConfigId || !this.#rpc || !this.#sessionId) return
+    await this.#rpc.request('session/set_config_option', {
+      sessionId: this.#sessionId,
+      configId: this.#spec.modelConfigId,
+      value: model,
+    })
   }
 
   #setApproval(approval: ApprovalMode | undefined): void {

@@ -35,6 +35,11 @@ export type InitializeResult = {
 export type NewSessionResult = {
   sessionId?: string
   modes?: { currentModeId?: string; availableModes?: Array<{ id?: string; name?: string }> }
+  configOptions?: Array<{
+    id?: string
+    currentValue?: string
+    options?: Array<{ value?: string; name?: string; description?: string | null }>
+  }>
 }
 
 /** Why a turn ended. `cancelled` is a normal outcome, not an error. */
