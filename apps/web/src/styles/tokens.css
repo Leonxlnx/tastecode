@@ -124,6 +124,10 @@
   --dur-slow: 260ms;
 }
 
+:root[data-font='system'] {
+  --font-ui: 'Segoe UI Variable Text', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+}
+
 :root[data-theme='light'] {
   color-scheme: light;
 

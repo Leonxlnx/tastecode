@@ -56,13 +56,17 @@ import {
   type ModelChoice,
 } from './model-catalog.js'
 import {
+  applyFontPreference,
   applyTheme,
   DARK_THEME_QUERY,
+  FONT_KEY,
+  readFontPreference,
   readSystemTheme,
   readThemePreference,
   THEME_KEY,
   type Theme,
   type ThemePreference,
+  type FontPreference,
 } from './theme.js'
 
 const SERVER_BASE_URL = import.meta.env.VITE_HARNESS_SERVER_URL ?? 'ws://127.0.0.1:4311'
@@ -204,6 +208,7 @@ export function App() {
   const [checkoutDeleteBusy, setCheckoutDeleteBusy] = useState(false)
   const macOS = isMacOS()
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference)
+  const [fontPreference, setFontPreference] = useState<FontPreference>(readFontPreference)
   const [systemTheme, setSystemTheme] = useState<Theme>(readSystemTheme)
   const theme = themePreference === 'system' ? systemTheme : themePreference
   const [macOSFontSmoothing, setMacOSFontSmoothing] = useState(
@@ -255,6 +260,11 @@ export function App() {
   useEffect(() => {
     localStorage.setItem(THEME_KEY, themePreference)
   }, [themePreference])
+
+  useLayoutEffect(() => {
+    applyFontPreference(fontPreference)
+    localStorage.setItem(FONT_KEY, fontPreference)
+  }, [fontPreference])
 
   useEffect(() => {
     const media = globalThis.matchMedia?.(DARK_THEME_QUERY)
@@ -1828,6 +1838,8 @@ export function App() {
           onSidebarSettingsChange={updateSidebarSettings}
           themePreference={themePreference}
           onThemePreferenceChange={setThemePreference}
+          fontPreference={fontPreference}
+          onFontPreferenceChange={setFontPreference}
           showMacOSFontSmoothing={macOS}
           macOSFontSmoothing={macOSFontSmoothing}
           onMacOSFontSmoothingChange={setMacOSFontSmoothing}
