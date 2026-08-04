@@ -37,7 +37,9 @@ const PROTOCOL = `Return JSON only, without Markdown fences, using exactly one o
 export function designBriefingPrompt(request: string): string {
   return `You are running Personal Harness Design Briefing mode.
 
-This turn may only advance a design brief. Do not build, scaffold, edit, or generate a website, brand system, asset set, component, or implementation. Do not call tools or read files; Personal Harness owns the question UI and persists the final brief.
+This is a fast text-only classification and extraction step. Answer immediately from the supplied request. Do not inspect the workspace, call tools, browse, invoke skills or MCP servers, or describe your reasoning.
+
+This turn may only advance a design brief. Do not build, scaffold, edit, or generate a website, brand system, asset set, component, or implementation. Personal Harness owns the question UI and persists the final brief.
 
 First decide whether the request is primarily about designing or redesigning a website, web page, landing page, portfolio, or product interface. Return "not_design" when it is not.
 
@@ -64,7 +66,9 @@ export function designBriefingContinuation(
 ): string {
   return `Continue the Personal Harness Design Briefing using the answers below.
 
-Think through every core brief field again. If an answer is vague, contradictory, or does not settle its field, return only the smallest useful follow-up questions. Treat "Decide for me" as permission to make and record a reasoned assumption. Do not repeat resolved questions. Return "complete" only when the brief is sufficient. Do not call tools.
+Answer immediately from the supplied answers only. Do not inspect the workspace, call tools, browse, invoke skills or MCP servers, or describe your reasoning.
+
+Check every core brief field again. If an answer is vague, contradictory, or does not settle its field, return only the smallest useful follow-up questions. Treat "Decide for me" as permission to make and record a reasoned assumption. Do not repeat resolved questions. Return "complete" only when the brief is sufficient.
 
 ${PROTOCOL}
 

@@ -578,11 +578,12 @@ export class Orchestrator {
         throw new Error('turn cancelled by panic stop')
       }
       const design = attachments.includes(DESIGN_BRIEF_ATTACHMENT)
+      const turnOptions = design ? { ...options, effort: 'low' } : options
       if (design) {
         this.#designFlows.set(threadId, {
           workspacePath: this.#repoPath(threadId),
           originalRequest: text,
-          options,
+          options: turnOptions,
           askedQuestions: false,
           finalAsked: false,
         })
@@ -590,7 +591,7 @@ export class Orchestrator {
       const prompt = design ? designBriefingPrompt(text) : text
       const visibleAttachments = attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT)
       return await (design
-        ? this.#sendDesignTurn(threadId, prompt, visibleAttachments, options)
+        ? this.#sendDesignTurn(threadId, prompt, visibleAttachments, turnOptions)
         : this.#get(threadId).session.sendTurn(threadId, prompt, visibleAttachments, options))
     } finally {
       this.#startingTurns.delete(threadId)

@@ -213,6 +213,7 @@ describe('provider-neutral design briefing', () => {
         const thread = await orchestrator.startThread(provider, workspace, {})
         await orchestrator.sendTurn(thread.id, 'Create a website.', [DESIGN_BRIEF_ATTACHMENT], {
           model,
+          effort: 'xhigh',
         })
 
         expect(sessions[0]?.sent[0]).toContain('Personal Harness Design Briefing mode')
@@ -318,7 +319,11 @@ describe('provider-neutral design briefing', () => {
           JSON.parse(readFileSync(path.join(workspace, '.taste', 'brief.json'), 'utf8')).subject,
         ).toBe('Independent studio')
         expect(sessions[0]?.userInputs).toEqual([])
-        expect(sessions[0]?.sentOptions).toEqual([{ model }, { model }, { model }])
+        expect(sessions[0]?.sentOptions).toEqual([
+          { model, effort: 'low' },
+          { model, effort: 'low' },
+          { model, effort: 'low' },
+        ])
         expect(
           received.some(
             ({ event }) =>
