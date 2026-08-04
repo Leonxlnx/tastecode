@@ -56,14 +56,18 @@ import {
   type ModelChoice,
 } from './model-catalog.js'
 import {
+  ACCENT_KEY,
+  applyAccentPreference,
   applyFontPreference,
   applyTheme,
   DARK_THEME_QUERY,
   FONT_KEY,
+  readAccentPreference,
   readFontPreference,
   readSystemTheme,
   readThemePreference,
   THEME_KEY,
+  type AccentPreference,
   type Theme,
   type ThemePreference,
   type FontPreference,
@@ -209,6 +213,8 @@ export function App() {
   const macOS = isMacOS()
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference)
   const [fontPreference, setFontPreference] = useState<FontPreference>(readFontPreference)
+  const [accentPreference, setAccentPreference] =
+    useState<AccentPreference>(readAccentPreference)
   const [systemTheme, setSystemTheme] = useState<Theme>(readSystemTheme)
   const theme = themePreference === 'system' ? systemTheme : themePreference
   const [macOSFontSmoothing, setMacOSFontSmoothing] = useState(
@@ -265,6 +271,11 @@ export function App() {
     applyFontPreference(fontPreference)
     localStorage.setItem(FONT_KEY, fontPreference)
   }, [fontPreference])
+
+  useLayoutEffect(() => {
+    applyAccentPreference(accentPreference)
+    localStorage.setItem(ACCENT_KEY, accentPreference)
+  }, [accentPreference])
 
   useEffect(() => {
     const media = globalThis.matchMedia?.(DARK_THEME_QUERY)
@@ -1892,6 +1903,8 @@ export function App() {
           onThemePreferenceChange={setThemePreference}
           fontPreference={fontPreference}
           onFontPreferenceChange={setFontPreference}
+          accentPreference={accentPreference}
+          onAccentPreferenceChange={setAccentPreference}
           showMacOSFontSmoothing={macOS}
           macOSFontSmoothing={macOSFontSmoothing}
           onMacOSFontSmoothingChange={setMacOSFontSmoothing}

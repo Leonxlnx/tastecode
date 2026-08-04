@@ -734,6 +734,26 @@ describe('new chats', () => {
     expect(document.documentElement.dataset.font).toBe('system')
   })
 
+  it('persists the selected accent palette', async () => {
+    const first = render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
+    fireEvent.change(screen.getByRole('combobox', { name: 'Accent palette' }), {
+      target: { value: 'ocean' },
+    })
+
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.accent')).toBe('ocean')
+      expect(document.documentElement.dataset.accent).toBe('ocean')
+    })
+
+    first.unmount()
+    render(<App />)
+
+    expect(document.documentElement.dataset.accent).toBe('ocean')
+  })
+
   it('tracks OS appearance while System is selected', async () => {
     const originalMatchMedia = window.matchMedia.bind(window)
     const listeners = new Set<(event: MediaQueryListEvent) => void>()
