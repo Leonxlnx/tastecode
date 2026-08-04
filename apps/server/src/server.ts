@@ -23,6 +23,7 @@ import { checkForUpdates } from './update-check.js'
 import { PushBus } from './push-bus.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
 import { Store } from './store.js'
+import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
 
 export const SERVER_VERSION = '0.0.0'
@@ -529,6 +530,18 @@ export function startServer(
         const p = params as { terminalId: string }
         orchestrator.closeTerminal(p.terminalId)
         return {}
+      }
+
+      case 'attachments.saveImage': {
+        const p = params as ParamsOf<'attachments.saveImage'>
+        return {
+          path: await materializeAttachment({ name: imageFileName(p.mimeType), data: p.data }),
+        }
+      }
+
+      case 'attachments.saveFile': {
+        const p = params as ParamsOf<'attachments.saveFile'>
+        return { path: await materializeAttachment({ name: p.name, data: p.data }) }
       }
 
       case 'thread.rename': {
