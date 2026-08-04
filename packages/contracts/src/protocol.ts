@@ -33,6 +33,7 @@ export const PROTOCOL_VERSION = 2
 /** Bumped whenever a client and server can no longer understand each other. */
 export const ErrorCode = {
   BAD_REQUEST: 'bad_request',
+  FORBIDDEN: 'forbidden',
   NOT_FOUND: 'not_found',
   PROVIDER_UNAVAILABLE: 'provider_unavailable',
   STALE_SNAPSHOT: 'stale_snapshot',
@@ -40,6 +41,7 @@ export const ErrorCode = {
 } as const
 export const ErrorCodeSchema = z.enum([
   ErrorCode.BAD_REQUEST,
+  ErrorCode.FORBIDDEN,
   ErrorCode.NOT_FOUND,
   ErrorCode.PROVIDER_UNAVAILABLE,
   ErrorCode.STALE_SNAPSHOT,

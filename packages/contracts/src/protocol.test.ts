@@ -230,6 +230,12 @@ describe('protocol envelopes', () => {
     expect(offer.pairingUri).toContain('harness://pair')
     expect('deviceToken' in offer).toBe(false)
     expect(() => methods['connections.claim'].params.parse({ name: '' })).toThrow()
+    expect(
+      ResponseSchema.parse({
+        id: 'device-request',
+        error: { code: ErrorCode.FORBIDDEN, message: 'This device cannot perform that action' },
+      }),
+    ).toMatchObject({ error: { code: 'forbidden' } })
   })
 
   it('validates remote attachment materialization requests', () => {
