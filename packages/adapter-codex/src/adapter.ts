@@ -463,16 +463,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     skills: Skill[]
     errors: SkillDiscoveryError[]
   }> {
-    const [response, configuredMcpIds] = await Promise.all([
-      this.#call<SkillsListResponse>('skills/list', {
-        cwds: [projectPath],
-        forceReload: true,
-      }),
-      this.listMcpServers()
-        .then((servers) => new Set(servers.map((server) => server.id)))
-        .catch(() => undefined),
-    ])
-    return mapSkillList(response, projectPath, configuredMcpIds)
+    const response = await this.#call<SkillsListResponse>('skills/list', {
+      cwds: [projectPath],
+      forceReload: true,
+    })
+    return mapSkillList(response, projectPath)
   }
 
   async setSkillEnabled(skillId: string, enabled: boolean): Promise<boolean> {
