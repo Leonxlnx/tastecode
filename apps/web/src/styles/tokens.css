@@ -128,6 +128,18 @@
   --font-ui: 'Segoe UI Variable Text', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 }
 
+:root[data-accent='ocean'] {
+  --attention: #65b8ff;
+  --file-reference: #62abc7;
+  --effort: #74b8cf;
+}
+
+:root[data-accent='sunset'] {
+  --attention: #c69cff;
+  --file-reference: #b58ad5;
+  --effort: #e58c76;
+}
+
 :root[data-theme='light'] {
   color-scheme: light;
 
@@ -192,6 +204,18 @@
   --dither-bloom-filter: invert(1) blur(1.25px);
   --dither-bloom-opacity: 0.05;
   --dither-bloom-blend: multiply;
+}
+
+:root[data-theme='light'][data-accent='ocean'] {
+  --attention: #1677be;
+  --file-reference: #247b99;
+  --effort: #287f99;
+}
+
+:root[data-theme='light'][data-accent='sunset'] {
+  --attention: #7e4bc2;
+  --file-reference: #8455a8;
+  --effort: #b15442;
 }
 
 * {

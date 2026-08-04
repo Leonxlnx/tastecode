@@ -3,8 +3,10 @@ import { createRoot } from 'react-dom/client'
 import 'streamdown/styles.css'
 import { App } from './App.js'
 import {
+  applyAccentPreference,
   applyFontPreference,
   applyTheme,
+  readAccentPreference,
   readFontPreference,
   readThemePreference,
   resolveTheme,
@@ -17,6 +19,7 @@ if (!root) throw new Error('missing #root')
 
 applyTheme(resolveTheme(readThemePreference()))
 applyFontPreference(readFontPreference())
+applyAccentPreference(readAccentPreference())
 
 createRoot(root).render(
   <StrictMode>

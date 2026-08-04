@@ -25,7 +25,7 @@ import {
 import { connectionMark, providerMark, type ModelChoice } from '../model-catalog.js'
 import { isDesktop } from '../bridge.js'
 import type { Transport } from '../transport.js'
-import type { FontPreference, ThemePreference } from '../theme.js'
+import type { AccentPreference, FontPreference, ThemePreference } from '../theme.js'
 import { McpSettings } from './McpSettings.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderIcon } from './ProviderIcon.js'
@@ -43,6 +43,12 @@ const FONT_OPTIONS = [
   { value: 'geist', label: 'Geist' },
   { value: 'system', label: 'System' },
 ] as const satisfies ReadonlyArray<{ value: FontPreference; label: string }>
+
+const ACCENT_OPTIONS = [
+  { value: 'neutral', label: 'Neutral' },
+  { value: 'ocean', label: 'Ocean' },
+  { value: 'sunset', label: 'Sunset' },
+] as const satisfies ReadonlyArray<{ value: AccentPreference; label: string }>
 
 /**
  * Settings stays intentionally small: the sidebar reorganizes the decisions
@@ -68,6 +74,8 @@ export function Settings(props: {
   onThemePreferenceChange: (theme: ThemePreference) => void
   fontPreference: FontPreference
   onFontPreferenceChange: (font: FontPreference) => void
+  accentPreference: AccentPreference
+  onAccentPreferenceChange: (accent: AccentPreference) => void
   showMacOSFontSmoothing: boolean
   macOSFontSmoothing: boolean
   onMacOSFontSmoothingChange: (enabled: boolean) => void
@@ -513,6 +521,8 @@ function AppearanceSettings(props: {
   onThemePreferenceChange: (theme: ThemePreference) => void
   fontPreference: FontPreference
   onFontPreferenceChange: (font: FontPreference) => void
+  accentPreference: AccentPreference
+  onAccentPreferenceChange: (accent: AccentPreference) => void
   showMacOSFontSmoothing: boolean
   macOSFontSmoothing: boolean
   onMacOSFontSmoothingChange: (enabled: boolean) => void
@@ -533,6 +543,22 @@ function AppearanceSettings(props: {
               }
             >
               {FONT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </SettingsRow>
+          <SettingsRow title="Accent palette" note="Tint links, activity, and effort feedback.">
+            <select
+              className="settings__select"
+              aria-label="Accent palette"
+              value={props.accentPreference}
+              onChange={(event) =>
+                props.onAccentPreferenceChange(event.currentTarget.value as AccentPreference)
+              }
+            >
+              {ACCENT_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
