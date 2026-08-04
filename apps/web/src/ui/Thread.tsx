@@ -464,6 +464,11 @@ function Row({
     return (
       <div className="said">
         <p className="said__text">{item.text}</p>
+        {item.text ? (
+          <div className="response-actions said__actions" aria-label="Prompt actions">
+            <CopyAction text={item.text} label="Copy prompt" />
+          </div>
+        ) : null}
       </div>
     )
   }

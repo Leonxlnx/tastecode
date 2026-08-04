@@ -2919,6 +2919,7 @@
 }
 
 .said {
+  position: relative;
   align-self: flex-end;
   width: fit-content;
   max-width: 88%;
@@ -2926,6 +2927,20 @@
   background: var(--surface-2);
   border-radius: var(--r-xl);
   padding: 9px 13px;
+}
+
+.said__actions {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  justify-content: flex-end;
+  margin: 0;
+}
+
+.said:hover > .said__actions,
+.said:focus-within > .said__actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .said__text {
