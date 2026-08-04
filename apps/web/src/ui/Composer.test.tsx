@@ -263,6 +263,18 @@ describe('Composer context usage', () => {
   })
 })
 
+describe('Composer draft replacement', () => {
+  it('loads a previous prompt for editing and focuses it', async () => {
+    renderComposer(vi.fn(), {
+      draftRequest: { text: 'Rewrite this request', request: 1 },
+    })
+
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    await waitFor(() => expect(composer.value).toBe('Rewrite this request'))
+    expect(document.activeElement).toBe(composer)
+  })
+})
+
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,
   overrides: Partial<Parameters<typeof Composer>[0]> = {},

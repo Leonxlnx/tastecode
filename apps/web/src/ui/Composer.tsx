@@ -165,6 +165,7 @@ export function Composer(props: {
   isolate: boolean
   designMode: boolean
   focusRequest: number
+  draftRequest?: { text: string; request: number } | undefined
   queuedTurns: QueuedTurn[]
   canSteerQueue: boolean
   onModelChange: (id: string) => void
@@ -299,6 +300,10 @@ export function Composer(props: {
       grow()
     })
   }
+
+  useEffect(() => {
+    if (props.draftRequest) setValue(props.draftRequest.text)
+  }, [props.draftRequest?.request])
 
   const addFiles = (paths: string[]) => {
     if (paths.length === 0) return

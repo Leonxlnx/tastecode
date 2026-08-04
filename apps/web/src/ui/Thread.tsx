@@ -21,6 +21,7 @@ import {
   Images,
   ListChecks,
   LoaderCircle,
+  Pencil,
   Search,
   SquareTerminal,
   Wrench,
@@ -62,6 +63,7 @@ export function Thread(props: {
   approvals: ApprovalRequest[]
   userInputs: UserInputRequest[]
   reviews: ApprovalReview[]
+  onEditMessage?: ((text: string) => void) | undefined
   onDecide: (id: string, decision: ApprovalDecision) => void
   onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void
 }) {
@@ -252,6 +254,7 @@ export function Thread(props: {
                     presentation.activity.length === 0 &&
                     presentation.finalAnswerIndex === row.index
                   }
+                  onEditMessage={props.onEditMessage}
                 />
               </div>
             )
@@ -439,6 +442,7 @@ function Row({
   searching,
   startedAt,
   showCompletionRail,
+  onEditMessage,
 }: {
   item: Item
   hidden: boolean
@@ -451,6 +455,7 @@ function Row({
   searching: boolean | undefined
   startedAt: number | undefined
   showCompletionRail: boolean
+  onEditMessage: ((text: string) => void) | undefined
 }) {
   if (hidden) return null
 
@@ -467,6 +472,16 @@ function Row({
         {item.text ? (
           <div className="response-actions said__actions" aria-label="Prompt actions">
             <CopyAction text={item.text} label="Copy prompt" />
+            {onEditMessage ? (
+              <button
+                type="button"
+                onClick={() => onEditMessage(item.text!)}
+                aria-label="Edit prompt"
+                title="Edit"
+              >
+                <Pencil aria-hidden />
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>

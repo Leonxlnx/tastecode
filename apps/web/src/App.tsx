@@ -195,6 +195,7 @@ export function App() {
     request: number
   }>()
   const [composerFocusRequest, setComposerFocusRequest] = useState(0)
+  const [composerDraft, setComposerDraft] = useState<{ text: string; request: number }>()
   const [threadRevealRequest, setThreadRevealRequest] = useState(0)
   const [notice, setNotice] = useState<string | undefined>()
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([])
@@ -1813,6 +1814,10 @@ export function App() {
                     answers,
                   })
                 }}
+                onEditMessage={(text) => {
+                  setComposerDraft((current) => ({ text, request: (current?.request ?? 0) + 1 }))
+                  setComposerFocusRequest((request) => request + 1)
+                }}
               />
             ) : (
               <Empty projects={projects} activePath={activePath} />
@@ -1853,6 +1858,7 @@ export function App() {
               isolate={active?.session.worktreeBranch ? true : isolateSession}
               designMode={designMode}
               focusRequest={composerFocusRequest}
+              draftRequest={composerDraft}
               queuedTurns={queuedTurns}
               canSteerQueue={canSteerQueue}
               onModelChange={selectModel}

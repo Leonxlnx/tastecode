@@ -53,4 +53,36 @@ describe('thread message actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy prompt' }))
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('Keep my exact prompt'))
   })
+
+  it('sends a previous prompt back to the composer for editing', () => {
+    const onEditMessage = vi.fn()
+    render(
+      <Thread
+        items={[
+          {
+            id: 'prompt-1',
+            turnId: 'turn-1',
+            type: 'message',
+            role: 'user',
+            status: 'completed',
+            text: 'Revise this prompt',
+            createdAt: 1,
+          },
+        ]}
+        running={false}
+        activeTurn={undefined}
+        plan={[]}
+        diff={undefined}
+        approvals={[]}
+        userInputs={[]}
+        reviews={[]}
+        onEditMessage={onEditMessage}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit prompt' }))
+    expect(onEditMessage).toHaveBeenCalledWith('Revise this prompt')
+  })
 })
