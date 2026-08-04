@@ -1,4 +1,4 @@
-import os from 'node:os'
+import os, { type NetworkInterfaceInfo } from 'node:os'
 import path from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
@@ -17,6 +17,7 @@ import {
   type SidebarSettings,
 } from '@harness/contracts'
 import { StaleDiffSnapshotError } from './diff-review.js'
+import { MobileAccess, type MobileConnectionAccess } from './mobile-access.js'
 import { Orchestrator } from './orchestrator.js'
 import { detectProviders, installCommandFor, launchCommandFor } from './providers.js'
 import { checkForUpdates } from './update-check.js'
@@ -64,10 +65,14 @@ export function startServer(
     port?: number
     host?: string
     accessToken?: string | undefined
+    mobilePort?: number
+    mobileNetworkInterfaces?: () => NodeJS.Dict<NetworkInterfaceInfo[]>
+    resolveTailscaleAddresses?: () => Promise<ReadonlySet<string>>
   } = {},
 ) {
   const port = options.port ?? DEFAULT_PORT
   const host = options.host ?? '127.0.0.1'
+  const mobilePort = options.mobilePort ?? (port === 0 ? 0 : port + 1)
   assertSafeBind(host, options.accessToken)
   const wss = new WebSocketServer({ port, host })
   const push = new PushBus()
@@ -115,11 +120,30 @@ export function startServer(
   orchestrator.refreshLifecycle()
   const lifecycleTimer = setInterval(() => orchestrator.refreshLifecycle(), 30_000)
   lifecycleTimer.unref()
+  const mobileAccess = new MobileAccess({
+    store,
+    port: mobilePort,
+    onConnection: (socket, request, access) => acceptConnection(socket, request, access),
+    ...(options.mobileNetworkInterfaces
+      ? { networkInterfaces: options.mobileNetworkInterfaces }
+      : {}),
+    ...(options.resolveTailscaleAddresses
+      ? { resolveTailscaleAddresses: options.resolveTailscaleAddresses }
+      : {}),
+  })
 
   // A previous run killed mid-session leaves git believing in checkouts that
   // are gone. Clearing that up at startup means the next session on that path
   // starts instead of failing with a message about our own leftovers.
   void orchestrator.recoverWorktrees().catch(() => undefined)
+
+  if (store.mobileAccessEnabled()) {
+    void mobileAccess
+      .start()
+      .catch((error) =>
+        console.error(`[server] could not restore mobile access: ${messageOf(error)}`),
+      )
+  }
 
   wss.on('connection', (socket, request) => {
     if (!allowedOrigin(request.headers.origin)) {
@@ -130,28 +154,42 @@ export function startServer(
       socket.close(1008, 'Access denied')
       return
     }
-    push.add(socket)
-    push.send(socket, 'server.welcome', {
+    acceptConnection(socket, request, { kind: 'admin' })
+  })
+
+  function acceptConnection(socket: WebSocket, _request: unknown, access: ConnectionAccess): void {
+    const welcome = {
       serverVersion: SERVER_VERSION,
       protocolVersion: PROTOCOL_VERSION,
-    })
+    }
+
+    if (access.kind === 'pairing') {
+      socket.send(JSON.stringify({ channel: 'server.welcome', sequence: 1, data: welcome }))
+    } else {
+      push.add(socket)
+      push.send(socket, 'server.welcome', welcome)
+    }
 
     socket.on('message', (raw) =>
-      handleMessage(socket, raw.toString()).catch((error) =>
+      handleMessage(socket, raw.toString(), access).catch((error) =>
         console.error(`[server] request handling failed: ${String(error)}`),
       ),
     )
     const removeSocket = () => {
       previewCapture.remove(socket)
-      push.remove(socket)
+      if (access.kind !== 'pairing') push.remove(socket)
     }
     socket.on('close', removeSocket)
     // Without a handler, a client resetting its connection emits 'error' on a
     // bare EventEmitter and crashes the whole server.
     socket.on('error', removeSocket)
-  })
+  }
 
-  async function handleMessage(socket: WebSocket, raw: string): Promise<void> {
+  async function handleMessage(
+    socket: WebSocket,
+    raw: string,
+    access: ConnectionAccess,
+  ): Promise<void> {
     let parsed: unknown
     try {
       parsed = JSON.parse(raw)
@@ -166,6 +204,12 @@ export function startServer(
     }
     const { id, method, params } = envelope.data
 
+    if (access.kind === 'device' && !mobileAccess.isDeviceActive(access.deviceId)) {
+      respondError(socket, id, ErrorCode.FORBIDDEN, 'This device has been revoked')
+      socket.terminate()
+      return
+    }
+
     // hasOwn, not truthiness: `methods` is a plain object, so 'constructor',
     // 'toString' and friends pass a truthy check and then blow up on
     // spec.params — outside the try below, so no reply is ever sent and the
@@ -173,6 +217,11 @@ export function startServer(
     const spec = Object.hasOwn(methods, method) ? methods[method as MethodName] : undefined
     if (!spec) {
       respondError(socket, id, ErrorCode.BAD_REQUEST, `unknown method: ${method}`)
+      return
+    }
+
+    if (!methodAllowed(access, method as MethodName)) {
+      respondError(socket, id, ErrorCode.FORBIDDEN, 'This connection cannot perform that action')
       return
     }
 
@@ -190,7 +239,7 @@ export function startServer(
     }
 
     try {
-      const result = await route(socket, method as MethodName, decoded.data)
+      const result = await route(socket, method as MethodName, decoded.data, access)
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ id, result }))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -203,7 +252,12 @@ export function startServer(
     }
   }
 
-  async function route(socket: WebSocket, method: MethodName, params: unknown): Promise<unknown> {
+  async function route(
+    socket: WebSocket,
+    method: MethodName,
+    params: unknown,
+    access: ConnectionAccess,
+  ): Promise<unknown> {
     switch (method) {
       case 'client.capabilities':
         previewCapture.setCapability(
@@ -282,6 +336,37 @@ export function startServer(
       case 'connections.models': {
         const p = params as { connectionId: string }
         return { models: await orchestrator.listConnectionModels(p.connectionId) }
+      }
+
+      case 'connections.status':
+        return mobileAccess.status()
+
+      case 'connections.startPairing': {
+        const offer = await mobileAccess.startPairing()
+        store.setMobileAccessEnabled(true)
+        return offer
+      }
+
+      case 'connections.stop':
+        store.setMobileAccessEnabled(false)
+        await mobileAccess.stop()
+        return {}
+
+      case 'connections.revoke': {
+        const p = params as ParamsOf<'connections.revoke'>
+        mobileAccess.revoke(p.deviceId)
+        return {}
+      }
+
+      case 'connections.deviceStatus': {
+        const status = mobileAccess.status()
+        return { serverName: status.serverName, addresses: status.addresses }
+      }
+
+      case 'connections.claim': {
+        const p = params as ParamsOf<'connections.claim'>
+        if (access.kind !== 'pairing') throw new Error('A current pairing ticket is required')
+        return mobileAccess.claim(access, p.name)
       }
 
       case 'mcp.list': {
@@ -825,11 +910,15 @@ export function startServer(
 
   return {
     port,
-    close: () => {
+    close: async () => {
       clearInterval(lifecycleTimer)
       orchestrator.disposeAll()
+      for (const socket of wss.clients) socket.terminate()
+      await Promise.all([
+        mobileAccess.stop(),
+        new Promise<void>((resolve) => wss.close(() => resolve())),
+      ])
       store.close()
-      wss.close()
     },
   }
 }
@@ -867,6 +956,50 @@ export function allowedOrigin(origin: string | undefined): boolean {
     hostname === '[::1]' ||
     (isIPv4(hostname) && hostname.startsWith('127.'))
   )
+}
+
+type ConnectionAccess = { kind: 'admin' } | MobileConnectionAccess
+
+const DEVICE_METHODS = new Set<MethodName>([
+  'system.info',
+  'providers.list',
+  'connections.list',
+  'connections.models',
+  'connections.deviceStatus',
+  'workspace.info',
+  'workspace.branches',
+  'workspace.switchBranch',
+  'models.list',
+  'acp.agents',
+  'projects.list',
+  'attachments.saveFile',
+  'thread.history',
+  'thread.queue',
+  'thread.start',
+  'thread.rename',
+  'thread.sendTurn',
+  'thread.settle',
+  'thread.unsettle',
+  'thread.close',
+  'thread.delete',
+  'thread.diff',
+  'thread.reviewFile',
+  'thread.unsavedWork',
+  'thread.interrupt',
+  'thread.respondToApproval',
+  'thread.respondToUserInput',
+  'thread.deleteQueuedTurn',
+  'thread.steerQueuedTurn',
+])
+
+function methodAllowed(access: ConnectionAccess, method: MethodName): boolean {
+  if (access.kind === 'admin') return method !== 'connections.claim'
+  if (access.kind === 'pairing') return method === 'connections.claim'
+  return DEVICE_METHODS.has(method)
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 export function hasAccess(requestUrl: string | undefined, expected: string | undefined): boolean {
