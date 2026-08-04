@@ -139,16 +139,16 @@ export function Sidebar(props: {
             <span>New chat</span>
             <ShortcutHint>{shortcutLabel(SHORTCUTS.newChat, macOS)}</ShortcutHint>
           </button>
+          <button
+            className="navitem rail__new-project"
+            onClick={props.onAddProject}
+            aria-keyshortcuts={shortcutAria(SHORTCUTS.newProject)}
+          >
+            <FolderPen size={15} aria-hidden />
+            <span>New project</span>
+            <ShortcutHint>{shortcutLabel(SHORTCUTS.newProject, macOS)}</ShortcutHint>
+          </button>
           <div className="rail__utility-row">
-            <button
-              className="navitem rail__new-project"
-              onClick={props.onAddProject}
-              aria-keyshortcuts={shortcutAria(SHORTCUTS.newProject)}
-            >
-              <FolderPen size={15} aria-hidden />
-              <span>New project</span>
-              <ShortcutHint>{shortcutLabel(SHORTCUTS.newProject, macOS)}</ShortcutHint>
-            </button>
             <button
               type="button"
               className="icon-btn icon-btn--always rail__search"

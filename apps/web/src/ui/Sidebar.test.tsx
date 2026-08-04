@@ -58,6 +58,11 @@ describe('Sidebar chat actions', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Switch to V1 Classic sidebar' }))
     expect(onModeChange).toHaveBeenCalledWith('classic')
+    const utilityRow = screen.getByRole('button', { name: 'Search chats' }).parentElement
+    expect(utilityRow?.contains(screen.getByRole('button', { name: 'New project' }))).toBe(false)
+    expect(
+      utilityRow?.contains(screen.getByRole('button', { name: 'Switch to V1 Classic sidebar' })),
+    ).toBe(true)
     expect(screen.queryByText('private@example.com')).toBeNull()
     expect(screen.getByText('Codex')).toBeTruthy()
   })
