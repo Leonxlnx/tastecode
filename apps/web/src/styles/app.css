@@ -2799,6 +2799,10 @@
   line-height: 1.52;
 }
 
+.reply > .md {
+  max-width: 72ch;
+}
+
 .md > *:first-child {
   margin-top: 0;
 }
@@ -2809,6 +2813,7 @@
 
 .md p {
   margin: 0 0 8px;
+  text-wrap: pretty;
   word-break: break-word;
 }
 
@@ -3316,7 +3321,6 @@
 .approval {
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-left: 2px solid var(--text-2);
   border-radius: var(--r-md);
   padding: 12px 14px;
 }
@@ -3371,12 +3375,13 @@
 
 /* Quoted, because it is the agent's justification and not our claim. */
 .approval__reason {
-  border-left: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
   color: var(--text-2);
   font-size: var(--t-sm);
   line-height: 1.6;
   margin: 0 0 12px;
-  padding-left: 10px;
+  padding: 8px 10px;
 }
 
 .approval__actions {
@@ -3390,18 +3395,6 @@
   flex: 1;
 }
 
-.approval--review {
-  border-left-color: var(--text-3);
-}
-
-.approval--review.is-approved {
-  border-left-color: var(--success);
-}
-
-.approval--review.is-denied {
-  border-left-color: var(--error);
-}
-
 .approval--review .approval__head {
   margin-bottom: 6px;
 }
@@ -3410,7 +3403,6 @@
   color: var(--text-3);
   font-size: var(--t-xs);
   margin-left: auto;
-  text-transform: uppercase;
 }
 
 .approval-review__description,
