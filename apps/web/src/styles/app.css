@@ -4706,6 +4706,75 @@
   flex: 1;
 }
 
+.context-usage {
+  position: relative;
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  outline: none;
+}
+
+.context-usage svg {
+  width: 22px;
+  height: 22px;
+  overflow: visible;
+  transform: rotate(-90deg);
+}
+
+.context-usage circle {
+  fill: none;
+  stroke-width: 2.25;
+}
+
+.context-usage__track {
+  stroke: var(--line-strong);
+}
+
+.context-usage__fill {
+  stroke: var(--text-2);
+  stroke-linecap: round;
+  stroke-dasharray: var(--context-used) 100;
+  transition: stroke-dasharray var(--dur-med) var(--ease-out);
+}
+
+.context-usage__tooltip {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 40;
+  display: grid;
+  width: max-content;
+  max-width: 230px;
+  gap: 2px;
+  padding: 8px 10px;
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(3px);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.context-usage__tooltip strong {
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 550;
+}
+
+.context-usage:is(:hover, :focus-visible) .context-usage__tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .tool {
   display: inline-flex;
   align-items: center;

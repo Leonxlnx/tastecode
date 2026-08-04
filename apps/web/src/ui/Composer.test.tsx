@@ -245,6 +245,24 @@ describe('Composer height', () => {
   })
 })
 
+describe('Composer context usage', () => {
+  it('shows exact context details on the compact ring', () => {
+    renderComposer(vi.fn(), {
+      usage: {
+        inputTokens: 12_000,
+        cachedInputTokens: 0,
+        outputTokens: 3_000,
+        reasoningTokens: 0,
+        totalTokens: 15_000,
+        contextWindow: 100_000,
+      },
+    })
+
+    expect(screen.getByRole('img', { name: /context tokens used \(15%\)/ })).toBeTruthy()
+    expect(screen.getByRole('tooltip').textContent).toContain('15% context used')
+  })
+})
+
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,
   overrides: Partial<Parameters<typeof Composer>[0]> = {},

@@ -1839,6 +1839,7 @@ export function App() {
               modelId={modelId}
               effort={effort}
               serviceTier={serviceTier}
+              usage={thread.usage}
               approval={approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval}
               autoReviewSupported={autoReviewSupported}
               voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}

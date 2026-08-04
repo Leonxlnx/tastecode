@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { ApprovalMode, QueuedTurn } from '@harness/contracts'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import type { ApprovalMode, QueuedTurn, Usage } from '@harness/contracts'
 import type { ModelChoice } from '../model-catalog.js'
 import { BorderBeam } from 'border-beam'
 import {
@@ -155,6 +155,7 @@ export function Composer(props: {
   modelId: string | undefined
   effort: string | undefined
   serviceTier: string | undefined
+  usage?: Usage | undefined
   approval: ApprovalMode
   autoReviewSupported: boolean
   voiceAvailable: boolean
@@ -901,6 +902,10 @@ export function Composer(props: {
 
                 {voiceState === 'idle' ? <span className="tools__spacer" /> : null}
 
+                {voiceState === 'idle' && props.usage?.contextWindow ? (
+                  <ContextUsage usage={props.usage} />
+                ) : null}
+
                 {voiceState === 'idle' && props.models.length > 0 ? (
                   <ModelSelector
                     models={props.models}
@@ -979,6 +984,35 @@ export function Composer(props: {
         />
       ) : null}
     </>
+  )
+}
+
+function ContextUsage({ usage }: { usage: Usage }) {
+  const contextWindow = usage.contextWindow ?? 0
+  const percent = contextWindow
+    ? Math.min(100, Math.max(0, (usage.totalTokens / contextWindow) * 100))
+    : 0
+  const detail = `${usage.totalTokens.toLocaleString()} of ${contextWindow.toLocaleString()} context tokens used (${Math.round(percent)}%)`
+
+  return (
+    <span
+      className="context-usage"
+      tabIndex={0}
+      role="img"
+      aria-label={detail}
+      style={{ '--context-used': percent } as CSSProperties}
+    >
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <circle className="context-usage__track" cx="12" cy="12" r="9" />
+        <circle className="context-usage__fill" cx="12" cy="12" r="9" pathLength="100" />
+      </svg>
+      <span className="context-usage__tooltip" role="tooltip">
+        <strong>{Math.round(percent)}% context used</strong>
+        <span>
+          {usage.totalTokens.toLocaleString()} / {contextWindow.toLocaleString()} tokens
+        </span>
+      </span>
+    </span>
   )
 }
 
