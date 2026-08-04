@@ -582,6 +582,9 @@ describe('protocol envelopes', () => {
         error: null,
       }).success,
     ).toBe(true)
+    expect(
+      channels['mcp.changed'].parse({ provider: 'codex', projectPath: 'D:\\project' }),
+    ).toEqual({ provider: 'codex', projectPath: 'D:\\project' })
     expect(() =>
       methods['mcp.startOAuth'].result.parse({
         loginId: 'mcp-login-2',

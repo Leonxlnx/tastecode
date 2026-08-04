@@ -1004,6 +1004,10 @@ export const channels = {
     success: z.boolean(),
     error: z.string().nullable(),
   }),
+  'mcp.changed': z.object({
+    provider: ProviderIdSchema,
+    projectPath: z.string().min(1),
+  }),
   'skills.changed': z.object({
     provider: ProviderIdSchema,
     projectPath: z.string().min(1),
