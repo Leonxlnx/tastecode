@@ -304,28 +304,28 @@ export function startServer(
       }
 
       case 'auth.status': {
-        const p = params as { provider: ProviderId }
+        const p = params as { provider: ProviderId; agent?: string }
         return orchestrator.account(p.provider)
       }
 
       case 'auth.startLogin': {
-        const p = params as { provider: ProviderId }
+        const p = params as { provider: ProviderId; agent?: string }
         return orchestrator.startLogin(p.provider)
       }
 
       case 'auth.cancelLogin': {
-        const p = params as { provider: ProviderId; loginId: string }
+        const p = params as { provider: ProviderId; agent?: string; loginId: string }
         await orchestrator.cancelLogin(p.provider, p.loginId)
         return {}
       }
 
       case 'auth.useApiKey': {
-        const p = params as { provider: ProviderId; apiKey: string }
+        const p = params as { provider: ProviderId; agent?: string; apiKey: string }
         return orchestrator.useApiKey(p.provider, p.apiKey)
       }
 
       case 'auth.signOut': {
-        const p = params as { provider: ProviderId }
+        const p = params as { provider: ProviderId; agent?: string }
         await orchestrator.signOut(p.provider)
         return {}
       }

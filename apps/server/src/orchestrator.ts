@@ -3,6 +3,8 @@ import {
   CODEX_SKILL_CAPABILITIES,
   CodexAdapter,
 } from '@harness/adapter-codex'
+import { claudeAccount, signOutClaude, startClaudeLogin } from '@harness/adapter-claude-code'
+import { cursorAccount, signOutCursor, startCursorLogin } from '@harness/adapter-cursor'
 import {
   DESIGN_BRIEF_ATTACHMENT,
   FINAL_BRIEFING_QUESTION,
@@ -208,6 +210,7 @@ export class Orchestrator {
    * started the flow.
    */
   #control: CodexAdapter | undefined
+  #providerLogins = new Map<ProviderId, { loginId: string; cancel: () => void }>()
   #voiceRequests = new Map<string, AbortController>()
 
   async #controlAdapter(): Promise<CodexAdapter> {
@@ -439,8 +442,10 @@ export class Orchestrator {
   }
 
   async account(provider: ProviderId): Promise<Account> {
-    if (provider !== 'codex') return { signedIn: false }
-    return (await this.#controlAdapter()).account()
+    if (provider === 'codex') return (await this.#controlAdapter()).account()
+    if (provider === 'claude-code') return claudeAccount()
+    if (provider === 'cursor') return cursorAccount()
+    return { signedIn: false }
   }
 
   async usageLimits(
@@ -450,14 +455,35 @@ export class Orchestrator {
     return (await this.#controlAdapter()).rateLimits()
   }
 
-  async startLogin(provider: ProviderId): Promise<{ loginId: string; authUrl: string }> {
-    if (provider !== 'codex') throw new Error(`provider "${provider}" cannot sign in yet`)
-    return (await this.#controlAdapter()).startLogin()
+  async startLogin(provider: ProviderId): Promise<{ loginId: string; authUrl?: string }> {
+    if (provider === 'codex') return (await this.#controlAdapter()).startLogin()
+    const start =
+      provider === 'claude-code'
+        ? startClaudeLogin
+        : provider === 'cursor'
+          ? startCursorLogin
+          : undefined
+    if (!start) throw new Error(`provider "${provider}" cannot sign in yet`)
+    this.#providerLogins.get(provider)?.cancel()
+    const login = start((result) => {
+      if (this.#providerLogins.get(provider)?.loginId === result.loginId) {
+        this.#providerLogins.delete(provider)
+      }
+      this.#onLogin(provider, result)
+    })
+    this.#providerLogins.set(provider, login)
+    return { loginId: login.loginId }
   }
 
   async cancelLogin(provider: ProviderId, loginId: string): Promise<void> {
-    if (provider !== 'codex') return
-    await (await this.#controlAdapter()).cancelLogin(loginId)
+    if (provider === 'codex') {
+      await (await this.#controlAdapter()).cancelLogin(loginId)
+      return
+    }
+    const login = this.#providerLogins.get(provider)
+    if (login?.loginId !== loginId) return
+    login.cancel()
+    this.#providerLogins.delete(provider)
   }
 
   async useApiKey(provider: ProviderId, apiKey: string): Promise<Account> {
@@ -466,8 +492,9 @@ export class Orchestrator {
   }
 
   async signOut(provider: ProviderId): Promise<void> {
-    if (provider !== 'codex') return
-    await (await this.#controlAdapter()).signOut()
+    if (provider === 'codex') return (await this.#controlAdapter()).signOut()
+    if (provider === 'claude-code') return signOutClaude()
+    if (provider === 'cursor') return signOutCursor()
   }
 
   async voiceStatus(provider: ProviderId): Promise<{
