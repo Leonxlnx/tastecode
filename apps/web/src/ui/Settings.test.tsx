@@ -90,5 +90,11 @@ describe('provider settings', () => {
         'noopener,noreferrer',
       )
     })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Connect another plan or API' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Provider, OpenAI API' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Anthropic API' }))
+    expect(screen.getByRole('button', { name: 'Provider, Anthropic API' })).toBeTruthy()
+    expect(screen.getByDisplayValue('https://api.anthropic.com/v1')).toBeTruthy()
   })
 })

@@ -11,6 +11,7 @@ import type {
 import {
   ArrowLeft,
   Blocks,
+  ChevronDown,
   Database,
   Info,
   LogOut,
@@ -27,6 +28,7 @@ import { isDesktop } from '../bridge.js'
 import type { Transport } from '../transport.js'
 import type { ThemePreference } from '../theme.js'
 import { McpSettings } from './McpSettings.js'
+import { Menu, MenuItem } from './Menu.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderIcon } from './ProviderIcon.js'
 
@@ -460,24 +462,45 @@ function ProviderSettings(props: {
       ))}
       {adding ? (
         <div className="provider-form">
-          <label>
+          <div className="provider-form__field">
             <span>Provider</span>
-            <select
-              value={preset}
-              onChange={(event) => choosePreset(event.target.value as ModelConnectionPreset)}
+            <Menu
+              align="left"
+              drop="down"
+              label={`Provider, ${CONNECTION_PRESETS[preset].label}`}
+              panelLabel="API provider"
+              panelClassName="provider-form__menu"
+              triggerClassName="provider-form__select"
+              trigger={(open) => (
+                <>
+                  <span className="provider-form__select-value">
+                    <ProviderIcon mark={connectionMark(preset)} size={16} />
+                    {CONNECTION_PRESETS[preset].label}
+                  </span>
+                  <ChevronDown className={open ? 'is-open' : undefined} size={14} aria-hidden />
+                </>
+              )}
             >
-              {Object.entries(CONNECTION_PRESETS).map(([value, config]) => (
-                <option key={value} value={value}>
-                  {config.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              {(close) =>
+                Object.entries(CONNECTION_PRESETS).map(([value, config]) => (
+                  <MenuItem
+                    key={value}
+                    title={config.label}
+                    active={value === preset}
+                    onClick={() => {
+                      choosePreset(value as ModelConnectionPreset)
+                      close()
+                    }}
+                  />
+                ))
+              }
+            </Menu>
+          </div>
           <label>
             <span>Name</span>
             <input value={name} onChange={(event) => setName(event.target.value)} />
           </label>
-          <label>
+          <label className="provider-form__wide">
             <span>Base URL</span>
             <input
               value={baseUrl}
@@ -494,7 +517,7 @@ function ProviderSettings(props: {
               spellCheck={false}
             />
           </label>
-          <label>
+          <label className="provider-form__wide">
             <span>API key</span>
             <input
               type="password"
