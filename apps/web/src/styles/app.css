@@ -148,11 +148,12 @@
 .rail__utility-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: space-between;
 }
 
 .rail__new-project {
   min-width: 0;
+  width: 100%;
 }
 
 .rail__new-project > span:not(.shortcut) {
