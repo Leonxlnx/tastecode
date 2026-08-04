@@ -76,7 +76,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       }
 
     case 'turn.completed':
-      return { ...state, running: false, activeTurn: undefined, userInputs: [] }
+      return { ...state, running: false, activeTurn: undefined }
 
     case 'plan.updated':
       return { ...state, plan: event.steps }

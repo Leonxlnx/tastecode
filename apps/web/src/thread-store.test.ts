@@ -35,9 +35,15 @@ describe('thread reducer', () => {
       createdAt: 1,
     }
     const waiting = reduce(emptyThread, { type: 'user_input.requested', request })
-    const resolved = reduce(waiting, { type: 'user_input.resolved', id: request.id })
+    const completed = reduce(waiting, {
+      type: 'turn.completed',
+      turnId: request.turnId,
+      status: 'completed',
+    })
+    const resolved = reduce(completed, { type: 'user_input.resolved', id: request.id })
 
     expect(waiting.userInputs).toEqual([request])
+    expect(completed.userInputs).toEqual([request])
     expect(resolved.userInputs).toEqual([])
   })
 
