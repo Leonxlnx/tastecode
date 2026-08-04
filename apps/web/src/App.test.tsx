@@ -380,6 +380,7 @@ describe('new chats', () => {
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
     expect(document.querySelector('.stage__body.is-new-session')).toBeNull()
     expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+    const threadElement = screen.getByTestId('thread')
 
     fireEvent.change(composer, { target: { value: 'Then do this too' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
@@ -396,6 +397,7 @@ describe('new chats', () => {
         transport.request.mock.calls.filter(([method]) => method === 'usage.summary'),
       ).toHaveLength(1)
     })
+    expect(screen.getByTestId('thread')).toBe(threadElement)
 
     emitThreadEvent('thread-1', {
       type: 'turn.completed',

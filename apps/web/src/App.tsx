@@ -1220,6 +1220,7 @@ export function App() {
       setRollbackOpen(false)
       activeIdRef.current = id
       setActiveId(id)
+      setThreadRevealRequest((request) => request + 1)
       setActivePath(found?.project.path)
       const cached = threadStates.current.get(id)
       if (cached) {
@@ -1781,7 +1782,6 @@ export function App() {
           >
             {activeId ? (
               <Thread
-                key={activeId}
                 items={thread.items}
                 running={thread.running}
                 searching={searching}
