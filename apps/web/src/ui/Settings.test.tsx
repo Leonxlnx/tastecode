@@ -59,6 +59,10 @@ describe('provider settings', () => {
         onSidebarSettingsChange={() => {}}
         themePreference="system"
         onThemePreferenceChange={() => {}}
+        fontPreference="geist"
+        onFontPreferenceChange={() => {}}
+        accentPreference="neutral"
+        onAccentPreferenceChange={() => {}}
         showMacOSFontSmoothing={false}
         macOSFontSmoothing={true}
         onMacOSFontSmoothingChange={() => {}}
