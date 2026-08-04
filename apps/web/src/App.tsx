@@ -213,8 +213,7 @@ export function App() {
   const macOS = isMacOS()
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference)
   const [fontPreference, setFontPreference] = useState<FontPreference>(readFontPreference)
-  const [accentPreference, setAccentPreference] =
-    useState<AccentPreference>(readAccentPreference)
+  const [accentPreference, setAccentPreference] = useState<AccentPreference>(readAccentPreference)
   const [systemTheme, setSystemTheme] = useState<Theme>(readSystemTheme)
   const theme = themePreference === 'system' ? systemTheme : themePreference
   const [macOSFontSmoothing, setMacOSFontSmoothing] = useState(

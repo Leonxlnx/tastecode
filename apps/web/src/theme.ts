@@ -1,7 +1,8 @@
 export type Theme = 'dark' | 'light'
 export type ThemePreference = Theme | 'system'
-export type FontPreference = 'geist' | 'system'
-export type AccentPreference = 'neutral' | 'ocean' | 'sunset'
+export type FontPreference = 'geist' | 'system' | 'humanist' | 'rounded' | 'serif' | 'mono'
+export type AccentPreference =
+  'neutral' | 'ocean' | 'forest' | 'sunset' | 'amber' | 'rose' | 'lavender'
 
 export const THEME_KEY = 'harness.theme'
 export const FONT_KEY = 'harness.font'
@@ -27,7 +28,14 @@ export function applyTheme(theme: Theme): void {
 }
 
 export function readFontPreference(): FontPreference {
-  return localStorage.getItem(FONT_KEY) === 'system' ? 'system' : 'geist'
+  const stored = localStorage.getItem(FONT_KEY)
+  return stored === 'system' ||
+    stored === 'humanist' ||
+    stored === 'rounded' ||
+    stored === 'serif' ||
+    stored === 'mono'
+    ? stored
+    : 'geist'
 }
 
 export function applyFontPreference(font: FontPreference): void {
@@ -36,7 +44,14 @@ export function applyFontPreference(font: FontPreference): void {
 
 export function readAccentPreference(): AccentPreference {
   const stored = localStorage.getItem(ACCENT_KEY)
-  return stored === 'ocean' || stored === 'sunset' ? stored : 'neutral'
+  return stored === 'ocean' ||
+    stored === 'forest' ||
+    stored === 'sunset' ||
+    stored === 'amber' ||
+    stored === 'rose' ||
+    stored === 'lavender'
+    ? stored
+    : 'neutral'
 }
 
 export function applyAccentPreference(accent: AccentPreference): void {

@@ -42,12 +42,20 @@ const THEME_OPTIONS = [
 const FONT_OPTIONS = [
   { value: 'geist', label: 'Geist' },
   { value: 'system', label: 'System' },
+  { value: 'humanist', label: 'Humanist' },
+  { value: 'rounded', label: 'Rounded' },
+  { value: 'serif', label: 'Editorial' },
+  { value: 'mono', label: 'Mono' },
 ] as const satisfies ReadonlyArray<{ value: FontPreference; label: string }>
 
 const ACCENT_OPTIONS = [
   { value: 'neutral', label: 'Neutral' },
   { value: 'ocean', label: 'Ocean' },
+  { value: 'forest', label: 'Forest' },
   { value: 'sunset', label: 'Sunset' },
+  { value: 'amber', label: 'Amber' },
+  { value: 'rose', label: 'Rose' },
+  { value: 'lavender', label: 'Lavender' },
 ] as const satisfies ReadonlyArray<{ value: AccentPreference; label: string }>
 
 /**
@@ -531,41 +539,56 @@ function AppearanceSettings(props: {
     <SettingsPanel title="Appearance" groupTitle="Theme" groupClassName="settings__group--plain">
       <ThemePicker value={props.themePreference} onChange={props.onThemePreferenceChange} />
       <div className="appearance__text">
-        <h2 className="settings__group-title">Text</h2>
-        <div className="settings__group">
-          <SettingsRow title="Interface font" note="Choose the typeface used across the app.">
-            <select
-              className="settings__select"
-              aria-label="Interface font"
-              value={props.fontPreference}
-              onChange={(event) =>
-                props.onFontPreferenceChange(event.currentTarget.value as FontPreference)
-              }
+        <h2 className="settings__group-title">Interface font</h2>
+        <fieldset className="appearance-picker" aria-label="Interface font">
+          {FONT_OPTIONS.map((option) => (
+            <button
+              className={`appearance-choice${props.fontPreference === option.value ? ' is-selected' : ''}`}
+              type="button"
+              aria-pressed={props.fontPreference === option.value}
+              onClick={() => props.onFontPreferenceChange(option.value)}
+              key={option.value}
             >
-              {FONT_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </SettingsRow>
-          <SettingsRow title="Accent palette" note="Tint links, activity, and effort feedback.">
-            <select
-              className="settings__select"
-              aria-label="Accent palette"
-              value={props.accentPreference}
-              onChange={(event) =>
-                props.onAccentPreferenceChange(event.currentTarget.value as AccentPreference)
-              }
+              <span
+                className="appearance-choice__font"
+                data-font-preview={option.value}
+                aria-hidden
+              >
+                Ag
+              </span>
+              <span>{option.label}</span>
+            </button>
+          ))}
+        </fieldset>
+      </div>
+      <div className="appearance__text">
+        <h2 className="settings__group-title">Accent palette</h2>
+        <fieldset
+          className="appearance-picker appearance-picker--accent"
+          aria-label="Accent palette"
+        >
+          {ACCENT_OPTIONS.map((option) => (
+            <button
+              className={`appearance-choice${props.accentPreference === option.value ? ' is-selected' : ''}`}
+              type="button"
+              aria-pressed={props.accentPreference === option.value}
+              onClick={() => props.onAccentPreferenceChange(option.value)}
+              key={option.value}
             >
-              {ACCENT_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </SettingsRow>
-          {props.showMacOSFontSmoothing ? (
+              <span
+                className="appearance-choice__swatch"
+                data-accent-preview={option.value}
+                aria-hidden
+              />
+              <span>{option.label}</span>
+            </button>
+          ))}
+        </fieldset>
+      </div>
+      {props.showMacOSFontSmoothing ? (
+        <div className="appearance__text">
+          <h2 className="settings__group-title">Text rendering</h2>
+          <div className="settings__group">
             <SettingsRow
               title="Font smoothing"
               note="Use macOS antialiasing for lighter, crisper text."
@@ -581,9 +604,9 @@ function AppearanceSettings(props: {
                 <span className="switch__thumb" />
               </button>
             </SettingsRow>
-          ) : null}
+          </div>
         </div>
-      </div>
+      ) : null}
     </SettingsPanel>
   )
 }
