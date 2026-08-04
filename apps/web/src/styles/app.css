@@ -2161,6 +2161,14 @@
   color: var(--text);
 }
 
+.pinned-sessions {
+  margin-bottom: 8px;
+}
+
+.sessrow.is-pinned .sess {
+  padding-left: 8px;
+}
+
 .sess__title {
   flex: 1;
   overflow: hidden;

@@ -23,6 +23,7 @@ export type Session = {
   status: ThreadInboxStatus
   lifecycle: ThreadLifecycle
   unread: boolean
+  pinned?: boolean
   worktreeBranch?: string | undefined
 }
 
@@ -56,6 +57,7 @@ export function Sidebar(props: {
   onRemoveProject: (path: string) => void
   onTogglePin: (path: string) => void
   onRenameSession: (id: string, title: string) => void
+  onToggleSessionPin?: (id: string) => void
   onDeleteSession: (id: string) => void
   onArchiveProject: (sessionIds: string[]) => void
   onReorderSession: (
@@ -80,8 +82,18 @@ export function Sidebar(props: {
     if (scope && !props.projects.some((project) => project.path === scope)) setScope('')
   }, [props.projects, scope])
 
-  const pinned = props.projects.filter((project) => project.pinned)
-  const rest = props.projects.filter((project) => !project.pinned)
+  const pinnedSessions = props.projects.flatMap((project) =>
+    project.sessions
+      .filter((session) => session.pinned)
+      .map((session) => ({ projectPath: project.path, session })),
+  )
+  const orderedProjects = [
+    ...props.projects.filter((project) => project.pinned),
+    ...props.projects.filter((project) => !project.pinned),
+  ].map((project) => ({
+    ...project,
+    sessions: project.sessions.filter((session) => !session.pinned),
+  }))
 
   return (
     <div
@@ -178,23 +190,43 @@ export function Sidebar(props: {
               onRemoveProject={props.onRemoveProject}
               onTogglePin={props.onTogglePin}
               onRenameSession={props.onRenameSession}
+              onToggleSessionPin={(id) => props.onToggleSessionPin?.(id)}
               onArchiveSession={props.onDeleteSession}
             />
           ) : (
             <>
-              {pinned.length > 0 ? (
+              {pinnedSessions.length > 0 ? (
                 <>
                   <p className="section">Pinned</p>
-                  {pinned.map((project) => (
-                    <ProjectRow key={project.path} project={project} {...props} forceOpen={false} />
-                  ))}
+                  <ul className="proj__sessions pinned-sessions">
+                    {pinnedSessions.map(({ projectPath, session }) => (
+                      <SessionRow
+                        key={session.id}
+                        session={session}
+                        active={session.id === props.activeSessionId}
+                        standalone
+                        onSelect={() => props.onSelectSession(session.id)}
+                        onRename={(title) => props.onRenameSession(session.id, title)}
+                        onDelete={() => props.onDeleteSession(session.id)}
+                        onTogglePin={() => props.onToggleSessionPin?.(session.id)}
+                        onOpenInExplorer={() => void revealPath(projectPath)}
+                        reorderable={false}
+                        dragging={false}
+                        dropPosition={undefined}
+                        onDragStart={() => undefined}
+                        onDragOver={() => undefined}
+                        onDrop={() => undefined}
+                        onDragEnd={() => undefined}
+                      />
+                    ))}
+                  </ul>
                 </>
               ) : null}
               <p className="section">Projects</p>
-              {rest.length === 0 ? (
+              {orderedProjects.length === 0 ? (
                 <p className="rail__hint">Nothing here yet.</p>
               ) : (
-                rest.map((project) => (
+                orderedProjects.map((project) => (
                   <ProjectRow key={project.path} project={project} {...props} forceOpen={false} />
                 ))
               )}
@@ -253,6 +285,7 @@ function ProjectRow(props: {
   onRemoveProject: (path: string) => void
   onTogglePin: (path: string) => void
   onRenameSession: (id: string, title: string) => void
+  onToggleSessionPin?: (id: string) => void
   onDeleteSession: (id: string) => void
   onArchiveProject: (sessionIds: string[]) => void
   onReorderSession: (
@@ -412,6 +445,7 @@ function ProjectRow(props: {
               onSelect={() => props.onSelectSession(session.id)}
               onRename={(title) => props.onRenameSession(session.id, title)}
               onDelete={() => props.onDeleteSession(session.id)}
+              onTogglePin={() => props.onToggleSessionPin?.(session.id)}
               onOpenInExplorer={() => void revealPath(props.project.path)}
               reorderable={reorderable}
               dragging={session.id === draggedSessionId}
@@ -453,7 +487,9 @@ function SessionRow(props: {
   onSelect: () => void
   onRename: (title: string) => void
   onDelete: () => void
+  onTogglePin: () => void
   onOpenInExplorer: () => void
+  standalone?: boolean
   reorderable: boolean
   dragging: boolean
   dropPosition: DropPosition | undefined
@@ -481,7 +517,7 @@ function SessionRow(props: {
 
   return (
     <li
-      className={`sessrow ${props.active ? 'is-active' : ''} ${
+      className={`sessrow ${props.active ? 'is-active' : ''} ${props.standalone ? 'is-pinned' : ''} ${
         props.reorderable ? 'is-reorderable' : ''
       } ${props.dragging ? 'is-dragging' : ''}`}
       draggable={props.reorderable}
@@ -512,6 +548,13 @@ function SessionRow(props: {
       >
         {(close) => (
           <>
+            <MenuItem
+              title={props.session.pinned ? 'Unpin chat' : 'Pin chat'}
+              onClick={() => {
+                props.onTogglePin()
+                close()
+              }}
+            />
             <MenuItem
               title="Rename chat"
               onClick={() => {

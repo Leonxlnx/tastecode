@@ -492,6 +492,38 @@ describe('new chats', () => {
     })
   })
 
+  it('persists chat pinning from the sidebar menu', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          {
+            id: 'pin-thread',
+            title: 'Keep nearby',
+            provider: 'codex',
+            createdAt: 0,
+            running: false,
+          },
+        ],
+      },
+    ]
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Options for Keep nearby' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Pin chat' }))
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.pin', {
+        threadId: 'pin-thread',
+        pinned: true,
+      })
+    })
+    expect(screen.getByText('Pinned')).toBeTruthy()
+  })
+
   it('shows changed files before restoring and offers undo afterwards', async () => {
     serverProjects = [
       {

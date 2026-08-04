@@ -25,6 +25,7 @@ export function InboxSidebar(props: {
   onRemoveProject: (path: string) => void
   onTogglePin: (path: string) => void
   onRenameSession: (id: string, title: string) => void
+  onToggleSessionPin?: (id: string) => void
   onArchiveSession: (id: string) => void
 }) {
   const [snoozedOpen, setSnoozedOpen] = useState(false)
@@ -77,6 +78,7 @@ export function InboxSidebar(props: {
               actions={props.actions}
               onSelect={() => props.onSelectSession(entry.session.id)}
               onRename={(title) => props.onRenameSession(entry.session.id, title)}
+              onTogglePin={() => props.onToggleSessionPin?.(entry.session.id)}
               onArchive={() => props.onArchiveSession(entry.session.id)}
             />
           ))}
@@ -145,6 +147,7 @@ function ActiveRow(
     actions: InboxActions
     onSelect: () => void
     onRename: (title: string) => void
+    onTogglePin: () => void
     onArchive: () => void
   },
 ) {
@@ -216,6 +219,13 @@ function ActiveRow(
         >
           {(close) => (
             <>
+              <MenuItem
+                title={props.session.pinned ? 'Unpin chat' : 'Pin chat'}
+                onClick={() => {
+                  props.onTogglePin()
+                  close()
+                }}
+              />
               {eligible ? (
                 <>
                   <MenuItem

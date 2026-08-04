@@ -558,6 +558,7 @@ export function App() {
             status: session.status ?? (session.running ? 'working' : 'idle'),
             lifecycle: session.lifecycle ?? { state: 'active', keepActive: false },
             unread: session.unread ?? false,
+            pinned: session.pinned ?? false,
             ...(session.worktreeBranch ? { worktreeBranch: session.worktreeBranch } : {}),
           })),
           savedOrder,
@@ -1634,6 +1635,13 @@ export function App() {
           onRenameSession={(id, title) => {
             setProjects((c) => renameSession(c, id, title))
             void transport.request('thread.rename', { threadId: id, title }).catch(() => undefined)
+          }}
+          onToggleSessionPin={(id) => {
+            const pinned = !findSession(projects, id)?.session.pinned
+            setProjects((current) =>
+              updateSession(current, id, (session) => ({ ...session, pinned })),
+            )
+            void transport.request('thread.pin', { threadId: id, pinned }).catch(() => undefined)
           }}
           onDeleteSession={(id) => void archiveSession(id)}
           onArchiveProject={(sessionIds) => {

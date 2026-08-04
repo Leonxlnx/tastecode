@@ -156,6 +156,47 @@ describe('Sidebar chat actions', () => {
     expect(onRemoveProject).toHaveBeenCalledWith('/work/harness')
   })
 
+  it('shows pinned chats once at the top and unpins them from their row menu', () => {
+    const onToggleSessionPin = vi.fn()
+    const pinned = { ...session('thread-1', 'Pinned chat'), pinned: true }
+    render(
+      <Sidebar
+        projects={[
+          {
+            path: '/work/harness',
+            name: 'Harness',
+            sessions: [pinned, session('thread-2', 'Regular chat')],
+          },
+        ]}
+        activeProjectPath="/work/harness"
+        activeSessionId="thread-1"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onToggleSessionPin={onToggleSessionPin}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('Pinned')).toBeTruthy()
+    expect(screen.getAllByText('Pinned chat')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Options for Pinned chat' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Unpin chat' }))
+    expect(onToggleSessionPin).toHaveBeenCalledWith('thread-1')
+  })
+
   it('reorders chats when one is dragged between sidebar rows', () => {
     const onReorderSession = vi.fn()
 
