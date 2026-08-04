@@ -131,6 +131,41 @@ describe('MCP settings', () => {
     await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
   })
 
+  it('refreshes when background MCP discovery finishes', async () => {
+    const listeners = new Map<string, (value: never) => void>()
+    const transport = {
+      request: vi.fn(async () => ({
+        capabilities: {
+          inventory: true,
+          add: true,
+          update: true,
+          remove: true,
+          reload: true,
+          startOAuth: true,
+          cancelOAuth: false,
+        },
+        servers: [],
+      })),
+      on: vi.fn((channel: string, listener: (value: never) => void) => {
+        listeners.set(channel, listener)
+        return () => listeners.delete(channel)
+      }),
+    } as unknown as Transport
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(1))
+    listeners.get('mcp.changed')?.({ provider: 'codex', projectPath: '/work/project' } as never)
+    await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
+  })
+
   it('adds a project server and disables an inherited server', async () => {
     const transport = client(async (method) => {
       if (method === 'mcp.list') {

@@ -52,7 +52,7 @@ export function McpSettings(props: {
       return
     }
     void refresh()
-    return props.transport.on('mcp.oauth', (result) => {
+    const offOAuth = props.transport.on('mcp.oauth', (result) => {
       if (result.provider !== props.provider || result.projectPath !== props.projectPath) return
       setBusy(undefined)
       if (result.success) {
@@ -63,6 +63,13 @@ export function McpSettings(props: {
         setError(result.error ?? 'MCP sign-in failed.')
       }
     })
+    const offChanged = props.transport.on('mcp.changed', ({ provider, projectPath }) => {
+      if (provider === props.provider && projectPath === props.projectPath) void refresh()
+    })
+    return () => {
+      offOAuth()
+      offChanged()
+    }
   }, [props.transport, props.provider, props.projectPath, refresh])
 
   async function applyChange(action: () => Promise<unknown>, success: string): Promise<boolean> {
