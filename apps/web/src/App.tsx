@@ -151,6 +151,7 @@ export function App() {
   const [models, setModels] = useState<ModelChoice[]>([])
   const [modelsLoaded, setModelsLoaded] = useState(false)
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([])
+  const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
   const [modelConnections, setModelConnections] = useState<ModelConnection[]>([])
   const [catalogRequest, setCatalogRequest] = useState(0)
   const [hiddenModels, setHiddenModels] = useState<Set<string>>(() => {
@@ -459,6 +460,7 @@ export function App() {
       if (cancelled) return
       const catalog = [...direct.flat(), ...(await Promise.all(acp)).flat(), ...api]
       setProviderStatuses(providers)
+      setAcpAgents(agentsResult?.agents ?? [])
       setModelConnections(connections)
       setModels(catalog)
       setModelsLoaded(true)
@@ -1883,6 +1885,7 @@ export function App() {
           projectName={activeProject ? displayName(activeProject) : undefined}
           account={account}
           providerStatuses={providerStatuses}
+          acpAgents={acpAgents}
           modelConnections={modelConnections}
           models={models}
           hiddenModels={hiddenModels}

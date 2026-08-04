@@ -6,6 +6,7 @@ import type {
   ModelTransport,
   ProviderId,
   ProviderStatus,
+  ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
 import {
@@ -23,7 +24,7 @@ import {
   RotateCcw,
   UserRound,
 } from 'lucide-react'
-import { connectionMark, providerMark, type ModelChoice } from '../model-catalog.js'
+import { agentMark, connectionMark, providerMark, type ModelChoice } from '../model-catalog.js'
 import { isDesktop } from '../bridge.js'
 import type { Transport } from '../transport.js'
 import type { AccentPreference, FontPreference, ThemePreference } from '../theme.js'
@@ -72,6 +73,7 @@ export function Settings(props: {
   projectName: string | undefined
   account: Account | undefined
   providerStatuses: ProviderStatus[]
+  acpAgents: ResultOf<'acp.agents'>['agents']
   modelConnections: ModelConnection[]
   models: ModelChoice[]
   hiddenModels: Set<string>
@@ -300,6 +302,7 @@ function ProviderSettings(props: {
   providerName: string
   account: Account | undefined
   providerStatuses: ProviderStatus[]
+  acpAgents: ResultOf<'acp.agents'>['agents']
   modelConnections: ModelConnection[]
   transport: Transport
   onConnectionsChanged: () => void
@@ -418,47 +421,92 @@ function ProviderSettings(props: {
           {authError}
         </p>
       ) : null}
-      {props.providerStatuses.map((status) => {
-        const account =
-          accounts[status.id] ?? (status.id === props.provider ? props.account : undefined)
-        const accountStatus = account?.signedIn
-          ? [account.email, account.plan].filter(Boolean).join(' · ') || 'Signed in'
-          : status.installed
-            ? 'Not signed in'
-            : 'Install the provider CLI to sign in.'
-        const busy = authBusy === status.id
-        return (
-          <SettingsRow key={status.id} title={status.displayName} note={accountStatus}>
-            <div className="provider-settings__actions">
-              <ProviderIcon mark={providerMark(status.id)} size={17} />
-              {status.id === 'acp' ? (
-                <span className={status.installed ? 'is-ready' : ''}>
-                  {status.installed ? 'Available' : 'Not installed'}
-                </span>
-              ) : account?.signedIn ? (
-                <button
-                  className="settings__action"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void signOut(status.id)}
-                >
-                  <LogOut size={13} aria-hidden />
-                  {busy ? 'Signing out…' : 'Sign out'}
-                </button>
-              ) : (
-                <button
-                  className="settings__action"
-                  type="button"
-                  disabled={!status.installed || busy}
-                  onClick={() => void signIn(status.id)}
-                >
-                  {busy ? 'Signing in…' : 'Sign in'}
-                </button>
-              )}
-            </div>
-          </SettingsRow>
-        )
-      })}
+      {props.providerStatuses
+        .filter((status) => status.id !== 'acp')
+        .map((status) => {
+          const account =
+            accounts[status.id] ?? (status.id === props.provider ? props.account : undefined)
+          const accountStatus = account?.signedIn
+            ? [account.email, account.plan].filter(Boolean).join(' · ') || 'Signed in'
+            : status.installed
+              ? status.setup?.login === 'provider'
+                ? 'Finish sign-in in the provider CLI.'
+                : 'Not signed in'
+              : (status.setup?.installCommand ?? status.problem ?? 'Provider CLI is not installed.')
+          const busy = authBusy === status.id
+          return (
+            <SettingsRow key={status.id} title={status.displayName} note={accountStatus}>
+              <div className="provider-settings__actions">
+                <ProviderIcon mark={providerMark(status.id)} size={17} />
+                {account?.signedIn ? (
+                  <button
+                    className="settings__action"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void signOut(status.id)}
+                  >
+                    <LogOut size={13} aria-hidden />
+                    {busy ? 'Signing out…' : 'Sign out'}
+                  </button>
+                ) : !status.installed ? (
+                  <button
+                    className="settings__action"
+                    type="button"
+                    disabled={!status.setup}
+                    onClick={() =>
+                      status.setup &&
+                      window.open(status.setup.installUrl, '_blank', 'noopener,noreferrer')
+                    }
+                  >
+                    Install first
+                  </button>
+                ) : status.setup?.login === 'provider' ? (
+                  <button
+                    className="settings__action"
+                    type="button"
+                    onClick={() =>
+                      window.open(status.setup!.installUrl, '_blank', 'noopener,noreferrer')
+                    }
+                  >
+                    Sign in
+                  </button>
+                ) : (
+                  <button
+                    className="settings__action"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void signIn(status.id)}
+                  >
+                    {busy ? 'Signing in…' : 'Sign in'}
+                  </button>
+                )}
+              </div>
+            </SettingsRow>
+          )
+        })}
+
+      {props.acpAgents.map((agent) => (
+        <SettingsRow
+          key={agent.id}
+          title={agent.name}
+          note={
+            agent.installed
+              ? 'Installed · sign-in is managed by the provider CLI.'
+              : (agent.setup.installCommand ?? 'Provider CLI is not installed.')
+          }
+        >
+          <div className="provider-settings__actions">
+            <ProviderIcon mark={agentMark(agent.id)} size={17} />
+            <button
+              className="settings__action"
+              type="button"
+              onClick={() => window.open(agent.setup.installUrl, '_blank', 'noopener,noreferrer')}
+            >
+              {agent.installed ? 'Sign in' : 'Install first'}
+            </button>
+          </div>
+        </SettingsRow>
+      ))}
 
       <h2 className="settings__group-title settings__group-title--inside">API connections</h2>
       {props.modelConnections.map((connection) => (

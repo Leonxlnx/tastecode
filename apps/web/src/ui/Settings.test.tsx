@@ -49,6 +49,29 @@ describe('provider settings', () => {
           },
           { id: 'cursor', displayName: 'Cursor', installed: true, auth: 'unauthenticated' },
         ]}
+        acpAgents={[
+          {
+            id: 'gemini',
+            name: 'Gemini CLI',
+            installed: false,
+            verified: true,
+            setup: {
+              installUrl: 'https://example.test/gemini',
+              installCommand: 'npm install -g @google/gemini-cli',
+              login: 'provider',
+            },
+          },
+          {
+            id: 'kimi',
+            name: 'Kimi CLI',
+            installed: true,
+            verified: true,
+            setup: {
+              installUrl: 'https://example.test/kimi',
+              login: 'provider',
+            },
+          },
+        ]}
         modelConnections={[]}
         models={[]}
         hiddenModels={new Set()}
@@ -74,6 +97,8 @@ describe('provider settings', () => {
 
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Sign out' })).toHaveLength(2))
     expect(screen.getAllByText('Codex')).toHaveLength(1)
+    expect(screen.getByText('Gemini CLI')).toBeTruthy()
+    expect(screen.getByText('Kimi CLI')).toBeTruthy()
 
     const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
     const cursorRow = screen.getByText('Cursor').closest<HTMLElement>('.settings__row')
@@ -100,5 +125,14 @@ describe('provider settings', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Anthropic API' }))
     expect(screen.getByRole('button', { name: 'Provider, Anthropic API' })).toBeTruthy()
     expect(screen.getByDisplayValue('https://api.anthropic.com/v1')).toBeTruthy()
+
+    const geminiRow = screen.getByText('Gemini CLI').closest<HTMLElement>('.settings__row')
+    if (!geminiRow) throw new Error('Gemini provider row missing')
+    fireEvent.click(within(geminiRow).getByRole('button', { name: 'Install first' }))
+    expect(open).toHaveBeenCalledWith(
+      'https://example.test/gemini',
+      '_blank',
+      'noopener,noreferrer',
+    )
   })
 })
