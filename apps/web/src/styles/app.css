@@ -2973,10 +2973,6 @@
   animation: activity-in 260ms var(--ease-out) both;
 }
 
-.activity:not(.activity--working) > .activity__summary {
-  border-bottom: 1px solid var(--line);
-}
-
 .activity--working .activity__summary {
   cursor: default;
   font-variant-numeric: tabular-nums;
