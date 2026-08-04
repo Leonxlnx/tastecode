@@ -124,7 +124,12 @@ describe('thread reducer', () => {
     const optimistic = beginOptimisticTurn(emptyThread, 'resume this chat')
     const confirmed = reduce(optimistic, {
       type: 'turn.started',
-      turn: { id: 'server-turn', createdAt: Date.now() + 5_000 },
+      turn: {
+        id: 'server-turn',
+        threadId: 'thread-1',
+        status: 'running',
+        createdAt: Date.now() + 5_000,
+      },
     })
 
     expect(confirmed.activeTurn).toEqual({
