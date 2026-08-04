@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import type { CSSProperties } from 'react'
 import type {
   Account,
   ApprovalMode,
@@ -79,6 +80,7 @@ const APPROVAL_KEY = 'harness.approval'
 const MACOS_FONT_SMOOTHING_KEY = 'harness.macosFontSmoothing'
 const TERMINAL_OPEN_KEY = 'harness.terminal.open'
 const TERMINAL_HEIGHT_KEY = 'harness.terminal.height'
+const RAIL_WIDTH_KEY = 'harness.rail.width'
 const DEFAULT_SIDEBAR_SETTINGS: SidebarSettings = { mode: 'inbox', autoSettleDays: 3 }
 const TerminalPane = lazy(() =>
   import('./ui/TerminalPane.js').then((module) => ({ default: module.TerminalPane })),
@@ -168,6 +170,7 @@ export function App() {
   const [collapsed, setCollapsed] = useState(
     () => globalThis.matchMedia?.('(max-width: 700px)').matches ?? false,
   )
+  const [railWidth, setRailWidth] = useState(readRailWidth)
   const [workspace, setWorkspace] = useState<WorkspaceInfo | undefined>()
   const [branches, setBranches] = useState<string[]>([])
   const [account, setAccount] = useState<Account | undefined>()
@@ -1636,7 +1639,10 @@ export function App() {
   ]
 
   return (
-    <div className={`shell ${collapsed ? 'is-narrow' : ''}`}>
+    <div
+      className={`shell ${collapsed ? 'is-narrow' : ''}`}
+      style={{ '--rail-w': `${railWidth}px` } as CSSProperties}
+    >
       <TitleBar collapsed={collapsed} onToggleRail={() => setCollapsed((c) => !c)} />
       {isDesktop ? <ZoomHud /> : null}
 
@@ -1656,8 +1662,13 @@ export function App() {
             onKeepActive: (id, keepActive) => void keepSessionActive(id, keepActive),
           }}
           collapsed={collapsed}
+          width={railWidth}
           account={account}
           onClose={() => setCollapsed(true)}
+          onWidthChange={(width) => {
+            setRailWidth(width)
+            localStorage.setItem(RAIL_WIDTH_KEY, String(width))
+          }}
           onAddProject={() => void addProject()}
           onNewSession={(path) => {
             if (path) beginSession(path)
@@ -1956,6 +1967,11 @@ export function App() {
       ) : null}
     </div>
   )
+}
+
+function readRailWidth(): number {
+  const stored = Number(localStorage.getItem(RAIL_WIDTH_KEY))
+  return Number.isFinite(stored) && stored >= 176 && stored <= 420 ? stored : 248
 }
 
 function Empty(props: { projects: Project[]; activePath: string | undefined }) {

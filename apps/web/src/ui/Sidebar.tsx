@@ -1,4 +1,11 @@
-import { type DragEvent, useEffect, useRef, useState } from 'react'
+import {
+  type DragEvent,
+  type KeyboardEvent,
+  type PointerEvent,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
 import type { Account, ProviderId, ThreadInboxStatus, ThreadLifecycle } from '@harness/contracts'
 import { Ellipsis, Folder, FolderPen, Plus, Search, X } from 'lucide-react'
 import { isDesktop, isMacOS, revealPath } from '../bridge.js'
@@ -38,6 +45,9 @@ export type Project = {
 type DropPosition = 'before' | 'after'
 
 const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
+const MIN_RAIL_WIDTH = 148
+const COLLAPSE_RAIL_WIDTH = 176
+const MAX_RAIL_WIDTH = 420
 
 export function Sidebar(props: {
   projects: Project[]
@@ -49,7 +59,9 @@ export function Sidebar(props: {
   onModeChange?: ((mode: 'classic' | 'inbox') => void) | undefined
   inbox?: InboxActions | undefined
   collapsed: boolean
+  width: number
   onClose: () => void
+  onWidthChange: (width: number) => void
   onAddProject: () => void
   onNewSession: (projectPath?: string) => void
   onSelectSession: (id: string) => void
@@ -260,8 +272,78 @@ export function Sidebar(props: {
           </Menu>
         </div>
       </nav>
+      {!props.collapsed ? (
+        <RailResizeHandle
+          width={props.width}
+          onWidthChange={props.onWidthChange}
+          onCollapse={props.onClose}
+        />
+      ) : null}
     </div>
   )
+}
+
+function RailResizeHandle(props: {
+  width: number
+  onWidthChange: (width: number) => void
+  onCollapse: () => void
+}) {
+  const drag = useRef<{ startX: number; width: number; current: number } | undefined>(undefined)
+
+  const preview = (target: HTMLElement, width: number) => {
+    target.closest<HTMLElement>('.shell')?.style.setProperty('--rail-w', `${width}px`)
+  }
+
+  const finish = (target: HTMLElement, width: number) => {
+    if (width <= COLLAPSE_RAIL_WIDTH) {
+      preview(target, props.width)
+      props.onCollapse()
+    } else {
+      props.onWidthChange(width)
+    }
+  }
+
+  const resizeWithKeyboard = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    event.preventDefault()
+    const next = clampRailWidth(props.width + (event.key === 'ArrowLeft' ? -8 : 8))
+    finish(event.currentTarget, next)
+  }
+
+  return (
+    <button
+      type="button"
+      className="rail__resize"
+      role="separator"
+      aria-label="Resize sidebar"
+      aria-orientation="vertical"
+      aria-valuemin={MIN_RAIL_WIDTH}
+      aria-valuemax={MAX_RAIL_WIDTH}
+      aria-valuenow={props.width}
+      onKeyDown={resizeWithKeyboard}
+      onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
+        event.currentTarget.setPointerCapture?.(event.pointerId)
+        drag.current = { startX: event.clientX, width: props.width, current: props.width }
+      }}
+      onPointerMove={(event: PointerEvent<HTMLButtonElement>) => {
+        if (!drag.current) return
+        const next = clampRailWidth(drag.current.width + event.clientX - drag.current.startX)
+        drag.current.current = next
+        preview(event.currentTarget, next)
+      }}
+      onPointerUp={(event: PointerEvent<HTMLButtonElement>) => {
+        if (!drag.current) return
+        const width = drag.current.current
+        drag.current = undefined
+        event.currentTarget.releasePointerCapture?.(event.pointerId)
+        finish(event.currentTarget, width)
+      }}
+    />
+  )
+}
+
+function clampRailWidth(width: number): number {
+  return Math.min(MAX_RAIL_WIDTH, Math.max(MIN_RAIL_WIDTH, Math.round(width)))
 }
 
 function ProjectRow(props: {

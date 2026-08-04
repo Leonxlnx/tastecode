@@ -113,6 +113,31 @@
   width: 6px;
 }
 
+.rail__resize {
+  position: absolute;
+  z-index: 2;
+  inset: 0 -3px 0 auto;
+  width: 6px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.rail__resize::after {
+  content: '';
+  position: absolute;
+  inset: 0 2px;
+  background: var(--line-strong);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.rail__resize:is(:hover, :focus-visible)::after {
+  opacity: 1;
+}
+
 .rail__actions {
   padding: 12px 10px 10px;
   display: flex;
@@ -5625,6 +5650,10 @@
 
   .rail-slot {
     z-index: 20;
+  }
+
+  .rail__resize {
+    display: none;
   }
 
   .rail-slot .rail {
