@@ -147,7 +147,7 @@ export type ProviderRuntime = {
     workspacePath: string,
     options: StartOptions,
   ): Promise<{ thread: Thread; session: AgentSession }>
-  listModels(): Promise<Model[]>
+  listModels(agent?: string): Promise<Model[]>
 }
 
 export function providerRuntime(
@@ -282,7 +282,10 @@ function acpRuntime(onLog: (line: string) => void): ProviderRuntime {
       const adapter = new AcpAdapter(options.agent)
       adapter.on('log', onLog)
       try {
-        const thread = await adapter.startThread(workspacePath, { approval: options.approval })
+        const thread = await adapter.startThread(workspacePath, {
+          approval: options.approval,
+          model: options.model,
+        })
         return { thread, session: adapter }
       } catch (error) {
         adapter.dispose()
@@ -296,6 +299,7 @@ function acpRuntime(onLog: (line: string) => void): ProviderRuntime {
       try {
         const thread = await adapter.resumeThread(threadId, workspacePath, {
           approval: options.approval,
+          model: options.model,
         })
         return { thread, session: adapter }
       } catch (error) {
@@ -303,9 +307,9 @@ function acpRuntime(onLog: (line: string) => void): ProviderRuntime {
         throw error
       }
     },
-    // ACP has no model listing. The picker hides itself when this is empty.
-    async listModels() {
-      return []
+    async listModels(agent) {
+      if (!agent) return []
+      return new AcpAdapter(agent).listModels()
     },
   }
 }

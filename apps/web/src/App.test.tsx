@@ -269,6 +269,49 @@ afterEach(() => {
 })
 
 describe('web client', () => {
+  it('discovers models separately for each installed ACP agent', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'acp.agents') {
+        return Promise.resolve({
+          agents: [
+            { id: 'gemini', name: 'Gemini CLI', installed: true, verified: true },
+            { id: 'kimi', name: 'Kimi CLI', installed: true, verified: true },
+          ],
+        })
+      }
+      if (method === 'models.list' && (params as { provider?: string }).provider === 'acp') {
+        const agent = (params as { agent: string }).agent
+        return Promise.resolve({
+          models: [
+            {
+              id: `${agent}-model`,
+              displayName: `${agent} model`,
+              isDefault: true,
+              reasoningEfforts: [],
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('models.list', {
+        provider: 'acp',
+        agent: 'gemini',
+      })
+      expect(transport.request).toHaveBeenCalledWith('models.list', {
+        provider: 'acp',
+        agent: 'kimi',
+      })
+    })
+  })
+
   it('reconnects when a newly opened mobile link changes the access token', async () => {
     window.location.hash = '#access_token=first-token'
     render(<App />)

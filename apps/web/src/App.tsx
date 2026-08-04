@@ -385,17 +385,21 @@ export function App() {
       )
       const acp = (agentsResult?.agents ?? [])
         .filter((agent) => agent.installed)
-        .flatMap((agent) =>
-          choicesFor(
+        .map(async (agent) => {
+          const result = await transport
+            .request('models.list', { provider: 'acp', agent: agent.id })
+            .catch(() => ({ models: [] }))
+          return choicesFor(
             {
               provider: 'acp',
               sourceName: agent.name,
               mark: agentMark(agent.id),
               agent: { id: agent.id, name: agent.name },
             },
-            [],
-          ),
-        )
+            result.models,
+            false,
+          )
+        })
       const api = (
         await Promise.all(
           connections
@@ -429,7 +433,7 @@ export function App() {
         )
       ).flat()
       if (cancelled) return
-      const catalog = [...direct.flat(), ...acp, ...api]
+      const catalog = [...direct.flat(), ...(await Promise.all(acp)).flat(), ...api]
       setProviderStatuses(providers)
       setModelConnections(connections)
       setModels(catalog)

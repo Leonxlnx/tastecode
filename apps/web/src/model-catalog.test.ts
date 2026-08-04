@@ -31,4 +31,19 @@ describe('model catalog', () => {
   ] as const)('uses the correct mark for %s', (agent, mark) => {
     expect(agentMark(agent)).toBe(mark)
   })
+
+  it('can omit a fake fallback when discovery is authoritative', () => {
+    expect(
+      choicesFor(
+        {
+          provider: 'acp',
+          sourceName: 'Kimi CLI',
+          mark: 'kimi',
+          agent: { id: 'kimi', name: 'Kimi CLI' },
+        },
+        [],
+        false,
+      ),
+    ).toEqual([])
+  })
 })

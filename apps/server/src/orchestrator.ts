@@ -225,11 +225,11 @@ export class Orchestrator {
     return adapter
   }
 
-  async listModels(provider: ProviderId): Promise<Model[]> {
+  async listModels(provider: ProviderId, agent?: string): Promise<Model[]> {
     // Codex has a control adapter already running; everything else asks its
     // own runtime, which is free to answer with nothing.
     if (provider === 'codex') return (await this.#controlAdapter()).listModels()
-    return providerRuntime(provider, this.#onLog).listModels()
+    return providerRuntime(provider, this.#onLog).listModels(agent)
   }
 
   listModelConnections() {

@@ -352,8 +352,8 @@ export function startServer(
       }
 
       case 'models.list': {
-        const p = params as { provider: ProviderId }
-        return { models: await orchestrator.listModels(p.provider) }
+        const p = params as { provider: ProviderId; agent?: string }
+        return { models: await orchestrator.listModels(p.provider, p.agent) }
       }
 
       case 'voice.status': {

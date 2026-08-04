@@ -69,13 +69,14 @@ export function agentMark(agentId: string): ProviderMark {
 export function choicesFor(
   input: Omit<ModelChoice, 'key' | 'model'>,
   models: Model[],
+  fallback = true,
 ): ModelChoice[] {
   const source = sourceKey({
     provider: input.provider,
     connectionId: input.connectionId,
     agentId: input.agent?.id,
   })
-  return (models.length > 0 ? models : [automaticModel()]).map((model) => ({
+  return (models.length > 0 ? models : fallback ? [automaticModel()] : []).map((model) => ({
     ...input,
     model,
     key: modelChoiceKey(source, model.id),
