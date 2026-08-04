@@ -263,6 +263,17 @@ describe('Composer context usage', () => {
   })
 })
 
+describe('Composer branch shelf', () => {
+  it('shows the branch picker only when the project has branches', () => {
+    renderComposer(vi.fn())
+    expect(screen.getByRole('button', { name: 'Choose branch' })).toBeTruthy()
+
+    cleanup()
+    renderComposer(vi.fn(), { branch: undefined, branches: [] })
+    expect(screen.queryByRole('button', { name: 'Choose branch' })).toBeNull()
+  })
+})
+
 describe('Composer draft replacement', () => {
   it('loads a previous prompt for editing and focuses it', async () => {
     renderComposer(vi.fn(), {

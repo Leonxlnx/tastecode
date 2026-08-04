@@ -592,34 +592,35 @@ export function Composer(props: {
                 </span>
               </button>
 
-              <Menu
-                label="Choose branch"
-                drop="down"
-                disabled={props.branches.length === 0}
-                triggerClassName="shelf-control shelf-control--branch"
-                trigger={() => (
-                  <span className="shelf-control__content">
-                    <GitBranch size={15} aria-hidden />
-                    <span>{props.branch ?? 'No branch'}</span>
-                  </span>
-                )}
-              >
-                {(close) => (
-                  <>
-                    {props.branches.map((branch) => (
-                      <MenuItem
-                        key={branch}
-                        title={branch}
-                        active={branch === props.branch}
-                        onClick={() => {
-                          props.onBranchChange(branch)
-                          close()
-                        }}
-                      />
-                    ))}
-                  </>
-                )}
-              </Menu>
+              {props.branches.length > 0 ? (
+                <Menu
+                  label="Choose branch"
+                  drop="down"
+                  triggerClassName="shelf-control shelf-control--branch"
+                  trigger={() => (
+                    <span className="shelf-control__content">
+                      <GitBranch size={15} aria-hidden />
+                      <span>{props.branch ?? 'No branch'}</span>
+                    </span>
+                  )}
+                >
+                  {(close) => (
+                    <>
+                      {props.branches.map((branch) => (
+                        <MenuItem
+                          key={branch}
+                          title={branch}
+                          active={branch === props.branch}
+                          onClick={() => {
+                            props.onBranchChange(branch)
+                            close()
+                          }}
+                        />
+                      ))}
+                    </>
+                  )}
+                </Menu>
+              ) : null}
             </div>
           ) : null}
 
