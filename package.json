@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "node tools/scripts/dev.js",
+    "harness": "tsx apps/server/src/cli.ts",
     "dev:mobile": "node tools/scripts/dev.js --mobile",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",

@@ -21,12 +21,13 @@ import { MobileAccess, type MobileConnectionAccess } from './mobile-access.js'
 import { Orchestrator } from './orchestrator.js'
 import { detectProviders } from './providers.js'
 import { PushBus } from './push-bus.js'
+import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
 
 export const SERVER_VERSION = '0.0.0'
-export const DEFAULT_PORT = 4311
+export { DEFAULT_PORT } from './server-config.js'
 
 /**
  * Where the database lives.
@@ -134,6 +135,12 @@ export function startServer(
       .catch((error) =>
         console.error(`[server] could not restore mobile access: ${messageOf(error)}`),
       )
+  }
+
+  async function startPairing() {
+    const offer = await mobileAccess.startPairing()
+    store.setMobileAccessEnabled(true)
+    return offer
   }
 
   wss.on('connection', (socket, request) => {
@@ -283,9 +290,7 @@ export function startServer(
         return mobileAccess.status()
 
       case 'connections.startPairing': {
-        const offer = await mobileAccess.startPairing()
-        store.setMobileAccessEnabled(true)
-        return offer
+        return startPairing()
       }
 
       case 'connections.stop':
@@ -836,6 +841,7 @@ export function startServer(
 
   return {
     port,
+    startPairing,
     close: async () => {
       clearInterval(lifecycleTimer)
       orchestrator.disposeAll()
