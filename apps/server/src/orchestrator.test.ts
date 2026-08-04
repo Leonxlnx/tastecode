@@ -297,7 +297,7 @@ describe('provider-neutral design briefing', () => {
                 constraints: [],
                 brandInputs: [],
                 creativeControl: 'Agent-led',
-                explicitAnswers: [],
+                explicitAnswers: [{ question: 'Malformed', answer: ['Not a string'] }],
                 assumptions: ['The agent chose unresolved details.'],
                 unresolved: [],
               },
@@ -315,9 +315,12 @@ describe('provider-neutral design briefing', () => {
         orchestrator.respondToUserInput(thread.id, finalRequest.request.id, {
           final_note: ["No, that's everything (Recommended)"],
         })
-        expect(
-          JSON.parse(readFileSync(path.join(workspace, '.taste', 'brief.json'), 'utf8')).subject,
-        ).toBe('Independent studio')
+        const brief = JSON.parse(readFileSync(path.join(workspace, '.taste', 'brief.json'), 'utf8'))
+        expect(brief.subject).toBe('Independent studio')
+        expect(brief.explicitAnswers).toEqual([
+          { question: 'What should field 1 be?', answer: 'Something vague' },
+          { question: 'Could you clarify that answer?', answer: 'Decide for me' },
+        ])
         expect(sessions[0]?.userInputs).toEqual([])
         expect(sessions[0]?.sentOptions).toEqual([
           { model, effort: 'low' },

@@ -70,6 +70,7 @@ type DesignFlow = {
   options: TurnOptions
   askedQuestions: boolean
   finalAsked: boolean
+  explicitAnswers: Array<{ question: string; answer: string }>
   pendingBrief?: unknown
 }
 type DesignInput = {
@@ -586,6 +587,7 @@ export class Orchestrator {
           options: turnOptions,
           askedQuestions: false,
           finalAsked: false,
+          explicitAnswers: [],
         })
       }
       const prompt = design ? designBriefingPrompt(text) : text
@@ -1058,6 +1060,14 @@ export class Orchestrator {
         (answers[FINAL_BRIEFING_QUESTION.id] ?? []).some((answer) =>
           answer.startsWith("No, that's everything"),
         )
+      if (!noMoreDetails) {
+        flow.explicitAnswers.push(
+          ...designInput.questions.flatMap((question) => {
+            const answer = (answers[question.id] ?? []).join(', ').trim()
+            return answer ? [{ question: question.question, answer }] : []
+          }),
+        )
+      }
       if (noMoreDetails && flow.pendingBrief) {
         this.#completeDesignBrief(threadId, designInput.turnId, flow.pendingBrief)
         void this.#drainQueue(threadId)
@@ -1401,7 +1411,12 @@ export class Orchestrator {
   #completeDesignBrief(threadId: string, turnId: string, brief: unknown): void {
     const flow = this.#designFlows.get(threadId)
     if (!flow) return
-    writeDesignBrief(flow.workspacePath, brief)
+    writeDesignBrief(
+      flow.workspacePath,
+      typeof brief === 'object' && brief !== null && !Array.isArray(brief)
+        ? { ...brief, explicitAnswers: flow.explicitAnswers }
+        : brief,
+    )
     this.#clearDesignFlow(threadId)
     this.#record(threadId, {
       type: 'item.completed',
