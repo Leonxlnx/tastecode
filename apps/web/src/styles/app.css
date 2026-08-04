@@ -5513,11 +5513,6 @@
     transform 150ms var(--ease-out);
 }
 
-.model-selector__fast-row:focus-within .model-selector__fast-meta {
-  opacity: 1;
-  transform: translate(0, -50%);
-}
-
 .model-selector__slider {
   position: relative;
   height: 36px;
