@@ -336,7 +336,7 @@ function useEnteringItemIds(items: Item[]): ReadonlySet<string> {
       const nextTail = items.at(-1)
       const prefixStayedStable = items.length === 1 || previous.at(-2)?.id === items.at(-2)?.id
       const reconciledLocalEcho =
-        previousTail?.id.startsWith('optimistic:') === true &&
+        previousTail?.id.startsWith('local:') === true &&
         previousTail.role === 'user' &&
         nextTail?.role === 'user' &&
         previousTail.text === nextTail.text
