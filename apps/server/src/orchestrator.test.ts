@@ -202,6 +202,19 @@ describe('structured user input', () => {
   })
 })
 
+describe('reply style', () => {
+  it.each(ProviderIdSchema.options)(
+    'starts %s with the shared reply instructions',
+    async (provider) => {
+      const { orchestrator, startedOptions } = harness()
+      await orchestrator.startThread(provider, process.cwd())
+
+      expect(startedOptions[0]?.instructions).toContain('clear, capable teammate')
+      expect(startedOptions[0]?.instructions).toContain('Do not use em dashes')
+    },
+  )
+})
+
 describe('provider-neutral design briefing', () => {
   it.each(ProviderIdSchema.options)(
     'runs the same adaptive question loop with %s',

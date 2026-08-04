@@ -24,7 +24,10 @@ describe('OpenCode adapter', () => {
     const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
     const events: DomainEvent[] = []
     adapter.on('event', (event) => events.push(event))
-    const thread = await adapter.startThread('C:\\repo', { model: 'provider-1/model-1' })
+    const thread = await adapter.startThread('C:\\repo', {
+      model: 'provider-1/model-1',
+      instructions: 'Answer plainly.',
+    })
     const completed = new Promise<void>((resolve) => {
       adapter.on('event', (event) => {
         if (event.type === 'turn.completed') resolve()
@@ -63,6 +66,7 @@ describe('OpenCode adapter', () => {
     const prompt = mock.requests.find((request) => request.url.includes('prompt_async'))
     expect(prompt?.body).toMatchObject({
       model: { providerID: 'provider-1', modelID: 'model-1' },
+      system: 'Answer plainly.',
       parts: [{ type: 'text', text: 'Check the repository' }],
     })
     adapter.dispose()

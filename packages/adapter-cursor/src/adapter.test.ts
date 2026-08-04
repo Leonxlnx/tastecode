@@ -31,7 +31,10 @@ describe('Cursor adapter', () => {
     })
     const events: DomainEvent[] = []
     adapter.on('event', (event) => events.push(event))
-    const thread = await adapter.startThread('C:\\repo', { model: 'cursor-model' })
+    const thread = await adapter.startThread('C:\\repo', {
+      model: 'cursor-model',
+      instructions: 'Answer plainly.',
+    })
     const completed = new Promise<void>((resolve) => {
       adapter.on('event', (event) => {
         if (event.type === 'turn.completed') resolve()
@@ -49,7 +52,7 @@ describe('Cursor adapter', () => {
       'stream-json',
       '--model',
       'cursor-model',
-      'Update README',
+      '<system-instructions>\nAnswer plainly.\n</system-instructions>\n\nUpdate README',
     ])
     expect(events).toEqual(
       expect.arrayContaining([

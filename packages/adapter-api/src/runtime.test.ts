@@ -8,6 +8,29 @@ function transport(...events: ApiStreamEvent[]): ApiTransport {
 }
 
 describe('ApiAgentSession', () => {
+  it('adds shared instructions to the first provider prompt only', async () => {
+    const seen: string[][] = []
+    const session = new ApiAgentSession({
+      model: 'test-model',
+      instructions: 'Answer plainly.',
+      transport: async function* ({ messages }) {
+        seen.push(
+          messages.filter((message) => message.role === 'user').map((message) => message.content),
+        )
+        yield { type: 'finish', reason: 'stop' }
+      },
+    })
+    const thread = session.startThread('C:\\repo', 'connection-1')
+    const first = await session.sendTurn(thread.id, 'First')
+    await session.waitForTurn(first)
+    const second = await session.sendTurn(thread.id, 'Second')
+    await session.waitForTurn(second)
+
+    expect(seen[0]?.[0]).toContain('Answer plainly.')
+    expect(seen[0]?.[0]).toContain('First')
+    expect(seen[1]?.at(-1)).toBe('Second')
+  })
+
   it('streams a provider-neutral turn and preserves resumable history', async () => {
     const session = new ApiAgentSession({
       model: 'test-model',
