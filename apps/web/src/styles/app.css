@@ -5001,7 +5001,7 @@
 
 .model-selector__trigger-copy {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 5px;
   min-width: 0;
 }
