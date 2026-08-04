@@ -6,8 +6,14 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { Account, ProviderId, ThreadInboxStatus, ThreadLifecycle } from '@harness/contracts'
-import { Ellipsis, Folder, FolderPen, Plus, Search, X } from 'lucide-react'
+import type {
+  Account,
+  ProviderId,
+  ResultOf,
+  ThreadInboxStatus,
+  ThreadLifecycle,
+} from '@harness/contracts'
+import { Ellipsis, Folder, FolderPen, Gauge, Plus, Search, X } from 'lucide-react'
 import { isDesktop, isMacOS, revealPath } from '../bridge.js'
 import { SHORTCUTS, shortcutAria, shortcutLabel } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
@@ -55,6 +61,8 @@ export function Sidebar(props: {
   activeSessionId: string | undefined
   account: Account | undefined
   providerName: string
+  usageSummary?: ResultOf<'usage.summary'> | undefined
+  usageSources?: string[] | undefined
   mode?: 'classic' | 'inbox'
   onModeChange?: ((mode: 'classic' | 'inbox') => void) | undefined
   inbox?: InboxActions | undefined
@@ -243,6 +251,11 @@ export function Sidebar(props: {
         </div>
 
         <div className="rail__foot">
+          <UsageLimits
+            providerName={props.providerName}
+            summary={props.usageSummary}
+            sources={props.usageSources ?? []}
+          />
           <Menu
             drop="up"
             label="Account"
@@ -281,6 +294,82 @@ export function Sidebar(props: {
       ) : null}
     </div>
   )
+}
+
+function UsageLimits(props: {
+  providerName: string
+  summary: ResultOf<'usage.summary'> | undefined
+  sources: string[]
+}) {
+  const primary = props.summary?.limits[0]
+  const otherSources = props.sources.filter((source) => source !== props.providerName)
+
+  return (
+    <Menu
+      drop="up"
+      align="left"
+      label="Usage limits"
+      panelRole="dialog"
+      panelLabel="Provider usage limits"
+      panelClassName="usage-limits__panel"
+      triggerClassName="usage-limits__trigger"
+      trigger={() => (
+        <span className="usage-limits__summary">
+          <Gauge size={14} aria-hidden />
+          <span>{primary ? `${Math.round(100 - primary.usedPercent)}% left` : 'Limits'}</span>
+        </span>
+      )}
+    >
+      {() => (
+        <div className="usage-limits">
+          <div className="usage-limits__head">
+            <strong>{props.providerName}</strong>
+            <span>Provider-reported usage</span>
+          </div>
+          {props.summary ? (
+            <div className="usage-limits__totals">
+              <span>{compactTokens(props.summary.session.totalTokens)} this chat</span>
+              <span>{compactTokens(props.summary.today.totalTokens)} today</span>
+            </div>
+          ) : null}
+          {props.summary?.limits.length ? (
+            <div className="usage-limits__windows">
+              {props.summary.limits.map((limit) => {
+                const left = Math.round(100 - limit.usedPercent)
+                return (
+                  <div className="usage-limit" key={limit.label}>
+                    <div className="usage-limit__label">
+                      <span>{limit.label}</span>
+                      <strong>{left}% left</strong>
+                    </div>
+                    <span className="usage-limit__track" aria-hidden>
+                      <span style={{ width: `${left}%` }} />
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <p className="usage-limits__empty">This provider does not report rate limits.</p>
+          )}
+          {otherSources.length > 0 ? (
+            <div className="usage-limits__other">
+              {otherSources.map((source) => (
+                <div key={source}>
+                  <span>{source}</span>
+                  <span>Not reported</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      )}
+    </Menu>
+  )
+}
+
+function compactTokens(value: number): string {
+  return value < 1_000 ? `${value} tokens` : `${Math.round(value / 100) / 10}k tokens`
 }
 
 function RailResizeHandle(props: {

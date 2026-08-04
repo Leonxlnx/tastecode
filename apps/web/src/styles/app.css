@@ -262,8 +262,116 @@
 }
 
 .rail__foot {
+  display: grid;
+  gap: 6px;
   border-top: 1px solid var(--line);
   padding: 8px 10px 10px;
+}
+
+.usage-limits__trigger {
+  width: 100%;
+  min-height: 32px;
+  justify-content: flex-start;
+  padding: 0 10px;
+  color: var(--text-2);
+}
+
+.usage-limits__summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--t-sm);
+}
+
+.usage-limits__summary svg {
+  color: var(--text-3);
+}
+
+.usage-limits__panel {
+  width: min(300px, calc(100vw - 16px));
+  padding: 0;
+}
+
+.usage-limits {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.usage-limits__head {
+  display: grid;
+  gap: 2px;
+}
+
+.usage-limits__head strong {
+  color: var(--text);
+  font-size: var(--t-md);
+  font-weight: 560;
+}
+
+.usage-limits__head span,
+.usage-limits__empty,
+.usage-limits__other {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.usage-limits__totals,
+.usage-limit__label,
+.usage-limits__other > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.usage-limits__totals {
+  color: var(--text-2);
+  font-size: var(--t-xs);
+}
+
+.usage-limits__windows {
+  display: grid;
+  gap: 11px;
+}
+
+.usage-limit {
+  display: grid;
+  gap: 6px;
+}
+
+.usage-limit__label {
+  color: var(--text-2);
+  font-size: var(--t-xs);
+}
+
+.usage-limit__label strong {
+  color: var(--text);
+  font-weight: 550;
+}
+
+.usage-limit__track {
+  height: 4px;
+  overflow: hidden;
+  background: var(--surface-3);
+  border-radius: 99px;
+}
+
+.usage-limit__track > span {
+  display: block;
+  height: 100%;
+  background: var(--text-2);
+  border-radius: inherit;
+}
+
+.usage-limits__empty {
+  margin: 0;
+}
+
+.usage-limits__other {
+  display: grid;
+  gap: 7px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
 }
 
 .search {

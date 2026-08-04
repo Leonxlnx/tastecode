@@ -30,6 +30,24 @@ describe('Sidebar chat actions', () => {
         activeSessionId={undefined}
         account={{ signedIn: true, email: 'private@example.com', plan: 'Pro' }}
         providerName="Codex"
+        usageSummary={{
+          session: {
+            inputTokens: 800,
+            cachedInputTokens: 0,
+            outputTokens: 200,
+            reasoningTokens: 0,
+            totalTokens: 1_000,
+          },
+          today: {
+            inputTokens: 4_000,
+            cachedInputTokens: 0,
+            outputTokens: 1_000,
+            reasoningTokens: 0,
+            totalTokens: 5_000,
+          },
+          limits: [{ label: 'Weekly', usedPercent: 87 }],
+        }}
+        usageSources={['Codex', 'Gemini CLI']}
         mode="inbox"
         inbox={{
           onSettle: vi.fn(),
@@ -67,6 +85,11 @@ describe('Sidebar chat actions', () => {
     ).toBe(true)
     expect(screen.queryByText('private@example.com')).toBeNull()
     expect(screen.getByText('Codex')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Usage limits' }))
+    expect(screen.getByRole('dialog', { name: 'Provider usage limits' }).textContent).toContain(
+      '13% left',
+    )
+    expect(screen.getByText('Gemini CLI').parentElement?.textContent).toContain('Not reported')
   })
 
   it('keeps rename and archive actions in the chat options menu', () => {

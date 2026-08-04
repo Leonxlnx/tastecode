@@ -1672,6 +1672,8 @@ export function App() {
           activeProjectPath={activePath}
           activeSessionId={activeId}
           providerName={providerName(provider, acpAgentName)}
+          usageSummary={usageSummary}
+          usageSources={[...new Set(models.map((choice) => choice.sourceName))]}
           mode={sidebarSettings.mode}
           onModeChange={(mode) => updateSidebarSettings({ mode })}
           inbox={{
