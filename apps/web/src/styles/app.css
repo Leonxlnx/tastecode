@@ -3077,11 +3077,6 @@
 
 /* ---------- collapsed rows ---------- */
 
-.aux {
-  border-left: 1px solid var(--line);
-  padding-left: 12px;
-}
-
 .aux__row {
   display: flex;
   align-items: center;
@@ -3129,11 +3124,6 @@
   border-radius: var(--r-md);
 }
 
-.aux--live {
-  padding-left: 0;
-  border-left: 0;
-}
-
 .aux--live .aux__row {
   gap: 10px;
   min-height: 30px;
@@ -3164,10 +3154,6 @@
 
 .aux--live .aux__out {
   margin-left: 32px;
-}
-
-.aux--error {
-  border-left-color: var(--error);
 }
 
 .aux--error .aux__label,
