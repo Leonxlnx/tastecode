@@ -151,6 +151,7 @@ export class Orchestrator {
    * other, and that is about this class, not about any vendor.
    */
   #runtimeFor: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
+  #runtimeForInjected: boolean
 
   constructor(
     store: Store,
@@ -196,6 +197,7 @@ export class Orchestrator {
       onExit: handlers.onTerminalExit ?? (() => {}),
     })
     this.#runtimeFor = handlers.runtimeFor ?? providerRuntime
+    this.#runtimeForInjected = handlers.runtimeFor !== undefined
   }
 
   /**
@@ -516,7 +518,7 @@ export class Orchestrator {
       : undefined
 
     const runtime =
-      provider === 'api'
+      provider === 'api' && !this.#runtimeForInjected
         ? this.#apiRuntime(options.connectionId)
         : this.#runtimeFor(provider, this.#onLog)
     const runtimeOptions = { ...options, ...this.#mcpRuntimeOptions(provider, workspacePath) }
