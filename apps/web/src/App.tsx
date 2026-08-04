@@ -19,7 +19,7 @@ import type {
   ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
-import { isDesktop, isMacOS, pickFolder } from './bridge.js'
+import { isDesktop, isMacOS, pickFolder, setDesktopTheme } from './bridge.js'
 import { isEditableTarget, matchesShortcut, SHORTCUTS, shortcutLabel } from './shortcuts.js'
 import { warmHighlighter } from './ui/highlighter.js'
 import { Transport } from './transport.js'
@@ -246,6 +246,7 @@ export function App() {
 
   useLayoutEffect(() => {
     applyTheme(theme)
+    void setDesktopTheme(theme)
   }, [theme])
 
   useEffect(() => {
