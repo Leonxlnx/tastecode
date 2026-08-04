@@ -719,9 +719,10 @@ describe('new chats', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
-    fireEvent.change(screen.getByRole('combobox', { name: 'Interface font' }), {
-      target: { value: 'system' },
-    })
+    expect(
+      within(screen.getByRole('group', { name: 'Interface font' })).getAllByRole('button'),
+    ).toHaveLength(6)
+    fireEvent.click(screen.getByRole('button', { name: /System/ }))
 
     await waitFor(() => {
       expect(localStorage.getItem('harness.font')).toBe('system')
@@ -739,9 +740,10 @@ describe('new chats', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
-    fireEvent.change(screen.getByRole('combobox', { name: 'Accent palette' }), {
-      target: { value: 'ocean' },
-    })
+    expect(
+      within(screen.getByRole('group', { name: 'Accent palette' })).getAllByRole('button'),
+    ).toHaveLength(7)
+    fireEvent.click(screen.getByRole('button', { name: /Ocean/ }))
 
     await waitFor(() => {
       expect(localStorage.getItem('harness.accent')).toBe('ocean')

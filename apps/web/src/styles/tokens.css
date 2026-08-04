@@ -128,16 +128,56 @@
   --font-ui: 'Segoe UI Variable Text', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 }
 
+:root[data-font='humanist'] {
+  --font-ui: Aptos, Candara, 'Segoe UI', sans-serif;
+}
+
+:root[data-font='rounded'] {
+  --font-ui: ui-rounded, 'SF Pro Rounded', 'Arial Rounded MT Bold', system-ui, sans-serif;
+}
+
+:root[data-font='serif'] {
+  --font-ui: Charter, 'Iowan Old Style', Georgia, serif;
+}
+
+:root[data-font='mono'] {
+  --font-ui: 'Geist Mono Variable', 'Cascadia Code', ui-monospace, monospace;
+}
+
 :root[data-accent='ocean'] {
   --attention: #65b8ff;
   --file-reference: #62abc7;
   --effort: #74b8cf;
 }
 
+:root[data-accent='forest'] {
+  --attention: #71c695;
+  --file-reference: #62aa84;
+  --effort: #8bc47a;
+}
+
 :root[data-accent='sunset'] {
   --attention: #c69cff;
   --file-reference: #b58ad5;
   --effort: #e58c76;
+}
+
+:root[data-accent='amber'] {
+  --attention: #e0ad61;
+  --file-reference: #c18e50;
+  --effort: #df985d;
+}
+
+:root[data-accent='rose'] {
+  --attention: #e593ad;
+  --file-reference: #c77f9e;
+  --effort: #df8294;
+}
+
+:root[data-accent='lavender'] {
+  --attention: #ae9eea;
+  --file-reference: #9385c8;
+  --effort: #c49ad8;
 }
 
 :root[data-theme='light'] {
@@ -212,10 +252,34 @@
   --effort: #287f99;
 }
 
+:root[data-theme='light'][data-accent='forest'] {
+  --attention: #247b4f;
+  --file-reference: #2f7658;
+  --effort: #4c7f3d;
+}
+
 :root[data-theme='light'][data-accent='sunset'] {
   --attention: #7e4bc2;
   --file-reference: #8455a8;
   --effort: #b15442;
+}
+
+:root[data-theme='light'][data-accent='amber'] {
+  --attention: #936017;
+  --file-reference: #845b24;
+  --effort: #a55a27;
+}
+
+:root[data-theme='light'][data-accent='rose'] {
+  --attention: #a34264;
+  --file-reference: #934b6a;
+  --effort: #ad4657;
+}
+
+:root[data-theme='light'][data-accent='lavender'] {
+  --attention: #6653aa;
+  --file-reference: #675896;
+  --effort: #81548f;
 }
 
 * {
