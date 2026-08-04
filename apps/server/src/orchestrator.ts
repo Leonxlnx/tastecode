@@ -139,9 +139,11 @@ export class Orchestrator {
     projectPath: string,
     result: { serverId: string; loginId: string; success: boolean; error: string | null },
   ) => void
+  #onMcpChanged: (provider: ProviderId, projectPath: string) => void
   #onSkillsChanged: (provider: ProviderId, projectPath: string) => void
   #onLifecycle: (threadId: string, lifecycle: ThreadLifecycle) => void
   #watchedSkillProjects = new Set<string>()
+  #watchedMcpProjects = new Set<string>()
   #mcpConfig: McpConfigStore
   #modelConnections: ModelConnectionStore
   #readCredential: (reference: string) => string
@@ -171,6 +173,7 @@ export class Orchestrator {
         projectPath: string,
         result: { serverId: string; loginId: string; success: boolean; error: string | null },
       ) => void
+      onMcpChanged?: (provider: ProviderId, projectPath: string) => void
       onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
       onLifecycle?: (threadId: string, lifecycle: ThreadLifecycle) => void
       mcpConfig?: McpConfigStore
@@ -190,6 +193,7 @@ export class Orchestrator {
     this.#onLog = handlers.onLog
     this.#onLogin = handlers.onLogin
     this.#onMcpOAuth = handlers.onMcpOAuth ?? (() => {})
+    this.#onMcpChanged = handlers.onMcpChanged ?? (() => {})
     this.#onSkillsChanged = handlers.onSkillsChanged ?? (() => {})
     this.#onLifecycle = handlers.onLifecycle ?? (() => {})
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
@@ -223,6 +227,11 @@ export class Orchestrator {
     adapter.on('skillsChanged', () => {
       for (const projectPath of this.#watchedSkillProjects) {
         this.#onSkillsChanged('codex', projectPath)
+      }
+    })
+    adapter.on('mcpChanged', () => {
+      for (const projectPath of this.#watchedMcpProjects) {
+        this.#onMcpChanged('codex', projectPath)
       }
     })
     const starting = adapter
@@ -278,16 +287,8 @@ export class Orchestrator {
     if (provider !== 'codex') {
       return { capabilities: UNSUPPORTED_MCP_CAPABILITIES, servers: [] }
     }
-
-    const active = [...this.#threads.values()].find(
-      ({ thread, session }) =>
-        thread.provider === provider &&
-        this.#store.thread(thread.id)?.projectPath === projectPath &&
-        session.listMcpServers,
-    )
-    const inherited = active?.session.listMcpServers
-      ? await active.session.listMcpServers(active.thread.id)
-      : await (await this.#controlAdapter()).listMcpServers()
+    this.#watchedMcpProjects.add(projectPath)
+    const inherited = await (await this.#controlAdapter()).listMcpServers()
     const servers = new Map(inherited.map((server) => [server.id, server]))
     for (const config of this.#mcpConfig.list(provider, projectPath)) {
       const current = servers.get(config.id)

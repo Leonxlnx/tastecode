@@ -92,6 +92,8 @@ export function startServer(
     onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
     onMcpOAuth: (provider, projectPath, result) =>
       push.broadcast('mcp.oauth', { provider, projectPath, ...result }),
+    onMcpChanged: (provider, projectPath) =>
+      push.broadcast('mcp.changed', { provider, projectPath }),
     onSkillsChanged: (provider, projectPath) =>
       push.broadcast('skills.changed', { provider, projectPath }),
     onLifecycle: (threadId, lifecycle) =>
