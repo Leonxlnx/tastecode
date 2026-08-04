@@ -27,6 +27,7 @@ import { rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { changedSince, restoreSnapshot, takeSnapshot } from './checkpoint.js'
+import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import type { Store, StoredCheckpoint } from './store.js'
 import {
   createWorktree,
@@ -549,7 +550,11 @@ export class Orchestrator {
       provider === 'api' && !this.#runtimeForInjected
         ? this.#apiRuntime(options.connectionId)
         : this.#runtimeFor(provider, this.#onLog)
-    const runtimeOptions = { ...options, ...this.#mcpRuntimeOptions(provider, workspacePath) }
+    const runtimeOptions = {
+      ...options,
+      instructions: REPLY_STYLE_INSTRUCTIONS,
+      ...this.#mcpRuntimeOptions(provider, workspacePath),
+    }
     let started
     try {
       started = await runtime.start(worktree?.path ?? workspacePath, runtimeOptions)

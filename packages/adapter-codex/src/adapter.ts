@@ -98,6 +98,7 @@ export const CODEX_CAPABILITIES: Capabilities = {
 }
 
 export type StartOptions = {
+  instructions?: string | undefined
   model?: string | undefined
   serviceTier?: string | undefined
   effort?: string | undefined
@@ -541,6 +542,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       cwd: workspacePath,
       ...(options.model ? { model: options.model } : {}),
       ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
+      ...(options.instructions ? { developerInstructions: options.instructions } : {}),
       ...(Object.keys(config).length ? { config } : {}),
       ...(approval ?? {}),
     })
@@ -552,10 +554,15 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     }
   }
 
-  async resumeThread(threadId: string, workspacePath: string): Promise<Thread> {
+  async resumeThread(
+    threadId: string,
+    workspacePath: string,
+    options: Pick<StartOptions, 'instructions'> = {},
+  ): Promise<Thread> {
     const response = await this.#call<ThreadResumeResponse>('thread/resume', {
       threadId,
       cwd: workspacePath,
+      ...(options.instructions ? { developerInstructions: options.instructions } : {}),
       ...(Object.keys(this.#mcpServers).length
         ? { config: { mcp_servers: this.#mcpServers } }
         : {}),

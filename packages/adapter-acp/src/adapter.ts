@@ -41,6 +41,7 @@ export type AcpAdapterEvents = {
 }
 
 export type AcpStartOptions = {
+  instructions?: string | undefined
   approval?: ApprovalMode | undefined
   model?: string | undefined
 }
@@ -51,6 +52,8 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   #sessionId: string | undefined
   #streamer: Streamer | undefined
   #turnCounter = 0
+  #instructions: string | undefined
+  #instructionsPending = false
   #approval: ApprovalMode = 'ask'
   #images = false
   #loadSession = false
@@ -87,6 +90,8 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
 
   async startThread(workspacePath: string, options: AcpStartOptions = {}): Promise<Thread> {
     this.#setApproval(options.approval)
+    this.#instructions = options.instructions
+    this.#instructionsPending = Boolean(options.instructions)
     const rpc = await this.#connect(workspacePath, options.model)
 
     const session = await rpc
@@ -122,6 +127,8 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     options: AcpStartOptions = {},
   ): Promise<Thread> {
     this.#setApproval(options.approval)
+    this.#instructions = options.instructions
+    this.#instructionsPending = false
     const sessionId = parseAcpThreadId(threadId, this.#spec.id)
     const rpc = await this.#connect(workspacePath, options.model)
     if (!this.#loadSession) {
@@ -153,10 +160,15 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
 
     // Deliberately not awaited inline: updates stream in while this is pending,
     // and the caller needs the turn id now to route them.
+    const prompt =
+      this.#instructionsPending && this.#instructions
+        ? `<system-instructions>\n${this.#instructions}\n</system-instructions>\n\n${text}`
+        : text
+    this.#instructionsPending = false
     void rpc
       .request<PromptResult>('session/prompt', {
         sessionId: this.#sessionId,
-        prompt: [{ type: 'text', text }],
+        prompt: [{ type: 'text', text: prompt }],
       })
       .then((result) => this.#finishTurn(turnId, result.stopReason))
       .catch((error: unknown) => {

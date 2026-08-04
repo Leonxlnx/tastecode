@@ -34,6 +34,7 @@ import type {
  * rather than letting it guess.
  */
 export type StartOptions = {
+  instructions?: string | undefined
   model?: string | undefined
   serviceTier?: string | undefined
   effort?: string | undefined
@@ -77,7 +78,12 @@ export function apiRuntime(
     async start(workspacePath, options) {
       const model = options.model ?? connection.defaultModel
       if (!model) throw new Error(`choose a model for "${connection.displayName}"`)
-      const session = new ApiAgentSession({ model, transport, secrets: [apiKey] })
+      const session = new ApiAgentSession({
+        model,
+        transport,
+        secrets: [apiKey],
+        ...(options.instructions ? { instructions: options.instructions } : {}),
+      })
       session.on('log', onLog)
       const thread = session.startThread(workspacePath, connection.id)
       return { thread, session }
@@ -178,6 +184,7 @@ function cursorRuntime(onLog: (line: string) => void): ProviderRuntime {
       const thread = await adapter.startThread(workspacePath, {
         ...(options.model ? { model: options.model } : {}),
         ...(options.approval ? { approval: options.approval } : {}),
+        ...(options.instructions ? { instructions: options.instructions } : {}),
       })
       return { thread, session: adapter }
     },
@@ -187,6 +194,7 @@ function cursorRuntime(onLog: (line: string) => void): ProviderRuntime {
       const thread = await adapter.resumeThread(threadId, workspacePath, {
         ...(options.model ? { model: options.model } : {}),
         ...(options.approval ? { approval: options.approval } : {}),
+        ...(options.instructions ? { instructions: options.instructions } : {}),
       })
       return { thread, session: adapter }
     },
@@ -206,6 +214,7 @@ function openCodeRuntime(onLog: (line: string) => void): ProviderRuntime {
         const thread = await adapter.startThread(workspacePath, {
           ...(options.model ? { model: options.model } : {}),
           ...(options.approval ? { approval: options.approval } : {}),
+          ...(options.instructions ? { instructions: options.instructions } : {}),
         })
         return { thread, session: adapter }
       } catch (error) {
@@ -213,12 +222,14 @@ function openCodeRuntime(onLog: (line: string) => void): ProviderRuntime {
         throw error
       }
     },
-    async resume(threadId, workspacePath) {
+    async resume(threadId, workspacePath, options) {
       const adapter = new OpenCodeAdapter()
       adapter.on('log', onLog)
       try {
         await adapter.start()
-        const thread = await adapter.resumeThread(threadId, workspacePath)
+        const thread = await adapter.resumeThread(threadId, workspacePath, {
+          ...(options.instructions ? { instructions: options.instructions } : {}),
+        })
         return { thread, session: adapter }
       } catch (error) {
         adapter.dispose()
@@ -256,7 +267,9 @@ function codexRuntime(onLog: (line: string) => void): ProviderRuntime {
       adapter.on('log', onLog)
       try {
         await adapter.start()
-        const thread = await adapter.resumeThread(threadId, workspacePath)
+        const thread = await adapter.resumeThread(threadId, workspacePath, {
+          ...(options.instructions ? { instructions: options.instructions } : {}),
+        })
         return { thread, session: adapter }
       } catch (error) {
         adapter.dispose()
@@ -285,6 +298,7 @@ function acpRuntime(onLog: (line: string) => void): ProviderRuntime {
         const thread = await adapter.startThread(workspacePath, {
           approval: options.approval,
           model: options.model,
+          instructions: options.instructions,
         })
         return { thread, session: adapter }
       } catch (error) {
@@ -300,6 +314,7 @@ function acpRuntime(onLog: (line: string) => void): ProviderRuntime {
         const thread = await adapter.resumeThread(threadId, workspacePath, {
           approval: options.approval,
           model: options.model,
+          instructions: options.instructions,
         })
         return { thread, session: adapter }
       } catch (error) {
@@ -322,6 +337,7 @@ function claudeRuntime(onLog: (line: string) => void): ProviderRuntime {
       const thread = await adapter.startThread(workspacePath, {
         model: options.model,
         approval: options.approval,
+        instructions: options.instructions,
       })
       return {
         thread,

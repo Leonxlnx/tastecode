@@ -41,6 +41,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   #approval: ApprovalMode = 'ask'
   #pendingApprovals = new Set<string>()
   #model: string | undefined
+  #instructions: string | undefined
 
   constructor(options: { baseUrl?: string } = {}) {
     super()
@@ -68,13 +69,14 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
 
   async startThread(
     workspacePath: string,
-    options: { model?: string; approval?: ApprovalMode } = {},
+    options: { model?: string; approval?: ApprovalMode; instructions?: string } = {},
   ): Promise<Thread> {
     this.#validateApproval(options.approval)
     await this.start()
     this.#workspacePath = workspacePath
     this.#approval = options.approval ?? 'ask'
     this.#model = options.model
+    this.#instructions = options.instructions
     this.#client = this.#newClient(workspacePath)
     await this.#subscribe()
     const { data: session } = await this.#client.session.create({
@@ -92,9 +94,14 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     }
   }
 
-  async resumeThread(threadId: string, workspacePath: string): Promise<Thread> {
+  async resumeThread(
+    threadId: string,
+    workspacePath: string,
+    options: { instructions?: string } = {},
+  ): Promise<Thread> {
     await this.start()
     this.#workspacePath = workspacePath
+    this.#instructions = options.instructions
     this.#client = this.#newClient(workspacePath)
     await this.#subscribe()
     const sessionId = threadId.startsWith('opencode-') ? threadId.slice(9) : threadId
@@ -130,7 +137,11 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     void this.#client.session
       .promptAsync({
         path: { id: this.#sessionId },
-        body: { parts: [{ type: 'text', text }], ...(model ? { model } : {}) },
+        body: {
+          parts: [{ type: 'text', text }],
+          ...(model ? { model } : {}),
+          ...(this.#instructions ? { system: this.#instructions } : {}),
+        },
         throwOnError: true,
       })
       .catch(() => this.#failTurn())

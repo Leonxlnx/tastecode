@@ -16,7 +16,7 @@ export const CURSOR_CAPABILITIES: Capabilities = {
 }
 
 type Events = { event: [DomainEvent]; log: [string] }
-type StartOptions = { model?: string; approval?: ApprovalMode }
+type StartOptions = { model?: string; approval?: ApprovalMode; instructions?: string }
 type Spawn = typeof spawnCli
 
 export class CursorAdapter extends EventEmitter<Events> {
@@ -28,6 +28,7 @@ export class CursorAdapter extends EventEmitter<Events> {
   #mapper: CursorEventMapper | undefined
   #turnId: string | undefined
   #turnCounter = 0
+  #instructionsPending = false
   #terminalEvent = false
   readonly #spawn: Spawn
 
@@ -45,6 +46,7 @@ export class CursorAdapter extends EventEmitter<Events> {
     this.#workspacePath = workspacePath
     this.#options = options
     this.#sessionId = undefined
+    this.#instructionsPending = Boolean(options.instructions)
     this.#threadId = `cursor-${crypto.randomUUID()}`
     return {
       id: this.#threadId,
@@ -65,6 +67,7 @@ export class CursorAdapter extends EventEmitter<Events> {
     this.#workspacePath = workspacePath
     this.#options = options
     this.#sessionId = sessionId
+    this.#instructionsPending = false
     this.#threadId = `cursor-${sessionId}`
     return { id: this.#threadId, provider: 'cursor', workspacePath, createdAt: Date.now() }
   }
@@ -76,6 +79,11 @@ export class CursorAdapter extends EventEmitter<Events> {
     if (this.#child) throw new Error('a turn is already running')
     if (attachments.length) throw new Error('Cursor CLI attachments are not supported')
     const turnId = `${threadId}-turn-${++this.#turnCounter}`
+    const prompt =
+      this.#instructionsPending && this.#options.instructions
+        ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${text}`
+        : text
+    this.#instructionsPending = false
     const args = [
       '--print',
       '--output-format',
@@ -85,7 +93,7 @@ export class CursorAdapter extends EventEmitter<Events> {
         : []),
       ...(this.#options.model ? ['--model', this.#options.model] : []),
       ...(this.#sessionId ? ['--resume', this.#sessionId] : []),
-      text,
+      prompt,
     ]
     const child = this.#spawn('cursor-agent', args, { cwd: this.#workspacePath })
     this.#child = child

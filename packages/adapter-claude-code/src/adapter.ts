@@ -46,6 +46,7 @@ export type ClaudeAdapterEvents = {
 }
 
 export type ClaudeStartOptions = {
+  instructions?: string | undefined
   model?: string | undefined
   approval?: ApprovalMode | undefined
 }
@@ -97,6 +98,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       '--verbose',
       ...(this.#options.model ? ['--model', this.#options.model] : []),
       ...(permissionMode ? ['--permission-mode', permissionMode] : []),
+      ...(this.#options.instructions ? ['--append-system-prompt', this.#options.instructions] : []),
       // Continuity: without this every turn starts a fresh context and the
       // agent forgets the conversation it is in the middle of.
       ...(this.#sessionId ? ['--resume', this.#sessionId] : []),

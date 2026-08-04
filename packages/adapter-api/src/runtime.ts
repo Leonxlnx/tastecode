@@ -59,6 +59,8 @@ export class ApiAgentSession extends EventEmitter<Events> {
   readonly #reviewTool: (call: ApiToolCall) => Omit<ApprovalRequest, 'id' | 'createdAt'> | undefined
   readonly #maxToolCalls: number
   readonly #secrets: readonly string[]
+  readonly #instructions: string | undefined
+  #instructionsPending = false
   #thread: Thread | undefined
   #messages: ApiMessage[] = []
   #active: { turnId: string; controller: AbortController; done: Promise<void> } | undefined
@@ -74,6 +76,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
     reviewTool?: (call: ApiToolCall) => Omit<ApprovalRequest, 'id' | 'createdAt'> | undefined
     maxToolCalls?: number
     secrets?: readonly string[]
+    instructions?: string
   }) {
     super()
     this.#model = options.model
@@ -88,6 +91,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
       throw new Error('maxToolCalls must be a positive integer')
     }
     this.#secrets = (options.secrets ?? []).filter((secret) => secret.length >= 4)
+    this.#instructions = options.instructions
   }
 
   startThread(workspacePath: string, connectionId: string): Thread {
@@ -101,6 +105,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
     }
     this.#thread = thread
     this.#messages = []
+    this.#instructionsPending = Boolean(this.#instructions)
     return thread
   }
 
@@ -109,6 +114,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
     this.#thread = structuredClone(state.thread)
     this.#messages = structuredClone(state.messages)
     this.#turnCounter = state.turnCounter
+    this.#instructionsPending = false
     return this.#thread
   }
 
@@ -160,7 +166,12 @@ export class ApiAgentSession extends EventEmitter<Events> {
       type: 'turn.started',
       turn: { id: turnId, threadId: thread.id, status: 'running', createdAt: Date.now() },
     })
-    this.#messages.push({ role: 'user', content: text })
+    const prompt =
+      this.#instructionsPending && this.#instructions
+        ? `<system-instructions>\n${this.#instructions}\n</system-instructions>\n\n${text}`
+        : text
+    this.#instructionsPending = false
+    this.#messages.push({ role: 'user', content: prompt })
 
     try {
       let toolCalls = 0
