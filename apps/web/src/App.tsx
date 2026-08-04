@@ -310,6 +310,12 @@ export function App() {
         })
         if (event.type === 'turn.completed' && threadId === activeIdRef.current) {
           void transport.request('thread.history', { threadId }).catch(() => undefined)
+          void transport
+            .request('usage.summary', { threadId })
+            .then((summary) => {
+              if (threadId === activeIdRef.current) setUsageSummary(summary)
+            })
+            .catch(() => undefined)
         }
       }
     })
@@ -622,7 +628,7 @@ export function App() {
   }, [activeId, thread.running, refreshCheckpoints])
 
   useEffect(() => {
-    if (!activeId) {
+    if (!activeId || activeId.startsWith('pending:')) {
       setUsageSummary(undefined)
       return
     }
@@ -638,7 +644,7 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [transport, activeId, thread.running])
+  }, [transport, activeId])
 
   // First load, plus the one-time handover from localStorage. Anything found
   // there is given to the server and the key removed, so it happens once.
