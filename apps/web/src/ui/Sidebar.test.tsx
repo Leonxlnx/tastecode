@@ -39,6 +39,8 @@ describe('Sidebar chat actions', () => {
           onKeepActive: vi.fn(),
         }}
         collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
         onModeChange={onModeChange}
         onClose={vi.fn()}
         onAddProject={vi.fn()}
@@ -80,6 +82,8 @@ describe('Sidebar chat actions', () => {
         account={undefined}
         providerName="Codex"
         collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
         onClose={vi.fn()}
         onAddProject={vi.fn()}
         onNewSession={vi.fn()}
@@ -125,6 +129,8 @@ describe('Sidebar chat actions', () => {
         account={undefined}
         providerName="Codex"
         collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
         onClose={vi.fn()}
         onAddProject={vi.fn()}
         onNewSession={vi.fn()}
@@ -177,6 +183,8 @@ describe('Sidebar chat actions', () => {
         account={undefined}
         providerName="Codex"
         collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
         onClose={vi.fn()}
         onAddProject={vi.fn()}
         onNewSession={vi.fn()}
@@ -218,6 +226,8 @@ describe('Sidebar chat actions', () => {
         account={undefined}
         providerName="Codex"
         collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
         onClose={vi.fn()}
         onAddProject={vi.fn()}
         onNewSession={vi.fn()}
@@ -272,6 +282,8 @@ describe('Sidebar chat actions', () => {
         account={undefined}
         providerName="Codex"
         collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
         onClose={onClose}
         onAddProject={vi.fn()}
         onNewSession={vi.fn()}
@@ -302,6 +314,8 @@ describe('Sidebar chat actions', () => {
         account={undefined}
         providerName="Codex"
         collapsed
+        width={248}
+        onWidthChange={vi.fn()}
         onClose={vi.fn()}
         onAddProject={vi.fn()}
         onNewSession={vi.fn()}
@@ -332,5 +346,44 @@ describe('Sidebar chat actions', () => {
     fireEvent.mouseLeave(slot!)
     expect(slot?.classList).not.toContain('is-revealed')
     expect(rail?.hasAttribute('inert')).toBe(true)
+  })
+
+  it('resizes with pointer or keyboard and collapses below the threshold', () => {
+    const onClose = vi.fn()
+    const onWidthChange = vi.fn()
+    render(
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={onWidthChange}
+        onClose={onClose}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    const handle = screen.getByRole('separator', { name: 'Resize sidebar' })
+    fireEvent.keyDown(handle, { key: 'ArrowRight' })
+    expect(onWidthChange).toHaveBeenCalledWith(256)
+
+    fireEvent.pointerDown(handle, { clientX: 248, pointerId: 1 })
+    fireEvent.pointerMove(handle, { clientX: 160, pointerId: 1 })
+    fireEvent.pointerUp(handle, { clientX: 160, pointerId: 1 })
+    expect(onClose).toHaveBeenCalledOnce()
   })
 })
