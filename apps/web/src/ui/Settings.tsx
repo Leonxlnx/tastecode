@@ -25,7 +25,7 @@ import {
 import { connectionMark, providerMark, type ModelChoice } from '../model-catalog.js'
 import { isDesktop } from '../bridge.js'
 import type { Transport } from '../transport.js'
-import type { ThemePreference } from '../theme.js'
+import type { FontPreference, ThemePreference } from '../theme.js'
 import { McpSettings } from './McpSettings.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderIcon } from './ProviderIcon.js'
@@ -38,6 +38,11 @@ const THEME_OPTIONS = [
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
 ] as const satisfies ReadonlyArray<{ value: ThemePreference; label: string }>
+
+const FONT_OPTIONS = [
+  { value: 'geist', label: 'Geist' },
+  { value: 'system', label: 'System' },
+] as const satisfies ReadonlyArray<{ value: FontPreference; label: string }>
 
 /**
  * Settings stays intentionally small: the sidebar reorganizes the decisions
@@ -61,6 +66,8 @@ export function Settings(props: {
   onSidebarSettingsChange: (settings: Partial<SidebarSettings>) => void
   themePreference: ThemePreference
   onThemePreferenceChange: (theme: ThemePreference) => void
+  fontPreference: FontPreference
+  onFontPreferenceChange: (font: FontPreference) => void
   showMacOSFontSmoothing: boolean
   macOSFontSmoothing: boolean
   onMacOSFontSmoothingChange: (enabled: boolean) => void
@@ -504,6 +511,8 @@ function ModelSettings(props: {
 function AppearanceSettings(props: {
   themePreference: ThemePreference
   onThemePreferenceChange: (theme: ThemePreference) => void
+  fontPreference: FontPreference
+  onFontPreferenceChange: (font: FontPreference) => void
   showMacOSFontSmoothing: boolean
   macOSFontSmoothing: boolean
   onMacOSFontSmoothingChange: (enabled: boolean) => void
@@ -511,10 +520,26 @@ function AppearanceSettings(props: {
   return (
     <SettingsPanel title="Appearance" groupTitle="Theme" groupClassName="settings__group--plain">
       <ThemePicker value={props.themePreference} onChange={props.onThemePreferenceChange} />
-      {props.showMacOSFontSmoothing ? (
-        <div className="appearance__text">
-          <h2 className="settings__group-title">Text</h2>
-          <div className="settings__group">
+      <div className="appearance__text">
+        <h2 className="settings__group-title">Text</h2>
+        <div className="settings__group">
+          <SettingsRow title="Interface font" note="Choose the typeface used across the app.">
+            <select
+              className="settings__select"
+              aria-label="Interface font"
+              value={props.fontPreference}
+              onChange={(event) =>
+                props.onFontPreferenceChange(event.currentTarget.value as FontPreference)
+              }
+            >
+              {FONT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </SettingsRow>
+          {props.showMacOSFontSmoothing ? (
             <SettingsRow
               title="Font smoothing"
               note="Use macOS antialiasing for lighter, crisper text."
@@ -530,9 +555,9 @@ function AppearanceSettings(props: {
                 <span className="switch__thumb" />
               </button>
             </SettingsRow>
-          </div>
+          ) : null}
         </div>
-      ) : null}
+      </div>
     </SettingsPanel>
   )
 }

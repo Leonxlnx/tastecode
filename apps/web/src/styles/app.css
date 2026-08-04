@@ -886,6 +886,17 @@
   margin-top: 34px;
 }
 
+.settings__select {
+  min-width: 120px;
+  padding: 6px 28px 6px 9px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+}
+
 .settings__row {
   display: flex;
   align-items: center;

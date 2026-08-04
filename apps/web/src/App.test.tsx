@@ -653,6 +653,26 @@ describe('new chats', () => {
     expect(document.documentElement.dataset.theme).toBe('light')
   })
 
+  it('persists the selected interface font', async () => {
+    const first = render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
+    fireEvent.change(screen.getByRole('combobox', { name: 'Interface font' }), {
+      target: { value: 'system' },
+    })
+
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.font')).toBe('system')
+      expect(document.documentElement.dataset.font).toBe('system')
+    })
+
+    first.unmount()
+    render(<App />)
+
+    expect(document.documentElement.dataset.font).toBe('system')
+  })
+
   it('tracks OS appearance while System is selected', async () => {
     const originalMatchMedia = window.matchMedia.bind(window)
     const listeners = new Set<(event: MediaQueryListEvent) => void>()
