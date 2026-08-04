@@ -574,7 +574,7 @@ export const methods = {
     }),
   },
   'models.list': {
-    params: z.object({ provider: ProviderIdSchema }),
+    params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
     result: z.object({ models: z.array(ModelSchema) }),
   },
   /**

@@ -158,6 +158,11 @@ describe('protocol envelopes', () => {
       }),
     ).toThrow()
     expect(() => methods['thread.start'].params.parse({ provider: 'nope' })).toThrow()
+    expect(methods['models.list'].params.parse({ provider: 'acp', agent: 'kimi' })).toEqual({
+      provider: 'acp',
+      agent: 'kimi',
+    })
+    expect(() => methods['models.list'].params.parse({ provider: 'acp', agent: '' })).toThrow()
     const { undo } = methods['thread.restore'].result.parse({ undo: 'restore-token' })
     expect(methods['thread.undoRestore'].params.parse({ threadId: 'th1', undo })).toEqual({
       threadId: 'th1',
