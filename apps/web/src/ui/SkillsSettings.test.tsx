@@ -101,4 +101,24 @@ describe('Agent Skills settings', () => {
     expect(screen.queryByRole('button', { name: 'Install from folder' })).toBeNull()
     expect(screen.queryByRole('switch')).toBeNull()
   })
+
+  it('replaces discovery with a retryable error', async () => {
+    const transport = client(async () => {
+      throw new Error('Skill discovery failed')
+    })
+    render(
+      <SkillsSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Skill discovery failed')
+    expect(screen.queryByText('Discovering skills…')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
+  })
 })

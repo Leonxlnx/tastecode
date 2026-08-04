@@ -20,6 +20,7 @@ export function McpSettings(props: {
   projectName: string | undefined
 }) {
   const [inventory, setInventory] = useState<Inventory>()
+  const [loading, setLoading] = useState(false)
   const [editor, setEditor] = useState<Editor>()
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
@@ -27,6 +28,7 @@ export function McpSettings(props: {
 
   const refresh = useCallback(async () => {
     if (!props.projectPath) return
+    setLoading(true)
     try {
       setInventory(
         await props.transport.request('mcp.list', {
@@ -37,12 +39,18 @@ export function McpSettings(props: {
       setError(undefined)
     } catch (cause) {
       setError(message(cause))
+    } finally {
+      setLoading(false)
     }
   }, [props.transport, props.provider, props.projectPath])
 
   useEffect(() => {
     setInventory(undefined)
-    if (!props.projectPath) return
+    setError(undefined)
+    if (!props.projectPath) {
+      setLoading(false)
+      return
+    }
     void refresh()
     return props.transport.on('mcp.oauth', (result) => {
       if (result.provider !== props.provider || result.projectPath !== props.projectPath) return
@@ -168,13 +176,15 @@ export function McpSettings(props: {
   const project = props.projectName ?? props.projectPath
   const status = !props.projectPath
     ? 'Select a project in the sidebar first.'
-    : !inventory
+    : loading
       ? 'Loading MCP servers…'
-      : !inventory.capabilities.inventory
-        ? `${props.providerName} does not expose MCP servers here yet.`
-        : inventory.servers.length === 0
-          ? 'No MCP servers are configured for this project.'
-          : undefined
+      : !inventory
+        ? undefined
+        : !inventory.capabilities.inventory
+          ? `${props.providerName} does not expose MCP servers here yet.`
+          : inventory.servers.length === 0
+            ? 'No MCP servers are configured for this project.'
+            : undefined
 
   return (
     <section className="settings__panel mcp-settings" aria-labelledby="settings-mcp">
@@ -207,7 +217,10 @@ export function McpSettings(props: {
 
       {error ? (
         <p className="mcp-settings__message is-error" role="alert">
-          {error}
+          {error}{' '}
+          <button className="settings__action" type="button" onClick={() => void refresh()}>
+            Retry
+          </button>
         </p>
       ) : null}
       {notice ? <p className="mcp-settings__message">{notice}</p> : null}

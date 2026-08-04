@@ -111,6 +111,26 @@ describe('MCP settings', () => {
     expect(screen.queryAllByRole('button')).toHaveLength(0)
   })
 
+  it('replaces the loading state with a retryable error', async () => {
+    const transport = client(async () => {
+      throw new Error('Codex did not respond')
+    })
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Codex did not respond')
+    expect(screen.queryByText('Loading MCP servers…')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
+  })
+
   it('adds a project server and disables an inherited server', async () => {
     const transport = client(async (method) => {
       if (method === 'mcp.list') {

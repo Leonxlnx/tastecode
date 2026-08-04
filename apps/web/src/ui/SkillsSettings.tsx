@@ -14,17 +14,21 @@ export function SkillsSettings(props: {
   projectName: string | undefined
 }) {
   const [inventory, setInventory] = useState<Inventory>()
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState<string>()
+  const [reload, setReload] = useState(0)
 
   useEffect(() => {
     if (!props.projectPath) {
       setInventory(undefined)
+      setLoading(false)
       return
     }
 
     let active = true
     const load = async () => {
+      setLoading(true)
       try {
         const next = await props.transport.request('skills.list', {
           provider: props.provider,
@@ -36,9 +40,12 @@ export function SkillsSettings(props: {
         }
       } catch (cause) {
         if (active) setError(message(cause))
+      } finally {
+        if (active) setLoading(false)
       }
     }
     setInventory(undefined)
+    setError(undefined)
     void load()
     const off = props.transport.on('skills.changed', ({ provider, projectPath }) => {
       if (provider === props.provider && projectPath === props.projectPath) void load()
@@ -47,7 +54,7 @@ export function SkillsSettings(props: {
       active = false
       off()
     }
-  }, [props.transport, props.provider, props.projectPath])
+  }, [props.transport, props.provider, props.projectPath, reload])
 
   async function toggle(skill: Skill): Promise<void> {
     if (!props.projectPath) return
@@ -107,13 +114,15 @@ export function SkillsSettings(props: {
   const project = props.projectName ?? props.projectPath
   const status = !props.projectPath
     ? 'Select a project in the sidebar first.'
-    : !inventory
+    : loading
       ? 'Discovering skills…'
-      : !inventory.capabilities.inventory
-        ? `${props.providerName} does not expose Agent Skills here yet.`
-        : inventory.skills.length === 0
-          ? 'No skills were discovered for this project.'
-          : undefined
+      : !inventory
+        ? undefined
+        : !inventory.capabilities.inventory
+          ? `${props.providerName} does not expose Agent Skills here yet.`
+          : inventory.skills.length === 0
+            ? 'No skills were discovered for this project.'
+            : undefined
 
   return (
     <section className="settings__panel skills-settings" aria-labelledby="settings-skills">
@@ -139,7 +148,14 @@ export function SkillsSettings(props: {
 
       {error ? (
         <p className="skills-settings__error" role="alert">
-          {error}
+          {error}{' '}
+          <button
+            className="settings__action"
+            type="button"
+            onClick={() => setReload((n) => n + 1)}
+          >
+            Retry
+          </button>
         </p>
       ) : null}
       {status ? <p className="skills-settings__empty">{status}</p> : null}
