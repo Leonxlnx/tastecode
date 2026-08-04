@@ -1,4 +1,4 @@
-import type { Model } from '@harness/contracts'
+import type { Model, ProviderSetup } from '@harness/contracts'
 import { isInstalled, spawnCli } from '@harness/proc'
 
 /**
@@ -26,6 +26,7 @@ export type AcpAgentSpec = {
   supportedVersion?: string
   /** Shown when the binary is missing, so the user knows what to install. */
   install?: string
+  setup: ProviderSetup
   /** CLI flag used to select a model before the ACP handshake. */
   modelArg?: string
   /** ACP config option used to select a model after creating a session. */
@@ -41,6 +42,11 @@ export const ACP_AGENTS: AcpAgentSpec[] = [
     verified: true,
     modelArg: '--model',
     install: 'npm i -g @google/gemini-cli',
+    setup: {
+      installUrl: 'https://github.com/google-gemini/gemini-cli/blob/main/docs/get-started/index.md',
+      installCommand: 'npm install -g @google/gemini-cli',
+      login: 'provider',
+    },
   },
   {
     id: 'kimi',
@@ -50,6 +56,12 @@ export const ACP_AGENTS: AcpAgentSpec[] = [
     verified: true,
     supportedVersion: '0.29',
     modelConfigId: 'model',
+    install: 'npm install -g @moonshot-ai/kimi-code',
+    setup: {
+      installUrl: 'https://moonshotai.github.io/kimi-code/en/guides/getting-started.html',
+      installCommand: 'npm install -g @moonshot-ai/kimi-code',
+      login: 'provider',
+    },
   },
   {
     id: 'qwen',
@@ -61,6 +73,11 @@ export const ACP_AGENTS: AcpAgentSpec[] = [
     verified: false,
     modelArg: '--model',
     install: 'npm i -g @qwen-code/qwen-code',
+    setup: {
+      installUrl: 'https://qwenlm.github.io/qwen-code-docs/en/users/quickstart/',
+      installCommand: 'npm install -g @qwen-code/qwen-code@latest',
+      login: 'provider',
+    },
   },
 ]
 

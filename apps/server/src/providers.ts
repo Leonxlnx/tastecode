@@ -3,7 +3,7 @@ import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex'
 import { CURSOR_CAPABILITIES, CURSOR_SUPPORTED_VERSION } from '@harness/adapter-cursor'
 import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode'
-import type { ProviderStatus } from '@harness/contracts'
+import type { ProviderSetup, ProviderStatus } from '@harness/contracts'
 import { commandVersion, isInstalled } from '@harness/proc'
 
 /**
@@ -25,18 +25,34 @@ type Probe = {
   displayName: string
   command?: string
   capabilities?: ProviderStatus['capabilities']
+  setup: ProviderSetup
   supportedVersion?: string
   /** Set when the adapter does not exist yet, in words we can show the user. */
   unbuilt?: string
 }
 
 const PROBES: Probe[] = [
-  { id: 'codex', displayName: 'Codex', command: 'codex', capabilities: CODEX_CAPABILITIES },
+  {
+    id: 'codex',
+    displayName: 'Codex',
+    command: 'codex',
+    capabilities: CODEX_CAPABILITIES,
+    setup: {
+      installUrl: 'https://help.openai.com/en/articles/11096431',
+      installCommand: 'npm install -g @openai/codex',
+      login: 'app',
+    },
+  },
   {
     id: 'claude-code',
     displayName: 'Claude Code',
     command: 'claude',
     capabilities: CLAUDE_CAPABILITIES,
+    setup: {
+      installUrl: 'https://docs.anthropic.com/en/docs/claude-code/getting-started',
+      installCommand: 'npm install -g @anthropic-ai/claude-code',
+      login: 'app',
+    },
   },
   {
     id: 'cursor',
@@ -44,12 +60,21 @@ const PROBES: Probe[] = [
     command: 'cursor-agent',
     capabilities: CURSOR_CAPABILITIES,
     supportedVersion: CURSOR_SUPPORTED_VERSION,
+    setup: {
+      installUrl: 'https://docs.cursor.com/en/cli/installation',
+      login: 'app',
+    },
   },
   {
     id: 'opencode',
     displayName: 'OpenCode',
     command: 'opencode',
     capabilities: OPENCODE_CAPABILITIES,
+    setup: {
+      installUrl: 'https://opencode.ai/en/docs',
+      installCommand: 'npm install -g opencode-ai',
+      login: 'provider',
+    },
   },
 ]
 
@@ -86,6 +111,7 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
       displayName: entry.displayName,
       installed: false,
       auth: 'unknown',
+      setup: entry.setup,
       ...(entry.unbuilt ? { problem: entry.unbuilt } : {}),
     }
   }
@@ -97,6 +123,7 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
       displayName: entry.displayName,
       installed: false,
       auth: 'unknown',
+      setup: entry.setup,
       problem: `${entry.command} is not on PATH`,
     }
   }
@@ -108,6 +135,7 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
     displayName: entry.displayName,
     installed: true,
     auth: 'unknown',
+    setup: entry.setup,
     ...(version ? { version } : {}),
     ...(entry.capabilities ? { capabilities: entry.capabilities } : {}),
     ...(unsupported

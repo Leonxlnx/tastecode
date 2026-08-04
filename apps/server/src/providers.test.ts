@@ -41,6 +41,8 @@ describe('detectProviders', () => {
     expect(claude.installed).toBe(false)
     // "not installed" with no reason leaves the user nothing to act on.
     expect(claude.problem).toContain('claude')
+    expect(claude.setup?.installUrl).toMatch(/^https:/)
+    expect(claude.setup?.login).toBe('app')
   })
 
   it('reports when the installed Cursor wire version is unsupported', async () => {

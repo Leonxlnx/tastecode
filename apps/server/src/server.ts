@@ -373,11 +373,12 @@ export function startServer(
       case 'acp.agents': {
         const agents = await detectAgents()
         return {
-          agents: agents.map(({ id, name, installed, verified, install }) => ({
+          agents: agents.map(({ id, name, installed, verified, install, setup }) => ({
             id,
             name,
             installed,
             verified,
+            setup,
             ...(install === undefined ? {} : { install }),
           })),
         }
