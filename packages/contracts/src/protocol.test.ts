@@ -674,6 +674,41 @@ describe('protocol envelopes', () => {
     ).toThrow()
   })
 
+  it('carries actionable provider setup metadata', () => {
+    const setup = {
+      installUrl: 'https://example.test/install',
+      installCommand: 'npm install -g example-cli',
+      login: 'provider' as const,
+    }
+
+    expect(
+      methods['providers.list'].result.parse({
+        providers: [
+          {
+            id: 'opencode',
+            displayName: 'OpenCode',
+            installed: false,
+            auth: 'unknown',
+            setup,
+          },
+        ],
+      }).providers[0]?.setup,
+    ).toEqual(setup)
+    expect(
+      methods['acp.agents'].result.parse({
+        agents: [
+          {
+            id: 'gemini',
+            name: 'Gemini CLI',
+            installed: false,
+            verified: true,
+            setup,
+          },
+        ],
+      }).agents[0]?.setup,
+    ).toEqual(setup)
+  })
+
   it('validates data for every declared channel', () => {
     expect(
       channels['thread.event'].parse({

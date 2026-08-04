@@ -11,6 +11,7 @@ import {
   DomainEventSchema,
   ModelSchema,
   ProviderIdSchema,
+  ProviderSetupSchema,
   ProviderStatusSchema,
   UsageSchema,
 } from './domain.js'
@@ -633,6 +634,7 @@ export const methods = {
           /** True when we captured and read this agent's frames ourselves. */
           verified: z.boolean(),
           install: z.string().optional(),
+          setup: ProviderSetupSchema,
         }),
       ),
     }),

@@ -278,6 +278,15 @@ export const AccountSchema = z.object({
 })
 export type Account = z.infer<typeof AccountSchema>
 
+/** Actionable setup information supplied by the provider adapter. */
+export const ProviderSetupSchema = z.object({
+  installUrl: z.url(),
+  installCommand: z.string().optional(),
+  /** `app` can authenticate in Harness; `provider` finishes setup in the provider's CLI. */
+  login: z.enum(['app', 'provider']),
+})
+export type ProviderSetup = z.infer<typeof ProviderSetupSchema>
+
 export const ProviderStatusSchema = z.object({
   id: ProviderIdSchema,
   displayName: z.string(),
@@ -290,6 +299,7 @@ export const ProviderStatusSchema = z.object({
    */
   auth: z.enum(['authenticated', 'unauthenticated', 'unknown']),
   capabilities: CapabilitiesSchema.optional(),
+  setup: ProviderSetupSchema.optional(),
   /** Why it is unusable, in language we can show the user directly. */
   problem: z.string().optional(),
 })
