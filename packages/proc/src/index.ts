@@ -85,6 +85,35 @@ export function commandVersion(command: string, timeoutMs = 5000): Promise<strin
   })
 }
 
+/** Run a short, non-interactive CLI command and capture its public output. */
+export function runCli(
+  command: string,
+  args: string[],
+  timeoutMs = 5000,
+): Promise<{ code: number | null; stdout: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawnCli(command, args)
+    let stdout = ''
+    let settled = false
+    const finish = (result: { code: number | null; stdout: string } | Error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      result instanceof Error ? reject(result) : resolve(result)
+    }
+    const timer = setTimeout(() => {
+      child.kill()
+      finish(new Error(`${command} did not respond`))
+    }, timeoutMs)
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk
+    })
+    child.on('error', finish)
+    child.on('exit', (code) => finish({ code, stdout }))
+  })
+}
+
 /**
  * Read newline-delimited JSON from a stream.
  *
