@@ -28,7 +28,7 @@ describe('Sidebar chat actions', () => {
         projects={[]}
         activeProjectPath={undefined}
         activeSessionId={undefined}
-        account={undefined}
+        account={{ signedIn: true, email: 'private@example.com', plan: 'Pro' }}
         providerName="Codex"
         mode="inbox"
         inbox={{
@@ -56,9 +56,10 @@ describe('Sidebar chat actions', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'V1 Classic' }))
-    fireEvent.click(screen.getByRole('button', { name: 'V2 Inbox' }))
-    expect(onModeChange.mock.calls).toEqual([['classic'], ['inbox']])
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to V1 Classic sidebar' }))
+    expect(onModeChange).toHaveBeenCalledWith('classic')
+    expect(screen.queryByText('private@example.com')).toBeNull()
+    expect(screen.getByText('Codex')).toBeTruthy()
   })
 
   it('keeps rename and archive actions in the chat options menu', () => {
@@ -139,6 +140,9 @@ describe('Sidebar chat actions', () => {
         onOpenSettings={vi.fn()}
       />,
     )
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Harness' }))
+    expect(screen.queryByDisplayValue('Harness')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Project options' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Archive chats' }))

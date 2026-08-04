@@ -139,39 +139,35 @@ export function Sidebar(props: {
             <span>New chat</span>
             <ShortcutHint>{shortcutLabel(SHORTCUTS.newChat, macOS)}</ShortcutHint>
           </button>
-          <button
-            className="navitem"
-            onClick={props.onAddProject}
-            aria-keyshortcuts={shortcutAria(SHORTCUTS.newProject)}
-          >
-            <FolderPen size={15} aria-hidden />
-            <span>New project</span>
-            <ShortcutHint>{shortcutLabel(SHORTCUTS.newProject, macOS)}</ShortcutHint>
-          </button>
-          <button
-            type="button"
-            className="search search--button"
-            onClick={() => props.onOpenSearch(inbox && scope ? scope : undefined)}
-            aria-keyshortcuts={shortcutAria(SHORTCUTS.searchSessions)}
-          >
-            <Search size={13} aria-hidden />
-            <span>Search chats</span>
-            <ShortcutHint>{shortcutLabel(SHORTCUTS.searchSessions, macOS)}</ShortcutHint>
-          </button>
-          <div className="rail__version" role="group" aria-label="Sidebar version">
+          <div className="rail__utility-row">
             <button
-              type="button"
-              aria-pressed={!inbox}
-              onClick={() => props.onModeChange?.('classic')}
+              className="navitem rail__new-project"
+              onClick={props.onAddProject}
+              aria-keyshortcuts={shortcutAria(SHORTCUTS.newProject)}
             >
-              V1 Classic
+              <FolderPen size={15} aria-hidden />
+              <span>New project</span>
+              <ShortcutHint>{shortcutLabel(SHORTCUTS.newProject, macOS)}</ShortcutHint>
             </button>
             <button
               type="button"
-              aria-pressed={inbox}
-              onClick={() => props.onModeChange?.('inbox')}
+              className="icon-btn icon-btn--always rail__search"
+              onClick={() => props.onOpenSearch(inbox && scope ? scope : undefined)}
+              aria-label="Search chats"
+              title={`Search chats (${shortcutLabel(SHORTCUTS.searchSessions, macOS)})`}
+              aria-keyshortcuts={shortcutAria(SHORTCUTS.searchSessions)}
             >
-              V2 Inbox
+              <Search size={14} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="rail__mode-toggle"
+              aria-pressed={inbox}
+              aria-label={`Switch to ${inbox ? 'V1 Classic' : 'V2 Inbox'} sidebar`}
+              title={`Switch to ${inbox ? 'V1 Classic' : 'V2 Inbox'} sidebar`}
+              onClick={() => props.onModeChange?.(inbox ? 'classic' : 'inbox')}
+            >
+              V{inbox ? '2' : '1'}
             </button>
           </div>
         </div>
@@ -244,14 +240,7 @@ export function Sidebar(props: {
                 <span className="account__avatar">
                   {initial(props.account, props.providerName)}
                 </span>
-                <span className="account__text">
-                  <span className="account__name">
-                    {props.account?.email ?? props.providerName}
-                  </span>
-                  {props.account?.plan ? (
-                    <span className="account__plan">{props.account.plan}</span>
-                  ) : null}
-                </span>
+                <span className="account__name">{props.providerName}</span>
               </span>
             )}
           >
@@ -338,7 +327,6 @@ function ProjectRow(props: {
             <button
               className="proj__toggle"
               onClick={() => setOpen(!expanded)}
-              onDoubleClick={() => setRenaming(true)}
               title={props.project.path}
             >
               <Folder className="proj__mark" size={12} aria-hidden />
@@ -352,7 +340,7 @@ function ProjectRow(props: {
               panelClassName="menu--sidebar"
               trigger={() => (
                 <span className="dots">
-                  <Ellipsis size={14} aria-hidden />
+                  <Ellipsis size={16} aria-hidden />
                 </span>
               )}
             >
@@ -544,7 +532,7 @@ function SessionRow(props: {
         label={`Options for ${props.session.title}`}
         triggerClassName="sess__menu"
         panelClassName="menu--sidebar"
-        trigger={() => <Ellipsis size={14} aria-hidden />}
+        trigger={() => <Ellipsis size={16} aria-hidden />}
       >
         {(close) => (
           <>

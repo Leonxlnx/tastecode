@@ -120,42 +120,52 @@
   gap: 1px;
 }
 
-.rail__version {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2px;
-  margin-top: 5px;
-  padding: 2px;
+.rail__utility-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rail__new-project {
+  min-width: 0;
+}
+
+.rail__new-project > span:not(.shortcut) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail__search,
+.rail__mode-toggle {
+  flex: none;
+  width: 30px;
+  height: 30px;
+}
+
+.rail__mode-toggle {
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
   border-radius: var(--r-md);
   box-shadow: var(--chrome-inset-shadow);
-}
-
-.rail__version button {
-  padding: 4px;
-  background: none;
-  border: 0;
-  border-radius: calc(var(--r-md) - 2px);
   color: var(--text-3);
   cursor: pointer;
   font: inherit;
   font-size: var(--t-xs);
   transition:
     background var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out),
     transform var(--dur-press) var(--ease-out);
 }
 
-.rail__version button[aria-pressed='true'] {
+.rail__mode-toggle[aria-pressed='true'] {
   background: var(--chrome-raised);
   box-shadow: var(--chrome-shadow);
   color: var(--text);
 }
 
-.rail__version button:active {
-  transform: translateY(1px);
+.rail__mode-toggle:active {
+  transform: scale(0.97);
 }
 
 .navitem {
@@ -182,14 +192,12 @@
 
 .navitem:hover,
 .navitem:focus-visible {
-  background: var(--chrome-raised);
-  box-shadow: var(--chrome-shadow);
+  background: var(--control-hover);
   color: var(--text);
 }
 
 .navitem:active {
-  box-shadow: var(--chrome-inset-shadow);
-  transform: translateY(1px);
+  transform: scale(0.98);
 }
 
 .navitem svg {
@@ -206,7 +214,7 @@
   margin-left: auto;
   color: var(--text-3);
   font-family: var(--font-mono);
-  font-size: var(--t-xs);
+  font-size: 10.5px;
   font-weight: 450;
   line-height: 1;
   white-space: nowrap;
@@ -217,7 +225,7 @@
   opacity: 0;
 }
 
-.rail__actions :is(.navitem, .search--button):is(:hover, :focus-visible) .shortcut {
+.rail__actions .navitem:is(:hover, :focus-visible) .shortcut {
   visibility: visible;
   opacity: 1;
 }
@@ -249,34 +257,6 @@
   border-color: var(--text-3);
 }
 
-.search--button {
-  width: 100%;
-  min-height: 31px;
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--t-sm);
-  text-align: left;
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
-}
-
-.search--button:hover,
-.search--button:focus-visible {
-  border-color: var(--text-3);
-  color: var(--text-2);
-}
-
-.search--button:active {
-  transform: translateY(1px);
-}
-
-.search--button > span:first-of-type {
-  flex: 1;
-  min-width: 0;
-}
-
 .account {
   display: flex;
   align-items: center;
@@ -297,24 +277,12 @@
   font-weight: 600;
 }
 
-.account__text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  line-height: 1.25;
-  text-align: left;
-}
-
 .account__name {
+  min-width: 0;
   font-size: var(--t-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.account__plan {
-  color: var(--text-3);
-  font-size: var(--t-xs);
 }
 
 .rail__foot .menutrigger {
@@ -433,8 +401,8 @@
 .dots {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
   border-radius: var(--r-sm);
   color: var(--text-3);
   opacity: 0;
@@ -2187,8 +2155,8 @@
 .sess__menu {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   border-radius: var(--r-sm);
   color: var(--text-3);
   transition: color var(--dur-fast) var(--ease-out);
@@ -4856,7 +4824,7 @@
 }
 
 .menu--settings {
-  min-width: min(176px, calc(100vw - 16px));
+  width: min(calc(var(--rail-w) - 20px), calc(100vw - 16px));
 }
 
 .menu--sidebar {
