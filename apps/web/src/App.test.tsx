@@ -615,15 +615,17 @@ describe('new chats', () => {
     serverSidebarSettings.mode = 'classic'
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'V2 Inbox' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Switch to V2 Inbox sidebar' }))
 
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('sidebar.updateSettings', {
         mode: 'inbox',
       })
-      expect(screen.getByRole('button', { name: 'V2 Inbox' }).getAttribute('aria-pressed')).toBe(
-        'true',
-      )
+      expect(
+        screen
+          .getByRole('button', { name: 'Switch to V1 Classic sidebar' })
+          .getAttribute('aria-pressed'),
+      ).toBe('true')
     })
   })
 
