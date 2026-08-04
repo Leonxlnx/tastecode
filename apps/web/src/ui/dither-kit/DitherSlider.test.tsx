@@ -54,7 +54,7 @@ afterEach(() => {
 })
 
 describe('DitherSlider', () => {
-  it('moves a finite bright Bayer spotlight with the pointer', () => {
+  it('moves a finite bright dither spotlight with the pointer', () => {
     const textureDraws: Draw[] = []
     const bloomDraws: Draw[] = []
     const textureContext = createCanvasContext(textureDraws)

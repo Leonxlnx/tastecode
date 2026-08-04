@@ -1,15 +1,8 @@
 import { useEffect, useRef } from 'react'
 
-const BAYER4 = [
-  [0, 8, 2, 10],
-  [12, 4, 14, 6],
-  [3, 11, 1, 9],
-  [15, 7, 13, 5],
-].map((row) => row.map((value) => (value + 0.5) / 16))
-
 const LIGHT = [237, 237, 237] as const
 const MAX_PIXEL_RATIO = 2
-const DOT_FILL = 0.5
+const DOT_FILL = 0.42
 const SPOT_INNER_RADIUS = 20
 const SPOT_OUTER_RADIUS = 60
 const FADE_IN_MS = 150
@@ -41,6 +34,12 @@ function smoothstep(progress: number): number {
 
 function easeOutCubic(progress: number): number {
   return 1 - (1 - progress) ** 3
+}
+
+function noiseThreshold(x: number, y: number): number {
+  let hash = Math.imul(x + 1, 374761393) ^ Math.imul(y + 1, 668265263)
+  hash = Math.imul(hash ^ (hash >>> 13), 1274126177)
+  return ((hash ^ (hash >>> 16)) >>> 0) / 4294967296
 }
 
 function paintDither(
@@ -85,7 +84,7 @@ function paintDither(
 
   for (let y = 0; y < rows; y += 1) {
     for (let x = 0; x < columns; x += 1) {
-      const threshold = BAYER4[y & 3]![x & 3]!
+      const threshold = noiseThreshold(x, y)
       const cellCenterX = x * cellSize + cellSize / 2
       const cellCenterY = y * cellSize + cellSize / 2
       const distance = Math.hypot(cellCenterX - pointerX, cellCenterY - pointerY)
