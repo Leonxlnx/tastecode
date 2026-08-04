@@ -1503,6 +1503,10 @@ describe('reopening a session', () => {
         threadId: 'untouched-thread',
       })
     })
-    expect(await screen.findByText('1.2k session · 3.4k today · 75% left (5 hours)')).toBeTruthy()
+    const limits = await screen.findByRole('button', { name: 'Usage limits' })
+    expect(limits.textContent).toContain('75% left')
+    fireEvent.click(limits)
+    expect(await screen.findByText('1.2k tokens this chat')).toBeTruthy()
+    expect(screen.getByText('3.4k tokens today')).toBeTruthy()
   })
 })
