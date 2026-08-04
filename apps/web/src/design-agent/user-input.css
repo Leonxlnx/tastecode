@@ -121,25 +121,31 @@
   flex: 1;
   min-height: 28px;
   padding: 5px 8px;
-  border: 1px solid var(--line);
-  border-radius: calc(var(--r-md) - 2px);
-  background: color-mix(in srgb, var(--surface) 72%, transparent);
-  box-shadow: inset 0 1px 2px color-mix(in srgb, black 18%, transparent);
   line-height: 16px;
 }
 
 .brief-input__custom {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--text);
   font: inherit;
   font-size: var(--t-sm);
 }
 
 .brief-input__custom:focus-visible {
+  outline: 0;
+}
+
+.brief-input__option--custom:has(.brief-input__custom:focus-visible) {
   border-color: var(--text-2);
-  outline-offset: 1px;
 }
 
 .brief-input__option > .brief-input__custom-preview {
+  border: 1px solid var(--line);
+  border-radius: calc(var(--r-md) - 2px);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, black 18%, transparent);
   color: var(--text-3);
   font-weight: 450;
 }
