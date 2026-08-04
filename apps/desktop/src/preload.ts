@@ -17,6 +17,8 @@ const api = {
     ipcRenderer.invoke('harness:savePastedImage', image),
   setZoom: (action: 'in' | 'out' | 'reset'): Promise<void> =>
     ipcRenderer.invoke('harness:setZoom', action),
+  setTheme: (theme: 'light' | 'dark'): Promise<void> =>
+    ipcRenderer.invoke('harness:setTheme', theme),
   onZoomChange: (listener: (factor: number) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, factor: unknown) => {
       if (typeof factor === 'number' && Number.isFinite(factor)) listener(factor)

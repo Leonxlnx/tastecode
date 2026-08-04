@@ -14,6 +14,7 @@ import {
 } from 'electron'
 import { allowsMicrophoneRequest } from './media-permissions.js'
 import { revealablePath } from './reveal-path.js'
+import { windowThemeOptions } from './window-theme.js'
 import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './zoom-shortcuts.js'
 
 /**
@@ -30,19 +31,20 @@ const devServer = process.env['HARNESS_DEV_SERVER']
 const MAX_PASTED_IMAGE_BYTES = 25 * 1024 * 1024
 
 function createWindow(): void {
+  const initialTheme = windowThemeOptions('dark')
   const window = new BrowserWindow({
     width: 1180,
     height: 820,
     minWidth: 720,
     minHeight: 520,
-    backgroundColor: '#202020',
+    backgroundColor: initialTheme.backgroundColor,
     // Draw our own top bar, but keep native window controls on Windows.
     titleBarStyle: 'hidden',
     // Height and colour must match --titlebar-h and --titlebar-bg in the renderer's
     // tokens. Windows sizes the caption buttons from this number, so if the two
     // drift the buttons stand taller than the bar they sit in — which is
     // invisible until someone screenshots it.
-    titleBarOverlay: { color: '#202020', symbolColor: '#ffffff', height: 34 },
+    titleBarOverlay: initialTheme.titleBarOverlay,
     show: false,
     webPreferences: {
       // Hardened from the first commit, not "later". The renderer gets no
@@ -94,6 +96,14 @@ ipcMain.handle('harness:setZoom', (event, action: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window) throw new Error('No window for zoom action')
   applyZoom(window, action)
+})
+
+ipcMain.handle('harness:setTheme', (event, theme: unknown) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window) throw new Error('No window for theme change')
+  const options = windowThemeOptions(theme)
+  window.setBackgroundColor(options.backgroundColor)
+  window.setTitleBarOverlay(options.titleBarOverlay)
 })
 
 function applyZoom(window: BrowserWindow, action: ZoomAction): void {

@@ -12,11 +12,13 @@ type Bridge = {
   revealPath: (path: string) => Promise<void>
   savePastedImage: (image: { type: string; bytes: ArrayBuffer }) => Promise<string>
   setZoom: (action: ZoomAction) => Promise<void>
+  setTheme: (theme: AppTheme) => Promise<void>
   onZoomChange: (listener: (factor: number) => void) => () => void
   isDesktop: true
 }
 
 export type ZoomAction = 'in' | 'out' | 'reset'
+export type AppTheme = 'light' | 'dark'
 
 const bridge = (globalThis as { harness?: Bridge }).harness
 
@@ -53,6 +55,10 @@ export async function savePastedImage(file: File): Promise<string | undefined> {
 
 export function setAppZoom(action: ZoomAction): Promise<void> {
   return bridge?.setZoom(action) ?? Promise.resolve()
+}
+
+export function setDesktopTheme(theme: AppTheme): Promise<void> {
+  return bridge?.setTheme(theme) ?? Promise.resolve()
 }
 
 export function onAppZoomChange(listener: (factor: number) => void): () => void {
