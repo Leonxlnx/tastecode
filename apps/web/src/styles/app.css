@@ -1360,6 +1360,109 @@
   transform: translateY(1px);
 }
 
+.settings__status {
+  flex: none;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.settings__status.is-on {
+  border-color: color-mix(in oklab, var(--attention) 28%, var(--line));
+  color: var(--text);
+}
+
+.settings__mobile-block,
+.settings__mobile-actions,
+.settings__mobile-error,
+.settings__pairing,
+.settings__mobile-empty {
+  border-top: 1px solid var(--line);
+}
+
+.settings__mobile-block,
+.settings__mobile-actions,
+.settings__mobile-error,
+.settings__mobile-empty {
+  margin: 0;
+  padding: 14px 16px;
+}
+
+.settings__mobile-actions,
+.settings__mobile-routes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings__mobile-routes {
+  margin-top: 10px;
+}
+
+.settings__mobile-route {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  overflow: hidden;
+  background: var(--chrome-recessed);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings__mobile-route strong {
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-weight: 500;
+}
+
+.settings__mobile-error {
+  color: var(--error);
+  font-size: var(--t-sm);
+}
+
+.settings__pairing {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  gap: 20px;
+  align-items: center;
+  padding: 16px;
+}
+
+.settings__pairing .settings__action {
+  margin-top: 12px;
+}
+
+.settings__qr {
+  display: grid;
+  place-items: center;
+  min-height: 176px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  color: #333;
+  font-size: var(--t-xs);
+}
+
+.settings__qr svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.settings__mobile-empty {
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
 .settings .switch {
   width: 34px;
   height: 20px;
@@ -6108,6 +6211,14 @@
 
   .settings__row-control {
     align-self: flex-end;
+  }
+
+  .settings__pairing {
+    grid-template-columns: 1fr;
+  }
+
+  .settings__qr {
+    width: min(100%, 220px);
   }
 
   .appearance-picker,

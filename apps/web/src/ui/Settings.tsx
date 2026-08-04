@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import type {
   Account,
+  ConnectionAddress,
+  ConnectionsStatus,
   ModelConnection,
   ModelConnectionPreset,
   ModelTransport,
   ProviderId,
   ProviderStatus,
+  PairedDevice,
   ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
@@ -22,6 +25,7 @@ import {
   Palette,
   PanelLeft,
   RotateCcw,
+  Smartphone,
   UserRound,
 } from 'lucide-react'
 import { agentMark, connectionMark, providerMark, type ModelChoice } from '../model-catalog.js'
@@ -32,9 +36,18 @@ import { McpSettings } from './McpSettings.js'
 import { Menu, MenuItem } from './Menu.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderIcon } from './ProviderIcon.js'
+import { renderQrSvg } from './qr-code.js'
 
 type SettingsSection =
-  'providers' | 'models' | 'mcp' | 'skills' | 'workflows' | 'appearance' | 'data' | 'about'
+  | 'providers'
+  | 'models'
+  | 'mcp'
+  | 'skills'
+  | 'workflows'
+  | 'mobile'
+  | 'appearance'
+  | 'data'
+  | 'about'
 
 const THEME_OPTIONS = [
   { value: 'system', label: 'System' },
@@ -140,6 +153,12 @@ export function Settings(props: {
             onClick={() => setSection('workflows')}
           />
           <SettingsNavItem
+            active={section === 'mobile'}
+            icon={<Smartphone size={15} aria-hidden />}
+            label="Mobile access"
+            onClick={() => setSection('mobile')}
+          />
+          <SettingsNavItem
             active={section === 'appearance'}
             icon={<Palette size={15} aria-hidden />}
             label="Appearance"
@@ -167,6 +186,7 @@ export function Settings(props: {
           {section === 'mcp' ? <McpSettings {...props} /> : null}
           {section === 'skills' ? <SkillsSettings {...props} /> : null}
           {section === 'workflows' ? <WorkflowSettings {...props} /> : null}
+          {section === 'mobile' ? <MobileAccessSettings transport={props.transport} /> : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
           {section === 'data' ? <DataSettings {...props} /> : null}
           {section === 'about' ? <AboutSettings /> : null}
@@ -669,6 +689,217 @@ function ModelSettings(props: {
       ))}
     </SettingsPanel>
   )
+}
+
+function MobileAccessSettings(props: { transport: Transport }) {
+  const [status, setStatus] = useState<ConnectionsStatus>()
+  const [pairing, setPairing] = useState<ResultOf<'connections.startPairing'>>()
+  const [qrSvg, setQrSvg] = useState<string>()
+  const [error, setError] = useState<string>()
+  const [busy, setBusy] = useState<'pair' | 'stop' | string>()
+  const [now, setNow] = useState(Date.now)
+
+  const refresh = useCallback(async () => {
+    try {
+      setStatus(await props.transport.request('connections.status', {}))
+      setError(undefined)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }, [props.transport])
+
+  useEffect(() => {
+    void refresh()
+    const timer = window.setInterval(() => {
+      setNow(Date.now())
+      void refresh()
+    }, 2_000)
+    return () => window.clearInterval(timer)
+  }, [refresh])
+
+  useEffect(() => {
+    if (!pairing || pairing.expiresAt <= Date.now()) {
+      setQrSvg(undefined)
+      return
+    }
+    let cancelled = false
+    void renderQrSvg(pairing.pairingUri)
+      .then((svg) => {
+        if (!cancelled) setQrSvg(svg)
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [pairing])
+
+  const startPairing = async () => {
+    setBusy('pair')
+    try {
+      const offer = await props.transport.request('connections.startPairing', {})
+      setStatus(offer)
+      setPairing(offer)
+      setNow(Date.now())
+      setError(undefined)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const stop = async () => {
+    setBusy('stop')
+    try {
+      await props.transport.request('connections.stop', {})
+      setPairing(undefined)
+      await refresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const revoke = async (deviceId: string) => {
+    setBusy(deviceId)
+    try {
+      await props.transport.request('connections.revoke', { deviceId })
+      await refresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const activePairing = pairing && pairing.expiresAt > now ? pairing : undefined
+
+  return (
+    <SettingsPanel title="Mobile access" groupTitle="This computer">
+      <SettingsRow
+        title={status?.enabled ? 'Available to paired devices' : 'Not accepting mobile connections'}
+        note={
+          status?.enabled
+            ? `${status.serverName} is listening on port ${status.port}.`
+            : 'Generate a one-time code to start the private listener and pair a device.'
+        }
+      >
+        <span className={`settings__status${status?.enabled ? ' is-on' : ''}`}>
+          {status?.enabled ? 'On' : 'Off'}
+        </span>
+      </SettingsRow>
+
+      {status?.addresses.length ? (
+        <div className="settings__mobile-block">
+          <p className="settings__row-title">Reachable addresses</p>
+          <p className="settings__row-note">
+            Prefer Tailscale. Use a LAN route only on a private network you trust.
+          </p>
+          <div className="settings__mobile-routes">
+            {status.addresses.map((address) => (
+              <AddressPill address={address} key={`${address.kind}-${address.url}`} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="settings__mobile-actions">
+        <button
+          className="settings__action"
+          type="button"
+          disabled={busy !== undefined}
+          onClick={() => void startPairing()}
+        >
+          {busy === 'pair' ? 'Generating...' : 'Generate pairing code'}
+        </button>
+        {status?.enabled ? (
+          <button
+            className="settings__action is-danger"
+            type="button"
+            disabled={busy !== undefined}
+            onClick={() => void stop()}
+          >
+            {busy === 'stop' ? 'Stopping...' : 'Stop mobile access'}
+          </button>
+        ) : null}
+      </div>
+
+      {error ? (
+        <p className="settings__mobile-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+
+      {activePairing ? (
+        <div className="settings__pairing">
+          <div className="settings__qr">
+            {qrSvg ? (
+              <div
+                role="img"
+                aria-label="Pairing QR code"
+                dangerouslySetInnerHTML={{ __html: qrSvg }}
+              />
+            ) : (
+              <span>Generating QR...</span>
+            )}
+          </div>
+          <div>
+            <p className="settings__row-title">Scan from Harness Mobile</p>
+            <p className="settings__row-note">
+              Expires in {formatCountdown(activePairing.expiresAt - now)} and works once.
+            </p>
+            <button
+              className="settings__action"
+              type="button"
+              onClick={() => void navigator.clipboard?.writeText(activePairing.pairingUri)}
+            >
+              Copy pairing link
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <h2 className="settings__group-title settings__group-title--inside">Paired devices</h2>
+      {status?.devices.length ? (
+        status.devices.map((device) => (
+          <SettingsRow key={device.id} title={device.name} note={formatDeviceNote(device, now)}>
+            <button
+              className="settings__action is-danger"
+              type="button"
+              disabled={busy !== undefined}
+              onClick={() => void revoke(device.id)}
+            >
+              {busy === device.id ? 'Revoking...' : 'Revoke'}
+            </button>
+          </SettingsRow>
+        ))
+      ) : (
+        <p className="settings__mobile-empty">No paired devices.</p>
+      )}
+    </SettingsPanel>
+  )
+}
+
+function AddressPill(props: { address: ConnectionAddress }) {
+  return (
+    <span className="settings__mobile-route" title={props.address.url}>
+      <strong>{props.address.kind === 'tailscale' ? 'Tailscale' : 'LAN'}</strong>
+      {props.address.label}
+    </span>
+  )
+}
+
+function formatCountdown(ms: number): string {
+  const seconds = Math.max(0, Math.ceil(ms / 1_000))
+  return seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`
+}
+
+function formatDeviceNote(device: PairedDevice, now: number): string {
+  const minutes = Math.max(0, Math.floor((now - device.lastSeenAt) / 60_000))
+  return minutes === 0 ? 'Seen just now' : `Seen ${minutes}m ago`
 }
 
 function AppearanceSettings(props: {

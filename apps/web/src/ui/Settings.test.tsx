@@ -24,6 +24,28 @@ describe('provider settings', () => {
           return { loginId: 'login-1', authUrl: 'https://auth.example.test/' }
         }
         if (method === 'auth.signOut') return {}
+        if (method === 'connections.status') {
+          return {
+            enabled: false,
+            serverName: 'Studio Mac',
+            port: 4312,
+            addresses: [],
+            devices: [],
+          }
+        }
+        if (method === 'connections.startPairing') {
+          return {
+            enabled: true,
+            serverName: 'Studio Mac',
+            port: 4312,
+            addresses: [
+              { kind: 'tailscale', label: 'Tailscale 100.101.2.3', url: 'ws://100.101.2.3:4312' },
+            ],
+            devices: [],
+            pairingUri: 'harness://pair?payload=test-ticket',
+            expiresAt: Date.now() + 300_000,
+          }
+        }
         throw new Error(`unexpected ${method}`)
       }),
       on: vi.fn(() => () => {}),
@@ -134,5 +156,11 @@ describe('provider settings', () => {
       '_blank',
       'noopener,noreferrer',
     )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mobile access' }))
+    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('connections.status', {}))
+    fireEvent.click(screen.getByRole('button', { name: 'Generate pairing code' }))
+    await waitFor(() => expect(screen.getByRole('img', { name: 'Pairing QR code' })).toBeTruthy())
+    expect(screen.getByText('Tailscale 100.101.2.3')).toBeTruthy()
   })
 })
