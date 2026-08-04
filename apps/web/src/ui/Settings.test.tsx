@@ -133,6 +133,38 @@ describe('provider settings', () => {
         }
         if (method === 'auth.signOut') return {}
         if (method === 'providers.install') return { terminalId: 'term-install-1' }
+        if (method === 'connections.status') {
+          return {
+            enabled: true,
+            serverName: 'Studio Mac',
+            port: 4312,
+            addresses: [
+              { kind: 'tailscale', label: 'Tailscale 100.101.2.3', url: 'ws://100.101.2.3:4312' },
+            ],
+            devices: [
+              {
+                id: 'phone-1',
+                name: 'Blueemi’s iPhone',
+                createdAt: Date.now() - 60_000,
+                lastSeenAt: Date.now(),
+              },
+            ],
+          }
+        }
+        if (method === 'connections.revoke') return {}
+        if (method === 'connections.startPairing') {
+          return {
+            enabled: true,
+            serverName: 'Studio Mac',
+            port: 4312,
+            addresses: [
+              { kind: 'tailscale', label: 'Tailscale 100.101.2.3', url: 'ws://100.101.2.3:4312' },
+            ],
+            devices: [],
+            pairingUri: 'harness://pair?payload=test-ticket',
+            expiresAt: Date.now() + 300_000,
+          }
+        }
         throw new Error(`unexpected ${method}`)
       }),
       on: vi.fn(() => () => {}),
@@ -249,6 +281,20 @@ describe('provider settings', () => {
     // Grok signs in through its own CLI: the row offers the guided card flow.
     expect(within(grokRow).getByRole('button', { name: 'Sign in' })).toBeTruthy()
     expect(open).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mobile access' }))
+    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('connections.status', {}))
+    const phoneRow = screen.getByText('Blueemi’s iPhone').closest<HTMLElement>('.settings__row')
+    if (!phoneRow) throw new Error('paired phone row missing')
+    fireEvent.click(within(phoneRow).getByRole('button', { name: 'Disconnect' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('connections.revoke', {
+        deviceId: 'phone-1',
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Generate pairing code' }))
+    await waitFor(() => expect(screen.getByRole('img', { name: 'Pairing QR code' })).toBeTruthy())
+    expect(screen.getByText('Tailscale 100.101.2.3')).toBeTruthy()
   })
 
   it('runs installs in the background and refreshes once the install exits cleanly', async () => {
