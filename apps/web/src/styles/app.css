@@ -5295,25 +5295,6 @@
 
 /* ---------- buttons ---------- */
 
-/* Icons share one small clockwise gesture so controls feel related without
-   moving their labels or hit targets. Spinners keep their own full rotation. */
-:where(
-  button:not(:disabled):not(.composer-voice-button):not(.composer-voice-bar__button):not(.orb)
-    svg:not(.spinner)
-) {
-  transform-box: fill-box;
-  transform-origin: center;
-  rotate: 0deg;
-  transition: rotate var(--dur-fast) var(--ease-out);
-}
-
-:where(
-  button:not(:disabled):not(.composer-voice-button):not(.composer-voice-bar__button):not(.orb):hover
-    svg:not(.spinner)
-) {
-  rotate: 4deg;
-}
-
 .btn {
   background: var(--light);
   border: 0;
