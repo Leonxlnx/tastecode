@@ -332,6 +332,7 @@ describe('new chats', () => {
     fireEvent.keyDown(composer, { key: 'Enter' })
 
     expect(screen.getByTestId('thread').textContent).toContain('Start immediately')
+    expect(screen.getByRole('button', { name: 'Start immediately, working' })).toBeTruthy()
     expect(screen.getByText('Working')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
     expect(document.querySelector('.stage__body.is-new-session')).toBeNull()

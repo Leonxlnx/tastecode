@@ -763,24 +763,29 @@ export function App() {
         if (pendingSession.current?.id === provisionalId) pendingSession.current.threadId = threadId
         setProjects((current) =>
           current.map((project) =>
-            project.path !== projectPath ||
-            project.sessions.some((session) => session.id === threadId)
+            project.path !== projectPath
               ? project
               : {
                   ...project,
-                  sessions: [
-                    {
-                      id: threadId,
-                      title,
-                      provider: choice.provider,
-                      ...(choice.agent ? { agent: choice.agent.id } : {}),
-                      createdAt: Date.now(),
-                      status: 'starting',
-                      lifecycle: { state: 'active', keepActive: false },
-                      unread: false,
-                    },
-                    ...project.sessions,
-                  ],
+                  sessions: project.sessions.some((session) => session.id === provisionalId)
+                    ? project.sessions.map((session) =>
+                        session.id === provisionalId ? { ...session, id: threadId } : session,
+                      )
+                    : project.sessions.some((session) => session.id === threadId)
+                      ? project.sessions
+                      : [
+                          {
+                            id: threadId,
+                            title,
+                            provider: choice.provider,
+                            ...(choice.agent ? { agent: choice.agent.id } : {}),
+                            createdAt: Date.now(),
+                            status: 'starting',
+                            lifecycle: { state: 'active', keepActive: false },
+                            unread: false,
+                          },
+                          ...project.sessions,
+                        ],
                 },
           ),
         )
@@ -797,6 +802,12 @@ export function App() {
         return threadId
       } catch (error) {
         threadStates.current.delete(provisionalId)
+        setProjects((current) =>
+          current.map((project) => ({
+            ...project,
+            sessions: project.sessions.filter((session) => session.id !== provisionalId),
+          })),
+        )
         if (activeIdRef.current === provisionalId) {
           activeIdRef.current = undefined
           setActiveId(undefined)
@@ -885,8 +896,32 @@ export function App() {
         if (!activePath) return
         const provisionalId = `pending:${crypto.randomUUID()}`
         const provisional = beginOptimisticTurn(emptyThread, text)
+        const choice = selectedModelChoice
+        if (!choice) return
         optimisticTurnId = provisional.activeTurn?.id
         threadStates.current.set(provisionalId, provisional)
+        setProjects((current) =>
+          current.map((project) =>
+            project.path === activePath
+              ? {
+                  ...project,
+                  sessions: [
+                    {
+                      id: provisionalId,
+                      title: titleFrom(text),
+                      provider: choice.provider,
+                      ...(choice.agent ? { agent: choice.agent.id } : {}),
+                      createdAt: Date.now(),
+                      status: 'starting',
+                      lifecycle: { state: 'active', keepActive: false },
+                      unread: false,
+                    },
+                    ...project.sessions,
+                  ],
+                }
+              : project,
+          ),
+        )
         activeIdRef.current = provisionalId
         setActiveId(provisionalId)
         setThread(provisional)
