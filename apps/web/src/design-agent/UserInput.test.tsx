@@ -129,7 +129,9 @@ describe('briefing questions', () => {
 
     fireEvent.click(screen.getByRole('radio', { name: 'Write your own answer' }))
     expect(screen.getByRole('button', { name: 'Submit' }).hasAttribute('disabled')).toBe(true)
-    fireEvent.change(screen.getByRole('textbox', { name: /Custom answer/ }), {
+    const customAnswer = screen.getByRole('textbox', { name: /Custom answer/ })
+    expect(customAnswer.getAttribute('placeholder')).toBe('Type your answer…')
+    fireEvent.change(customAnswer, {
       target: { value: 'Deep green with warm ivory' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }))

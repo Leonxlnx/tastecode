@@ -122,7 +122,7 @@ export function UserInput(props: {
                     className="brief-input__custom"
                     type={question.secret ? 'password' : 'text'}
                     value={answers[question.id] ?? ''}
-                    placeholder="Write your own answer…"
+                    placeholder="Type your answer…"
                     aria-label={`Custom answer: ${question.question}`}
                     autoFocus
                     onChange={(event) =>
@@ -130,7 +130,7 @@ export function UserInput(props: {
                     }
                   />
                 ) : (
-                  <span>Write your own answer</span>
+                  <span className="brief-input__custom-preview">Write your own answer…</span>
                 )}
               </label>
             ) : null}
