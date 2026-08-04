@@ -4697,6 +4697,21 @@
   color: var(--text);
 }
 
+.composer__design:hover > span,
+.composer__design:focus-visible > span {
+  background: linear-gradient(90deg, #b9a7ff, #87c7d8, #e2a6bc, #b9a7ff);
+  background-clip: text;
+  background-size: 200% 100%;
+  color: transparent;
+  animation: design-label-shimmer 2.4s linear infinite;
+}
+
+@keyframes design-label-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   :is(.composer__design-beam, .composer__design-button-beam)::before,
   :is(.composer__design-beam, .composer__design-button-beam)::after,
@@ -5090,6 +5105,44 @@
   display: grid;
   place-items: center;
   transition: transform var(--dur-press) var(--ease-out);
+}
+
+.model-selector__fast[aria-pressed='true'] .model-selector__fast-icon {
+  animation: fast-bolt-on 320ms cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+.model-selector__fast[aria-pressed='false'] .model-selector__fast-icon {
+  animation: fast-bolt-off 260ms var(--ease-out);
+}
+
+@keyframes fast-bolt-on {
+  0% {
+    transform: scale(0.7);
+    filter: brightness(1);
+  }
+  48% {
+    transform: scale(1.25);
+    filter: brightness(1.8) drop-shadow(0 0 5px currentColor);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
+@keyframes fast-bolt-off {
+  45% {
+    transform: scale(0.78);
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer__design:hover > span,
+  .composer__design:focus-visible > span,
+  .model-selector__fast .model-selector__fast-icon {
+    animation: none;
+  }
 }
 
 .model-selector__fast-icon svg {
