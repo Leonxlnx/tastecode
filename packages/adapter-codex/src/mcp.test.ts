@@ -6,6 +6,7 @@ import {
   CODEX_MCP_CAPABILITIES,
   mapMcpServerStatus,
   mapMcpStartupStatus,
+  mcpStartupInventory,
   prepareMcpConfig,
 } from './mcp.js'
 
@@ -157,5 +158,22 @@ describe('Codex MCP inventory', () => {
     ['oAuth', { status: 'authenticated', method: 'oauth' }],
   ] as const)('maps Codex auth status %s', (authStatus, expected) => {
     expect(mapMcpServerStatus({ ...response.data[0]!, authStatus }).auth).toEqual(expected)
+  })
+
+  it('exposes startup inventory before full details arrive', () => {
+    expect(
+      mcpStartupInventory(
+        new Map([
+          ['\0docs', { state: 'ready' }],
+          ['thread-1\0repo-tools', { state: 'starting' }],
+        ]),
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        id: 'docs',
+        startup: { state: 'ready' },
+        tools: [],
+      }),
+    ])
   })
 })

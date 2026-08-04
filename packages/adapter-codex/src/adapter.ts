@@ -41,7 +41,12 @@ import type { GuardianApprovalReviewStatus } from './generated/v2/GuardianApprov
 import type { ItemGuardianApprovalReviewCompletedNotification } from './generated/v2/ItemGuardianApprovalReviewCompletedNotification'
 import type { ItemGuardianApprovalReviewStartedNotification } from './generated/v2/ItemGuardianApprovalReviewStartedNotification'
 import type { JsonValue } from './generated/serde_json/JsonValue.js'
-import { mapMcpServerStatus, mapMcpStartupStatus, prepareMcpConfig } from './mcp.js'
+import {
+  mapMcpServerStatus,
+  mapMcpStartupStatus,
+  mcpStartupInventory,
+  prepareMcpConfig,
+} from './mcp.js'
 import type { SkillsListResponse } from './generated/v2/SkillsListResponse.js'
 import type { SkillsConfigWriteResponse } from './generated/v2/SkillsConfigWriteResponse.js'
 import type { ToolRequestUserInputParams } from './generated/v2/ToolRequestUserInputParams.js'
@@ -255,6 +260,7 @@ export type CodexAdapterEvents = {
   /** Emitted when the browser half of an OAuth flow finishes. */
   login: [{ loginId: string | null; success: boolean; error: string | null }]
   mcpOAuth: [{ serverId: string; loginId: string; success: boolean; error: string | null }]
+  mcpChanged: [{ threadId?: string }]
   skillsChanged: []
 }
 
@@ -265,6 +271,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   )
   #started = false
   #mcpStartup = new Map<string, McpStartupStatus>()
+  #mcpInventory = new Map<string, McpServer[]>()
+  #mcpInventoryLoads = new Map<string, Promise<void>>()
   #mcpServers: Record<string, JsonValue>
   #mcpEnvironment: NodeJS.ProcessEnv
   #mcpLogins = new Map<string, string>()
@@ -441,6 +449,28 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   }
 
   async listMcpServers(threadId?: string): Promise<McpServer[]> {
+    const key = threadId ?? ''
+    const cached = this.#mcpInventory.get(key)
+    if (cached) return cached
+    if (!this.#mcpInventoryLoads.has(key)) {
+      const loading = this.#loadMcpServers(threadId)
+        .then((servers) => {
+          this.#mcpInventory.set(key, servers)
+          this.emit('mcpChanged', threadId ? { threadId } : {})
+        })
+        .catch((error: unknown) => {
+          this.emit(
+            'log',
+            `MCP inventory refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+          )
+        })
+        .finally(() => this.#mcpInventoryLoads.delete(key))
+      this.#mcpInventoryLoads.set(key, loading)
+    }
+    return mcpStartupInventory(this.#mcpStartup, threadId)
+  }
+
+  async #loadMcpServers(threadId?: string): Promise<McpServer[]> {
     const servers: McpServer[] = []
     let cursor: string | undefined
     do {
@@ -640,6 +670,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#rpc = undefined
     this.#started = false
     this.#mcpStartup.clear()
+    this.#mcpInventory.clear()
+    this.#mcpInventoryLoads.clear()
   }
 
   #call<T>(method: string, params: unknown): Promise<T> {
@@ -859,6 +891,16 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       case 'mcpServer/startupStatus/updated': {
         const p = params as McpServerStatusUpdatedNotification
         this.#mcpStartup.set(mcpStartupKey(p.threadId ?? undefined, p.name), mapMcpStartupStatus(p))
+        const inventory = this.#mcpInventory.get(p.threadId ?? '')
+        if (inventory) {
+          this.#mcpInventory.set(
+            p.threadId ?? '',
+            inventory.map((server) =>
+              server.id === p.name ? { ...server, startup: mapMcpStartupStatus(p) } : server,
+            ),
+          )
+        }
+        this.emit('mcpChanged', p.threadId ? { threadId: p.threadId } : {})
         return
       }
 

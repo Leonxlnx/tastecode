@@ -120,6 +120,29 @@ export function mapMcpStartupStatus(status: McpServerStatusUpdatedNotification):
   }
 }
 
+export function mcpStartupInventory(
+  startupByKey: ReadonlyMap<string, McpStartupStatus>,
+  threadId?: string,
+): McpServer[] {
+  const prefix = `${threadId ?? ''}\0`
+  return [...startupByKey.entries()].flatMap(([key, startup]) =>
+    key.startsWith(prefix)
+      ? [
+          {
+            id: key.slice(prefix.length),
+            scope: 'global' as const,
+            enabled: true,
+            auth: { status: 'not_required' as const },
+            startup,
+            tools: [],
+            resources: [],
+            resourceTemplates: [],
+          },
+        ]
+      : [],
+  )
+}
+
 export function mapMcpServerStatus(status: McpServerStatus, startup?: McpStartupStatus): McpServer {
   const displayName =
     status.serverInfo?.title ??
