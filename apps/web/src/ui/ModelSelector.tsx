@@ -367,7 +367,7 @@ export function ModelSelector(props: ModelSelectorProps) {
         </span>
       )}
     >
-      {(close) => (
+      {() => (
         <div className="model-selector">
           <div className="model-selector__models" role="group" aria-label="Models">
             {props.models.map((entry) => {
@@ -379,10 +379,7 @@ export function ModelSelector(props: ModelSelectorProps) {
                   className={`model-selector__model${selected ? ' is-selected' : ''}`}
                   aria-pressed={selected}
                   aria-label={`Use ${entry.model.displayName} through ${entry.sourceName}`}
-                  onClick={() => {
-                    handleModelSelect(entry)
-                    close()
-                  }}
+                  onClick={() => handleModelSelect(entry)}
                 >
                   <ProviderIcon mark={entry.mark} size={16} />
                   <span className="model-selector__model-copy">

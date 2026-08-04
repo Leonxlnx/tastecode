@@ -264,6 +264,7 @@ describe('ModelSelector', () => {
     expect(onModelChange).toHaveBeenCalledWith('codex:gpt-5.6-mini')
     expect(onEffortChange).toHaveBeenCalledWith('low')
     expect(onServiceTierChange).toHaveBeenCalledWith('fast')
+    expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
   })
 
   it('maps pointer positions onto discrete effort stops', () => {
