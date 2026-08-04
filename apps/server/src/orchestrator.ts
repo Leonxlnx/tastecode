@@ -210,11 +210,13 @@ export class Orchestrator {
    * started the flow.
    */
   #control: CodexAdapter | undefined
+  #controlStarting: Promise<CodexAdapter> | undefined
   #providerLogins = new Map<ProviderId, { loginId: string; cancel: () => void }>()
   #voiceRequests = new Map<string, AbortController>()
 
   async #controlAdapter(): Promise<CodexAdapter> {
     if (this.#control) return this.#control
+    if (this.#controlStarting) return this.#controlStarting
     const adapter = new CodexAdapter()
     adapter.on('log', (line) => this.#onLog(line))
     adapter.on('login', (result) => this.#onLogin('codex', result))
@@ -223,9 +225,21 @@ export class Orchestrator {
         this.#onSkillsChanged('codex', projectPath)
       }
     })
-    await adapter.start()
-    this.#control = adapter
-    return adapter
+    const starting = adapter
+      .start()
+      .then(() => {
+        this.#control = adapter
+        return adapter
+      })
+      .catch((error: unknown) => {
+        adapter.dispose()
+        throw error
+      })
+      .finally(() => {
+        if (this.#controlStarting === starting) this.#controlStarting = undefined
+      })
+    this.#controlStarting = starting
+    return starting
   }
 
   async listModels(provider: ProviderId, agent?: string): Promise<Model[]> {
@@ -1251,6 +1265,8 @@ export class Orchestrator {
     this.#designInputs.clear()
     this.#designInputByThread.clear()
     this.#resumingThreads.clear()
+    void this.#controlStarting?.then((adapter) => adapter.dispose())
+    this.#controlStarting = undefined
     this.#control?.dispose()
     this.#control = undefined
   }
