@@ -163,6 +163,15 @@ describe('protocol envelopes', () => {
       agent: 'kimi',
     })
     expect(() => methods['models.list'].params.parse({ provider: 'acp', agent: '' })).toThrow()
+    expect(methods['auth.status'].params.parse({ provider: 'acp', agent: 'kimi' })).toEqual({
+      provider: 'acp',
+      agent: 'kimi',
+    })
+    expect(methods['auth.startLogin'].result.parse({ loginId: 'cli-login' })).toEqual({
+      loginId: 'cli-login',
+    })
+    expect(() => methods['auth.status'].params.parse({ provider: 'acp', agent: '' })).toThrow()
+    expect(() => methods['auth.startLogin'].result.parse({ loginId: '' })).toThrow()
     const { undo } = methods['thread.restore'].result.parse({ undo: 'restore-token' })
     expect(methods['thread.undoRestore'].params.parse({ threadId: 'th1', undo })).toEqual({
       threadId: 'th1',

@@ -528,7 +528,7 @@ export const methods = {
     }),
   },
   'auth.status': {
-    params: z.object({ provider: ProviderIdSchema }),
+    params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
     result: AccountSchema,
   },
   /**
@@ -536,19 +536,27 @@ export const methods = {
    * signs in on the vendor's own site; completion arrives on `auth.event`.
    */
   'auth.startLogin': {
-    params: z.object({ provider: ProviderIdSchema }),
-    result: z.object({ loginId: z.string(), authUrl: z.string() }),
+    params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
+    result: z.object({ loginId: z.string().min(1), authUrl: HttpUrlSchema.optional() }),
   },
   'auth.cancelLogin': {
-    params: z.object({ provider: ProviderIdSchema, loginId: z.string() }),
+    params: z.object({
+      provider: ProviderIdSchema,
+      agent: z.string().min(1).optional(),
+      loginId: z.string().min(1),
+    }),
     result: z.object({}),
   },
   'auth.useApiKey': {
-    params: z.object({ provider: ProviderIdSchema, apiKey: z.string() }),
+    params: z.object({
+      provider: ProviderIdSchema,
+      agent: z.string().min(1).optional(),
+      apiKey: z.string().min(1),
+    }),
     result: AccountSchema,
   },
   'auth.signOut': {
-    params: z.object({ provider: ProviderIdSchema }),
+    params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
     result: z.object({}),
   },
   'workspace.info': {
@@ -983,6 +991,7 @@ export const channels = {
   }),
   'auth.event': z.object({
     provider: ProviderIdSchema,
+    agent: z.string().min(1).optional(),
     loginId: z.string().nullable(),
     success: z.boolean(),
     error: z.string().nullable(),
