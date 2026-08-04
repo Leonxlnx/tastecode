@@ -48,6 +48,7 @@ import {
   getEffortProgressFromPointer,
   getFastModeOffValue,
   getFriendlyEffortLabel,
+  groupModelsBySource,
 } from './ModelSelector.js'
 
 const RAW_MODELS: Model[] = [
@@ -265,6 +266,38 @@ describe('ModelSelector', () => {
     expect(onEffortChange).toHaveBeenCalledWith('low')
     expect(onServiceTierChange).toHaveBeenCalledWith('fast')
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
+  })
+
+  it('renders one section per source instead of repeating it on every row', () => {
+    const claudeModel: ModelChoice = {
+      key: 'claude-code:auto',
+      provider: 'claude-code',
+      sourceName: 'Claude Code',
+      mark: 'anthropic',
+      model: {
+        id: 'auto',
+        displayName: 'Automatic',
+        description: '',
+        isDefault: false,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    }
+
+    expect(groupModelsBySource([...MODELS, claudeModel]).map((group) => group.name)).toEqual([
+      'Codex',
+      'Claude Code',
+    ])
+
+    renderSelector({ models: [...MODELS, claudeModel] })
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+
+    const titles = Array.from(document.querySelectorAll('.model-selector__group-title')).map(
+      (title) => title.textContent,
+    )
+    expect(titles).toEqual(['Codex', 'Claude Code'])
+    expect(document.querySelectorAll('.model-selector__model-source')).toHaveLength(0)
+    expect(screen.getByRole('button', { name: 'Use Automatic through Claude Code' })).toBeTruthy()
   })
 
   it('maps pointer positions onto discrete effort stops', () => {
