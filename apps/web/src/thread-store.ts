@@ -70,7 +70,12 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       return {
         ...state,
         running: true,
-        activeTurn: { id: event.turn.id, startedAt: event.turn.createdAt },
+        activeTurn: {
+          id: event.turn.id,
+          startedAt: state.activeTurn?.id.startsWith('local-turn:')
+            ? state.activeTurn.startedAt
+            : event.turn.createdAt,
+        },
         plan: [],
         diff: undefined,
       }

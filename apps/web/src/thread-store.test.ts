@@ -120,6 +120,19 @@ describe('thread reducer', () => {
     expect(state.activeTurn?.id).toMatch(/^local-turn:/)
   })
 
+  it('does not restart the timer when the server confirms an optimistic turn', () => {
+    const optimistic = beginOptimisticTurn(emptyThread, 'resume this chat')
+    const confirmed = reduce(optimistic, {
+      type: 'turn.started',
+      turn: { id: 'server-turn', createdAt: Date.now() + 5_000 },
+    })
+
+    expect(confirmed.activeTurn).toEqual({
+      id: 'server-turn',
+      startedAt: optimistic.activeTurn?.startedAt,
+    })
+  })
+
   it('rebuilds a whole conversation from a stored event log', () => {
     // What reopening a session does: the server hands back everything that
     // happened, and replaying it has to produce the same thread the user left.
