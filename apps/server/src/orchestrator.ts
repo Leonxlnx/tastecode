@@ -288,7 +288,15 @@ export class Orchestrator {
       return { capabilities: UNSUPPORTED_MCP_CAPABILITIES, servers: [] }
     }
     this.#watchedMcpProjects.add(projectPath)
-    const inherited = await (await this.#controlAdapter()).listMcpServers()
+    const active = [...this.#threads.values()].find(
+      ({ thread, session }) =>
+        thread.provider === provider &&
+        this.#store.thread(thread.id)?.projectPath === projectPath &&
+        session.listMcpServers,
+    )
+    const inherited = active?.session.listMcpServers
+      ? await active.session.listMcpServers(active.thread.id)
+      : await (await this.#controlAdapter()).listMcpServers()
     const servers = new Map(inherited.map((server) => [server.id, server]))
     for (const config of this.#mcpConfig.list(provider, projectPath)) {
       const current = servers.get(config.id)
