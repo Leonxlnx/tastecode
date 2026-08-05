@@ -12,7 +12,7 @@ import type {
   ThreadLifecycle,
 } from '@harness/contracts'
 import type { AgentSession, ProviderRuntime, StartOptions, TurnOptions } from './adapters.js'
-import { DESIGN_BRIEF_ATTACHMENT } from '@harness/design-agent'
+import { DESIGN_BRIEF_ATTACHMENT, writeDesignBrief } from '@harness/design-agent'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
@@ -448,6 +448,112 @@ describe('provider-neutral design briefing', () => {
 })
 
 describe('persisted threads', () => {
+  it('restores an unanswered design briefing question', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-question-resume-'))
+    const store = new Store(':memory:')
+    store.addProject(workspace)
+    store.addThread({
+      id: 'persisted-question',
+      projectPath: workspace,
+      provider: 'codex',
+      title: 'Persisted question',
+    })
+    store.setDesignRun('persisted-question', {
+      originalRequest: 'Build a site.',
+      options: {},
+      phase: 'brief',
+      askedQuestions: true,
+      finalAsked: false,
+      explicitAnswers: [],
+    })
+    store.append('persisted-question', {
+      type: 'user_input.requested',
+      request: {
+        id: 'persisted-input',
+        turnId: 'brief-turn',
+        questions: [
+          {
+            id: 'audience',
+            header: 'Audience',
+            question: 'Who is this for?',
+            allowOther: true,
+            secret: false,
+            options: [{ label: 'Decide for me', description: 'Choose the audience.' }],
+          },
+        ],
+        autoResolutionMs: null,
+        createdAt: 1,
+      },
+    })
+    const { orchestrator, sessions } = harness(undefined, store)
+    try {
+      await orchestrator.submitTurn('persisted-question', 'Queue this.')
+      expect(sessions[0]?.sent).toEqual([])
+
+      orchestrator.respondToUserInput('persisted-question', 'persisted-input', {
+        audience: ['Independent founders'],
+      })
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
+      expect(sessions[0]?.sent[0]).toContain('Independent founders')
+    } finally {
+      orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('resumes a persisted design phase before accepting a new prompt', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-resume-'))
+    const store = new Store(':memory:')
+    store.addProject(workspace)
+    store.addThread({
+      id: 'persisted-design',
+      projectPath: workspace,
+      provider: 'codex',
+      title: 'Persisted design',
+    })
+    writeDesignBrief(workspace, {
+      originalRequest: 'Build a studio site.',
+      subject: 'Studio',
+      pageType: 'Marketing site',
+      scope: 'Single page',
+      primaryGoal: 'Generate enquiries',
+      audience: 'Prospective clients',
+      offer: 'Design services',
+      primaryAction: 'Start a project',
+      requiredContent: [],
+      constraints: [],
+      brandInputs: [],
+      creativeControl: 'Agent-led',
+      explicitAnswers: [],
+      assumptions: [],
+      unresolved: [],
+    })
+    store.setDesignRun('persisted-design', {
+      workspacePath: 'ignored-stale-path',
+      originalRequest: 'Build a studio site.',
+      options: { model: 'shared-model', effort: 'low' },
+      phase: 'brand',
+      askedQuestions: false,
+      finalAsked: false,
+      explicitAnswers: [],
+    })
+    const { orchestrator, sessions } = harness(undefined, store)
+    try {
+      await expect(
+        orchestrator.submitTurn('persisted-design', 'Do this after design.'),
+      ).resolves.toMatchObject({ queued: true })
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
+      expect(sessions[0]?.sent[0]).toContain('Brand phase')
+      expect(sessions[0]?.sentOptions[0]).toEqual({ model: 'shared-model', effort: 'low' })
+      expect(orchestrator.queue('persisted-design').items[0]?.text).toBe('Do this after design.')
+    } finally {
+      orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
   it('resumes a stored Codex thread once and preserves concurrent prompt order', async () => {
     const store = new Store(':memory:')
     store.addProject('/repo')
