@@ -18,6 +18,17 @@ import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
 import * as checkpoint from './checkpoint.js'
 
+vi.mock('./design-preview-runner.js', () => ({
+  startDesignPreview: vi.fn(
+    async (_workspace: string, plan: { url: string; viewports: unknown[] }) => ({
+      url: plan.url,
+      viewports: plan.viewports,
+      output: () => 'ready',
+      stop: async () => {},
+    }),
+  ),
+}))
+
 /**
  * What must stay true when several sessions run at once.
  *
@@ -423,16 +434,36 @@ describe('provider-neutral design briefing', () => {
           ),
         )
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
-        expect(sessions[0]?.sentOptions).toEqual(
-          Array.from({ length: 7 }, () => ({ model, effort: 'low' })),
-        )
-        expect(
-          received.some(
-            ({ event }) =>
-              event.type === 'item.completed' &&
-              event.item.text === 'Website built. Implemented the studio page.',
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(8))
+        expect(sessions[0]?.sent[7]).toContain('Preview Setup phase')
+        sessions[0]?.emit(
+          message(
+            JSON.stringify({
+              version: 1,
+              command: 'pnpm',
+              args: ['dev', '--host', '127.0.0.1'],
+              cwd: '.',
+              url: 'http://127.0.0.1:5173',
+              viewports: [
+                { name: 'desktop', width: 1440, height: 1000 },
+                { name: 'mobile', width: 390, height: 844 },
+              ],
+            }),
+            's1-turn',
           ),
-        ).toBe(true)
+        )
+        await vi.waitFor(() =>
+          expect(
+            received.some(
+              ({ event }) =>
+                event.type === 'item.completed' &&
+                event.item.text === 'Website built. Preview ready at http://127.0.0.1:5173/',
+            ),
+          ).toBe(true),
+        )
+        expect(sessions[0]?.sentOptions).toEqual(
+          Array.from({ length: 8 }, () => ({ model, effort: 'low' })),
+        )
         expect(readdirSync(path.join(workspace, '.taste')).sort()).toEqual([
           'assets.json',
           'brand.json',
