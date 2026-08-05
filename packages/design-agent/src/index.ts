@@ -57,6 +57,7 @@ export {
   FINAL_BRIEFING_QUESTION,
   designBriefingContinuation,
   designBriefingPrompt,
+  designPhaseCorrectionPrompt,
   parseBriefingOutput,
   type BriefingOutput,
   type BriefingQuestion,
