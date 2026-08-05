@@ -12,6 +12,7 @@ export {
   type PageBlueprint,
   type PageLink,
 } from './page.js'
+export { designPagePrompt, parsePagePhaseOutput } from './page-phase.js'
 export {
   DESIGN_BRIEF_ATTACHMENT,
   FINAL_BRIEFING_QUESTION,
