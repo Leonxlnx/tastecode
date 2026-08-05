@@ -16,11 +16,11 @@ export { JsonRpcError, StdioJsonRpc, type JsonRpcId, type ServerRequestHandler }
 export function spawnCli(
   command: string,
   args: string[],
-  options: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; replaceEnv?: boolean } = {},
 ): ChildProcessWithoutNullStreams {
   const spawnOptions = {
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-    env: { ...process.env, ...options.env },
+    env: options.replaceEnv ? options.env : { ...process.env, ...options.env },
     stdio: ['pipe', 'pipe', 'pipe'] satisfies Array<'pipe'>,
     windowsHide: true,
   }
