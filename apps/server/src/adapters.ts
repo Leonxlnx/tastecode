@@ -24,6 +24,7 @@ import type {
   ProviderId,
   Thread,
 } from '@harness/contracts'
+import { createApiWorkspaceTools } from './api-workspace-tools.js'
 
 /**
  * One shape every engine is driven through.
@@ -78,10 +79,12 @@ export function apiRuntime(
     async start(workspacePath, options) {
       const model = options.model ?? connection.defaultModel
       if (!model) throw new Error(`choose a model for "${connection.displayName}"`)
+      const workspaceTools = createApiWorkspaceTools(workspacePath, options.approval)
       const session = new ApiAgentSession({
         model,
         transport,
         secrets: [apiKey],
+        ...workspaceTools,
         ...(options.instructions ? { instructions: options.instructions } : {}),
       })
       session.on('log', onLog)
