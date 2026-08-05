@@ -8,10 +8,24 @@ import { cursorAccount, signOutCursor, startCursorLogin } from '@harness/adapter
 import {
   DESIGN_BRIEF_ATTACHMENT,
   FINAL_BRIEFING_QUESTION,
+  designAssetPrompt,
+  designBrandPrompt,
   designBriefingContinuation,
   designBriefingPrompt,
+  designBuildPrompt,
+  designPagePrompt,
+  parseAssetPhaseOutput,
+  parseBrandPhaseOutput,
   parseBriefingOutput,
+  parseBuildPhaseOutput,
+  parsePagePhaseOutput,
+  readBrandSystem,
+  readDesignBrief,
+  readPageBlueprint,
+  writeAssetManifest,
+  writeBrandSystem,
   writeDesignBrief,
+  writePageBlueprint,
   type BriefingQuestion,
 } from '@harness/design-agent'
 import {
@@ -67,14 +81,18 @@ import { installLocalSkill } from './skill-install.js'
 
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
+type DesignFlowPhase = 'brief' | 'brand' | 'page' | 'assets' | 'build' | 'complete'
 type DesignFlow = {
   workspacePath: string
   originalRequest: string
   options: TurnOptions
+  phase: DesignFlowPhase
   askedQuestions: boolean
   finalAsked: boolean
   explicitAnswers: Array<{ question: string; answer: string }>
   pendingBrief?: unknown
+  pendingPrompt?: string
+  completion?: string
 }
 type DesignInput = {
   threadId: string
@@ -640,6 +658,7 @@ export class Orchestrator {
           workspacePath: this.#repoPath(threadId),
           originalRequest: text,
           options: turnOptions,
+          phase: 'brief',
           askedQuestions: false,
           finalAsked: false,
           explicitAnswers: [],
@@ -1145,7 +1164,6 @@ export class Orchestrator {
       }
       if (noMoreDetails && flow.pendingBrief) {
         this.#completeDesignBrief(threadId, designInput.turnId, flow.pendingBrief)
-        void this.#drainQueue(threadId)
         return
       }
 
@@ -1412,7 +1430,24 @@ export class Orchestrator {
       this.#handleDesignOutput(threadId, turnId, event.item.text ?? '')
       return
     }
-    if (event.type === 'turn.completed') this.#designTurns.delete(turnId)
+    if (event.type === 'turn.completed') {
+      this.#designTurns.delete(turnId)
+      const flow = this.#designFlows.get(threadId)
+      if (flow?.completion) {
+        this.#record(threadId, event)
+        this.#finishDesignFlow(threadId, turnId, flow.completion)
+        return
+      }
+      if (flow?.pendingPrompt) {
+        const prompt = flow.pendingPrompt
+        delete flow.pendingPrompt
+        this.#record(threadId, event)
+        void this.#sendDesignTurn(threadId, prompt, [], flow.options).catch((error: unknown) =>
+          this.#failDesignFlow(threadId, error),
+        )
+        return
+      }
+    }
     this.#record(threadId, event)
   }
 
@@ -1421,6 +1456,10 @@ export class Orchestrator {
     if (!flow) return
 
     try {
+      if (flow.phase !== 'brief') {
+        this.#completeDesignPhase(flow, text)
+        return
+      }
       const output = parseBriefingOutput(text)
       if (output.status === 'questions') {
         flow.askedQuestions = true
@@ -1488,12 +1527,62 @@ export class Orchestrator {
   #completeDesignBrief(threadId: string, turnId: string, brief: unknown): void {
     const flow = this.#designFlows.get(threadId)
     if (!flow) return
-    writeDesignBrief(
+    const saved = writeDesignBrief(
       flow.workspacePath,
       typeof brief === 'object' && brief !== null && !Array.isArray(brief)
         ? { ...brief, explicitAnswers: flow.explicitAnswers }
         : brief,
     )
+    flow.phase = 'brand'
+    const prompt = designBrandPrompt(saved)
+    if (this.#activeTurns.has(threadId)) {
+      flow.pendingPrompt = prompt
+      return
+    }
+    void this.#sendDesignTurn(threadId, prompt, [], flow.options).catch((error: unknown) =>
+      this.#failDesignFlow(threadId, error),
+    )
+  }
+
+  #completeDesignPhase(flow: DesignFlow, text: string): void {
+    if (flow.phase === 'brand') {
+      const brand = writeBrandSystem(flow.workspacePath, parseBrandPhaseOutput(text))
+      flow.phase = 'page'
+      flow.pendingPrompt = designPagePrompt(readDesignBrief(flow.workspacePath), brand)
+      return
+    }
+    if (flow.phase === 'page') {
+      const page = writePageBlueprint(flow.workspacePath, parsePagePhaseOutput(text))
+      flow.phase = 'assets'
+      flow.pendingPrompt = designAssetPrompt(
+        readDesignBrief(flow.workspacePath),
+        readBrandSystem(flow.workspacePath),
+        page,
+      )
+      return
+    }
+    if (flow.phase === 'assets') {
+      const assets = writeAssetManifest(flow.workspacePath, parseAssetPhaseOutput(text))
+      flow.phase = 'build'
+      flow.pendingPrompt = designBuildPrompt(
+        readDesignBrief(flow.workspacePath),
+        readBrandSystem(flow.workspacePath),
+        readPageBlueprint(flow.workspacePath),
+        assets,
+      )
+      return
+    }
+    if (flow.phase === 'build') {
+      const output = parseBuildPhaseOutput(text)
+      if (output.status === 'failed') throw new Error(output.error)
+      flow.phase = 'complete'
+      flow.completion = output.summary
+      return
+    }
+    throw new Error(`unexpected design phase ${flow.phase}`)
+  }
+
+  #finishDesignFlow(threadId: string, turnId: string, summary: string): void {
     this.#clearDesignFlow(threadId)
     this.#record(threadId, {
       type: 'item.completed',
@@ -1503,10 +1592,11 @@ export class Orchestrator {
         type: 'message',
         role: 'assistant',
         status: 'completed',
-        text: 'Brief complete.\nDEBUG FINISHED · NO WEBSITE BUILT',
+        text: `Website built. ${summary}`,
         createdAt: Date.now(),
       },
     })
+    void this.#drainQueue(threadId)
   }
 
   #failDesignFlow(threadId: string, error: unknown): void {
