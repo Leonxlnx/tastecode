@@ -139,6 +139,19 @@ describe('opening a database written by an older build', () => {
   })
 })
 
+describe('design runs', () => {
+  it('replaces and removes the durable workflow payload', () => {
+    store.setDesignRun('t1', { phase: 'brief', status: 'waiting' })
+    expect(store.designRun('t1')).toEqual({ phase: 'brief', status: 'waiting' })
+
+    store.setDesignRun('t1', { phase: 'brand', status: 'running' })
+    expect(store.designRun('t1')).toEqual({ phase: 'brand', status: 'running' })
+
+    store.deleteDesignRun('t1')
+    expect(store.designRun('t1')).toBeUndefined()
+  })
+})
+
 describe('projects', () => {
   it('names a project after its folder when no name is given', () => {
     const project = store.addProject('/home/me/work/harness')

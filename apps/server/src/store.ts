@@ -175,6 +175,11 @@ CREATE TABLE IF NOT EXISTS diff_decisions (
   PRIMARY KEY (thread_id, target_id)
 );
 
+CREATE TABLE IF NOT EXISTS design_runs (
+  thread_id TEXT PRIMARY KEY,
+  payload   TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS checkpoints_by_thread ON checkpoints (thread_id, seq);
 CREATE INDEX IF NOT EXISTS events_by_thread ON events (thread_id, seq);
 CREATE INDEX IF NOT EXISTS threads_by_project ON threads (project_path);
@@ -508,7 +513,28 @@ export class Store {
     this.#db.prepare(`DELETE FROM checkpoints WHERE thread_id = ?`).run(id)
     this.#db.prepare(`DELETE FROM restore_undos WHERE thread_id = ?`).run(id)
     this.#db.prepare(`DELETE FROM diff_decisions WHERE thread_id = ?`).run(id)
+    this.#db.prepare(`DELETE FROM design_runs WHERE thread_id = ?`).run(id)
     this.#db.prepare(`DELETE FROM threads WHERE id = ?`).run(id)
+  }
+
+  setDesignRun(threadId: string, payload: unknown): void {
+    this.#db
+      .prepare(
+        `INSERT INTO design_runs (thread_id, payload) VALUES (?, ?)
+         ON CONFLICT (thread_id) DO UPDATE SET payload = excluded.payload`,
+      )
+      .run(threadId, JSON.stringify(payload))
+  }
+
+  designRun(threadId: string): unknown {
+    const row = this.#db
+      .prepare(`SELECT payload FROM design_runs WHERE thread_id = ?`)
+      .get(threadId) as { payload: string } | undefined
+    return row ? JSON.parse(row.payload) : undefined
+  }
+
+  deleteDesignRun(threadId: string): void {
+    this.#db.prepare(`DELETE FROM design_runs WHERE thread_id = ?`).run(threadId)
   }
 
   setDiffDecision(threadId: string, targetId: string, decision: DiffDecision): void {
