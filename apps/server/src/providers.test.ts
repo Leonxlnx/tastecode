@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detectProviders, type SystemProbe } from './providers.js'
+import { detectProviders, installCommandFor, type SystemProbe } from './providers.js'
 
 /**
  * These assert what we *say* about the machine, not what is on it. A test that
@@ -123,5 +123,20 @@ describe('detectProviders', () => {
       'cursor',
       'opencode',
     ])
+  })
+})
+
+describe('install command resolution', () => {
+  it('resolves install commands from the server-side tables only', () => {
+    expect(installCommandFor('opencode')).toBe('npm install -g opencode-ai')
+    expect(installCommandFor('claude-code')).toBe('npm install -g @anthropic-ai/claude-code')
+    expect(installCommandFor('acp', 'gemini')).toBe('npm install -g @google/gemini-cli')
+  })
+
+  it('refuses targets it cannot script instead of guessing', () => {
+    // Cursor ships its own installer; there is no command worth running blind.
+    expect(() => installCommandFor('cursor')).toThrow(/no scripted install/)
+    expect(() => installCommandFor('acp', 'nonexistent')).toThrow(/unknown install target/)
+    expect(() => installCommandFor('acp')).toThrow(/unknown install target/)
   })
 })

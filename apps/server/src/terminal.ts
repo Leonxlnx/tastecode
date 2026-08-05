@@ -21,29 +21,46 @@ export class TerminalManager {
   }
 
   open(threadId: string, cwd: string, columns: number, rows: number): string {
-    const currentId = this.#byThread.get(threadId)
+    return this.#spawn(threadId, [], cwd, columns, rows)
+  }
+
+  /**
+   * Run one command to completion in a terminal. Keyed like a thread terminal
+   * so a second request for the same key reattaches to the run in progress
+   * instead of starting the command twice. A real pty rather than a plain
+   * child process, so an installer that asks a question can be handed to the
+   * user instead of hanging invisibly.
+   */
+  run(key: string, command: string, cwd: string, columns: number, rows: number): string {
+    const args =
+      globalThis.process.platform === 'win32' ? ['/d', '/s', '/c', command] : ['-c', command]
+    return this.#spawn(key, args, cwd, columns, rows)
+  }
+
+  #spawn(key: string, args: string[], cwd: string, columns: number, rows: number): string {
+    const currentId = this.#byThread.get(key)
     if (currentId) {
       this.resize(currentId, columns, rows)
       return currentId
     }
 
     const terminalId = randomUUID()
-    const process = spawn(platformShell(), [], {
+    const process = spawn(platformShell(), args, {
       name: 'xterm-256color',
       cols: columns,
       rows,
       cwd,
       env: globalThis.process.env,
     })
-    const entry = { threadId, process }
+    const entry = { threadId: key, process }
     this.#byId.set(terminalId, entry)
-    this.#byThread.set(threadId, terminalId)
+    this.#byThread.set(key, terminalId)
 
     process.onData((data) => this.#onOutput(terminalId, data))
     process.onExit(({ exitCode }) => {
       if (this.#byId.get(terminalId) === entry) {
         this.#byId.delete(terminalId)
-        this.#byThread.delete(threadId)
+        this.#byThread.delete(key)
       }
       this.#onExit(terminalId, Number.isInteger(exitCode) ? exitCode : null)
     })

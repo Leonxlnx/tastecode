@@ -1149,6 +1149,18 @@
   border-top: 1px solid var(--line);
 }
 
+.install-terminal {
+  height: 240px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+
+/* Keep the row divider that the adjacent-sibling rule above would lose. */
+.install-terminal + .settings__row {
+  border-top: 1px solid var(--line);
+}
+
 .settings__row-copy {
   min-width: 0;
 }

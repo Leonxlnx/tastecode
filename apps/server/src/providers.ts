@@ -1,4 +1,4 @@
-import { detectAgents } from '@harness/adapter-acp'
+import { detectAgents, findAgentSpec } from '@harness/adapter-acp'
 import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex'
 import { CURSOR_CAPABILITIES, CURSOR_SUPPORTED_VERSION } from '@harness/adapter-cursor'
@@ -95,6 +95,29 @@ const REAL_SYSTEM: SystemProbe = {
   isInstalled,
   version: commandVersion,
   acpAgents: detectAgents,
+}
+
+/**
+ * The install command for a provider or ACP agent, from the tables above and
+ * nowhere else. The renderer names a target; it never sends command text —
+ * that is what keeps `providers.install` from being a remote shell.
+ */
+export function installCommandFor(provider: ProviderStatus['id'], agent?: string): string {
+  const target =
+    provider === 'acp'
+      ? (() => {
+          const spec = agent ? findAgentSpec(agent) : undefined
+          return spec ? { name: spec.name, setup: spec.setup } : undefined
+        })()
+      : (() => {
+          const entry = PROBES.find((candidate) => candidate.id === provider)
+          return entry ? { name: entry.displayName, setup: entry.setup } : undefined
+        })()
+  if (!target) throw new Error(`unknown install target: ${agent ?? provider}`)
+  if (!target.setup.installCommand) {
+    throw new Error(`${target.name} has no scripted install; use its setup page`)
+  }
+  return target.setup.installCommand
 }
 
 export async function detectProviders(

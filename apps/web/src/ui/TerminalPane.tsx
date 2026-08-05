@@ -253,11 +253,11 @@ function statusText(status: TerminalStatus): string {
   return status.exitCode === null ? 'Exited' : `Exited (${status.exitCode})`
 }
 
-function terminalFont(): string {
+export function terminalFont(): string {
   return getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim()
 }
 
-function terminalTheme(): ITheme {
+export function terminalTheme(): ITheme {
   const style = getComputedStyle(document.documentElement)
   const token = (name: string) => style.getPropertyValue(name).trim()
   return {
