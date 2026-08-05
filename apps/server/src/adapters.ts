@@ -354,10 +354,10 @@ function claudeRuntime(onLog: (line: string) => void): ProviderRuntime {
         },
       }
     },
-    // Not enumerable over this surface, and a hardcoded list would be wrong
-    // within a month. The picker hides itself when this is empty.
+    // The adapter answers with the CLI's documented --model aliases; nothing
+    // needs to start for that, so no dispose dance here.
     async listModels() {
-      return []
+      return new ClaudeCodeAdapter().listModels()
     },
   }
 }
