@@ -46,6 +46,7 @@ export {
   type ReviewSeverity,
   type VisualReview,
 } from './review-phase.js'
+export { parsePreviewPlan, type PreviewPlan } from './preview.js'
 export {
   DESIGN_BRIEF_ATTACHMENT,
   FINAL_BRIEFING_QUESTION,
