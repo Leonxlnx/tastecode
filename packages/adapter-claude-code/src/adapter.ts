@@ -33,6 +33,30 @@ export const CLAUDE_CAPABILITIES: Capabilities = {
   images: false,
 }
 
+/**
+ * The aliases `claude --model` documents, not concrete model ids: each one
+ * tracks the newest model of its family, so the list survives releases. The
+ * empty id means "pass no --model flag" and lets the CLI use its own default.
+ */
+export const CLAUDE_MODELS: Model[] = [
+  {
+    id: '',
+    displayName: 'Automatic',
+    description: 'Let Claude Code use its configured default model',
+    isDefault: true,
+    reasoningEfforts: [],
+    serviceTiers: [],
+  },
+  claudeAlias('fable', 'Fable', 'Latest Fable — the most capable tier'),
+  claudeAlias('opus', 'Opus', 'Latest Opus — deep reasoning'),
+  claudeAlias('sonnet', 'Sonnet', 'Latest Sonnet — balanced speed and capability'),
+  claudeAlias('haiku', 'Haiku', 'Latest Haiku — fastest and cheapest'),
+]
+
+function claudeAlias(id: string, displayName: string, description: string): Model {
+  return { id, displayName, description, isDefault: false, reasoningEfforts: [], serviceTiers: [] }
+}
+
 /** Claude Code names its permission modes differently; ours map on cleanly. */
 const PERMISSION_MODE: Partial<Record<ApprovalMode, string>> = {
   ask: 'default',
@@ -144,11 +168,13 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 
   /**
    * Models are not enumerable over this surface — there is no equivalent of
-   * Codex's model/list — so this reports nothing rather than a hardcoded list
-   * that will be wrong within a month. The UI hides the picker.
+   * Codex's model/list — but `--model` documents stable aliases that always
+   * point at the newest model of each family. Offering those instead of full
+   * model ids keeps the list from going stale when a new version ships.
+   * Verified against claude-code 2.1.222.
    */
   async listModels(): Promise<Model[]> {
-    return []
+    return CLAUDE_MODELS
   }
 
   dispose(): void {

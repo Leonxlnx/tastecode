@@ -19,12 +19,14 @@ describe('ACP persisted sessions', () => {
 })
 
 describe('ACP model discovery', () => {
-  it('uses Gemini CLI model aliases instead of a fake generic default', async () => {
+  it('offers the concrete Gemini model names the CLI accepts, with auto as default', async () => {
     expect(await discoverAgentModels('gemini')).toMatchObject([
       { id: 'auto', displayName: 'Auto (Gemini)', isDefault: true },
-      { id: 'pro' },
-      { id: 'flash' },
-      { id: 'flash-lite' },
+      { id: 'gemini-3-pro-preview', displayName: 'Gemini 3 Pro (Preview)' },
+      { id: 'gemini-3-flash-preview', displayName: 'Gemini 3 Flash (Preview)' },
+      { id: 'gemini-2.5-pro', displayName: 'Gemini 2.5 Pro' },
+      { id: 'gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' },
+      { id: 'gemini-2.5-flash-lite', displayName: 'Gemini 2.5 Flash Lite' },
     ])
   })
 

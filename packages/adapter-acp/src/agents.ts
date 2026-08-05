@@ -91,14 +91,24 @@ export async function detectAgents(): Promise<Array<AcpAgentSpec & { installed: 
   )
 }
 
-/** Model choices exposed by the agent's own stable surface. */
+/**
+ * Model choices exposed by the agent's own stable surface.
+ *
+ * The Gemini ids are the concrete names `--model` accepts, taken from
+ * gemini-cli-core's VALID_GEMINI_MODELS (verified against gemini-cli 0.21.x),
+ * plus the `auto` routing alias. Concrete names are what people recognise from
+ * Google's own docs; `auto` stays the default because routing is the CLI's
+ * recommended mode.
+ */
 export async function discoverAgentModels(agentId: string): Promise<Model[]> {
   if (agentId === 'gemini') {
     return [
       model('auto', 'Auto (Gemini)', 'Let Gemini CLI route each task', true),
-      model('pro', 'Pro', 'Prefer Gemini Pro models'),
-      model('flash', 'Flash', 'Prefer Gemini Flash models'),
-      model('flash-lite', 'Flash Lite', 'Prefer Gemini Flash Lite models'),
+      model('gemini-3-pro-preview', 'Gemini 3 Pro (Preview)', 'Most capable Gemini model'),
+      model('gemini-3-flash-preview', 'Gemini 3 Flash (Preview)', 'Fast Gemini 3 model'),
+      model('gemini-2.5-pro', 'Gemini 2.5 Pro', 'Stable Pro model'),
+      model('gemini-2.5-flash', 'Gemini 2.5 Flash', 'Stable fast model'),
+      model('gemini-2.5-flash-lite', 'Gemini 2.5 Flash Lite', 'Lightest and cheapest model'),
     ]
   }
   if (agentId !== 'kimi') return []
