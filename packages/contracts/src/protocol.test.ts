@@ -734,6 +734,21 @@ describe('protocol envelopes', () => {
     })
   })
 
+  it('names a launch target without carrying any command text', () => {
+    const valid = { provider: 'acp', agent: 'gemini', columns: 80, rows: 24 }
+    expect(methods['providers.launch'].params.parse(valid)).toEqual(valid)
+    expect(
+      methods['providers.launch'].params.parse({ provider: 'opencode', columns: 80, rows: 24 }),
+    ).toEqual({ provider: 'opencode', columns: 80, rows: 24 })
+    expect(methods['providers.launch'].params.parse({ ...valid, command: 'rm -rf /' })).toEqual(
+      valid,
+    )
+    expect(() => methods['providers.launch'].params.parse({ provider: 'acp', agent: '' })).toThrow()
+    expect(methods['providers.launch'].result.parse({ terminalId: 'term-1' })).toEqual({
+      terminalId: 'term-1',
+    })
+  })
+
   it('validates data for every declared channel', () => {
     expect(
       channels['thread.event'].parse({

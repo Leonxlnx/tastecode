@@ -431,6 +431,24 @@ export const methods = {
     }),
     result: z.object({ terminalId: TerminalIdSchema }),
   },
+  /**
+   * Launch a provider's own CLI in an interactive terminal session, for
+   * providers whose sign-in lives inside that CLI (`setup.login ===
+   * 'provider'`). Same boundary as `providers.install`: the client names the
+   * target, the server resolves what to run from its own table, and no command
+   * text ever crosses. The session speaks the usual `terminal.output`,
+   * `terminal.input` and `terminal.exit` channels; asking again while one is
+   * running reattaches instead of launching twice. Fails when the target's
+   * sign-in is not provider-CLI-managed or the CLI is not installed.
+   */
+  'providers.launch': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      agent: z.string().min(1).optional(),
+      ...TerminalSizeSchema.shape,
+    }),
+    result: z.object({ terminalId: TerminalIdSchema }),
+  },
   'connections.list': {
     params: z.object({}),
     result: ModelConnectionListSchema,
