@@ -3080,11 +3080,31 @@
   height: 20px;
 }
 
+.activity__working-label {
+  animation: activity-label-in 180ms var(--ease-out) both;
+}
+
+.activity__working-time {
+  color: var(--text-4);
+}
+
+.activity__working-time::before {
+  content: '·';
+  margin-right: 6px;
+}
+
 .activity.is-settling {
   animation: activity-settle-in 360ms var(--ease-out) both;
 }
 
 @keyframes activity-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+@keyframes activity-label-in {
   from {
     opacity: 0;
     transform: translateY(3px);
@@ -3102,6 +3122,7 @@
   .thread__row.is-entering > :is(.reply, .aux, .activity),
   .thread__row.is-entering > .said,
   .activity--working,
+  .activity__working-label,
   .activity.is-settling {
     animation: none;
   }
