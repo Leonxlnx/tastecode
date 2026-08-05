@@ -29,9 +29,11 @@ import { agentMark, connectionMark, providerMark, type ModelChoice } from '../mo
 import { isDesktop } from '../bridge.js'
 import {
   beginInstall,
+  beginLogin,
   clearInstall,
   installKey,
   installState,
+  loginKey,
   subscribeInstalls,
   type InstallTarget,
 } from '../provider-install.js'
@@ -452,11 +454,22 @@ function ProviderSettings(props: {
               />
             )
           }
+          if (!account?.signedIn && status.setup?.login === 'provider') {
+            return (
+              <CliSignInRow
+                key={status.id}
+                title={status.displayName}
+                idleNote="Not signed in · sign-in runs in the provider's CLI."
+                icon={<ProviderIcon mark={providerMark(status.id)} size={17} />}
+                target={{ provider: status.id }}
+                transport={props.transport}
+                onSignedIn={() => void refreshAccount(status.id).catch(() => undefined)}
+              />
+            )
+          }
           const accountStatus = account?.signedIn
             ? [account.email, account.plan].filter(Boolean).join(' · ') || 'Signed in'
-            : status.setup?.login === 'provider'
-              ? 'Finish sign-in in the provider CLI.'
-              : 'Not signed in'
+            : 'Not signed in'
           const busy = authBusy === status.id
           return (
             <SettingsRow key={status.id} title={status.displayName} note={accountStatus}>
@@ -471,16 +484,6 @@ function ProviderSettings(props: {
                   >
                     <LogOut size={13} aria-hidden />
                     {busy ? 'Signing out…' : 'Sign out'}
-                  </button>
-                ) : status.setup?.login === 'provider' ? (
-                  <button
-                    className="settings__action"
-                    type="button"
-                    onClick={() =>
-                      window.open(status.setup!.installUrl, '_blank', 'noopener,noreferrer')
-                    }
-                  >
-                    Sign in
                   </button>
                 ) : (
                   <button
@@ -499,22 +502,15 @@ function ProviderSettings(props: {
 
       {props.acpAgents.map((agent) =>
         agent.installed ? (
-          <SettingsRow
+          <CliSignInRow
             key={agent.id}
             title={agent.name}
-            note="Installed · sign-in is managed by the provider CLI."
-          >
-            <div className="provider-settings__actions">
-              <ProviderIcon mark={agentMark(agent.id)} size={17} />
-              <button
-                className="settings__action"
-                type="button"
-                onClick={() => window.open(agent.setup.installUrl, '_blank', 'noopener,noreferrer')}
-              >
-                Sign in
-              </button>
-            </div>
-          </SettingsRow>
+            idleNote="Installed · sign-in is managed by the provider CLI."
+            icon={<ProviderIcon mark={agentMark(agent.id)} size={17} />}
+            target={{ provider: 'acp', agent: agent.id }}
+            transport={props.transport}
+            onSignedIn={props.onConnectionsChanged}
+          />
         ) : (
           <InstallableRow
             key={agent.id}
@@ -957,6 +953,76 @@ function InstallableRow(props: {
         </div>
       </SettingsRow>
       {install && showTerminal ? (
+        <InstallTerminal transport={props.transport} installKey={key} />
+      ) : null}
+    </>
+  )
+}
+
+/**
+ * Sign-in for a provider whose login lives inside its own CLI. The button
+ * launches that CLI in a server-side pty and hands the user the terminal
+ * right away — the OAuth flow happens in there, not on a docs page. A clean
+ * exit means the user finished and quit, so the row refreshes; a dirty exit
+ * keeps the log around for reading before a retry.
+ */
+function CliSignInRow(props: {
+  title: string
+  idleNote: string
+  icon: ReactNode
+  target: InstallTarget
+  transport: Transport
+  onSignedIn: () => void
+}) {
+  const key = loginKey(props.target)
+  const login = useSyncExternalStore(subscribeInstalls, () => installState(key))
+  const [showTerminal, setShowTerminal] = useState(true)
+  const [startError, setStartError] = useState<string>()
+  const { onSignedIn } = props
+
+  useEffect(() => {
+    if (login?.phase === 'succeeded') {
+      clearInstall(key)
+      onSignedIn()
+    }
+  }, [login?.phase, key, onSignedIn])
+
+  const start = () => {
+    setStartError(undefined)
+    setShowTerminal(true)
+    void beginLogin(props.transport, props.target).catch((cause: unknown) =>
+      setStartError(cause instanceof Error ? cause.message : String(cause)),
+    )
+  }
+
+  const note =
+    login?.phase === 'running'
+      ? 'Complete the sign-in in the terminal below, then exit the CLI.'
+      : login?.phase === 'failed'
+        ? `The CLI exited${login.exitCode === null ? '' : ` (exit ${login.exitCode})`} — check the terminal, or retry.`
+        : (startError ?? props.idleNote)
+
+  return (
+    <>
+      <SettingsRow title={props.title} note={note}>
+        <div className="provider-settings__actions">
+          {props.icon}
+          {login?.phase === 'running' ? (
+            <button
+              className="settings__action"
+              type="button"
+              onClick={() => setShowTerminal((visible) => !visible)}
+            >
+              {showTerminal ? 'Hide terminal' : 'Show terminal'}
+            </button>
+          ) : (
+            <button className="settings__action" type="button" onClick={start}>
+              {login?.phase === 'failed' ? 'Retry sign-in' : 'Sign in'}
+            </button>
+          )}
+        </div>
+      </SettingsRow>
+      {login && showTerminal ? (
         <InstallTerminal transport={props.transport} installKey={key} />
       ) : null}
     </>

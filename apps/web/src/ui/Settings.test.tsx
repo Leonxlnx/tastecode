@@ -6,6 +6,15 @@ import { resetInstalls } from '../provider-install.js'
 import type { Transport } from '../transport.js'
 import { Settings } from './Settings.js'
 
+// The real component boots xterm, which needs a canvas happy-dom does not
+// have. What these tests care about is *when* a terminal is offered, not how
+// it paints.
+vi.mock('./InstallTerminal.js', () => ({
+  InstallTerminal: (props: { installKey: string }) => (
+    <div data-testid="install-terminal" data-install-key={props.installKey} />
+  ),
+}))
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
@@ -229,5 +238,116 @@ describe('provider settings', () => {
 
     emit('terminal.exit', { terminalId: 'term-install-2', exitCode: 0 })
     await waitFor(() => expect(onConnectionsChanged).toHaveBeenCalled())
+  })
+
+  it('signs in to provider-CLI-managed logins in an in-app terminal, not a docs page', async () => {
+    const channels = new Map<string, Set<(data: unknown) => void>>()
+    const transport = {
+      request: vi.fn(async (method: string) => {
+        if (method === 'providers.launch') return { terminalId: 'term-login-3' }
+        if (method === 'auth.status') return { signedIn: false }
+        throw new Error(`unexpected ${method}`)
+      }),
+      on: vi.fn((channel: string, listener: (data: unknown) => void) => {
+        const listeners = channels.get(channel) ?? new Set()
+        listeners.add(listener)
+        channels.set(channel, listeners)
+        return () => listeners.delete(listener)
+      }),
+    } as unknown as Transport
+    const onConnectionsChanged = vi.fn()
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+
+    render(
+      <Settings
+        provider="codex"
+        providerName="Codex"
+        transport={transport}
+        projectPath={undefined}
+        projectName={undefined}
+        account={undefined}
+        providerStatuses={[
+          {
+            id: 'opencode',
+            displayName: 'OpenCode',
+            installed: true,
+            auth: 'unknown',
+            setup: {
+              installUrl: 'https://example.test/opencode',
+              installCommand: 'npm install -g opencode-ai',
+              login: 'provider',
+            },
+          },
+        ]}
+        acpAgents={[
+          {
+            id: 'kimi',
+            name: 'Kimi CLI',
+            installed: true,
+            verified: true,
+            setup: {
+              installUrl: 'https://example.test/kimi',
+              login: 'provider',
+            },
+          },
+        ]}
+        modelConnections={[]}
+        models={[]}
+        hiddenModels={new Set()}
+        onModelVisibilityChange={() => {}}
+        onConnectionsChanged={onConnectionsChanged}
+        projectCount={0}
+        sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
+        onSidebarSettingsChange={() => {}}
+        themePreference="system"
+        onThemePreferenceChange={() => {}}
+        fontPreference="geist"
+        onFontPreferenceChange={() => {}}
+        accentPreference="neutral"
+        onAccentPreferenceChange={() => {}}
+        showMacOSFontSmoothing={false}
+        macOSFontSmoothing={true}
+        onMacOSFontSmoothingChange={() => {}}
+        onAccountChange={() => {}}
+        onReset={() => {}}
+        onClose={() => {}}
+      />,
+    )
+
+    const opencodeRow = screen.getByText('OpenCode').closest<HTMLElement>('.settings__row')
+    if (!opencodeRow) throw new Error('OpenCode row missing')
+    fireEvent.click(within(opencodeRow).getByRole('button', { name: 'Sign in' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('providers.launch', {
+        provider: 'opencode',
+        columns: 100,
+        rows: 30,
+      }),
+    )
+    expect(open).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.getByTestId('install-terminal')).toBeTruthy())
+    expect(screen.getByRole('button', { name: 'Hide terminal' })).toBeTruthy()
+
+    const emit = (channel: string, data: unknown) => {
+      for (const listener of channels.get(channel) ?? []) listener(data)
+    }
+    emit('terminal.exit', { terminalId: 'term-login-3', exitCode: 0 })
+    await waitFor(() => expect(screen.queryByTestId('install-terminal')).toBeNull())
+    expect(within(opencodeRow).getByRole('button', { name: 'Sign in' })).toBeTruthy()
+
+    const kimiRow = screen.getByText('Kimi CLI').closest<HTMLElement>('.settings__row')
+    if (!kimiRow) throw new Error('Kimi row missing')
+    fireEvent.click(within(kimiRow).getByRole('button', { name: 'Sign in' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('providers.launch', {
+        provider: 'acp',
+        agent: 'kimi',
+        columns: 100,
+        rows: 30,
+      }),
+    )
+    emit('terminal.exit', { terminalId: 'term-login-3', exitCode: 0 })
+    await waitFor(() => expect(onConnectionsChanged).toHaveBeenCalled())
+    expect(open).not.toHaveBeenCalled()
   })
 })
