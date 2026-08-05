@@ -892,7 +892,7 @@ export function Composer(props: {
                   strength={0.58}
                   duration={2.4}
                   active={props.designMode}
-                  borderRadius={16}
+                  borderRadius={10}
                 >
                   <button
                     type="button"

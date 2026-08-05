@@ -5029,7 +5029,7 @@
 .composer__design-button-beam {
   display: flex;
   flex: none;
-  border-radius: 999px;
+  border-radius: 10px;
 }
 
 /* Scoped like the hover rule below: the later generic .menutrigger
@@ -5043,13 +5043,20 @@
     .menutrigger--model-selector,
     .composer-voice-button
   ) {
-  /* Flat chips: the border carries the shape, the fill is one quiet step
-     above the prompt background. No gradients, no sheen. */
-  background: color-mix(in srgb, var(--surface-2) 62%, var(--bg-prompt));
+  /* Skeuomorphic chips: lit from above — gradient fill, a bright inset top
+     edge, and a soft drop shadow. Border and highlight sit one contrast step
+     above the old values so the shape reads on the near-black prompt bg. */
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-3) 92%, transparent),
+    color-mix(in srgb, var(--surface-2) 52%, transparent)
+  );
   /* --line-strong alone sinks into --bg-prompt at 1px. The text-3 mix keeps
-     the resting border one clear step below the hover mix. */
-  border: 1px solid color-mix(in srgb, var(--text-3) 34%, var(--line-strong));
-  box-shadow: none;
+     the resting border one clear step below the 70% hover mix. */
+  border: 1px solid color-mix(in srgb, var(--text-3) 45%, var(--line-strong));
+  box-shadow:
+    inset 0 1px color-mix(in srgb, white 14%, transparent),
+    0 1px 2px color-mix(in srgb, black 30%, transparent);
   transition:
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
@@ -5071,7 +5078,7 @@
 .tools :is(.composer__permission, .composer__design, .menutrigger--model-selector) {
   min-height: 32px;
   padding: 5px 13px;
-  border-radius: 999px;
+  border-radius: 10px;
 }
 
 .composer-voice-button {
@@ -5874,9 +5881,15 @@
       .menutrigger--model-selector,
       .composer-voice-button
     ):hover:not(:disabled) {
-    background: var(--surface-3);
-    border-color: color-mix(in srgb, var(--text-3) 60%, var(--line-strong));
-    box-shadow: none;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface-3) 100%, transparent),
+      color-mix(in srgb, var(--surface-2) 75%, transparent)
+    );
+    border-color: color-mix(in srgb, var(--text-3) 70%, var(--line-strong));
+    box-shadow:
+      inset 0 1px color-mix(in srgb, white 18%, transparent),
+      0 2px 5px color-mix(in srgb, black 32%, transparent);
   }
 
   .tools
