@@ -752,6 +752,8 @@ function summariseLive(item: Item): string {
       return ongoing ? 'Editing files' : 'Edited files'
     case 'tool_call': {
       const text = toolText(item)
+      const designPhase = designPhaseLabel(text)
+      if (designPhase) return designPhase
       if (text.includes('image')) return ongoing ? 'Viewing an image' : 'Viewed an image'
       if (text.match(/read|open|file/)) return ongoing ? 'Reading files' : 'Read files'
       if (text.includes('search')) return ongoing ? 'Searching' : 'Searched'
@@ -762,6 +764,18 @@ function summariseLive(item: Item): string {
     default:
       return summarise(item)
   }
+}
+
+function designPhaseLabel(text: string): string | undefined {
+  if (text.includes('design:brief')) return 'Preparing questions'
+  if (text.includes('design:brand')) return 'Creating brand direction'
+  if (text.includes('design:page')) return 'Planning the page'
+  if (text.includes('design:assets')) return 'Gathering assets'
+  if (text.includes('design:build')) return 'Building the website'
+  if (text.includes('design:preview')) return 'Starting the preview'
+  if (text.includes('design:review')) return 'Reviewing the design'
+  if (text.includes('design:repair')) return 'Refining the website'
+  return undefined
 }
 
 function toolText(item: Item): string {

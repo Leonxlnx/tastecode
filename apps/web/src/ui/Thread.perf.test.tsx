@@ -99,6 +99,22 @@ describe('thread at scale', () => {
         false,
       ),
     ).toBe('Searching')
+    expect(
+      workLabel(
+        [
+          {
+            id: 'design-brand',
+            turnId: 'turn-1',
+            type: 'tool_call',
+            text: 'design:brand',
+            status: 'started',
+            createdAt: 3,
+          },
+        ],
+        'turn-1',
+        false,
+      ),
+    ).toBe('Creating brand direction')
   })
 
   it('costs about the same at a thousand items as at a hundred', () => {
