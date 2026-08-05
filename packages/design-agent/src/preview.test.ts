@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parsePreviewPlan } from './preview.js'
+import { designPreviewPrompt, parsePreviewPhaseOutput, parsePreviewPlan } from './preview.js'
 
 const plan = {
   version: 1,
@@ -15,6 +15,14 @@ const plan = {
 }
 
 describe('preview plan', () => {
+  it('asks for a shell-free local plan and parses the response', () => {
+    const prompt = designPreviewPrompt()
+    expect(prompt).toContain('Preview Setup phase')
+    expect(prompt).toContain('127.0.0.1')
+    expect(prompt).toContain('Do not install dependencies')
+    expect(parsePreviewPhaseOutput(JSON.stringify(plan))).toMatchObject({ command: 'pnpm' })
+  })
+
   it('normalizes a shell-free local preview plan', () => {
     expect(parsePreviewPlan(plan)).toMatchObject({
       command: 'pnpm',

@@ -12,6 +12,25 @@ export interface PreviewPlan {
   }>
 }
 
+const PREVIEW_PROTOCOL = `Return the preview plan as JSON only, without Markdown fences:
+
+{"version":1,"command":"pnpm","args":["dev","--host","127.0.0.1"],"cwd":".","url":"http://127.0.0.1:5173","readyPattern":"optional output text","viewports":[{"name":"desktop","width":1440,"height":1000},{"name":"mobile","width":390,"height":844}]}`
+
+export function designPreviewPrompt(): string {
+  return `You are running the Preview Setup phase of Personal Harness Design Mode.
+
+Inspect the implemented project's real package scripts and configuration. Choose the existing development or preview command that serves the built page on 127.0.0.1 with an explicit port. Do not install dependencies, edit files, start the server, use a shell string, or choose a remote URL. The command is an executable name and args is its argv array. cwd is relative to the current workspace.
+
+Include one representative desktop viewport and one representative mobile viewport. Use readyPattern only when the command has a stable output fragment that indicates readiness. Personal Harness will validate and execute this plan.
+
+${PREVIEW_PROTOCOL}`
+}
+
+export function parsePreviewPhaseOutput(text: string): PreviewPlan {
+  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
+  return parsePreviewPlan(JSON.parse(fenced?.[1] ?? text))
+}
+
 export function parsePreviewPlan(value: unknown): PreviewPlan {
   const plan = record(value, 'preview plan')
   if (plan.version !== 1) throw new Error('preview plan version must be 1')
