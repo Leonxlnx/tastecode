@@ -24,6 +24,7 @@ export {
   type AssetStatus,
   type DesignAsset,
 } from './assets.js'
+export { designAssetPrompt, parseAssetPhaseOutput } from './asset-phase.js'
 export {
   DESIGN_PHASES,
   createDesignRunState,
