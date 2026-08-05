@@ -11,7 +11,6 @@ import {
   writeFileSync,
 } from 'node:fs'
 import path from 'node:path'
-import os from 'node:os'
 import type { ApiTool, ApiToolCall, ApiToolResult } from '@harness/adapter-api'
 import type { ApprovalMode, ApprovalRequest } from '@harness/contracts'
 import { spawnCli } from '@harness/proc'
@@ -21,6 +20,7 @@ import {
   isSecretWorkspaceName,
   writableWorkspacePath,
 } from './api-workspace-paths.js'
+import { safeCommandEnvironment } from './safe-command-environment.js'
 
 const MAX_READ_BYTES = 200_000
 const MAX_WRITE_BYTES = 1_000_000
@@ -200,7 +200,7 @@ function runCommand(
     const child = spawnCli(command, args, {
       cwd,
       replaceEnv: true,
-      env: commandEnvironment(workspace),
+      env: safeCommandEnvironment(workspace),
     })
     let output = ''
     let settled = false
@@ -237,31 +237,6 @@ function runCommand(
     if (signal.aborted) abort()
     child.stdin.end()
   })
-}
-
-function commandEnvironment(workspace: string): NodeJS.ProcessEnv {
-  const runtime = path.join(os.tmpdir(), 'personal-harness-api-tools')
-  mkdirSync(runtime, { recursive: true })
-  const nullFile = process.platform === 'win32' ? 'NUL' : '/dev/null'
-  return {
-    PATH: process.env['PATH'],
-    PATHEXT: process.env['PATHEXT'],
-    SYSTEMROOT: process.env['SYSTEMROOT'],
-    WINDIR: process.env['WINDIR'],
-    COMSPEC: process.env['COMSPEC'],
-    TEMP: runtime,
-    TMP: runtime,
-    HOME: workspace,
-    USERPROFILE: workspace,
-    APPDATA: runtime,
-    LOCALAPPDATA: runtime,
-    CI: '1',
-    NO_COLOR: '1',
-    GIT_TERMINAL_PROMPT: '0',
-    GIT_CONFIG_NOSYSTEM: '1',
-    GIT_CONFIG_GLOBAL: nullFile,
-    NPM_CONFIG_USERCONFIG: nullFile,
-  }
 }
 
 function commandLine(input: Record<string, unknown>): string {
