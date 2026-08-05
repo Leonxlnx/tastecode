@@ -221,7 +221,7 @@ describe('provider-neutral design briefing', () => {
     async (provider) => {
       const model = 'future-provider/model-that-needs-no-design-code'
       const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-flow-'))
-      const { orchestrator, sessions, received } = harness()
+      const { orchestrator, sessions, received, store } = harness()
       try {
         const thread = await orchestrator.startThread(provider, workspace, {})
         await orchestrator.sendTurn(thread.id, 'Create a website.', [DESIGN_BRIEF_ATTACHMENT], {
@@ -254,6 +254,7 @@ describe('provider-neutral design briefing', () => {
         expect(firstRequest?.type).toBe('user_input.requested')
         if (firstRequest?.type !== 'user_input.requested') throw new Error('missing questions')
         expect(firstRequest.request.questions).toHaveLength(5)
+        expect(store.designRun(thread.id)).toMatchObject({ phase: 'brief', askedQuestions: true })
 
         orchestrator.respondToUserInput(thread.id, firstRequest.request.id, {
           field_0: ['Something vague'],
@@ -329,6 +330,7 @@ describe('provider-neutral design briefing', () => {
           final_note: ["No, that's everything (Recommended)"],
         })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(4))
+        expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand' })
         const brief = JSON.parse(readFileSync(path.join(workspace, '.taste', 'brief.json'), 'utf8'))
         expect(brief.subject).toBe('Independent studio')
         expect(brief.explicitAnswers).toEqual([
@@ -370,6 +372,7 @@ describe('provider-neutral design briefing', () => {
         )
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(5))
+        expect(store.designRun(thread.id)).toMatchObject({ phase: 'page' })
         expect(sessions[0]?.sent[4]).toContain('Page Blueprint phase')
 
         sessions[0]?.emit(
@@ -436,6 +439,7 @@ describe('provider-neutral design briefing', () => {
           'brief.json',
           'page.json',
         ])
+        expect(store.designRun(thread.id)).toBeUndefined()
       } finally {
         rmSync(workspace, { recursive: true, force: true })
       }
