@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Transport } from './transport.js'
 import {
   beginInstall,
+  beginLogin,
   installKey,
   installState,
   lastPrintableLine,
+  loginKey,
   resetInstalls,
 } from './provider-install.js'
 
@@ -85,5 +87,45 @@ describe('beginInstall', () => {
 
     emit('terminal.exit', { terminalId: 'term-1', exitCode: 0 })
     expect(installState(installKey(target))?.phase).toBe('succeeded')
+  })
+})
+
+describe('beginLogin', () => {
+  function fakeTransport() {
+    const transport = {
+      request: vi.fn(async () => ({ terminalId: 'term-login-1' })),
+      on: vi.fn(() => () => {}),
+    } as unknown as Transport
+    return transport
+  }
+
+  it('asks the server to launch the sign-in CLI, never naming a command', async () => {
+    const transport = fakeTransport()
+    await beginLogin(transport, { provider: 'acp', agent: 'gemini' })
+    expect(transport.request).toHaveBeenCalledWith('providers.launch', {
+      provider: 'acp',
+      agent: 'gemini',
+      columns: 100,
+      rows: 30,
+    })
+  })
+
+  it('keeps a login and an install for the same target apart in the store', async () => {
+    const transport = fakeTransport()
+    const target = { provider: 'opencode' as const }
+    await beginInstall(transport, target)
+    await beginLogin(transport, target)
+    expect(loginKey(target)).not.toBe(installKey(target))
+    expect(installState(installKey(target))?.phase).toBe('running')
+    expect(installState(loginKey(target))?.phase).toBe('running')
+    expect(transport.request).toHaveBeenCalledTimes(2)
+  })
+
+  it('reattaches instead of launching twice while a login is running', async () => {
+    const transport = fakeTransport()
+    const target = { provider: 'acp' as const, agent: 'kimi' }
+    await beginLogin(transport, target)
+    await beginLogin(transport, target)
+    expect(transport.request).toHaveBeenCalledTimes(1)
   })
 })

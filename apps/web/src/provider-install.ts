@@ -25,6 +25,15 @@ export function installKey(target: InstallTarget): string {
   return target.agent ? `${target.provider}:${target.agent}` : target.provider
 }
 
+/**
+ * Interactive sign-in sessions share the install store — same lifecycle, same
+ * attachable terminal — but never the same entry, so an install and a login
+ * for one target cannot clobber each other.
+ */
+export function loginKey(target: InstallTarget): string {
+  return `login:${installKey(target)}`
+}
+
 const LOG_CAP = 200_000
 
 const installs = new Map<string, InstallState>()
@@ -55,11 +64,27 @@ export function resetInstalls(): void {
  * session rather than installing twice.
  */
 export async function beginInstall(transport: Transport, target: InstallTarget): Promise<void> {
-  const key = installKey(target)
+  return begin(transport, 'providers.install', target, installKey(target))
+}
+
+/**
+ * Start (or reattach to) an interactive sign-in session: the provider's own
+ * CLI running in a server-side pty, where the user completes the OAuth flow.
+ */
+export async function beginLogin(transport: Transport, target: InstallTarget): Promise<void> {
+  return begin(transport, 'providers.launch', target, loginKey(target))
+}
+
+async function begin(
+  transport: Transport,
+  method: 'providers.install' | 'providers.launch',
+  target: InstallTarget,
+  key: string,
+): Promise<void> {
   const existing = installs.get(key)
   if (existing?.phase === 'running') return
 
-  const { terminalId } = await transport.request('providers.install', {
+  const { terminalId } = await transport.request(method, {
     provider: target.provider,
     ...(target.agent ? { agent: target.agent } : {}),
     columns: 100,
