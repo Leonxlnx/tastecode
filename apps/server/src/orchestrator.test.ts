@@ -328,6 +328,7 @@ describe('provider-neutral design briefing', () => {
         orchestrator.respondToUserInput(thread.id, finalRequest.request.id, {
           final_note: ["No, that's everything (Recommended)"],
         })
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(4))
         const brief = JSON.parse(readFileSync(path.join(workspace, '.taste', 'brief.json'), 'utf8'))
         expect(brief.subject).toBe('Independent studio')
         expect(brief.explicitAnswers).toEqual([
@@ -335,18 +336,106 @@ describe('provider-neutral design briefing', () => {
           { question: 'Could you clarify that answer?', answer: 'Decide for me' },
         ])
         expect(sessions[0]?.userInputs).toEqual([])
-        expect(sessions[0]?.sentOptions).toEqual([
-          { model, effort: 'low' },
-          { model, effort: 'low' },
-          { model, effort: 'low' },
-        ])
+        expect(sessions[0]?.sent[3]).toContain('Brand phase')
+
+        sessions[0]?.emit(
+          message(
+            JSON.stringify({
+              version: 1,
+              creativeDirection: {
+                summary: 'Warm editorial confidence',
+                keywords: ['warm', 'precise'],
+                avoid: ['generic gradients'],
+              },
+              colorPalette: [{ name: 'Ink', value: '#171717', usage: 'Primary text' }],
+              typefaces: [
+                { family: 'Inter', source: 'project', roles: ['body'], weights: [400, 600] },
+              ],
+              interfaceDirection: 'Editorial grid with tactile controls.',
+              imageDirection: {
+                summary: 'Human work in context',
+                subjects: ['studio process'],
+                treatment: 'Natural light',
+                avoid: ['stock poses'],
+              },
+              motionDirection: {
+                summary: 'Fast physical feedback',
+                principles: ['interruptible transitions'],
+                avoid: ['decorative looping'],
+              },
+              voice: { summary: 'Direct and assured', avoid: ['empty superlatives'] },
+            }),
+            's1-turn',
+          ),
+        )
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(5))
+        expect(sessions[0]?.sent[4]).toContain('Page Blueprint phase')
+
+        sessions[0]?.emit(
+          message(
+            JSON.stringify({
+              version: 1,
+              page: { title: 'Studio', route: '/', description: 'Studio services' },
+              navigation: [{ label: 'Work', target: '#work' }],
+              sections: [
+                {
+                  id: 'hero',
+                  purpose: 'Introduce the offer',
+                  copy: {
+                    heading: 'Design that earns attention',
+                    body: ['A focused independent studio.'],
+                    callsToAction: [{ label: 'Start a project', target: '#contact' }],
+                  },
+                  layout: 'Split editorial hero',
+                  componentNeeds: [],
+                  assetNeeds: [],
+                },
+              ],
+              responsive: ['Stack the hero on narrow screens'],
+              interactions: ['Anchor navigation'],
+              acceptanceCriteria: ['Primary action is visible'],
+            }),
+            's1-turn',
+          ),
+        )
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(6))
+        expect(sessions[0]?.sent[5]).toContain('Asset phase')
+
+        sessions[0]?.emit(message(JSON.stringify({ version: 1, assets: [] }), 's1-turn'))
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(7))
+        expect(sessions[0]?.sent[6]).toContain('Build phase')
+
+        sessions[0]?.emit(
+          message(
+            JSON.stringify({
+              status: 'complete',
+              summary: 'Implemented the studio page.',
+              files: ['src/page.tsx'],
+              checks: ['pnpm typecheck — passed'],
+            }),
+            's1-turn',
+          ),
+        )
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        expect(sessions[0]?.sentOptions).toEqual(
+          Array.from({ length: 7 }, () => ({ model, effort: 'low' })),
+        )
         expect(
           received.some(
             ({ event }) =>
               event.type === 'item.completed' &&
-              event.item.text === 'Brief complete.\nDEBUG FINISHED · NO WEBSITE BUILT',
+              event.item.text === 'Website built. Implemented the studio page.',
           ),
         ).toBe(true)
+        expect(readdirSync(path.join(workspace, '.taste')).sort()).toEqual([
+          'assets.json',
+          'brand.json',
+          'brief.json',
+          'page.json',
+        ])
       } finally {
         rmSync(workspace, { recursive: true, force: true })
       }
