@@ -1560,6 +1560,12 @@ export class Orchestrator {
   }
 
   #handleSessionEvent(threadId: string, event: DomainEvent): void {
+    if (event.type === 'thread.error' && this.#designFlows.has(threadId)) {
+      this.#clearDesignFlow(threadId)
+      this.#record(threadId, event)
+      void this.#drainQueue(threadId)
+      return
+    }
     if (event.type === 'turn.started' && this.#designStartingThreads.has(threadId)) {
       this.#designTurns.set(event.turn.id, threadId)
     }
@@ -1813,7 +1819,7 @@ export class Orchestrator {
     this.#record(threadId, {
       type: 'thread.error',
       threadId,
-      message: `Design briefing failed: ${error instanceof Error ? error.message : String(error)}`,
+      message: `Design mode failed: ${error instanceof Error ? error.message : String(error)}`,
     })
   }
 

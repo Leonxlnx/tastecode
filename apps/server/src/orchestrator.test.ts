@@ -493,6 +493,27 @@ describe('provider-neutral design briefing', () => {
       }
     },
   )
+
+  it('clears a failed provider run so later prompts are not trapped behind it', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-error-'))
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      sessions[0]?.emit({ type: 'thread.error', threadId: thread.id, message: 'provider failed' })
+
+      expect(store.designRun(thread.id)).toBeUndefined()
+      await expect(orchestrator.submitTurn(thread.id, 'Continue normally.')).resolves.toMatchObject(
+        {
+          queued: false,
+        },
+      )
+      expect(sessions[0]?.sent.at(-1)).toBe('Continue normally.')
+    } finally {
+      orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
 })
 
 describe('persisted threads', () => {
