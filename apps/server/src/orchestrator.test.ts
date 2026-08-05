@@ -579,6 +579,30 @@ describe('provider-neutral design briefing', () => {
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
+
+  it('stops the workflow when its provider turn is interrupted', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-interrupt-'))
+    const { orchestrator, sessions, received, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'interrupted' })
+
+      expect(store.designRun(thread.id)).toBeUndefined()
+      expect(sessions[0]?.sent).toHaveLength(1)
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'item.completed' &&
+            event.item.text === 'design:brief' &&
+            event.item.status === 'failed',
+        ),
+      ).toBe(true)
+    } finally {
+      orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
 })
 
 describe('persisted threads', () => {

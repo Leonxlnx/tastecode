@@ -1631,8 +1631,18 @@ export class Orchestrator {
       return
     }
     if (event.type === 'turn.completed') {
-      this.#completeDesignActivity(threadId, turnId)
+      this.#completeDesignActivity(
+        threadId,
+        turnId,
+        event.status === 'completed' ? 'completed' : 'failed',
+      )
       this.#designTurns.delete(turnId)
+      if (event.status !== 'completed') {
+        this.#clearDesignFlow(threadId)
+        this.#record(threadId, event)
+        void this.#drainQueue(threadId)
+        return
+      }
       const flow = this.#designFlows.get(threadId)
       if (flow?.completion) {
         this.#record(threadId, event)
@@ -1876,13 +1886,17 @@ export class Orchestrator {
     }
   }
 
-  #completeDesignActivity(threadId: string, turnId: string): void {
+  #completeDesignActivity(
+    threadId: string,
+    turnId: string,
+    status: 'completed' | 'failed' = 'completed',
+  ): void {
     const item = this.#designActivityItems.get(turnId)
     if (!item) return
     this.#designActivityItems.delete(turnId)
     this.#record(threadId, {
       type: 'item.completed',
-      item: { ...item, status: 'completed' },
+      item: { ...item, status },
     })
   }
 
