@@ -663,6 +663,7 @@ export class Orchestrator {
           finalAsked: false,
           explicitAnswers: [],
         })
+        this.#saveDesignFlow(threadId)
       }
       const prompt = design ? designBriefingPrompt(text) : text
       const visibleAttachments = attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT)
@@ -1161,6 +1162,7 @@ export class Orchestrator {
             return answer ? [{ question: question.question, answer }] : []
           }),
         )
+        this.#saveDesignFlow(threadId)
       }
       if (noMoreDetails && flow.pendingBrief) {
         this.#completeDesignBrief(threadId, designInput.turnId, flow.pendingBrief)
@@ -1441,6 +1443,7 @@ export class Orchestrator {
       if (flow?.pendingPrompt) {
         const prompt = flow.pendingPrompt
         delete flow.pendingPrompt
+        this.#saveDesignFlow(threadId)
         this.#record(threadId, event)
         void this.#sendDesignTurn(threadId, prompt, [], flow.options).catch((error: unknown) =>
           this.#failDesignFlow(threadId, error),
@@ -1457,7 +1460,7 @@ export class Orchestrator {
 
     try {
       if (flow.phase !== 'brief') {
-        this.#completeDesignPhase(flow, text)
+        this.#completeDesignPhase(threadId, flow, text)
         return
       }
       const output = parseBriefingOutput(text)
@@ -1465,6 +1468,7 @@ export class Orchestrator {
         flow.askedQuestions = true
         flow.finalAsked = false
         flow.pendingBrief = undefined
+        this.#saveDesignFlow(threadId)
         this.#requestDesignInput(threadId, turnId, output.questions, false)
         return
       }
@@ -1487,6 +1491,7 @@ export class Orchestrator {
       if (flow.askedQuestions && !flow.finalAsked) {
         flow.pendingBrief = output.brief
         flow.finalAsked = true
+        this.#saveDesignFlow(threadId)
         this.#requestDesignInput(threadId, turnId, [FINAL_BRIEFING_QUESTION], true)
         return
       }
@@ -1537,18 +1542,21 @@ export class Orchestrator {
     const prompt = designBrandPrompt(saved)
     if (this.#activeTurns.has(threadId)) {
       flow.pendingPrompt = prompt
+      this.#saveDesignFlow(threadId)
       return
     }
+    this.#saveDesignFlow(threadId)
     void this.#sendDesignTurn(threadId, prompt, [], flow.options).catch((error: unknown) =>
       this.#failDesignFlow(threadId, error),
     )
   }
 
-  #completeDesignPhase(flow: DesignFlow, text: string): void {
+  #completeDesignPhase(threadId: string, flow: DesignFlow, text: string): void {
     if (flow.phase === 'brand') {
       const brand = writeBrandSystem(flow.workspacePath, parseBrandPhaseOutput(text))
       flow.phase = 'page'
       flow.pendingPrompt = designPagePrompt(readDesignBrief(flow.workspacePath), brand)
+      this.#saveDesignFlow(threadId)
       return
     }
     if (flow.phase === 'page') {
@@ -1559,6 +1567,7 @@ export class Orchestrator {
         readBrandSystem(flow.workspacePath),
         page,
       )
+      this.#saveDesignFlow(threadId)
       return
     }
     if (flow.phase === 'assets') {
@@ -1570,6 +1579,7 @@ export class Orchestrator {
         readPageBlueprint(flow.workspacePath),
         assets,
       )
+      this.#saveDesignFlow(threadId)
       return
     }
     if (flow.phase === 'build') {
@@ -1577,6 +1587,7 @@ export class Orchestrator {
       if (output.status === 'failed') throw new Error(output.error)
       flow.phase = 'complete'
       flow.completion = output.summary
+      this.#saveDesignFlow(threadId)
       return
     }
     throw new Error(`unexpected design phase ${flow.phase}`)
@@ -1610,12 +1621,18 @@ export class Orchestrator {
 
   #clearDesignFlow(threadId: string): void {
     this.#designFlows.delete(threadId)
+    this.#store.deleteDesignRun(threadId)
     const requestId = this.#designInputByThread.get(threadId)
     if (requestId) this.#designInputs.delete(requestId)
     this.#designInputByThread.delete(threadId)
     for (const [turnId, owner] of this.#designTurns) {
       if (owner === threadId) this.#designTurns.delete(turnId)
     }
+  }
+
+  #saveDesignFlow(threadId: string): void {
+    const flow = this.#designFlows.get(threadId)
+    if (flow) this.#store.setDesignRun(threadId, flow)
   }
 
   #attachThread(
