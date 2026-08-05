@@ -14,6 +14,7 @@ import {
   designBriefingPrompt,
   designBuildPrompt,
   designPagePrompt,
+  designPhaseCorrectionPrompt,
   designPreviewPrompt,
   parseAssetPhaseOutput,
   parseBrandPhaseOutput,
@@ -95,6 +96,7 @@ type DesignFlow = {
   askedQuestions: boolean
   finalAsked: boolean
   explicitAnswers: Array<{ question: string; answer: string }>
+  correcting: boolean
   pendingBrief?: unknown
   pendingPrompt?: string
   completion?: string
@@ -147,6 +149,7 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     askedQuestions: stored.askedQuestions,
     finalAsked: stored.finalAsked,
     explicitAnswers,
+    correcting: stored.correcting === true,
     ...(stored.pendingBrief === undefined ? {} : { pendingBrief: stored.pendingBrief }),
     ...(typeof stored.pendingPrompt === 'string' ? { pendingPrompt: stored.pendingPrompt } : {}),
     ...(typeof stored.completion === 'string' ? { completion: stored.completion } : {}),
@@ -759,6 +762,7 @@ export class Orchestrator {
           askedQuestions: false,
           finalAsked: false,
           explicitAnswers: [],
+          correcting: false,
         })
         this.#saveDesignFlow(threadId)
       }
@@ -1272,7 +1276,20 @@ export class Orchestrator {
         this.#saveDesignFlow(threadId)
       }
       if (noMoreDetails && flow.pendingBrief) {
-        this.#completeDesignBrief(threadId, designInput.turnId, flow.pendingBrief)
+        try {
+          this.#completeDesignBrief(threadId, designInput.turnId, flow.pendingBrief)
+        } catch (error) {
+          const prompt = this.#queueDesignCorrection(threadId, flow, error)
+          if (!prompt) {
+            this.#failDesignFlow(threadId, error)
+            return
+          }
+          delete flow.pendingPrompt
+          this.#saveDesignFlow(threadId)
+          void this.#sendDesignTurn(threadId, prompt, [], flow.options).catch(
+            (sendError: unknown) => this.#failDesignFlow(threadId, sendError),
+          )
+        }
         return
       }
 
@@ -1646,6 +1663,7 @@ export class Orchestrator {
         return
       }
       const output = parseBriefingOutput(text)
+      flow.correcting = false
       if (output.status === 'questions') {
         flow.askedQuestions = true
         flow.finalAsked = false
@@ -1679,7 +1697,9 @@ export class Orchestrator {
       }
       this.#completeDesignBrief(threadId, turnId, output.brief)
     } catch (error) {
-      this.#failDesignFlow(threadId, error)
+      if (!this.#queueDesignCorrection(threadId, flow, error)) {
+        this.#failDesignFlow(threadId, error)
+      }
     }
   }
 
@@ -1735,14 +1755,18 @@ export class Orchestrator {
 
   #completeDesignPhase(threadId: string, turnId: string, flow: DesignFlow, text: string): void {
     if (flow.phase === 'brand') {
-      const brand = writeBrandSystem(flow.workspacePath, parseBrandPhaseOutput(text))
+      const output = parseBrandPhaseOutput(text)
+      flow.correcting = false
+      const brand = writeBrandSystem(flow.workspacePath, output)
       flow.phase = 'page'
       flow.pendingPrompt = designPagePrompt(readDesignBrief(flow.workspacePath), brand)
       this.#saveDesignFlow(threadId)
       return
     }
     if (flow.phase === 'page') {
-      const page = writePageBlueprint(flow.workspacePath, parsePagePhaseOutput(text))
+      const output = parsePagePhaseOutput(text)
+      flow.correcting = false
+      const page = writePageBlueprint(flow.workspacePath, output)
       flow.phase = 'assets'
       flow.pendingPrompt = designAssetPrompt(
         readDesignBrief(flow.workspacePath),
@@ -1753,7 +1777,9 @@ export class Orchestrator {
       return
     }
     if (flow.phase === 'assets') {
-      const assets = writeAssetManifest(flow.workspacePath, parseAssetPhaseOutput(text))
+      const output = parseAssetPhaseOutput(text)
+      flow.correcting = false
+      const assets = writeAssetManifest(flow.workspacePath, output)
       flow.phase = 'build'
       flow.pendingPrompt = designBuildPrompt(
         readDesignBrief(flow.workspacePath),
@@ -1766,6 +1792,7 @@ export class Orchestrator {
     }
     if (flow.phase === 'build') {
       const output = parseBuildPhaseOutput(text)
+      flow.correcting = false
       if (output.status === 'failed') throw new Error(output.error)
       flow.phase = 'preview'
       flow.pendingPrompt = designPreviewPrompt()
@@ -1774,6 +1801,7 @@ export class Orchestrator {
     }
     if (flow.phase === 'preview') {
       const plan = parsePreviewPhaseOutput(text)
+      flow.correcting = false
       void this.#startDesignPreview(threadId, turnId, flow, plan).catch((error: unknown) =>
         this.#failDesignFlow(threadId, error),
       )
@@ -1821,6 +1849,17 @@ export class Orchestrator {
       threadId,
       message: `Design mode failed: ${error instanceof Error ? error.message : String(error)}`,
     })
+  }
+
+  #queueDesignCorrection(threadId: string, flow: DesignFlow, error: unknown): string | undefined {
+    if (flow.correcting) return undefined
+    flow.correcting = true
+    const prompt = designPhaseCorrectionPrompt(
+      error instanceof Error ? error.message : String(error),
+    )
+    flow.pendingPrompt = prompt
+    this.#saveDesignFlow(threadId)
+    return prompt
   }
 
   #clearDesignFlow(threadId: string): void {
