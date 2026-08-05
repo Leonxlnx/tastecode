@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest'
 import { render, cleanup } from '@testing-library/react'
-import type { DomainEvent } from '@harness/contracts'
-import { Thread } from './Thread.js'
+import type { DomainEvent, Item } from '@harness/contracts'
+import { Thread, workLabel } from './Thread.js'
 import { makeFixtureThread } from './fixture.js'
 import { emptyThread, reduce } from '../thread-store.js'
 
@@ -69,6 +69,36 @@ describe('thread at scale', () => {
     expect(
       document.querySelector('.activity__working-orb canvas')?.getAttribute('aria-label'),
     ).toBe('Searching…')
+  })
+
+  it('names the latest active work without depending on a provider', () => {
+    const items: Item[] = [
+      {
+        id: 'plan-1',
+        turnId: 'turn-1',
+        type: 'plan',
+        status: 'started',
+        createdAt: 1,
+      },
+    ]
+    expect(workLabel(items, 'turn-1', false)).toBe('Updating the plan')
+    expect(
+      workLabel(
+        [
+          ...items,
+          {
+            id: 'search-1',
+            turnId: 'turn-1',
+            type: 'tool_call',
+            text: 'search components',
+            status: 'started',
+            createdAt: 2,
+          },
+        ],
+        'turn-1',
+        false,
+      ),
+    ).toBe('Searching')
   })
 
   it('costs about the same at a thousand items as at a hundred', () => {
