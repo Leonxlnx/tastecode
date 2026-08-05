@@ -506,6 +506,11 @@
   box-shadow: inset 0 1px var(--chrome-highlight);
 }
 
+:root[data-theme='light'] .sessrow.is-active {
+  --sess-bg: var(--chrome-raised);
+  box-shadow: var(--chrome-shadow);
+}
+
 .sessrow.is-reorderable .sess {
   cursor: grab;
 }
@@ -857,11 +862,11 @@
 }
 
 .theme-preview {
-  --theme-preview-bg: #f3f3f3;
-  --theme-preview-panel: #fefefe;
-  --theme-preview-line: #d2d2d2;
-  --theme-preview-copy: #e2e2e2;
-  --theme-preview-divider: #ededed;
+  --theme-preview-bg: #fdfdfd;
+  --theme-preview-panel: linear-gradient(180deg, #ffffff 0%, #fafafa 100%);
+  --theme-preview-line: #dcdce0;
+  --theme-preview-copy: #eeeeef;
+  --theme-preview-divider: #ebebed;
   --theme-preview-stroke: color-mix(in oklab, var(--text) 16%, transparent);
   --theme-preview-stroke-width: 1px;
 
@@ -914,11 +919,11 @@
 }
 
 .theme-preview--system {
-  --theme-preview-bg: linear-gradient(90deg, #f3f3f3 0 50%, #3a3a3c 50%);
-  --theme-preview-panel: linear-gradient(90deg, #fefefe 0 50%, #171717 50%);
-  --theme-preview-line: linear-gradient(90deg, #d2d2d2 0 50%, #777779 50%);
-  --theme-preview-copy: linear-gradient(90deg, #e2e2e2 0 50%, #4e4e50 50%);
-  --theme-preview-divider: linear-gradient(90deg, #ededed 0 50%, #29292b 50%);
+  --theme-preview-bg: linear-gradient(90deg, #fdfdfd 0 50%, #3a3a3c 50%);
+  --theme-preview-panel: linear-gradient(90deg, #ffffff 0 50%, #171717 50%);
+  --theme-preview-line: linear-gradient(90deg, #dcdce0 0 50%, #777779 50%);
+  --theme-preview-copy: linear-gradient(90deg, #eeeeef 0 50%, #4e4e50 50%);
+  --theme-preview-divider: linear-gradient(90deg, #ebebed 0 50%, #29292b 50%);
 }
 
 .theme-preview__header,
@@ -1058,6 +1063,17 @@
   border-color: var(--text-2);
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text);
+}
+
+:root[data-theme='light'] .appearance-choice:not(.is-selected) {
+  background: var(--chrome-raised);
+  border-color: var(--chrome-border);
+  box-shadow: var(--chrome-shadow);
+}
+
+:root[data-theme='light'] .appearance-choice:not(.is-selected):hover {
+  background: var(--chrome-raised-hover);
+  border-color: var(--line-strong);
 }
 
 .appearance-choice__font {
@@ -1817,12 +1833,19 @@
   cursor: pointer;
   font: inherit;
   text-align: left;
-  transition: background var(--dur-fast) var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 
 .command-palette__item:hover,
 .command-palette__item.is-selected {
   background: var(--surface-2);
+}
+
+:root[data-theme='light'] .command-palette__item:is(:hover, .is-selected) {
+  background: var(--chrome-raised-hover);
+  box-shadow: var(--chrome-shadow);
 }
 
 .command-palette__copy {
@@ -2001,6 +2024,12 @@
 .switch.is-on {
   background: var(--light);
   border-color: var(--light);
+}
+
+:root[data-theme='light'] .switch:not(.is-on) {
+  background: var(--chrome-recessed);
+  border-color: var(--chrome-border);
+  box-shadow: var(--chrome-inset-shadow);
 }
 
 .switch__thumb {
@@ -5201,7 +5230,7 @@
     .menutrigger--model-selector,
     .composer-voice-button
   ) {
-  /* Dark mode keeps a little depth; light mode uses quiet, flat chrome. */
+  /* Both themes share the same dimensional chrome; their tokens tune the depth and contrast. */
   background: var(--composer-control-bg);
   border: 1px solid var(--composer-control-border);
   box-shadow: var(--composer-control-shadow);

@@ -238,21 +238,21 @@
   --on-danger: #fefefe;
 
   --bg: #fdfdfd;
-  --bg-rail: #f9f9f9;
-  --bg-prompt: #fefefe;
-  --bg-shelf: #f7f7f7;
+  --bg-rail: var(--chrome-raised);
+  --bg-prompt: #ffffff;
+  --bg-shelf: #fafafa;
   --bg-queue: #ffffff;
-  --surface: #f4f4f5;
-  --surface-2: #e8e8ea;
-  --surface-3: #dedee1;
-  --control-hover: #f3f3f4;
-  --menu-bg: #fdfdfd;
-  --menu-hover: #f3f3f4;
-  --menu-line: #e4e4e7;
+  --surface: #fafafa;
+  --surface-2: #f5f5f6;
+  --surface-3: #ececef;
+  --control-hover: var(--chrome-raised-hover);
+  --menu-bg: var(--chrome-raised);
+  --menu-hover: var(--chrome-raised-hover);
+  --menu-line: #e6e6e9;
 
-  --line: #e7e7e9;
-  --line-strong: #d7d7da;
-  --queue-line: #ececee;
+  --line: #ebebed;
+  --line-strong: #dedee2;
+  --queue-line: #eeeeef;
 
   --text: #27272a;
   --response-text: #18181b;
@@ -267,15 +267,13 @@
   --composer-orb: #1d1d1f;
   --composer-on-orb: #ffffff;
   --composer-stop: #1d1d1f;
-  --composer-control-bg: linear-gradient(180deg, #ffffff 0%, #fafafa 100%);
-  --composer-control-bg-hover: linear-gradient(180deg, #ffffff 0%, #f6f6f7 100%);
-  --composer-control-border: #e5e5e8;
-  --composer-control-border-hover: #dcdce0;
-  --composer-control-shadow:
-    inset 0 1px rgb(255 255 255 / 95%), 0 1px 2px rgb(24 24 27 / 8%),
-    0 4px 10px -8px rgb(24 24 27 / 18%);
+  --composer-control-bg: var(--chrome-raised);
+  --composer-control-bg-hover: var(--chrome-raised-hover);
+  --composer-control-border: var(--chrome-border);
+  --composer-control-border-hover: var(--line-strong);
+  --composer-control-shadow: var(--chrome-shadow);
   --composer-control-shadow-hover: inset 0 1px #ffffff, 0 2px 5px -2px rgb(24 24 27 / 12%);
-  --composer-control-shadow-active: inset 0 1px 2px rgb(24 24 27 / 10%);
+  --composer-control-shadow-active: var(--chrome-inset-shadow);
   --composer-design-active-bg: var(--composer-control-bg);
   --composer-design-border-hover: #c7c7cd;
   --composer-design-border-active: #b9bac2;
@@ -283,30 +281,31 @@
   --composer-design-beam-stroke-strength: 2.1;
   --composer-design-beam-inner-strength: 1.15;
   --composer-design-beam-bloom-strength: 1.25;
-  --model-picker-bg: linear-gradient(180deg, #ffffff 0%, #fafafa 100%);
+  --model-picker-bg: var(--menu-bg);
   --model-picker-controls-bg: linear-gradient(180deg, #fafafa 0%, #f6f6f7 100%);
   --model-picker-title-bg: transparent;
-  --model-picker-selected-bg: linear-gradient(180deg, #ffffff 0%, #f3f3f5 100%);
-  --model-picker-selected-shadow:
-    inset 0 0 0 1px #e3e3e6, inset 0 1px #ffffff, 0 1px 2px rgb(24 24 27 / 7%);
-  --model-picker-hover-bg: linear-gradient(180deg, #ffffff 0%, #f6f6f7 100%);
-  --model-picker-fast-bg: linear-gradient(180deg, #ffffff 0%, #f5f5f6 100%);
-  --model-picker-fast-border: #e1e1e4;
-  --model-picker-fast-shadow: inset 0 1px #ffffff, 0 1px 2px rgb(24 24 27 / 8%);
-  --model-picker-fast-on-bg: linear-gradient(180deg, #f5f5f6 0%, #e9e9ec 100%);
-  --model-picker-fast-on-border: #d7d7db;
-  --shadow-flyout: 0 8px 24px -16px rgb(24 24 27 / 20%);
-  --shadow-modal: 0 20px 48px -28px rgb(24 24 27 / 22%);
-  --shadow-rail: 12px 0 24px -18px rgb(24 24 27 / 18%);
-  --chrome-raised: linear-gradient(180deg, #ffffff, #f1f1f2);
-  --chrome-raised-hover: linear-gradient(180deg, #ffffff, #e9e9ec);
-  --chrome-recessed: #eeeeef;
+  --model-picker-selected-bg: var(--chrome-raised-hover);
+  --model-picker-selected-shadow: inset 0 0 0 1px var(--chrome-border), var(--chrome-shadow);
+  --model-picker-hover-bg: var(--chrome-raised);
+  --model-picker-fast-bg: var(--chrome-raised);
+  --model-picker-fast-border: var(--chrome-border);
+  --model-picker-fast-shadow: var(--chrome-shadow);
+  --model-picker-fast-on-bg: var(--chrome-recessed);
+  --model-picker-fast-on-border: var(--line-strong);
+  --shadow-flyout: 0 1px 2px rgb(24 24 27 / 5%), 0 10px 28px -18px rgb(24 24 27 / 18%);
+  --shadow-modal: 0 2px 6px rgb(24 24 27 / 7%), 0 24px 56px -30px rgb(24 24 27 / 24%);
+  --shadow-rail: 12px 0 28px -20px rgb(24 24 27 / 16%);
+  --chrome-raised: linear-gradient(180deg, #ffffff 0%, #fafafa 100%);
+  --chrome-raised-hover: linear-gradient(180deg, #ffffff 0%, #f5f5f6 100%);
+  --chrome-recessed: #f3f3f5;
   --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  --chrome-border: #d9d9dc;
-  --chrome-highlight: rgb(255 255 255 / 85%);
-  --chrome-shadow: inset 0 1px var(--chrome-highlight), 0 1px 2px rgb(24 24 27 / 12%);
-  --chrome-inset-shadow: inset 0 1px 3px rgb(24 24 27 / 10%);
-  --titlebar-bg: #fdfdfd;
+  --chrome-border: #e3e3e6;
+  --chrome-highlight: rgb(255 255 255 / 96%);
+  --chrome-shadow:
+    inset 0 1px var(--chrome-highlight), 0 1px 2px rgb(24 24 27 / 8%),
+    0 4px 10px -8px rgb(24 24 27 / 16%);
+  --chrome-inset-shadow: inset 0 1px 3px rgb(24 24 27 / 8%), inset 0 0 0 1px rgb(24 24 27 / 2%);
+  --titlebar-bg: var(--chrome-raised);
   --titlebar-symbol: #27272a;
 
   --on-light: #fefefe;
