@@ -5,6 +5,7 @@ out/
 build/
 coverage/
 node_modules/
+.claude/worktrees/
 
 # Vendor protocol bindings. Produced by `codex app-server generate-ts`;
 # reformatting them would make every regeneration a noisy diff.
