@@ -13,6 +13,7 @@ export {
   type PageBlueprint,
   type PageLink,
 } from './page.js'
+export { designPagePrompt, parsePagePhaseOutput } from './page-phase.js'
 export {
   parseAssetManifest,
   readAssetManifest,
