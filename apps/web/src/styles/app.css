@@ -4876,7 +4876,7 @@
 .tools {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   padding: 4px 8px 8px 8px;
   /* Never wraps. Send has to stay on the row at every width, so the labels in
      the middle shrink and truncate instead. */
@@ -5029,7 +5029,7 @@
 .composer__design-button-beam {
   display: flex;
   flex: none;
-  border-radius: var(--r-md);
+  border-radius: 999px;
 }
 
 /* Scoped like the hover rule below: the later generic .menutrigger
@@ -5043,17 +5043,13 @@
     .menutrigger--model-selector,
     .composer-voice-button
   ) {
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--surface-3) 72%, transparent),
-    color-mix(in srgb, var(--surface-2) 46%, transparent)
-  );
+  /* Flat chips: the border carries the shape, the fill is one quiet step
+     above the prompt background. No gradients, no sheen. */
+  background: color-mix(in srgb, var(--surface-2) 62%, var(--bg-prompt));
   /* --line-strong alone sinks into --bg-prompt at 1px. The text-3 mix keeps
-     the resting border one clear step below the 55% hover mix. */
-  border: 1px solid color-mix(in srgb, var(--text-3) 30%, var(--line-strong));
-  box-shadow:
-    inset 0 1px color-mix(in srgb, white 9%, transparent),
-    0 1px 1px color-mix(in srgb, black 18%, transparent);
+     the resting border one clear step below the hover mix. */
+  border: 1px solid color-mix(in srgb, var(--text-3) 34%, var(--line-strong));
+  box-shadow: none;
   transition:
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
@@ -5062,24 +5058,33 @@
     transform var(--dur-press) var(--ease-out);
 }
 
-.composer__add {
-  width: 30px;
-  height: 30px;
+/* Scoped under .tools so these outrank the later generic .menutrigger
+   radius/padding, which ties on bare class specificity and would win. */
+.tools .composer__add {
+  width: 32px;
+  height: 32px;
   justify-content: center;
   padding: 0;
-  border-radius: 50%;
+  border-radius: 10px;
 }
 
-.composer__permission,
-.composer__design,
-.menutrigger--model-selector {
-  min-height: 30px;
+.tools :is(.composer__permission, .composer__design, .menutrigger--model-selector) {
+  min-height: 32px;
+  padding: 5px 13px;
+  border-radius: 999px;
 }
 
 .composer-voice-button {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
+}
+
+.tools :is(.composer__add, .composer__permission) .tool:not(.tool--danger),
+.tools :is(.composer__add, .composer__permission) .tool:not(.tool--danger) svg,
+.tools .composer__design:not(.is-active),
+.tools .composer__design:not(.is-active) svg {
+  color: color-mix(in srgb, var(--text) 55%, var(--text-2));
 }
 
 :is(
@@ -5869,15 +5874,9 @@
       .menutrigger--model-selector,
       .composer-voice-button
     ):hover:not(:disabled) {
-    background: linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--surface-3) 96%, transparent),
-      color-mix(in srgb, var(--surface-2) 68%, transparent)
-    );
-    border-color: color-mix(in srgb, var(--text-3) 55%, var(--line-strong));
-    box-shadow:
-      inset 0 1px color-mix(in srgb, white 12%, transparent),
-      0 2px 4px color-mix(in srgb, black 20%, transparent);
+    background: var(--surface-3);
+    border-color: color-mix(in srgb, var(--text-3) 60%, var(--line-strong));
+    box-shadow: none;
   }
 
   .tools
