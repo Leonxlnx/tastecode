@@ -18,7 +18,7 @@ import {
 } from '@harness/contracts'
 import { StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator } from './orchestrator.js'
-import { detectProviders } from './providers.js'
+import { detectProviders, installCommandFor } from './providers.js'
 import { PushBus } from './push-bus.js'
 import { Store } from './store.js'
 import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
@@ -199,6 +199,13 @@ export function startServer(
 
       case 'providers.list':
         return { providers: await detectProviders() }
+
+      case 'providers.install': {
+        const p = params as ParamsOf<'providers.install'>
+        const command = installCommandFor(p.provider, p.agent)
+        const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
+        return { terminalId: orchestrator.installProvider(target, command, p.columns, p.rows) }
+      }
 
       case 'connections.list':
         return { connections: orchestrator.listModelConnections() }

@@ -47,6 +47,38 @@ describe('TerminalManager', () => {
     }
   }, 15_000)
 
+  it('runs a one-shot command, reattaches while running, and reports its exit', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-run-'))
+    let output = ''
+    let finished: (result: { terminalId: string; exitCode: number | null }) => void = () => {}
+    const exited = new Promise<{ terminalId: string; exitCode: number | null }>((resolve) => {
+      finished = resolve
+    })
+    const manager = new TerminalManager({
+      onOutput: (_terminalId, data) => (output += data),
+      onExit: (terminalId, exitCode) => finished({ terminalId, exitCode }),
+    })
+
+    try {
+      // Linger briefly after the echo so the reattach below happens while the
+      // command is verifiably still alive.
+      const command =
+        process.platform === 'win32'
+          ? 'echo harness-run-done && ping -n 2 127.0.0.1 > NUL'
+          : 'echo harness-run-done && sleep 1'
+      const terminalId = manager.run('install:probe', command, cwd, 80, 24)
+      // A second click while the command runs must attach, not run it again.
+      expect(manager.run('install:probe', 'echo something-else', cwd, 100, 30)).toBe(terminalId)
+
+      await expect(within(exited)).resolves.toEqual({ terminalId, exitCode: 0 })
+      expect(output).toContain('harness-run-done')
+      expect(output).not.toContain('something-else')
+    } finally {
+      manager.closeAll()
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  }, 15_000)
+
   it('closes the PTY when its session closes', async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-close-'))
     let finished: () => void = () => {}

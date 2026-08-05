@@ -2,12 +2,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { Account, ProviderId } from '@harness/contracts'
+import { resetInstalls } from '../provider-install.js'
 import type { Transport } from '../transport.js'
 import { Settings } from './Settings.js'
 
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  resetInstalls()
 })
 
 describe('provider settings', () => {
@@ -24,6 +26,7 @@ describe('provider settings', () => {
           return { loginId: 'login-1', authUrl: 'https://auth.example.test/' }
         }
         if (method === 'auth.signOut') return {}
+        if (method === 'providers.install') return { terminalId: 'term-install-1' }
         throw new Error(`unexpected ${method}`)
       }),
       on: vi.fn(() => () => {}),
@@ -128,11 +131,103 @@ describe('provider settings', () => {
 
     const geminiRow = screen.getByText('Gemini CLI').closest<HTMLElement>('.settings__row')
     if (!geminiRow) throw new Error('Gemini provider row missing')
-    fireEvent.click(within(geminiRow).getByRole('button', { name: 'Install first' }))
-    expect(open).toHaveBeenCalledWith(
+    fireEvent.click(within(geminiRow).getByRole('button', { name: 'Install' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('providers.install', {
+        provider: 'acp',
+        agent: 'gemini',
+        columns: 100,
+        rows: 30,
+      }),
+    )
+    expect(open).not.toHaveBeenCalledWith(
       'https://example.test/gemini',
       '_blank',
       'noopener,noreferrer',
     )
+    await waitFor(() =>
+      expect(within(geminiRow).getByRole('button', { name: 'Installing…' })).toBeTruthy(),
+    )
+  })
+
+  it('runs installs in the background and refreshes once the install exits cleanly', async () => {
+    const channels = new Map<string, Set<(data: unknown) => void>>()
+    const transport = {
+      request: vi.fn(async (method: string) => {
+        if (method === 'providers.install') return { terminalId: 'term-install-2' }
+        if (method === 'auth.status') return { signedIn: false }
+        throw new Error(`unexpected ${method}`)
+      }),
+      on: vi.fn((channel: string, listener: (data: unknown) => void) => {
+        const listeners = channels.get(channel) ?? new Set()
+        listeners.add(listener)
+        channels.set(channel, listeners)
+        return () => listeners.delete(listener)
+      }),
+    } as unknown as Transport
+    const onConnectionsChanged = vi.fn()
+
+    render(
+      <Settings
+        provider="codex"
+        providerName="Codex"
+        transport={transport}
+        projectPath={undefined}
+        projectName={undefined}
+        account={undefined}
+        providerStatuses={[
+          {
+            id: 'opencode',
+            displayName: 'OpenCode',
+            installed: false,
+            auth: 'unknown',
+            setup: {
+              installUrl: 'https://example.test/opencode',
+              installCommand: 'npm install -g opencode-ai',
+              login: 'provider',
+            },
+          },
+        ]}
+        acpAgents={[]}
+        modelConnections={[]}
+        models={[]}
+        hiddenModels={new Set()}
+        onModelVisibilityChange={() => {}}
+        onConnectionsChanged={onConnectionsChanged}
+        projectCount={0}
+        sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
+        onSidebarSettingsChange={() => {}}
+        themePreference="system"
+        onThemePreferenceChange={() => {}}
+        fontPreference="geist"
+        onFontPreferenceChange={() => {}}
+        accentPreference="neutral"
+        onAccentPreferenceChange={() => {}}
+        showMacOSFontSmoothing={false}
+        macOSFontSmoothing={true}
+        onMacOSFontSmoothingChange={() => {}}
+        onAccountChange={() => {}}
+        onReset={() => {}}
+        onClose={() => {}}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('providers.install', {
+        provider: 'opencode',
+        columns: 100,
+        rows: 30,
+      }),
+    )
+
+    const emit = (channel: string, data: unknown) => {
+      for (const listener of channels.get(channel) ?? []) listener(data)
+    }
+    emit('terminal.output', { terminalId: 'term-install-2', data: 'added 12 packages\r\n' })
+    await waitFor(() => expect(screen.getByText('added 12 packages')).toBeTruthy())
+
+    emit('terminal.exit', { terminalId: 'term-install-2', exitCode: 0 })
+    await waitFor(() => expect(onConnectionsChanged).toHaveBeenCalled())
   })
 })

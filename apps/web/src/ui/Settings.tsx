@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type {
   Account,
   ModelConnection,
   ModelConnectionPreset,
   ModelTransport,
   ProviderId,
+  ProviderSetup,
   ProviderStatus,
   ResultOf,
   SidebarSettings,
@@ -26,7 +27,16 @@ import {
 } from 'lucide-react'
 import { agentMark, connectionMark, providerMark, type ModelChoice } from '../model-catalog.js'
 import { isDesktop } from '../bridge.js'
+import {
+  beginInstall,
+  clearInstall,
+  installKey,
+  installState,
+  subscribeInstalls,
+  type InstallTarget,
+} from '../provider-install.js'
 import type { Transport } from '../transport.js'
+import { InstallTerminal } from './InstallTerminal.js'
 import type { AccentPreference, FontPreference, ThemePreference } from '../theme.js'
 import { McpSettings } from './McpSettings.js'
 import { Menu, MenuItem } from './Menu.js'
@@ -426,13 +436,27 @@ function ProviderSettings(props: {
         .map((status) => {
           const account =
             accounts[status.id] ?? (status.id === props.provider ? props.account : undefined)
+          if (!status.installed && !account?.signedIn) {
+            return (
+              <InstallableRow
+                key={status.id}
+                title={status.displayName}
+                idleNote={
+                  status.setup?.installCommand ?? status.problem ?? 'Provider CLI is not installed.'
+                }
+                icon={<ProviderIcon mark={providerMark(status.id)} size={17} />}
+                target={{ provider: status.id }}
+                setup={status.setup}
+                transport={props.transport}
+                onInstalled={props.onConnectionsChanged}
+              />
+            )
+          }
           const accountStatus = account?.signedIn
             ? [account.email, account.plan].filter(Boolean).join(' · ') || 'Signed in'
-            : status.installed
-              ? status.setup?.login === 'provider'
-                ? 'Finish sign-in in the provider CLI.'
-                : 'Not signed in'
-              : (status.setup?.installCommand ?? status.problem ?? 'Provider CLI is not installed.')
+            : status.setup?.login === 'provider'
+              ? 'Finish sign-in in the provider CLI.'
+              : 'Not signed in'
           const busy = authBusy === status.id
           return (
             <SettingsRow key={status.id} title={status.displayName} note={accountStatus}>
@@ -447,18 +471,6 @@ function ProviderSettings(props: {
                   >
                     <LogOut size={13} aria-hidden />
                     {busy ? 'Signing out…' : 'Sign out'}
-                  </button>
-                ) : !status.installed ? (
-                  <button
-                    className="settings__action"
-                    type="button"
-                    disabled={!status.setup}
-                    onClick={() =>
-                      status.setup &&
-                      window.open(status.setup.installUrl, '_blank', 'noopener,noreferrer')
-                    }
-                  >
-                    Install first
                   </button>
                 ) : status.setup?.login === 'provider' ? (
                   <button
@@ -485,28 +497,37 @@ function ProviderSettings(props: {
           )
         })}
 
-      {props.acpAgents.map((agent) => (
-        <SettingsRow
-          key={agent.id}
-          title={agent.name}
-          note={
-            agent.installed
-              ? 'Installed · sign-in is managed by the provider CLI.'
-              : (agent.setup.installCommand ?? 'Provider CLI is not installed.')
-          }
-        >
-          <div className="provider-settings__actions">
-            <ProviderIcon mark={agentMark(agent.id)} size={17} />
-            <button
-              className="settings__action"
-              type="button"
-              onClick={() => window.open(agent.setup.installUrl, '_blank', 'noopener,noreferrer')}
-            >
-              {agent.installed ? 'Sign in' : 'Install first'}
-            </button>
-          </div>
-        </SettingsRow>
-      ))}
+      {props.acpAgents.map((agent) =>
+        agent.installed ? (
+          <SettingsRow
+            key={agent.id}
+            title={agent.name}
+            note="Installed · sign-in is managed by the provider CLI."
+          >
+            <div className="provider-settings__actions">
+              <ProviderIcon mark={agentMark(agent.id)} size={17} />
+              <button
+                className="settings__action"
+                type="button"
+                onClick={() => window.open(agent.setup.installUrl, '_blank', 'noopener,noreferrer')}
+              >
+                Sign in
+              </button>
+            </div>
+          </SettingsRow>
+        ) : (
+          <InstallableRow
+            key={agent.id}
+            title={agent.name}
+            idleNote={agent.setup.installCommand ?? 'Provider CLI is not installed.'}
+            icon={<ProviderIcon mark={agentMark(agent.id)} size={17} />}
+            target={{ provider: 'acp', agent: agent.id }}
+            setup={agent.setup}
+            transport={props.transport}
+            onInstalled={props.onConnectionsChanged}
+          />
+        ),
+      )}
 
       <h2 className="settings__group-title settings__group-title--inside">API connections</h2>
       {props.modelConnections.map((connection) => (
@@ -845,6 +866,89 @@ function SettingsPanel(props: {
         {props.children}
       </div>
     </section>
+  )
+}
+
+/**
+ * A provider that is not on this machine yet. When the server knows a real
+ * install command the button runs it in the background — no docs page — and
+ * the row narrates progress from the live output. The terminal itself stays
+ * hidden until the user asks for it or the install fails and needs them.
+ */
+function InstallableRow(props: {
+  title: string
+  idleNote: string
+  icon: ReactNode
+  target: InstallTarget
+  setup: ProviderSetup | undefined
+  transport: Transport
+  onInstalled: () => void
+}) {
+  const key = installKey(props.target)
+  const install = useSyncExternalStore(subscribeInstalls, () => installState(key))
+  const [showTerminal, setShowTerminal] = useState(false)
+  const [startError, setStartError] = useState<string>()
+  const { onInstalled } = props
+
+  useEffect(() => {
+    if (install?.phase === 'failed') setShowTerminal(true)
+    if (install?.phase === 'succeeded') {
+      clearInstall(key)
+      onInstalled()
+    }
+  }, [install?.phase, key, onInstalled])
+
+  const start = () => {
+    setStartError(undefined)
+    void beginInstall(props.transport, props.target).catch((cause: unknown) =>
+      setStartError(cause instanceof Error ? cause.message : String(cause)),
+    )
+  }
+
+  const note =
+    install?.phase === 'running'
+      ? install.lastLine || 'Installing…'
+      : install?.phase === 'failed'
+        ? `Install failed${install.exitCode === null ? '' : ` (exit ${install.exitCode})`} — finish it in the terminal below, or retry.`
+        : install?.phase === 'succeeded'
+          ? 'Installed · refreshing…'
+          : (startError ?? props.idleNote)
+
+  return (
+    <>
+      <SettingsRow title={props.title} note={note}>
+        <div className="provider-settings__actions">
+          {props.icon}
+          {!props.setup?.installCommand ? (
+            <button
+              className="settings__action"
+              type="button"
+              disabled={!props.setup}
+              onClick={() =>
+                props.setup && window.open(props.setup.installUrl, '_blank', 'noopener,noreferrer')
+              }
+            >
+              Install first
+            </button>
+          ) : install?.phase === 'running' ? (
+            <button
+              className="settings__action"
+              type="button"
+              onClick={() => setShowTerminal((visible) => !visible)}
+            >
+              {showTerminal ? 'Hide terminal' : 'Installing…'}
+            </button>
+          ) : (
+            <button className="settings__action" type="button" onClick={start}>
+              {install?.phase === 'failed' ? 'Retry install' : 'Install'}
+            </button>
+          )}
+        </div>
+      </SettingsRow>
+      {install && showTerminal ? (
+        <InstallTerminal transport={props.transport} installKey={key} />
+      ) : null}
+    </>
   )
 }
 

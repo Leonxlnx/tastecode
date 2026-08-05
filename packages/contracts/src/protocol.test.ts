@@ -726,7 +726,9 @@ describe('protocol envelopes', () => {
     expect(methods['providers.install'].params.parse({ ...valid, command: 'rm -rf /' })).toEqual(
       valid,
     )
-    expect(() => methods['providers.install'].params.parse({ provider: 'acp', agent: '' })).toThrow()
+    expect(() =>
+      methods['providers.install'].params.parse({ provider: 'acp', agent: '' }),
+    ).toThrow()
     expect(methods['providers.install'].result.parse({ terminalId: 'term-1' })).toEqual({
       terminalId: 'term-1',
     })

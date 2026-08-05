@@ -940,6 +940,16 @@ export class Orchestrator {
     return this.#terminals.open(threadId, this.#repoPath(threadId), columns, rows)
   }
 
+  /**
+   * Run a provider install command in its own terminal session. Keyed by
+   * target so clicking install twice attaches to the run already going, and
+   * rooted in the home directory because a global CLI install has no business
+   * inside any particular project checkout.
+   */
+  installProvider(target: string, command: string, columns: number, rows: number): string {
+    return this.#terminals.run(`install:${target}`, command, os.homedir(), columns, rows)
+  }
+
   writeTerminal(terminalId: string, data: string): void {
     this.#terminals.write(terminalId, data)
   }
