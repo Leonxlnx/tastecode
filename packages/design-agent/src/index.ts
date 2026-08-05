@@ -4,6 +4,7 @@ export {
   type DesignBrief,
   type ExplicitBriefAnswer,
 } from './brief.js'
+export { parseBrandSystem, readBrandSystem, writeBrandSystem, type BrandSystem } from './brand.js'
 export {
   DESIGN_BRIEF_ATTACHMENT,
   FINAL_BRIEFING_QUESTION,
