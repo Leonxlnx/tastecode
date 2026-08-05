@@ -471,6 +471,23 @@ describe('provider-neutral design briefing', () => {
           'page.json',
         ])
         expect(store.designRun(thread.id)).toBeUndefined()
+        expect(
+          received
+            .filter(
+              ({ event }) =>
+                event.type === 'item.started' && event.item.text?.startsWith('design:'),
+            )
+            .map(({ event }) => (event.type === 'item.started' ? event.item.text : undefined)),
+        ).toEqual([
+          'design:brief',
+          'design:brief',
+          'design:brief',
+          'design:brand',
+          'design:page',
+          'design:assets',
+          'design:build',
+          'design:preview',
+        ])
       } finally {
         rmSync(workspace, { recursive: true, force: true })
       }
