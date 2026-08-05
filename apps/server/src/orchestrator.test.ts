@@ -514,6 +514,71 @@ describe('provider-neutral design briefing', () => {
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
+
+  it('recovers from one malformed phase response', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-correction-'))
+    const { orchestrator, sessions, received, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      sessions[0]?.emit(message('not json', 's1-turn'))
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+      expect(sessions[0]?.sent[1]).toContain('failed validation')
+      sessions[0]?.emit(
+        message(
+          JSON.stringify({
+            status: 'questions',
+            message: 'Preparing questions.',
+            questions: [
+              {
+                id: 'subject',
+                header: 'Subject',
+                question: 'What should the site present?',
+                allowOther: true,
+                options: [{ label: 'Decide for me', description: 'Choose a suitable subject.' }],
+              },
+            ],
+            brief: null,
+          }),
+          's1-turn',
+        ),
+      )
+
+      await vi.waitFor(() =>
+        expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(true),
+      )
+      expect(store.designRun(thread.id)).toMatchObject({ phase: 'brief', correcting: false })
+    } finally {
+      orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('stops after a second malformed response', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-correction-'))
+    const { orchestrator, sessions, received, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      sessions[0]?.emit(message('not json', 's1-turn'))
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+      sessions[0]?.emit(message('still not json', 's1-turn'))
+
+      expect(store.designRun(thread.id)).toBeUndefined()
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'thread.error' && event.message.includes('Design mode failed'),
+        ),
+      ).toBe(true)
+    } finally {
+      orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
 })
 
 describe('persisted threads', () => {
