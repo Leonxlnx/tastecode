@@ -19,6 +19,7 @@ import {
   parseBriefingOutput,
   parseBuildPhaseOutput,
   parsePagePhaseOutput,
+  readAssetManifest,
   readBrandSystem,
   readDesignBrief,
   readPageBlueprint,
@@ -93,6 +94,83 @@ type DesignFlow = {
   pendingBrief?: unknown
   pendingPrompt?: string
   completion?: string
+}
+
+function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlow | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const stored = value as Record<string, unknown>
+  const phases: DesignFlowPhase[] = ['brief', 'brand', 'page', 'assets', 'build', 'complete']
+  if (
+    typeof stored.originalRequest !== 'string' ||
+    !phases.includes(stored.phase as DesignFlowPhase) ||
+    typeof stored.askedQuestions !== 'boolean' ||
+    typeof stored.finalAsked !== 'boolean' ||
+    !Array.isArray(stored.explicitAnswers)
+  ) {
+    return undefined
+  }
+  const explicitAnswers = stored.explicitAnswers.filter(
+    (answer): answer is { question: string; answer: string } =>
+      typeof answer === 'object' &&
+      answer !== null &&
+      typeof (answer as Record<string, unknown>).question === 'string' &&
+      typeof (answer as Record<string, unknown>).answer === 'string',
+  )
+  if (explicitAnswers.length !== stored.explicitAnswers.length) return undefined
+
+  const rawOptions =
+    typeof stored.options === 'object' && stored.options !== null && !Array.isArray(stored.options)
+      ? (stored.options as Record<string, unknown>)
+      : {}
+  const options: TurnOptions = {}
+  for (const field of ['model', 'serviceTier', 'effort'] as const) {
+    if (typeof rawOptions[field] === 'string') options[field] = rawOptions[field]
+  }
+
+  return {
+    workspacePath,
+    originalRequest: stored.originalRequest,
+    options,
+    phase: stored.phase as DesignFlowPhase,
+    askedQuestions: stored.askedQuestions,
+    finalAsked: stored.finalAsked,
+    explicitAnswers,
+    ...(stored.pendingBrief === undefined ? {} : { pendingBrief: stored.pendingBrief }),
+    ...(typeof stored.pendingPrompt === 'string' ? { pendingPrompt: stored.pendingPrompt } : {}),
+    ...(typeof stored.completion === 'string' ? { completion: stored.completion } : {}),
+  }
+}
+
+function unresolvedDesignInput(
+  history: Array<{ event: DomainEvent }>,
+): { id: string; turnId: string; questions: BriefingQuestion[] } | undefined {
+  const unresolved = new Map<string, { turnId: string; questions: BriefingQuestion[] }>()
+  for (const { event } of history) {
+    if (event.type === 'user_input.requested') {
+      unresolved.set(event.request.id, {
+        turnId: event.request.turnId,
+        questions: event.request.questions.map((question) => ({
+          id: question.id,
+          header: question.header,
+          question: question.question,
+          allowOther: question.allowOther,
+          options: question.options ?? [],
+        })),
+      })
+    }
+    if (event.type === 'user_input.resolved') unresolved.delete(event.id)
+  }
+  const last = [...unresolved].at(-1)
+  return last ? { id: last[0], ...last[1] } : undefined
+}
+
+function openTurn(history: Array<{ event: DomainEvent }>): string | undefined {
+  const open = new Set<string>()
+  for (const { event } of history) {
+    if (event.type === 'turn.started') open.add(event.turn.id)
+    if (event.type === 'turn.completed') open.delete(event.turnId)
+  }
+  return [...open].at(-1)
 }
 type DesignInput = {
   threadId: string
@@ -687,6 +765,7 @@ export class Orchestrator {
     if (
       this.#activeTurns.has(threadId) ||
       this.#startingTurns.has(threadId) ||
+      this.#designFlows.has(threadId) ||
       this.#designInputByThread.has(threadId) ||
       queue.length > 0
     ) {
@@ -700,7 +779,12 @@ export class Orchestrator {
       queue.push(queuedTurn)
       this.#queuedTurns.set(threadId, queue)
       this.#notifyQueue(threadId)
-      if (!this.#activeTurns.has(threadId) && !this.#startingTurns.has(threadId)) {
+      if (
+        !this.#activeTurns.has(threadId) &&
+        !this.#startingTurns.has(threadId) &&
+        !this.#designFlows.has(threadId) &&
+        !this.#designInputByThread.has(threadId)
+      ) {
         void this.#drainQueue(threadId)
       }
       return { queued: true, queuedTurn: this.#publicQueuedTurn(queuedTurn) }
@@ -782,7 +866,11 @@ export class Orchestrator {
       this.#wakeForActivity(threadId, true)
     }
     this.#onEvent(threadId, event, seq)
-    if (event.type === 'turn.completed' && !this.#designInputByThread.has(threadId)) {
+    if (
+      event.type === 'turn.completed' &&
+      !this.#designFlows.has(threadId) &&
+      !this.#designInputByThread.has(threadId)
+    ) {
       void this.#drainQueue(threadId)
     }
   }
@@ -1361,6 +1449,57 @@ export class Orchestrator {
       throw new Error(`provider resumed unexpected thread ${result.thread.id}`)
     }
     this.#attachThread(result.thread, result.session, stored.projectPath)
+    this.#restoreDesignFlow(threadId, workspacePath)
+  }
+
+  #restoreDesignFlow(threadId: string, workspacePath: string): void {
+    const flow = parseStoredDesignFlow(this.#store.designRun(threadId), workspacePath)
+    if (!flow) return
+    this.#designFlows.set(threadId, flow)
+
+    const unresolved = unresolvedDesignInput(this.#store.history(threadId))
+    if (unresolved) {
+      this.#designInputs.set(unresolved.id, {
+        threadId,
+        turnId: unresolved.turnId,
+        questions: unresolved.questions,
+        final: unresolved.questions.every((question) => question.id === FINAL_BRIEFING_QUESTION.id),
+      })
+      this.#designInputByThread.set(threadId, unresolved.id)
+      return
+    }
+
+    const openTurnId = openTurn(this.#store.history(threadId))
+    if (openTurnId) {
+      this.#designTurns.set(openTurnId, threadId)
+      return
+    }
+
+    if (flow.completion) {
+      this.#finishDesignFlow(threadId, `design-resumed-${crypto.randomUUID()}`, flow.completion)
+      return
+    }
+
+    const prompt = flow.pendingPrompt ?? this.#designPromptFor(flow)
+    delete flow.pendingPrompt
+    this.#saveDesignFlow(threadId)
+    void this.#sendDesignTurn(threadId, prompt, [], flow.options).catch((error: unknown) =>
+      this.#failDesignFlow(threadId, error),
+    )
+  }
+
+  #designPromptFor(flow: DesignFlow): string {
+    if (flow.phase === 'brief') return designBriefingPrompt(flow.originalRequest)
+    const brief = readDesignBrief(flow.workspacePath)
+    if (flow.phase === 'brand') return designBrandPrompt(brief)
+    const brand = readBrandSystem(flow.workspacePath)
+    if (flow.phase === 'page') return designPagePrompt(brief, brand)
+    const page = readPageBlueprint(flow.workspacePath)
+    if (flow.phase === 'assets') return designAssetPrompt(brief, brand, page)
+    if (flow.phase === 'build') {
+      return designBuildPrompt(brief, brand, page, readAssetManifest(flow.workspacePath))
+    }
+    throw new Error(`cannot resume design phase ${flow.phase}`)
   }
 
   async #sendDesignTurn(
