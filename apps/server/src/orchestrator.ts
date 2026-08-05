@@ -62,6 +62,7 @@ import type {
   McpServer,
   McpServerConfig,
   Model,
+  Item,
   PanicStopResult,
   ParamsOf,
   ProviderId,
@@ -228,6 +229,7 @@ export class Orchestrator {
   #designTurns = new Map<string, string>()
   #designStartingThreads = new Set<string>()
   #designMessageItems = new Set<string>()
+  #designActivityItems = new Map<string, Item>()
   #designInputs = new Map<string, DesignInput>()
   #designInputByThread = new Map<string, string>()
   #designPreviews = new Map<string, RunningPreview>()
@@ -1421,6 +1423,7 @@ export class Orchestrator {
     this.#designTurns.clear()
     this.#designStartingThreads.clear()
     this.#designMessageItems.clear()
+    this.#designActivityItems.clear()
     this.#designInputs.clear()
     this.#designInputByThread.clear()
     for (const preview of this.#designPreviews.values()) void preview.stop()
@@ -1537,6 +1540,19 @@ export class Orchestrator {
         options,
       )
       this.#designTurns.set(turnId, threadId)
+      const flow = this.#designFlows.get(threadId)
+      if (flow) {
+        const item: Item = {
+          id: `design-activity-${crypto.randomUUID()}`,
+          turnId,
+          type: 'tool_call',
+          status: 'started',
+          text: `design:${flow.phase}`,
+          createdAt: Date.now(),
+        }
+        this.#designActivityItems.set(turnId, item)
+        this.#record(threadId, { type: 'item.started', item })
+      }
       return turnId
     } finally {
       this.#designStartingThreads.delete(threadId)
@@ -1592,6 +1608,7 @@ export class Orchestrator {
       return
     }
     if (event.type === 'turn.completed') {
+      this.#completeDesignActivity(threadId, turnId)
       this.#designTurns.delete(turnId)
       const flow = this.#designFlows.get(threadId)
       if (flow?.completion) {
@@ -1619,7 +1636,7 @@ export class Orchestrator {
 
     try {
       if (flow.phase !== 'brief') {
-        this.#completeDesignPhase(threadId, flow, text)
+        this.#completeDesignPhase(threadId, turnId, flow, text)
         return
       }
       const output = parseBriefingOutput(text)
@@ -1710,7 +1727,7 @@ export class Orchestrator {
     )
   }
 
-  #completeDesignPhase(threadId: string, flow: DesignFlow, text: string): void {
+  #completeDesignPhase(threadId: string, turnId: string, flow: DesignFlow, text: string): void {
     if (flow.phase === 'brand') {
       const brand = writeBrandSystem(flow.workspacePath, parseBrandPhaseOutput(text))
       flow.phase = 'page'
@@ -1751,7 +1768,7 @@ export class Orchestrator {
     }
     if (flow.phase === 'preview') {
       const plan = parsePreviewPhaseOutput(text)
-      void this.#startDesignPreview(threadId, flow, plan).catch((error: unknown) =>
+      void this.#startDesignPreview(threadId, turnId, flow, plan).catch((error: unknown) =>
         this.#failDesignFlow(threadId, error),
       )
       return
@@ -1778,6 +1795,7 @@ export class Orchestrator {
 
   async #startDesignPreview(
     threadId: string,
+    turnId: string,
     flow: DesignFlow,
     plan: ReturnType<typeof parsePreviewPhaseOutput>,
   ): Promise<void> {
@@ -1786,7 +1804,8 @@ export class Orchestrator {
     flow.phase = 'complete'
     flow.completion = `Preview ready at ${preview.url}`
     this.#saveDesignFlow(threadId)
-    this.#finishDesignFlow(threadId, `design-preview-${crypto.randomUUID()}`, flow.completion)
+    this.#completeDesignActivity(threadId, turnId)
+    this.#finishDesignFlow(threadId, turnId, flow.completion)
   }
 
   #failDesignFlow(threadId: string, error: unknown): void {
@@ -1805,8 +1824,21 @@ export class Orchestrator {
     if (requestId) this.#designInputs.delete(requestId)
     this.#designInputByThread.delete(threadId)
     for (const [turnId, owner] of this.#designTurns) {
-      if (owner === threadId) this.#designTurns.delete(turnId)
+      if (owner === threadId) {
+        this.#designTurns.delete(turnId)
+        this.#designActivityItems.delete(turnId)
+      }
     }
+  }
+
+  #completeDesignActivity(threadId: string, turnId: string): void {
+    const item = this.#designActivityItems.get(turnId)
+    if (!item) return
+    this.#designActivityItems.delete(turnId)
+    this.#record(threadId, {
+      type: 'item.completed',
+      item: { ...item, status: 'completed' },
+    })
   }
 
   #saveDesignFlow(threadId: string): void {
