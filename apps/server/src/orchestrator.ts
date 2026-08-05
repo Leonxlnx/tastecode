@@ -950,6 +950,16 @@ export class Orchestrator {
     return this.#terminals.run(`install:${target}`, command, os.homedir(), columns, rows)
   }
 
+  /**
+   * Run a provider's interactive sign-in CLI in its own terminal session.
+   * Keyed by target so a second Sign in click reattaches to the session
+   * already going, and rooted in the home directory because signing in to a
+   * global CLI has no business inside any particular project checkout.
+   */
+  launchProviderLogin(target: string, command: string, columns: number, rows: number): string {
+    return this.#terminals.run(`login:${target}`, command, os.homedir(), columns, rows)
+  }
+
   writeTerminal(terminalId: string, data: string): void {
     this.#terminals.write(terminalId, data)
   }

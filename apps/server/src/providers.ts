@@ -27,6 +27,8 @@ type Probe = {
   capabilities?: ProviderStatus['capabilities']
   setup: ProviderSetup
   supportedVersion?: string
+  /** Interactive sign-in command, for providers whose login lives in their own CLI. */
+  loginCommand?: string
   /** Set when the adapter does not exist yet, in words we can show the user. */
   unbuilt?: string
 }
@@ -75,6 +77,7 @@ const PROBES: Probe[] = [
       installCommand: 'npm install -g opencode-ai',
       login: 'provider',
     },
+    loginCommand: 'opencode auth login',
   },
 ]
 
@@ -118,6 +121,30 @@ export function installCommandFor(provider: ProviderStatus['id'], agent?: string
     throw new Error(`${target.name} has no scripted install; use its setup page`)
   }
   return target.setup.installCommand
+}
+
+/**
+ * The interactive sign-in command for a provider whose login lives in its own
+ * CLI (`setup.login === 'provider'`). Same boundary as `installCommandFor`:
+ * the renderer names a target and the command comes from these tables only.
+ * ACP agents sign in inside their ordinary interactive CLI, so the launch is
+ * the bare binary; direct providers name an explicit login command.
+ */
+export function launchCommandFor(provider: ProviderStatus['id'], agent?: string): string {
+  if (provider === 'acp') {
+    const spec = agent ? findAgentSpec(agent) : undefined
+    if (!spec) throw new Error(`unknown launch target: ${agent ?? provider}`)
+    if (spec.setup.login !== 'provider') {
+      throw new Error(`${spec.name} signs in through the app, not its own CLI`)
+    }
+    return spec.command
+  }
+  const entry = PROBES.find((candidate) => candidate.id === provider)
+  if (!entry) throw new Error(`unknown launch target: ${provider}`)
+  if (entry.setup.login !== 'provider' || !entry.loginCommand) {
+    throw new Error(`${entry.displayName} signs in through the app, not its own CLI`)
+  }
+  return entry.loginCommand
 }
 
 export async function detectProviders(

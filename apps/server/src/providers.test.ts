@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { detectProviders, installCommandFor, type SystemProbe } from './providers.js'
+import {
+  detectProviders,
+  installCommandFor,
+  launchCommandFor,
+  type SystemProbe,
+} from './providers.js'
 
 /**
  * These assert what we *say* about the machine, not what is on it. A test that
@@ -138,5 +143,21 @@ describe('install command resolution', () => {
     expect(() => installCommandFor('cursor')).toThrow(/no scripted install/)
     expect(() => installCommandFor('acp', 'nonexistent')).toThrow(/unknown install target/)
     expect(() => installCommandFor('acp')).toThrow(/unknown install target/)
+  })
+})
+
+describe('sign-in launch command resolution', () => {
+  it('resolves the interactive sign-in CLI from the server-side tables only', () => {
+    expect(launchCommandFor('acp', 'gemini')).toBe('gemini')
+    expect(launchCommandFor('acp', 'kimi')).toBe('kimi')
+    expect(launchCommandFor('acp', 'qwen')).toBe('qwen')
+    expect(launchCommandFor('opencode')).toBe('opencode auth login')
+  })
+
+  it('refuses providers whose sign-in happens in the app, and unknown targets', () => {
+    expect(() => launchCommandFor('codex')).toThrow(/signs in through the app/)
+    expect(() => launchCommandFor('claude-code')).toThrow(/signs in through the app/)
+    expect(() => launchCommandFor('acp', 'nonexistent')).toThrow(/unknown launch target/)
+    expect(() => launchCommandFor('acp')).toThrow(/unknown launch target/)
   })
 })
