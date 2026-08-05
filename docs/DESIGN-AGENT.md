@@ -54,15 +54,15 @@ build, not design-process narration.
 
 The server remains the sole orchestrator and source of session state. A Design Mode run records:
 
-- current phase and status;
-- paths and versions of completed artifacts;
-- the active user-input request, when blocked;
-- build, preview, and review attempts;
-- a concise failure reason and the safe phase to resume from.
+- the current phase and original request;
+- the selected model options for subsequent internal turns;
+- explicit briefing answers and any pending final brief;
+- the active user-input request, reconstructed from the durable event log;
+- the next validated phase prompt, when one is waiting to run.
 
 Restart recovery resumes from the latest validated artifact. It does not ask the provider to
-reconstruct state from chat text and does not repeat a completed phase. Editing an earlier
-artifact invalidates only its downstream artifacts.
+reconstruct state from chat text and does not repeat a completed phase. The state lives in the
+server database rather than a second `.taste/run.json` file.
 
 ## Replaceable judgment
 
@@ -80,9 +80,9 @@ Harness must not invent a private TasteSkill API before its actual package contr
 
 ## OriginKit
 
-OriginKit is an optional MCP source during **Source** and **Build**. The agent may search its
+OriginKit is an optional MCP source during **Source**. The agent may search its
 catalog and fetch a fitting component when that improves the blueprint. It must record any
-selected component and local changes in the asset or page artifact.
+selected component and local destination in the asset artifact.
 
 Rate limits, missing authentication, an unavailable MCP server, or no suitable result are normal
 fallback cases. The workflow continues with the project's existing dependencies and local
@@ -102,7 +102,7 @@ system.
 ## Failure behavior
 
 - Non-design request: disable Design Mode for the turn and explain why.
-- Invalid phase output: retry once with the validation error, then stop with a recoverable error.
+- Invalid phase output: stop with the validation error and preserve the latest completed artifact.
 - Missing optional tool: record the fallback and continue.
 - Build or preview failure: surface the real command error and remain resumable.
 - Review failure: make bounded repairs; never loop indefinitely.
@@ -115,3 +115,26 @@ the project builds; a local preview renders; the visual review passes or reports
 remaining limitation; and the user can continue from the resulting normal Harness session.
 
 Roadmap scope and release status remain in [ROADMAP.md](./ROADMAP.md#m4--design-agent).
+
+## Implementation status
+
+Implemented and locally covered:
+
+- adaptive, provider-neutral briefing and final-note flow;
+- validated brief, brand, page, and asset artifacts;
+- automatic Brand, Blueprint, Source, and Build turns in the same provider session;
+- server-owned progress checkpoints and recovery of open questions or incomplete phases;
+- an allowlisted, credential-free local preview runner on `127.0.0.1`;
+- optional OriginKit lookup with an honest local fallback;
+- phase-specific chat activity markers and animated live labels;
+- cleanup after provider errors so later prompts are not blocked.
+
+Still required before the workflow meets the definition of done:
+
+- a screenshot-capable client bridge that captures every requested preview viewport;
+- visual Review and bounded Repair orchestration over those real screenshots;
+- live desktop exercise of the complete path and all repository gates.
+
+The screenshot bridge is deliberately not implemented as a file-polling side channel or a
+provider-specific browser tool. It needs an explicit shared client capability and protocol so
+desktop can capture while web and mobile degrade honestly.
