@@ -33,13 +33,13 @@ brief, phases advance automatically unless a real user decision or approval is r
 
 The files are a chain of evidence and decisions, not copies of one large object.
 
-| Artifact | Owns | May consume |
-| --- | --- | --- |
-| `brief.json` | User intent, business facts, constraints, explicit answers, assumptions | Prompt and briefing answers |
-| `brand.json` | Derived visual and verbal system | Brief, existing brand files, brand skill |
-| `page.json` | Page structure, content intent, component needs, responsive behavior | Brief and brand |
-| `assets.json` | Existing and requested assets, provenance, status, destination | Brief, brand, page, project files, optional sources |
-| Project files | The working implementation | All completed artifacts |
+| Artifact      | Owns                                                                    | May consume                                         |
+| ------------- | ----------------------------------------------------------------------- | --------------------------------------------------- |
+| `brief.json`  | User intent, business facts, constraints, explicit answers, assumptions | Prompt and briefing answers                         |
+| `brand.json`  | Derived visual and verbal system                                        | Brief, existing brand files, brand skill            |
+| `page.json`   | Page structure, content intent, component needs, responsive behavior    | Brief and brand                                     |
+| `assets.json` | Existing and requested assets, provenance, status, destination          | Brief, brand, page, project files, optional sources |
+| Project files | The working implementation                                              | All completed artifacts                             |
 
 Later artifacts reference earlier decisions but do not mutate them. For example, a color the
 user names is recorded as a brand input in the brief; the Brand phase decides its role and
