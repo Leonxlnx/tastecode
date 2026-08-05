@@ -37,6 +37,16 @@ export {
 } from './run.js'
 export { designBuildPrompt, parseBuildPhaseOutput, type BuildPhaseOutput } from './build-phase.js'
 export {
+  designRepairPrompt,
+  designReviewPrompt,
+  parseRepairPhaseOutput,
+  parseReviewPhaseOutput,
+  type RepairPhaseOutput,
+  type ReviewScreenshot,
+  type ReviewSeverity,
+  type VisualReview,
+} from './review-phase.js'
+export {
   DESIGN_BRIEF_ATTACHMENT,
   FINAL_BRIEFING_QUESTION,
   designBriefingContinuation,
