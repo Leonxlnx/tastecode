@@ -892,11 +892,18 @@ function InstallableRow(props: {
 
   useEffect(() => {
     if (install?.phase === 'failed') setShowTerminal(true)
-    if (install?.phase === 'succeeded') {
-      clearInstall(key)
-      onInstalled()
-    }
-  }, [install?.phase, key, onInstalled])
+    if (install?.phase === 'succeeded') onInstalled()
+  }, [install?.phase, onInstalled])
+
+  // The succeeded entry stays until this row leaves the page — re-detecting
+  // the provider takes a moment, and clearing early would flash the idle
+  // "Install" button in between. The row unmounting is the confirmation.
+  useEffect(
+    () => () => {
+      if (installState(key)?.phase === 'succeeded') clearInstall(key)
+    },
+    [key],
+  )
 
   const start = () => {
     setStartError(undefined)
@@ -937,6 +944,10 @@ function InstallableRow(props: {
               onClick={() => setShowTerminal((visible) => !visible)}
             >
               {showTerminal ? 'Hide terminal' : 'Installing…'}
+            </button>
+          ) : install?.phase === 'succeeded' ? (
+            <button className="settings__action" type="button" disabled>
+              Installed
             </button>
           ) : (
             <button className="settings__action" type="button" onClick={start}>
