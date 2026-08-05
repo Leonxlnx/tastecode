@@ -717,6 +717,21 @@ describe('protocol envelopes', () => {
     ).toEqual(setup)
   })
 
+  it('names an install target without carrying any command text', () => {
+    const valid = { provider: 'acp', agent: 'gemini', columns: 80, rows: 24 }
+    expect(methods['providers.install'].params.parse(valid)).toEqual(valid)
+    expect(
+      methods['providers.install'].params.parse({ provider: 'opencode', columns: 80, rows: 24 }),
+    ).toEqual({ provider: 'opencode', columns: 80, rows: 24 })
+    expect(methods['providers.install'].params.parse({ ...valid, command: 'rm -rf /' })).toEqual(
+      valid,
+    )
+    expect(() => methods['providers.install'].params.parse({ provider: 'acp', agent: '' })).toThrow()
+    expect(methods['providers.install'].result.parse({ terminalId: 'term-1' })).toEqual({
+      terminalId: 'term-1',
+    })
+  })
+
   it('validates data for every declared channel', () => {
     expect(
       channels['thread.event'].parse({

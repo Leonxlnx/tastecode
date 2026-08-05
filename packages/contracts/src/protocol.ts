@@ -414,6 +414,23 @@ export const methods = {
     params: z.object({}),
     result: z.object({ providers: z.array(ProviderStatusSchema) }),
   },
+  /**
+   * Install a provider CLI in the background. The client only names the
+   * target; the server resolves the install command from its own table, so no
+   * command text ever crosses this boundary. The install runs in a real
+   * terminal session — output and exit arrive on the usual `terminal.output`
+   * and `terminal.exit` channels — so the user can be handed the live session
+   * if the installer needs them. Fails when the target has no scriptable
+   * install (the setup URL stays the fallback).
+   */
+  'providers.install': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      agent: z.string().min(1).optional(),
+      ...TerminalSizeSchema.shape,
+    }),
+    result: z.object({ terminalId: TerminalIdSchema }),
+  },
   'connections.list': {
     params: z.object({}),
     result: ModelConnectionListSchema,
