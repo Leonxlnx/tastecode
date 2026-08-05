@@ -14,11 +14,13 @@ import {
   designBriefingPrompt,
   designBuildPrompt,
   designPagePrompt,
+  designPreviewPrompt,
   parseAssetPhaseOutput,
   parseBrandPhaseOutput,
   parseBriefingOutput,
   parseBuildPhaseOutput,
   parsePagePhaseOutput,
+  parsePreviewPhaseOutput,
   readAssetManifest,
   readBrandSystem,
   readDesignBrief,
@@ -79,10 +81,11 @@ import { readCredential } from './credentials.js'
 import { ModelConnectionStore } from './model-connections.js'
 import { TerminalManager } from './terminal.js'
 import { installLocalSkill } from './skill-install.js'
+import { startDesignPreview, type RunningPreview } from './design-preview-runner.js'
 
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
-type DesignFlowPhase = 'brief' | 'brand' | 'page' | 'assets' | 'build' | 'complete'
+type DesignFlowPhase = 'brief' | 'brand' | 'page' | 'assets' | 'build' | 'preview' | 'complete'
 type DesignFlow = {
   workspacePath: string
   originalRequest: string
@@ -99,7 +102,15 @@ type DesignFlow = {
 function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlow | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
   const stored = value as Record<string, unknown>
-  const phases: DesignFlowPhase[] = ['brief', 'brand', 'page', 'assets', 'build', 'complete']
+  const phases: DesignFlowPhase[] = [
+    'brief',
+    'brand',
+    'page',
+    'assets',
+    'build',
+    'preview',
+    'complete',
+  ]
   if (
     typeof stored.originalRequest !== 'string' ||
     !phases.includes(stored.phase as DesignFlowPhase) ||
@@ -219,6 +230,7 @@ export class Orchestrator {
   #designMessageItems = new Set<string>()
   #designInputs = new Map<string, DesignInput>()
   #designInputByThread = new Map<string, string>()
+  #designPreviews = new Map<string, RunningPreview>()
   #resumingThreads = new Map<string, Promise<void>>()
   #panicGeneration = 0
   #panicStopping = false
@@ -732,6 +744,11 @@ export class Orchestrator {
       const design = attachments.includes(DESIGN_BRIEF_ATTACHMENT)
       const turnOptions = design ? { ...options, effort: 'low' } : options
       if (design) {
+        const previousPreview = this.#designPreviews.get(threadId)
+        if (previousPreview) {
+          this.#designPreviews.delete(threadId)
+          void previousPreview.stop()
+        }
         this.#designFlows.set(threadId, {
           workspacePath: this.#repoPath(threadId),
           originalRequest: text,
@@ -1406,6 +1423,8 @@ export class Orchestrator {
     this.#designMessageItems.clear()
     this.#designInputs.clear()
     this.#designInputByThread.clear()
+    for (const preview of this.#designPreviews.values()) void preview.stop()
+    this.#designPreviews.clear()
     this.#resumingThreads.clear()
     void this.#controlStarting?.then((adapter) => adapter.dispose())
     this.#controlStarting = undefined
@@ -1499,6 +1518,7 @@ export class Orchestrator {
     if (flow.phase === 'build') {
       return designBuildPrompt(brief, brand, page, readAssetManifest(flow.workspacePath))
     }
+    if (flow.phase === 'preview') return designPreviewPrompt()
     throw new Error(`cannot resume design phase ${flow.phase}`)
   }
 
@@ -1724,9 +1744,16 @@ export class Orchestrator {
     if (flow.phase === 'build') {
       const output = parseBuildPhaseOutput(text)
       if (output.status === 'failed') throw new Error(output.error)
-      flow.phase = 'complete'
-      flow.completion = output.summary
+      flow.phase = 'preview'
+      flow.pendingPrompt = designPreviewPrompt()
       this.#saveDesignFlow(threadId)
+      return
+    }
+    if (flow.phase === 'preview') {
+      const plan = parsePreviewPhaseOutput(text)
+      void this.#startDesignPreview(threadId, flow, plan).catch((error: unknown) =>
+        this.#failDesignFlow(threadId, error),
+      )
       return
     }
     throw new Error(`unexpected design phase ${flow.phase}`)
@@ -1747,6 +1774,19 @@ export class Orchestrator {
       },
     })
     void this.#drainQueue(threadId)
+  }
+
+  async #startDesignPreview(
+    threadId: string,
+    flow: DesignFlow,
+    plan: ReturnType<typeof parsePreviewPhaseOutput>,
+  ): Promise<void> {
+    const preview = await startDesignPreview(flow.workspacePath, plan)
+    this.#designPreviews.set(threadId, preview)
+    flow.phase = 'complete'
+    flow.completion = `Preview ready at ${preview.url}`
+    this.#saveDesignFlow(threadId)
+    this.#finishDesignFlow(threadId, `design-preview-${crypto.randomUUID()}`, flow.completion)
   }
 
   #failDesignFlow(threadId: string, error: unknown): void {
