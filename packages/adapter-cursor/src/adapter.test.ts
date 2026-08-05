@@ -92,7 +92,43 @@ describe('Cursor adapter', () => {
       expect.objectContaining({ type: 'turn.completed', status: 'interrupted' }),
     )
     expect(adapter.capabilities).toEqual(CURSOR_CAPABILITIES)
-    await expect(adapter.listModels()).resolves.toEqual([])
+  })
+
+  it('lists concrete account models without the automatic route', async () => {
+    const adapter = new CursorAdapter({
+      run: async (command, args) => {
+        expect([command, args]).toEqual(['cursor-agent', ['models']])
+        return {
+          code: 0,
+          stdout: [
+            'Available models',
+            '',
+            'auto - Automatic',
+            'composer-2.5 - Composer 2.5 Fast (current, default)',
+            'claude-4.6-sonnet - Claude 4.6 Sonnet',
+            '',
+            'Tip: use --model <id> to switch.',
+          ].join('\n'),
+        }
+      },
+    })
+
+    await expect(adapter.listModels()).resolves.toEqual([
+      {
+        id: 'composer-2.5',
+        displayName: 'Composer 2.5 Fast',
+        isDefault: true,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+      {
+        id: 'claude-4.6-sonnet',
+        displayName: 'Claude 4.6 Sonnet',
+        isDefault: false,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    ])
   })
 
   it('completes a turn whose result rides the final unterminated chunk', async () => {

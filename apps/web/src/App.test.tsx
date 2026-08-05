@@ -320,6 +320,75 @@ describe('web client', () => {
     })
   })
 
+  it('does not invent Automatic choices for empty agent model catalogs', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const capabilities = {
+      steer: false,
+      fork: false,
+      interrupt: true,
+      reasoningItems: false,
+      approvals: false,
+      userInput: false,
+      autoReview: false,
+      images: false,
+    }
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'providers.list') {
+        return Promise.resolve({
+          providers: [
+            {
+              id: 'claude-code',
+              displayName: 'Claude Code',
+              installed: true,
+              auth: 'authenticated',
+              capabilities,
+            },
+            {
+              id: 'cursor',
+              displayName: 'Cursor',
+              installed: true,
+              auth: 'authenticated',
+              capabilities,
+            },
+            {
+              id: 'opencode',
+              displayName: 'OpenCode',
+              installed: true,
+              auth: 'authenticated',
+              capabilities,
+            },
+          ],
+        })
+      }
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models:
+            (params as { provider?: string }).provider === 'claude-code'
+              ? [
+                  {
+                    id: 'fable',
+                    displayName: 'Fable',
+                    isDefault: true,
+                    reasoningEfforts: [],
+                    serviceTiers: [],
+                  },
+                ]
+              : [],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.provider', 'claude-code')
+
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Model and reasoning' }))
+    expect(screen.getByRole('button', { name: 'Use Fable through Claude Code' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Use Automatic through Cursor' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Use Automatic through OpenCode' })).toBeNull()
+  })
+
   it('reconnects when a newly opened mobile link changes the access token', async () => {
     window.location.hash = '#access_token=first-token'
     render(<App />)

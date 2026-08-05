@@ -286,6 +286,7 @@ export function App() {
                 : {}),
             },
             [],
+            true,
           )[0]
         : undefined,
     [provider, acpAgent, acpAgentName],
@@ -524,6 +525,7 @@ export function App() {
                 mark: providerMark(entry.id),
               },
               result.models,
+              false,
             )
           }),
       )

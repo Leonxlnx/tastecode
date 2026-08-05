@@ -202,7 +202,7 @@ function cursorRuntime(onLog: (line: string) => void): ProviderRuntime {
       return { thread, session: adapter }
     },
     async listModels() {
-      return []
+      return new CursorAdapter().listModels()
     },
   }
 }

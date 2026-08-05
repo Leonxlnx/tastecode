@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import { killTree, readNdjson, spawnCli } from '@harness/proc'
+import { killTree, readNdjson, runCli, spawnCli } from '@harness/proc'
 import { CursorEventMapper, type CursorEvent } from './events.js'
 
 export const CURSOR_SUPPORTED_VERSION = '2026.07'
@@ -18,6 +18,7 @@ export const CURSOR_CAPABILITIES: Capabilities = {
 type Events = { event: [DomainEvent]; log: [string] }
 type StartOptions = { model?: string; approval?: ApprovalMode; instructions?: string }
 type Spawn = typeof spawnCli
+type Run = typeof runCli
 
 export class CursorAdapter extends EventEmitter<Events> {
   #workspacePath = ''
@@ -30,10 +31,12 @@ export class CursorAdapter extends EventEmitter<Events> {
   #turnCounter = 0
   #instructionsPending = false
   readonly #spawn: Spawn
+  readonly #run: Run
 
-  constructor(options: { spawn?: Spawn } = {}) {
+  constructor(options: { spawn?: Spawn; run?: Run } = {}) {
     super()
     this.#spawn = options.spawn ?? spawnCli
+    this.#run = options.run ?? runCli
   }
 
   get capabilities(): Capabilities {
@@ -140,7 +143,9 @@ export class CursorAdapter extends EventEmitter<Events> {
   respondToApproval(): void {}
 
   async listModels(): Promise<Model[]> {
-    return []
+    const result = await this.#run('cursor-agent', ['models'])
+    if (result.code !== 0) throw new Error('Cursor model discovery failed')
+    return parseCursorModels(result.stdout)
   }
 
   dispose(): void {
@@ -176,6 +181,39 @@ export class CursorAdapter extends EventEmitter<Events> {
     this.#turnId = undefined
     this.#mapper = undefined
   }
+}
+
+const ANSI = /\u001b\[[0-9;?]*[ -\/]*[@-~]/g
+
+/** Parse the account-specific rows printed by `cursor-agent models`. */
+function parseCursorModels(output: string): Model[] {
+  const models: Model[] = []
+  let readingModels = false
+  for (const rawLine of output.replace(ANSI, '').split(/\r\n|\n|\r/)) {
+    const line = rawLine.trim()
+    if (line === 'Available models') {
+      readingModels = true
+      continue
+    }
+    if (!readingModels || !line) continue
+    if (line.startsWith('Tip:')) break
+
+    const status = line.match(/\s+\(((?:current|default)(?:,\s*(?:current|default))*)\)$/)
+    const details = status ? line.slice(0, -status[0].length) : line
+    const separator = details.indexOf(' - ')
+    const id = (separator < 0 ? details : details.slice(0, separator)).trim()
+    const displayName = (separator < 0 ? id : details.slice(separator + 3)).trim()
+    if (!id || /\s/.test(id) || /^auto(?:matic)?$/i.test(id)) continue
+
+    models.push({
+      id,
+      displayName: displayName || id,
+      isDefault: status?.[1]?.split(',').some((label) => label.trim() === 'default') ?? false,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    })
+  }
+  return models
 }
 
 function validateApproval(approval: ApprovalMode | undefined): void {
