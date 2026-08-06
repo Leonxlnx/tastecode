@@ -72,22 +72,43 @@ describe('OpenCode adapter', () => {
     adapter.dispose()
   })
 
-  it('accepts the next turn from inside the turn.completed listener (#373)', async () => {
+  it('hands the turn over through the duplicated completion idle (#373)', async () => {
     const mock = await serveOpenCode()
     const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
     const thread = await adapter.startThread('C:\\repo', { model: 'provider-1/model-1' })
+    const completions: string[] = []
+    adapter.on('event', (event) => {
+      if (event.type === 'turn.completed') completions.push(event.turnId)
+    })
     // The design flow sends the next phase prompt synchronously inside the
     // turn.completed emit; the adapter must already accept a new turn there.
     const followUp = new Promise<string>((resolve, reject) => {
       adapter.on('event', (event) => {
-        if (event.type === 'turn.completed') {
+        if (event.type === 'turn.completed' && completions.length === 1) {
           adapter.sendTurn(thread.id, 'Next phase prompt').then(resolve, reject)
         }
       })
     })
+    const busy = {
+      type: 'session.status',
+      properties: { sessionID: 'session-1', status: { type: 'busy' } },
+    } as unknown as Event
+    const idle = { type: 'session.idle', properties: { sessionID: 'session-1' } } as Event
+
     await adapter.sendTurn(thread.id, 'First prompt')
-    mock.broadcast({ type: 'session.idle', properties: { sessionID: 'session-1' } })
+    mock.broadcast(busy)
+    // The real server emits BOTH `session.status idle` and `session.idle`
+    // ~1ms apart for one completion. The duplicate lands on the fresh
+    // synchronously-started turn and must not finish it as empty/successful.
+    mock.broadcast(idle)
+    mock.broadcast(idle)
     await expect(followUp).resolves.toContain('-turn-2')
+    expect(completions).toHaveLength(1)
+
+    mock.broadcast(busy)
+    mock.broadcast(idle)
+    await expect.poll(() => completions).toHaveLength(2)
+    expect(completions[1]).toContain('-turn-2')
     adapter.dispose()
   })
 

@@ -95,6 +95,8 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   #threadId: string | undefined
   #turnId: string | undefined
   #turnCounter = 0
+  /** Whether the server showed any session activity since the turn started. */
+  #turnSawActivity = false
   #mapper: OpenCodeEventMapper | undefined
   #eventController: AbortController | undefined
   #approval: ApprovalMode = 'ask'
@@ -204,6 +206,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     if (this.#turnId) throw new Error('a turn is already running')
     const turnId = `${threadId}-turn-${++this.#turnCounter}`
     this.#turnId = turnId
+    this.#turnSawActivity = false
     this.#mapper = new OpenCodeEventMapper(turnId)
     this.emit('event', {
       type: 'turn.started',
@@ -343,9 +346,17 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       event.type === 'session.idle' ||
       (event.type === 'session.status' && event.properties.status.type === 'idle')
     ) {
+      // One completion emits BOTH `session.status idle` and `session.idle`
+      // (captured ~1ms apart against the real server). The next turn starts
+      // synchronously inside the first one's turn.completed, so the duplicate
+      // arrives for a brand-new turn the server has not even seen — finishing
+      // it here would report an empty successful turn and stall the caller.
+      // Only an idle for a turn with observed session activity may finish it.
+      if (!this.#turnSawActivity) return
       this.#finishTurn('completed')
       return
     }
+    if (sessionId(event) === this.#sessionId) this.#turnSawActivity = true
     if (!this.#mapper) return
     for (const domainEvent of this.#mapper.translate(event)) this.emit('event', domainEvent)
   }
