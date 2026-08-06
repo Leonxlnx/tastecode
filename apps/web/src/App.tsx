@@ -31,7 +31,9 @@ import {
   beginOptimisticTurn,
   emptyThread,
   reduce,
+  reduceDeltas,
   removeQueuedOptimisticMessage,
+  type ItemDeltaEvent,
   type ThreadState,
 } from './thread-store.js'
 import { CommandPalette, type CommandScope, type PaletteCommand } from './ui/CommandPalette.js'
@@ -164,6 +166,7 @@ export function App() {
   const historyBuffers = useRef(
     new Map<string, Array<{ seq: number | undefined; event: DomainEvent }>>(),
   )
+  const pendingThreadDeltas = useRef(new Map<string, ItemDeltaEvent[]>())
   const queueStates = useRef(new Map<string, { items: QueuedTurn[]; canSteer: boolean }>())
   const pendingSession = useRef<
     | {
@@ -375,37 +378,49 @@ export function App() {
   sidebarSettingsRef.current = sidebarSettings
 
   useEffect(() => {
-    // Deltas arrive far faster than frames are drawn. Committing React on
-    // every chunk multiplies the whole tree's render cost by the token rate,
-    // so streaming deltas coalesce onto one commit per animation frame
-    // (ARCHITECTURE.md, "Batch deltas on rAF"). threadStates stays current
-    // synchronously — only the setThread commit is deferred. Anything that
-    // is not a delta flushes immediately so approvals, turn boundaries, and
-    // completed items never wait on a frame.
+    // Deltas arrive far faster than frames are drawn. Fold and render one batch
+    // per animation frame so a provider burst copies the item list once, not
+    // once per token. A non-delta first flushes its thread synchronously, which
+    // preserves event order and keeps approvals, boundaries, and completions
+    // immediate.
     let liveFlush: number | undefined
+    const applyPendingDeltas = (threadId: string) => {
+      const deltas = pendingThreadDeltas.current.get(threadId)
+      const current = threadStates.current.get(threadId) ?? emptyThread
+      if (!deltas || deltas.length === 0) return current
+      pendingThreadDeltas.current.delete(threadId)
+      const next = reduceDeltas(current, deltas)
+      threadStates.current.set(threadId, next)
+      return next
+    }
     const flushLive = () => {
       liveFlush = undefined
+      for (const threadId of pendingThreadDeltas.current.keys()) applyPendingDeltas(threadId)
       const id = activeIdRef.current
       if (id) setThread(threadStates.current.get(id) ?? emptyThread)
     }
     const offEvents = transport.on('thread.event', ({ threadId, event, seq }) => {
       // While a history load is in flight, the fetched state will replace the
-      // cache — record the event so it can be replayed on top. It still
-      // applies immediately below, so the UI never waits on the round trip.
+      // cache — record the event so it can be replayed on top. Non-deltas
+      // apply immediately below; deltas join the same frame batch as rendering.
       historyBuffers.current.get(threadId)?.push({ seq, event })
-      const next = reduce(threadStates.current.get(threadId) ?? emptyThread, event)
+      if (event.type === 'item.delta') {
+        const pending = pendingThreadDeltas.current.get(threadId)
+        if (pending) pending.push(event)
+        else pendingThreadDeltas.current.set(threadId, [event])
+        liveFlush ??= requestAnimationFrame(flushLive)
+        return
+      }
+
+      const next = reduce(applyPendingDeltas(threadId), event)
       threadStates.current.set(threadId, next)
 
       if (threadId === activeIdRef.current) {
-        if (event.type === 'item.delta') {
-          liveFlush ??= requestAnimationFrame(flushLive)
-        } else {
-          if (liveFlush !== undefined) {
-            cancelAnimationFrame(liveFlush)
-            liveFlush = undefined
-          }
-          setThread(next)
+        if (liveFlush !== undefined && pendingThreadDeltas.current.size === 0) {
+          cancelAnimationFrame(liveFlush)
+          liveFlush = undefined
         }
+        setThread(next)
       }
       if (threadId === activeIdRef.current && endsDesignBriefing(event)) setDesignMode(false)
 
@@ -480,6 +495,7 @@ export function App() {
     transport.connect()
     return () => {
       if (liveFlush !== undefined) cancelAnimationFrame(liveFlush)
+      for (const threadId of pendingThreadDeltas.current.keys()) applyPendingDeltas(threadId)
       window.clearTimeout(announce)
       offEvents()
       offQueue()
@@ -770,6 +786,9 @@ export function App() {
         const withLive = buffered
           .filter((entry) => entry.seq === undefined || entry.seq > lastSeq)
           .reduce((state, entry) => reduce(state, entry.event), restored)
+        // The buffered events above already include any deltas still waiting
+        // for a frame, so do not apply that pending batch a second time.
+        pendingThreadDeltas.current.delete(threadId)
         threadStates.current.set(threadId, withLive)
         setProjects((current) => updateSession(current, threadId, markSessionRead))
         if (activeIdRef.current === threadId) setThread(withLive)

@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DomainEvent, Item } from '@harness/contracts'
-import { appendUserMessage, beginOptimisticTurn, emptyThread, reduce } from './thread-store.js'
+import {
+  appendUserMessage,
+  beginOptimisticTurn,
+  emptyThread,
+  reduce,
+  reduceDeltas,
+} from './thread-store.js'
 
 const item = (over: Partial<Item> = {}): Item => ({
   id: 'i1',
@@ -55,6 +61,38 @@ describe('thread reducer', () => {
     ])
     expect(state.items).toHaveLength(1)
     expect(state.items[0]?.text).toBe('hello')
+  })
+
+  it('folds a frame of interleaved deltas to the same state as replay', () => {
+    const started = apply([
+      { type: 'item.started', item: item({ id: 'i1', text: 'one' }) },
+      { type: 'item.started', item: item({ id: 'i2', text: 'two' }) },
+    ])
+    const deltas: DomainEvent[] = [
+      { type: 'item.delta', turnId: 't1', itemId: 'i1', textDelta: ' A' },
+      { type: 'item.delta', turnId: 't1', itemId: 'i2', textDelta: ' B' },
+      { type: 'item.delta', turnId: 't1', itemId: 'i1', textDelta: ' C' },
+    ]
+    const replayed = deltas.reduce(reduce, started)
+    const batched = reduceDeltas(
+      started,
+      deltas.filter((event) => event.type === 'item.delta'),
+    )
+
+    expect(batched).toEqual(replayed)
+  })
+
+  it('coalesces early deltas into one placeholder per missing item', () => {
+    const state = reduceDeltas(emptyThread, [
+      { type: 'item.delta', turnId: 't1', itemId: 'x', textDelta: 'Hel' },
+      { type: 'item.delta', turnId: 't1', itemId: 'y', textDelta: 'Other' },
+      { type: 'item.delta', turnId: 't1', itemId: 'x', textDelta: 'lo' },
+    ])
+
+    expect(state.items.map(({ id, text }) => ({ id, text }))).toEqual([
+      { id: 'x', text: 'Hello' },
+      { id: 'y', text: 'Other' },
+    ])
   })
 
   it('completes an item in place rather than appending a second copy', () => {

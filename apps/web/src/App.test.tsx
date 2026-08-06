@@ -1721,6 +1721,143 @@ describe('live sessions', () => {
     expect(sessionTitles()).toEqual(['Older session', 'Newer session'])
   })
 
+  it('folds streamed deltas once per animation frame', async () => {
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    await screen.findByTestId('thread')
+    emitThreadEvent('untouched-thread', {
+      type: 'turn.started',
+      turn: { id: 'turn-1', threadId: 'untouched-thread', status: 'running', createdAt: 0 },
+    })
+    emitThreadEvent('untouched-thread', {
+      type: 'item.started',
+      item: {
+        id: 'item-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'started',
+        text: '',
+        createdAt: 0,
+      },
+    })
+
+    const frames: FrameRequestCallback[] = []
+    const requestFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        frames.push(callback)
+        return frames.length
+      })
+    emitThreadEvent('untouched-thread', {
+      type: 'item.delta',
+      turnId: 'turn-1',
+      itemId: 'item-1',
+      textDelta: 'Hel',
+    })
+    emitThreadEvent('untouched-thread', {
+      type: 'item.delta',
+      turnId: 'turn-1',
+      itemId: 'item-1',
+      textDelta: 'lo',
+    })
+
+    expect(requestFrame).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('thread').textContent).not.toContain('Hello')
+    act(() => frames[0]?.(16))
+    expect(screen.getByTestId('thread').textContent).toContain('Hello')
+  })
+
+  it('flushes pending deltas before a completion event', async () => {
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    await screen.findByTestId('thread')
+    emitThreadEvent('untouched-thread', {
+      type: 'turn.started',
+      turn: { id: 'turn-1', threadId: 'untouched-thread', status: 'running', createdAt: 0 },
+    })
+    emitThreadEvent('untouched-thread', {
+      type: 'item.started',
+      item: {
+        id: 'item-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'started',
+        text: '',
+        createdAt: 0,
+      },
+    })
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1)
+
+    emitThreadEvent('untouched-thread', {
+      type: 'item.delta',
+      turnId: 'turn-1',
+      itemId: 'item-1',
+      textDelta: 'Hello',
+    })
+    emitThreadEvent('untouched-thread', {
+      type: 'item.completed',
+      item: {
+        id: 'item-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        createdAt: 0,
+      },
+    })
+
+    expect(screen.getByTestId('thread').textContent).toContain('Hello')
+  })
+
+  it('does not replay a pending delta twice when history finishes loading', async () => {
+    const defaultRequest = transport.request.getMockImplementation()!
+    let resolveHistory: ((value: { events: []; running: false }) => void) | undefined
+    const history = new Promise<{ events: []; running: false }>((resolve) => {
+      resolveHistory = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.history' ? history : defaultRequest(method, params),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    await screen.findByTestId('thread')
+
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    emitThreadEvent('untouched-thread', {
+      type: 'turn.started',
+      turn: { id: 'turn-1', threadId: 'untouched-thread', status: 'running', createdAt: 0 },
+    })
+    emitThreadEvent('untouched-thread', {
+      type: 'item.started',
+      item: {
+        id: 'item-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'started',
+        text: '',
+        createdAt: 0,
+      },
+    })
+    emitThreadEvent('untouched-thread', {
+      type: 'item.delta',
+      turnId: 'turn-1',
+      itemId: 'item-1',
+      textDelta: 'Hello',
+    })
+
+    await act(async () => resolveHistory?.({ events: [], running: false }))
+    expect(screen.getByTestId('thread').textContent?.match(/Hello/g)).toHaveLength(1)
+    act(() => frames[0]?.(16))
+    expect(screen.getByTestId('thread').textContent?.match(/Hello/g)).toHaveLength(1)
+  })
+
   it('keeps background session state and distinguishes work from attention', async () => {
     serverProjects = [
       {

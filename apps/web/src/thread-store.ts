@@ -43,6 +43,8 @@ export const emptyThread: ThreadState = {
   reviews: {},
 }
 
+export type ItemDeltaEvent = Extract<DomainEvent, { type: 'item.delta' }>
+
 /**
  * Marks a locally-echoed message that the agent has not confirmed yet. The
  * user's own text must appear the instant they hit send — waiting for a round
@@ -218,6 +220,47 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
     default:
       return state
   }
+}
+
+/**
+ * Applies one rendered frame of text deltas with one item-array copy and one
+ * item replacement per target. The single-event reducer stays authoritative
+ * for replay; this is its equivalent fast path for the live transport, where
+ * providers commonly emit many tiny chunks before the browser can paint.
+ */
+export function reduceDeltas(state: ThreadState, deltas: ItemDeltaEvent[]): ThreadState {
+  if (deltas.length === 0) return state
+
+  const chunksByItem = new Map<string, string[]>()
+  for (const event of deltas) {
+    const chunks = chunksByItem.get(event.itemId)
+    if (chunks) chunks.push(event.textDelta)
+    else chunksByItem.set(event.itemId, [event.textDelta])
+  }
+
+  const items = state.items.slice()
+  for (const [itemId, chunks] of chunksByItem) {
+    const last = items.length - 1
+    const index = items[last]?.id === itemId ? last : items.findIndex((item) => item.id === itemId)
+    const textDelta = chunks.length === 1 ? chunks[0]! : chunks.join('')
+    if (index < 0) {
+      items.push({
+        id: itemId,
+        turnId: state.activeTurn?.id ?? '',
+        type: 'message',
+        status: 'started',
+        role: 'assistant',
+        text: textDelta,
+        createdAt: Date.now(),
+      })
+      continue
+    }
+
+    const existing = items[index]
+    if (existing) items[index] = { ...existing, text: (existing.text ?? '') + textDelta }
+  }
+
+  return { ...state, items }
 }
 
 /** Local echo, so the user's own message appears the instant they hit send. */

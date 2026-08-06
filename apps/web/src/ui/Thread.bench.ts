@@ -1,6 +1,12 @@
 import { bench, describe } from 'vitest'
-import type { DomainEvent, Item } from '@harness/contracts'
-import { emptyThread, reduce, type ThreadState } from '../thread-store.js'
+import type { Item } from '@harness/contracts'
+import {
+  emptyThread,
+  reduce,
+  reduceDeltas,
+  type ItemDeltaEvent,
+  type ThreadState,
+} from '../thread-store.js'
 import { makeFixtureThread } from './fixture.js'
 import { createThreadProjector, findTurns, presentTurns } from './turns.js'
 
@@ -29,7 +35,7 @@ const projectThread = createThreadProjector()
 projectThread(streamedFrames[0]!)
 let streamedFrame = 0
 
-const deltas: DomainEvent[] = Array.from({ length: 500 }, () => ({
+const deltas: ItemDeltaEvent[] = Array.from({ length: 500 }, () => ({
   type: 'item.delta',
   turnId: liveItem.turnId,
   itemId: liveItem.id,
@@ -61,6 +67,15 @@ describe('long-thread hot paths', () => {
       let state = streamingState
       for (const event of deltas) state = reduce(state, event)
       if (state.items.at(-1)?.text?.length !== deltas.length) throw new Error('invalid fold')
+    },
+    OPTIONS,
+  )
+
+  bench(
+    'folds a 500-delta frame into a 1,000-item thread',
+    () => {
+      const state = reduceDeltas(streamingState, deltas)
+      if (state.items.at(-1)?.text?.length !== deltas.length) throw new Error('invalid batch')
     },
     OPTIONS,
   )
