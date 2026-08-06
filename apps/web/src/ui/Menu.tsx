@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Check } from 'lucide-react'
 import { ShortcutHint } from './ShortcutHint.js'
@@ -32,12 +32,28 @@ export function Menu(props: {
   panelLabel?: string
   panelClassName?: string
   shortcutAria?: string
+  contextMenuTargetRef?: RefObject<HTMLElement | null>
 }) {
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<MenuPosition>()
+  const [contextPoint, setContextPoint] = useState<{ x: number; y: number }>()
   const wrap = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const target = props.contextMenuTargetRef?.current
+    if (!target) return
+
+    const onContextMenu = (event: MouseEvent) => {
+      event.preventDefault()
+      setPosition(undefined)
+      setContextPoint({ x: event.clientX, y: event.clientY })
+      setOpen(true)
+    }
+    target.addEventListener('contextmenu', onContextMenu)
+    return () => target.removeEventListener('contextmenu', onContextMenu)
+  }, [props.contextMenuTargetRef])
 
   useEffect(() => {
     if (!open) return
@@ -62,11 +78,14 @@ export function Menu(props: {
     const updatePosition = () => {
       const triggerBounds = trigger.current?.getBoundingClientRect()
       const menuBounds = panel.current?.getBoundingClientRect()
-      if (!triggerBounds || !menuBounds) return
+      if ((!triggerBounds && !contextPoint) || !menuBounds) return
 
       const preferredDrop = props.drop ?? 'up'
-      const spaceAbove = triggerBounds.top - MENU_GAP - VIEWPORT_GUTTER
-      const spaceBelow = window.innerHeight - triggerBounds.bottom - MENU_GAP - VIEWPORT_GUTTER
+      const gap = contextPoint ? 0 : MENU_GAP
+      const anchorTop = contextPoint?.y ?? triggerBounds?.top ?? 0
+      const anchorBottom = contextPoint?.y ?? triggerBounds?.bottom ?? 0
+      const spaceAbove = anchorTop - gap - VIEWPORT_GUTTER
+      const spaceBelow = window.innerHeight - anchorBottom - gap - VIEWPORT_GUTTER
       let drop = preferredDrop
 
       if (drop === 'down' && menuBounds.height > spaceBelow && spaceAbove > spaceBelow) {
@@ -75,8 +94,11 @@ export function Menu(props: {
         drop = 'down'
       }
 
-      const preferredLeft =
-        props.align === 'right' ? triggerBounds.right - menuBounds.width : triggerBounds.left
+      const preferredLeft = contextPoint
+        ? contextPoint.x
+        : props.align === 'right'
+          ? (triggerBounds?.right ?? 0) - menuBounds.width
+          : (triggerBounds?.left ?? 0)
       const maxLeft = Math.max(
         VIEWPORT_GUTTER,
         window.innerWidth - menuBounds.width - VIEWPORT_GUTTER,
@@ -84,9 +106,7 @@ export function Menu(props: {
       const left = Math.min(Math.max(preferredLeft, VIEWPORT_GUTTER), maxLeft)
 
       const preferredTop =
-        drop === 'down'
-          ? triggerBounds.bottom + MENU_GAP
-          : triggerBounds.top - MENU_GAP - menuBounds.height
+        drop === 'down' ? anchorBottom + gap : anchorTop - gap - menuBounds.height
       const maxTop = Math.max(
         VIEWPORT_GUTTER,
         window.innerHeight - menuBounds.height - VIEWPORT_GUTTER,
@@ -122,7 +142,7 @@ export function Menu(props: {
       document.removeEventListener('scroll', onScroll, true)
       resizeObserver?.disconnect()
     }
-  }, [open, props.align, props.drop])
+  }, [contextPoint, open, props.align, props.drop])
 
   return (
     <div className="menuwrap" ref={wrap}>
@@ -131,6 +151,7 @@ export function Menu(props: {
         className={`menutrigger${props.triggerClassName ? ` ${props.triggerClassName}` : ''}`}
         onClick={() => {
           setPosition(undefined)
+          setContextPoint(undefined)
           setOpen((current) => !current)
         }}
         disabled={props.disabled}

@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { useRef } from 'react'
 import { Menu, MenuItem } from './Menu.js'
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
@@ -15,6 +16,24 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
     bottom: top + height,
     toJSON: () => ({}),
   }
+}
+
+function ContextMenuHarness() {
+  const target = useRef<HTMLButtonElement>(null)
+
+  return (
+    <>
+      <button ref={target}>Project row</button>
+      <Menu
+        drop="down"
+        label="Project options"
+        contextMenuTargetRef={target}
+        trigger={() => <span>Open</span>}
+      >
+        {(close) => <MenuItem title="Rename" onClick={close} />}
+      </Menu>
+    </>
+  )
 }
 
 beforeEach(() => {
@@ -76,5 +95,26 @@ describe('Menu', () => {
     menuWidth = 80
     fireEvent.scroll(menu)
     expect(menu.style.left).toBe('139px')
+  })
+
+  it('opens at the pointer when its context-menu target is right-clicked', () => {
+    vi.mocked(Element.prototype.getBoundingClientRect).mockImplementation(function (this: Element) {
+      if (this.classList.contains('menutrigger')) return rect(215, 170, 24, 24)
+      if (this.classList.contains('menu')) return rect(0, 0, 100, 80)
+      return rect(0, 0, 0, 0)
+    })
+    render(<ContextMenuHarness />)
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Project row' }), {
+      clientX: 120,
+      clientY: 80,
+    })
+
+    const menu = screen.getByRole('menu')
+    expect(menu.style.left).toBe('120px')
+    expect(menu.style.top).toBe('80px')
+    expect(
+      screen.getByRole('button', { name: 'Project options' }).getAttribute('aria-expanded'),
+    ).toBe('true')
   })
 })
