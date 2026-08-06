@@ -1,6 +1,15 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parseAcpThreadId } from './adapter.js'
-import { LISTED_AGENTS, discoverAgentModels, findAgentSpec, parseKimiModels } from './agents.js'
+import {
+  LISTED_AGENTS,
+  acpAccount,
+  discoverAgentModels,
+  findAgentSpec,
+  parseKimiModels,
+} from './agents.js'
 
 describe('ACP persisted sessions', () => {
   it('keeps provider-native session ids intact', () => {
@@ -21,6 +30,21 @@ describe('ACP persisted sessions', () => {
     // Gemini CLI is superseded by Antigravity; old threads must still resume.
     expect(LISTED_AGENTS.some((agent) => agent.id === 'gemini')).toBe(false)
     expect(findAgentSpec('gemini')).toMatchObject({ command: 'gemini', retired: true })
+  })
+
+  it('reports Kimi signed in only once the login left its credential file', () => {
+    const home = mkdtempSync(join(tmpdir(), 'acp-home-'))
+    try {
+      expect(acpAccount('kimi', home)).toEqual({ signedIn: false })
+      mkdirSync(join(home, '.kimi-code', 'credentials'), { recursive: true })
+      writeFileSync(join(home, '.kimi-code', 'credentials', 'kimi-code.json'), '{}')
+      expect(acpAccount('kimi', home)).toEqual({ signedIn: true })
+      // No probe declared for Qwen: state is unknown, reported signed-out so
+      // the sign-in flow stays reachable.
+      expect(acpAccount('qwen', home)).toEqual({ signedIn: false })
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 })
 

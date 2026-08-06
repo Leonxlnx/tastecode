@@ -393,6 +393,7 @@ function ProviderSettings(props: {
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
   const [accounts, setAccounts] = useState<Partial<Record<ProviderId, Account>>>({})
+  const [agentAccounts, setAgentAccounts] = useState<Record<string, Account>>({})
   const [authBusy, setAuthBusy] = useState<ProviderId>()
   const [authError, setAuthError] = useState<string>()
 
@@ -405,6 +406,17 @@ function ProviderSettings(props: {
     [props.transport, props.onAccountChange],
   )
 
+  const refreshAgentAccount = useCallback(
+    async (agentId: string) => {
+      const account = await props.transport.request('auth.status', {
+        provider: 'acp',
+        agent: agentId,
+      })
+      setAgentAccounts((current) => ({ ...current, [agentId]: account }))
+    },
+    [props.transport],
+  )
+
   useEffect(() => {
     for (const status of props.providerStatuses) {
       if (status.installed && status.id !== 'acp') {
@@ -412,6 +424,9 @@ function ProviderSettings(props: {
           setAccounts((current) => ({ ...current, [status.id]: { signedIn: false } })),
         )
       }
+    }
+    for (const agent of props.acpAgents) {
+      if (agent.installed) void refreshAgentAccount(agent.id).catch(() => {})
     }
     return props.transport.on('auth.event', (event) => {
       if (event.agent) return
@@ -425,7 +440,13 @@ function ProviderSettings(props: {
         setAuthError(event.error ?? 'Sign-in was cancelled.')
       }
     })
-  }, [props.transport, props.providerStatuses, refreshAccount])
+  }, [
+    props.transport,
+    props.providerStatuses,
+    props.acpAgents,
+    refreshAccount,
+    refreshAgentAccount,
+  ])
 
   const signIn = async (provider: ProviderId) => {
     setAuthBusy(provider)
@@ -586,7 +607,18 @@ function ProviderSettings(props: {
         ...agentById('qwen'),
         ...props.acpAgents.filter((agent) => !knownAgents.has(agent.id)),
       ].map((agent) =>
-        agent.installed ? (
+        // A signed-in CLI must not keep offering "Sign in" — that ran the
+        // whole login flow against an already-authenticated binary. The CLIs
+        // have no sign-out command, so the signed-in row carries no action.
+        agent.installed && agentAccounts[agent.id]?.signedIn ? (
+          <SettingsRow
+            key={agent.id}
+            title={agent.name}
+            note="Signed in · managed by the provider CLI."
+          >
+            <ProviderIcon mark={agentMark(agent.id)} size={17} />
+          </SettingsRow>
+        ) : agent.installed ? (
           <CliSignInRow
             key={agent.id}
             title={agent.name}
@@ -594,7 +626,10 @@ function ProviderSettings(props: {
             icon={<ProviderIcon mark={agentMark(agent.id)} size={17} />}
             target={{ provider: 'acp', agent: agent.id }}
             transport={props.transport}
-            onSignedIn={props.onConnectionsChanged}
+            onSignedIn={() => {
+              props.onConnectionsChanged()
+              void refreshAgentAccount(agent.id).catch(() => {})
+            }}
           />
         ) : (
           <InstallableRow

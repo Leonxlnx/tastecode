@@ -29,8 +29,12 @@ describe('provider settings', () => {
       cursor: { signedIn: false },
     }
     const transport = {
-      request: vi.fn(async (method: string, params: { provider?: ProviderId }) => {
-        if (method === 'auth.status') return accounts[params.provider ?? '']
+      request: vi.fn(async (method: string, params: { provider?: ProviderId; agent?: string }) => {
+        if (method === 'auth.status') {
+          // The Kimi CLI on this machine is already logged in; Qwen is not.
+          if (params.agent) return { signedIn: params.agent === 'kimi' }
+          return accounts[params.provider ?? '']
+        }
         if (method === 'auth.startLogin') {
           return { loginId: 'login-1', authUrl: 'https://auth.example.test/' }
         }
@@ -128,6 +132,15 @@ describe('provider settings', () => {
     expect(screen.queryByText('Gemini CLI')).toBeNull()
     expect(screen.getByText('Qwen Code')).toBeTruthy()
     expect(screen.getByText('Kimi CLI')).toBeTruthy()
+
+    // Kimi's CLI is already authenticated: the row must say so and offer no
+    // sign-in — the CLIs have no sign-out either, so no action at all.
+    await waitFor(() =>
+      expect(screen.getByText('Signed in · managed by the provider CLI.')).toBeTruthy(),
+    )
+    const kimiRow = screen.getByText('Kimi CLI').closest<HTMLElement>('.settings__row')
+    if (!kimiRow) throw new Error('Kimi row missing')
+    expect(within(kimiRow).queryByRole('button')).toBeNull()
 
     const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
     const cursorRow = screen.getByText('Cursor').closest<HTMLElement>('.settings__row')

@@ -365,7 +365,7 @@ export function startServer(
 
       case 'auth.status': {
         const p = params as { provider: ProviderId; agent?: string }
-        return orchestrator.account(p.provider)
+        return orchestrator.account(p.provider, p.agent)
       }
 
       case 'auth.startLogin': {

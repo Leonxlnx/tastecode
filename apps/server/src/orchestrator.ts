@@ -3,6 +3,7 @@ import {
   CODEX_SKILL_CAPABILITIES,
   CodexAdapter,
 } from '@harness/adapter-codex'
+import { acpAccount } from '@harness/adapter-acp'
 import { claudeAccount, signOutClaude, startClaudeLogin } from '@harness/adapter-claude-code'
 import { cursorAccount, signOutCursor, startCursorLogin } from '@harness/adapter-cursor'
 import {
@@ -696,10 +697,11 @@ export class Orchestrator {
     return { mcpServers, mcpCredentials }
   }
 
-  async account(provider: ProviderId): Promise<Account> {
+  async account(provider: ProviderId, agent?: string): Promise<Account> {
     if (provider === 'codex') return (await this.#controlAdapter()).account()
     if (provider === 'claude-code') return claudeAccount()
     if (provider === 'cursor') return cursorAccount()
+    if (provider === 'acp' && agent) return acpAccount(agent)
     return { signedIn: false }
   }
 

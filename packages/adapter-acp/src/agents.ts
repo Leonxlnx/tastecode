@@ -1,4 +1,7 @@
-import type { Model, ProviderSetup } from '@harness/contracts'
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import type { Account, Model, ProviderSetup } from '@harness/contracts'
 import { isInstalled, killTree, spawnCli } from '@harness/proc'
 
 /**
@@ -39,6 +42,13 @@ export type AcpAgentSpec = {
    * the row would turn old threads into a crash instead of a session.
    */
   retired?: boolean
+  /**
+   * File whose existence marks a completed provider login, relative to the
+   * user's home directory. Existence only — the content is the provider's
+   * credential and is never read. Absent when the CLI gives us no way to
+   * tell, in which case sign-in state stays unknown.
+   */
+  credentialProbe?: string
 }
 
 export const ACP_AGENTS: AcpAgentSpec[] = [
@@ -71,6 +81,12 @@ export const ACP_AGENTS: AcpAgentSpec[] = [
     verified: true,
     supportedVersion: '0.29',
     modelConfigId: 'model',
+    // kimi-code 0.29.1 has no auth-status command (`kimi --help` offers only
+    // login/provider/doctor), and the ACP initialize response advertises auth
+    // *methods* regardless of state. Its config.toml keys `oauth/kimi-code`
+    // into this credentials store, so the file's existence is the one signal
+    // a completed device-code login leaves behind. Captured 2026-08-07.
+    credentialProbe: join('.kimi-code', 'credentials', 'kimi-code.json'),
     install: 'npm install -g @moonshot-ai/kimi-code',
     setup: {
       installUrl: 'https://moonshotai.github.io/kimi-code/en/guides/getting-started.html',
@@ -108,6 +124,19 @@ export async function detectAgents(): Promise<Array<AcpAgentSpec & { installed: 
   return Promise.all(
     LISTED_AGENTS.map(async (agent) => ({ ...agent, installed: await isInstalled(agent.command) })),
   )
+}
+
+/**
+ * Sign-in state as far as the agent's CLI lets us observe it. Agents declare
+ * the file a completed login leaves behind (`credentialProbe`); we check that
+ * it exists and nothing more — reading it would cross the credential
+ * boundary in rules/security.md. Without a probe the state is unknown and
+ * reported as signed-out, which keeps the sign-in flow reachable.
+ */
+export function acpAccount(agentId: string, home = homedir()): Account {
+  const spec = findAgentSpec(agentId)
+  if (!spec?.credentialProbe) return { signedIn: false }
+  return { signedIn: existsSync(join(home, spec.credentialProbe)) }
 }
 
 /**
