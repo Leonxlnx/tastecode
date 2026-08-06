@@ -46,17 +46,23 @@ export const CLAUDE_CAPABILITIES: Capabilities = {
 }
 
 /**
- * The aliases `claude --model` documents, not concrete model ids: each alias
+ * The first four are the aliases `claude --model` documents: each alias
  * tracks the newest model of its family, so the ids survive releases. The
  * display names DO name the current version — users pick "Fable 5", not a
  * vague family word — which makes them the one thing to touch when Anthropic
- * ships a new generation. Current as of claude-code 2.1.222.
+ * ships a new generation. Below the aliases sit the previous generation as
+ * pinned full names (`--help` documents the full-name form, e.g.
+ * 'claude-fable-5') for users who want the model an alias just moved off
+ * of. Current as of claude-code 2.1.222.
  */
 export const CLAUDE_MODELS: Model[] = [
   claudeAlias('fable', 'Fable 5', 'Most capable — flagship tier', true),
   claudeAlias('opus', 'Opus 5', 'Deep reasoning'),
   claudeAlias('sonnet', 'Sonnet 5', 'Balanced speed and capability'),
   claudeAlias('haiku', 'Haiku 4.5', 'Fastest and cheapest'),
+  claudeAlias('claude-opus-4-8', 'Opus 4.8', 'Previous Opus generation'),
+  claudeAlias('claude-opus-4-7', 'Opus 4.7', 'Older Opus generation'),
+  claudeAlias('claude-sonnet-4-6', 'Sonnet 4.6', 'Previous Sonnet generation'),
 ]
 
 function claudeAlias(

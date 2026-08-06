@@ -45,6 +45,9 @@ describe('Claude Code model list', () => {
       { id: 'opus', displayName: 'Opus 5' },
       { id: 'sonnet', displayName: 'Sonnet 5' },
       { id: 'haiku', displayName: 'Haiku 4.5' },
+      { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+      { id: 'claude-opus-4-7', displayName: 'Opus 4.7' },
+      { id: 'claude-sonnet-4-6', displayName: 'Sonnet 4.6' },
     ])
   })
 
