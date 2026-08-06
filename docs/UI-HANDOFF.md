@@ -109,6 +109,12 @@ shortcuts do not fire, focus moves into the dialog, and Escape closes it.
 Use `readSetting` / `writeSetting` / `removeSetting` in `App.tsx`, `readStored` in
 `theme.ts`.
 
+**The working rail mounts once per turn.** It renders outside the virtualized rows —
+translated to the first response row's offset, over space that row's padding reserves —
+because a rail rendered inside a `Row` unmounts at the first token and whenever the row
+leaves the overscan window, restarting the orb (#371). It is also deliberately not keyed
+by turn id: the optimistic id is replaced by the server's mid-turn.
+
 **Kills we cause are marked, and they go through `killTree`.** On Windows `taskkill`
 reports exit code 1, so an unmarked intentional kill looks like a crash — that wrote a
 phantom `claude exited with code 1` into the transcript on every Stop. And `child.kill()`
@@ -118,40 +124,30 @@ only ends the `cmd.exe` shim, leaving the real process holding file locks.
 
 Ordered by how much a user would notice.
 
-**1. The thinking orb restarts once per turn.** The working rail renders as a child of
-`.thread__col` before any item exists, then moves inside the virtualized `Row` once
-`firstResponseIndex` is set (`Thread.tsx`, the `showWorkingRail` prop). A different tree
-position is an unmount, so `ThinkingOrb` restarts and `activity-in` replays — at the first
-token, which is when the user is looking hardest. It repeats whenever that row leaves the
-overscan window. Keeping the rail above the streaming answer is the design intent, so the
-fix is to render it in exactly one place and position it there, not to move it below.
-`DESIGN-AGENT.md` now states this as a requirement: _"The elapsed timer does not remount
-when the label changes."_
-
-**2. `Sidebar` and `StageHeader` memoization is inert.** The owner passes a dozen inline
+**1. `Sidebar` and `StageHeader` memoization is inert.** The owner passes a dozen inline
 arrows plus a fresh `inbox` object and `usageSources` array. Mechanical to fix with
 `useCallback` / `useMemo` in `App.tsx`, but it touches a lot of call sites at once.
 
-**3. Queue state is not refetched after a reconnect.** `resync` in `App.tsx` reloads
+**2. Queue state is not refetched after a reconnect.** `resync` in `App.tsx` reloads
 history and projects; missed `thread.queue` pushes are the one category it does not
 repair, so `queuedTurns` stays stale until the user switches sessions.
 
-**4. Server-side delta coalescing.** Every `item.delta` gets its own SQLite transaction
+**3. Server-side delta coalescing.** Every `item.delta` gets its own SQLite transaction
 and WebSocket frame. Not catastrophic — `synchronous = NORMAL` avoids the fsync — but it
 is hundreds of transactions and frames per second on a token-granularity provider, on the
 path before the client sees anything. Buffer per item and flush on a ~16ms timer or on any
 non-delta event; replay semantics are unchanged because deltas concatenate.
 
-**5. Shiki re-tokenizes a growing code block every frame.** Completed blocks are memoized
+**4. Shiki re-tokenizes a growing code block every frame.** Completed blocks are memoized
 by content, so only the in-progress one is affected — but that is a full TextMate pass over
 the whole block, on the JavaScript regex engine (the CSP forbids WASM), 60 times a second.
 Re-tokenize from the last complete line and reuse the cached prefix.
 
-**6. No ping/pong heartbeat.** A half-open TCP connection produces no write error, so it
+**5. No ping/pong heartbeat.** A half-open TCP connection produces no write error, so it
 sits in the push bus indefinitely with pushes buffering in memory. The one case the
 "a failed write closes the connection" rule does not cover.
 
-**7. `historyBuffers` has a latent concurrency hazard.** Two overlapping `loadHistory`
+**6. `historyBuffers` has a latent concurrency hazard.** Two overlapping `loadHistory`
 calls for the same thread share one buffer entry and the earlier `finally` deletes it.
 Not currently reachable — every caller is serialized by other guards — but it is one new
 call site away from being real.
