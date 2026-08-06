@@ -7198,38 +7198,6 @@
 }
 
 /* ---------------------------------------------------------------------------
-   In-titlebar application menu (File / Edit / View / Help). Text triggers in
-   the drag strip must opt out of dragging or the click never lands.
-   --------------------------------------------------------------------------- */
-
-.titlebar__menus {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  -webkit-app-region: no-drag;
-}
-
-.titlebar__menu-trigger {
-  border: 0;
-  background: transparent;
-  color: var(--text-2);
-  font: inherit;
-  font-size: 12px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
-}
-
-.titlebar__menu-trigger:hover,
-.titlebar__menu-trigger[aria-expanded='true'] {
-  background: var(--control-hover);
-  color: var(--text);
-}
-
-/* ---------------------------------------------------------------------------
    Terminal focus and framing. A focused terminal should say so quietly.
    --------------------------------------------------------------------------- */
 

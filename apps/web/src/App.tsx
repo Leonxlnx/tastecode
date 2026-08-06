@@ -21,7 +21,7 @@ import type {
   ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
-import { isDesktop, isMacOS, pickFolder, setAppZoom, setDesktopTheme } from './bridge.js'
+import { isDesktop, isMacOS, pickFolder, setDesktopTheme } from './bridge.js'
 import { isEditableTarget, matchesShortcut, SHORTCUTS, shortcutLabel } from './shortcuts.js'
 import { warmHighlighter } from './ui/highlighter.js'
 import { Transport } from './transport.js'
@@ -44,8 +44,6 @@ import { Sidebar, type Project } from './ui/Sidebar.js'
 import { StageHeader } from './ui/StageHeader.js'
 import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
-import { ShortcutsDialog } from './ui/ShortcutsDialog.js'
-import { chatToMarkdown, downloadText, exportFilename } from './chat-export.js'
 import { ZoomHud } from './ui/ZoomHud.js'
 import { serverUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
@@ -148,7 +146,6 @@ export function App() {
   // to the server and comes back through here.
   const [projects, setProjects] = useState<Project[]>([])
   const [projectsLoaded, setProjectsLoaded] = useState(false)
-  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   /** The thread whose interrupt has been sent but not yet acknowledged. */
   const [stoppingThreadId, setStoppingThreadId] = useState<string | undefined>()
   const [offline, setOffline] = useState(false)
@@ -1709,13 +1706,11 @@ export function App() {
         setSessionSearchOpen(true)
         return
       }
-      // A modal sheet owns the keyboard. Without this, Ctrl+N started a chat
-      // underneath the open Settings panel. The settings shortcut still works
-      // (it closes the sheet); everything else waits.
-      if (settingsOpen || shortcutsOpen) {
+      // The Settings sheet owns the keyboard. Without this, Ctrl+N started a
+      // chat underneath it. Its own shortcut still closes it; everything else waits.
+      if (settingsOpen) {
         if (matchesShortcut(event, SHORTCUTS.settings)) {
           event.preventDefault()
-          setShortcutsOpen(false)
           setSettingsOpen((open) => !open)
         }
         return
@@ -1764,7 +1759,7 @@ export function App() {
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [activePath, addProject, provider, startNewChat, settingsOpen, shortcutsOpen])
+  }, [activePath, addProject, provider, startNewChat, settingsOpen])
 
   if (!provider) {
     return (
@@ -1918,39 +1913,8 @@ export function App() {
       className={`shell ${collapsed ? 'is-narrow' : ''}`}
       style={{ '--rail-w': `${railWidth}px` } as CSSProperties}
     >
-      <TitleBar
-        collapsed={collapsed}
-        onToggleRail={() => setCollapsed((c) => !c)}
-        onNewChat={startNewChat}
-        onNewProject={() => void addProject()}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onSearchChats={() => {
-          setSessionSearchProject(undefined)
-          setSessionSearchOpen(true)
-        }}
-        onZoom={(action) => void setAppZoom(action)}
-        zoomAvailable={isDesktop}
-        onExportChat={() => {
-          if (!activeId || thread.items.length === 0) {
-            setNotice('Nothing to export — open a chat first.')
-            return
-          }
-          const title = findSession(projects, activeId)?.session.title ?? 'Chat'
-          downloadText(exportFilename(title), chatToMarkdown(title, thread.items))
-        }}
-        onShowShortcuts={() => setShortcutsOpen(true)}
-        onOpenHelp={(page) =>
-          window.open(
-            page === 'docs'
-              ? 'https://github.com/Leonxlnx/personalharness#readme'
-              : 'https://github.com/Leonxlnx/personalharness/issues',
-            '_blank',
-            'noopener,noreferrer',
-          )
-        }
-      />
+      <TitleBar collapsed={collapsed} onToggleRail={() => setCollapsed((c) => !c)} />
       {isDesktop ? <ZoomHud /> : null}
-      {shortcutsOpen ? <ShortcutsDialog onClose={() => setShortcutsOpen(false)} /> : null}
 
       <div className="shell__body">
         <Sidebar
