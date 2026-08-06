@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useRef,
@@ -45,7 +47,6 @@ import {
   type InstallTarget,
 } from '../provider-install.js'
 import type { Transport } from '../transport.js'
-import { InstallTerminal } from './InstallTerminal.js'
 import type {
   AccentPreference,
   BackdropPreference,
@@ -56,6 +57,10 @@ import { McpSettings } from './McpSettings.js'
 import { Menu, MenuItem } from './Menu.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderIcon } from './ProviderIcon.js'
+
+const InstallTerminal = lazy(() =>
+  import('./InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
+)
 
 type SettingsSection =
   'providers' | 'models' | 'mcp' | 'skills' | 'workflows' | 'appearance' | 'data' | 'about'
@@ -1211,7 +1216,7 @@ function InstallableRow(props: {
         </div>
       </SettingsRow>
       {install && showTerminal ? (
-        <InstallTerminal transport={props.transport} installKey={key} />
+        <ProviderTerminal transport={props.transport} installKey={key} />
       ) : null}
     </>
   )
@@ -1292,9 +1297,17 @@ function CliSignInRow(props: {
         </div>
       </SettingsRow>
       {login && showTerminal ? (
-        <InstallTerminal transport={props.transport} installKey={key} />
+        <ProviderTerminal transport={props.transport} installKey={key} />
       ) : null}
     </>
+  )
+}
+
+function ProviderTerminal(props: { transport: Transport; installKey: string }) {
+  return (
+    <Suspense fallback={<div className="install-terminal" aria-label="Install terminal" />}>
+      <InstallTerminal {...props} />
+    </Suspense>
   )
 }
 
