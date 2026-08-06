@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  ClaudeCodeAdapter,
-  CLAUDE_MODELS,
-  claudeTurnArgs,
-  claudeUserMessage,
-} from './adapter.js'
+import { ClaudeCodeAdapter, CLAUDE_MODELS, claudeTurnArgs, claudeUserMessage } from './adapter.js'
 
 describe('Claude Code turn invocation', () => {
   it('keeps every argv element newline-free (#372: cmd.exe truncates there)', () => {
