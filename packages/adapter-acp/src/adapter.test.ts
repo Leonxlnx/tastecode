@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseAcpThreadId } from './adapter.js'
-import { discoverAgentModels, findAgentSpec, parseKimiModels } from './agents.js'
+import { LISTED_AGENTS, discoverAgentModels, findAgentSpec, parseKimiModels } from './agents.js'
 
 describe('ACP persisted sessions', () => {
   it('keeps provider-native session ids intact', () => {
@@ -15,6 +15,12 @@ describe('ACP persisted sessions', () => {
       verified: true,
       supportedVersion: '0.29',
     })
+  })
+
+  it('hides retired agents from listings but keeps them resumable', () => {
+    // Gemini CLI is superseded by Antigravity; old threads must still resume.
+    expect(LISTED_AGENTS.some((agent) => agent.id === 'gemini')).toBe(false)
+    expect(findAgentSpec('gemini')).toMatchObject({ command: 'gemini', retired: true })
   })
 })
 

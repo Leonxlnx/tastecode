@@ -62,6 +62,7 @@ describe('provider settings', () => {
           { id: 'cursor', displayName: 'Cursor', installed: true, auth: 'unauthenticated' },
         ]}
         acpAgents={[
+          // A stale server may still list retired gemini; the row must not render.
           {
             id: 'gemini',
             name: 'Gemini CLI',
@@ -70,6 +71,17 @@ describe('provider settings', () => {
             setup: {
               installUrl: 'https://example.test/gemini',
               installCommand: 'npm install -g @google/gemini-cli',
+              login: 'provider',
+            },
+          },
+          {
+            id: 'qwen',
+            name: 'Qwen Code',
+            installed: false,
+            verified: false,
+            setup: {
+              installUrl: 'https://example.test/qwen',
+              installCommand: 'npm install -g @qwen-code/qwen-code',
               login: 'provider',
             },
           },
@@ -113,7 +125,8 @@ describe('provider settings', () => {
 
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Sign out' })).toHaveLength(2))
     expect(screen.getAllByText('Codex')).toHaveLength(1)
-    expect(screen.getByText('Gemini CLI')).toBeTruthy()
+    expect(screen.queryByText('Gemini CLI')).toBeNull()
+    expect(screen.getByText('Qwen Code')).toBeTruthy()
     expect(screen.getByText('Kimi CLI')).toBeTruthy()
 
     const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
@@ -142,13 +155,13 @@ describe('provider settings', () => {
     expect(screen.getByRole('button', { name: 'Provider, Anthropic API' })).toBeTruthy()
     expect(screen.getByDisplayValue('https://api.anthropic.com/v1')).toBeTruthy()
 
-    const geminiRow = screen.getByText('Gemini CLI').closest<HTMLElement>('.settings__row')
-    if (!geminiRow) throw new Error('Gemini provider row missing')
-    fireEvent.click(within(geminiRow).getByRole('button', { name: 'Install' }))
+    const qwenRow = screen.getByText('Qwen Code').closest<HTMLElement>('.settings__row')
+    if (!qwenRow) throw new Error('Qwen provider row missing')
+    fireEvent.click(within(qwenRow).getByRole('button', { name: 'Install' }))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('providers.install', {
         provider: 'acp',
-        agent: 'gemini',
+        agent: 'qwen',
         columns: 100,
         rows: 30,
       }),
@@ -159,7 +172,7 @@ describe('provider settings', () => {
       'noopener,noreferrer',
     )
     await waitFor(() =>
-      expect(within(geminiRow).getByRole('button', { name: 'Installing…' })).toBeTruthy(),
+      expect(within(qwenRow).getByRole('button', { name: 'Installing…' })).toBeTruthy(),
     )
   })
 

@@ -553,6 +553,9 @@ function ProviderSettings(props: {
   const direct = props.providerStatuses.filter((status) => status.id !== 'acp')
   const byId = (id: ProviderId) => direct.filter((status) => status.id === id)
   const agentById = (id: string) => props.acpAgents.filter((agent) => agent.id === id)
+  // 'gemini' stays in this set although it has no row: it is retired (the
+  // server no longer lists it), and the set keeps an older server's listing
+  // out of the unknown-agents catch-all below.
   const knownAgents = new Set(['gemini', 'kimi', 'qwen'])
 
   return (
@@ -576,7 +579,6 @@ function ProviderSettings(props: {
       {[
         ...agentById('kimi'),
         ...agentById('qwen'),
-        ...agentById('gemini'),
         ...props.acpAgents.filter((agent) => !knownAgents.has(agent.id)),
       ].map((agent) =>
         agent.installed ? (

@@ -33,6 +33,12 @@ export type AcpAgentSpec = {
   modelArg?: string
   /** ACP config option used to select a model after creating a session. */
   modelConfigId?: string
+  /**
+   * No longer offered anywhere in the product. The spec itself must remain:
+   * resuming a persisted session still needs the launch command, and deleting
+   * the row would turn old threads into a crash instead of a session.
+   */
+  retired?: boolean
 }
 
 export const ACP_AGENTS: AcpAgentSpec[] = [
@@ -49,10 +55,11 @@ export const ACP_AGENTS: AcpAgentSpec[] = [
       installCommand: 'npm install -g @google/gemini-cli',
       login: 'provider',
     },
-    // Google discontinued Gemini Code Assist for individuals on 2026-06-18;
-    // the CLI still runs, but personal-account OAuth is refused with a
-    // pointer to antigravity.google. Organization accounts and API keys
-    // keep working, so the agent stays offered rather than removed.
+    // Google discontinued Gemini Code Assist for individuals on 2026-06-18
+    // and Antigravity is the direct provider that replaced it, so the row is
+    // retired from every listing (decided 2026-08-07). Existing gemini
+    // threads still resume through this spec.
+    retired: true,
     problem:
       'Google ended individual sign-in (June 2026) — use an organization account or set GEMINI_API_KEY.',
   },
@@ -89,13 +96,17 @@ export const ACP_AGENTS: AcpAgentSpec[] = [
   },
 ]
 
+/** The agents offered in listings — retirement hides an agent everywhere new. */
+export const LISTED_AGENTS: AcpAgentSpec[] = ACP_AGENTS.filter((agent) => !agent.retired)
+
+/** Resolves retired agents too: resume must outlive the listing. */
 export function findAgentSpec(id: string): AcpAgentSpec | undefined {
   return ACP_AGENTS.find((agent) => agent.id === id)
 }
 
 export async function detectAgents(): Promise<Array<AcpAgentSpec & { installed: boolean }>> {
   return Promise.all(
-    ACP_AGENTS.map(async (agent) => ({ ...agent, installed: await isInstalled(agent.command) })),
+    LISTED_AGENTS.map(async (agent) => ({ ...agent, installed: await isInstalled(agent.command) })),
   )
 }
 

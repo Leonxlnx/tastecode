@@ -1,6 +1,7 @@
 export { AcpAdapter, parseAcpThreadId, type AcpStartOptions } from './adapter.js'
 export {
   ACP_AGENTS,
+  LISTED_AGENTS,
   detectAgents,
   discoverAgentModels,
   findAgentSpec,
