@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
 
 /**
  * The entire native surface exposed to the renderer.
@@ -19,6 +20,8 @@ const api = {
     ipcRenderer.invoke('harness:setZoom', action),
   setTheme: (theme: 'light' | 'dark'): Promise<void> =>
     ipcRenderer.invoke('harness:setTheme', theme),
+  capturePreview: (request: PreviewCaptureRequest): Promise<PreviewCaptureResult> =>
+    ipcRenderer.invoke('harness:capturePreview', request),
   onZoomChange: (listener: (factor: number) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, factor: unknown) => {
       if (typeof factor === 'number' && Number.isFinite(factor)) listener(factor)
