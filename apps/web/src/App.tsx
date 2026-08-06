@@ -194,7 +194,6 @@ export function App() {
   const hiddenModelsRef = useRef(hiddenModels)
   hiddenModelsRef.current = hiddenModels
   const [autoReviewSupported, setAutoReviewSupported] = useState(false)
-  const [userInputSupported, setUserInputSupported] = useState(false)
   const [modelId, setModelId] = useState<string | undefined>(
     () => readSetting(MODEL_KEY) ?? undefined,
   )
@@ -657,7 +656,6 @@ export function App() {
     if (!provider) return
     let cancelled = false
     setAutoReviewSupported(false)
-    setUserInputSupported(false)
     void transport
       .request('providers.list', {})
       .then(({ providers }) => {
@@ -665,13 +663,9 @@ export function App() {
         setAutoReviewSupported(
           providers.find((entry) => entry.id === provider)?.capabilities?.autoReview === true,
         )
-        setUserInputSupported(
-          providers.find((entry) => entry.id === provider)?.capabilities?.userInput === true,
-        )
       })
       .catch(() => {
         if (!cancelled) setAutoReviewSupported(false)
-        if (!cancelled) setUserInputSupported(false)
       })
     return () => {
       cancelled = true
@@ -1088,15 +1082,11 @@ export function App() {
       // for the paragraph someone just typed.
       const restoreDraft = () =>
         setComposerDraft((current) => ({ text, request: (current?.request ?? 0) + 1 }))
+      // Design briefing questions are Harness-owned and answered by the server,
+      // so they work for every provider that can complete a text turn — no
+      // structured-input capability gate here (that gates provider-originated
+      // input only).
       const briefing = designMode
-      if (briefing) {
-        if (!userInputSupported) {
-          setDesignMode(false)
-          setNotice('Design briefing requires an agent that supports structured questions.')
-          restoreDraft()
-          return
-        }
-      }
       const turnAttachments = briefing ? addDesignBriefing(attachments) : attachments
       // Typing first and having the session appear is the natural order. Making
       // the user press "new session" before they are allowed to type is the
@@ -1303,7 +1293,6 @@ export function App() {
       serviceTier,
       updateQueue,
       designMode,
-      userInputSupported,
     ],
   )
 

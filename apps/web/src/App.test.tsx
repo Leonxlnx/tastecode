@@ -76,6 +76,7 @@ vi.mock('./voice-recorder.js', async (importOriginal) => ({
 
 /** What the server reports. Projects live there now, not in localStorage. */
 let serverProjects: unknown[] = []
+let serverProviders: unknown[] = []
 let serverUnsavedWork = { isolated: false, uncommitted: false }
 let serverSidebarSettings: {
   mode: 'classic' | 'inbox'
@@ -110,30 +111,29 @@ beforeEach(() => {
   ]
   serverUnsavedWork = { isolated: false, uncommitted: false }
   serverSidebarSettings = { mode: 'classic', autoSettleDays: 3 }
+  serverProviders = [
+    {
+      id: 'codex',
+      displayName: 'Codex',
+      installed: true,
+      auth: 'authenticated',
+      capabilities: {
+        steer: true,
+        fork: true,
+        interrupt: true,
+        reasoningItems: true,
+        approvals: true,
+        userInput: true,
+        autoReview: true,
+        images: true,
+      },
+    },
+  ]
 
   transport.request.mockImplementation((method: string, params: unknown) => {
     switch (method) {
       case 'providers.list':
-        return Promise.resolve({
-          providers: [
-            {
-              id: 'codex',
-              displayName: 'Codex',
-              installed: true,
-              auth: 'authenticated',
-              capabilities: {
-                steer: true,
-                fork: true,
-                interrupt: true,
-                reasoningItems: true,
-                approvals: true,
-                userInput: true,
-                autoReview: true,
-                images: true,
-              },
-            },
-          ],
-        })
+        return Promise.resolve({ providers: serverProviders })
       case 'models.list':
         return Promise.resolve({ models: [] })
       case 'workspace.info':
@@ -472,6 +472,40 @@ describe('new chats', () => {
     expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
       'false',
     )
+  })
+
+  it('sends the design brief through a provider without structured input', async () => {
+    // Briefing questions are Harness-owned and answered by the server, so a
+    // provider that never declares `userInput` must still be able to submit.
+    localStorage.setItem('harness.provider', 'claude')
+    serverProviders = [
+      {
+        id: 'claude',
+        displayName: 'Claude Code',
+        installed: true,
+        auth: 'authenticated',
+        capabilities: { interrupt: true },
+      },
+    ]
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Design' }))
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Design a landing page' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.sendTurn',
+        expect.objectContaining({ attachments: [DESIGN_BRIEF_ATTACHMENT] }),
+      ),
+    )
+    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect((composer as HTMLTextAreaElement).value).toBe('')
   })
 
   it('starts a new session in an isolated checkout when selected', async () => {
