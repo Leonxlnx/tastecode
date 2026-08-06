@@ -25,6 +25,7 @@ controls, a real terminal, MCP and Agent Skills. M4 (the design agent) is next. 
 - **Never commit a secret**, including in fixtures and examples.
 - **Never write a `.sh` script.** Node/TypeScript only — we are a Windows + macOS team.
 - **Never assume POSIX paths.** Use `node:path`.
+- **Never open a PR unless the user explicitly asks for one.**
 - **Never push to `main`.** Branch, PR, merge. An agent may **merge its own PR without
   waiting** when the work is confidently finished: all four gates green locally, the flow
   exercised against the running app, and nothing in the PR touches `packages/contracts`,
@@ -52,8 +53,6 @@ controls, a real terminal, MCP and Agent Skills. M4 (the design agent) is next. 
 - **Every issue has exactly one directly responsible assignee from creation.** The
   assignee owns the next action; update it before handing work to someone else. The first
   draft PR says which files active work changes.
-- **Open a draft PR on the first commit**, not when the work is finished. That draft is how
-  everyone else sees which files you are in.
 - **One PR does one thing.** Never fold a design change into a PR about logic; the reviewer
   would have to accept both or neither.
 - **Keep branches under two days and ~400 lines.** Conflicts come from old branches, not
