@@ -1,3 +1,5 @@
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
 import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import type { PageBlueprint } from './page.js'
@@ -82,6 +84,18 @@ export function parseReviewPhaseOutput(text: string): VisualReview {
   }
 }
 
+export function readVisualReview(workspacePath: string): VisualReview {
+  return parseReviewPhaseOutput(readFileSync(reviewPath(workspacePath), 'utf8'))
+}
+
+export function writeVisualReview(workspacePath: string, review: VisualReview): VisualReview {
+  const validated = parseReviewPhaseOutput(JSON.stringify(review))
+  const outputPath = reviewPath(workspacePath)
+  mkdirSync(path.dirname(outputPath), { recursive: true })
+  writeFileSync(outputPath, `${JSON.stringify(validated, null, 2)}\n`, 'utf8')
+  return validated
+}
+
 export function designRepairPrompt(review: VisualReview, attempt: number, limit: number): string {
   if (review.verdict !== 'repair') throw new Error('repair requires a review with findings')
   return `You are running repair attempt ${attempt} of ${limit} in Personal Harness Design Mode.
@@ -138,4 +152,8 @@ function member<T extends string>(value: unknown, values: readonly T[], field: s
     throw new Error(`${field} must be one of ${values.join(', ')}`)
   }
   return value as T
+}
+
+function reviewPath(workspacePath: string): string {
+  return path.join(workspacePath, '.taste', 'review.json')
 }

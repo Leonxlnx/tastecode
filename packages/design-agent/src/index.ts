@@ -41,6 +41,8 @@ export {
   designReviewPrompt,
   parseRepairPhaseOutput,
   parseReviewPhaseOutput,
+  readVisualReview,
+  writeVisualReview,
   type RepairPhaseOutput,
   type ReviewScreenshot,
   type ReviewSeverity,
