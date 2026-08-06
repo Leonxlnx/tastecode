@@ -352,12 +352,19 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
 
   #finishTurn(status: 'completed' | 'interrupted'): void {
     if (!this.#turnId) return
-    for (const event of this.#mapper?.finish() ?? []) this.emit('event', event)
-    for (const id of this.#pendingApprovals) this.emit('event', { type: 'approval.resolved', id })
+    const turnId = this.#turnId
+    const finishEvents = this.#mapper?.finish() ?? []
+    const approvals = [...this.#pendingApprovals]
     this.#pendingApprovals.clear()
-    this.emit('event', { type: 'turn.completed', turnId: this.#turnId, status })
+    // Live-turn state clears before any emit: the orchestrator reacts to
+    // `turn.completed` synchronously inside the emit (the design flow sends
+    // the next phase prompt right there), and that sendTurn must not be
+    // refused as "a turn is already running" (#373).
     this.#turnId = undefined
     this.#mapper = undefined
+    for (const event of finishEvents) this.emit('event', event)
+    for (const id of approvals) this.emit('event', { type: 'approval.resolved', id })
+    this.emit('event', { type: 'turn.completed', turnId, status })
   }
 
   /** When `turnId` is given, no-op unless it is still the live turn — a late
@@ -365,18 +372,24 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   #failTurn(turnId?: string): void {
     if (turnId !== undefined && this.#turnId !== turnId) return
     if (!this.#turnId || !this.#threadId) return
-    for (const event of this.#mapper?.finish('failed') ?? []) this.emit('event', event)
-    for (const id of this.#pendingApprovals) this.emit('event', { type: 'approval.resolved', id })
+    const failedTurnId = this.#turnId
+    const threadId = this.#threadId
+    const finishEvents = this.#mapper?.finish('failed') ?? []
+    const approvals = [...this.#pendingApprovals]
     this.#pendingApprovals.clear()
+    // Same ordering as #finishTurn: listeners may start the next turn inside
+    // these emits, so the live-turn state must already be gone.
+    this.#turnId = undefined
+    this.#mapper = undefined
+    for (const event of finishEvents) this.emit('event', event)
+    for (const id of approvals) this.emit('event', { type: 'approval.resolved', id })
     this.emit('log', 'OpenCode request failed')
     this.emit('event', {
       type: 'thread.error',
-      threadId: this.#threadId,
+      threadId,
       message: 'The OpenCode request failed.',
     })
-    this.emit('event', { type: 'turn.completed', turnId: this.#turnId, status: 'failed' })
-    this.#turnId = undefined
-    this.#mapper = undefined
+    this.emit('event', { type: 'turn.completed', turnId: failedTurnId, status: 'failed' })
   }
 
   #validateApproval(approval: ApprovalMode | undefined): void {

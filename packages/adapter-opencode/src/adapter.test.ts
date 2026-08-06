@@ -72,6 +72,25 @@ describe('OpenCode adapter', () => {
     adapter.dispose()
   })
 
+  it('accepts the next turn from inside the turn.completed listener (#373)', async () => {
+    const mock = await serveOpenCode()
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    const thread = await adapter.startThread('C:\\repo', { model: 'provider-1/model-1' })
+    // The design flow sends the next phase prompt synchronously inside the
+    // turn.completed emit; the adapter must already accept a new turn there.
+    const followUp = new Promise<string>((resolve, reject) => {
+      adapter.on('event', (event) => {
+        if (event.type === 'turn.completed') {
+          adapter.sendTurn(thread.id, 'Next phase prompt').then(resolve, reject)
+        }
+      })
+    })
+    await adapter.sendTurn(thread.id, 'First prompt')
+    mock.broadcast({ type: 'session.idle', properties: { sessionID: 'session-1' } })
+    await expect(followUp).resolves.toContain('-turn-2')
+    adapter.dispose()
+  })
+
   it('resumes, answers permissions, interrupts and lists connected models', async () => {
     const mock = await serveOpenCode()
     const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
