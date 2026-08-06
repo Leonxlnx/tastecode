@@ -48,4 +48,23 @@ describe('preview plan', () => {
       'must stay inside the workspace',
     )
   })
+
+  it('bounds capture work to supported viewport sizes', () => {
+    expect(() =>
+      parsePreviewPlan({
+        ...plan,
+        viewports: [{ name: 'oversized', width: 7_680, height: 4_320 }],
+      }),
+    ).toThrow('between 320 and 3840')
+    expect(() =>
+      parsePreviewPlan({
+        ...plan,
+        viewports: Array.from({ length: 5 }, (_, index) => ({
+          name: `viewport-${index}`,
+          width: 390,
+          height: 844,
+        })),
+      }),
+    ).toThrow('between one and four')
+  })
 })

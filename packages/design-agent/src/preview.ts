@@ -36,15 +36,15 @@ export function parsePreviewPlan(value: unknown): PreviewPlan {
   if (plan.version !== 1) throw new Error('preview plan version must be 1')
   const url = localUrl(plan.url)
   const readyPattern = optionalString(plan.readyPattern, 'preview readyPattern')
-  if (!Array.isArray(plan.viewports) || plan.viewports.length === 0) {
-    throw new Error('preview viewports must be a non-empty array')
+  if (!Array.isArray(plan.viewports) || plan.viewports.length === 0 || plan.viewports.length > 4) {
+    throw new Error('preview viewports must contain between one and four entries')
   }
   const viewports = plan.viewports.map((value, index) => {
     const viewport = record(value, `preview viewports[${index}]`)
     return {
       name: string(viewport.name, `preview viewports[${index}].name`),
-      width: dimension(viewport.width, `preview viewports[${index}].width`),
-      height: dimension(viewport.height, `preview viewports[${index}].height`),
+      width: dimension(viewport.width, 320, 3_840, `preview viewports[${index}].width`),
+      height: dimension(viewport.height, 240, 2_160, `preview viewports[${index}].height`),
     }
   })
   if (new Set(viewports.map((viewport) => viewport.name)).size !== viewports.length) {
@@ -87,9 +87,9 @@ function relativePath(value: unknown): string {
   return result
 }
 
-function dimension(value: unknown, field: string): number {
-  if (!Number.isInteger(value) || (value as number) < 240 || (value as number) > 7680) {
-    throw new Error(`${field} must be an integer between 240 and 7680`)
+function dimension(value: unknown, minimum: number, maximum: number, field: string): number {
+  if (!Number.isInteger(value) || (value as number) < minimum || (value as number) > maximum) {
+    throw new Error(`${field} must be an integer between ${minimum} and ${maximum}`)
   }
   return value as number
 }
