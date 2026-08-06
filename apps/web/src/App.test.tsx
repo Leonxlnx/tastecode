@@ -677,8 +677,7 @@ describe('new chats', () => {
     serverUnsavedWork = { isolated: true, uncommitted: true }
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Options for Parallel work' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive chat' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive Parallel work' }))
     expect(await screen.findByRole('dialog', { name: 'Discard isolated checkout' })).toBeTruthy()
     expect(transport.request).not.toHaveBeenCalledWith('thread.discardWorktree', expect.anything())
 
@@ -717,7 +716,7 @@ describe('new chats', () => {
     ]
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Options for Keep nearby' }))
+    fireEvent.contextMenu(await screen.findByRole('button', { name: 'Keep nearby' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Pin chat' }))
 
     await waitFor(() => {

@@ -94,7 +94,7 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByText('Gemini CLI').parentElement?.textContent).toContain('Not reported')
   })
 
-  it('keeps rename and archive actions in the chat options menu', () => {
+  it('shows direct Lucide rename and archive actions for each chat', () => {
     const onRenameSession = vi.fn()
     const onDeleteSession = vi.fn()
 
@@ -130,15 +130,18 @@ describe('Sidebar chat actions', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Options for Polish the sidebar' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
+    const rename = screen.getByRole('button', { name: 'Rename Polish the sidebar' })
+    const archive = screen.getByRole('button', { name: 'Archive Polish the sidebar' })
+    expect(rename.querySelector('svg')).not.toBeNull()
+    expect(archive.querySelector('svg')).not.toBeNull()
+
+    fireEvent.click(rename)
     const input = screen.getByDisplayValue('Polish the sidebar')
     fireEvent.change(input, { target: { value: 'Wider sidebar chats' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onRenameSession).toHaveBeenCalledWith('thread-1', 'Wider sidebar chats')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Options for Polish the sidebar' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive chat' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Archive Polish the sidebar' }))
     expect(onDeleteSession).toHaveBeenCalledWith('thread-1')
   })
 
@@ -180,8 +183,17 @@ describe('Sidebar chat actions', () => {
     fireEvent.doubleClick(screen.getByRole('button', { name: 'Harness' }))
     expect(screen.queryByDisplayValue('Harness')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Project options' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive chats' }))
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Harness' }))
+    const pinItem = screen.getByRole('menuitem', { name: 'Pin to top' })
+    const editItem = screen.getByRole('menuitem', { name: 'Edit name' })
+    const archiveItem = screen.getByRole('menuitem', { name: 'Archive chats' })
+    const removeItem = screen.getByRole('menuitem', { name: 'Remove from sidebar' })
+    for (const item of [pinItem, editItem, archiveItem, removeItem]) {
+      expect(item.querySelector('svg')).not.toBeNull()
+    }
+    expect(removeItem.classList.contains('menu__item--danger')).toBe(true)
+
+    fireEvent.click(archiveItem)
     fireEvent.click(screen.getByRole('button', { name: 'Archive chats' }))
     expect(onArchiveProject).toHaveBeenCalledWith(['thread-1', 'thread-2'])
 
@@ -189,10 +201,13 @@ describe('Sidebar chat actions', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from sidebar' }))
     expect(
       screen.getByText(
-        "This removes the project from the app. Files on your computer and existing chats won't be deleted.",
+        'This only removes the project from the sidebar. Its folder and chats stay untouched.',
       ),
     ).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Remove project' }))
+    const removeButton = screen.getByRole('button', { name: 'Remove project' })
+    expect(removeButton.classList.contains('btn--danger')).toBe(true)
+    expect(document.activeElement?.textContent).toBe('Cancel')
+    fireEvent.click(removeButton)
     expect(onRemoveProject).toHaveBeenCalledWith('/work/harness')
   })
 
@@ -234,9 +249,59 @@ describe('Sidebar chat actions', () => {
 
     expect(screen.getByText('Pinned')).toBeTruthy()
     expect(screen.getAllByText('Pinned chat')).toHaveLength(1)
-    fireEvent.click(screen.getByRole('button', { name: 'Options for Pinned chat' }))
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Pinned chat' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Unpin chat' }))
     expect(onToggleSessionPin).toHaveBeenCalledWith('thread-1')
+  })
+
+  it('shows five project chats until the list is expanded', () => {
+    render(
+      <Sidebar
+        projects={[
+          {
+            path: '/work/harness',
+            name: 'Harness',
+            sessions: Array.from({ length: 7 }, (_, index) =>
+              session(`thread-${index + 1}`, `Chat ${index + 1}`),
+            ),
+          },
+        ]}
+        activeProjectPath="/work/harness"
+        activeSessionId="thread-1"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Chat 5' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Chat 6' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    expect(screen.getByRole('button', { name: 'Chat 7' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Show less' }))
+    expect(screen.queryByRole('button', { name: 'Chat 6' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Harness' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Harness' }))
+    expect(screen.queryByRole('button', { name: 'Chat 6' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
   })
 
   it('reorders chats when one is dragged between sidebar rows', () => {

@@ -15,7 +15,21 @@ import type {
   ThreadInboxStatus,
   ThreadLifecycle,
 } from '@harness/contracts'
-import { Ellipsis, Folder, FolderPen, Gauge, Plus, Search, X } from 'lucide-react'
+import {
+  Archive,
+  Ellipsis,
+  Folder,
+  FolderOpen,
+  FolderPen,
+  Gauge,
+  PanelLeftClose,
+  Pencil,
+  Pin,
+  PinOff,
+  Plus,
+  Search,
+  X,
+} from 'lucide-react'
 import { isDesktop, isMacOS, revealPath } from '../bridge.js'
 import { SHORTCUTS, shortcutAria, shortcutLabel } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
@@ -56,6 +70,7 @@ const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦',
 const MIN_RAIL_WIDTH = 148
 const COLLAPSE_RAIL_WIDTH = 176
 const MAX_RAIL_WIDTH = 420
+const COLLAPSED_PROJECT_SESSION_COUNT = 5
 
 function SidebarComponent(props: {
   projects: Project[]
@@ -472,6 +487,7 @@ function ProjectRow(props: {
   ) => void
 }) {
   const [open, setOpen] = useState(true)
+  const [showAllSessions, setShowAllSessions] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState<'archive' | 'remove'>()
   const [draggedSessionId, setDraggedSessionId] = useState<string>()
@@ -479,8 +495,13 @@ function ProjectRow(props: {
     id: string
     position: DropPosition
   }>()
+  const contextMenuTarget = useRef<HTMLButtonElement>(null)
   const expanded = open || props.forceOpen
   const count = props.project.sessions.length
+  const hasMoreSessions = count > COLLAPSED_PROJECT_SESSION_COUNT
+  const visibleSessions = showAllSessions
+    ? props.project.sessions
+    : props.project.sessions.slice(0, COLLAPSED_PROJECT_SESSION_COUNT)
   const reorderable = !props.forceOpen
 
   const endDrag = () => {
@@ -512,8 +533,12 @@ function ProjectRow(props: {
         ) : (
           <>
             <button
+              ref={contextMenuTarget}
               className="proj__toggle"
-              onClick={() => setOpen(!expanded)}
+              onClick={() => {
+                if (expanded) setShowAllSessions(false)
+                setOpen(!expanded)
+              }}
               title={props.project.path}
             >
               <Folder className="proj__mark" size={12} aria-hidden />
@@ -525,6 +550,7 @@ function ProjectRow(props: {
               align="right"
               label="Project options"
               panelClassName="menu--sidebar"
+              contextMenuTargetRef={contextMenuTarget}
               trigger={() => (
                 <span className="dots">
                   <Ellipsis size={16} aria-hidden />
@@ -535,6 +561,13 @@ function ProjectRow(props: {
                 <>
                   <MenuItem
                     title={props.project.pinned ? 'Unpin' : 'Pin to top'}
+                    icon={
+                      props.project.pinned ? (
+                        <PinOff size={14} aria-hidden />
+                      ) : (
+                        <Pin size={14} aria-hidden />
+                      )
+                    }
                     onClick={() => {
                       props.onTogglePin(props.project.path)
                       close()
@@ -543,6 +576,7 @@ function ProjectRow(props: {
                   {isDesktop ? (
                     <MenuItem
                       title="Open in Explorer"
+                      icon={<FolderOpen size={14} aria-hidden />}
                       onClick={() => {
                         void revealPath(props.project.path)
                         close()
@@ -551,6 +585,7 @@ function ProjectRow(props: {
                   ) : null}
                   <MenuItem
                     title="Edit name"
+                    icon={<Pencil size={14} aria-hidden />}
                     onClick={() => {
                       setRenaming(true)
                       close()
@@ -558,6 +593,7 @@ function ProjectRow(props: {
                   />
                   <MenuItem
                     title="Archive chats"
+                    icon={<Archive size={14} aria-hidden />}
                     onClick={() => {
                       setConfirming('archive')
                       close()
@@ -565,6 +601,8 @@ function ProjectRow(props: {
                   />
                   <MenuItem
                     title="Remove from sidebar"
+                    icon={<PanelLeftClose size={14} aria-hidden />}
+                    className="menu__item--danger"
                     onClick={() => {
                       setConfirming('remove')
                       close()
@@ -587,13 +625,14 @@ function ProjectRow(props: {
 
       {confirming ? (
         <SidebarConfirmDialog
-          title={confirming === 'archive' ? 'Archive all chats?' : 'Remove project from sidebar?'}
+          title={confirming === 'archive' ? 'Archive all chats?' : 'Remove project?'}
           body={
             confirming === 'archive'
-              ? `This archives every chat in ${displayName(props.project)}. Files on your computer won't be deleted.`
-              : "This removes the project from the app. Files on your computer and existing chats won't be deleted."
+              ? `This archives every chat in ${displayName(props.project)}. Files on your computer stay untouched.`
+              : 'This only removes the project from the sidebar. Its folder and chats stay untouched.'
           }
           action={confirming === 'archive' ? 'Archive chats' : 'Remove project'}
+          destructive={confirming === 'remove'}
           onConfirm={() => {
             if (confirming === 'archive') {
               props.onArchiveProject(props.project.sessions.map((session) => session.id))
@@ -612,7 +651,7 @@ function ProjectRow(props: {
           reason the sidebar read as sluggish. */}
       <div className="proj__drawer" data-open={expanded && count > 0}>
         <ul className="proj__sessions">
-          {props.project.sessions.map((session) => (
+          {visibleSessions.map((session) => (
             <SessionRow
               key={session.id}
               session={session}
@@ -650,6 +689,18 @@ function ProjectRow(props: {
               onDragEnd={endDrag}
             />
           ))}
+          {hasMoreSessions ? (
+            <li className="proj__sessions-toggle-row">
+              <button
+                type="button"
+                className="proj__sessions-toggle"
+                aria-expanded={showAllSessions}
+                onClick={() => setShowAllSessions((current) => !current)}
+              >
+                {showAllSessions ? 'Show less' : 'Show more'}
+              </button>
+            </li>
+          ) : null}
         </ul>
       </div>
     </section>
@@ -674,6 +725,7 @@ function SessionRow(props: {
   onDragEnd: () => void
 }) {
   const [renaming, setRenaming] = useState(false)
+  const contextMenuTarget = useRef<HTMLButtonElement>(null)
 
   if (renaming) {
     return (
@@ -703,6 +755,7 @@ function SessionRow(props: {
       onDragEnd={props.onDragEnd}
     >
       <button
+        ref={contextMenuTarget}
         className={`sess ${props.active ? 'is-active' : ''}`}
         onClick={props.onSelect}
         onDoubleClick={() => setRenaming(true)}
@@ -713,49 +766,73 @@ function SessionRow(props: {
         <SessionStatus status={props.session.status} />
       </button>
 
-      <Menu
-        drop="down"
-        align="right"
-        label={`Options for ${props.session.title}`}
-        triggerClassName="sess__menu"
-        panelClassName="menu--sidebar"
-        trigger={() => <Ellipsis size={16} aria-hidden />}
-      >
-        {(close) => (
-          <>
-            <MenuItem
-              title={props.session.pinned ? 'Unpin chat' : 'Pin chat'}
-              onClick={() => {
-                props.onTogglePin()
-                close()
-              }}
-            />
-            <MenuItem
-              title="Rename chat"
-              onClick={() => {
-                setRenaming(true)
-                close()
-              }}
-            />
-            <MenuItem
-              title="Archive chat"
-              onClick={() => {
-                props.onDelete()
-                close()
-              }}
-            />
-            {isDesktop ? (
+      <span className="sess__actions">
+        <button
+          type="button"
+          className="sess__action"
+          onClick={() => setRenaming(true)}
+          aria-label={`Rename ${props.session.title}`}
+          title="Rename chat"
+        >
+          <Pencil size={13} aria-hidden />
+        </button>
+        <button
+          type="button"
+          className="sess__action"
+          onClick={props.onDelete}
+          aria-label={`Archive ${props.session.title}`}
+          title="Archive chat"
+        >
+          <Archive size={14} aria-hidden />
+        </button>
+      </span>
+
+      <div className="sess__context-menu">
+        <Menu
+          drop="down"
+          align="right"
+          label={`Options for ${props.session.title}`}
+          triggerClassName="sess__context-menu-trigger"
+          panelClassName="menu--sidebar"
+          contextMenuTargetRef={contextMenuTarget}
+          trigger={() => <Ellipsis size={16} aria-hidden />}
+        >
+          {(close) => (
+            <>
               <MenuItem
-                title="Open in Explorer"
+                title={props.session.pinned ? 'Unpin chat' : 'Pin chat'}
                 onClick={() => {
-                  props.onOpenInExplorer()
+                  props.onTogglePin()
                   close()
                 }}
               />
-            ) : null}
-          </>
-        )}
-      </Menu>
+              <MenuItem
+                title="Rename chat"
+                onClick={() => {
+                  setRenaming(true)
+                  close()
+                }}
+              />
+              <MenuItem
+                title="Archive chat"
+                onClick={() => {
+                  props.onDelete()
+                  close()
+                }}
+              />
+              {isDesktop ? (
+                <MenuItem
+                  title="Open in Explorer"
+                  onClick={() => {
+                    props.onOpenInExplorer()
+                    close()
+                  }}
+                />
+              ) : null}
+            </>
+          )}
+        </Menu>
+      </div>
     </li>
   )
 }
@@ -764,6 +841,7 @@ function SidebarConfirmDialog(props: {
   title: string
   body: string
   action: string
+  destructive: boolean
   onConfirm: () => void
   onClose: () => void
 }) {
@@ -780,10 +858,13 @@ function SidebarConfirmDialog(props: {
         <section className="sheet__section">
           <p>{props.body}</p>
           <div className="sidebar-confirm__actions">
-            <button className="ghost" onClick={props.onClose}>
+            <button className="ghost" onClick={props.onClose} autoFocus>
               Cancel
             </button>
-            <button className="btn btn--danger" onClick={props.onConfirm}>
+            <button
+              className={`btn${props.destructive ? ' btn--danger' : ''}`}
+              onClick={props.onConfirm}
+            >
               {props.action}
             </button>
           </div>
