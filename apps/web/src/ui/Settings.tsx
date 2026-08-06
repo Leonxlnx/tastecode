@@ -251,11 +251,8 @@ function WorkflowSettings(props: {
   const autoSettle = props.sidebarSettings.autoSettleDays !== null
 
   return (
-    <SettingsPanel title="Workflows" groupTitle="Sidebar">
-      <SettingsRow
-        title="Sidebar version"
-        note="V2 is a stable cross-project inbox with snoozed and settled shelves."
-      >
+    <SettingsPanel title="Workflows">
+      <SettingsRow title="Sidebar version">
         <div className="settings__sidebar-switcher" role="radiogroup" aria-label="Sidebar version">
           <button
             className={!inbox ? 'is-selected' : ''}
@@ -277,10 +274,7 @@ function WorkflowSettings(props: {
           </button>
         </div>
       </SettingsRow>
-      <SettingsRow
-        title="Settle inactive threads"
-        note="Move eligible inactive work out of the inbox after this many days."
-      >
+      <SettingsRow title="Settle inactive threads">
         <div className="settings__inline-controls">
           <input
             className="settings__number"
@@ -520,9 +514,7 @@ function ProviderSettings(props: {
         <InstallableRow
           key={status.id}
           title={status.displayName}
-          idleNote={
-            status.setup?.installCommand ?? status.problem ?? 'Provider CLI is not installed.'
-          }
+          idleNote={status.problem}
           icon={<ProviderIcon mark={providerMark(status.id)} size={17} />}
           target={{ provider: status.id }}
           setup={status.setup}
@@ -536,7 +528,6 @@ function ProviderSettings(props: {
         <CliSignInRow
           key={status.id}
           title={status.displayName}
-          idleNote="Not signed in · sign-in runs in the provider's CLI."
           icon={<ProviderIcon mark={providerMark(status.id)} size={17} />}
           target={{ provider: status.id }}
           transport={props.transport}
@@ -549,8 +540,9 @@ function ProviderSettings(props: {
       : 'Not signed in'
     const busy = authBusy === status.id
     return (
-      <SettingsRow key={status.id} title={status.displayName} note={accountStatus}>
+      <SettingsRow key={status.id} title={status.displayName}>
         <div className="provider-settings__actions">
+          <span className="settings__status">{accountStatus}</span>
           <ProviderIcon mark={providerMark(status.id)} size={17} />
           {account?.signedIn ? (
             <button
@@ -586,7 +578,7 @@ function ProviderSettings(props: {
   const knownAgents = new Set(['gemini', 'kimi', 'qwen'])
 
   return (
-    <SettingsPanel title="Providers" groupTitle="Agent subscriptions">
+    <SettingsPanel title="Providers">
       {authError ? (
         <p className="provider-form__error" role="alert">
           {authError}
@@ -603,8 +595,7 @@ function ProviderSettings(props: {
         )
         .map(renderProviderRow)}
 
-      <h2 className="settings__group-title settings__group-title--inside">Other agents</h2>
-      <PlannedRow title="Pi" note="Inflection's agent — not integrated yet, planned." />
+      <PlannedRow title="Pi" />
       {[
         ...agentById('kimi'),
         ...agentById('qwen'),
@@ -615,12 +606,9 @@ function ProviderSettings(props: {
         // out removes the credential the login left behind, so the row works
         // like every direct provider's.
         agent.installed && agentAccounts[agent.id]?.signedIn ? (
-          <SettingsRow
-            key={agent.id}
-            title={agent.name}
-            note="Signed in · managed by the provider CLI."
-          >
+          <SettingsRow key={agent.id} title={agent.name}>
             <div className="provider-settings__actions">
+              <span className="settings__status">Signed in</span>
               <ProviderIcon mark={agentMark(agent.id)} size={17} />
               <button
                 className="settings__action"
@@ -643,7 +631,7 @@ function ProviderSettings(props: {
           <CliSignInRow
             key={agent.id}
             title={agent.name}
-            idleNote={agent.problem ?? 'Installed · sign-in is managed by the provider CLI.'}
+            idleNote={agent.problem}
             icon={<ProviderIcon mark={agentMark(agent.id)} size={17} />}
             target={{ provider: 'acp', agent: agent.id }}
             transport={props.transport}
@@ -656,7 +644,6 @@ function ProviderSettings(props: {
           <InstallableRow
             key={agent.id}
             title={agent.name}
-            idleNote={agent.setup.installCommand ?? 'Provider CLI is not installed.'}
             icon={<ProviderIcon mark={agentMark(agent.id)} size={17} />}
             target={{ provider: 'acp', agent: agent.id }}
             setup={agent.setup}
@@ -668,12 +655,15 @@ function ProviderSettings(props: {
 
       <h2 className="settings__group-title settings__group-title--inside">API connections</h2>
       {props.modelConnections.map((connection) => (
-        <SettingsRow
-          key={connection.id}
-          title={connection.displayName}
-          note={`${CONNECTION_PRESETS[connection.preset].label} · ${connection.credentialConfigured ? 'Key stored securely' : 'Key missing'}`}
-        >
+        <SettingsRow key={connection.id} title={connection.displayName}>
           <div className="provider-settings__actions">
+            <span
+              className={`settings__status${connection.credentialConfigured ? '' : ' is-warning'}`}
+            >
+              {connection.credentialConfigured
+                ? CONNECTION_PRESETS[connection.preset].label
+                : 'Key missing'}
+            </span>
             <ProviderIcon mark={connectionMark(connection.preset)} size={17} />
             <button
               className="settings__action is-danger"
@@ -796,19 +786,14 @@ function ModelSettings(props: {
   ).length
 
   return (
-    <SettingsPanel
-      title="Models"
-      groupTitle="Composer model list"
-      groupClassName="settings__group--plain model-settings"
-    >
-      <div className="model-settings__summary">
-        <p>Choose which models appear in the composer. Provider connections stay unchanged.</p>
-        {props.models.length > 0 ? (
+    <SettingsPanel title="Models" groupClassName="settings__group--plain model-settings">
+      {props.models.length > 0 ? (
+        <div className="model-settings__summary">
           <span>
             {visibleModelCount} of {props.models.length} visible
           </span>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       {sources.size > 0 ? (
         <div className="model-settings__sources">
@@ -823,13 +808,10 @@ function ModelSettings(props: {
                 <header className="model-visibility__source">
                   <div className="model-visibility__source-copy">
                     {choices[0] ? <ProviderIcon mark={choices[0].mark} size={18} /> : null}
-                    <div>
-                      <h3>{source}</h3>
-                      <p>
-                        {visibleCount} of {choices.length}{' '}
-                        {choices.length === 1 ? 'model' : 'models'} visible
-                      </p>
-                    </div>
+                    <h3>{source}</h3>
+                    <span className="settings__status">
+                      {visibleCount}/{choices.length}
+                    </span>
                   </div>
                   <button
                     className={`switch switch--source${anyVisible ? ' is-on' : ''}`}
@@ -902,7 +884,7 @@ function AppearanceSettings(props: {
   onMacOSFontSmoothingChange: (enabled: boolean) => void
 }) {
   return (
-    <SettingsPanel title="Appearance" groupTitle="Theme" groupClassName="settings__group--plain">
+    <SettingsPanel title="Appearance" groupClassName="settings__group--plain">
       <ThemePicker value={props.themePreference} onChange={props.onThemePreferenceChange} />
       <div className="appearance__text">
         <h2 className="settings__group-title">Interface font</h2>
@@ -954,10 +936,7 @@ function AppearanceSettings(props: {
       <div className="appearance__text">
         <h2 className="settings__group-title">Sidebar</h2>
         <div className="settings__group">
-          <SettingsRow
-            title="Translucent sidebar"
-            note="Let a soft glow shine through the rail. Strength is yours to set."
-          >
+          <SettingsRow title="Translucent sidebar">
             <div className="settings__inline-controls">
               <input
                 className="settings__slider"
@@ -1011,10 +990,7 @@ function AppearanceSettings(props: {
         <div className="appearance__text">
           <h2 className="settings__group-title">Text rendering</h2>
           <div className="settings__group">
-            <SettingsRow
-              title="Font smoothing"
-              note="Use macOS antialiasing for lighter, crisper text."
-            >
+            <SettingsRow title="Font smoothing">
               <button
                 className={`switch${props.macOSFontSmoothing ? ' is-on' : ''}`}
                 type="button"
@@ -1078,11 +1054,8 @@ function DataSettings(props: { projectCount: number; onReset: () => void }) {
   const projectLabel = `${props.projectCount} ${props.projectCount === 1 ? 'project' : 'projects'} on this machine`
 
   return (
-    <SettingsPanel title="Data" groupTitle="Local data">
-      <SettingsRow
-        title={projectLabel}
-        note="Stored locally. Nothing is uploaded anywhere, by us or on your behalf."
-      >
+    <SettingsPanel title="Data">
+      <SettingsRow title={projectLabel}>
         <button className="settings__action" type="button" onClick={props.onReset}>
           <RotateCcw size={13} aria-hidden />
           <span>Reset app</span>
@@ -1108,8 +1081,9 @@ function AboutSettings(props: { transport: Transport }) {
   }
 
   const short = (sha: string) => sha.slice(0, 7)
+  // Only a verdict earns a second line; the idle row explains nothing.
   const updateNote = !result
-    ? 'Compare this build with the latest commit on GitHub.'
+    ? undefined
     : result.error
       ? result.error
       : result.upToDate
@@ -1119,11 +1093,12 @@ function AboutSettings(props: { transport: Transport }) {
           : 'Could not determine a verdict.'
 
   return (
-    <SettingsPanel title="About" groupTitle="Personal Harness">
-      <SettingsRow
-        title="Personal Harness"
-        note={`${isDesktop ? 'Desktop' : 'Browser'} · pre-release${result?.localCommit ? ` · ${short(result.localCommit)}` : ''}`}
-      />
+    <SettingsPanel title="About">
+      <SettingsRow title="Personal Harness">
+        <span className="settings__status">
+          {`${isDesktop ? 'Desktop' : 'Browser'} · pre-release${result?.localCommit ? ` · ${short(result.localCommit)}` : ''}`}
+        </span>
+      </SettingsRow>
       <SettingsRow title="Updates" note={updateNote}>
         <button
           className="settings__action"
@@ -1135,7 +1110,7 @@ function AboutSettings(props: { transport: Transport }) {
           {checking ? 'Checking…' : 'Check for updates'}
         </button>
       </SettingsRow>
-      <SettingsRow title="Source" note="Open source, and built to be forked.">
+      <SettingsRow title="Source">
         <button
           className="settings__action"
           type="button"
@@ -1154,18 +1129,14 @@ function AboutSettings(props: { transport: Transport }) {
   )
 }
 
-function SettingsPanel(props: {
-  title: string
-  groupTitle: string
-  groupClassName?: string
-  children: ReactNode
-}) {
+// No group subtitle between the title and the card: one heading carries a
+// panel, and the removed line was repeating it in smaller type.
+function SettingsPanel(props: { title: string; groupClassName?: string; children: ReactNode }) {
   return (
     <section className="settings__panel" aria-labelledby={`settings-${props.title.toLowerCase()}`}>
       <h1 className="settings__title" id={`settings-${props.title.toLowerCase()}`}>
         {props.title}
       </h1>
-      <h2 className="settings__group-title">{props.groupTitle}</h2>
       <div className={`settings__group${props.groupClassName ? ` ${props.groupClassName}` : ''}`}>
         {props.children}
       </div>
@@ -1181,7 +1152,7 @@ function SettingsPanel(props: {
  */
 function InstallableRow(props: {
   title: string
-  idleNote: string
+  idleNote?: string | undefined
   icon: ReactNode
   target: InstallTarget
   setup: ProviderSetup | undefined
@@ -1289,7 +1260,7 @@ function InstallableRow(props: {
  */
 function CliSignInRow(props: {
   title: string
-  idleNote: string
+  idleNote?: string | undefined
   icon: ReactNode
   target: InstallTarget
   transport: Transport
@@ -1374,9 +1345,9 @@ function ProviderTerminal(props: { transport: Transport; installKey: string }) {
  * omitting it — "not supported yet" and "not installed" must stay
  * distinguishable, and the roadmap belongs in the product, not a doc.
  */
-function PlannedRow(props: { title: string; note: string }) {
+function PlannedRow(props: { title: string }) {
   return (
-    <SettingsRow title={props.title} note={props.note}>
+    <SettingsRow title={props.title}>
       <div className="provider-settings__actions">
         <ProviderIcon mark="custom" size={17} />
         <button className="settings__action" type="button" disabled>
@@ -1389,7 +1360,7 @@ function PlannedRow(props: { title: string; note: string }) {
 
 function SettingsRow(props: {
   title: string
-  note?: string
+  note?: string | undefined
   className?: string
   children?: ReactNode
 }) {

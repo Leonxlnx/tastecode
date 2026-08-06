@@ -681,7 +681,7 @@
 }
 
 .settings__title {
-  margin: 0 0 40px;
+  margin: 0 0 22px;
   color: var(--text);
   font-size: var(--t-2xl);
   font-weight: 550;
@@ -1057,9 +1057,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  min-height: 66px;
-  padding: 12px 16px;
+  gap: 16px;
+  min-height: 46px;
+  padding: 6px 16px;
   transition: background var(--dur-fast) var(--ease-out);
 }
 
@@ -1087,9 +1087,10 @@
   min-width: 0;
 }
 
-.settings__row-title,
-.settings__row-note,
 .settings__row-title {
+  /* These are <p> elements: without the reset their UA margins force the
+     row taller than its 46px minimum. */
+  margin: 0;
   color: var(--text);
   font-size: var(--t-md);
   font-weight: 500;
@@ -1103,7 +1104,7 @@
 }
 
 .settings__row-note {
-  margin-top: 2px;
+  margin: 2px 0 0;
 }
 
 .settings__group-note {
@@ -1117,7 +1118,7 @@
 }
 
 .settings__group-title--inside {
-  margin: 20px 16px 8px;
+  margin: 14px 16px 6px;
 }
 
 .provider-settings__status,
@@ -1261,8 +1262,7 @@
 
 .model-settings__summary p,
 .model-settings__empty p,
-.model-visibility__source h3,
-.model-visibility__source p {
+.model-visibility__source h3 {
   margin: 0;
 }
 
@@ -1304,8 +1304,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  min-height: 60px;
-  padding: 11px 16px;
+  min-height: 46px;
+  padding: 7px 16px;
   color: var(--text);
 }
 
@@ -1313,10 +1313,6 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  min-width: 0;
-}
-
-.model-visibility__source-copy > div {
   min-width: 0;
 }
 
@@ -1329,26 +1325,32 @@
   white-space: nowrap;
 }
 
-.model-visibility__source p {
-  margin-top: 2px;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  font-weight: 400;
-  line-height: 1.35;
-  font-variant-numeric: tabular-nums;
-}
-
 .model-visibility__models {
   border-top: 1px solid var(--line);
 }
 
 .model-visibility__model {
-  min-height: 60px;
+  min-height: 44px;
   padding-block: 10px;
 }
 
 .model-visibility__model.is-hidden .settings__row-title {
   color: var(--text-2);
+}
+
+/* One-line rows: state that used to be a note sits inline, muted, before
+   the row's control. Warning states keep their color so they stay findable. */
+.settings__status {
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings__status.is-warning {
+  color: var(--error);
 }
 
 .settings__row-control {

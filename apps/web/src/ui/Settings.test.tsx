@@ -133,13 +133,11 @@ describe('provider settings', () => {
     expect(screen.getByText('Qwen Code')).toBeTruthy()
     expect(screen.getByText('Kimi CLI')).toBeTruthy()
 
-    // Kimi's CLI is already authenticated: the row says so and offers the
-    // same Sign out as every direct provider (it removes the credential).
-    await waitFor(() =>
-      expect(screen.getByText('Signed in · managed by the provider CLI.')).toBeTruthy(),
-    )
+    // Kimi's CLI is already authenticated: the row says so inline and offers
+    // the same Sign out as every direct provider (it removes the credential).
     const kimiRow = screen.getByText('Kimi CLI').closest<HTMLElement>('.settings__row')
     if (!kimiRow) throw new Error('Kimi row missing')
+    await waitFor(() => expect(within(kimiRow).getByText('Signed in')).toBeTruthy())
     fireEvent.click(within(kimiRow).getByRole('button', { name: 'Sign out' }))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('auth.signOut', {
