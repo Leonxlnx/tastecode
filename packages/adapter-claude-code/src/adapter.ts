@@ -1,5 +1,8 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { killTree, readNdjson, spawnCli } from '@harness/proc'
 import { toDomainEvents, type ClaudeEvent } from './events.js'
@@ -13,7 +16,16 @@ import { toDomainEvents, type ClaudeEvent } from './events.js'
  * than fatal, because the shape will change and a session dying on an unknown
  * event is a worse failure than a missing row.
  *
- * Verified against claude-code 2.1.220.
+ * Nothing multi-line may ever go on argv: on Windows `spawnCli` runs through a
+ * cmd.exe shim, and cmd.exe cuts the assembled command line at the first
+ * newline inside any argument — silently dropping the rest of that argument
+ * and every argument after it (#372). The prompt therefore travels over stdin
+ * as stream-json input, and the session instructions travel as a file path via
+ * `--append-system-prompt-file`.
+ *
+ * Verified against claude-code 2.1.220; stdin stream-json prompt delivery,
+ * `--resume` alongside it, and `--append-system-prompt-file` captured against
+ * 2.1.222 on Windows through the real cmd.exe spawn path.
  *
  * As with Codex, this never reads a credential. The binary authenticates
  * itself. See rules/security.md.
@@ -74,6 +86,43 @@ export type ClaudeStartOptions = {
   approval?: ApprovalMode | undefined
 }
 
+/** One stream-json stdin line: how the prompt reaches the CLI, never argv. */
+export function claudeUserMessage(text: string): string {
+  return `${JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'text', text }] },
+  })}\n`
+}
+
+/**
+ * The per-turn argv. Exported for the test that holds the #372 invariant:
+ * no element may ever contain a newline, because cmd.exe would truncate the
+ * command line there and silently drop every argument after it.
+ */
+export function claudeTurnArgs(
+  options: ClaudeStartOptions,
+  sessionId: string | undefined,
+  instructionsFile: string | undefined,
+): string[] {
+  const permissionMode = options.approval ? PERMISSION_MODE[options.approval] : undefined
+  return [
+    '-p',
+    '--output-format',
+    'stream-json',
+    // Required alongside stream-json, and it is what surfaces tool calls at
+    // all rather than only the final answer.
+    '--verbose',
+    '--input-format',
+    'stream-json',
+    ...(options.model ? ['--model', options.model] : []),
+    ...(permissionMode ? ['--permission-mode', permissionMode] : []),
+    ...(instructionsFile ? ['--append-system-prompt-file', instructionsFile] : []),
+    // Continuity: without this every turn starts a fresh context and the
+    // agent forgets the conversation it is in the middle of.
+    ...(sessionId ? ['--resume', sessionId] : []),
+  ]
+}
+
 export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   #workspacePath = ''
   #options: ClaudeStartOptions = {}
@@ -83,6 +132,9 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   /** Children we killed on purpose — their non-zero exits are not failures. */
   #intentionalKills = new WeakSet<ChildProcessWithoutNullStreams>()
   #turnCounter = 0
+  /** Where the multi-line session instructions live, since argv cannot carry them. */
+  #instructionsDir: string | undefined
+  #instructionsFile: string | undefined
 
   get capabilities(): Capabilities {
     return CLAUDE_CAPABILITIES
@@ -99,6 +151,18 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#workspacePath = workspacePath
     this.#options = options
     this.#sessionId = undefined
+    this.#clearInstructionsFile()
+    if (options.instructions) {
+      try {
+        this.#instructionsDir = mkdtempSync(path.join(tmpdir(), 'harness-claude-'))
+        this.#instructionsFile = path.join(this.#instructionsDir, 'system-prompt.md')
+        writeFileSync(this.#instructionsFile, options.instructions, 'utf8')
+      } catch (error) {
+        // Style guidance is not worth failing the thread over; run without it.
+        this.#clearInstructionsFile()
+        this.emit('log', `session instructions dropped: ${String(error)}`)
+      }
+    }
     return {
       id: `claude-${crypto.randomUUID()}`,
       provider: 'claude-code',
@@ -109,25 +173,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 
   async sendTurn(threadId: string, text: string): Promise<string> {
     const turnId = `${threadId}-turn-${++this.#turnCounter}`
-    const permissionMode = this.#options.approval
-      ? PERMISSION_MODE[this.#options.approval]
-      : undefined
-
-    const args = [
-      '-p',
-      text,
-      '--output-format',
-      'stream-json',
-      // Required alongside stream-json, and it is what surfaces tool calls at
-      // all rather than only the final answer.
-      '--verbose',
-      ...(this.#options.model ? ['--model', this.#options.model] : []),
-      ...(permissionMode ? ['--permission-mode', permissionMode] : []),
-      ...(this.#options.instructions ? ['--append-system-prompt', this.#options.instructions] : []),
-      // Continuity: without this every turn starts a fresh context and the
-      // agent forgets the conversation it is in the middle of.
-      ...(this.#sessionId ? ['--resume', this.#sessionId] : []),
-    ]
+    const args = claudeTurnArgs(this.#options, this.#sessionId, this.#instructionsFile)
 
     // A turn already in flight would be orphaned by the reassignment below —
     // its exit handler must also not clobber the new child's reference.
@@ -175,6 +221,12 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
     })
 
+    // A child that dies before reading stdin surfaces EPIPE here; the exit
+    // handler already reports that failure, so the write error is only noise.
+    child.stdin.on('error', () => undefined)
+    child.stdin.write(claudeUserMessage(text))
+    child.stdin.end()
+
     return turnId
   }
 
@@ -196,6 +248,19 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   dispose(): void {
     if (this.#child) this.#stop(this.#child)
     this.#child = undefined
+    this.#clearInstructionsFile()
+  }
+
+  #clearInstructionsFile(): void {
+    if (this.#instructionsDir) {
+      try {
+        rmSync(this.#instructionsDir, { recursive: true, force: true })
+      } catch {
+        // A leftover temp directory is not worth surfacing; the OS sweeps it.
+      }
+    }
+    this.#instructionsDir = undefined
+    this.#instructionsFile = undefined
   }
 
   /** Kill a child we own on purpose, and remember that its exit is ours. */

@@ -1,5 +1,46 @@
 import { describe, expect, it } from 'vitest'
-import { ClaudeCodeAdapter, CLAUDE_MODELS } from './adapter.js'
+import {
+  ClaudeCodeAdapter,
+  CLAUDE_MODELS,
+  claudeTurnArgs,
+  claudeUserMessage,
+} from './adapter.js'
+
+describe('Claude Code turn invocation', () => {
+  it('keeps every argv element newline-free (#372: cmd.exe truncates there)', () => {
+    const args = claudeTurnArgs(
+      { model: 'haiku', approval: 'ask', instructions: 'line one\nline two\n- bullet' },
+      'session-1',
+      'C:\\tmp\\harness-claude-abc\\system-prompt.md',
+    )
+    for (const arg of args) {
+      expect(arg).not.toMatch(/[\r\n]/)
+    }
+  })
+
+  it('never carries the prompt or instructions text on argv', () => {
+    const instructions = 'Write like a clear, capable teammate.\n- Lead with the answer.'
+    const args = claudeTurnArgs({ instructions }, undefined, '/tmp/x/system-prompt.md')
+    expect(args.join(' ')).not.toContain('teammate')
+    expect(args).toContain('--input-format')
+    expect(args).toContain('--append-system-prompt-file')
+  })
+
+  it('keeps --resume so the conversation survives the turn boundary', () => {
+    const args = claudeTurnArgs({ model: 'haiku' }, 'sess-9', undefined)
+    expect(args.slice(-2)).toEqual(['--resume', 'sess-9'])
+    expect(args).not.toContain('--append-system-prompt-file')
+  })
+
+  it('encodes the prompt as one stream-json user message line', () => {
+    const line = claudeUserMessage('first line\nsecond line')
+    expect(line.endsWith('\n')).toBe(true)
+    expect(JSON.parse(line)).toEqual({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'text', text: 'first line\nsecond line' }] },
+    })
+  })
+})
 
 describe('Claude Code model list', () => {
   it('offers the documented --model aliases under full versioned names', async () => {
