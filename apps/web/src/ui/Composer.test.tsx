@@ -175,8 +175,10 @@ describe('Composer permissions', () => {
     unsupported.unmount()
     renderComposer(vi.fn(), { autoReviewSupported: true })
     fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
+    const autoApprove = screen.getByRole('menuitem', { name: /Auto-approve/ })
     const autoReview = screen.getByRole('menuitem', { name: /Auto-review/ })
-    expect(autoReview.querySelector('svg')).toBeTruthy()
+    expect(autoApprove.querySelector('.lucide-shield-check')).toBeTruthy()
+    expect(autoReview.querySelector('.lucide-scan-eye')).toBeTruthy()
     expect(autoReview.classList.contains('composer__permission-option--auto-review')).toBe(true)
     expect(
       screen

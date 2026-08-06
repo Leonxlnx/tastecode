@@ -15,6 +15,7 @@ import {
   Palette,
   Pencil,
   Plus,
+  ScanEye,
   ShieldCheck,
   ShieldQuestion,
   Square,
@@ -80,7 +81,7 @@ export const APPROVAL_MODES: {
     title: 'Auto-review',
     short: 'Auto-review',
     detail: 'Codex reviews elevated actions before they run',
-    icon: ShieldCheck,
+    icon: ScanEye,
   },
   {
     id: 'full',
