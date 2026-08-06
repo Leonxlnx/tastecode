@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync, type StatementSync } from 'node:sqlite'
 import type {
   DiffDecision,
   DomainEvent,
@@ -218,6 +218,8 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
 
 export class Store {
   #db: DatabaseSync
+  #insertEvent: StatementSync
+  #insertSearchEntry: StatementSync
 
   /** `:memory:` in tests; a file under the user's data directory in the app. */
   constructor(location: string) {
@@ -232,6 +234,15 @@ export class Store {
     this.#db.exec('PRAGMA synchronous = NORMAL')
     this.#db.exec('PRAGMA foreign_keys = ON')
     this.#db.exec(SCHEMA)
+    // These statements run for every persisted event. Preparing them once
+    // keeps SQLite compilation off the streamed-delta path.
+    this.#insertEvent = this.#db.prepare(
+      `INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`,
+    )
+    this.#insertSearchEntry = this.#db.prepare(
+      `INSERT INTO session_search (rowid, thread_id, event_seq, turn_id, created_at, text)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
     this.#migrate()
     const searchIndexReady = this.#db
       .prepare(`SELECT 1 FROM schema_migrations WHERE name = ?`)
@@ -569,9 +580,7 @@ export class Store {
     const at = Date.now()
     this.#db.exec('BEGIN IMMEDIATE')
     try {
-      const result = this.#db
-        .prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`)
-        .run(threadId, at, JSON.stringify(event))
+      const result = this.#insertEvent.run(threadId, at, JSON.stringify(event))
       const seq = Number(result.lastInsertRowid)
       this.#indexEvent(seq, threadId, at, event)
       this.#db.exec('COMMIT')
@@ -715,12 +724,7 @@ export class Store {
   #indexEvent(seq: number, threadId: string, at: number, event: DomainEvent): void {
     const entry = searchableEntry(event)
     if (!entry) return
-    this.#db
-      .prepare(
-        `INSERT INTO session_search (rowid, thread_id, event_seq, turn_id, created_at, text)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(seq, threadId, seq, entry.turnId, entry.createdAt ?? at, entry.text)
+    this.#insertSearchEntry.run(seq, threadId, seq, entry.turnId, entry.createdAt ?? at, entry.text)
   }
 
   /** Persistent totals derived from the event log that already owns usage. */
