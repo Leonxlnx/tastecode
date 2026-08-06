@@ -39,6 +39,7 @@ The files are a chain of evidence and decisions, not copies of one large object.
 | `brand.json`  | Derived visual and verbal system                                        | Brief, existing brand files, brand skill            |
 | `page.json`   | Page structure, content intent, component needs, responsive behavior    | Brief and brand                                     |
 | `assets.json` | Existing and requested assets, provenance, status, destination          | Brief, brand, page, project files, optional sources |
+| `review.json` | Final visual verdict and any remaining actionable findings              | Brief, brand, page, rendered screenshots            |
 | Project files | The working implementation                                              | All completed artifacts                             |
 
 Later artifacts reference earlier decisions but do not mutate them. For example, a color the
@@ -58,7 +59,8 @@ The server remains the sole orchestrator and source of session state. A Design M
 - the selected model options for subsequent internal turns;
 - explicit briefing answers and any pending final brief;
 - the active user-input request, reconstructed from the durable event log;
-- the next validated phase prompt, when one is waiting to run.
+- the next validated phase prompt, when one is waiting to run;
+- the validated preview plan, screenshots, latest review, and bounded repair attempt.
 
 Restart recovery resumes from the latest validated artifact. It does not ask the provider to
 reconstruct state from chat text and does not repeat a completed phase. The state lives in the
@@ -127,14 +129,17 @@ Implemented and locally covered:
 - an allowlisted, credential-free local preview runner on `127.0.0.1`;
 - optional OriginKit lookup with an honest local fallback;
 - phase-specific chat activity markers and animated live labels;
-- cleanup after provider errors so later prompts are not blocked.
+- cleanup after provider errors so later prompts are not blocked;
+- a capability-negotiated desktop screenshot bridge for validated loopback previews;
+- visual Review with a maximum of two Repair attempts and a durable final verdict;
+- honest completion without visual review when the selected provider cannot accept images or no
+  capture-capable desktop client is connected.
 
 Still required before the workflow meets the definition of done:
 
-- a screenshot-capable client bridge that captures every requested preview viewport;
-- visual Review and bounded Repair orchestration over those real screenshots;
-- live desktop exercise of the complete path and all repository gates.
+- live desktop exercise of a real provider-driven build through screenshot Review and Repair;
+- replacement of the explicit judgment prompts with the jointly authored TasteSkill v2 rules.
 
-The screenshot bridge is deliberately not implemented as a file-polling side channel or a
-provider-specific browser tool. It needs an explicit shared client capability and protocol so
-desktop can capture while web and mobile degrade honestly.
+The screenshot bridge uses an explicit shared client capability and protocol rather than a
+file-polling side channel or provider-specific browser tool. Desktop captures while web and
+mobile degrade honestly.
