@@ -528,9 +528,12 @@ describe('provider-neutral design briefing', () => {
             ),
           ).toBe(true),
         )
-        expect(sessions[0]?.sentOptions).toEqual(
-          Array.from({ length: 11 }, () => ({ model, effort: 'low' })),
-        )
+        // Qualification and briefing run fast; every phase after the
+        // validated brief keeps the user's requested effort.
+        expect(sessions[0]?.sentOptions).toEqual([
+          ...Array.from({ length: 3 }, () => ({ model, effort: 'low' })),
+          ...Array.from({ length: 8 }, () => ({ model, effort: 'xhigh' })),
+        ])
         expect(readdirSync(path.join(workspace, '.taste')).sort()).toEqual([
           'assets.json',
           'brand.json',
@@ -807,7 +810,7 @@ describe('persisted threads', () => {
     store.setDesignRun('persisted-design', {
       workspacePath: 'ignored-stale-path',
       originalRequest: 'Build a studio site.',
-      options: { model: 'shared-model', effort: 'low' },
+      options: { model: 'shared-model', effort: 'high' },
       phase: 'brand',
       askedQuestions: false,
       finalAsked: false,
@@ -820,7 +823,9 @@ describe('persisted threads', () => {
       ).resolves.toMatchObject({ queued: true })
       await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
       expect(sessions[0]?.sent[0]).toContain('Brand phase')
-      expect(sessions[0]?.sentOptions[0]).toEqual({ model: 'shared-model', effort: 'low' })
+      // Recovery keeps the user's effort for post-brief phases instead of the
+      // lowered briefing setting.
+      expect(sessions[0]?.sentOptions[0]).toEqual({ model: 'shared-model', effort: 'high' })
       expect(orchestrator.queue('persisted-design').items[0]?.text).toBe('Do this after design.')
     } finally {
       orchestrator.disposeAll()

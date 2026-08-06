@@ -865,27 +865,33 @@ export class Orchestrator {
         throw new Error('turn cancelled by panic stop')
       }
       const design = attachments.includes(DESIGN_BRIEF_ATTACHMENT)
-      const turnOptions = design ? { ...options, effort: 'low' } : options
       if (design) {
         this.#stopDesignPreview(threadId)
-        this.#designFlows.set(threadId, {
+        // The flow keeps the user's own options; only brief-phase turns force
+        // low effort (see #designTurnOptions). Storing the lowered options
+        // here made Brand, Page, Build, and Review inherit the fast briefing
+        // setting for the whole run.
+        const flow: DesignFlow = {
           workspacePath: this.#repoPath(threadId),
           originalRequest: text,
-          options: turnOptions,
+          options,
           phase: 'brief',
           askedQuestions: false,
           finalAsked: false,
           explicitAnswers: [],
           correcting: false,
           repairAttempt: 0,
-        })
+        }
+        this.#designFlows.set(threadId, flow)
         this.#saveDesignFlow(threadId)
+        return await this.#sendDesignTurn(
+          threadId,
+          designBriefingPrompt(text),
+          attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT),
+          this.#designTurnOptions(flow),
+        )
       }
-      const prompt = design ? designBriefingPrompt(text) : text
-      const visibleAttachments = attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT)
-      return await (design
-        ? this.#sendDesignTurn(threadId, prompt, visibleAttachments, turnOptions)
-        : this.#get(threadId).session.sendTurn(threadId, prompt, visibleAttachments, options))
+      return await this.#get(threadId).session.sendTurn(threadId, text, attachments, options)
     } finally {
       this.#startingTurns.delete(threadId)
     }
@@ -1434,7 +1440,7 @@ export class Orchestrator {
           }
           delete flow.pendingPrompt
           this.#saveDesignFlow(threadId)
-          void this.#sendDesignTurn(threadId, prompt, [], flow.options).catch(
+          void this.#sendDesignTurn(threadId, prompt, [], this.#designTurnOptions(flow)).catch(
             (sendError: unknown) => this.#failDesignFlow(threadId, sendError),
           )
         }
@@ -1445,7 +1451,7 @@ export class Orchestrator {
         threadId,
         designBriefingContinuation(designInput.questions, answers),
         [],
-        flow.options,
+        this.#designTurnOptions(flow),
       ).catch((error: unknown) => this.#failDesignFlow(threadId, error))
       return
     }
@@ -1707,8 +1713,18 @@ export class Orchestrator {
       threadId,
       prompt,
       this.#designAttachmentsFor(flow),
-      flow.options,
+      this.#designTurnOptions(flow),
     ).catch((error: unknown) => this.#failDesignFlow(threadId, error))
+  }
+
+  /**
+   * Qualification and briefing deliberately run fast; every phase after the
+   * validated brief gets the user's own effort back. Storing lowered options
+   * on the flow instead used to give the whole run briefing effort
+   * (docs/DESIGN-AGENT.md, critical gap 3).
+   */
+  #designTurnOptions(flow: DesignFlow): TurnOptions {
+    return flow.phase === 'brief' ? { ...flow.options, effort: 'low' } : flow.options
   }
 
   #designPromptFor(flow: DesignFlow): string {
@@ -1879,7 +1895,7 @@ export class Orchestrator {
           threadId,
           prompt,
           this.#designAttachmentsFor(flow),
-          flow.options,
+          this.#designTurnOptions(flow),
         ).catch((error: unknown) => this.#failDesignFlow(threadId, error))
         return
       }
@@ -1976,8 +1992,8 @@ export class Orchestrator {
       return
     }
     this.#saveDesignFlow(threadId)
-    void this.#sendDesignTurn(threadId, prompt, [], flow.options).catch((error: unknown) =>
-      this.#failDesignFlow(threadId, error),
+    void this.#sendDesignTurn(threadId, prompt, [], this.#designTurnOptions(flow)).catch(
+      (error: unknown) => this.#failDesignFlow(threadId, error),
     )
   }
 
@@ -2142,7 +2158,12 @@ export class Orchestrator {
     const prompt = flow.pendingPrompt
     delete flow.pendingPrompt
     this.#saveDesignFlow(threadId)
-    await this.#sendDesignTurn(threadId, prompt, this.#designAttachmentsFor(flow), flow.options)
+    await this.#sendDesignTurn(
+      threadId,
+      prompt,
+      this.#designAttachmentsFor(flow),
+      this.#designTurnOptions(flow),
+    )
   }
 
   #finishWithoutVisualReview(
