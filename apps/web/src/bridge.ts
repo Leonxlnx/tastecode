@@ -13,6 +13,7 @@ type Bridge = {
   savePastedImage: (image: { type: string; bytes: ArrayBuffer }) => Promise<string>
   setZoom: (action: ZoomAction) => Promise<void>
   setTheme: (theme: AppTheme) => Promise<void>
+  capturePreview: (request: PreviewCaptureRequest) => Promise<PreviewCaptureResult>
   onZoomChange: (listener: (factor: number) => void) => () => void
   isDesktop: true
 }
@@ -23,6 +24,7 @@ export type AppTheme = 'light' | 'dark'
 const bridge = (globalThis as { harness?: Bridge }).harness
 
 export const isDesktop = bridge?.isDesktop === true
+export const canCapturePreview = bridge?.capturePreview !== undefined
 
 export function isMacOS(): boolean {
   return navigator.platform.startsWith('Mac')
@@ -64,3 +66,21 @@ export function setDesktopTheme(theme: AppTheme): Promise<void> {
 export function onAppZoomChange(listener: (factor: number) => void): () => void {
   return bridge?.onZoomChange(listener) ?? (() => undefined)
 }
+
+export async function capturePreview(
+  request: PreviewCaptureRequest,
+): Promise<PreviewCaptureResult> {
+  if (!bridge) {
+    return { status: 'failed', requestId: request.requestId, error: 'Preview capture unavailable' }
+  }
+  try {
+    return await bridge.capturePreview(request)
+  } catch (error) {
+    return {
+      status: 'failed',
+      requestId: request.requestId,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
