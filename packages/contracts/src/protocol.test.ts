@@ -120,7 +120,10 @@ describe('protocol envelopes', () => {
       PreviewCaptureRequestSchema.parse({ ...request, url: 'https://example.com' }),
     ).toThrow()
     expect(() =>
-      PreviewCaptureRequestSchema.parse({ ...request, viewports: [{ width: 10_000, height: 900 }] }),
+      PreviewCaptureRequestSchema.parse({
+        ...request,
+        viewports: [{ width: 10_000, height: 900 }],
+      }),
     ).toThrow()
     expect(
       PreviewCaptureResultSchema.parse({
