@@ -1112,6 +1112,84 @@ describe('new chats', () => {
       })
     })
   })
+
+  it('keeps highest reasoning effort at the highest stop when switching models', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      switch (method) {
+        case 'models.list':
+          return Promise.resolve({
+            models: [
+              {
+                id: 'gpt-5.6-sol',
+                displayName: 'GPT-5.6 Sol',
+                isDefault: true,
+                reasoningEfforts: ['low', 'medium', 'high', 'max', 'ultra'],
+                defaultReasoningEffort: 'low',
+                serviceTiers: [],
+              },
+              {
+                id: 'gpt-5.6-mini',
+                displayName: 'GPT-5.6 Mini',
+                isDefault: false,
+                reasoningEfforts: ['low', 'medium', 'high'],
+                defaultReasoningEffort: 'low',
+                serviceTiers: [],
+              },
+            ],
+          })
+        case 'workspace.info':
+          return Promise.resolve({ branch: 'main', added: 0, removed: 0, dirtyFiles: 0 })
+        case 'workspace.branches':
+          return Promise.resolve({ branches: ['main'] })
+        case 'auth.status':
+          return Promise.resolve({ signedIn: true })
+        case 'projects.list':
+          return Promise.resolve({ projects: serverProjects })
+        case 'thread.start':
+          return Promise.resolve({ threadId: 'thread-1' })
+        case 'thread.queue':
+          return Promise.resolve({ items: [], canSteer: true })
+        case 'thread.sendTurn':
+          return Promise.resolve({ queued: false, turnId: 'turn-1' })
+        default:
+          return request(method, params)
+      }
+    })
+
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Model and reasoning' }))
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Reasoning effort' }), { key: 'End' })
+    fireEvent.click(screen.getByRole('button', { name: 'Use GPT-5.6 Mini through Codex' }))
+
+    await waitFor(() => {
+      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
+        'Effort: High',
+      )
+    })
+
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Keep the rank' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.start', {
+        provider: 'codex',
+        workspacePath: '/work/project',
+        approval: 'ask',
+        model: 'gpt-5.6-mini',
+        effort: 'high',
+      })
+      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
+        threadId: 'thread-1',
+        text: 'Keep the rank',
+        model: 'gpt-5.6-mini',
+        effort: 'high',
+      })
+    })
+  })
 })
 
 describe('sidebar chat ordering', () => {

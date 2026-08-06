@@ -256,7 +256,7 @@ describe('ModelSelector', () => {
     expect(onEffortChange).toHaveBeenNthCalledWith(3, 'low')
   })
 
-  it('shows compact models immediately and keeps fast intent when switching models', () => {
+  it('shows compact models immediately and keeps highest effort and fast intent', () => {
     const { onModelChange, onEffortChange, onServiceTierChange } = renderSelector({
       effort: 'xhigh',
       serviceTier: 'priority',
@@ -269,7 +269,7 @@ describe('ModelSelector', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Use GPT-5.6 Mini through Codex' }))
 
     expect(onModelChange).toHaveBeenCalledWith('codex:gpt-5.6-mini')
-    expect(onEffortChange).toHaveBeenCalledWith('low')
+    expect(onEffortChange).toHaveBeenCalledWith('medium')
     expect(onServiceTierChange).toHaveBeenCalledWith('fast')
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
   })

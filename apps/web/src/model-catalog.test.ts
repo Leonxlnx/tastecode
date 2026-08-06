@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { agentMark, choicesFor } from './model-catalog.js'
+import type { Model } from '@harness/contracts'
+import { agentMark, choicesFor, resolveReasoningEffort } from './model-catalog.js'
 
-const model = {
+const model: Model = {
   id: 'shared-model',
   displayName: 'Shared model',
   isDefault: true,
   reasoningEfforts: [],
   serviceTiers: [],
+}
+
+function reasoningModel(reasoningEfforts: string[], defaultReasoningEffort?: string): Model {
+  return {
+    ...model,
+    reasoningEfforts,
+    ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
+  }
 }
 
 describe('model catalog', () => {
@@ -45,5 +54,35 @@ describe('model catalog', () => {
         false,
       ),
     ).toEqual([])
+  })
+
+  it('keeps an effort that the next model supports', () => {
+    expect(
+      resolveReasoningEffort({
+        currentEffort: 'medium',
+        currentModel: reasoningModel(['low', 'medium', 'high']),
+        nextModel: reasoningModel(['low', 'medium', 'high', 'max'], 'low'),
+      }),
+    ).toBe('medium')
+  })
+
+  it('keeps highest effort at the highest stop when the next model adds higher labels', () => {
+    expect(
+      resolveReasoningEffort({
+        currentEffort: 'high',
+        currentModel: reasoningModel(['low', 'medium', 'high']),
+        nextModel: reasoningModel(['low', 'medium', 'high', 'max', 'ultra'], 'low'),
+      }),
+    ).toBe('ultra')
+  })
+
+  it.each(['max', 'ultra'])("maps %s to the next model's highest supported effort", (effort) => {
+    expect(
+      resolveReasoningEffort({
+        currentEffort: effort,
+        currentModel: reasoningModel(['low', 'medium', 'high', 'max', 'ultra']),
+        nextModel: reasoningModel(['low', 'medium', 'high'], 'low'),
+      }),
+    ).toBe('high')
   })
 })

@@ -55,6 +55,7 @@ import {
   choicesFor,
   connectionMark,
   providerMark,
+  resolveReasoningEffort,
   sourceKey,
   type ModelChoice,
 } from './model-catalog.js'
@@ -618,9 +619,7 @@ export function App() {
         removeSetting(AGENT_NAME_KEY)
       }
       setEffort((current) =>
-        current && selected.model.reasoningEfforts.includes(current)
-          ? current
-          : (selected.model.defaultReasoningEffort ?? selected.model.reasoningEfforts[0]),
+        resolveReasoningEffort({ currentEffort: current, nextModel: selected.model }),
       )
       setServiceTier((current) =>
         current && selected.model.serviceTiers.some((tier) => tier.id === current)
@@ -910,9 +909,11 @@ export function App() {
         removeSetting(AGENT_NAME_KEY)
       }
       setEffort((current) =>
-        current && selected.model.reasoningEfforts.includes(current)
-          ? current
-          : (selected.model.defaultReasoningEffort ?? selected.model.reasoningEfforts[0]),
+        resolveReasoningEffort({
+          currentEffort: current,
+          currentModel: selectedModelChoice?.model,
+          nextModel: selected.model,
+        }),
       )
       setServiceTier((current) =>
         current && selected.model.serviceTiers.some((tier) => tier.id === current)
@@ -920,7 +921,7 @@ export function App() {
           : (selected.model.defaultServiceTier ?? undefined),
       )
     },
-    [models],
+    [models, selectedModelChoice],
   )
 
   const addProject = useCallback(async () => {
@@ -1440,10 +1441,11 @@ export function App() {
           // effort/tier into one that does not offer them sends a parameter
           // the server rejects.
           setEffort((current) =>
-            current && matchingChoice.model.reasoningEfforts.includes(current)
-              ? current
-              : (matchingChoice.model.defaultReasoningEffort ??
-                matchingChoice.model.reasoningEfforts[0]),
+            resolveReasoningEffort({
+              currentEffort: current,
+              currentModel: selectedModelChoice?.model,
+              nextModel: matchingChoice.model,
+            }),
           )
           setServiceTier((current) =>
             current && matchingChoice.model.serviceTiers.some((tier) => tier.id === current)
@@ -1478,7 +1480,7 @@ export function App() {
         setNotice(error instanceof Error ? error.message : String(error))
       }
     },
-    [projects, models, loadHistory, transport],
+    [projects, models, selectedModelChoice, loadHistory, transport],
   )
 
   const inspectCheckpoint = useCallback(

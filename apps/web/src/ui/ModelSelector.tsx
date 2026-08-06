@@ -1,6 +1,6 @@
 import { useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react'
 import { Check, ChevronDown, Zap } from 'lucide-react'
-import type { ModelChoice } from '../model-catalog.js'
+import { resolveReasoningEffort, type ModelChoice } from '../model-catalog.js'
 import { DitherSlider } from './dither-kit/DitherSlider.js'
 import { Menu } from './Menu.js'
 import { ProviderIcon } from './ProviderIcon.js'
@@ -115,8 +115,7 @@ function getSelectedEffort(
   effort: string | undefined,
 ): string | undefined {
   if (!model) return undefined
-  if (effort && model.reasoningEfforts.includes(effort)) return effort
-  return model.defaultReasoningEffort ?? model.reasoningEfforts[0]
+  return resolveReasoningEffort({ currentEffort: effort, nextModel: model })
 }
 
 function isFastModeEnabled(
@@ -345,14 +344,13 @@ export function ModelSelector(props: ModelSelectorProps) {
       props.onModelChange(nextChoice.key)
     }
 
-    if (
-      nextModel.reasoningEfforts.length > 0 &&
-      (!selectedEffort || !nextModel.reasoningEfforts.includes(selectedEffort))
-    ) {
-      const nextEffort = nextModel.defaultReasoningEffort ?? nextModel.reasoningEfforts[0]
-      if (nextEffort && nextEffort !== selectedEffort) {
-        props.onEffortChange(nextEffort)
-      }
+    const nextEffort = resolveReasoningEffort({
+      currentEffort: selectedEffort,
+      currentModel: model,
+      nextModel,
+    })
+    if (nextEffort && nextEffort !== selectedEffort) {
+      props.onEffortChange(nextEffort)
     }
 
     const nextServiceTier = getNextServiceTierForModel({
