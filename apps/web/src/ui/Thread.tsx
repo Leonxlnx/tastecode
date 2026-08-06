@@ -349,14 +349,13 @@ export function Thread(props: {
               )
             })}
             {props.running && props.activeTurn ? (
-              // Keyed by turn so the entrance replays at turn boundaries and
-              // only there. Before any response row exists the rail sits at
-              // the end of the runway, over the space the spacer below holds.
-              <div
-                key={props.activeTurn.id}
-                className="thread__rail"
-                style={{ transform: `translateY(${railOffset}px)` }}
-              >
+              // Deliberately not keyed by turn id: the optimistic turn's id is
+              // replaced by the server's a few seconds in, and a key would
+              // remount the rail at exactly the moment this render position
+              // exists to survive. Before any response row exists the rail
+              // sits at the end of the runway, over the space the spacer
+              // below holds.
+              <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
                 <WorkingRail startedAt={props.activeTurn.startedAt} label={activeWorkLabel} />
               </div>
             ) : null}
