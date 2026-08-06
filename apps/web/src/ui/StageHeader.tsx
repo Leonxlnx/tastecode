@@ -89,10 +89,7 @@ function basename(path: string): string {
 
 /**
  * Memoised: the app root re-renders on every streamed frame, and this subtree
- * does not change while an answer arrives.
- *
- * NOT YET EFFECTIVE — two inline handlers in the owner (onOpenRollback,
- * onToggleTerminal) fail memo's shallow compare on every render. Same
- * follow-up as Sidebar.
+ * does not change while an answer arrives. Stable owner callbacks let the
+ * shallow comparison keep project menus and header controls out of that path.
  */
 export const StageHeader = memo(StageHeaderComponent)

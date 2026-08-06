@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { DomainEvent } from '@harness/contracts'
+import type { ComponentProps } from 'react'
 import { App } from './App.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 
@@ -12,6 +13,11 @@ const transport = vi.hoisted(() => ({
   urls: [] as string[],
   connect: vi.fn(),
   close: vi.fn(),
+}))
+
+const shellRenders = vi.hoisted(() => ({
+  sidebar: vi.fn(),
+  stageHeader: vi.fn(),
 }))
 
 vi.mock('./transport.js', () => ({
@@ -64,6 +70,26 @@ vi.mock('./ui/Thread.js', () => ({
   ),
 }))
 
+vi.mock('./ui/Sidebar.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./ui/Sidebar.js')>()
+  const { memo } = await import('react')
+  const Sidebar = memo((props: ComponentProps<typeof original.Sidebar>) => {
+    shellRenders.sidebar()
+    return <original.Sidebar {...props} />
+  })
+  return { ...original, Sidebar }
+})
+
+vi.mock('./ui/StageHeader.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./ui/StageHeader.js')>()
+  const { memo } = await import('react')
+  const StageHeader = memo((props: ComponentProps<typeof original.StageHeader>) => {
+    shellRenders.stageHeader()
+    return <original.StageHeader {...props} />
+  })
+  return { ...original, StageHeader }
+})
+
 vi.mock('./bridge.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./bridge.js')>()),
   isMacOS: () => true,
@@ -84,6 +110,8 @@ let serverSidebarSettings: {
 } = { mode: 'classic', autoSettleDays: 3 }
 
 beforeEach(() => {
+  shellRenders.sidebar.mockClear()
+  shellRenders.stageHeader.mockClear()
   transport.listeners.clear()
   transport.stateListeners.clear()
   transport.urls.length = 0
@@ -1766,6 +1794,47 @@ describe('live sessions', () => {
     expect(screen.getByTestId('thread').textContent).not.toContain('Hello')
     act(() => frames[0]?.(16))
     expect(screen.getByTestId('thread').textContent).toContain('Hello')
+  })
+
+  it('keeps static shell regions out of streamed-frame renders', async () => {
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    await screen.findByTestId('thread')
+    emitThreadEvent('untouched-thread', {
+      type: 'turn.started',
+      turn: { id: 'turn-1', threadId: 'untouched-thread', status: 'running', createdAt: 0 },
+    })
+    emitThreadEvent('untouched-thread', {
+      type: 'item.started',
+      item: {
+        id: 'item-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'started',
+        text: '',
+        createdAt: 0,
+      },
+    })
+
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    shellRenders.sidebar.mockClear()
+    shellRenders.stageHeader.mockClear()
+
+    emitThreadEvent('untouched-thread', {
+      type: 'item.delta',
+      turnId: 'turn-1',
+      itemId: 'item-1',
+      textDelta: 'Hello',
+    })
+    act(() => frames[0]?.(16))
+
+    expect(shellRenders.sidebar).not.toHaveBeenCalled()
+    expect(shellRenders.stageHeader).not.toHaveBeenCalled()
   })
 
   it('flushes pending deltas before a completion event', async () => {

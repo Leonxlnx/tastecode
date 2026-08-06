@@ -1860,6 +1860,140 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [activePath, addProject, provider, startNewChat, settingsOpen])
 
+  const sidebarInbox = useMemo(
+    () => ({
+      onSettle: (id: string) => void hideSession(id, 'settle'),
+      onSettleMany: (ids: string[]) => void hideSessions(ids, 'settle'),
+      onUnsettle: (id: string) => void restoreSession(id, 'unsettle'),
+      onUnsettleMany: (ids: string[]) => void restoreSessions(ids, 'unsettle'),
+      onSnooze: (id: string, wakeAt: number) => void hideSession(id, 'snooze', wakeAt),
+      onSnoozeMany: (ids: string[], wakeAt: number) => void hideSessions(ids, 'snooze', wakeAt),
+      onUnsnooze: (id: string) => void restoreSession(id, 'unsnooze'),
+      onUnsnoozeMany: (ids: string[]) => void restoreSessions(ids, 'unsnooze'),
+      onKeepActive: (id: string, keepActive: boolean) => void keepSessionActive(id, keepActive),
+    }),
+    [hideSession, hideSessions, restoreSession, restoreSessions, keepSessionActive],
+  )
+  const closeSidebar = useCallback(() => setCollapsed(true), [])
+  const resizeSidebar = useCallback((width: number) => {
+    setRailWidth(width)
+    writeSetting(RAIL_WIDTH_KEY, String(width))
+  }, [])
+  const addSidebarProject = useCallback(() => void addProject(), [addProject])
+  const startSidebarSession = useCallback(
+    (path?: string, chooseProject?: boolean) => {
+      if (chooseProject && projects.length > 1) {
+        setPreferredNewThreadProject(path ?? activePath)
+        setPaletteScope('new-thread')
+      } else if (path) beginSession(path)
+      else if (projects.length === 1 && projects[0]) beginSession(projects[0].path)
+      else {
+        setPreferredNewThreadProject(activePath)
+        setPaletteScope('new-thread')
+      }
+    },
+    [projects, activePath, beginSession],
+  )
+  const selectSidebarSession = useCallback((id: string) => void selectSession(id), [selectSession])
+  const renameSidebarProject = useCallback(
+    (path: string, name: string) => {
+      setProjects((current) =>
+        current.map((project) => (project.path === path ? { ...project, name } : project)),
+      )
+      void transport.request('projects.rename', { path, name }).catch(() => undefined)
+    },
+    [transport],
+  )
+  const removeSidebarProject = useCallback(
+    (path: string) => {
+      const previousActivePath = activePath
+      setProjects((current) => current.filter((project) => project.path !== path))
+      if (activePath === path) setActivePath(undefined)
+      void transport
+        .request('projects.remove', { path })
+        .then(refreshProjects)
+        .catch((error) => {
+          setNotice(error instanceof Error ? error.message : String(error))
+          // Put the selection back too, not just the list. Removal can now be
+          // refused, and refreshProjects would otherwise fill the cleared
+          // selection with an arbitrary other project while the open session
+          // still belongs to this one.
+          setActivePath(previousActivePath)
+          void refreshProjects().catch(() => undefined)
+        })
+    },
+    [transport, activePath, refreshProjects],
+  )
+  const toggleSidebarProjectPin = useCallback(
+    (path: string) => {
+      const pinned = !projects.find((project) => project.path === path)?.pinned
+      setProjects((current) =>
+        current.map((project) => (project.path === path ? { ...project, pinned } : project)),
+      )
+      void transport.request('projects.pin', { path, pinned }).catch(() => undefined)
+    },
+    [transport, projects],
+  )
+  const renameSidebarSession = useCallback(
+    (id: string, title: string) => {
+      setProjects((current) => renameSession(current, id, title))
+      void transport.request('thread.rename', { threadId: id, title }).catch(() => undefined)
+    },
+    [transport],
+  )
+  const toggleSidebarSessionPin = useCallback(
+    (id: string) => {
+      const pinned = !findSession(projects, id)?.session.pinned
+      setProjects((current) => updateSession(current, id, (session) => ({ ...session, pinned })))
+      void transport.request('thread.pin', { threadId: id, pinned }).catch(() => undefined)
+    },
+    [transport, projects],
+  )
+  const deleteSidebarSession = useCallback(
+    (id: string) => void archiveSession(id),
+    [archiveSession],
+  )
+  const archiveSidebarProject = useCallback(
+    (sessionIds: string[]) => {
+      void (async () => {
+        for (const id of sessionIds) {
+          if (!(await archiveSession(id))) break
+        }
+      })()
+    },
+    [archiveSession],
+  )
+  const reorderSidebarSession = useCallback(
+    (projectPath: string, sourceId: string, targetId: string, position: 'before' | 'after') => {
+      setProjects((current) =>
+        current.map((project) => {
+          if (project.path !== projectPath) return project
+          const sourceIndex = project.sessions.findIndex((session) => session.id === sourceId)
+          if (sourceIndex < 0) return project
+
+          const sessions = [...project.sessions]
+          const [moved] = sessions.splice(sourceIndex, 1)
+          const targetIndex = sessions.findIndex((session) => session.id === targetId)
+          if (!moved || targetIndex < 0) return project
+          sessions.splice(targetIndex + (position === 'after' ? 1 : 0), 0, moved)
+          return { ...project, sessions }
+        }),
+      )
+    },
+    [],
+  )
+  const openSidebarSearch = useCallback((projectPath?: string) => {
+    setSessionSearchProject(projectPath)
+    setSessionSearchOpen(true)
+  }, [])
+  const openSettings = useCallback(() => setSettingsOpen(true), [])
+  const toggleRail = useCallback(() => setCollapsed((current) => !current), [])
+  const openRollback = useCallback(() => {
+    setRollbackInspection(undefined)
+    setRollbackOpen(true)
+  }, [])
+  const toggleTerminal = useCallback(() => setTerminalOpen((open) => !open), [])
+
   if (!provider) {
     return (
       <>
@@ -2013,7 +2147,7 @@ export function App() {
       className={`shell ${collapsed ? 'is-narrow' : ''}`}
       style={{ '--rail-w': `${railWidth}px` } as CSSProperties}
     >
-      <TitleBar collapsed={collapsed} onToggleRail={() => setCollapsed((c) => !c)} />
+      <TitleBar collapsed={collapsed} onToggleRail={toggleRail} />
       {isDesktop ? <ZoomHud /> : null}
 
       <div className="shell__body">
@@ -2024,104 +2158,25 @@ export function App() {
           providerName={providerName(provider, acpAgentName)}
           usageSummary={usageSummary}
           mode={sidebarSettings.mode}
-          inbox={{
-            onSettle: (id) => void hideSession(id, 'settle'),
-            onSettleMany: (ids) => void hideSessions(ids, 'settle'),
-            onUnsettle: (id) => void restoreSession(id, 'unsettle'),
-            onUnsettleMany: (ids) => void restoreSessions(ids, 'unsettle'),
-            onSnooze: (id, wakeAt) => void hideSession(id, 'snooze', wakeAt),
-            onSnoozeMany: (ids, wakeAt) => void hideSessions(ids, 'snooze', wakeAt),
-            onUnsnooze: (id) => void restoreSession(id, 'unsnooze'),
-            onUnsnoozeMany: (ids) => void restoreSessions(ids, 'unsnooze'),
-            onKeepActive: (id, keepActive) => void keepSessionActive(id, keepActive),
-          }}
+          inbox={sidebarInbox}
           collapsed={collapsed}
           width={railWidth}
           account={account}
-          onClose={() => setCollapsed(true)}
-          onWidthChange={(width) => {
-            setRailWidth(width)
-            writeSetting(RAIL_WIDTH_KEY, String(width))
-          }}
-          onAddProject={() => void addProject()}
-          onNewSession={(path, chooseProject) => {
-            if (chooseProject && projects.length > 1) {
-              setPreferredNewThreadProject(path ?? activePath)
-              setPaletteScope('new-thread')
-            } else if (path) beginSession(path)
-            else if (projects.length === 1 && projects[0]) beginSession(projects[0].path)
-            else {
-              setPreferredNewThreadProject(activePath)
-              setPaletteScope('new-thread')
-            }
-          }}
-          onSelectSession={(id) => void selectSession(id)}
-          onRenameProject={(path, name) => {
-            setProjects((c) => c.map((p) => (p.path === path ? { ...p, name } : p)))
-            void transport.request('projects.rename', { path, name }).catch(() => undefined)
-          }}
-          onRemoveProject={(path) => {
-            const previousActivePath = activePath
-            setProjects((c) => c.filter((p) => p.path !== path))
-            if (activePath === path) setActivePath(undefined)
-            void transport
-              .request('projects.remove', { path })
-              .then(refreshProjects)
-              .catch((error) => {
-                setNotice(error instanceof Error ? error.message : String(error))
-                // Put the selection back too, not just the list. Removal can
-                // now be refused, and refreshProjects would otherwise fill the
-                // cleared selection with an arbitrary other project while the
-                // open session still belongs to this one.
-                setActivePath(previousActivePath)
-                void refreshProjects().catch(() => undefined)
-              })
-          }}
-          onTogglePin={(path) => {
-            const pinned = !projects.find((p) => p.path === path)?.pinned
-            setProjects((c) => c.map((p) => (p.path === path ? { ...p, pinned } : p)))
-            void transport.request('projects.pin', { path, pinned }).catch(() => undefined)
-          }}
-          onRenameSession={(id, title) => {
-            setProjects((c) => renameSession(c, id, title))
-            void transport.request('thread.rename', { threadId: id, title }).catch(() => undefined)
-          }}
-          onToggleSessionPin={(id) => {
-            const pinned = !findSession(projects, id)?.session.pinned
-            setProjects((current) =>
-              updateSession(current, id, (session) => ({ ...session, pinned })),
-            )
-            void transport.request('thread.pin', { threadId: id, pinned }).catch(() => undefined)
-          }}
-          onDeleteSession={(id) => void archiveSession(id)}
-          onArchiveProject={(sessionIds) => {
-            void (async () => {
-              for (const id of sessionIds) {
-                if (!(await archiveSession(id))) break
-              }
-            })()
-          }}
-          onReorderSession={(projectPath, sourceId, targetId, position) =>
-            setProjects((current) =>
-              current.map((project) => {
-                if (project.path !== projectPath) return project
-                const sourceIndex = project.sessions.findIndex((session) => session.id === sourceId)
-                if (sourceIndex < 0) return project
-
-                const sessions = [...project.sessions]
-                const [moved] = sessions.splice(sourceIndex, 1)
-                const targetIndex = sessions.findIndex((session) => session.id === targetId)
-                if (!moved || targetIndex < 0) return project
-                sessions.splice(targetIndex + (position === 'after' ? 1 : 0), 0, moved)
-                return { ...project, sessions }
-              }),
-            )
-          }
-          onOpenSearch={(projectPath) => {
-            setSessionSearchProject(projectPath)
-            setSessionSearchOpen(true)
-          }}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onClose={closeSidebar}
+          onWidthChange={resizeSidebar}
+          onAddProject={addSidebarProject}
+          onNewSession={startSidebarSession}
+          onSelectSession={selectSidebarSession}
+          onRenameProject={renameSidebarProject}
+          onRemoveProject={removeSidebarProject}
+          onTogglePin={toggleSidebarProjectPin}
+          onRenameSession={renameSidebarSession}
+          onToggleSessionPin={toggleSidebarSessionPin}
+          onDeleteSession={deleteSidebarSession}
+          onArchiveProject={archiveSidebarProject}
+          onReorderSession={reorderSidebarSession}
+          onOpenSearch={openSidebarSearch}
+          onOpenSettings={openSettings}
         />
 
         <main className="stage">
@@ -2133,11 +2188,8 @@ export function App() {
             worktreeBranch={active?.session.worktreeBranch}
             terminalOpen={terminalOpen}
             onSelectProject={selectProject}
-            onOpenRollback={() => {
-              setRollbackInspection(undefined)
-              setRollbackOpen(true)
-            }}
-            onToggleTerminal={() => setTerminalOpen((open) => !open)}
+            onOpenRollback={openRollback}
+            onToggleTerminal={toggleTerminal}
           />
 
           <div

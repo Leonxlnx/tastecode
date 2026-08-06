@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { PanelLeft } from 'lucide-react'
 import { isMacOS } from '../bridge.js'
 import { SHORTCUTS, shortcutAria, shortcutLabel } from '../shortcuts.js'
@@ -13,7 +14,7 @@ import { SHORTCUTS, shortcutAria, shortcutLabel } from '../shortcuts.js'
  * Height comes from --titlebar-h, which the main process also uses for the
  * native caption buttons.
  */
-export function TitleBar(props: { collapsed: boolean; onToggleRail: () => void }) {
+function TitleBarComponent(props: { collapsed: boolean; onToggleRail: () => void }) {
   const shortcut = shortcutLabel(SHORTCUTS.toggleSidebar, isMacOS())
 
   return (
@@ -32,3 +33,6 @@ export function TitleBar(props: { collapsed: boolean; onToggleRail: () => void }
     </header>
   )
 }
+
+/** Window chrome is independent of streamed thread state. */
+export const TitleBar = memo(TitleBarComponent)

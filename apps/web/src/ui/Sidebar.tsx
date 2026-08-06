@@ -926,12 +926,7 @@ function initial(account: Account | undefined, fallback: string): string {
 
 /**
  * Memoised: the app root re-renders on every streamed frame, and this subtree
- * does not change while an answer arrives.
- *
- * NOT YET EFFECTIVE. memo compares props shallowly, and the owner still passes
- * a dozen inline arrows plus a fresh `inbox` object, so the comparison fails
- * every time. The internal useMemos above save the repeated work today.
- * Finishing this means giving those props stable identities in App.tsx —
- * mechanical, but too broad a change to make carelessly.
+ * does not change while an answer arrives. The owner keeps every callback and
+ * composite prop stable, so streamed text does not reconcile the session rail.
  */
 export const Sidebar = memo(SidebarComponent)
