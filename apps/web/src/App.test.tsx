@@ -813,21 +813,22 @@ describe('new chats', () => {
     })
   })
 
-  it('switches sidebar versions directly from the rail', async () => {
+  it('switches sidebar versions only from settings', async () => {
     serverSidebarSettings.mode = 'classic'
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Switch to V2 Inbox sidebar' }))
+    expect(screen.queryByRole('button', { name: /Switch to V[12].*sidebar/ })).toBeNull()
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Workflows' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'V2 Inbox' }))
 
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('sidebar.updateSettings', {
         mode: 'inbox',
       })
-      expect(
-        screen
-          .getByRole('button', { name: 'Switch to V1 Classic sidebar' })
-          .getAttribute('aria-pressed'),
-      ).toBe('true')
+      expect(screen.getByRole('radio', { name: 'V2 Inbox' }).getAttribute('aria-checked')).toBe(
+        'true',
+      )
     })
   })
 
@@ -1272,9 +1273,75 @@ describe('inbox lifecycle', () => {
         screen.getByRole('button', { name: /^Older chat,/ }).closest('li')?.classList,
       ).toContain('is-selected')
     })
-    fireEvent.click(screen.getByRole('button', { name: /Settled/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Unsettle Newest chat' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Un-settle Newest chat' }))
     expect(transport.request).toHaveBeenCalledWith('thread.unsettle', { threadId: 'newest' })
+  })
+
+  it('bulk settles selected threads and advances beyond the whole selection', async () => {
+    serverSidebarSettings.mode = 'inbox'
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'newest', title: 'Newest chat', provider: 'codex', createdAt: 3, running: false },
+          { id: 'middle', title: 'Middle chat', provider: 'codex', createdAt: 2, running: false },
+          { id: 'oldest', title: 'Oldest chat', provider: 'codex', createdAt: 1, running: false },
+        ],
+      },
+    ]
+
+    render(<App />)
+    const newest = await screen.findByRole('button', { name: /^Newest chat,/ })
+    const middle = screen.getByRole('button', { name: /^Middle chat,/ })
+    fireEvent.click(newest)
+    fireEvent.click(newest, { metaKey: true })
+    fireEvent.click(middle, { metaKey: true })
+    fireEvent.contextMenu(middle)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Settle 2 threads' }))
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.settle', { threadId: 'newest' })
+      expect(transport.request).toHaveBeenCalledWith('thread.settle', { threadId: 'middle' })
+      expect(
+        screen.getByRole('button', { name: /^Oldest chat,/ }).closest('li')?.classList,
+      ).toContain('is-selected')
+    })
+  })
+
+  it('uses the viewed project as the preferred new-thread destination', async () => {
+    serverSidebarSettings.mode = 'inbox'
+    serverProjects = [
+      {
+        path: '/work/alpha',
+        name: 'Alpha',
+        pinned: false,
+        createdAt: 0,
+        sessions: [],
+      },
+      {
+        path: '/work/beta',
+        name: 'Beta',
+        pinned: false,
+        createdAt: 1,
+        sessions: [],
+      },
+    ]
+
+    render(<App />)
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Sidebar project filter' }), {
+      target: { value: '/work/beta' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'New Thread' }))
+
+    const picker = screen.getByRole('dialog', { name: 'Choose a project for the new thread' })
+    expect(
+      within(picker)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['New thread in Beta/work/beta', 'New thread in Alpha/work/alpha'])
   })
 
   it('stops emphasizing completed work after it is opened', async () => {
@@ -1294,14 +1361,19 @@ describe('inbox lifecycle', () => {
             running: false,
             status: 'ready',
             unread: true,
+            lifecycle: { state: 'active', keepActive: false, wokeAt: 1 },
           },
         ],
       },
     ]
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Ready chat, project, Ready' }))
-    expect(await screen.findByRole('button', { name: 'Ready chat, project, Idle' })).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: 'Ready chat, project, Done' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Ready chat, project, Done' })).toBeNull()
+      expect(screen.getByRole('button', { name: /^Ready chat, project,/ })).toBeTruthy()
+      expect(screen.queryByText('Woke')).toBeNull()
+    })
   })
 })
 
@@ -1347,6 +1419,7 @@ describe('global shortcuts', () => {
   })
 
   it('opens the project switcher directly and keeps its shortcut out of the picker', async () => {
+    serverSidebarSettings.mode = 'classic'
     serverProjects = [
       {
         path: '/work/project',
@@ -1365,9 +1438,9 @@ describe('global shortcuts', () => {
     ]
     render(<App />)
 
+    await screen.findByRole('button', { name: 'New session' })
     const actions = document.querySelector<HTMLElement>('.rail__actions')
     expect(actions).not.toBeNull()
-    await screen.findByRole('button', { name: 'New session' })
     expect(within(actions!).getByText('⌘N')).toBeTruthy()
     expect(within(actions!).getByText('⌘⇧O')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Project' }).textContent).not.toContain('⌘P')
@@ -1757,10 +1830,8 @@ describe('reopening a session', () => {
         threadId: 'untouched-thread',
       })
     })
-    const limits = await screen.findByRole('button', { name: 'Usage limits' })
-    expect(limits.textContent).toContain('75% left')
-    fireEvent.click(limits)
-    expect(await screen.findByText('1.2k tokens this chat')).toBeTruthy()
-    expect(screen.getByText('3.4k tokens today')).toBeTruthy()
+    expect(screen.queryByText('75% left')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    expect(await screen.findByText('75% left')).toBeTruthy()
   })
 })

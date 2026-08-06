@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Search } from 'lucide-react'
 import { ShortcutHint } from './ShortcutHint.js'
 
-export type CommandScope = 'all' | 'projects'
+export type CommandScope = 'all' | 'projects' | 'new-thread'
 
 export type PaletteCommand = {
   id: string
@@ -12,12 +12,14 @@ export type PaletteCommand = {
   keywords?: string
   shortcut?: string
   projectCommand?: boolean
+  newThreadProject?: boolean
   run: () => void
 }
 
 export function CommandPalette(props: {
   commands: PaletteCommand[]
   scope: CommandScope
+  preferredCommandId?: string | undefined
   onClose: () => void
 }) {
   const [query, setQuery] = useState('')
@@ -30,10 +32,18 @@ export function CommandPalette(props: {
   }, [])
 
   const commands = useMemo(() => {
-    const available =
+    const scoped =
       props.scope === 'projects'
         ? props.commands.filter((command) => command.projectCommand)
-        : props.commands
+        : props.scope === 'new-thread'
+          ? props.commands.filter((command) => command.newThreadProject)
+          : props.commands
+    const preferred = props.preferredCommandId
+      ? scoped.find((command) => command.id === props.preferredCommandId)
+      : undefined
+    const available = preferred
+      ? [preferred, ...scoped.filter((command) => command.id !== preferred.id)]
+      : scoped
     const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
     if (terms.length === 0) return available
     return available.filter((command) => {
@@ -41,7 +51,7 @@ export function CommandPalette(props: {
         `${command.title} ${command.detail ?? ''} ${command.group} ${command.keywords ?? ''}`.toLowerCase()
       return terms.every((term) => searchable.includes(term))
     })
-  }, [props.commands, props.scope, query])
+  }, [props.commands, props.scope, props.preferredCommandId, query])
 
   useEffect(() => {
     setSelected(0)
@@ -72,7 +82,13 @@ export function CommandPalette(props: {
       className="command-palette"
       role="dialog"
       aria-modal="true"
-      aria-label={props.scope === 'projects' ? 'Switch project' : 'Command palette'}
+      aria-label={
+        props.scope === 'projects'
+          ? 'Switch project'
+          : props.scope === 'new-thread'
+            ? 'Choose a project for the new thread'
+            : 'Command palette'
+      }
       onKeyDown={(event) => {
         if (event.key === 'Escape' && !event.defaultPrevented) {
           event.preventDefault()
@@ -111,7 +127,11 @@ export function CommandPalette(props: {
               }
             }}
             placeholder={
-              props.scope === 'projects' ? 'Switch project…' : 'Search commands, projects, chats…'
+              props.scope === 'projects'
+                ? 'Switch project…'
+                : props.scope === 'new-thread'
+                  ? 'Choose a project…'
+                  : 'Search commands, projects, chats…'
             }
             spellCheck={false}
             aria-label="Search commands"

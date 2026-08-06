@@ -225,6 +225,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sidebarSettings, setSidebarSettings] = useState(DEFAULT_SIDEBAR_SETTINGS)
   const [paletteScope, setPaletteScope] = useState<CommandScope | null>(null)
+  const [preferredNewThreadProject, setPreferredNewThreadProject] = useState<string>()
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false)
   const [sessionSearchProject, setSessionSearchProject] = useState<string>()
   const [searchJump, setSearchJump] = useState<{
@@ -409,13 +410,17 @@ export function App() {
 
       if (affectsSessionStatus(event)) {
         setProjects((current) => {
-          const updated = updateSession(current, threadId, (session) => ({
-            ...session,
-            status: statusFor(next, event, threadId !== activeIdRef.current),
-            ...(event.type === 'turn.completed'
-              ? { unread: threadId !== activeIdRef.current }
-              : {}),
-          }))
+          const updated = updateSession(current, threadId, (session) => {
+            const status = statusFor(next, event, threadId !== activeIdRef.current)
+            return {
+              ...session,
+              status,
+              statusSince: status === session.status ? session.statusSince : Date.now(),
+              ...(event.type === 'turn.completed'
+                ? { unread: threadId !== activeIdRef.current }
+                : {}),
+            }
+          })
           return event.type === 'turn.started' && sidebarSettingsRef.current.mode === 'classic'
             ? promoteSession(updated, threadId)
             : updated
@@ -719,18 +724,22 @@ export function App() {
         pinned: project.pinned,
         sessions: applySessionOrder(
           project.path,
-          project.sessions.map((session) => ({
-            id: session.id,
-            title: session.title,
-            provider: session.provider,
-            ...(session.agent ? { agent: session.agent } : {}),
-            createdAt: session.createdAt,
-            status: session.status ?? (session.running ? 'working' : 'idle'),
-            lifecycle: session.lifecycle ?? { state: 'active', keepActive: false },
-            unread: session.unread ?? false,
-            pinned: session.pinned ?? false,
-            ...(session.worktreeBranch ? { worktreeBranch: session.worktreeBranch } : {}),
-          })),
+          project.sessions.map((session) => {
+            const status = session.status ?? (session.running ? 'working' : 'idle')
+            return {
+              id: session.id,
+              title: session.title,
+              provider: session.provider,
+              ...(session.agent ? { agent: session.agent } : {}),
+              createdAt: session.createdAt,
+              statusSince: session.running ? Date.now() : session.createdAt,
+              status,
+              lifecycle: session.lifecycle ?? { state: 'active', keepActive: false },
+              unread: session.unread ?? false,
+              pinned: session.pinned ?? false,
+              ...(session.worktreeBranch ? { worktreeBranch: session.worktreeBranch } : {}),
+            }
+          }),
           savedOrder,
         ),
       })),
@@ -981,6 +990,7 @@ export function App() {
                             provider: choice.provider,
                             ...(choice.agent ? { agent: choice.agent.id } : {}),
                             createdAt: Date.now(),
+                            statusSince: Date.now(),
                             status: 'starting',
                             lifecycle: { state: 'active', keepActive: false },
                             unread: false,
@@ -1121,6 +1131,7 @@ export function App() {
                       provider: choice.provider,
                       ...(choice.agent ? { agent: choice.agent.id } : {}),
                       createdAt: Date.now(),
+                      statusSince: Date.now(),
                       status: 'starting',
                       lifecycle: { state: 'active', keepActive: false },
                       unread: false,
@@ -1606,10 +1617,15 @@ export function App() {
   }, [transport, checkoutDelete, deleteSession, refreshProjects])
 
   const startNewChat = useCallback(() => {
+    if (sidebarSettings.mode === 'inbox' && projects.length > 1) {
+      setPreferredNewThreadProject(activePath)
+      setPaletteScope('new-thread')
+      return
+    }
     const path = activePath ?? projects[0]?.path
     if (path) beginSession(path)
     else void addProject()
-  }, [activePath, projects, beginSession, addProject])
+  }, [activePath, projects, beginSession, addProject, sidebarSettings.mode])
 
   const updateSidebarSettings = useCallback(
     (updates: Partial<SidebarSettings>) => {
@@ -1622,28 +1638,40 @@ export function App() {
     [transport],
   )
 
-  const hideSession = useCallback(
-    async (id: string, action: 'settle' | 'snooze', wakeAt?: number) => {
+  const hideSessions = useCallback(
+    async (ids: string[], action: 'settle' | 'snooze', wakeAt?: number) => {
+      const targets = [...new Set(ids)]
+      if (targets.length === 0 || (action === 'snooze' && wakeAt === undefined)) return
       try {
-        const pending =
-          action === 'settle'
-            ? transport.request('thread.settle', { threadId: id })
-            : wakeAt === undefined
-              ? undefined
-              : transport.request('thread.snooze', { threadId: id, wakeAt })
-        if (!pending) return
-        const result = await pending
+        const results = await Promise.all(
+          targets.map(async (id) => {
+            let result
+            if (action === 'settle') {
+              result = await transport.request('thread.settle', { threadId: id })
+            } else {
+              if (wakeAt === undefined) throw new Error('snooze time is required')
+              result = await transport.request('thread.snooze', { threadId: id, wakeAt })
+            }
+            return [id, result.lifecycle] as const
+          }),
+        )
+        const lifecycles = new Map(results)
         setProjects((current) =>
-          updateSession(current, id, (session) => ({
-            ...session,
-            lifecycle: result.lifecycle,
+          current.map((project) => ({
+            ...project,
+            sessions: project.sessions.map((session) => {
+              const lifecycle = lifecycles.get(session.id)
+              return lifecycle ? { ...session, lifecycle } : session
+            }),
           })),
         )
-        if (activeIdRef.current !== id) return
-        const current = findSession(projects, id)
+        const activeId = activeIdRef.current
+        if (!activeId || !targets.includes(activeId)) return
+        const current = findSession(projects, activeId)
+        const hidden = new Set(targets)
         const next = projects
           .flatMap((project) => project.sessions)
-          .filter((session) => session.id !== id && session.lifecycle.state === 'active')
+          .filter((session) => !hidden.has(session.id) && session.lifecycle.state === 'active')
           .sort((a, b) => b.createdAt - a.createdAt)[0]
         if (next) await selectSession(next.id)
         else if (current) beginSession(current.project.path)
@@ -1655,17 +1683,34 @@ export function App() {
     [transport, projects, selectSession, beginSession, refreshProjects],
   )
 
-  const restoreSession = useCallback(
-    async (id: string, action: 'unsettle' | 'unsnooze') => {
+  const hideSession = useCallback(
+    (id: string, action: 'settle' | 'snooze', wakeAt?: number) =>
+      hideSessions([id], action, wakeAt),
+    [hideSessions],
+  )
+
+  const restoreSessions = useCallback(
+    async (ids: string[], action: 'unsettle' | 'unsnooze') => {
+      const targets = [...new Set(ids)]
+      if (targets.length === 0) return
       try {
-        const result =
-          action === 'unsettle'
-            ? await transport.request('thread.unsettle', { threadId: id })
-            : await transport.request('thread.unsnooze', { threadId: id })
+        const results = await Promise.all(
+          targets.map(async (id) => {
+            const result =
+              action === 'unsettle'
+                ? await transport.request('thread.unsettle', { threadId: id })
+                : await transport.request('thread.unsnooze', { threadId: id })
+            return [id, result.lifecycle] as const
+          }),
+        )
+        const lifecycles = new Map(results)
         setProjects((current) =>
-          updateSession(current, id, (session) => ({
-            ...session,
-            lifecycle: result.lifecycle,
+          current.map((project) => ({
+            ...project,
+            sessions: project.sessions.map((session) => {
+              const lifecycle = lifecycles.get(session.id)
+              return lifecycle ? { ...session, lifecycle } : session
+            }),
           })),
         )
       } catch (error) {
@@ -1674,6 +1719,11 @@ export function App() {
       }
     },
     [transport, refreshProjects],
+  )
+
+  const restoreSession = useCallback(
+    (id: string, action: 'unsettle' | 'unsnooze') => restoreSessions([id], action),
+    [restoreSessions],
   )
 
   const keepSessionActive = useCallback(
@@ -1890,10 +1940,11 @@ export function App() {
     })),
     ...projects.map((project): PaletteCommand => ({
       id: `new-chat-${encodeURIComponent(project.path)}`,
-      title: `New chat in ${displayName(project)}`,
+      title: `New thread in ${displayName(project)}`,
       detail: project.path,
       group: 'Projects',
       keywords: 'session conversation',
+      newThreadProject: true,
       run: () => beginSession(project.path),
     })),
     ...projects.flatMap((project) =>
@@ -1923,15 +1974,16 @@ export function App() {
           activeSessionId={activeId}
           providerName={providerName(provider, acpAgentName)}
           usageSummary={usageSummary}
-          hasActiveUsageSession={Boolean(activeId && !activeId.startsWith('pending:'))}
-          usageSources={[...new Set(models.map((choice) => choice.sourceName))]}
           mode={sidebarSettings.mode}
-          onModeChange={(mode) => updateSidebarSettings({ mode })}
           inbox={{
             onSettle: (id) => void hideSession(id, 'settle'),
+            onSettleMany: (ids) => void hideSessions(ids, 'settle'),
             onUnsettle: (id) => void restoreSession(id, 'unsettle'),
+            onUnsettleMany: (ids) => void restoreSessions(ids, 'unsettle'),
             onSnooze: (id, wakeAt) => void hideSession(id, 'snooze', wakeAt),
+            onSnoozeMany: (ids, wakeAt) => void hideSessions(ids, 'snooze', wakeAt),
             onUnsnooze: (id) => void restoreSession(id, 'unsnooze'),
+            onUnsnoozeMany: (ids) => void restoreSessions(ids, 'unsnooze'),
             onKeepActive: (id, keepActive) => void keepSessionActive(id, keepActive),
           }}
           collapsed={collapsed}
@@ -1943,10 +1995,16 @@ export function App() {
             writeSetting(RAIL_WIDTH_KEY, String(width))
           }}
           onAddProject={() => void addProject()}
-          onNewSession={(path) => {
-            if (path) beginSession(path)
+          onNewSession={(path, chooseProject) => {
+            if (chooseProject && projects.length > 1) {
+              setPreferredNewThreadProject(path ?? activePath)
+              setPaletteScope('new-thread')
+            } else if (path) beginSession(path)
             else if (projects.length === 1 && projects[0]) beginSession(projects[0].path)
-            else setPaletteScope('projects')
+            else {
+              setPreferredNewThreadProject(activePath)
+              setPaletteScope('new-thread')
+            }
           }}
           onSelectSession={(id) => void selectSession(id)}
           onRenameProject={(path, name) => {
@@ -2194,7 +2252,15 @@ export function App() {
         <CommandPalette
           commands={commands}
           scope={paletteScope}
-          onClose={() => setPaletteScope(null)}
+          preferredCommandId={
+            paletteScope === 'new-thread' && preferredNewThreadProject
+              ? `new-chat-${encodeURIComponent(preferredNewThreadProject)}`
+              : undefined
+          }
+          onClose={() => {
+            setPaletteScope(null)
+            setPreferredNewThreadProject(undefined)
+          }}
         />
       ) : null}
 
@@ -2352,6 +2418,10 @@ function markSessionRead(session: Project['sessions'][number]): Project['session
     ...session,
     unread: false,
     status: session.status === 'ready' ? 'idle' : session.status,
+    lifecycle:
+      session.lifecycle.state === 'active' && session.lifecycle.wokeAt !== undefined
+        ? { state: 'active', keepActive: session.lifecycle.keepActive }
+        : session.lifecycle,
   }
 }
 

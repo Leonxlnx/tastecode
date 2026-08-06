@@ -21,8 +21,9 @@ const session = (id: string, title: string) => ({
 })
 
 describe('Sidebar chat actions', () => {
-  it('switches directly between the classic and inbox sidebars', () => {
-    const onModeChange = vi.fn()
+  it('keeps the inbox version switch out of the sidebar', () => {
+    const onAddProject = vi.fn()
+    const onOpenSettings = vi.fn()
     render(
       <Sidebar
         projects={[]}
@@ -30,7 +31,6 @@ describe('Sidebar chat actions', () => {
         activeSessionId={undefined}
         account={{ signedIn: true, email: 'private@example.com', plan: 'Pro' }}
         providerName="Codex"
-        hasActiveUsageSession={false}
         usageSummary={{
           session: {
             inputTokens: 800,
@@ -48,7 +48,6 @@ describe('Sidebar chat actions', () => {
           },
           limits: [{ label: 'Weekly', usedPercent: 87 }],
         }}
-        usageSources={['Codex', 'Gemini CLI']}
         mode="inbox"
         inbox={{
           onSettle: vi.fn(),
@@ -60,9 +59,8 @@ describe('Sidebar chat actions', () => {
         collapsed={false}
         width={248}
         onWidthChange={vi.fn()}
-        onModeChange={onModeChange}
         onClose={vi.fn()}
-        onAddProject={vi.fn()}
+        onAddProject={onAddProject}
         onNewSession={vi.fn()}
         onSelectSession={vi.fn()}
         onRenameProject={vi.fn()}
@@ -73,25 +71,19 @@ describe('Sidebar chat actions', () => {
         onArchiveProject={vi.fn()}
         onReorderSession={vi.fn()}
         onOpenSearch={vi.fn()}
-        onOpenSettings={vi.fn()}
+        onOpenSettings={onOpenSettings}
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Switch to V1 Classic sidebar' }))
-    expect(onModeChange).toHaveBeenCalledWith('classic')
-    const utilityRow = screen.getByRole('button', { name: 'Search chats' }).parentElement
-    expect(utilityRow?.contains(screen.getByRole('button', { name: 'New project' }))).toBe(false)
-    expect(
-      utilityRow?.contains(screen.getByRole('button', { name: 'Switch to V1 Classic sidebar' })),
-    ).toBe(true)
-    expect(screen.queryByText('private@example.com')).toBeNull()
-    expect(screen.getByText('Codex')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Usage limits' }))
-    expect(screen.getByRole('dialog', { name: 'Provider usage limits' }).textContent).toContain(
-      '13% left',
-    )
-    expect(screen.queryByText('1k tokens this chat')).toBeNull()
-    expect(screen.getByText('Gemini CLI').parentElement?.textContent).toContain('Not reported')
+    expect(screen.queryByRole('button', { name: /Switch to V[12]/ })).toBeNull()
+    expect(screen.getByRole('textbox', { name: 'Search threads' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'New Thread' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Add Project' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'New Thread' }))
+    expect(onAddProject).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('button', { name: 'Account' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    expect(onOpenSettings).toHaveBeenCalledOnce()
   })
 
   it('shows direct Lucide rename and archive actions for each chat', () => {

@@ -1,10 +1,13 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { InboxSidebar, type InboxActions } from './InboxSidebar.js'
 import type { Project, Session } from './Sidebar.js'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+})
 
 const actions: InboxActions = {
   onSettle: vi.fn(),
@@ -33,14 +36,13 @@ function props(projects: Project[]) {
   return {
     projects,
     scope: '',
+    activeProjectPath: undefined,
     activeSessionId: undefined,
     actions,
     onScopeChange: vi.fn(),
+    onAddProject: vi.fn(),
     onNewSession: vi.fn(),
     onSelectSession: vi.fn(),
-    onRenameProject: vi.fn(),
-    onRemoveProject: vi.fn(),
-    onTogglePin: vi.fn(),
     onRenameSession: vi.fn(),
     onArchiveSession: vi.fn(),
   }
@@ -87,7 +89,7 @@ describe('InboxSidebar', () => {
       [...container.querySelectorAll('.inbox-card__title')].map((node) => node.textContent),
     ).toEqual(['New Alpha', 'Beta approval', 'Older Alpha'])
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'Sidebar project scope' }), {
+    fireEvent.change(screen.getByRole('combobox', { name: 'Sidebar project filter' }), {
       target: { value: '/alpha' },
     })
     expect(onScopeChange).toHaveBeenCalledWith('/alpha')
@@ -132,30 +134,91 @@ describe('InboxSidebar', () => {
 
     expect(screen.getByText('Settled 30')).toBeTruthy()
     expect(container.querySelectorAll('.inbox-shelf__row')).toHaveLength(13)
-    fireEvent.click(screen.getByRole('button', { name: 'Load 25 more' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show 25 more' }))
     expect(container.querySelectorAll('.inbox-shelf__row')).toHaveLength(37)
-    fireEvent.click(screen.getByRole('button', { name: 'Unsettle Settled 30' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Un-settle Settled 30' }))
     expect(actions.onUnsettle).toHaveBeenCalledWith('settled-30')
-
-    const projects = screen.getByText('Projects · 1').closest('details')!
-    fireEvent.click(within(projects).getByText('Projects · 1'))
-    expect(within(projects).getByRole('button', { name: 'New chat in Alpha' })).toBeTruthy()
   })
 
-  it('offers snooze and keep-active presets from the keyboard-accessible row menu', () => {
+  it('keeps project controls at the top and offers all snooze presets', () => {
     const project: Project = {
       path: '/alpha',
       name: 'Alpha',
       sessions: [active('alpha', 'Alpha task', 1)],
     }
-    render(<InboxSidebar {...props([project])} />)
+    const onNewSession = vi.fn()
+    render(
+      <InboxSidebar {...props([project])} activeProjectPath="/alpha" onNewSession={onNewSession} />,
+    )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Chat options for Alpha task' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Snooze for 1 hour' }))
+    fireEvent.click(screen.getByRole('button', { name: 'New Thread' }))
+    expect(onNewSession).toHaveBeenCalledWith('/alpha', false)
+    expect(screen.getByRole('button', { name: 'Add Project' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Thread options for Alpha task' }))
+    expect(screen.getByRole('menuitem', { name: 'This evening' })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: 'Tomorrow morning' })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: 'Next week' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'In one hour' }))
     expect(actions.onSnooze).toHaveBeenCalledWith('alpha', expect.any(Number))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Chat options for Alpha task' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Thread options for Alpha task' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Keep active' }))
     expect(actions.onKeepActive).toHaveBeenCalledWith('alpha', true)
+  })
+
+  it('searches titles across collapsed lifecycle shelves without changing their order', () => {
+    const project: Project = {
+      path: '/alpha',
+      name: 'Alpha',
+      sessions: [
+        active('active', 'Active result', 30),
+        {
+          ...active('snoozed', 'Snoozed result', 20),
+          lifecycle: { state: 'snoozed', snoozedAt: 1, wakeAt: Date.now() + 10_000 },
+        },
+        {
+          ...active('settled', 'Settled result', 10),
+          lifecycle: { state: 'settled', settledAt: 2, reason: 'manual' },
+        },
+      ],
+    }
+    const { container } = render(<InboxSidebar {...props([project])} />)
+
+    expect(screen.queryByText('Snoozed result')).toBeNull()
+    const search = screen.getByRole('textbox', { name: 'Search threads' })
+    fireEvent.change(search, {
+      target: { value: 'result' },
+    })
+    expect(
+      [...container.querySelectorAll('.inbox-card__title, .inbox-shelf__row > button span')].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(['Active result', 'Snoozed result', 'Settled result'])
+
+    fireEvent.keyDown(search, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(screen.getByText('Active result').closest('button'))
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(screen.getByText('Snoozed result').closest('button'))
+  })
+
+  it('supports command selection and exposes bulk lifecycle actions on right click', () => {
+    const project: Project = {
+      path: '/alpha',
+      name: 'Alpha',
+      sessions: [active('one', 'First task', 30), active('two', 'Second task', 20)],
+    }
+    const onSettleMany = vi.fn()
+    render(<InboxSidebar {...props([project])} actions={{ ...actions, onSettleMany }} />)
+
+    const first = screen.getByText('First task').closest('button')!
+    const second = screen.getByText('Second task').closest('button')!
+    fireEvent.click(first, { metaKey: true })
+    fireEvent.click(second, { metaKey: true })
+    fireEvent.contextMenu(second)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Settle 2 threads' }))
+
+    expect(onSettleMany).toHaveBeenCalledWith(['one', 'two'])
+    expect(actions.onSettle).not.toHaveBeenCalled()
   })
 })

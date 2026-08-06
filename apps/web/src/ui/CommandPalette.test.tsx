@@ -17,6 +17,20 @@ function makeCommands(): { commands: PaletteCommand[]; ran: string[] } {
       projectCommand: true,
       run: () => ran.push('proj-a'),
     },
+    {
+      id: 'new-thread-a',
+      title: 'New thread in Project A',
+      group: 'Projects',
+      newThreadProject: true,
+      run: () => ran.push('new-thread-a'),
+    },
+    {
+      id: 'new-thread-b',
+      title: 'New thread in Project B',
+      group: 'Projects',
+      newThreadProject: true,
+      run: () => ran.push('new-thread-b'),
+    },
   ]
   return { commands, ran }
 }
@@ -66,5 +80,23 @@ describe('CommandPalette', () => {
 
     expect(screen.getByText('Project A')).toBeTruthy()
     expect(screen.queryByText('New chat')).toBeNull()
+  })
+
+  it('shows only new-thread destinations and puts the preferred project first', () => {
+    const { commands } = makeCommands()
+    render(
+      <CommandPalette
+        commands={commands}
+        scope="new-thread"
+        preferredCommandId="new-thread-b"
+        onClose={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('dialog', { name: 'Choose a project for the new thread' })).toBeTruthy()
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'New thread in Project B',
+      'New thread in Project A',
+    ])
   })
 })

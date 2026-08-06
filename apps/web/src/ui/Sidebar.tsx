@@ -28,6 +28,7 @@ import {
   PinOff,
   Plus,
   Search,
+  Settings as SettingsIcon,
   X,
 } from 'lucide-react'
 import { isDesktop, isMacOS, revealPath } from '../bridge.js'
@@ -49,6 +50,8 @@ export type Session = {
   provider: ProviderId
   agent?: string | undefined
   createdAt: number
+  /** Client-observed start of the current status, used for elapsed/relative labels. */
+  statusSince?: number | undefined
   status: ThreadInboxStatus
   lifecycle: ThreadLifecycle
   unread: boolean
@@ -79,17 +82,14 @@ function SidebarComponent(props: {
   account: Account | undefined
   providerName: string
   usageSummary?: ResultOf<'usage.summary'> | undefined
-  hasActiveUsageSession?: boolean | undefined
-  usageSources?: string[] | undefined
   mode?: 'classic' | 'inbox'
-  onModeChange?: ((mode: 'classic' | 'inbox') => void) | undefined
   inbox?: InboxActions | undefined
   collapsed: boolean
   width: number
   onClose: () => void
   onWidthChange: (width: number) => void
   onAddProject: () => void
-  onNewSession: (projectPath?: string) => void
+  onNewSession: (projectPath?: string, chooseProject?: boolean) => void
   onSelectSession: (id: string) => void
   onRenameProject: (path: string, name: string) => void
   onRemoveProject: (path: string) => void
@@ -111,6 +111,21 @@ function SidebarComponent(props: {
   const [scope, setScope] = useState('')
   const macOS = isMacOS()
   const inbox = props.mode === 'inbox' && props.inbox !== undefined
+  const primaryUsage = props.usageSummary?.limits[0]
+
+  const closeOnNarrowViewport = () => {
+    if (globalThis.matchMedia?.('(max-width: 700px)').matches) props.onClose()
+  }
+
+  const selectSession = (id: string) => {
+    props.onSelectSession(id)
+    closeOnNarrowViewport()
+  }
+
+  const newSession = (projectPath?: string, chooseProject?: boolean) => {
+    props.onNewSession(projectPath, chooseProject)
+    closeOnNarrowViewport()
+  }
 
   useEffect(() => {
     if (!props.collapsed) setEdgeRevealed(false)
@@ -166,80 +181,74 @@ function SidebarComponent(props: {
       ) : null}
 
       <nav className="rail" inert={props.collapsed && !edgeRevealed ? true : undefined}>
-        <div className="rail__actions">
-          <button
-            className="navitem"
-            aria-keyshortcuts={shortcutAria(SHORTCUTS.newChat)}
-            onClick={() => {
-              if (inbox) {
-                props.onNewSession(
-                  scope || (props.projects.length === 1 ? props.projects[0]?.path : undefined),
-                )
-                return
-              }
-              const project =
-                props.projects.find((candidate) => candidate.path === props.activeProjectPath) ??
-                props.projects[0]
-              if (project) props.onNewSession(project.path)
-              else props.onAddProject()
+        {inbox ? (
+          <InboxSidebar
+            projects={props.projects}
+            scope={scope}
+            activeProjectPath={props.activeProjectPath}
+            activeSessionId={props.activeSessionId}
+            actions={props.inbox!}
+            onScopeChange={setScope}
+            onAddProject={() => {
+              props.onAddProject()
+              closeOnNarrowViewport()
             }}
-          >
-            <Plus size={15} aria-hidden />
-            <span>New chat</span>
-            <ShortcutHint>{shortcutLabel(SHORTCUTS.newChat, macOS)}</ShortcutHint>
-          </button>
-          <button
-            className="navitem rail__new-project"
-            onClick={props.onAddProject}
-            aria-keyshortcuts={shortcutAria(SHORTCUTS.newProject)}
-          >
-            <FolderPen size={15} aria-hidden />
-            <span>New project</span>
-            <ShortcutHint>{shortcutLabel(SHORTCUTS.newProject, macOS)}</ShortcutHint>
-          </button>
-          <div className="rail__utility-row">
-            <button
-              type="button"
-              className="icon-btn icon-btn--always rail__search"
-              onClick={() => props.onOpenSearch(inbox && scope ? scope : undefined)}
-              aria-label="Search chats"
-              title={`Search chats (${shortcutLabel(SHORTCUTS.searchSessions, macOS)})`}
-              aria-keyshortcuts={shortcutAria(SHORTCUTS.searchSessions)}
-            >
-              <Search size={14} aria-hidden />
-            </button>
-            <button
-              type="button"
-              className="rail__mode-toggle"
-              aria-pressed={inbox}
-              aria-label={`Switch to ${inbox ? 'V1 Classic' : 'V2 Inbox'} sidebar`}
-              title={`Switch to ${inbox ? 'V1 Classic' : 'V2 Inbox'} sidebar`}
-              onClick={() => props.onModeChange?.(inbox ? 'classic' : 'inbox')}
-            >
-              V{inbox ? '2' : '1'}
-            </button>
-          </div>
-        </div>
+            onNewSession={newSession}
+            onSelectSession={selectSession}
+            onRenameSession={props.onRenameSession}
+            onToggleSessionPin={(id) => props.onToggleSessionPin?.(id)}
+            onArchiveSession={props.onDeleteSession}
+            onArchiveSessions={props.onArchiveProject}
+          />
+        ) : (
+          <>
+            <div className="rail__actions">
+              <button
+                className="navitem"
+                aria-keyshortcuts={shortcutAria(SHORTCUTS.newChat)}
+                onClick={() => {
+                  const project =
+                    props.projects.find(
+                      (candidate) => candidate.path === props.activeProjectPath,
+                    ) ?? props.projects[0]
+                  if (project) newSession(project.path)
+                  else {
+                    props.onAddProject()
+                    closeOnNarrowViewport()
+                  }
+                }}
+              >
+                <Plus size={15} aria-hidden />
+                <span>New chat</span>
+                <ShortcutHint>{shortcutLabel(SHORTCUTS.newChat, macOS)}</ShortcutHint>
+              </button>
+              <button
+                className="navitem rail__new-project"
+                onClick={() => {
+                  props.onAddProject()
+                  closeOnNarrowViewport()
+                }}
+                aria-keyshortcuts={shortcutAria(SHORTCUTS.newProject)}
+              >
+                <FolderPen size={15} aria-hidden />
+                <span>New project</span>
+                <ShortcutHint>{shortcutLabel(SHORTCUTS.newProject, macOS)}</ShortcutHint>
+              </button>
+              <div className="rail__utility-row">
+                <button
+                  type="button"
+                  className="icon-btn icon-btn--always rail__search"
+                  onClick={() => props.onOpenSearch()}
+                  aria-label="Search chats"
+                  title={`Search chats (${shortcutLabel(SHORTCUTS.searchSessions, macOS)})`}
+                  aria-keyshortcuts={shortcutAria(SHORTCUTS.searchSessions)}
+                >
+                  <Search size={14} aria-hidden />
+                </button>
+              </div>
+            </div>
 
-        <div className="rail__body">
-          {inbox ? (
-            <InboxSidebar
-              projects={props.projects}
-              scope={scope}
-              activeSessionId={props.activeSessionId}
-              actions={props.inbox!}
-              onScopeChange={setScope}
-              onNewSession={(path) => props.onNewSession(path)}
-              onSelectSession={props.onSelectSession}
-              onRenameProject={props.onRenameProject}
-              onRemoveProject={props.onRemoveProject}
-              onTogglePin={props.onTogglePin}
-              onRenameSession={props.onRenameSession}
-              onToggleSessionPin={(id) => props.onToggleSessionPin?.(id)}
-              onArchiveSession={props.onDeleteSession}
-            />
-          ) : (
-            <>
+            <div className="rail__body">
               {pinnedSessions.length > 0 ? (
                 <>
                   <p className="section">Pinned</p>
@@ -250,7 +259,7 @@ function SidebarComponent(props: {
                         session={session}
                         active={session.id === props.activeSessionId}
                         standalone
-                        onSelect={() => props.onSelectSession(session.id)}
+                        onSelect={() => selectSession(session.id)}
                         onRename={(title) => props.onRenameSession(session.id, title)}
                         onDelete={() => props.onDeleteSession(session.id)}
                         onTogglePin={() => props.onToggleSessionPin?.(session.id)}
@@ -272,47 +281,73 @@ function SidebarComponent(props: {
                 <p className="rail__hint">Nothing here yet.</p>
               ) : (
                 orderedProjects.map((project) => (
-                  <ProjectRow key={project.path} project={project} {...props} forceOpen={false} />
+                  <ProjectRow
+                    {...props}
+                    key={project.path}
+                    project={project}
+                    forceOpen={false}
+                    onNewSession={(path) => newSession(path)}
+                    onSelectSession={selectSession}
+                  />
                 ))
               )}
-            </>
-          )}
-        </div>
+            </div>
+          </>
+        )}
 
         <div className="rail__foot">
-          <UsageLimits
-            providerName={props.providerName}
-            summary={props.usageSummary}
-            showTotals={props.hasActiveUsageSession ?? Boolean(props.activeSessionId)}
-            sources={props.usageSources ?? []}
-          />
-          <Menu
-            drop="up"
-            label="Account"
-            panelClassName="menu--settings"
-            trigger={() => (
-              <span className="account">
-                <span className="account__avatar">
-                  {initial(props.account, props.providerName)}
+          {inbox ? (
+            <button
+              className="navitem inbox-settings"
+              type="button"
+              aria-keyshortcuts={shortcutAria(SHORTCUTS.settings)}
+              onClick={() => {
+                props.onOpenSettings()
+                closeOnNarrowViewport()
+              }}
+            >
+              <SettingsIcon size={15} aria-hidden />
+              <span>Settings</span>
+              <ShortcutHint>{shortcutLabel(SHORTCUTS.settings, macOS)}</ShortcutHint>
+            </button>
+          ) : (
+            <Menu
+              drop="up"
+              label="Account"
+              panelClassName="menu--settings"
+              trigger={() => (
+                <span className="account">
+                  <span className="account__avatar">
+                    {initial(props.account, props.providerName)}
+                  </span>
+                  <span className="account__name">{props.providerName}</span>
                 </span>
-                <span className="account__name">{props.providerName}</span>
-              </span>
-            )}
-          >
-            {(close) => (
-              <>
-                <MenuItem
-                  title="Settings"
-                  shortcut={shortcutLabel(SHORTCUTS.settings, macOS)}
-                  shortcutAria={shortcutAria(SHORTCUTS.settings)}
-                  onClick={() => {
-                    props.onOpenSettings()
-                    close()
-                  }}
-                />
-              </>
-            )}
-          </Menu>
+              )}
+            >
+              {(close) => (
+                <>
+                  <div className="account-menu__usage">
+                    <Gauge size={14} aria-hidden />
+                    <span>
+                      {primaryUsage
+                        ? `${Math.round(100 - primaryUsage.usedPercent)}% left`
+                        : 'Limits unavailable'}
+                    </span>
+                  </div>
+                  <MenuItem
+                    title="Settings"
+                    shortcut={shortcutLabel(SHORTCUTS.settings, macOS)}
+                    shortcutAria={shortcutAria(SHORTCUTS.settings)}
+                    onClick={() => {
+                      props.onOpenSettings()
+                      closeOnNarrowViewport()
+                      close()
+                    }}
+                  />
+                </>
+              )}
+            </Menu>
+          )}
         </div>
       </nav>
       {!props.collapsed ? (
@@ -324,83 +359,6 @@ function SidebarComponent(props: {
       ) : null}
     </div>
   )
-}
-
-function UsageLimits(props: {
-  providerName: string
-  summary: ResultOf<'usage.summary'> | undefined
-  showTotals: boolean
-  sources: string[]
-}) {
-  const primary = props.summary?.limits[0]
-  const otherSources = props.sources.filter((source) => source !== props.providerName)
-
-  return (
-    <Menu
-      drop="up"
-      align="left"
-      label="Usage limits"
-      panelRole="dialog"
-      panelLabel="Provider usage limits"
-      panelClassName="usage-limits__panel"
-      triggerClassName="usage-limits__trigger"
-      trigger={() => (
-        <span className="usage-limits__summary">
-          <Gauge size={14} aria-hidden />
-          <span>{primary ? `${Math.round(100 - primary.usedPercent)}% left` : 'Limits'}</span>
-        </span>
-      )}
-    >
-      {() => (
-        <div className="usage-limits">
-          <div className="usage-limits__head">
-            <strong>{props.providerName}</strong>
-            <span>Provider-reported usage</span>
-          </div>
-          {props.summary && props.showTotals ? (
-            <div className="usage-limits__totals">
-              <span>{compactTokens(props.summary.session.totalTokens)} this chat</span>
-              <span>{compactTokens(props.summary.today.totalTokens)} today</span>
-            </div>
-          ) : null}
-          {props.summary?.limits.length ? (
-            <div className="usage-limits__windows">
-              {props.summary.limits.map((limit) => {
-                const left = Math.round(100 - limit.usedPercent)
-                return (
-                  <div className="usage-limit" key={limit.label}>
-                    <div className="usage-limit__label">
-                      <span>{limit.label}</span>
-                      <strong>{left}% left</strong>
-                    </div>
-                    <span className="usage-limit__track" aria-hidden>
-                      <span style={{ width: `${left}%` }} />
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          ) : (
-            <p className="usage-limits__empty">This provider does not report rate limits.</p>
-          )}
-          {otherSources.length > 0 ? (
-            <div className="usage-limits__other">
-              {otherSources.map((source) => (
-                <div key={source}>
-                  <span>{source}</span>
-                  <span>Not reported</span>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      )}
-    </Menu>
-  )
-}
-
-function compactTokens(value: number): string {
-  return value < 1_000 ? `${value} tokens` : `${Math.round(value / 100) / 10}k tokens`
 }
 
 function RailResizeHandle(props: {
@@ -971,10 +929,9 @@ function initial(account: Account | undefined, fallback: string): string {
  * does not change while an answer arrives.
  *
  * NOT YET EFFECTIVE. memo compares props shallowly, and the owner still passes
- * a dozen inline arrows plus a fresh `inbox` object and `usageSources` array,
- * so the comparison fails every time. The internal useMemos above are what is
- * saving work today. Finishing this means giving those props stable
- * identities in App.tsx — mechanical, but too broad a change to make
- * carelessly.
+ * a dozen inline arrows plus a fresh `inbox` object, so the comparison fails
+ * every time. The internal useMemos above save the repeated work today.
+ * Finishing this means giving those props stable identities in App.tsx —
+ * mechanical, but too broad a change to make carelessly.
  */
 export const Sidebar = memo(SidebarComponent)
