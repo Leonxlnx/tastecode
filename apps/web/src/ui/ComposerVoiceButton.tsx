@@ -19,7 +19,6 @@ export function ComposerVoiceButton(props: {
       className="icon-btn icon-btn--always composer-voice-button"
       disabled={props.disabled || props.isTranscribing}
       aria-label={label}
-      title={`${label} — audio is sent to OpenAI for transcription`}
       onClick={props.onClick}
     >
       {props.isTranscribing ? (

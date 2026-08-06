@@ -5309,38 +5309,43 @@
 
 .composer-voice-bar__track {
   position: relative;
-  display: flex;
   flex: 1;
   min-width: 0;
   height: 28px;
-  align-items: center;
   overflow: hidden;
 }
 
-.composer-voice-bar__centerline {
+.dither-waveform {
   position: absolute;
-  inset: 50% 0 auto;
-  border-top: 1px dashed var(--line-strong);
-  transform: translateY(-50%);
+  inset: 0;
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, transparent, black 8%, black);
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
 }
 
-.composer-voice-bar__levels {
-  position: relative;
-  display: flex;
+.dither-waveform__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
   height: 100%;
-  margin-left: auto;
-  align-items: center;
-  gap: 2px;
+  image-rendering: pixelated;
 }
 
-.composer-voice-bar__level {
-  flex: none;
-  border-radius: 1px;
-  background: var(--text);
+.dither-waveform__texture {
+  opacity: var(--dither-texture-opacity);
+  filter: var(--dither-texture-filter);
 }
 
-.composer-voice-bar.is-transcribing .composer-voice-bar__level {
-  opacity: 0.55;
+.dither-waveform__bloom {
+  opacity: var(--dither-bloom-opacity);
+  filter: var(--dither-bloom-filter);
+  image-rendering: auto;
+  mix-blend-mode: var(--dither-bloom-blend);
+}
+
+.composer-voice-bar.is-transcribing .dither-waveform {
+  opacity: 0.5;
 }
 
 .composer-voice-bar__duration {
