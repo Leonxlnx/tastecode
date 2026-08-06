@@ -16,12 +16,17 @@ import {
   designPagePrompt,
   designPhaseCorrectionPrompt,
   designPreviewPrompt,
+  designRepairPrompt,
+  designReviewPrompt,
   parseAssetPhaseOutput,
   parseBrandPhaseOutput,
   parseBriefingOutput,
   parseBuildPhaseOutput,
   parsePagePhaseOutput,
   parsePreviewPhaseOutput,
+  parsePreviewPlan,
+  parseRepairPhaseOutput,
+  parseReviewPhaseOutput,
   readAssetManifest,
   readBrandSystem,
   readDesignBrief,
@@ -30,7 +35,11 @@ import {
   writeBrandSystem,
   writeDesignBrief,
   writePageBlueprint,
+  writeVisualReview,
   type BriefingQuestion,
+  type PreviewPlan,
+  type ReviewScreenshot,
+  type VisualReview,
 } from '@harness/design-agent'
 import {
   providerRuntime,
@@ -87,7 +96,8 @@ import { startDesignPreview, type RunningPreview } from './design-preview-runner
 
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
-type DesignFlowPhase = 'brief' | 'brand' | 'page' | 'assets' | 'build' | 'preview' | 'complete'
+type DesignFlowPhase =
+  'brief' | 'brand' | 'page' | 'assets' | 'build' | 'preview' | 'review' | 'repair' | 'complete'
 type DesignFlow = {
   workspacePath: string
   originalRequest: string
@@ -97,9 +107,14 @@ type DesignFlow = {
   finalAsked: boolean
   explicitAnswers: Array<{ question: string; answer: string }>
   correcting: boolean
+  repairAttempt: number
   pendingBrief?: unknown
   pendingPrompt?: string
   completion?: string
+  previewPlan?: PreviewPlan
+  previewUrl?: string
+  screenshots?: ReviewScreenshot[]
+  review?: VisualReview
 }
 
 function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlow | undefined {
@@ -112,6 +127,8 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     'assets',
     'build',
     'preview',
+    'review',
+    'repair',
     'complete',
   ]
   if (
@@ -141,18 +158,59 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     if (typeof rawOptions[field] === 'string') options[field] = rawOptions[field]
   }
 
+  let previewPlan: PreviewPlan | undefined
+  let review: VisualReview | undefined
+  try {
+    if (stored.previewPlan !== undefined) previewPlan = parsePreviewPlan(stored.previewPlan)
+    if (stored.review !== undefined) {
+      review = parseReviewPhaseOutput(JSON.stringify(stored.review))
+    }
+  } catch {
+    return undefined
+  }
+  const rawScreenshots = stored.screenshots
+  const screenshotCount = Array.isArray(rawScreenshots) ? rawScreenshots.length : undefined
+  const screenshots = Array.isArray(rawScreenshots)
+    ? rawScreenshots.filter(
+        (value): value is ReviewScreenshot =>
+          typeof value === 'object' &&
+          value !== null &&
+          typeof (value as Record<string, unknown>).path === 'string' &&
+          Number.isInteger((value as Record<string, unknown>).width) &&
+          Number.isInteger((value as Record<string, unknown>).height),
+      )
+    : undefined
+  if (screenshots && screenshots.length !== screenshotCount) return undefined
+  const repairAttempt =
+    Number.isInteger(stored.repairAttempt) && (stored.repairAttempt as number) >= 0
+      ? (stored.repairAttempt as number)
+      : 0
+  const phase = stored.phase as DesignFlowPhase
+  if (
+    ((phase === 'review' || phase === 'repair') && !previewPlan) ||
+    (phase === 'review' && !screenshots) ||
+    (phase === 'repair' && !review)
+  ) {
+    return undefined
+  }
+
   return {
     workspacePath,
     originalRequest: stored.originalRequest,
     options,
-    phase: stored.phase as DesignFlowPhase,
+    phase,
     askedQuestions: stored.askedQuestions,
     finalAsked: stored.finalAsked,
     explicitAnswers,
     correcting: stored.correcting === true,
+    repairAttempt,
     ...(stored.pendingBrief === undefined ? {} : { pendingBrief: stored.pendingBrief }),
     ...(typeof stored.pendingPrompt === 'string' ? { pendingPrompt: stored.pendingPrompt } : {}),
     ...(typeof stored.completion === 'string' ? { completion: stored.completion } : {}),
+    ...(previewPlan ? { previewPlan } : {}),
+    ...(previewPlan ? { previewUrl: previewPlan.url } : {}),
+    ...(screenshots ? { screenshots } : {}),
+    ...(review ? { review } : {}),
   }
 }
 
@@ -194,6 +252,7 @@ type DesignInput = {
   final: boolean
 }
 const PANIC_STOP_TIMEOUT_MS = 5_000
+const DESIGN_REPAIR_LIMIT = 2
 const UNSUPPORTED_MCP_CAPABILITIES: McpCapabilities = {
   inventory: false,
   add: false,
@@ -256,6 +315,12 @@ export class Orchestrator {
   #onMcpChanged: (provider: ProviderId, projectPath: string) => void
   #onSkillsChanged: (provider: ProviderId, projectPath: string) => void
   #onLifecycle: (threadId: string, lifecycle: ThreadLifecycle) => void
+  #capturePreview:
+    | ((
+        url: string,
+        viewports: Array<{ width: number; height: number }>,
+      ) => Promise<ReviewScreenshot[] | undefined>)
+    | undefined
   #watchedSkillProjects = new Set<string>()
   #watchedMcpProjects = new Set<string>()
   #mcpConfig: McpConfigStore
@@ -290,6 +355,10 @@ export class Orchestrator {
       onMcpChanged?: (provider: ProviderId, projectPath: string) => void
       onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
       onLifecycle?: (threadId: string, lifecycle: ThreadLifecycle) => void
+      capturePreview?: (
+        url: string,
+        viewports: Array<{ width: number; height: number }>,
+      ) => Promise<ReviewScreenshot[] | undefined>
       mcpConfig?: McpConfigStore
       modelConnections?: ModelConnectionStore
       readCredential?: (reference: string) => string
@@ -310,6 +379,7 @@ export class Orchestrator {
     this.#onMcpChanged = handlers.onMcpChanged ?? (() => {})
     this.#onSkillsChanged = handlers.onSkillsChanged ?? (() => {})
     this.#onLifecycle = handlers.onLifecycle ?? (() => {})
+    this.#capturePreview = handlers.capturePreview
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
     this.#modelConnections = handlers.modelConnections ?? new ModelConnectionStore()
     this.#readCredential = handlers.readCredential ?? readCredential
@@ -763,6 +833,7 @@ export class Orchestrator {
           finalAsked: false,
           explicitAnswers: [],
           correcting: false,
+          repairAttempt: 0,
         })
         this.#saveDesignFlow(threadId)
       }
@@ -1522,9 +1593,12 @@ export class Orchestrator {
     const prompt = flow.pendingPrompt ?? this.#designPromptFor(flow)
     delete flow.pendingPrompt
     this.#saveDesignFlow(threadId)
-    void this.#sendDesignTurn(threadId, prompt, [], flow.options).catch((error: unknown) =>
-      this.#failDesignFlow(threadId, error),
-    )
+    void this.#sendDesignTurn(
+      threadId,
+      prompt,
+      this.#designAttachmentsFor(flow),
+      flow.options,
+    ).catch((error: unknown) => this.#failDesignFlow(threadId, error))
   }
 
   #designPromptFor(flow: DesignFlow): string {
@@ -1539,7 +1613,17 @@ export class Orchestrator {
       return designBuildPrompt(brief, brand, page, readAssetManifest(flow.workspacePath))
     }
     if (flow.phase === 'preview') return designPreviewPrompt()
+    if (flow.phase === 'review' && flow.screenshots) {
+      return designReviewPrompt(brief, brand, page, flow.screenshots)
+    }
+    if (flow.phase === 'repair' && flow.review) {
+      return designRepairPrompt(flow.review, flow.repairAttempt, DESIGN_REPAIR_LIMIT)
+    }
     throw new Error(`cannot resume design phase ${flow.phase}`)
+  }
+
+  #designAttachmentsFor(flow: DesignFlow): string[] {
+    return flow.phase === 'review' ? (flow.screenshots?.map(({ path }) => path) ?? []) : []
   }
 
   async #sendDesignTurn(
@@ -1654,9 +1738,12 @@ export class Orchestrator {
         delete flow.pendingPrompt
         this.#saveDesignFlow(threadId)
         this.#record(threadId, event)
-        void this.#sendDesignTurn(threadId, prompt, [], flow.options).catch((error: unknown) =>
-          this.#failDesignFlow(threadId, error),
-        )
+        void this.#sendDesignTurn(
+          threadId,
+          prompt,
+          this.#designAttachmentsFor(flow),
+          flow.options,
+        ).catch((error: unknown) => this.#failDesignFlow(threadId, error))
         return
       }
     }
@@ -1817,6 +1904,37 @@ export class Orchestrator {
       )
       return
     }
+    if (flow.phase === 'review') {
+      const review = writeVisualReview(flow.workspacePath, parseReviewPhaseOutput(text))
+      flow.correcting = false
+      flow.review = review
+      if (review.verdict === 'pass') {
+        flow.phase = 'complete'
+        flow.completion = `Preview ready at ${flow.previewUrl}. Visual review passed${
+          flow.repairAttempt
+            ? ` after ${flow.repairAttempt} repair attempt${flow.repairAttempt === 1 ? '' : 's'}`
+            : ''
+        }.`
+      } else if (flow.repairAttempt >= DESIGN_REPAIR_LIMIT) {
+        flow.phase = 'complete'
+        flow.completion = `Preview ready at ${flow.previewUrl}. Visual review stopped after ${DESIGN_REPAIR_LIMIT} repair attempts with ${review.findings.length} finding${review.findings.length === 1 ? '' : 's'} remaining.`
+      } else {
+        flow.phase = 'repair'
+        flow.repairAttempt += 1
+        flow.pendingPrompt = designRepairPrompt(review, flow.repairAttempt, DESIGN_REPAIR_LIMIT)
+      }
+      this.#saveDesignFlow(threadId)
+      return
+    }
+    if (flow.phase === 'repair') {
+      const output = parseRepairPhaseOutput(text)
+      flow.correcting = false
+      if (output.status === 'failed') throw new Error(output.summary)
+      void this.#captureDesignReview(threadId, turnId, flow).catch((error: unknown) =>
+        this.#failDesignFlow(threadId, error),
+      )
+      return
+    }
     throw new Error(`unexpected design phase ${flow.phase}`)
   }
 
@@ -1845,8 +1963,65 @@ export class Orchestrator {
   ): Promise<void> {
     const preview = await startDesignPreview(flow.workspacePath, plan)
     this.#designPreviews.set(threadId, preview)
+    flow.previewPlan = plan
+    flow.previewUrl = preview.url
+    if (!this.#get(threadId).session.capabilities.images) {
+      this.#finishWithoutVisualReview(
+        threadId,
+        turnId,
+        flow,
+        'the selected provider does not declare image support',
+      )
+      return
+    }
+    await this.#captureDesignReview(threadId, turnId, flow)
+  }
+
+  async #captureDesignReview(threadId: string, turnId: string, flow: DesignFlow): Promise<void> {
+    if (!flow.previewPlan || !flow.previewUrl) throw new Error('Preview plan is unavailable')
+    if (!this.#capturePreview) {
+      this.#finishWithoutVisualReview(threadId, turnId, flow, 'desktop capture is unavailable')
+      return
+    }
+    if (!this.#designPreviews.has(threadId)) {
+      const preview = await startDesignPreview(flow.workspacePath, flow.previewPlan)
+      this.#designPreviews.set(threadId, preview)
+      flow.previewUrl = preview.url
+    }
+    const screenshots = await this.#capturePreview(
+      flow.previewUrl,
+      flow.previewPlan.viewports.map(({ width, height }) => ({ width, height })),
+    )
+    if (!screenshots) {
+      this.#finishWithoutVisualReview(threadId, turnId, flow, 'desktop capture is unavailable')
+      return
+    }
+    flow.phase = 'review'
+    flow.screenshots = screenshots
+    flow.pendingPrompt = designReviewPrompt(
+      readDesignBrief(flow.workspacePath),
+      readBrandSystem(flow.workspacePath),
+      readPageBlueprint(flow.workspacePath),
+      screenshots,
+    )
+    this.#saveDesignFlow(threadId)
+    this.#completeDesignActivity(threadId, turnId)
+    if (this.#activeTurns.has(threadId)) return
+
+    const prompt = flow.pendingPrompt
+    delete flow.pendingPrompt
+    this.#saveDesignFlow(threadId)
+    await this.#sendDesignTurn(threadId, prompt, this.#designAttachmentsFor(flow), flow.options)
+  }
+
+  #finishWithoutVisualReview(
+    threadId: string,
+    turnId: string,
+    flow: DesignFlow,
+    reason: string,
+  ): void {
     flow.phase = 'complete'
-    flow.completion = `Preview ready at ${preview.url}`
+    flow.completion = `Preview ready at ${flow.previewUrl}. Visual review skipped because ${reason}.`
     this.#saveDesignFlow(threadId)
     this.#completeDesignActivity(threadId, turnId)
     this.#finishDesignFlow(threadId, turnId, flow.completion)

@@ -23,6 +23,7 @@ describe('preview capture coordinator', () => {
 
   it('fails fast without a capable client', async () => {
     const coordinator = new PreviewCaptureCoordinator(vi.fn())
+    expect(coordinator.available).toBe(false)
     await expect(coordinator.capture('http://127.0.0.1:5183/', viewports)).rejects.toThrow(
       'unavailable',
     )

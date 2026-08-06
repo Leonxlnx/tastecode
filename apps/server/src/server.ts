@@ -105,6 +105,10 @@ export function startServer(
     onTerminalOutput: (terminalId, data) => push.broadcast('terminal.output', { terminalId, data }),
     onTerminalExit: (terminalId, exitCode) =>
       push.broadcast('terminal.exit', { terminalId, exitCode }),
+    capturePreview: (url, viewports) =>
+      previewCapture.available
+        ? previewCapture.capture(url, viewports)
+        : Promise.resolve(undefined),
   })
   orchestrator.refreshLifecycle()
   const lifecycleTimer = setInterval(() => orchestrator.refreshLifecycle(), 30_000)

@@ -24,6 +24,10 @@ export class PreviewCaptureCoordinator {
     private readonly timeoutMs = 30_000,
   ) {}
 
+  get available(): boolean {
+    return this.#clients.size > 0
+  }
+
   setCapability(socket: WebSocket, available: boolean): void {
     if (available) this.#clients.add(socket)
     else this.remove(socket)

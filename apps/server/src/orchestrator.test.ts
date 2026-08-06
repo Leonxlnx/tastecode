@@ -44,7 +44,7 @@ const CAPABILITIES: Capabilities = {
   interrupt: true,
   reasoningItems: false,
   approvals: false,
-  images: false,
+  images: true,
 }
 
 /** A session that answers when told to, so turns can be interleaved by hand. */
@@ -56,6 +56,7 @@ class FakeSession implements AgentSession {
   interruptBarrier: Promise<void> | undefined
   interruptError: Error | undefined
   sent: string[] = []
+  sentAttachments: string[][] = []
   sentOptions: Array<TurnOptions | undefined> = []
   steered: string[] = []
   userInputs: Array<{ requestId: string; answers: Record<string, string[]> }> = []
@@ -70,10 +71,11 @@ class FakeSession implements AgentSession {
   async sendTurn(
     _threadId: string,
     text: string,
-    _attachments?: string[],
+    attachments: string[] = [],
     options?: TurnOptions,
   ): Promise<string> {
     this.sent.push(text)
+    this.sentAttachments.push(attachments)
     this.sentOptions.push(options)
     if (this.release) await new Promise<void>((resolve) => (this.release = resolve))
     return `${this.id}-turn`
@@ -117,6 +119,13 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
   const startedOptions: StartOptions[] = []
   const resumedIds: string[] = []
   const resumedIn: string[] = []
+  const capturePreview = vi.fn(
+    async (_url: string, viewports: Array<{ width: number; height: number }>) =>
+      viewports.map((viewport) => ({
+        path: path.join(os.tmpdir(), `${viewport.width}x${viewport.height}.png`),
+        ...viewport,
+      })),
+  )
 
   const runtimeFor = (provider: ProviderId): ProviderRuntime => ({
     async start(workspacePath, options) {
@@ -168,6 +177,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
       path.join(mkdtempSync(path.join(os.tmpdir(), 'harness-mcp-')), 'mcp.json'),
     ),
     readCredential: (reference) => `secret:${reference}`,
+    capturePreview,
     runtimeFor,
     ...(worktreeRoot ? { worktreeRoot } : {}),
   })
@@ -182,6 +192,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     startedOptions,
     resumedIds,
     resumedIn,
+    capturePreview,
   }
 }
 
@@ -232,7 +243,7 @@ describe('provider-neutral design briefing', () => {
     async (provider) => {
       const model = 'future-provider/model-that-needs-no-design-code'
       const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-flow-'))
-      const { orchestrator, sessions, received, store } = harness()
+      const { orchestrator, sessions, received, store, capturePreview } = harness()
       try {
         const thread = await orchestrator.startThread(provider, workspace, {})
         await orchestrator.sendTurn(thread.id, 'Create a website.', [DESIGN_BRIEF_ATTACHMENT], {
@@ -452,25 +463,81 @@ describe('provider-neutral design briefing', () => {
             's1-turn',
           ),
         )
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(9))
+        expect(sessions[0]?.sent[8]).toContain('visual Review phase')
+        expect(sessions[0]?.sentAttachments[8]).toHaveLength(2)
+        sessions[0]?.emit(
+          message(
+            JSON.stringify({
+              version: 1,
+              verdict: 'repair',
+              summary: 'One mobile issue remains.',
+              findings: [
+                {
+                  id: 'hero_mobile_clip',
+                  severity: 'major',
+                  area: 'Hero at 390px',
+                  evidence: 'The primary action is clipped.',
+                  repair: 'Stack the hero content before the image.',
+                },
+              ],
+            }),
+            's1-turn',
+          ),
+        )
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(10))
+        expect(sessions[0]?.sent[9]).toContain('repair attempt 1 of 2')
+        sessions[0]?.emit(
+          message(
+            JSON.stringify({
+              status: 'complete',
+              summary: 'Fixed the mobile hero.',
+              files: ['src/page.tsx'],
+              checks: ['pnpm typecheck — passed'],
+            }),
+            's1-turn',
+          ),
+        )
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(11))
+        sessions[0]?.emit(
+          message(
+            JSON.stringify({
+              version: 1,
+              verdict: 'pass',
+              summary: 'The page now matches the approved direction.',
+              findings: [],
+            }),
+            's1-turn',
+          ),
+        )
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() =>
           expect(
             received.some(
               ({ event }) =>
                 event.type === 'item.completed' &&
-                event.item.text === 'Website built. Preview ready at http://127.0.0.1:5173/',
+                event.item.text ===
+                  'Website built. Preview ready at http://127.0.0.1:5173/. Visual review passed after 1 repair attempt.',
             ),
           ).toBe(true),
         )
         expect(sessions[0]?.sentOptions).toEqual(
-          Array.from({ length: 8 }, () => ({ model, effort: 'low' })),
+          Array.from({ length: 11 }, () => ({ model, effort: 'low' })),
         )
         expect(readdirSync(path.join(workspace, '.taste')).sort()).toEqual([
           'assets.json',
           'brand.json',
           'brief.json',
           'page.json',
+          'review.json',
         ])
         expect(store.designRun(thread.id)).toBeUndefined()
+        expect(capturePreview).toHaveBeenCalledTimes(2)
+        expect(
+          JSON.parse(readFileSync(path.join(workspace, '.taste', 'review.json'), 'utf8')),
+        ).toMatchObject({ verdict: 'pass', findings: [] })
         expect(
           received
             .filter(
@@ -487,6 +554,9 @@ describe('provider-neutral design briefing', () => {
           'design:assets',
           'design:build',
           'design:preview',
+          'design:review',
+          'design:repair',
+          'design:review',
         ])
       } finally {
         rmSync(workspace, { recursive: true, force: true })
