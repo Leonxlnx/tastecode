@@ -16,6 +16,8 @@ export type InstallState = {
   log: string
   /** Last printable line, for the settings row note. */
   lastLine: string
+  /** Auth URL detected in a sign-in session and already opened for the user. */
+  openedAuthUrl?: string
   exitCode: number | null
 }
 
@@ -49,13 +51,27 @@ export function installState(key: string): InstallState | undefined {
 }
 
 export function clearInstall(key: string): void {
+  detachTransportListeners(key)
   if (installs.delete(key)) notify()
 }
 
 /** Test isolation only: module state must not leak between test cases. */
 export function resetInstalls(): void {
+  for (const key of [...transportListeners.keys()]) detachTransportListeners(key)
   installs.clear()
   notify()
+}
+
+/**
+ * Transport subscriptions per session. A pty that never reports exit would
+ * otherwise leak its output listener (and the rolling log it feeds) for the
+ * lifetime of the app.
+ */
+const transportListeners = new Map<string, Array<() => void>>()
+
+function detachTransportListeners(key: string): void {
+  for (const off of transportListeners.get(key) ?? []) off()
+  transportListeners.delete(key)
 }
 
 /**
@@ -69,10 +85,24 @@ export async function beginInstall(transport: Transport, target: InstallTarget):
 
 /**
  * Start (or reattach to) an interactive sign-in session: the provider's own
- * CLI running in a server-side pty, where the user completes the OAuth flow.
+ * CLI running in a server-side pty. The first URL the CLI prints is its OAuth
+ * link — it gets opened for the user automatically, so the flow is "click
+ * Sign in, approve in the browser" with the terminal only as a fallback.
  */
-export async function beginLogin(transport: Transport, target: InstallTarget): Promise<void> {
-  return begin(transport, 'providers.launch', target, loginKey(target))
+export async function beginLogin(
+  transport: Transport,
+  target: InstallTarget,
+  openUrl: (url: string) => void = (url) => window.open(url, '_blank', 'noopener,noreferrer'),
+): Promise<void> {
+  return begin(transport, 'providers.launch', target, loginKey(target), openUrl)
+}
+
+/** The first http(s) URL in a log, after stripping terminal control noise. */
+export function firstAuthUrl(log: string): string | undefined {
+  const printable = log.replace(ANSI, '')
+  // Kill soft line wraps the pty inserts mid-URL before matching.
+  const match = printable.replace(/[\r\n]+\s*/g, '\n').match(/https?:\/\/[^\s'"<>)]+/)
+  return match?.[0]
 }
 
 async function begin(
@@ -80,6 +110,7 @@ async function begin(
   method: 'providers.install' | 'providers.launch',
   target: InstallTarget,
   key: string,
+  openUrl?: (url: string) => void,
 ): Promise<void> {
   const existing = installs.get(key)
   if (existing?.phase === 'running') return
@@ -101,18 +132,32 @@ async function begin(
   installs.set(key, state)
   notify()
 
+  // A retry replaces the session; the old session's listeners go with it.
+  detachTransportListeners(key)
   const offOutput = transport.on('terminal.output', (event) => {
     const current = installs.get(key)
     if (!current || event.terminalId !== terminalId) return
     let log = current.log + event.data
     if (log.length > LOG_CAP) log = log.slice(log.length - LOG_CAP)
-    installs.set(key, { ...current, log, lastLine: lastPrintableLine(log) })
+    let openedAuthUrl = current.openedAuthUrl
+    if (openUrl && !openedAuthUrl) {
+      const url = firstAuthUrl(log)
+      if (url) {
+        openedAuthUrl = url
+        openUrl(url)
+      }
+    }
+    installs.set(key, {
+      ...current,
+      log,
+      lastLine: lastPrintableLine(log),
+      ...(openedAuthUrl ? { openedAuthUrl } : {}),
+    })
     notify()
   })
   const offExit = transport.on('terminal.exit', (event) => {
     if (event.terminalId !== terminalId) return
-    offOutput()
-    offExit()
+    detachTransportListeners(key)
     const current = installs.get(key)
     if (!current) return
     installs.set(key, {
@@ -122,6 +167,7 @@ async function begin(
     })
     notify()
   })
+  transportListeners.set(key, [offOutput, offExit])
 }
 
 function notify(): void {

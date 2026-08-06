@@ -19,6 +19,7 @@ import {
 import { StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator } from './orchestrator.js'
 import { detectProviders, installCommandFor, launchCommandFor } from './providers.js'
+import { checkForUpdates } from './update-check.js'
 import { PushBus } from './push-bus.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
 import { Store } from './store.js'
@@ -130,11 +131,19 @@ export function startServer(
       protocolVersion: PROTOCOL_VERSION,
     })
 
-    socket.on('message', (raw) => void handleMessage(socket, raw.toString()))
-    socket.on('close', () => {
+    socket.on('message', (raw) =>
+      handleMessage(socket, raw.toString()).catch((error) =>
+        console.error(`[server] request handling failed: ${String(error)}`),
+      ),
+    )
+    const removeSocket = () => {
       previewCapture.remove(socket)
       push.remove(socket)
-    })
+    }
+    socket.on('close', removeSocket)
+    // Without a handler, a client resetting its connection emits 'error' on a
+    // bare EventEmitter and crashes the whole server.
+    socket.on('error', removeSocket)
   })
 
   async function handleMessage(socket: WebSocket, raw: string): Promise<void> {
@@ -173,7 +182,7 @@ export function startServer(
 
     try {
       const result = await route(socket, method as MethodName, decoded.data)
-      socket.send(JSON.stringify({ id, result }))
+      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ id, result }))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       respondError(
@@ -207,6 +216,9 @@ export function startServer(
 
       case 'system.panicStop':
         return orchestrator.panicStop()
+
+      case 'system.updateCheck':
+        return checkForUpdates()
 
       case 'search.sessions':
         return store.searchSessions(
@@ -471,6 +483,7 @@ export function startServer(
         // The sidebar entry can disappear while its history remains available
         // when the project is added again. Running processes still need an owner.
         for (const thread of store.threads(p.path)) orchestrator.close(thread.id)
+        orchestrator.forgetProject(p.path)
         store.removeProject(p.path)
         return {}
       }
@@ -771,6 +784,7 @@ export function startServer(
     message: string,
     detail?: string,
   ): void {
+    if (socket.readyState !== socket.OPEN) return
     socket.send(JSON.stringify({ id, error: { code, message, ...(detail ? { detail } : {}) } }))
   }
 

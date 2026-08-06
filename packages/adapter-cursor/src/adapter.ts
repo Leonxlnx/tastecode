@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import { readNdjson, spawnCli } from '@harness/proc'
+import { killTree, readNdjson, spawnCli } from '@harness/proc'
 import { CursorEventMapper, type CursorEvent } from './events.js'
 
 export const CURSOR_SUPPORTED_VERSION = '2026.07'
@@ -125,7 +125,7 @@ export class CursorAdapter extends EventEmitter<Events> {
     if (!this.#child || !this.#turnId) return
     const turnId = this.#turnId
     this.#terminalEvent = true
-    this.#child.kill()
+    killTree(this.#child)
     for (const event of this.#mapper?.finish() ?? []) this.emit('event', event)
     this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
     this.#turnId = undefined
@@ -140,7 +140,7 @@ export class CursorAdapter extends EventEmitter<Events> {
 
   dispose(): void {
     this.#terminalEvent = true
-    this.#child?.kill()
+    if (this.#child) killTree(this.#child)
     this.#child = undefined
     this.#threadId = undefined
     this.#turnId = undefined

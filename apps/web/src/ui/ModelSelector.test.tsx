@@ -276,13 +276,13 @@ describe('ModelSelector', () => {
 
   it('renders one section per source instead of repeating it on every row', () => {
     const claudeModel: ModelChoice = {
-      key: 'claude-code:auto',
+      key: 'claude-code:sonnet',
       provider: 'claude-code',
       sourceName: 'Claude Code',
       mark: 'anthropic',
       model: {
-        id: 'auto',
-        displayName: 'Automatic',
+        id: 'sonnet',
+        displayName: 'Sonnet 5',
         description: '',
         isDefault: false,
         reasoningEfforts: [],
@@ -303,7 +303,7 @@ describe('ModelSelector', () => {
     )
     expect(titles).toEqual(['Codex', 'Claude Code'])
     expect(document.querySelectorAll('.model-selector__model-source')).toHaveLength(0)
-    expect(screen.getByRole('button', { name: 'Use Automatic through Claude Code' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Use Sonnet 5 through Claude Code' })).toBeTruthy()
   })
 
   it('maps pointer positions onto discrete effort stops', () => {

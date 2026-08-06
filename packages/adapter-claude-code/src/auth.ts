@@ -1,5 +1,5 @@
 import type { Account } from '@harness/contracts'
-import { runCli, spawnCli } from '@harness/proc'
+import { killTree, runCli, spawnCli } from '@harness/proc'
 
 export async function claudeAccount(): Promise<Account> {
   const result = await runCli('claude', ['auth', 'status'])
@@ -29,7 +29,7 @@ export function startClaudeLogin(
   }
   child.on('error', () => finish(false, 'Claude Code could not start its sign-in flow.'))
   child.on('exit', (code) => finish(code === 0, code === 0 ? null : 'Claude Code sign-in failed.'))
-  return { loginId, cancel: () => child.kill() }
+  return { loginId, cancel: () => killTree(child) }
 }
 
 export async function signOutClaude(): Promise<void> {

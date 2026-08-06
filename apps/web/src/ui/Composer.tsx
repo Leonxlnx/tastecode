@@ -506,14 +506,18 @@ export function Composer(props: {
     setVoiceState('idle')
   }
 
+  // Dependency-scoped: without an array this ran after every streamed frame
+  // just to check the recording cap.
   useEffect(() => {
     if (voiceState === 'recording' && recorder.durationMs >= MAX_RECORDING_MS) {
       void transcribeVoice()
     }
-  })
+  }, [voiceState, recorder.durationMs])
 
+  const voiceStateRef = useRef(voiceState)
+  voiceStateRef.current = voiceState
   useEffect(() => {
-    if (!props.voiceAvailable && voiceState !== 'idle') cancelVoice()
+    if (!props.voiceAvailable && voiceStateRef.current !== 'idle') cancelVoice()
   }, [props.voiceAvailable])
 
   const showStop = props.running && text.trim() === '' && attachments.length === 0

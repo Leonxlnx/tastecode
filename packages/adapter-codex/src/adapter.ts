@@ -679,6 +679,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#mcpStartup.clear()
     this.#mcpInventory.clear()
     this.#mcpInventoryLoads.clear()
+    // Held responders close over the dead transport; answering one after
+    // disposal would write into nothing. Drop them with the process.
+    this.#approvals.clear()
+    this.#userInputs.clear()
+    this.#mcpLogins.clear()
   }
 
   #call<T>(method: string, params: unknown): Promise<T> {

@@ -19,15 +19,26 @@ export class PushBus {
     this.#sockets.delete(socket)
   }
 
-  /** Push to one connection. */
+  /**
+   * Push to one connection. A dead socket must never take the caller down —
+   * one client resetting its TCP connection cannot be allowed to starve every
+   * other connection of the rest of a broadcast.
+   */
   send<C extends ChannelName>(socket: WebSocket, channel: C, data: DataOf<C>): void {
+    if (socket.readyState !== socket.OPEN) return
     const sequence = (this.#sockets.get(socket) ?? 0) + 1
     this.#sockets.set(socket, sequence)
-    socket.send(JSON.stringify({ channel, sequence, data }))
+    try {
+      socket.send(JSON.stringify({ channel, sequence, data }), (error) => {
+        if (error) this.remove(socket)
+      })
+    } catch {
+      this.remove(socket)
+    }
   }
 
   /** Push to every connection. Each keeps its own sequence. */
   broadcast<C extends ChannelName>(channel: C, data: DataOf<C>): void {
-    for (const socket of this.#sockets.keys()) this.send(socket, channel, data)
+    for (const socket of [...this.#sockets.keys()]) this.send(socket, channel, data)
   }
 }

@@ -226,6 +226,9 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       model && this.#spec.modelArg
         ? [...this.#spec.args, this.#spec.modelArg, model]
         : this.#spec.args
+    // A second connect (retry after a failed resume, say) must not orphan the
+    // agent process the first one spawned.
+    this.#rpc?.dispose()
     const child = spawnCli(this.#spec.command, args, { cwd: workspacePath })
     const rpc = new StdioJsonRpc(child, this.#spec.name)
     this.#rpc = rpc

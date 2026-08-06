@@ -453,6 +453,27 @@ export const methods = {
     params: z.object({}),
     result: PanicStopResultSchema,
   },
+  /**
+   * Compare the running checkout against the GitHub default branch. The
+   * server does the network call — the renderer's CSP deliberately talks to
+   * one local server and nothing else. Every field is optional because each
+   * half can be unknowable (packaged build without git; offline).
+   */
+  'system.updateCheck': {
+    params: z.object({}),
+    result: z.object({
+      localCommit: z.string().optional(),
+      remote: z
+        .object({
+          sha: z.string(),
+          message: z.string(),
+          date: z.string(),
+        })
+        .optional(),
+      upToDate: z.boolean().optional(),
+      error: z.string().optional(),
+    }),
+  },
   'providers.list': {
     params: z.object({}),
     result: z.object({ providers: z.array(ProviderStatusSchema) }),

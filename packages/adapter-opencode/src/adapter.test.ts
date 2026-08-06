@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import type { DomainEvent } from '@harness/contracts'
 import type { Event } from '@opencode-ai/sdk'
 import { afterEach, describe, expect, it } from 'vitest'
-import { OpenCodeAdapter, OPENCODE_CAPABILITIES } from './adapter.js'
+import { OpenCodeAdapter, OPENCODE_CAPABILITIES, openCodeMcpConfig } from './adapter.js'
 
 const CAPTURED = JSON.parse(
   readFileSync(new URL('./fixtures/events.json', import.meta.url), 'utf8'),
@@ -209,3 +209,52 @@ function json(response: ServerResponse, value: unknown): void {
   response.writeHead(200, { 'content-type': 'application/json' })
   response.end(JSON.stringify(value))
 }
+
+describe('openCodeMcpConfig', () => {
+  it('maps stdio and http servers into opencode config, resolving credentials', () => {
+    expect(
+      openCodeMcpConfig(
+        [
+          {
+            id: 'docs',
+            enabled: true,
+            transport: {
+              type: 'stdio',
+              command: 'npx',
+              args: ['docs-mcp'],
+              environment: {
+                PLAIN: { source: 'literal', value: 'x' },
+                TOKEN: { source: 'credential', credentialRef: 'ref-1' },
+              },
+            },
+          },
+          {
+            id: 'remote',
+            enabled: true,
+            transport: {
+              type: 'http',
+              url: 'https://mcp.example.test',
+              headers: { Authorization: { source: 'credential', credentialRef: 'ref-1' } },
+            },
+          },
+          { id: 'off', enabled: false },
+        ],
+        { 'ref-1': 'secret-value' },
+      ),
+    ).toEqual({
+      docs: {
+        type: 'local',
+        command: ['npx', 'docs-mcp'],
+        environment: { PLAIN: 'x', TOKEN: 'secret-value' },
+        enabled: true,
+      },
+      remote: {
+        type: 'remote',
+        url: 'https://mcp.example.test',
+        headers: { Authorization: 'secret-value' },
+        enabled: true,
+      },
+      off: { type: 'local', command: ['true'], enabled: false },
+    })
+  })
+})

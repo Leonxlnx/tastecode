@@ -1,5 +1,5 @@
 import type { Account } from '@harness/contracts'
-import { runCli, spawnCli } from '@harness/proc'
+import { killTree, runCli, spawnCli } from '@harness/proc'
 
 export async function cursorAccount(): Promise<Account> {
   const result = await runCli('cursor-agent', ['status'])
@@ -24,7 +24,7 @@ export function startCursorLogin(
   }
   child.on('error', () => finish(false, 'Cursor could not start its sign-in flow.'))
   child.on('exit', (code) => finish(code === 0, code === 0 ? null : 'Cursor sign-in failed.'))
-  return { loginId, cancel: () => child.kill() }
+  return { loginId, cancel: () => killTree(child) }
 }
 
 export async function signOutCursor(): Promise<void> {

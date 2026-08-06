@@ -3,6 +3,7 @@ import type { Transport } from './transport.js'
 import {
   beginInstall,
   beginLogin,
+  firstAuthUrl,
   installKey,
   installState,
   lastPrintableLine,
@@ -124,8 +125,55 @@ describe('beginLogin', () => {
   it('reattaches instead of launching twice while a login is running', async () => {
     const transport = fakeTransport()
     const target = { provider: 'acp' as const, agent: 'kimi' }
-    await beginLogin(transport, target)
-    await beginLogin(transport, target)
+    await beginLogin(transport, target, () => {})
+    await beginLogin(transport, target, () => {})
     expect(transport.request).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens the first auth URL the CLI prints, exactly once', async () => {
+    const channels = new Map<string, Set<(data: unknown) => void>>()
+    const transport = {
+      request: vi.fn(async () => ({ terminalId: 'term-login-2' })),
+      on: vi.fn((channel: string, listener: (data: unknown) => void) => {
+        const listeners = channels.get(channel) ?? new Set()
+        listeners.add(listener)
+        channels.set(channel, listeners)
+        return () => listeners.delete(listener)
+      }),
+    } as unknown as Transport
+    const emit = (channel: string, data: unknown) => {
+      for (const listener of channels.get(channel) ?? []) listener(data)
+    }
+    const opened: string[] = []
+
+    await beginLogin(transport, { provider: 'acp', agent: 'gemini' }, (url) => opened.push(url))
+    emit('terminal.output', { terminalId: 'term-login-2', data: 'Starting sign-in...\r\n' })
+    emit('terminal.output', {
+      terminalId: 'term-login-2',
+      data: 'Open this URL: https://accounts.example.test/auth?code=abc\r\n',
+    })
+    emit('terminal.output', {
+      terminalId: 'term-login-2',
+      data: 'Or later https://example.test/other\r\n',
+    })
+
+    expect(opened).toEqual(['https://accounts.example.test/auth?code=abc'])
+    expect(installState(loginKey({ provider: 'acp', agent: 'gemini' }))?.openedAuthUrl).toBe(
+      'https://accounts.example.test/auth?code=abc',
+    )
+  })
+})
+
+describe('firstAuthUrl', () => {
+  const ESCAPE = String.fromCharCode(27)
+
+  it('finds the URL under terminal control noise', () => {
+    expect(firstAuthUrl(`${ESCAPE}[32mVisit https://x.test/login?a=1${ESCAPE}[0m now`)).toBe(
+      'https://x.test/login?a=1',
+    )
+  })
+
+  it('is empty when the CLI has not printed a link yet', () => {
+    expect(firstAuthUrl('warming up...')).toBeUndefined()
   })
 })

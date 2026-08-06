@@ -40,8 +40,10 @@ export function modelChoiceKey(source: string, modelId: string): string {
 export function automaticModel(): Model {
   return {
     id: '',
-    displayName: 'Automatic',
-    description: 'Let the provider choose its default model',
+    // Only shown when a provider cannot enumerate its models at all — name
+    // the honest behavior, never the word "Automatic".
+    displayName: 'Provider default',
+    description: 'The model this provider is configured to use',
     isDefault: true,
     reasoningEfforts: [],
     serviceTiers: [],

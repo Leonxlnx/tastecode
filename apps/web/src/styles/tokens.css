@@ -443,3 +443,98 @@ html.is-macos-font-smoothing {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Background palettes. Each tints the neutral stack — never the text colors —
+   so every accent still reads on top. Dark values first, light beneath.
+   --------------------------------------------------------------------------- */
+
+:root[data-backdrop='slate'] {
+  --bg: #0e1013;
+  --bg-rail: #12151a;
+  --bg-prompt: #191d24;
+  --surface: #191d24;
+  --surface-2: #20242c;
+  --surface-3: #292e37;
+}
+
+:root[data-backdrop='mocha'] {
+  --bg: #121010;
+  --bg-rail: #161312;
+  --bg-prompt: #1c1817;
+  --surface: #1c1817;
+  --surface-2: #241f1d;
+  --surface-3: #2d2725;
+}
+
+:root[data-backdrop='forest'] {
+  --bg: #0e120f;
+  --bg-rail: #121713;
+  --bg-prompt: #181f1a;
+  --surface: #181f1a;
+  --surface-2: #202822;
+  --surface-3: #29322b;
+}
+
+:root[data-backdrop='midnight'] {
+  --bg: #0b0d14;
+  --bg-rail: #0e1119;
+  --bg-prompt: #141828;
+  --surface: #141828;
+  --surface-2: #1b2030;
+  --surface-3: #232939;
+}
+
+:root[data-backdrop='plum'] {
+  --bg: #120f13;
+  --bg-rail: #161217;
+  --bg-prompt: #1d181e;
+  --surface: #1d181e;
+  --surface-2: #251f26;
+  --surface-3: #2e2730;
+}
+
+:root[data-theme='light'][data-backdrop='slate'] {
+  --bg: #f7f9fc;
+  --bg-rail: #f2f5f9;
+  --bg-prompt: #fbfcfe;
+  --surface: #eef2f7;
+  --surface-2: #e3e9f1;
+  --surface-3: #d7dfe9;
+}
+
+:root[data-theme='light'][data-backdrop='mocha'] {
+  --bg: #fcfaf8;
+  --bg-rail: #f7f4f0;
+  --bg-prompt: #fefdfb;
+  --surface: #f4f0eb;
+  --surface-2: #ebe5de;
+  --surface-3: #e0d9d0;
+}
+
+:root[data-theme='light'][data-backdrop='forest'] {
+  --bg: #f8fbf8;
+  --bg-rail: #f2f7f2;
+  --bg-prompt: #fcfefc;
+  --surface: #eef4ee;
+  --surface-2: #e3ece3;
+  --surface-3: #d6e2d6;
+}
+
+:root[data-theme='light'][data-backdrop='midnight'] {
+  --bg: #f5f7fc;
+  --bg-rail: #eff2f9;
+  --bg-prompt: #fafbfe;
+  --surface: #ebeef7;
+  --surface-2: #dfe4f0;
+  --surface-3: #d2d9e8;
+}
+
+:root[data-theme='light'][data-backdrop='plum'] {
+  --bg: #fbf8fc;
+  --bg-rail: #f6f2f7;
+  --bg-prompt: #fdfcfe;
+  --surface: #f3eef4;
+  --surface-2: #eae2ec;
+  --surface-3: #ded4e0;
+}

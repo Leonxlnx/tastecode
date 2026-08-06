@@ -4,6 +4,7 @@ import type {
   ApprovalMode,
   Capabilities,
   DomainEvent,
+  McpServerConfig,
   Model,
   Thread,
 } from '@harness/contracts'
@@ -26,8 +27,66 @@ export const OPENCODE_CAPABILITIES: Capabilities = {
 
 type Events = { event: [DomainEvent]; log: [string] }
 
+/**
+ * Harness MCP config as the `mcp` block of an opencode config. Credential
+ * references resolve here — the reference, never the secret, is what crossed
+ * the protocol. Verified against opencode 1.x: `OPENCODE_CONFIG_CONTENT`
+ * accepts `{ mcp: { name: { type: 'local'|'remote', ... } } }`.
+ */
+export function openCodeMcpConfig(
+  servers: McpServerConfig[],
+  credentials: Record<string, string>,
+): Record<string, unknown> {
+  const resolve = (
+    value: { source: 'literal'; value: string } | { source: 'credential'; credentialRef: string },
+  ) => (value.source === 'literal' ? value.value : (credentials[value.credentialRef] ?? ''))
+  const mcp: Record<string, unknown> = {}
+  for (const server of servers) {
+    if (!server.enabled) {
+      mcp[server.id] = { type: 'local', command: ['true'], enabled: false }
+      continue
+    }
+    if (server.transport.type === 'stdio') {
+      mcp[server.id] = {
+        type: 'local',
+        command: [server.transport.command, ...(server.transport.args ?? [])],
+        ...(server.transport.environment
+          ? {
+              environment: Object.fromEntries(
+                Object.entries(server.transport.environment).map(([key, value]) => [
+                  key,
+                  resolve(value),
+                ]),
+              ),
+            }
+          : {}),
+        enabled: true,
+      }
+    } else {
+      mcp[server.id] = {
+        type: 'remote',
+        url: server.transport.url,
+        ...(server.transport.headers
+          ? {
+              headers: Object.fromEntries(
+                Object.entries(server.transport.headers).map(([key, value]) => [
+                  key,
+                  resolve(value),
+                ]),
+              ),
+            }
+          : {}),
+        enabled: true,
+      }
+    }
+  }
+  return mcp
+}
+
 export class OpenCodeAdapter extends EventEmitter<Events> {
   readonly #configuredBaseUrl: string | undefined
+  readonly #mcpServers: McpServerConfig[]
+  readonly #mcpCredentials: Record<string, string>
   #baseUrl: string | undefined
   #server: { close(): void } | undefined
   #client: OpencodeClient | undefined
@@ -43,9 +102,17 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   #model: string | undefined
   #instructions: string | undefined
 
-  constructor(options: { baseUrl?: string } = {}) {
+  constructor(
+    options: {
+      baseUrl?: string
+      mcpServers?: McpServerConfig[]
+      mcpCredentials?: Record<string, string>
+    } = {},
+  ) {
     super()
     this.#configuredBaseUrl = options.baseUrl
+    this.#mcpServers = options.mcpServers ?? []
+    this.#mcpCredentials = options.mcpCredentials ?? {}
   }
 
   get capabilities(): Capabilities {
@@ -59,7 +126,16 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       return
     }
     try {
-      const server = await createOpencodeServer({ hostname: '127.0.0.1', port: 0 })
+      const serverOptions: Parameters<typeof createOpencodeServer>[0] = {
+        hostname: '127.0.0.1',
+        port: 0,
+      }
+      if (this.#mcpServers.length > 0) {
+        serverOptions.config = {
+          mcp: openCodeMcpConfig(this.#mcpServers, this.#mcpCredentials) as never,
+        }
+      }
+      const server = await createOpencodeServer(serverOptions)
       this.#server = server
       this.#baseUrl = server.url
     } catch {

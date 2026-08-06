@@ -4,9 +4,13 @@ export type FontPreference = 'geist' | 'system' | 'humanist' | 'rounded' | 'seri
 export type AccentPreference =
   'neutral' | 'ocean' | 'forest' | 'sunset' | 'amber' | 'rose' | 'lavender'
 
+export type BackdropPreference = 'default' | 'slate' | 'mocha' | 'forest' | 'midnight' | 'plum'
+
 export const THEME_KEY = 'harness.theme'
 export const FONT_KEY = 'harness.font'
 export const ACCENT_KEY = 'harness.accent'
+export const BACKDROP_KEY = 'harness.backdrop'
+export const GLASS_KEY = 'harness.sidebarGlass'
 export const DARK_THEME_QUERY = '(prefers-color-scheme: dark)'
 
 export function readThemePreference(): ThemePreference {
@@ -56,4 +60,34 @@ export function readAccentPreference(): AccentPreference {
 
 export function applyAccentPreference(accent: AccentPreference): void {
   document.documentElement.dataset.accent = accent
+}
+
+export function readBackdropPreference(): BackdropPreference {
+  const stored = localStorage.getItem(BACKDROP_KEY)
+  return stored === 'slate' ||
+    stored === 'mocha' ||
+    stored === 'forest' ||
+    stored === 'midnight' ||
+    stored === 'plum'
+    ? stored
+    : 'default'
+}
+
+export function applyBackdropPreference(backdrop: BackdropPreference): void {
+  document.documentElement.dataset.backdrop = backdrop
+}
+
+/**
+ * Sidebar translucency in percent, 0 (opaque, the default) to 60. Anything
+ * above that makes text sit on too little contrast to read comfortably.
+ */
+export function readGlassPreference(): number {
+  const stored = Number(localStorage.getItem(GLASS_KEY))
+  return Number.isFinite(stored) ? Math.min(60, Math.max(0, Math.round(stored))) : 0
+}
+
+export function applyGlassPreference(glass: number): void {
+  const root = document.documentElement
+  root.dataset.glass = glass > 0 ? 'on' : 'off'
+  root.style.setProperty('--rail-glass', String(glass / 100))
 }

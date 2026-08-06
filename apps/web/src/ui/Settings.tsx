@@ -46,7 +46,12 @@ import {
 } from '../provider-install.js'
 import type { Transport } from '../transport.js'
 import { InstallTerminal } from './InstallTerminal.js'
-import type { AccentPreference, FontPreference, ThemePreference } from '../theme.js'
+import type {
+  AccentPreference,
+  BackdropPreference,
+  FontPreference,
+  ThemePreference,
+} from '../theme.js'
 import { McpSettings } from './McpSettings.js'
 import { Menu, MenuItem } from './Menu.js'
 import { SkillsSettings } from './SkillsSettings.js'
@@ -80,6 +85,15 @@ const ACCENT_OPTIONS = [
   { value: 'lavender', label: 'Lavender' },
 ] as const satisfies ReadonlyArray<{ value: AccentPreference; label: string }>
 
+const BACKDROP_OPTIONS = [
+  { value: 'default', label: 'Graphite' },
+  { value: 'slate', label: 'Slate' },
+  { value: 'mocha', label: 'Mocha' },
+  { value: 'forest', label: 'Forest' },
+  { value: 'midnight', label: 'Midnight' },
+  { value: 'plum', label: 'Plum' },
+] as const satisfies ReadonlyArray<{ value: BackdropPreference; label: string }>
+
 /**
  * Settings stays intentionally small: the sidebar reorganizes the decisions
  * the app already exposes without inventing preferences for their own sake.
@@ -107,6 +121,10 @@ export function Settings(props: {
   onFontPreferenceChange: (font: FontPreference) => void
   accentPreference: AccentPreference
   onAccentPreferenceChange: (accent: AccentPreference) => void
+  backdropPreference: BackdropPreference
+  onBackdropPreferenceChange: (backdrop: BackdropPreference) => void
+  sidebarGlass: number
+  onSidebarGlassChange: (glass: number) => void
   showMacOSFontSmoothing: boolean
   macOSFontSmoothing: boolean
   onMacOSFontSmoothingChange: (enabled: boolean) => void
@@ -188,7 +206,7 @@ export function Settings(props: {
           {section === 'workflows' ? <WorkflowSettings {...props} /> : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
           {section === 'data' ? <DataSettings {...props} /> : null}
-          {section === 'about' ? <AboutSettings /> : null}
+          {section === 'about' ? <AboutSettings transport={props.transport} /> : null}
         </div>
       </main>
     </div>
@@ -433,6 +451,76 @@ function ProviderSettings(props: {
     }
   }
 
+  const renderProviderRow = (status: ProviderStatus) => {
+    const account =
+      accounts[status.id] ?? (status.id === props.provider ? props.account : undefined)
+    if (!status.installed && !account?.signedIn) {
+      return (
+        <InstallableRow
+          key={status.id}
+          title={status.displayName}
+          idleNote={
+            status.setup?.installCommand ?? status.problem ?? 'Provider CLI is not installed.'
+          }
+          icon={<ProviderIcon mark={providerMark(status.id)} size={17} />}
+          target={{ provider: status.id }}
+          setup={status.setup}
+          transport={props.transport}
+          onInstalled={props.onConnectionsChanged}
+        />
+      )
+    }
+    if (!account?.signedIn && status.setup?.login === 'provider') {
+      return (
+        <CliSignInRow
+          key={status.id}
+          title={status.displayName}
+          idleNote="Not signed in · sign-in runs in the provider's CLI."
+          icon={<ProviderIcon mark={providerMark(status.id)} size={17} />}
+          target={{ provider: status.id }}
+          transport={props.transport}
+          onSignedIn={() => void refreshAccount(status.id).catch(() => undefined)}
+        />
+      )
+    }
+    const accountStatus = account?.signedIn
+      ? [account.email, account.plan].filter(Boolean).join(' · ') || 'Signed in'
+      : 'Not signed in'
+    const busy = authBusy === status.id
+    return (
+      <SettingsRow key={status.id} title={status.displayName} note={accountStatus}>
+        <div className="provider-settings__actions">
+          <ProviderIcon mark={providerMark(status.id)} size={17} />
+          {account?.signedIn ? (
+            <button
+              className="settings__action"
+              type="button"
+              disabled={busy}
+              onClick={() => void signOut(status.id)}
+            >
+              <LogOut size={13} aria-hidden />
+              {busy ? 'Signing out…' : 'Sign out'}
+            </button>
+          ) : (
+            <button
+              className="settings__action"
+              type="button"
+              disabled={busy}
+              onClick={() => void signIn(status.id)}
+            >
+              {busy ? 'Signing in…' : 'Sign in'}
+            </button>
+          )}
+        </div>
+      </SettingsRow>
+    )
+  }
+
+  const direct = props.providerStatuses.filter((status) => status.id !== 'acp')
+  const byId = (id: ProviderId) => direct.filter((status) => status.id === id)
+  const agentById = (id: string) => props.acpAgents.filter((agent) => agent.id === id)
+  const knownAgents = new Set(['gemini', 'kimi', 'qwen'])
+
   return (
     <SettingsPanel title="Providers" groupTitle="Agent subscriptions">
       {authError ? (
@@ -440,74 +528,23 @@ function ProviderSettings(props: {
           {authError}
         </p>
       ) : null}
-      {props.providerStatuses
-        .filter((status) => status.id !== 'acp')
-        .map((status) => {
-          const account =
-            accounts[status.id] ?? (status.id === props.provider ? props.account : undefined)
-          if (!status.installed && !account?.signedIn) {
-            return (
-              <InstallableRow
-                key={status.id}
-                title={status.displayName}
-                idleNote={
-                  status.setup?.installCommand ?? status.problem ?? 'Provider CLI is not installed.'
-                }
-                icon={<ProviderIcon mark={providerMark(status.id)} size={17} />}
-                target={{ provider: status.id }}
-                setup={status.setup}
-                transport={props.transport}
-                onInstalled={props.onConnectionsChanged}
-              />
-            )
-          }
-          if (!account?.signedIn && status.setup?.login === 'provider') {
-            return (
-              <CliSignInRow
-                key={status.id}
-                title={status.displayName}
-                idleNote="Not signed in · sign-in runs in the provider's CLI."
-                icon={<ProviderIcon mark={providerMark(status.id)} size={17} />}
-                target={{ provider: status.id }}
-                transport={props.transport}
-                onSignedIn={() => void refreshAccount(status.id).catch(() => undefined)}
-              />
-            )
-          }
-          const accountStatus = account?.signedIn
-            ? [account.email, account.plan].filter(Boolean).join(' · ') || 'Signed in'
-            : 'Not signed in'
-          const busy = authBusy === status.id
-          return (
-            <SettingsRow key={status.id} title={status.displayName} note={accountStatus}>
-              <div className="provider-settings__actions">
-                <ProviderIcon mark={providerMark(status.id)} size={17} />
-                {account?.signedIn ? (
-                  <button
-                    className="settings__action"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void signOut(status.id)}
-                  >
-                    <LogOut size={13} aria-hidden />
-                    {busy ? 'Signing out…' : 'Sign out'}
-                  </button>
-                ) : (
-                  <button
-                    className="settings__action"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void signIn(status.id)}
-                  >
-                    {busy ? 'Signing in…' : 'Sign in'}
-                  </button>
-                )}
-              </div>
-            </SettingsRow>
-          )
-        })}
+      {byId('codex').map(renderProviderRow)}
+      {byId('claude-code').map(renderProviderRow)}
+      <PlannedRow title="Grok" note="xAI's agent — not integrated yet, planned." />
+      {byId('cursor').map(renderProviderRow)}
+      {byId('opencode').map(renderProviderRow)}
+      {direct
+        .filter((status) => !['codex', 'claude-code', 'cursor', 'opencode'].includes(status.id))
+        .map(renderProviderRow)}
 
-      {props.acpAgents.map((agent) =>
+      <h2 className="settings__group-title settings__group-title--inside">Other agents</h2>
+      <PlannedRow title="Pi" note="Inflection's agent — not integrated yet, planned." />
+      {[
+        ...agentById('kimi'),
+        ...agentById('qwen'),
+        ...agentById('gemini'),
+        ...props.acpAgents.filter((agent) => !knownAgents.has(agent.id)),
+      ].map((agent) =>
         agent.installed ? (
           <CliSignInRow
             key={agent.id}
@@ -662,35 +699,54 @@ function ModelSettings(props: {
       <p className="settings__group-note settings__group-note--top">
         Show only the models you actually use. This does not disconnect the provider.
       </p>
-      {[...sources.entries()].map(([source, choices]) => (
-        <div className="model-visibility" key={source}>
-          <div className="model-visibility__source">
-            {choices[0] ? <ProviderIcon mark={choices[0].mark} size={17} /> : null}
-            <span>{source}</span>
-          </div>
-          {choices.map((choice) => {
-            const visible = !props.hiddenModels.has(choice.key)
-            return (
-              <SettingsRow
-                key={choice.key}
-                title={choice.model.displayName}
-                note={choice.model.description ?? 'Available from this provider'}
+      {[...sources.entries()].map(([source, choices]) => {
+        const anyVisible = choices.some((choice) => !props.hiddenModels.has(choice.key))
+        return (
+          <div className="model-visibility" key={source}>
+            <div className="model-visibility__source">
+              {choices[0] ? <ProviderIcon mark={choices[0].mark} size={17} /> : null}
+              <span>{source}</span>
+              <button
+                className={`switch switch--source${anyVisible ? ' is-on' : ''}`}
+                type="button"
+                role="switch"
+                aria-label={`Show any models from ${source}`}
+                aria-checked={anyVisible}
+                onClick={() => {
+                  // One master switch per provider: off hides every model, on
+                  // brings them all back — "deselect a provider" without
+                  // disconnecting it.
+                  for (const choice of choices)
+                    props.onModelVisibilityChange(choice.key, !anyVisible)
+                }}
               >
-                <button
-                  className={`switch${visible ? ' is-on' : ''}`}
-                  type="button"
-                  role="switch"
-                  aria-label={`Show ${choice.model.displayName}`}
-                  aria-checked={visible}
-                  onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
+                <span className="switch__thumb" />
+              </button>
+            </div>
+            {choices.map((choice) => {
+              const visible = !props.hiddenModels.has(choice.key)
+              return (
+                <SettingsRow
+                  key={choice.key}
+                  title={choice.model.displayName}
+                  note={choice.model.description ?? 'Available from this provider'}
                 >
-                  <span className="switch__thumb" />
-                </button>
-              </SettingsRow>
-            )
-          })}
-        </div>
-      ))}
+                  <button
+                    className={`switch${visible ? ' is-on' : ''}`}
+                    type="button"
+                    role="switch"
+                    aria-label={`Show ${choice.model.displayName}`}
+                    aria-checked={visible}
+                    onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
+                  >
+                    <span className="switch__thumb" />
+                  </button>
+                </SettingsRow>
+              )
+            })}
+          </div>
+        )
+      })}
     </SettingsPanel>
   )
 }
@@ -702,6 +758,10 @@ function AppearanceSettings(props: {
   onFontPreferenceChange: (font: FontPreference) => void
   accentPreference: AccentPreference
   onAccentPreferenceChange: (accent: AccentPreference) => void
+  backdropPreference: BackdropPreference
+  onBackdropPreferenceChange: (backdrop: BackdropPreference) => void
+  sidebarGlass: number
+  onSidebarGlassChange: (glass: number) => void
   showMacOSFontSmoothing: boolean
   macOSFontSmoothing: boolean
   onMacOSFontSmoothingChange: (enabled: boolean) => void
@@ -731,6 +791,62 @@ function AppearanceSettings(props: {
             </button>
           ))}
         </fieldset>
+      </div>
+      <div className="appearance__text">
+        <h2 className="settings__group-title">Background</h2>
+        <fieldset
+          className="appearance-picker appearance-picker--accent"
+          aria-label="Background palette"
+        >
+          {BACKDROP_OPTIONS.map((option) => (
+            <button
+              className={`appearance-choice${props.backdropPreference === option.value ? ' is-selected' : ''}`}
+              type="button"
+              aria-pressed={props.backdropPreference === option.value}
+              onClick={() => props.onBackdropPreferenceChange(option.value)}
+              key={option.value}
+            >
+              <span
+                className="appearance-choice__swatch"
+                data-backdrop-preview={option.value}
+                aria-hidden
+              />
+              <span>{option.label}</span>
+            </button>
+          ))}
+        </fieldset>
+      </div>
+      <div className="appearance__text">
+        <h2 className="settings__group-title">Sidebar</h2>
+        <div className="settings__group">
+          <SettingsRow
+            title="Translucent sidebar"
+            note="Let a soft glow shine through the rail. Strength is yours to set."
+          >
+            <div className="settings__inline-controls">
+              <input
+                className="settings__slider"
+                type="range"
+                aria-label="Sidebar translucency"
+                min={0}
+                max={60}
+                step={5}
+                value={props.sidebarGlass}
+                onChange={(event) => props.onSidebarGlassChange(event.currentTarget.valueAsNumber)}
+              />
+              <button
+                className={`switch${props.sidebarGlass > 0 ? ' is-on' : ''}`}
+                type="button"
+                role="switch"
+                aria-label="Translucent sidebar"
+                aria-checked={props.sidebarGlass > 0}
+                onClick={() => props.onSidebarGlassChange(props.sidebarGlass > 0 ? 0 : 35)}
+              >
+                <span className="switch__thumb" />
+              </button>
+            </div>
+          </SettingsRow>
+        </div>
       </div>
       <div className="appearance__text">
         <h2 className="settings__group-title">Accent palette</h2>
@@ -841,14 +957,64 @@ function DataSettings(props: { projectCount: number; onReset: () => void }) {
   )
 }
 
-function AboutSettings() {
+function AboutSettings(props: { transport: Transport }) {
+  const [checking, setChecking] = useState(false)
+  const [result, setResult] = useState<ResultOf<'system.updateCheck'>>()
+
+  const check = async () => {
+    setChecking(true)
+    try {
+      setResult(await props.transport.request('system.updateCheck', {}))
+    } catch (cause) {
+      setResult({ error: cause instanceof Error ? cause.message : String(cause) })
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  const short = (sha: string) => sha.slice(0, 7)
+  const updateNote = !result
+    ? 'Compare this build with the latest commit on GitHub.'
+    : result.error
+      ? result.error
+      : result.upToDate
+        ? `Up to date · ${short(result.remote?.sha ?? '')} is the newest commit.`
+        : result.remote
+          ? `Newer commit on GitHub${result.remote.message ? `: "${result.remote.message}"` : ''} (${short(result.remote.sha)}). Pull and restart to update.`
+          : 'Could not determine a verdict.'
+
   return (
     <SettingsPanel title="About" groupTitle="Personal Harness">
       <SettingsRow
         title="Personal Harness"
-        note={`${isDesktop ? 'Desktop' : 'Browser'} · pre-release`}
+        note={`${isDesktop ? 'Desktop' : 'Browser'} · pre-release${result?.localCommit ? ` · ${short(result.localCommit)}` : ''}`}
       />
-      <p className="settings__group-note">Open source, and built to be forked.</p>
+      <SettingsRow title="Updates" note={updateNote}>
+        <button
+          className="settings__action"
+          type="button"
+          disabled={checking}
+          onClick={() => void check()}
+        >
+          <RotateCcw size={13} aria-hidden />
+          {checking ? 'Checking…' : 'Check for updates'}
+        </button>
+      </SettingsRow>
+      <SettingsRow title="Source" note="Open source, and built to be forked.">
+        <button
+          className="settings__action"
+          type="button"
+          onClick={() =>
+            window.open(
+              'https://github.com/Leonxlnx/personalharness',
+              '_blank',
+              'noopener,noreferrer',
+            )
+          }
+        >
+          GitHub
+        </button>
+      </SettingsRow>
     </SettingsPanel>
   )
 }
@@ -1000,10 +1166,19 @@ function CliSignInRow(props: {
   const [startError, setStartError] = useState<string>()
   const { onSignedIn } = props
 
+  // Latched like InstallableRow: onSignedIn may get a new identity from any
+  // parent render, and firing more than once per success is the seed of the
+  // refresh loop fixed there.
+  const notifiedLogin = useRef(false)
   useEffect(() => {
     if (login?.phase === 'succeeded') {
-      clearInstall(key)
-      onSignedIn()
+      if (!notifiedLogin.current) {
+        notifiedLogin.current = true
+        clearInstall(key)
+        onSignedIn()
+      }
+    } else {
+      notifiedLogin.current = false
     }
   }, [login?.phase, key, onSignedIn])
 
@@ -1017,7 +1192,9 @@ function CliSignInRow(props: {
 
   const note =
     login?.phase === 'running'
-      ? 'Complete the sign-in in the terminal below, then exit the CLI.'
+      ? login.openedAuthUrl
+        ? 'Browser opened — approve the sign-in there. The terminal below follows along.'
+        : 'Complete the sign-in in the terminal below, then exit the CLI.'
       : login?.phase === 'failed'
         ? `The CLI exited${login.exitCode === null ? '' : ` (exit ${login.exitCode})`} — check the terminal, or retry.`
         : (startError ?? props.idleNote)
@@ -1046,6 +1223,24 @@ function CliSignInRow(props: {
         <InstallTerminal transport={props.transport} installKey={key} />
       ) : null}
     </>
+  )
+}
+
+/**
+ * A provider we intend to support but have not built. Listing it beats
+ * omitting it — "not supported yet" and "not installed" must stay
+ * distinguishable, and the roadmap belongs in the product, not a doc.
+ */
+function PlannedRow(props: { title: string; note: string }) {
+  return (
+    <SettingsRow title={props.title} note={props.note}>
+      <div className="provider-settings__actions">
+        <ProviderIcon mark="custom" size={17} />
+        <button className="settings__action" type="button" disabled>
+          Planned
+        </button>
+      </div>
+    </SettingsRow>
   )
 }
 

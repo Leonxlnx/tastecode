@@ -1,5 +1,5 @@
 import type { Model, ProviderSetup } from '@harness/contracts'
-import { isInstalled, spawnCli } from '@harness/proc'
+import { isInstalled, killTree, spawnCli } from '@harness/proc'
 
 /**
  * Agents we know how to launch in ACP mode.
@@ -111,8 +111,7 @@ export async function detectAgents(): Promise<Array<AcpAgentSpec & { installed: 
 export async function discoverAgentModels(agentId: string): Promise<Model[]> {
   if (agentId === 'gemini') {
     return [
-      model('auto', 'Auto (Gemini)', 'Let Gemini CLI route each task', true),
-      model('gemini-3-pro-preview', 'Gemini 3 Pro (Preview)', 'Most capable Gemini model'),
+      model('gemini-3-pro-preview', 'Gemini 3 Pro (Preview)', 'Most capable Gemini model', true),
       model('gemini-3-flash-preview', 'Gemini 3 Flash (Preview)', 'Fast Gemini 3 model'),
       model('gemini-2.5-pro', 'Gemini 2.5 Pro', 'Stable Pro model'),
       model('gemini-2.5-flash', 'Gemini 2.5 Flash', 'Stable fast model'),
@@ -160,7 +159,7 @@ function captureCli(command: string, args: string[], timeoutMs = 5000): Promise<
       error ? reject(error) : resolve(output)
     }
     const timer = setTimeout(() => {
-      child.kill()
+      killTree(child)
       finish(new Error(`${command} model discovery timed out`))
     }, timeoutMs)
     child.stdout.setEncoding('utf8')

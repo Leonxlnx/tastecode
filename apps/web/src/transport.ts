@@ -23,7 +23,9 @@ export class Transport {
   #url: string
   #socket: WebSocket | undefined
   #pending = new Map<string, Pending>()
-  #queue: string[] = []
+  /** Ids actually transmitted on the current socket — lost if it drops. */
+  #inFlight = new Set<string>()
+  #queue: Array<{ id: string | undefined; payload: string }> = []
   #nextId = 1
   #lastSequence = 0
   #state: ConnectionState = 'closed'
@@ -71,16 +73,17 @@ export class Transport {
     const promise = new Promise<unknown>((resolve, reject) => {
       this.#pending.set(id, { resolve, reject })
     })
-    this.#send(JSON.stringify({ id, method, params }))
+    this.#send(JSON.stringify({ id, method, params }), id)
     return promise as Promise<ResultOf<M>>
   }
 
-  #send(payload: string): void {
+  #send(payload: string, id?: string): void {
     if (this.#socket?.readyState === WebSocket.OPEN) {
       this.#socket.send(payload)
+      if (id) this.#inFlight.add(id)
       return
     }
-    this.#queue.push(payload)
+    this.#queue.push({ id, payload })
   }
 
   #open(state: ConnectionState): void {
@@ -95,7 +98,10 @@ export class Transport {
 
     socket.onopen = () => {
       this.#setState('open')
-      for (const payload of this.#queue.splice(0)) socket.send(payload)
+      for (const entry of this.#queue.splice(0)) {
+        socket.send(entry.payload)
+        if (entry.id) this.#inFlight.add(entry.id)
+      }
       void this.request('client.capabilities', { previewCapture: canCapturePreview }).catch(
         () => undefined,
       )
@@ -111,6 +117,18 @@ export class Transport {
 
     socket.onclose = () => {
       if (this.#socket !== socket) return
+      // Calls already transmitted on this socket can never be answered — the
+      // server's reply died with the connection. Leaving them pending is how
+      // a session got stuck at "starting" forever. Requests still queued
+      // survive and flush on reconnect.
+      for (const id of this.#inFlight) {
+        const call = this.#pending.get(id)
+        if (call) {
+          this.#pending.delete(id)
+          call.reject(new Error('Connection to the server was lost.'))
+        }
+      }
+      this.#inFlight.clear()
       if (this.#closedByUs) return
       this.#setState('reconnecting')
       // Fixed backoff is fine for a loopback connection to a server we own.
@@ -131,9 +149,13 @@ export class Transport {
       const call = this.#pending.get(id)
       if (!call) return
       this.#pending.delete(id)
+      this.#inFlight.delete(id)
       const error = message['error'] as { message?: string; detail?: string } | undefined
       if (error) {
-        call.reject(new Error(error.detail ? `${error.message} (${error.detail})` : error.message))
+        // A frame without a message must not surface as the literal string
+        // "undefined" in the notice bar.
+        const text = error.message ?? 'The server reported an error.'
+        call.reject(new Error(error.detail ? `${text} (${error.detail})` : text))
       } else {
         call.resolve(message['result'])
       }

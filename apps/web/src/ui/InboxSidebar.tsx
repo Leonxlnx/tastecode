@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Bell, CheckCheck, ChevronRight, Ellipsis, Plus } from 'lucide-react'
 import { Menu, MenuItem } from './Menu.js'
 import type { Project, Session } from './Sidebar.js'
@@ -31,18 +31,24 @@ export function InboxSidebar(props: {
   const [snoozedOpen, setSnoozedOpen] = useState(false)
   const [settledOpen, setSettledOpen] = useState(false)
   const [settledLimit, setSettledLimit] = useState(10)
-  const entries = props.projects
-    .flatMap((project) => project.sessions.map((session) => ({ project, session })))
-    .filter((entry) => !props.scope || entry.project.path === props.scope)
-  const active = entries
-    .filter((entry) => entry.session.lifecycle.state === 'active')
-    .sort(newestFirst)
-  const snoozed = entries
-    .filter((entry) => entry.session.lifecycle.state === 'snoozed')
-    .sort((a, b) => wakeAt(a.session) - wakeAt(b.session))
-  const settled = entries
-    .filter((entry) => entry.session.lifecycle.state === 'settled')
-    .sort((a, b) => settledAt(b.session) - settledAt(a.session))
+  // Memoised: this component re-renders on every streamed commit, and five
+  // full passes over every session in every project per frame is real work.
+  const { active, snoozed, settled } = useMemo(() => {
+    const entries = props.projects
+      .flatMap((project) => project.sessions.map((session) => ({ project, session })))
+      .filter((entry) => !props.scope || entry.project.path === props.scope)
+    return {
+      active: entries
+        .filter((entry) => entry.session.lifecycle.state === 'active')
+        .sort(newestFirst),
+      snoozed: entries
+        .filter((entry) => entry.session.lifecycle.state === 'snoozed')
+        .sort((a, b) => wakeAt(a.session) - wakeAt(b.session)),
+      settled: entries
+        .filter((entry) => entry.session.lifecycle.state === 'settled')
+        .sort((a, b) => settledAt(b.session) - settledAt(a.session)),
+    }
+  }, [props.projects, props.scope])
   const selectedSnoozed = snoozed.find((entry) => entry.session.id === props.activeSessionId)
   const selectedSettled = settled.find((entry) => entry.session.id === props.activeSessionId)
   const visibleSettled = withSelected(settled.slice(0, settledLimit), selectedSettled)

@@ -1,4 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { killTree } from './kill.js'
+
+export { killTree } from './kill.js'
 
 export { JsonRpcError, StdioJsonRpc, type JsonRpcId, type ServerRequestHandler } from './jsonrpc.js'
 
@@ -67,7 +70,7 @@ export function commandVersion(command: string, timeoutMs = 5000): Promise<strin
       if (settled) return
       settled = true
       clearTimeout(timer)
-      child.kill()
+      killTree(child)
       resolve(value)
     }
 
@@ -102,7 +105,7 @@ export function runCli(
       result instanceof Error ? reject(result) : resolve(result)
     }
     const timer = setTimeout(() => {
-      child.kill()
+      killTree(child)
       finish(new Error(`${command} did not respond`))
     }, timeoutMs)
     child.stdout.setEncoding('utf8')

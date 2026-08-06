@@ -98,6 +98,10 @@ describe('provider settings', () => {
         onFontPreferenceChange={() => {}}
         accentPreference="neutral"
         onAccentPreferenceChange={() => {}}
+        backdropPreference="default"
+        onBackdropPreferenceChange={() => {}}
+        sidebarGlass={0}
+        onSidebarGlassChange={() => {}}
         showMacOSFontSmoothing={false}
         macOSFontSmoothing={true}
         onMacOSFontSmoothingChange={() => {}}
@@ -212,6 +216,10 @@ describe('provider settings', () => {
         onFontPreferenceChange={() => {}}
         accentPreference="neutral"
         onAccentPreferenceChange={() => {}}
+        backdropPreference="default"
+        onBackdropPreferenceChange={() => {}}
+        sidebarGlass={0}
+        onSidebarGlassChange={() => {}}
         showMacOSFontSmoothing={false}
         macOSFontSmoothing={true}
         onMacOSFontSmoothingChange={() => {}}
@@ -317,6 +325,10 @@ describe('provider settings', () => {
         onFontPreferenceChange={() => {}}
         accentPreference="neutral"
         onAccentPreferenceChange={() => {}}
+        backdropPreference="default"
+        onBackdropPreferenceChange={() => {}}
+        sidebarGlass={0}
+        onSidebarGlassChange={() => {}}
         showMacOSFontSmoothing={false}
         macOSFontSmoothing={true}
         onMacOSFontSmoothingChange={() => {}}

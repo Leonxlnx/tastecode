@@ -30,7 +30,7 @@ export function getCompactModelName(displayName: string | undefined): string {
 }
 
 export function getFriendlyEffortLabel(value: string | undefined): string {
-  if (!value) return 'Automatic'
+  if (!value) return 'Default'
   if (value.toLowerCase() === 'xhigh') return 'Extra High'
   if (value.toLowerCase() === 'xlow') return 'Extra Low'
   return value
@@ -178,7 +178,7 @@ function DitherChoiceRow(props: {
 
   const displayIndex = pointerIndex ?? props.selectedIndex
   const displayedLabel =
-    props.optionLabels[displayIndex] ?? props.optionLabels[props.selectedIndex] ?? 'Automatic'
+    props.optionLabels[displayIndex] ?? props.optionLabels[props.selectedIndex] ?? 'Default'
   const selectedProgress =
     displayIndex < 0 || props.optionLabels.length < 2
       ? 0.5

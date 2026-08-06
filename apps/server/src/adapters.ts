@@ -210,7 +210,10 @@ function cursorRuntime(onLog: (line: string) => void): ProviderRuntime {
 function openCodeRuntime(onLog: (line: string) => void): ProviderRuntime {
   return {
     async start(workspacePath, options) {
-      const adapter = new OpenCodeAdapter()
+      const adapter = new OpenCodeAdapter({
+        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+        ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
+      })
       adapter.on('log', onLog)
       try {
         await adapter.start()
@@ -226,7 +229,10 @@ function openCodeRuntime(onLog: (line: string) => void): ProviderRuntime {
       }
     },
     async resume(threadId, workspacePath, options) {
-      const adapter = new OpenCodeAdapter()
+      const adapter = new OpenCodeAdapter({
+        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+        ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
+      })
       adapter.on('log', onLog)
       try {
         await adapter.start()
@@ -277,9 +283,15 @@ function codexRuntime(onLog: (line: string) => void): ProviderRuntime {
         ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
       })
       adapter.on('log', onLog)
-      await adapter.start()
-      const thread = await adapter.startThread(workspacePath, options)
-      return { thread, session: adapter }
+      try {
+        await adapter.start()
+        const thread = await adapter.startThread(workspacePath, options)
+        return { thread, session: adapter }
+      } catch (error) {
+        // A failing thread/start must not leak the app-server child it spawned.
+        adapter.dispose()
+        throw error
+      }
     },
     async resume(threadId, workspacePath, options) {
       const adapter = new CodexAdapter({

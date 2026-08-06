@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { killTree } from './kill.js'
 
 /**
  * Newline-delimited JSON-RPC 2.0 over a child process's stdio.
@@ -50,6 +51,7 @@ export class StdioJsonRpc {
   #nextId = 1
   #buffer = ''
   #disposed = false
+  #exited = false
   #label: string
 
   #onNotification: (method: string, params: unknown) => void = () => {}
@@ -64,8 +66,17 @@ export class StdioJsonRpc {
     child.stdout.on('data', (chunk: string) => this.#ingest(chunk))
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => this.#onStderr(chunk))
-    child.on('exit', (code) => this.#failAll(new Error(`${this.#label} exited (code ${code})`)))
-    child.on('error', (error) => this.#failAll(error))
+    child.on('exit', (code) => {
+      this.#exited = true
+      this.#failAll(new Error(`${this.#label} exited (code ${code})`))
+    })
+    child.on('error', (error) => {
+      this.#exited = true
+      this.#failAll(error)
+    })
+    // A write after the peer died raises EPIPE as a stream 'error' event;
+    // without a listener that crashes the process instead of failing a call.
+    child.stdin.on('error', (error) => this.#onStderr(`stdin: ${String(error)}`))
   }
 
   onNotification(handler: (method: string, params: unknown) => void): void {
@@ -99,10 +110,11 @@ export class StdioJsonRpc {
     if (this.#disposed) return
     this.#disposed = true
     this.#failAll(new Error('transport disposed'))
-    this.#child.kill()
+    killTree(this.#child)
   }
 
   #write(message: unknown): void {
+    if (this.#exited || !this.#child.stdin.writable) return
     this.#child.stdin.write(JSON.stringify(message) + '\n')
   }
 

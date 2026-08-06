@@ -596,7 +596,10 @@ function ProjectRow(props: {
       <div
         className="proj__drawer"
         data-open={expanded && count > 0}
-        style={{ maxHeight: expanded ? `${count * 30}px` : '0px' }}
+        // Generous cap per row: rows can exceed the nominal height (wrapped
+        // titles, the inline rename input) and a tight cap clips the last row
+        // mid-animation. The transition end state is identical either way.
+        style={{ maxHeight: expanded ? `${count * 56}px` : '0px' }}
       >
         <ul className="proj__sessions">
           {props.project.sessions.map((session) => (

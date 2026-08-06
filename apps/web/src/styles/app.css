@@ -1328,6 +1328,10 @@
   border-top: 1px solid var(--line);
 }
 
+.model-visibility__source .switch--source {
+  margin-left: auto;
+}
+
 .model-visibility__source {
   display: flex;
   align-items: center;
@@ -2471,6 +2475,7 @@
   padding: 0 8px 0 32px;
   text-align: left;
   min-width: 0;
+  transition: color var(--dur-fast) var(--ease-out);
   /* Nothing in the rail wraps. Titles are arbitrary user text and a row that
      grows taller as the title grows makes the whole list unstable. */
   white-space: nowrap;
@@ -2478,6 +2483,19 @@
 
 .sess:hover {
   color: var(--text);
+}
+
+/* A quiet accent tick marks the active session without shouting. */
+.sessrow.is-active::before {
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--attention);
+  content: '';
+  opacity: 0.85;
 }
 
 .sessrow.is-active .sess {
@@ -6806,4 +6824,185 @@
   .onboard__inner {
     animation: none;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   Translucent sidebar. The strength comes from --rail-glass (0..0.6, set by
+   Appearance). A soft accent glow sits behind the shell whenever glass or a
+   background palette is active, so the translucency has something to show.
+   --------------------------------------------------------------------------- */
+
+:root[data-glass='on'] .rail {
+  background: color-mix(
+    in srgb,
+    var(--bg-rail) calc(100% - var(--rail-glass, 0) * 100%),
+    transparent
+  );
+  backdrop-filter: blur(16px) saturate(1.15);
+  -webkit-backdrop-filter: blur(16px) saturate(1.15);
+}
+
+:root[data-glass='on'] .shell,
+:root[data-backdrop]:not([data-backdrop='default']) .shell {
+  background-image:
+    radial-gradient(
+      60% 42% at 8% 0%,
+      color-mix(in srgb, var(--attention) 6%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      50% 38% at 100% 100%,
+      color-mix(in srgb, var(--effort) 5%, transparent),
+      transparent 70%
+    );
+  background-attachment: fixed;
+}
+
+.appearance-choice__swatch[data-backdrop-preview='default'] {
+  --swatch-a: #1a1a1a;
+  --swatch-b: #444444;
+}
+
+.appearance-choice__swatch[data-backdrop-preview='slate'] {
+  --swatch-a: #12151a;
+  --swatch-b: #3a4353;
+}
+
+.appearance-choice__swatch[data-backdrop-preview='mocha'] {
+  --swatch-a: #161312;
+  --swatch-b: #55453d;
+}
+
+.appearance-choice__swatch[data-backdrop-preview='forest'] {
+  --swatch-a: #121713;
+  --swatch-b: #3c5242;
+}
+
+.appearance-choice__swatch[data-backdrop-preview='midnight'] {
+  --swatch-a: #0e1119;
+  --swatch-b: #2c3a5e;
+}
+
+.appearance-choice__swatch[data-backdrop-preview='plum'] {
+  --swatch-a: #161217;
+  --swatch-b: #4d3a52;
+}
+
+.settings__slider {
+  width: 130px;
+  accent-color: var(--attention);
+}
+
+/* ---------------------------------------------------------------------------
+   In-titlebar application menu (File / Edit / View / Help). Text triggers in
+   the drag strip must opt out of dragging or the click never lands.
+   --------------------------------------------------------------------------- */
+
+.titlebar__menus {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar__menu-trigger {
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.titlebar__menu-trigger:hover,
+.titlebar__menu-trigger[aria-expanded='true'] {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+/* ---------------------------------------------------------------------------
+   Terminal focus and framing. A focused terminal should say so quietly.
+   --------------------------------------------------------------------------- */
+
+.terminal-pane__viewport:focus-within {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--attention) 55%, transparent);
+}
+
+.install-terminal {
+  margin: 0 12px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: inset 0 1px var(--chrome-highlight);
+}
+
+.install-terminal:focus-within {
+  border-color: color-mix(in srgb, var(--attention) 45%, var(--line));
+}
+
+/* ---------------------------------------------------------------------------
+   Keyboard shortcuts dialog.
+   --------------------------------------------------------------------------- */
+
+.shortcuts-overlay {
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  animation: fade-in var(--dur-fast) var(--ease-out);
+}
+
+.shortcuts-dialog {
+  width: min(360px, calc(100vw - 48px));
+  padding: 14px 16px 16px;
+  background: var(--menu-bg, var(--surface));
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg, 12px);
+  box-shadow: 0 18px 48px -18px rgb(0 0 0 / 0.55);
+}
+
+.shortcuts-dialog__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.shortcuts-dialog__head h2 {
+  margin: 0;
+  font-size: var(--t-md, 14px);
+  font-weight: 600;
+}
+
+.shortcuts-dialog__list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shortcuts-dialog__list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 2px;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+}
+
+.shortcuts-dialog__list kbd {
+  padding: 2px 7px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
 }

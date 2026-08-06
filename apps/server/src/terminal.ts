@@ -80,7 +80,11 @@ export class TerminalManager {
     const entry = this.#byId.get(terminalId)
     if (!entry) return
     this.#byId.delete(terminalId)
-    this.#byThread.delete(entry.threadId)
+    // Only unmap the key if it still points at this terminal — closing a
+    // stale id must not orphan a newer pty spawned under the same key.
+    if (this.#byThread.get(entry.threadId) === terminalId) {
+      this.#byThread.delete(entry.threadId)
+    }
     entry.process.kill()
   }
 

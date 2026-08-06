@@ -20,7 +20,7 @@ import type {
   ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
-import { isDesktop, isMacOS, pickFolder, setDesktopTheme } from './bridge.js'
+import { isDesktop, isMacOS, pickFolder, setAppZoom, setDesktopTheme } from './bridge.js'
 import { isEditableTarget, matchesShortcut, SHORTCUTS, shortcutLabel } from './shortcuts.js'
 import { warmHighlighter } from './ui/highlighter.js'
 import { Transport } from './transport.js'
@@ -43,6 +43,8 @@ import { Sidebar, type Project } from './ui/Sidebar.js'
 import { StageHeader } from './ui/StageHeader.js'
 import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
+import { ShortcutsDialog } from './ui/ShortcutsDialog.js'
+import { chatToMarkdown, downloadText, exportFilename } from './chat-export.js'
 import { ZoomHud } from './ui/ZoomHud.js'
 import { serverUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
@@ -58,16 +60,23 @@ import {
 import {
   ACCENT_KEY,
   applyAccentPreference,
+  applyBackdropPreference,
   applyFontPreference,
+  applyGlassPreference,
   applyTheme,
+  BACKDROP_KEY,
   DARK_THEME_QUERY,
   FONT_KEY,
+  GLASS_KEY,
   readAccentPreference,
+  readBackdropPreference,
   readFontPreference,
+  readGlassPreference,
   readSystemTheme,
   readThemePreference,
   THEME_KEY,
   type AccentPreference,
+  type BackdropPreference,
   type Theme,
   type ThemePreference,
   type FontPreference,
@@ -81,6 +90,8 @@ const AGENT_NAME_KEY = 'harness.acpAgentName'
 const PROJECTS_KEY = 'harness.projects'
 const SESSION_ORDER_KEY = 'harness.sessionOrder'
 const MODEL_KEY = 'harness.model'
+/** Stable identity: a fresh [] every render re-renders every thread row. */
+const EMPTY_CHECKPOINTS: Checkpoint[] = []
 const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
 const EFFORT_KEY = 'harness.effort'
 const SERVICE_TIER_KEY = 'harness.serviceTier'
@@ -129,6 +140,8 @@ export function App() {
   // A cache of what the server says, not a source of truth. Every change goes
   // to the server and comes back through here.
   const [projects, setProjects] = useState<Project[]>([])
+  const [projectsLoaded, setProjectsLoaded] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [activeId, setActiveId] = useState<string | undefined>()
   const [activePath, setActivePath] = useState<string | undefined>()
   const [thread, setThread] = useState<ThreadState>(emptyThread)
@@ -161,6 +174,10 @@ export function App() {
       return new Set()
     }
   })
+  // Read via ref inside the catalog effect so toggling visibility does not
+  // refetch every provider's model list.
+  const hiddenModelsRef = useRef(hiddenModels)
+  hiddenModelsRef.current = hiddenModels
   const [autoReviewSupported, setAutoReviewSupported] = useState(false)
   const [userInputSupported, setUserInputSupported] = useState(false)
   const [modelId, setModelId] = useState<string | undefined>(
@@ -216,6 +233,9 @@ export function App() {
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference)
   const [fontPreference, setFontPreference] = useState<FontPreference>(readFontPreference)
   const [accentPreference, setAccentPreference] = useState<AccentPreference>(readAccentPreference)
+  const [backdropPreference, setBackdropPreference] =
+    useState<BackdropPreference>(readBackdropPreference)
+  const [sidebarGlass, setSidebarGlass] = useState<number>(readGlassPreference)
   const [systemTheme, setSystemTheme] = useState<Theme>(readSystemTheme)
   const theme = themePreference === 'system' ? systemTheme : themePreference
   const [macOSFontSmoothing, setMacOSFontSmoothing] = useState(
@@ -277,6 +297,16 @@ export function App() {
     applyAccentPreference(accentPreference)
     localStorage.setItem(ACCENT_KEY, accentPreference)
   }, [accentPreference])
+
+  useLayoutEffect(() => {
+    applyBackdropPreference(backdropPreference)
+    localStorage.setItem(BACKDROP_KEY, backdropPreference)
+  }, [backdropPreference])
+
+  useLayoutEffect(() => {
+    applyGlassPreference(sidebarGlass)
+    localStorage.setItem(GLASS_KEY, String(sidebarGlass))
+  }, [sidebarGlass])
 
   useEffect(() => {
     const media = globalThis.matchMedia?.(DARK_THEME_QUERY)
@@ -495,11 +525,18 @@ export function App() {
       setModels(catalog)
       setModelsLoaded(true)
       const stored = localStorage.getItem(MODEL_KEY)
+      // Fallbacks respect hidden models: adding an API key must not silently
+      // switch the user onto a model they explicitly hid. An explicit stored
+      // choice still wins — hiding is about the list, not about revoking a
+      // selection the user made themselves.
+      const hidden = hiddenModelsRef.current
+      const visible = catalog.filter((choice) => !hidden.has(choice.key))
+      const pool = visible.length > 0 ? visible : catalog
       const selected =
         catalog.find((choice) => choice.key === stored) ??
         catalog.find((choice) => choice.model.id === stored) ??
-        catalog.find((choice) => choice.model.isDefault) ??
-        catalog[0]
+        pool.find((choice) => choice.model.isDefault) ??
+        pool[0]
       if (!selected) return
       setModelId(selected.key)
       setProvider(selected.provider)
@@ -607,6 +644,7 @@ export function App() {
 
   const refreshProjects = useCallback(async () => {
     const { projects: list } = await transport.request('projects.list', {})
+    setProjectsLoaded(true)
     const savedOrder = loadSessionOrder()
     setProjects(
       list.map((project) => ({
@@ -1146,7 +1184,12 @@ export function App() {
   )
 
   const interrupt = useCallback(() => {
-    if (activeId) void transport.request('thread.interrupt', { threadId: activeId })
+    // A provisional id means the thread is still being created server-side;
+    // interrupting it would only produce an error nobody can act on.
+    if (!activeId || activeId.startsWith('pending:')) return
+    transport
+      .request('thread.interrupt', { threadId: activeId })
+      .catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
   }, [transport, activeId])
 
   const transcribeVoice = useCallback(
@@ -1706,8 +1749,39 @@ export function App() {
       className={`shell ${collapsed ? 'is-narrow' : ''}`}
       style={{ '--rail-w': `${railWidth}px` } as CSSProperties}
     >
-      <TitleBar collapsed={collapsed} onToggleRail={() => setCollapsed((c) => !c)} />
+      <TitleBar
+        collapsed={collapsed}
+        onToggleRail={() => setCollapsed((c) => !c)}
+        onNewChat={startNewChat}
+        onNewProject={() => void addProject()}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onSearchChats={() => {
+          setSessionSearchProject(undefined)
+          setSessionSearchOpen(true)
+        }}
+        onZoom={(action) => void setAppZoom(action)}
+        zoomAvailable={isDesktop}
+        onExportChat={() => {
+          if (!activeId || thread.items.length === 0) {
+            setNotice('Nothing to export — open a chat first.')
+            return
+          }
+          const title = findSession(projects, activeId)?.session.title ?? 'Chat'
+          downloadText(exportFilename(title), chatToMarkdown(title, thread.items))
+        }}
+        onShowShortcuts={() => setShortcutsOpen(true)}
+        onOpenHelp={(page) =>
+          window.open(
+            page === 'docs'
+              ? 'https://github.com/Leonxlnx/personalharness#readme'
+              : 'https://github.com/Leonxlnx/personalharness/issues',
+            '_blank',
+            'noopener,noreferrer',
+          )
+        }
+      />
       {isDesktop ? <ZoomHud /> : null}
+      {shortcutsOpen ? <ShortcutsDialog onClose={() => setShortcutsOpen(false)} /> : null}
 
       <div className="shell__body">
         <Sidebar
@@ -1838,7 +1912,7 @@ export function App() {
                 approvals={thread.approvals}
                 userInputs={thread.userInputs}
                 reviews={Object.values(thread.reviews)}
-                checkpoints={thread.running ? [] : checkpoints}
+                checkpoints={thread.running ? EMPTY_CHECKPOINTS : checkpoints}
                 onDecide={(approvalId, decision) => {
                   if (!activeId) return
                   void transport.request('thread.respondToApproval', {
@@ -1866,7 +1940,7 @@ export function App() {
                 }}
               />
             ) : (
-              <Empty projects={projects} activePath={activePath} />
+              <Empty projects={projects} activePath={activePath} loaded={projectsLoaded} />
             )}
 
             {active && terminalOpen ? (
@@ -1960,6 +2034,10 @@ export function App() {
           onFontPreferenceChange={setFontPreference}
           accentPreference={accentPreference}
           onAccentPreferenceChange={setAccentPreference}
+          backdropPreference={backdropPreference}
+          onBackdropPreferenceChange={setBackdropPreference}
+          sidebarGlass={sidebarGlass}
+          onSidebarGlassChange={setSidebarGlass}
           showMacOSFontSmoothing={macOS}
           macOSFontSmoothing={macOSFontSmoothing}
           onMacOSFontSmoothingChange={setMacOSFontSmoothing}
@@ -2054,8 +2132,12 @@ function readRailWidth(): number {
   return Number.isFinite(stored) && stored >= 176 && stored <= 420 ? stored : 248
 }
 
-function Empty(props: { projects: Project[]; activePath: string | undefined }) {
+function Empty(props: { projects: Project[]; activePath: string | undefined; loaded: boolean }) {
   const activeProject = props.projects.find((project) => project.path === props.activePath)
+
+  // Before the first projects.list reply, "no projects" is not a fact yet —
+  // flashing the add-a-project prompt for one round trip reads as a glitch.
+  if (!props.loaded) return <div className="empty" />
 
   if (props.projects.length === 0) {
     return (

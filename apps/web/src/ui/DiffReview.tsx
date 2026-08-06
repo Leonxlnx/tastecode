@@ -7,6 +7,7 @@ export function DiffReview({ transport, threadId }: { transport: Transport; thre
   const [diff, setDiff] = useState<SessionDiff>()
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string>()
+  const [showSlowLoad, setShowSlowLoad] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -18,6 +19,11 @@ export function DiffReview({ transport, threadId }: { transport: Transport; thre
   }, [transport, threadId])
 
   useEffect(() => void refresh(), [refresh])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setShowSlowLoad(true), 200)
+    return () => window.clearTimeout(timer)
+  }, [])
 
   async function decide(path: string, hunkId: string, decision: DiffDecision): Promise<void> {
     if (!diff) return
@@ -45,12 +51,17 @@ export function DiffReview({ transport, threadId }: { transport: Transport; thre
     }
   }
 
-  if (!diff && !status)
+  // No placeholder inside the first grace period: this component remounts at
+  // every turn boundary, and flashing "Loading review…" for a fast local
+  // fetch reads as flicker, not information.
+  if (!diff && !status) {
+    if (!showSlowLoad) return null
     return (
       <p className="diff-review__status" role="status">
         Loading review…
       </p>
     )
+  }
 
   return (
     <div className="diff-review">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type {
   McpServer,
   McpServerConfig,
@@ -26,21 +26,33 @@ export function McpSettings(props: {
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
 
+  // Generation counter: a slow reply from a previous project must not land
+  // on top of the current one's list (or arrive after unmount).
+  const refreshGeneration = useRef(0)
+  useEffect(
+    () => () => {
+      refreshGeneration.current += 1
+    },
+    [],
+  )
+
   const refresh = useCallback(async () => {
     if (!props.projectPath) return
+    const generation = ++refreshGeneration.current
     setLoading(true)
     try {
-      setInventory(
-        await props.transport.request('mcp.list', {
-          provider: props.provider,
-          projectPath: props.projectPath,
-        }),
-      )
+      const inventory = await props.transport.request('mcp.list', {
+        provider: props.provider,
+        projectPath: props.projectPath,
+      })
+      if (refreshGeneration.current !== generation) return
+      setInventory(inventory)
       setError(undefined)
     } catch (cause) {
+      if (refreshGeneration.current !== generation) return
       setError(message(cause))
     } finally {
-      setLoading(false)
+      if (refreshGeneration.current === generation) setLoading(false)
     }
   }, [props.transport, props.provider, props.projectPath])
 

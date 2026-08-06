@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import { readNdjson, spawnCli } from '@harness/proc'
+import { killTree, readNdjson, spawnCli } from '@harness/proc'
 import { toDomainEvents, type ClaudeEvent } from './events.js'
 
 /**
@@ -34,27 +34,26 @@ export const CLAUDE_CAPABILITIES: Capabilities = {
 }
 
 /**
- * The aliases `claude --model` documents, not concrete model ids: each one
- * tracks the newest model of its family, so the list survives releases. The
- * empty id means "pass no --model flag" and lets the CLI use its own default.
+ * The aliases `claude --model` documents, not concrete model ids: each alias
+ * tracks the newest model of its family, so the ids survive releases. The
+ * display names DO name the current version — users pick "Fable 5", not a
+ * vague family word — which makes them the one thing to touch when Anthropic
+ * ships a new generation. Current as of claude-code 2.1.222.
  */
 export const CLAUDE_MODELS: Model[] = [
-  {
-    id: '',
-    displayName: 'Automatic',
-    description: 'Let Claude Code use its configured default model',
-    isDefault: true,
-    reasoningEfforts: [],
-    serviceTiers: [],
-  },
-  claudeAlias('fable', 'Fable', 'Latest Fable — the most capable tier'),
-  claudeAlias('opus', 'Opus', 'Latest Opus — deep reasoning'),
-  claudeAlias('sonnet', 'Sonnet', 'Latest Sonnet — balanced speed and capability'),
-  claudeAlias('haiku', 'Haiku', 'Latest Haiku — fastest and cheapest'),
+  claudeAlias('fable', 'Fable 5', 'Most capable — flagship tier', true),
+  claudeAlias('opus', 'Opus 5', 'Deep reasoning'),
+  claudeAlias('sonnet', 'Sonnet 5', 'Balanced speed and capability'),
+  claudeAlias('haiku', 'Haiku 4.5', 'Fastest and cheapest'),
 ]
 
-function claudeAlias(id: string, displayName: string, description: string): Model {
-  return { id, displayName, description, isDefault: false, reasoningEfforts: [], serviceTiers: [] }
+function claudeAlias(
+  id: string,
+  displayName: string,
+  description: string,
+  isDefault = false,
+): Model {
+  return { id, displayName, description, isDefault, reasoningEfforts: [], serviceTiers: [] }
 }
 
 /** Claude Code names its permission modes differently; ours map on cleanly. */
@@ -128,6 +127,9 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       ...(this.#sessionId ? ['--resume', this.#sessionId] : []),
     ]
 
+    // A turn already in flight would be orphaned by the reassignment below —
+    // its exit handler must also not clobber the new child's reference.
+    if (this.#child) killTree(this.#child)
     const child = spawnCli('claude', args, { cwd: this.#workspacePath })
     this.#child = child
 
@@ -146,7 +148,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))
 
     child.on('exit', (code) => {
-      this.#child = undefined
+      if (this.#child === child) this.#child = undefined
       // A non-zero exit without a `result` event means the CLI failed before
       // it could report anything, and silence would look like a hang.
       if (code !== 0 && code !== null) {
@@ -159,11 +161,19 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       }
     })
 
+    // A spawn failure emits 'error' on the child; without a listener that
+    // throws out of the event loop and takes the whole server down.
+    child.on('error', (error) => {
+      if (this.#child === child) this.#child = undefined
+      this.emit('event', { type: 'thread.error', threadId, message: String(error) })
+      this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
+    })
+
     return turnId
   }
 
   async interrupt(): Promise<void> {
-    this.#child?.kill()
+    if (this.#child) killTree(this.#child)
   }
 
   /**
@@ -178,7 +188,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   }
 
   dispose(): void {
-    this.#child?.kill()
+    if (this.#child) killTree(this.#child)
     this.#child = undefined
   }
 

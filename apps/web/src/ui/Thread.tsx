@@ -82,7 +82,19 @@ export function Thread(props: {
   /** Index the current turn starts at, for anchor mode. */
   const anchorIndex = useRef(0)
   const wasRunning = useRef(props.running)
-  const enteringItemIds = useEnteringItemIds(props.items)
+  /**
+   * Our own scrollTop writes fire scroll events too. Without telling them
+   * apart from the user's, the handler cannot let a manual scroll take over
+   * during anchor mode — the effect would just yank the viewport back on the
+   * next streamed chunk, which is the most hostile thing a chat UI can do.
+   */
+  const programmaticScroll = useRef(false)
+  const writeScrollTop = useCallback((el: HTMLElement, top: number) => {
+    if (Math.abs(el.scrollTop - top) < 1) return
+    programmaticScroll.current = true
+    el.scrollTop = top
+  }, [])
+  const enteringItemIds = useEnteringItemIds(props.items, props.threadId)
   const settledTurnId = useSettledTurnId(props.running, props.activeTurn?.id)
 
   const virtualizer = useVirtualizer({
@@ -121,12 +133,12 @@ export function Thread(props: {
       completedRevealRequest.current = revealRequest
       modeRef.current = 'follow-end'
       setMode('follow-end')
-      el.scrollTop = el.scrollHeight
+      writeScrollTop(el, el.scrollHeight - el.clientHeight)
       return
     }
 
     if (modeRef.current === 'follow-end') {
-      el.scrollTop = el.scrollHeight
+      writeScrollTop(el, el.scrollHeight - el.clientHeight)
       return
     }
 
@@ -138,18 +150,23 @@ export function Thread(props: {
         setMode('follow-end')
         return
       }
-      el.scrollTop = start
+      writeScrollTop(el, start)
     }
-  }, [props.items, props.revealRequest, virtualizer])
+  }, [props.items, props.revealRequest, virtualizer, writeScrollTop])
 
   const onScroll = useCallback(() => {
     const el = scroller.current
     if (!el) return
-    // Any manual scroll hands control back to the user. Fighting them for the
-    // viewport is the single most hostile thing a chat UI can do.
+    // Our own corrections are not the user's opinion.
+    if (programmaticScroll.current) {
+      programmaticScroll.current = false
+      return
+    }
+    // Any manual scroll hands control back to the user — from anchor mode
+    // too, not only from follow-end.
     if (isAtBottom(el)) {
-      if (modeRef.current === 'free') setMode('follow-end')
-    } else if (modeRef.current === 'follow-end') {
+      if (modeRef.current !== 'follow-end') setMode('follow-end')
+    } else if (modeRef.current !== 'free') {
       setMode('free')
     }
   }, [])
@@ -326,12 +343,21 @@ const TURN_SETTLE_MS = 520
  * remount as virtualisation scrolls, and replaying their entrance then makes
  * the list feel unstable rather than alive.
  */
-function useEnteringItemIds(items: Item[]): ReadonlySet<string> {
+function useEnteringItemIds(items: Item[], threadId?: string): ReadonlySet<string> {
   const previousItems = useRef(items)
+  const previousThreadId = useRef(threadId)
   const timers = useRef(new Map<string, number>())
   const [entering, setEntering] = useState<ReadonlySet<string>>(() => new Set())
 
   useLayoutEffect(() => {
+    // Thread never remounts on session switch; comparing against another
+    // session's items would replay the entry animation on historical rows.
+    if (previousThreadId.current !== threadId) {
+      previousThreadId.current = threadId
+      previousItems.current = items
+      setEntering((current) => (current.size === 0 ? current : new Set()))
+      return
+    }
     const previous = previousItems.current
     previousItems.current = items
     let incoming: Item[] = []

@@ -113,9 +113,11 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
     case 'item.started': {
       // The agent echoes the user's message back as a canonical item. Drop our
       // optimistic copy when it arrives, so the message does not appear twice.
+      // Matched from the tail: sending the same text twice must reconcile the
+      // newest placeholder, not resurrect the oldest one.
       const optimisticIndex =
         event.item.role === 'user'
-          ? state.items.findIndex(
+          ? state.items.findLastIndex(
               (item) =>
                 item.id.startsWith(OPTIMISTIC_PREFIX) &&
                 (event.item.text === undefined || item.text === event.item.text),

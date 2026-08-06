@@ -262,6 +262,16 @@ const UNSUPPORTED_MCP_CAPABILITIES: McpCapabilities = {
   startOAuth: false,
   cancelOAuth: false,
 }
+/** Harness-managed project servers only: no vendor inventory, no OAuth. */
+const OPENCODE_MCP_MANAGEMENT_CAPABILITIES: McpCapabilities = {
+  inventory: false,
+  add: true,
+  update: true,
+  remove: true,
+  reload: false,
+  startOAuth: false,
+  cancelOAuth: false,
+}
 const UNSUPPORTED_SKILL_CAPABILITIES: SkillCapabilities = {
   inventory: false,
   configure: false,
@@ -441,7 +451,9 @@ export class Orchestrator {
     // Codex has a control adapter already running; everything else asks its
     // own runtime, which is free to answer with nothing.
     if (provider === 'codex') return (await this.#controlAdapter()).listModels()
-    return providerRuntime(provider, this.#onLog).listModels(agent)
+    // The injected seam, not the module function — otherwise tests spawn the
+    // real vendor CLIs just to draw a model list.
+    return this.#runtimeFor(provider, this.#onLog).listModels(agent)
   }
 
   listModelConnections() {
@@ -470,6 +482,31 @@ export class Orchestrator {
     provider: ProviderId,
     projectPath: string,
   ): Promise<{ capabilities: McpCapabilities; servers: McpServer[] }> {
+    if (provider === 'opencode') {
+      // No vendor inventory over this surface, but the harness-managed
+      // project servers are real: they are handed to every opencode launch
+      // through its own config.
+      this.#watchedMcpProjects.add(projectPath)
+      return {
+        capabilities: OPENCODE_MCP_MANAGEMENT_CAPABILITIES,
+        servers: this.#mcpConfig.list(provider, projectPath).map((config) => ({
+          id: config.id,
+          scope: 'project' as const,
+          enabled: config.enabled,
+          auth: { status: 'not_required' as const },
+          startup: { state: 'stopped' as const },
+          tools: [],
+          resources: [],
+          resourceTemplates: [],
+          ...(config.enabled
+            ? {
+                transport: config.transport,
+                ...(config.displayName ? { displayName: config.displayName } : {}),
+              }
+            : {}),
+        })),
+      }
+    }
     if (provider !== 'codex') {
       return { capabilities: UNSUPPORTED_MCP_CAPABILITIES, servers: [] }
     }
@@ -627,12 +664,12 @@ export class Orchestrator {
   }
 
   #requireMcpManagement(provider: ProviderId): void {
-    if (provider !== 'codex')
+    if (provider !== 'codex' && provider !== 'opencode')
       throw new Error(`provider "${provider}" cannot manage MCP servers yet`)
   }
 
   #mcpRuntimeOptions(provider: ProviderId, projectPath: string): StartOptions {
-    if (provider !== 'codex') return {}
+    if (provider !== 'codex' && provider !== 'opencode') return {}
     const mcpServers = this.#mcpConfig.list(provider, projectPath)
     const mcpCredentials: Record<string, string> = {}
     for (const server of mcpServers) {
@@ -1202,6 +1239,9 @@ export class Orchestrator {
 
   async #drainQueue(threadId: string): Promise<void> {
     if (
+      // A panic stop empties every queue; a drain that was already in flight
+      // must not start the turn it grabbed before the panic landed.
+      this.#panicStopping ||
       this.#drainingQueues.has(threadId) ||
       this.#activeTurns.has(threadId) ||
       this.#startingTurns.has(threadId) ||
@@ -1381,7 +1421,11 @@ export class Orchestrator {
   }
 
   async interrupt(threadId: string): Promise<void> {
-    await this.#get(threadId).session.interrupt(threadId)
+    // "Stop" on a thread that is not live must be a no-op, not an error the
+    // user cannot act on.
+    const entry = this.#threads.get(threadId)
+    if (!entry) return
+    await entry.session.interrupt(threadId)
   }
 
   async panicStop(): Promise<PanicStopResult> {
@@ -1521,7 +1565,10 @@ export class Orchestrator {
     for (const preview of this.#designPreviews.values()) void preview.stop()
     this.#designPreviews.clear()
     this.#resumingThreads.clear()
-    void this.#controlStarting?.then((adapter) => adapter.dispose())
+    void this.#controlStarting?.then(
+      (adapter) => adapter.dispose(),
+      () => undefined,
+    )
     this.#controlStarting = undefined
     this.#control?.dispose()
     this.#control = undefined
@@ -1561,6 +1608,12 @@ export class Orchestrator {
     if (result.thread.id !== threadId) {
       result.session.dispose()
       throw new Error(`provider resumed unexpected thread ${result.thread.id}`)
+    }
+    // The thread may have been closed while the provider was resuming; a
+    // late attach would leave a zombie agent process nobody can reach.
+    if (this.#store.thread(threadId)?.closedAt !== undefined) {
+      result.session.dispose()
+      throw new Error(`thread ${threadId} was closed while resuming`)
     }
     this.#attachThread(result.thread, result.session, stored.projectPath)
     this.#restoreDesignFlow(threadId, workspacePath)
@@ -2081,6 +2134,16 @@ export class Orchestrator {
         this.#designActivityItems.delete(turnId)
       }
     }
+    // Item ids normally self-delete on item.completed; a design turn that
+    // died mid-item leaves its entry behind. With no design flow live the
+    // set has no meaning, so this is the safe moment to empty it.
+    if (this.#designFlows.size === 0) this.#designMessageItems.clear()
+  }
+
+  /** Drop per-project watch state when a project leaves the sidebar. */
+  forgetProject(projectPath: string): void {
+    this.#watchedSkillProjects.delete(projectPath)
+    this.#watchedMcpProjects.delete(projectPath)
   }
 
   #completeDesignActivity(
@@ -2108,6 +2171,9 @@ export class Orchestrator {
     projectPath: string,
     worktree?: Worktree,
   ): void {
+    // A racing double-attach must not silently drop the previous session's
+    // process — dispose it before overwriting.
+    this.#threads.get(thread.id)?.session.dispose()
     this.#threads.set(thread.id, { thread, session, ...(worktree ? { worktree } : {}) })
     session.onMcpOAuth?.((result) => this.#onMcpOAuth(thread.provider, projectPath, result))
     session.on('event', (event) => this.#handleSessionEvent(thread.id, event))

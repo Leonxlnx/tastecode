@@ -260,6 +260,7 @@ export function terminalFont(): string {
 export function terminalTheme(): ITheme {
   const style = getComputedStyle(document.documentElement)
   const token = (name: string) => style.getPropertyValue(name).trim()
+  const dark = document.documentElement.dataset['theme'] !== 'light'
   return {
     background: token('--bg'),
     foreground: token('--text'),
@@ -267,5 +268,46 @@ export function terminalTheme(): ITheme {
     cursorAccent: token('--bg'),
     selectionBackground: token('--surface-3'),
     selectionForeground: token('--text'),
+    // Muted ANSI palette tuned to the app. Without it xterm falls back to
+    // harsh pure-RGB defaults that clash with every accent.
+    ...(dark ? DARK_ANSI : LIGHT_ANSI),
   }
+}
+
+const DARK_ANSI = {
+  black: '#282c34',
+  red: '#e06c75',
+  green: '#98c379',
+  yellow: '#d8b26e',
+  blue: '#61afef',
+  magenta: '#c678dd',
+  cyan: '#56b6c2',
+  white: '#d7dae0',
+  brightBlack: '#5c6370',
+  brightRed: '#ef8189',
+  brightGreen: '#a9d38c',
+  brightYellow: '#e6c384',
+  brightBlue: '#7cc0f4',
+  brightMagenta: '#d48fe6',
+  brightCyan: '#6fc9d4',
+  brightWhite: '#eceef2',
+}
+
+const LIGHT_ANSI = {
+  black: '#383a42',
+  red: '#ca4a55',
+  green: '#4f8a3d',
+  yellow: '#a3841c',
+  blue: '#2f6fdb',
+  magenta: '#a24bb5',
+  cyan: '#0d7f8f',
+  white: '#c9cdd4',
+  brightBlack: '#6b6f78',
+  brightRed: '#e05561',
+  brightGreen: '#5fa14c',
+  brightYellow: '#b9962e',
+  brightBlue: '#4a84e6',
+  brightMagenta: '#b563c8',
+  brightCyan: '#1f97a8',
+  brightWhite: '#e8eaee',
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Account, ProviderId } from '@harness/contracts'
 import {
   ArrowRight,
@@ -461,17 +461,24 @@ function SignIn(props: {
 
   // The vendor tells us when the browser half finished. Polling would be both
   // slower and wrong — the user may take a minute in a password manager.
+  // onDone lives in a ref: the parent passes an inline arrow, and cycling the
+  // subscription on every parent render would drop any auth.event that lands
+  // in the gap — a sign-in that hangs on "waiting" forever.
+  const onDone = useRef(props.onDone)
+  onDone.current = props.onDone
   useEffect(() => {
     return props.transport.on('auth.event', (event) => {
       if (loginId && event.loginId !== loginId) return
       if (event.success) {
-        void props.transport.request('auth.status', { provider: props.card.id }).then(props.onDone)
+        void props.transport
+          .request('auth.status', { provider: props.card.id })
+          .then((account) => onDone.current(account))
       } else {
         setPhase('failed')
         setError(event.error ?? 'Sign-in was cancelled.')
       }
     })
-  }, [props.transport, props.card.id, loginId, props.onDone])
+  }, [props.transport, props.card.id, loginId])
 
   const startBrowserLogin = async () => {
     setError(undefined)
