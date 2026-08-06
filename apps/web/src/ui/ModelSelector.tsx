@@ -132,7 +132,9 @@ function supportsServiceTier(
   return Boolean(serviceTier && model?.serviceTiers.some((tier) => tier.id === serviceTier))
 }
 
-function getNextServiceTierForModel(input: {
+/** Carries fast *intent* across models whose fast tiers use different ids
+ *  (Codex 'priority', Cursor 'fast'). Used by the owner when a model changes. */
+export function getNextServiceTierForModel(input: {
   nextModel: ModelChoice['model']
   currentModel: ModelChoice['model'] | undefined
   currentServiceTier: string | undefined
@@ -338,28 +340,13 @@ export function ModelSelector(props: ModelSelectorProps) {
     props.onEffortChange(nextValue)
   }
 
+  // Effort and tier for the new model are the owner's job (App.selectModel):
+  // it restores the setup last used with that provider, falling back to the
+  // ladder translation. Computing a second answer here raced that restore
+  // and overwrote it whenever the two disagreed.
   const handleModelSelect = (nextChoice: ModelChoice) => {
-    const nextModel = nextChoice.model
     if (nextChoice.key !== choice?.key) {
       props.onModelChange(nextChoice.key)
-    }
-
-    const nextEffort = resolveReasoningEffort({
-      currentEffort: selectedEffort,
-      currentModel: model,
-      nextModel,
-    })
-    if (nextEffort && nextEffort !== selectedEffort) {
-      props.onEffortChange(nextEffort)
-    }
-
-    const nextServiceTier = getNextServiceTierForModel({
-      nextModel,
-      currentModel: model,
-      currentServiceTier: props.serviceTier,
-    })
-    if (nextServiceTier !== props.serviceTier) {
-      props.onServiceTierChange(nextServiceTier)
     }
   }
 

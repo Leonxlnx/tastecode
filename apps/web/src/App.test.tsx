@@ -1194,6 +1194,103 @@ describe('new chats', () => {
       })
     })
   })
+
+  it('restores the setup last used with a provider when returning to it', async () => {
+    serverProviders = [
+      ...serverProviders,
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        installed: true,
+        auth: 'authenticated',
+        capabilities: {
+          steer: false,
+          fork: false,
+          interrupt: true,
+          reasoningItems: true,
+          approvals: false,
+          userInput: false,
+          autoReview: false,
+          images: false,
+        },
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        if ((params as { provider: string }).provider === 'codex') {
+          return Promise.resolve({
+            models: [
+              {
+                id: 'gpt-5.6-sol',
+                displayName: 'GPT-5.6 Sol',
+                isDefault: true,
+                reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+                defaultReasoningEffort: 'medium',
+                serviceTiers: [],
+              },
+            ],
+          })
+        }
+        return Promise.resolve({
+          models: [
+            {
+              id: 'opus',
+              displayName: 'Opus 5',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    // Codex: push effort to the top of Sol's ladder.
+    fireEvent.click(await screen.findByRole('button', { name: 'Model and reasoning' }))
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Reasoning effort' }), { key: 'End' })
+    await waitFor(() => {
+      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
+        'Effort: Extra High',
+      )
+    })
+
+    // Claude: the top carries over to 'high'; drop it to the bottom.
+    fireEvent.click(screen.getByRole('button', { name: 'Use Opus 5 through Claude Code' }))
+    await waitFor(() => {
+      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
+        'Effort: High',
+      )
+    })
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Reasoning effort' }), { key: 'Home' })
+    await waitFor(() => {
+      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
+        'Effort: Low',
+      )
+    })
+
+    // Returning to Codex restores the remembered Extra High — the old
+    // carry-over translation of 'low' would land on Low here.
+    fireEvent.click(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' }))
+    await waitFor(() => {
+      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
+        'Effort: Extra High',
+      )
+    })
+
+    // And Claude still remembers Low rather than inheriting the top again.
+    fireEvent.click(screen.getByRole('button', { name: 'Use Opus 5 through Claude Code' }))
+    await waitFor(() => {
+      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
+        'Effort: Low',
+      )
+    })
+  })
 })
 
 describe('sidebar chat ordering', () => {

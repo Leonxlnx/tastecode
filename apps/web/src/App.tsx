@@ -39,6 +39,7 @@ import {
 import { CommandPalette, type CommandScope, type PaletteCommand } from './ui/CommandPalette.js'
 import { CheckoutDiscardDialog } from './ui/CheckoutDiscardDialog.js'
 import { Composer, type WorkspaceInfo } from './ui/Composer.js'
+import { getNextServiceTierForModel } from './ui/ModelSelector.js'
 import { Onboarding } from './ui/Onboarding.js'
 import { RollbackDialog, type Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearch } from './ui/SessionSearch.js'
@@ -93,6 +94,9 @@ const AGENT_NAME_KEY = 'harness.acpAgentName'
 const PROJECTS_KEY = 'harness.projects'
 const SESSION_ORDER_KEY = 'harness.sessionOrder'
 const MODEL_KEY = 'harness.model'
+/** Last model/effort/tier used per source, so returning to a provider
+ *  restores the exact working setup instead of a best-guess translation. */
+const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
 /** Stable identity: a fresh [] every render re-renders every thread row. */
 const EMPTY_CHECKPOINTS: Checkpoint[] = []
 const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
@@ -912,6 +916,33 @@ export function App() {
     }
   }, [serviceTier])
 
+  // Remember the active source's exact setup, so returning to a provider
+  // restores what was last used there instead of a best-guess translation.
+  useEffect(() => {
+    if (!selectedModelChoice) return
+    const source = sourceKey({
+      provider: selectedModelChoice.provider,
+      connectionId: selectedModelChoice.connectionId,
+      agentId: selectedModelChoice.agent?.id,
+    })
+    const selections = readSourceSelections()
+    const entry: SourceSelection = {
+      modelKey: selectedModelChoice.key,
+      ...(effort ? { effort } : {}),
+      ...(serviceTier ? { serviceTier } : {}),
+    }
+    const current = selections[source]
+    if (
+      current?.modelKey === entry.modelKey &&
+      current.effort === entry.effort &&
+      current.serviceTier === entry.serviceTier
+    ) {
+      return
+    }
+    selections[source] = entry
+    writeSetting(MODEL_BY_SOURCE_KEY, JSON.stringify(selections))
+  }, [selectedModelChoice, effort, serviceTier])
+
   useEffect(() => {
     writeSetting(APPROVAL_KEY, approval)
   }, [approval])
@@ -934,6 +965,31 @@ export function App() {
         removeSetting(AGENT_KEY)
         removeSetting(AGENT_NAME_KEY)
       }
+      // Picking the model this source was last used with restores the exact
+      // effort and tier that were active then. Any other pick translates the
+      // current effort onto the new model's ladder, as before.
+      const remembered =
+        readSourceSelections()[
+          sourceKey({
+            provider: selected.provider,
+            connectionId: selected.connectionId,
+            agentId: selected.agent?.id,
+          })
+        ]
+      if (remembered?.modelKey === selected.key) {
+        setEffort(
+          remembered.effort && selected.model.reasoningEfforts.includes(remembered.effort)
+            ? remembered.effort
+            : resolveReasoningEffort({ currentEffort: undefined, nextModel: selected.model }),
+        )
+        setServiceTier(
+          remembered.serviceTier &&
+            selected.model.serviceTiers.some((tier) => tier.id === remembered.serviceTier)
+            ? remembered.serviceTier
+            : (selected.model.defaultServiceTier ?? undefined),
+        )
+        return
+      }
       setEffort((current) =>
         resolveReasoningEffort({
           currentEffort: current,
@@ -941,10 +997,15 @@ export function App() {
           nextModel: selected.model,
         }),
       )
+      // Not a bare id check: fast tiers are named differently per provider
+      // (Codex 'priority', Cursor 'fast'), and fast intent must survive the
+      // switch even though the id cannot.
       setServiceTier((current) =>
-        current && selected.model.serviceTiers.some((tier) => tier.id === current)
-          ? current
-          : (selected.model.defaultServiceTier ?? undefined),
+        getNextServiceTierForModel({
+          nextModel: selected.model,
+          currentModel: selectedModelChoice?.model,
+          currentServiceTier: current,
+        }),
       )
     },
     [models, selectedModelChoice],
@@ -2577,6 +2638,34 @@ function saveSessionOrder(projects: Project[]): void {
   if (serialized === lastSavedSessionOrder) return
   lastSavedSessionOrder = serialized
   writeSetting(SESSION_ORDER_KEY, serialized)
+}
+
+type SourceSelection = { modelKey: string; effort?: string; serviceTier?: string }
+
+function readSourceSelections(): Record<string, SourceSelection> {
+  try {
+    const parsed: unknown = JSON.parse(readSetting(MODEL_BY_SOURCE_KEY) ?? '{}')
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).flatMap(([source, value]) => {
+        if (typeof value !== 'object' || value === null) return []
+        const entry = value as Record<string, unknown>
+        if (typeof entry.modelKey !== 'string') return []
+        return [
+          [
+            source,
+            {
+              modelKey: entry.modelKey,
+              ...(typeof entry.effort === 'string' ? { effort: entry.effort } : {}),
+              ...(typeof entry.serviceTier === 'string' ? { serviceTier: entry.serviceTier } : {}),
+            },
+          ],
+        ]
+      }),
+    )
+  } catch {
+    return {}
+  }
 }
 
 /**

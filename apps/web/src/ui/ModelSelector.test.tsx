@@ -257,7 +257,7 @@ describe('ModelSelector', () => {
     expect(onEffortChange).toHaveBeenNthCalledWith(3, 'low')
   })
 
-  it('shows compact models immediately and keeps highest effort and fast intent', () => {
+  it('shows compact models immediately and leaves effort and tier to the owner', () => {
     const { onModelChange, onEffortChange, onServiceTierChange } = renderSelector({
       effort: 'xhigh',
       serviceTier: 'priority',
@@ -270,8 +270,11 @@ describe('ModelSelector', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Use GPT-5.6 Mini through Codex' }))
 
     expect(onModelChange).toHaveBeenCalledWith('codex:gpt-5.6-mini')
-    expect(onEffortChange).toHaveBeenCalledWith('medium')
-    expect(onServiceTierChange).toHaveBeenCalledWith('fast')
+    // Effort and tier for the new model are the owner's decision — it may be
+    // restoring the setup last used with that provider. A second answer from
+    // here raced that restore and overwrote it.
+    expect(onEffortChange).not.toHaveBeenCalled()
+    expect(onServiceTierChange).not.toHaveBeenCalled()
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
   })
 
