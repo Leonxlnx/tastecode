@@ -20,6 +20,7 @@ import { StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator } from './orchestrator.js'
 import { detectProviders, installCommandFor, launchCommandFor } from './providers.js'
 import { PushBus } from './push-bus.js'
+import { PreviewCaptureCoordinator } from './preview-capture.js'
 import { Store } from './store.js'
 import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
 
@@ -68,6 +69,9 @@ export function startServer(
   assertSafeBind(host, options.accessToken)
   const wss = new WebSocketServer({ port, host })
   const push = new PushBus()
+  const previewCapture = new PreviewCaptureCoordinator((socket, request) =>
+    push.send(socket, 'preview.captureRequested', request),
+  )
 
   // A port clash is the most likely startup failure — a previous run that did
   // not shut down cleanly. An unhandled 'error' event crashes the process with
@@ -123,7 +127,10 @@ export function startServer(
     })
 
     socket.on('message', (raw) => void handleMessage(socket, raw.toString()))
-    socket.on('close', () => push.remove(socket))
+    socket.on('close', () => {
+      previewCapture.remove(socket)
+      push.remove(socket)
+    })
   })
 
   async function handleMessage(socket: WebSocket, raw: string): Promise<void> {
@@ -161,7 +168,7 @@ export function startServer(
     }
 
     try {
-      const result = await route(method as MethodName, decoded.data)
+      const result = await route(socket, method as MethodName, decoded.data)
       socket.send(JSON.stringify({ id, result }))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -174,8 +181,19 @@ export function startServer(
     }
   }
 
-  async function route(method: MethodName, params: unknown): Promise<unknown> {
+  async function route(socket: WebSocket, method: MethodName, params: unknown): Promise<unknown> {
     switch (method) {
+      case 'client.capabilities':
+        previewCapture.setCapability(
+          socket,
+          (params as ParamsOf<'client.capabilities'>).previewCapture,
+        )
+        return {}
+
+      case 'preview.captureResult':
+        previewCapture.complete(socket, params as ParamsOf<'preview.captureResult'>)
+        return {}
+
       case 'system.info':
         return {
           serverVersion: SERVER_VERSION,
