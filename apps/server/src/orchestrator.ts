@@ -291,6 +291,8 @@ export class Orchestrator {
   #designTurns = new Map<string, string>()
   #designStartingThreads = new Set<string>()
   #designMessageItems = new Set<string>()
+  #acceptedDesignOutputs = new Set<string>()
+  #designOutputErrors = new Map<string, unknown>()
   #designActivityItems = new Map<string, Item>()
   #designInputs = new Map<string, DesignInput>()
   #designInputByThread = new Map<string, string>()
@@ -1511,6 +1513,8 @@ export class Orchestrator {
     this.#designTurns.clear()
     this.#designStartingThreads.clear()
     this.#designMessageItems.clear()
+    this.#acceptedDesignOutputs.clear()
+    this.#designOutputErrors.clear()
     this.#designActivityItems.clear()
     this.#designInputs.clear()
     this.#designInputByThread.clear()
@@ -1632,6 +1636,12 @@ export class Orchestrator {
     attachments: string[],
     options: TurnOptions,
   ): Promise<string> {
+    for (const [turnId, owner] of this.#designTurns) {
+      if (owner === threadId) {
+        this.#acceptedDesignOutputs.delete(turnId)
+        this.#designOutputErrors.delete(turnId)
+      }
+    }
     this.#designStartingThreads.add(threadId)
     try {
       const turnId = await this.#get(threadId).session.sendTurn(
@@ -1711,10 +1721,19 @@ export class Orchestrator {
       event.item.role === 'assistant'
     ) {
       this.#designMessageItems.delete(event.item.id)
-      this.#handleDesignOutput(threadId, turnId, event.item.text ?? '')
+      if (this.#acceptedDesignOutputs.has(turnId)) return
+      try {
+        this.#handleDesignOutput(threadId, turnId, event.item.text ?? '')
+        this.#acceptedDesignOutputs.add(turnId)
+      } catch (error) {
+        this.#designOutputErrors.set(turnId, error)
+      }
       return
     }
     if (event.type === 'turn.completed') {
+      const acceptedOutput = this.#acceptedDesignOutputs.delete(turnId)
+      const outputError = this.#designOutputErrors.get(turnId)
+      this.#designOutputErrors.delete(turnId)
       this.#completeDesignActivity(
         threadId,
         turnId,
@@ -1727,7 +1746,14 @@ export class Orchestrator {
         void this.#drainQueue(threadId)
         return
       }
-      const flow = this.#designFlows.get(threadId)
+      let flow = this.#designFlows.get(threadId)
+      if (!acceptedOutput && outputError && flow) {
+        if (!this.#queueDesignCorrection(threadId, flow, outputError)) {
+          this.#failDesignFlow(threadId, outputError)
+          return
+        }
+        flow = this.#designFlows.get(threadId)
+      }
       if (flow?.completion) {
         this.#record(threadId, event)
         this.#finishDesignFlow(threadId, turnId, flow.completion)
@@ -1754,50 +1780,44 @@ export class Orchestrator {
     const flow = this.#designFlows.get(threadId)
     if (!flow) return
 
-    try {
-      if (flow.phase !== 'brief') {
-        this.#completeDesignPhase(threadId, turnId, flow, text)
-        return
-      }
-      const output = parseBriefingOutput(text)
-      flow.correcting = false
-      if (output.status === 'questions') {
-        flow.askedQuestions = true
-        flow.finalAsked = false
-        flow.pendingBrief = undefined
-        this.#saveDesignFlow(threadId)
-        this.#requestDesignInput(threadId, turnId, output.questions, false)
-        return
-      }
-      if (output.status === 'not_design') {
-        this.#clearDesignFlow(threadId)
-        this.#record(threadId, {
-          type: 'item.completed',
-          item: {
-            id: `design-not-applicable-${crypto.randomUUID()}`,
-            turnId,
-            type: 'message',
-            role: 'assistant',
-            status: 'completed',
-            text: 'Design mode was turned off because this request is not a website design task.',
-            createdAt: Date.now(),
-          },
-        })
-        return
-      }
-      if (flow.askedQuestions && !flow.finalAsked) {
-        flow.pendingBrief = output.brief
-        flow.finalAsked = true
-        this.#saveDesignFlow(threadId)
-        this.#requestDesignInput(threadId, turnId, [FINAL_BRIEFING_QUESTION], true)
-        return
-      }
-      this.#completeDesignBrief(threadId, turnId, output.brief)
-    } catch (error) {
-      if (!this.#queueDesignCorrection(threadId, flow, error)) {
-        this.#failDesignFlow(threadId, error)
-      }
+    if (flow.phase !== 'brief') {
+      this.#completeDesignPhase(threadId, turnId, flow, text)
+      return
     }
+    const output = parseBriefingOutput(text)
+    flow.correcting = false
+    if (output.status === 'questions') {
+      flow.askedQuestions = true
+      flow.finalAsked = false
+      flow.pendingBrief = undefined
+      this.#saveDesignFlow(threadId)
+      this.#requestDesignInput(threadId, turnId, output.questions, false)
+      return
+    }
+    if (output.status === 'not_design') {
+      this.#clearDesignFlow(threadId)
+      this.#record(threadId, {
+        type: 'item.completed',
+        item: {
+          id: `design-not-applicable-${crypto.randomUUID()}`,
+          turnId,
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          text: 'Design mode was turned off because this request is not a website design task.',
+          createdAt: Date.now(),
+        },
+      })
+      return
+    }
+    if (flow.askedQuestions && !flow.finalAsked) {
+      flow.pendingBrief = output.brief
+      flow.finalAsked = true
+      this.#saveDesignFlow(threadId)
+      this.#requestDesignInput(threadId, turnId, [FINAL_BRIEFING_QUESTION], true)
+      return
+    }
+    this.#completeDesignBrief(threadId, turnId, output.brief)
   }
 
   #requestDesignInput(
@@ -2056,6 +2076,8 @@ export class Orchestrator {
     for (const [turnId, owner] of this.#designTurns) {
       if (owner === threadId) {
         this.#designTurns.delete(turnId)
+        this.#acceptedDesignOutputs.delete(turnId)
+        this.#designOutputErrors.delete(turnId)
         this.#designActivityItems.delete(turnId)
       }
     }
