@@ -123,6 +123,7 @@ describe('detectProviders', () => {
 
     expect(providers.map((entry) => entry.id).sort()).toEqual([
       'acp',
+      'antigravity',
       'claude-code',
       'codex',
       'cursor',
