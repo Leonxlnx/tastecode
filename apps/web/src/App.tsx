@@ -32,6 +32,7 @@ import {
   emptyThread,
   reduce,
   reduceDeltas,
+  reduceEventLog,
   removeQueuedOptimisticMessage,
   type ItemDeltaEvent,
   type ThreadState,
@@ -780,12 +781,10 @@ export function App() {
       historyBuffers.current.set(threadId, [])
       try {
         const { events } = await transport.request('thread.history', { threadId })
-        const restored = events.reduce((state, entry) => reduce(state, entry.event), emptyThread)
+        const restored = reduceEventLog(emptyThread, events)
         const lastSeq = events.at(-1)?.seq ?? 0
         const buffered = historyBuffers.current.get(threadId) ?? []
-        const withLive = buffered
-          .filter((entry) => entry.seq === undefined || entry.seq > lastSeq)
-          .reduce((state, entry) => reduce(state, entry.event), restored)
+        const withLive = reduceEventLog(restored, buffered, lastSeq)
         // The buffered events above already include any deltas still waiting
         // for a frame, so do not apply that pending batch a second time.
         pendingThreadDeltas.current.delete(threadId)

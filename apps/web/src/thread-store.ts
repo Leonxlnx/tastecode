@@ -224,9 +224,9 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
 
 /**
  * Applies one rendered frame of text deltas with one item-array copy and one
- * item replacement per target. The single-event reducer stays authoritative
- * for replay; this is its equivalent fast path for the live transport, where
- * providers commonly emit many tiny chunks before the browser can paint.
+ * item replacement per target. The single-event reducer stays authoritative;
+ * this is its equivalent fast path for live frames and persisted replay, where
+ * providers commonly emit many tiny chunks between structural events.
  */
 export function reduceDeltas(state: ThreadState, deltas: ItemDeltaEvent[]): ThreadState {
   if (deltas.length === 0) return state
@@ -261,6 +261,39 @@ export function reduceDeltas(state: ThreadState, deltas: ItemDeltaEvent[]): Thre
   }
 
   return { ...state, items }
+}
+
+/**
+ * Replays persisted events with the same delta batching used by the live
+ * renderer. Long histories contain hundreds of adjacent text chunks per item;
+ * folding those one at a time copies the growing transcript once per token.
+ * Non-delta events flush first, preserving the exact recorded order.
+ */
+export function reduceEventLog(
+  state: ThreadState,
+  entries: ReadonlyArray<{ seq?: number | undefined; event: DomainEvent }>,
+  afterSeq?: number,
+): ThreadState {
+  let next = state
+  let deltas: ItemDeltaEvent[] = []
+
+  const flushDeltas = () => {
+    if (deltas.length === 0) return
+    next = reduceDeltas(next, deltas)
+    deltas = []
+  }
+
+  for (const entry of entries) {
+    if (afterSeq !== undefined && entry.seq !== undefined && entry.seq <= afterSeq) continue
+    if (entry.event.type === 'item.delta') {
+      deltas.push(entry.event)
+      continue
+    }
+    flushDeltas()
+    next = reduce(next, entry.event)
+  }
+  flushDeltas()
+  return next
 }
 
 /** Local echo, so the user's own message appears the instant they hit send. */

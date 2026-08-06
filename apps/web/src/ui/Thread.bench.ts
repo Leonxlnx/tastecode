@@ -1,9 +1,10 @@
 import { bench, describe } from 'vitest'
-import type { Item } from '@harness/contracts'
+import type { DomainEvent, Item } from '@harness/contracts'
 import {
   emptyThread,
   reduce,
   reduceDeltas,
+  reduceEventLog,
   type ItemDeltaEvent,
   type ThreadState,
 } from '../thread-store.js'
@@ -42,6 +43,52 @@ const deltas: ItemDeltaEvent[] = Array.from({ length: 500 }, () => ({
   textDelta: 'x',
 }))
 
+const replayEntries: Array<{ seq: number; event: DomainEvent }> = []
+for (let itemIndex = 0; itemIndex < 1_000; itemIndex += 1) {
+  const id = `history-${itemIndex}`
+  replayEntries.push({
+    seq: replayEntries.length + 1,
+    event: {
+      type: 'item.started',
+      item: {
+        id,
+        turnId: `turn-${itemIndex}`,
+        type: 'message',
+        role: 'assistant',
+        status: 'started',
+        text: '',
+        createdAt: itemIndex,
+      },
+    },
+  })
+  for (let deltaIndex = 0; deltaIndex < 50; deltaIndex += 1) {
+    replayEntries.push({
+      seq: replayEntries.length + 1,
+      event: {
+        type: 'item.delta',
+        turnId: `turn-${itemIndex}`,
+        itemId: id,
+        textDelta: 'x',
+      },
+    })
+  }
+  replayEntries.push({
+    seq: replayEntries.length + 1,
+    event: {
+      type: 'item.completed',
+      item: {
+        id,
+        turnId: `turn-${itemIndex}`,
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: 'x'.repeat(50),
+        createdAt: itemIndex,
+      },
+    },
+  })
+}
+
 describe('long-thread hot paths', () => {
   bench(
     'derives navigation and presentation for 1,000 items',
@@ -76,6 +123,15 @@ describe('long-thread hot paths', () => {
     () => {
       const state = reduceDeltas(streamingState, deltas)
       if (state.items.at(-1)?.text?.length !== deltas.length) throw new Error('invalid batch')
+    },
+    OPTIONS,
+  )
+
+  bench(
+    'replays 52,000 persisted events into a 1,000-item thread',
+    () => {
+      const state = reduceEventLog(emptyThread, replayEntries)
+      if (state.items.length !== 1_000) throw new Error('invalid replay')
     },
     OPTIONS,
   )

@@ -6,6 +6,7 @@ import {
   emptyThread,
   reduce,
   reduceDeltas,
+  reduceEventLog,
 } from './thread-store.js'
 
 const item = (over: Partial<Item> = {}): Item => ({
@@ -198,6 +199,57 @@ describe('thread reducer', () => {
     expect(state.items.map((i) => i.text)).toEqual(['run the tests', 'All green.'])
     // A replayed turn is finished history, not something still in flight.
     expect(state.running).toBe(false)
+  })
+
+  it('batches stored deltas without changing replay semantics', () => {
+    const events: DomainEvent[] = [
+      {
+        type: 'turn.started',
+        turn: { id: 't1', threadId: 'th1', status: 'running', createdAt: 0 },
+      },
+      { type: 'item.started', item: item({ id: 'a1', text: '' }) },
+      { type: 'item.started', item: item({ id: 'a2', text: '' }) },
+      { type: 'item.delta', turnId: 't1', itemId: 'a1', textDelta: 'one' },
+      { type: 'item.delta', turnId: 't1', itemId: 'a2', textDelta: 'two' },
+      { type: 'item.delta', turnId: 't1', itemId: 'a1', textDelta: ' three' },
+      { type: 'item.completed', item: item({ id: 'a1', status: 'completed' }) },
+      { type: 'item.delta', turnId: 't1', itemId: 'a2', textDelta: ' four' },
+      { type: 'item.completed', item: item({ id: 'a2', status: 'completed' }) },
+      { type: 'turn.completed', turnId: 't1', status: 'completed' },
+    ]
+
+    const sequential = events.reduce(reduce, emptyThread)
+    const batched = reduceEventLog(
+      emptyThread,
+      events.map((event, index) => ({ seq: index + 1, event })),
+    )
+
+    expect(batched).toEqual(sequential)
+    expect(batched.items.map(({ id, text }) => ({ id, text }))).toEqual([
+      { id: 'a1', text: 'one three' },
+      { id: 'a2', text: 'two four' },
+    ])
+  })
+
+  it('replays only buffered events newer than restored history', () => {
+    const started = apply([{ type: 'item.started', item: item({ text: '' }) }])
+    const buffered = [
+      {
+        seq: 9,
+        event: { type: 'item.delta', turnId: 't1', itemId: 'i1', textDelta: 'old' },
+      },
+      {
+        event: { type: 'item.delta', turnId: 't1', itemId: 'i1', textDelta: 'local ' },
+      },
+      {
+        seq: 11,
+        event: { type: 'item.delta', turnId: 't1', itemId: 'i1', textDelta: 'live' },
+      },
+    ] satisfies Array<{ seq?: number; event: DomainEvent }>
+
+    const state = reduceEventLog(started, buffered, 10)
+
+    expect(state.items[0]?.text).toBe('local live')
   })
 
   it('tracks whether a turn is running', () => {
