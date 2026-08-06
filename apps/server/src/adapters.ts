@@ -219,6 +219,8 @@ function cursorRuntime(onLog: (line: string) => void): ProviderRuntime {
       adapter.on('log', onLog)
       const thread = await adapter.startThread(workspacePath, {
         ...(options.model ? { model: options.model } : {}),
+        ...(options.effort ? { effort: options.effort } : {}),
+        ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
         ...(options.approval ? { approval: options.approval } : {}),
         ...(options.instructions ? { instructions: options.instructions } : {}),
       })
@@ -229,6 +231,8 @@ function cursorRuntime(onLog: (line: string) => void): ProviderRuntime {
       adapter.on('log', onLog)
       const thread = await adapter.resumeThread(threadId, workspacePath, {
         ...(options.model ? { model: options.model } : {}),
+        ...(options.effort ? { effort: options.effort } : {}),
+        ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
         ...(options.approval ? { approval: options.approval } : {}),
         ...(options.instructions ? { instructions: options.instructions } : {}),
       })

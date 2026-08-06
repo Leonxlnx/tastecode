@@ -5,6 +5,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { DomainEvent } from '@harness/contracts'
 import { describe, expect, it } from 'vitest'
 import { CursorAdapter, CURSOR_CAPABILITIES } from './adapter.js'
+import { resetCursorIndexForTests } from './models.js'
 
 class FakeChild extends EventEmitter {
   readonly stdin = new PassThrough()
@@ -197,5 +198,60 @@ describe('Cursor adapter', () => {
     await expect(adapter.startThread('C:\\repo', { approval: 'auto-review' })).rejects.toThrow(
       'automatic approval review',
     )
+  })
+
+  it('starts on the concrete variant id, warming the index when it is cold', async () => {
+    const capture = readFileSync(
+      new URL('./fixtures/cursor-models-2026-08-07.txt', import.meta.url),
+      'utf8',
+    )
+    resetCursorIndexForTests()
+    const child = new FakeChild()
+    let args: string[] = []
+    let listings = 0
+    const adapter = new CursorAdapter({
+      run: async () => {
+        listings += 1
+        return { code: 0, stdout: capture, stderr: '' }
+      },
+      spawn: (_command, value) => {
+        args = value
+        return child as unknown as ChildProcessWithoutNullStreams
+      },
+    })
+    const thread = await adapter.startThread('C:\\repo', {
+      model: 'gpt-5.3-codex',
+      effort: 'xhigh',
+      serviceTier: 'fast',
+    })
+    await adapter.sendTurn(thread.id, 'go')
+
+    // A cold index costs exactly one listing run at session start.
+    expect(listings).toBe(1)
+    expect(args).toContain('gpt-5.3-codex-xhigh-fast')
+    adapter.dispose()
+  })
+
+  it('passes a defaults-only selection through without a listing run', async () => {
+    resetCursorIndexForTests()
+    const child = new FakeChild()
+    let args: string[] = []
+    let listings = 0
+    const adapter = new CursorAdapter({
+      run: async () => {
+        listings += 1
+        return { code: 0, stdout: '', stderr: '' }
+      },
+      spawn: (_command, value) => {
+        args = value
+        return child as unknown as ChildProcessWithoutNullStreams
+      },
+    })
+    const thread = await adapter.startThread('C:\\repo', { model: 'gpt-5.3-codex' })
+    await adapter.sendTurn(thread.id, 'go')
+
+    expect(listings).toBe(0)
+    expect(args).toContain('gpt-5.3-codex')
+    adapter.dispose()
   })
 })
