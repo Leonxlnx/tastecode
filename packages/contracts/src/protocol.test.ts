@@ -9,6 +9,8 @@ import {
   McpServerSchema,
   McpStartupStatusSchema,
   methods,
+  PreviewCaptureRequestSchema,
+  PreviewCaptureResultSchema,
   PushSchema,
   RequestSchema,
   ResponseSchema,
@@ -104,6 +106,29 @@ describe('protocol envelopes', () => {
 
   it('requires a sequence on every push so clients can detect gaps', () => {
     expect(() => PushSchema.parse({ channel: 'server.welcome', data: {} })).toThrow()
+  })
+
+  it('bounds desktop preview capture at the protocol boundary', () => {
+    const request = {
+      requestId: '0dca4330-66f5-4f68-9287-c6b2bf4c6bf0',
+      url: 'http://127.0.0.1:5183/',
+      viewports: [{ width: 1_440, height: 900 }],
+    }
+
+    expect(PreviewCaptureRequestSchema.parse(request)).toEqual(request)
+    expect(() =>
+      PreviewCaptureRequestSchema.parse({ ...request, url: 'https://example.com' }),
+    ).toThrow()
+    expect(() =>
+      PreviewCaptureRequestSchema.parse({ ...request, viewports: [{ width: 10_000, height: 900 }] }),
+    ).toThrow()
+    expect(
+      PreviewCaptureResultSchema.parse({
+        status: 'completed',
+        requestId: request.requestId,
+        screenshots: [{ path: 'C:\\tmp\\desktop.png', width: 1_440, height: 900 }],
+      }).status,
+    ).toBe('completed')
   })
 
   it('validates params for every declared method', () => {

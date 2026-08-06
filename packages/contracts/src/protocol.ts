@@ -118,6 +118,41 @@ const HttpUrlSchema = z
   .url()
   .refine((value) => /^https?:\/\//i.test(value), 'expected an HTTP or HTTPS URL')
 
+const LoopbackPreviewUrlSchema = z.url().refine((value) => {
+  const url = new URL(value)
+  return url.protocol === 'http:' && url.hostname === '127.0.0.1' && url.port !== ''
+}, 'expected an HTTP URL on 127.0.0.1 with an explicit port')
+
+export const PreviewViewportSchema = z.object({
+  width: z.number().int().min(320).max(3_840),
+  height: z.number().int().min(240).max(2_160),
+})
+export type PreviewViewport = z.infer<typeof PreviewViewportSchema>
+
+export const PreviewScreenshotSchema = PreviewViewportSchema.extend({ path: z.string().min(1) })
+export type PreviewScreenshot = z.infer<typeof PreviewScreenshotSchema>
+
+export const PreviewCaptureRequestSchema = z.object({
+  requestId: z.string().uuid(),
+  url: LoopbackPreviewUrlSchema,
+  viewports: z.array(PreviewViewportSchema).min(1).max(4),
+})
+export type PreviewCaptureRequest = z.infer<typeof PreviewCaptureRequestSchema>
+
+export const PreviewCaptureResultSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('completed'),
+    requestId: z.string().uuid(),
+    screenshots: z.array(PreviewScreenshotSchema).min(1).max(4),
+  }),
+  z.object({
+    status: z.literal('failed'),
+    requestId: z.string().uuid(),
+    error: z.string().min(1),
+  }),
+])
+export type PreviewCaptureResult = z.infer<typeof PreviewCaptureResultSchema>
+
 export const McpConfigValueSchema = z.discriminatedUnion('source', [
   /** Non-secret config only. Credentials must use the reference shape below. */
   z.object({ source: z.literal('literal'), value: z.string() }),
@@ -398,6 +433,14 @@ export type SessionDiff = z.infer<typeof SessionDiffSchema>
  * single source of truth that the server routes against and the client calls.
  */
 export const methods = {
+  'client.capabilities': {
+    params: z.object({ previewCapture: z.boolean() }),
+    result: z.object({}),
+  },
+  'preview.captureResult': {
+    params: PreviewCaptureResultSchema,
+    result: z.object({}),
+  },
   'system.info': {
     params: z.object({}),
     result: z.object({
@@ -1028,6 +1071,7 @@ export const PushSchema = z.object({
 export type Push = z.infer<typeof PushSchema>
 
 export const channels = {
+  'preview.captureRequested': PreviewCaptureRequestSchema,
   'server.welcome': z.object({
     serverVersion: z.string(),
     protocolVersion: z.number(),
