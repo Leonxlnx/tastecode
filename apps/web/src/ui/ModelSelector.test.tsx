@@ -172,7 +172,8 @@ describe('ModelSelector', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
-    expect(screen.getByText('1.5x speed')).toBeTruthy()
+    // Tier descriptions are data, not UI: the panel shows no plan copy.
+    expect(screen.queryByText('1.5x speed')).toBeNull()
     expect(screen.queryByText('1.5× Speed · 2.5× Usage')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Enable fast mode' }))

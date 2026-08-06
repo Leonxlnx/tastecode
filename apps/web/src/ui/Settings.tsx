@@ -794,7 +794,6 @@ function ModelSettings(props: {
                         className={`model-visibility__model${visible ? '' : ' is-hidden'}`}
                         key={choice.key}
                         title={choice.model.displayName}
-                        note={choice.model.description ?? 'Available from this provider'}
                       >
                         <button
                           className={`switch${visible ? ' is-on' : ''}`}
@@ -1319,7 +1318,7 @@ function PlannedRow(props: { title: string; note: string }) {
 
 function SettingsRow(props: {
   title: string
-  note: string
+  note?: string
   className?: string
   children?: ReactNode
 }) {
@@ -1327,7 +1326,7 @@ function SettingsRow(props: {
     <div className={`settings__row${props.className ? ` ${props.className}` : ''}`}>
       <div className="settings__row-copy">
         <p className="settings__row-title">{props.title}</p>
-        <p className="settings__row-note">{props.note}</p>
+        {props.note ? <p className="settings__row-note">{props.note}</p> : null}
       </div>
       {props.children ? <div className="settings__row-control">{props.children}</div> : null}
     </div>

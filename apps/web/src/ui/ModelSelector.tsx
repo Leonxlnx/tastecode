@@ -428,15 +428,11 @@ export function ModelSelector(props: ModelSelectorProps) {
               </span>
               {fastTier ? (
                 <div className="model-selector__fast-row">
-                  {fastTier.description ? (
-                    <span className="model-selector__fast-meta">{fastTier.description}</span>
-                  ) : null}
                   <button
                     type="button"
                     className={`model-selector__fast${fastEnabled ? ' is-on' : ''}`}
                     aria-label={fastEnabled ? 'Disable fast mode' : 'Enable fast mode'}
                     aria-pressed={fastEnabled}
-                    title={fastTier.description}
                     onClick={() =>
                       props.onServiceTierChange(
                         fastEnabled ? getFastModeOffValue(model) : fastTier.id,
