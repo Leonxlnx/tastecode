@@ -546,16 +546,39 @@ describe('new chats', () => {
   it('sends the design brief through a provider without structured input', async () => {
     // Briefing questions are Harness-owned and answered by the server, so a
     // provider that never declares `userInput` must still be able to submit.
-    localStorage.setItem('harness.provider', 'claude')
+    localStorage.setItem('harness.provider', 'claude-code')
     serverProviders = [
       {
-        id: 'claude',
+        id: 'claude-code',
         displayName: 'Claude Code',
         installed: true,
         auth: 'authenticated',
         capabilities: { interrupt: true },
       },
     ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    // Since 174d079 a provider with an empty catalog has no selectable model,
+    // so the adapter's real alias list is mirrored here.
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (
+        method === 'models.list' &&
+        (params as { provider?: string }).provider === 'claude-code'
+      ) {
+        return Promise.resolve({
+          models: [
+            {
+              id: 'fable',
+              displayName: 'Fable 5',
+              isDefault: true,
+              reasoningEfforts: [],
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
     ]
