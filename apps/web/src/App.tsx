@@ -96,6 +96,7 @@ const SESSION_ORDER_KEY = 'harness.sessionOrder'
 const MODEL_KEY = 'harness.model'
 /** Stable identity: a fresh [] every render re-renders every thread row. */
 const EMPTY_CHECKPOINTS: Checkpoint[] = []
+const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
 const EFFORT_KEY = 'harness.effort'
 const SERVICE_TIER_KEY = 'harness.serviceTier'
@@ -1985,47 +1986,50 @@ export function App() {
     setSessionSearchProject(projectPath)
     setSessionSearchOpen(true)
   }, [])
+  const closeSessionSearch = useCallback(() => setSessionSearchOpen(false), [])
+  const selectSessionSearchResult = useCallback(
+    (threadId: string, turnId: string) => {
+      setSessionSearchOpen(false)
+      setSearchJump((current) => ({
+        threadId,
+        turnId,
+        request: (current?.request ?? 0) + 1,
+      }))
+      void selectSession(threadId)
+    },
+    [selectSession],
+  )
   const openSettings = useCallback(() => setSettingsOpen(true), [])
+  const closeSettings = useCallback(() => setSettingsOpen(false), [])
+  const resetSettings = useCallback(() => {
+    localStorage.clear()
+    location.reload()
+  }, [])
+  const changeModelVisibility = useCallback((key: string, visible: boolean) => {
+    setHiddenModels((current) => {
+      const next = new Set(current)
+      if (visible) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+  const closePalette = useCallback(() => {
+    setPaletteScope(null)
+    setPreferredNewThreadProject(undefined)
+  }, [])
   const toggleRail = useCallback(() => setCollapsed((current) => !current), [])
   const openRollback = useCallback(() => {
     setRollbackInspection(undefined)
     setRollbackOpen(true)
   }, [])
   const toggleTerminal = useCallback(() => setTerminalOpen((open) => !open), [])
+  const closeTerminal = useCallback(() => setTerminalOpen(false), [])
 
-  if (!provider) {
-    return (
-      <>
-        <Onboarding
-          transport={transport}
-          models={models}
-          hiddenModels={hiddenModels}
-          onModelVisibilityChange={(key, visible) => {
-            setHiddenModels((current) => {
-              const next = new Set(current)
-              if (visible) next.delete(key)
-              else next.add(key)
-              return next
-            })
-          }}
-          onRefreshModels={refreshCatalog}
-          onDone={(id, agent) => {
-            writeSetting(SETUP_KEY, id)
-            if (agent) {
-              writeSetting(AGENT_KEY, agent.id)
-              writeSetting(AGENT_NAME_KEY, agent.name)
-            }
-            setAcpAgent(agent?.id)
-            setAcpAgentName(agent?.name)
-            setProvider(id)
-          }}
-        />
-      </>
-    )
-  }
-
-  const active = findSession(projects, activeId)
-  const activeProject = projects.find((project) => project.path === activePath)
+  const active = useMemo(() => findSession(projects, activeId), [projects, activeId])
+  const activeProject = useMemo(
+    () => projects.find((project) => project.path === activePath),
+    [projects, activePath],
+  )
   const searching = thread.items.some(
     (item) =>
       item.turnId === thread.activeTurn?.id &&
@@ -2033,113 +2037,149 @@ export function App() {
       item.status === 'started' &&
       `${item.text ?? ''} ${item.command ?? ''}`.toLowerCase().includes('search'),
   )
-  const labels = {
-    newChat: shortcutLabel(SHORTCUTS.newChat, macOS),
-    switchProject: shortcutLabel(SHORTCUTS.switchProject, macOS),
-    newProject: shortcutLabel(SHORTCUTS.newProject, macOS),
-    settings: shortcutLabel(SHORTCUTS.settings, macOS),
-    searchSessions: shortcutLabel(SHORTCUTS.searchSessions, macOS),
-    focusComposer: shortcutLabel(SHORTCUTS.focusComposer, macOS),
-    toggleSidebar: shortcutLabel(SHORTCUTS.toggleSidebar, macOS),
-  }
-  const commands: PaletteCommand[] = [
-    {
-      id: 'search-sessions',
-      title: 'Search all chats',
-      detail: 'Messages and tool output across projects',
-      group: 'Actions',
-      shortcut: labels.searchSessions,
-      run: () => {
-        setSessionSearchProject(undefined)
-        setSessionSearchOpen(true)
+  const commands = useMemo<PaletteCommand[]>(() => {
+    if (!paletteScope) return EMPTY_PALETTE_COMMANDS
+    const labels = {
+      newChat: shortcutLabel(SHORTCUTS.newChat, macOS),
+      switchProject: shortcutLabel(SHORTCUTS.switchProject, macOS),
+      newProject: shortcutLabel(SHORTCUTS.newProject, macOS),
+      settings: shortcutLabel(SHORTCUTS.settings, macOS),
+      searchSessions: shortcutLabel(SHORTCUTS.searchSessions, macOS),
+      focusComposer: shortcutLabel(SHORTCUTS.focusComposer, macOS),
+      toggleSidebar: shortcutLabel(SHORTCUTS.toggleSidebar, macOS),
+    }
+    return [
+      {
+        id: 'search-sessions',
+        title: 'Search all chats',
+        detail: 'Messages and tool output across projects',
+        group: 'Actions',
+        shortcut: labels.searchSessions,
+        run: () => {
+          setSessionSearchProject(undefined)
+          setSessionSearchOpen(true)
+        },
       },
-    },
-    {
-      id: 'new-chat',
-      title: 'New chat',
-      detail: activePath ? `Start in ${basename(activePath)}` : 'Choose a project folder',
-      group: 'Actions',
-      keywords: 'session conversation',
-      shortcut: labels.newChat,
-      run: startNewChat,
-    },
-    {
-      id: 'switch-project',
-      title: 'Switch project…',
-      detail: 'Choose another workspace',
-      group: 'Actions',
-      keywords: 'folder workspace',
-      shortcut: labels.switchProject,
-      run: () => setPaletteScope('projects'),
-    },
-    {
-      id: 'new-project',
-      title: 'New project',
-      detail: 'Add a folder to the sidebar',
-      group: 'Actions',
-      keywords: 'add open folder workspace',
-      shortcut: labels.newProject,
-      projectCommand: true,
-      run: () => void addProject(),
-    },
-    ...(activePath
-      ? [
-          {
-            id: 'focus-composer',
-            title: 'Focus composer',
-            detail: 'Move the cursor to your prompt',
-            group: 'Actions' as const,
-            keywords: 'prompt message type',
-            shortcut: labels.focusComposer,
-            run: () => setComposerFocusRequest((request) => request + 1),
-          },
-        ]
-      : []),
-    {
-      id: 'toggle-sidebar',
-      title: collapsed ? 'Show sidebar' : 'Hide sidebar',
-      group: 'Actions',
-      keywords: 'rail navigation',
-      shortcut: labels.toggleSidebar,
-      run: () => setCollapsed((current) => !current),
-    },
-    {
-      id: 'open-settings',
-      title: 'Settings',
-      detail: 'Providers, appearance, storage',
-      group: 'Actions',
-      shortcut: labels.settings,
-      run: () => setSettingsOpen(true),
-    },
-    ...projects.map((project): PaletteCommand => ({
-      id: `project-${encodeURIComponent(project.path)}`,
-      title: displayName(project),
-      detail: project.path,
-      group: 'Projects',
-      keywords: 'switch folder workspace',
-      projectCommand: true,
-      run: () => selectProject(project.path),
-    })),
-    ...projects.map((project): PaletteCommand => ({
-      id: `new-chat-${encodeURIComponent(project.path)}`,
-      title: `New thread in ${displayName(project)}`,
-      detail: project.path,
-      group: 'Projects',
-      keywords: 'session conversation',
-      newThreadProject: true,
-      run: () => beginSession(project.path),
-    })),
-    ...projects.flatMap((project) =>
-      project.sessions.map((session): PaletteCommand => ({
-        id: `chat-${session.id}`,
-        title: session.title,
-        detail: displayName(project),
-        group: 'Chats',
-        keywords: `${project.path} open session conversation`,
-        run: () => void selectSession(session.id),
+      {
+        id: 'new-chat',
+        title: 'New chat',
+        detail: activePath ? `Start in ${basename(activePath)}` : 'Choose a project folder',
+        group: 'Actions',
+        keywords: 'session conversation',
+        shortcut: labels.newChat,
+        run: startNewChat,
+      },
+      {
+        id: 'switch-project',
+        title: 'Switch project…',
+        detail: 'Choose another workspace',
+        group: 'Actions',
+        keywords: 'folder workspace',
+        shortcut: labels.switchProject,
+        run: () => setPaletteScope('projects'),
+      },
+      {
+        id: 'new-project',
+        title: 'New project',
+        detail: 'Add a folder to the sidebar',
+        group: 'Actions',
+        keywords: 'add open folder workspace',
+        shortcut: labels.newProject,
+        projectCommand: true,
+        run: () => void addProject(),
+      },
+      ...(activePath
+        ? [
+            {
+              id: 'focus-composer',
+              title: 'Focus composer',
+              detail: 'Move the cursor to your prompt',
+              group: 'Actions' as const,
+              keywords: 'prompt message type',
+              shortcut: labels.focusComposer,
+              run: () => setComposerFocusRequest((request) => request + 1),
+            },
+          ]
+        : []),
+      {
+        id: 'toggle-sidebar',
+        title: collapsed ? 'Show sidebar' : 'Hide sidebar',
+        group: 'Actions',
+        keywords: 'rail navigation',
+        shortcut: labels.toggleSidebar,
+        run: () => setCollapsed((current) => !current),
+      },
+      {
+        id: 'open-settings',
+        title: 'Settings',
+        detail: 'Providers, appearance, storage',
+        group: 'Actions',
+        shortcut: labels.settings,
+        run: () => setSettingsOpen(true),
+      },
+      ...projects.map((project): PaletteCommand => ({
+        id: `project-${encodeURIComponent(project.path)}`,
+        title: displayName(project),
+        detail: project.path,
+        group: 'Projects',
+        keywords: 'switch folder workspace',
+        projectCommand: true,
+        run: () => selectProject(project.path),
       })),
-    ),
-  ]
+      ...projects.map((project): PaletteCommand => ({
+        id: `new-chat-${encodeURIComponent(project.path)}`,
+        title: `New thread in ${displayName(project)}`,
+        detail: project.path,
+        group: 'Projects',
+        keywords: 'session conversation',
+        newThreadProject: true,
+        run: () => beginSession(project.path),
+      })),
+      ...projects.flatMap((project) =>
+        project.sessions.map((session): PaletteCommand => ({
+          id: `chat-${session.id}`,
+          title: session.title,
+          detail: displayName(project),
+          group: 'Chats',
+          keywords: `${project.path} open session conversation`,
+          run: () => void selectSession(session.id),
+        })),
+      ),
+    ]
+  }, [
+    paletteScope,
+    macOS,
+    activePath,
+    startNewChat,
+    addProject,
+    collapsed,
+    projects,
+    selectProject,
+    beginSession,
+    selectSession,
+  ])
+
+  if (!provider) {
+    return (
+      <Onboarding
+        transport={transport}
+        models={models}
+        hiddenModels={hiddenModels}
+        onModelVisibilityChange={changeModelVisibility}
+        onRefreshModels={refreshCatalog}
+        onDone={(id, agent) => {
+          writeSetting(SETUP_KEY, id)
+          if (agent) {
+            writeSetting(AGENT_KEY, agent.id)
+            writeSetting(AGENT_NAME_KEY, agent.name)
+          }
+          setAcpAgent(agent?.id)
+          setAcpAgentName(agent?.name)
+          setProvider(id)
+        }}
+      />
+    )
+  }
 
   return (
     <div
@@ -2228,7 +2268,7 @@ export function App() {
                   height={terminalHeight}
                   theme={theme}
                   onHeightChange={setTerminalHeight}
-                  onClose={() => setTerminalOpen(false)}
+                  onClose={closeTerminal}
                 />
               </Suspense>
             ) : null}
@@ -2293,14 +2333,7 @@ export function App() {
           modelConnections={modelConnections}
           models={models}
           hiddenModels={hiddenModels}
-          onModelVisibilityChange={(key, visible) => {
-            setHiddenModels((current) => {
-              const next = new Set(current)
-              if (visible) next.delete(key)
-              else next.add(key)
-              return next
-            })
-          }}
+          onModelVisibilityChange={changeModelVisibility}
           onConnectionsChanged={refreshCatalog}
           projectCount={projects.length}
           sidebarSettings={sidebarSettings}
@@ -2319,11 +2352,8 @@ export function App() {
           macOSFontSmoothing={macOSFontSmoothing}
           onMacOSFontSmoothingChange={setMacOSFontSmoothing}
           onAccountChange={handleAccountChange}
-          onReset={() => {
-            localStorage.clear()
-            location.reload()
-          }}
-          onClose={() => setSettingsOpen(false)}
+          onReset={resetSettings}
+          onClose={closeSettings}
         />
       ) : null}
 
@@ -2336,10 +2366,7 @@ export function App() {
               ? `new-chat-${encodeURIComponent(preferredNewThreadProject)}`
               : undefined
           }
-          onClose={() => {
-            setPaletteScope(null)
-            setPreferredNewThreadProject(undefined)
-          }}
+          onClose={closePalette}
         />
       ) : null}
 
@@ -2348,16 +2375,8 @@ export function App() {
           transport={transport}
           projects={projects}
           initialProjectPath={sessionSearchProject}
-          onSelect={(threadId, turnId) => {
-            setSessionSearchOpen(false)
-            setSearchJump((current) => ({
-              threadId,
-              turnId,
-              request: (current?.request ?? 0) + 1,
-            }))
-            void selectSession(threadId)
-          }}
-          onClose={() => setSessionSearchOpen(false)}
+          onSelect={selectSessionSearchResult}
+          onClose={closeSessionSearch}
         />
       ) : null}
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Search } from 'lucide-react'
 import { ShortcutHint } from './ShortcutHint.js'
 
@@ -16,7 +16,7 @@ export type PaletteCommand = {
   run: () => void
 }
 
-export function CommandPalette(props: {
+function CommandPaletteComponent(props: {
   commands: PaletteCommand[]
   scope: CommandScope
   preferredCommandId?: string | undefined
@@ -181,3 +181,5 @@ export function CommandPalette(props: {
     </div>
   )
 }
+
+export const CommandPalette = memo(CommandPaletteComponent)

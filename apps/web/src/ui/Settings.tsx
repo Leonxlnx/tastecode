@@ -1,5 +1,6 @@
 import {
   lazy,
+  memo,
   Suspense,
   useCallback,
   useEffect,
@@ -103,7 +104,7 @@ const BACKDROP_OPTIONS = [
  * Settings stays intentionally small: the sidebar reorganizes the decisions
  * the app already exposes without inventing preferences for their own sake.
  */
-export function Settings(props: {
+function SettingsComponent(props: {
   provider: ProviderId
   providerName: string
   transport: Transport
@@ -1345,3 +1346,5 @@ function SettingsRow(props: {
     </div>
   )
 }
+
+export const Settings = memo(SettingsComponent)

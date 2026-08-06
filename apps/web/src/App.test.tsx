@@ -20,6 +20,13 @@ const shellRenders = vi.hoisted(() => ({
   stageHeader: vi.fn(),
 }))
 
+const utilityRenders = vi.hoisted(() => ({
+  commandPalette: vi.fn(),
+  sessionSearch: vi.fn(),
+  settings: vi.fn(),
+  terminalPane: vi.fn(),
+}))
+
 vi.mock('./transport.js', () => ({
   Transport: class {
     constructor(url: string) {
@@ -90,6 +97,46 @@ vi.mock('./ui/StageHeader.js', async (importOriginal) => {
   return { ...original, StageHeader }
 })
 
+vi.mock('./ui/CommandPalette.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./ui/CommandPalette.js')>()
+  const { memo } = await import('react')
+  const CommandPalette = memo((props: ComponentProps<typeof original.CommandPalette>) => {
+    utilityRenders.commandPalette()
+    return <original.CommandPalette {...props} />
+  })
+  return { ...original, CommandPalette }
+})
+
+vi.mock('./ui/Settings.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./ui/Settings.js')>()
+  const { memo } = await import('react')
+  const Settings = memo((props: ComponentProps<typeof original.Settings>) => {
+    utilityRenders.settings()
+    return <original.Settings {...props} />
+  })
+  return { ...original, Settings }
+})
+
+vi.mock('./ui/SessionSearch.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./ui/SessionSearch.js')>()
+  const { memo } = await import('react')
+  const SessionSearch = memo((props: ComponentProps<typeof original.SessionSearch>) => {
+    utilityRenders.sessionSearch()
+    return <original.SessionSearch {...props} />
+  })
+  return { ...original, SessionSearch }
+})
+
+vi.mock('./ui/TerminalPane.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./ui/TerminalPane.js')>()
+  const { memo } = await import('react')
+  const TerminalPane = memo((props: ComponentProps<typeof original.TerminalPane>) => {
+    utilityRenders.terminalPane()
+    return <div data-testid="terminal-pane">{props.threadId}</div>
+  })
+  return { ...original, TerminalPane }
+})
+
 vi.mock('./bridge.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./bridge.js')>()),
   isMacOS: () => true,
@@ -112,6 +159,10 @@ let serverSidebarSettings: {
 beforeEach(() => {
   shellRenders.sidebar.mockClear()
   shellRenders.stageHeader.mockClear()
+  utilityRenders.commandPalette.mockClear()
+  utilityRenders.sessionSearch.mockClear()
+  utilityRenders.settings.mockClear()
+  utilityRenders.terminalPane.mockClear()
   transport.listeners.clear()
   transport.stateListeners.clear()
   transport.urls.length = 0
@@ -1835,6 +1886,86 @@ describe('live sessions', () => {
 
     expect(shellRenders.sidebar).not.toHaveBeenCalled()
     expect(shellRenders.stageHeader).not.toHaveBeenCalled()
+  })
+
+  it('keeps open utility surfaces out of streamed-frame renders', async () => {
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    await screen.findByTestId('thread')
+    emitThreadEvent('untouched-thread', {
+      type: 'turn.started',
+      turn: { id: 'turn-1', threadId: 'untouched-thread', status: 'running', createdAt: 0 },
+    })
+    emitThreadEvent('untouched-thread', {
+      type: 'item.started',
+      item: {
+        id: 'item-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'started',
+        text: '',
+        createdAt: 0,
+      },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
+    await screen.findByTestId('terminal-pane')
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    const palette = screen.getByRole('dialog', { name: 'Command palette' })
+
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    utilityRenders.commandPalette.mockClear()
+    utilityRenders.terminalPane.mockClear()
+
+    emitThreadEvent('untouched-thread', {
+      type: 'item.delta',
+      turnId: 'turn-1',
+      itemId: 'item-1',
+      textDelta: 'first',
+    })
+    act(() => frames.shift()?.(16))
+
+    expect(utilityRenders.commandPalette).not.toHaveBeenCalled()
+    expect(utilityRenders.terminalPane).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(palette, { key: 'Escape' })
+    fireEvent.keyDown(window, { key: ',', metaKey: true })
+    await screen.findByRole('dialog', { name: 'Settings' })
+    utilityRenders.settings.mockClear()
+    utilityRenders.terminalPane.mockClear()
+
+    emitThreadEvent('untouched-thread', {
+      type: 'item.delta',
+      turnId: 'turn-1',
+      itemId: 'item-1',
+      textDelta: ' second',
+    })
+    act(() => frames.shift()?.(32))
+
+    expect(utilityRenders.settings).not.toHaveBeenCalled()
+    expect(utilityRenders.terminalPane).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    await screen.findByRole('dialog', { name: 'Search all chats' })
+    utilityRenders.sessionSearch.mockClear()
+    utilityRenders.terminalPane.mockClear()
+
+    emitThreadEvent('untouched-thread', {
+      type: 'item.delta',
+      turnId: 'turn-1',
+      itemId: 'item-1',
+      textDelta: ' third',
+    })
+    act(() => frames.shift()?.(48))
+
+    expect(utilityRenders.sessionSearch).not.toHaveBeenCalled()
+    expect(utilityRenders.terminalPane).not.toHaveBeenCalled()
   })
 
   it('flushes pending deltas before a completion event', async () => {

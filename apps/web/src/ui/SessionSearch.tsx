@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { ProviderId, SessionSearchResult } from '@harness/contracts'
 import { Search, X } from 'lucide-react'
 import type { Transport } from '../transport.js'
@@ -13,7 +13,7 @@ const PROVIDERS: Array<{ id: ProviderId; label: string }> = [
   { id: 'acp', label: 'Gemini, Kimi & Qwen' },
 ]
 
-export function SessionSearch(props: {
+function SessionSearchComponent(props: {
   transport: Transport
   projects: Array<{ path: string; name?: string | undefined }>
   initialProjectPath?: string | undefined
@@ -213,3 +213,5 @@ function basename(path: string): string {
 function providerLabel(provider: ProviderId): string {
   return PROVIDERS.find((entry) => entry.id === provider)?.label ?? provider
 }
+
+export const SessionSearch = memo(SessionSearchComponent)
