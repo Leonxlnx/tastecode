@@ -718,59 +718,98 @@ function ModelSettings(props: {
     groups.set(choice.sourceName, group)
     return groups
   }, new Map<string, ModelChoice[]>())
+  const visibleModelCount = props.models.filter(
+    (choice) => !props.hiddenModels.has(choice.key),
+  ).length
+
   return (
-    <SettingsPanel title="Models" groupTitle="Composer model list">
-      <p className="settings__group-note settings__group-note--top">
-        Show only the models you actually use. This does not disconnect the provider.
-      </p>
-      {[...sources.entries()].map(([source, choices]) => {
-        const anyVisible = choices.some((choice) => !props.hiddenModels.has(choice.key))
-        return (
-          <div className="model-visibility" key={source}>
-            <div className="model-visibility__source">
-              {choices[0] ? <ProviderIcon mark={choices[0].mark} size={17} /> : null}
-              <span>{source}</span>
-              <button
-                className={`switch switch--source${anyVisible ? ' is-on' : ''}`}
-                type="button"
-                role="switch"
-                aria-label={`Show any models from ${source}`}
-                aria-checked={anyVisible}
-                onClick={() => {
-                  // One master switch per provider: off hides every model, on
-                  // brings them all back — "deselect a provider" without
-                  // disconnecting it.
-                  for (const choice of choices)
-                    props.onModelVisibilityChange(choice.key, !anyVisible)
-                }}
-              >
-                <span className="switch__thumb" />
-              </button>
-            </div>
-            {choices.map((choice) => {
-              const visible = !props.hiddenModels.has(choice.key)
-              return (
-                <SettingsRow
-                  key={choice.key}
-                  title={choice.model.displayName}
-                  note={choice.model.description ?? 'Available from this provider'}
-                >
+    <SettingsPanel
+      title="Models"
+      groupTitle="Composer model list"
+      groupClassName="settings__group--plain model-settings"
+    >
+      <div className="model-settings__summary">
+        <p>Choose which models appear in the composer. Provider connections stay unchanged.</p>
+        {props.models.length > 0 ? (
+          <span>
+            {visibleModelCount} of {props.models.length} visible
+          </span>
+        ) : null}
+      </div>
+
+      {sources.size > 0 ? (
+        <div className="model-settings__sources">
+          {[...sources.entries()].map(([source, choices]) => {
+            const visibleCount = choices.filter(
+              (choice) => !props.hiddenModels.has(choice.key),
+            ).length
+            const anyVisible = visibleCount > 0
+
+            return (
+              <section className="model-visibility" aria-label={source} key={source}>
+                <header className="model-visibility__source">
+                  <div className="model-visibility__source-copy">
+                    {choices[0] ? <ProviderIcon mark={choices[0].mark} size={18} /> : null}
+                    <div>
+                      <h3>{source}</h3>
+                      <p>
+                        {visibleCount} of {choices.length}{' '}
+                        {choices.length === 1 ? 'model' : 'models'} visible
+                      </p>
+                    </div>
+                  </div>
                   <button
-                    className={`switch${visible ? ' is-on' : ''}`}
+                    className={`switch switch--source${anyVisible ? ' is-on' : ''}`}
                     type="button"
                     role="switch"
-                    aria-label={`Show ${choice.model.displayName}`}
-                    aria-checked={visible}
-                    onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
+                    aria-label={`Show any models from ${source}`}
+                    aria-checked={anyVisible}
+                    onClick={() => {
+                      // One master switch per provider: off hides every model, on
+                      // brings them all back — "deselect a provider" without
+                      // disconnecting it.
+                      for (const choice of choices)
+                        props.onModelVisibilityChange(choice.key, !anyVisible)
+                    }}
                   >
                     <span className="switch__thumb" />
                   </button>
-                </SettingsRow>
-              )
-            })}
-          </div>
-        )
-      })}
+                </header>
+
+                <div className="model-visibility__models">
+                  {choices.map((choice) => {
+                    const visible = !props.hiddenModels.has(choice.key)
+                    return (
+                      <SettingsRow
+                        className={`model-visibility__model${visible ? '' : ' is-hidden'}`}
+                        key={choice.key}
+                        title={choice.model.displayName}
+                        note={choice.model.description ?? 'Available from this provider'}
+                      >
+                        <button
+                          className={`switch${visible ? ' is-on' : ''}`}
+                          type="button"
+                          role="switch"
+                          aria-label={`Show ${choice.model.displayName}`}
+                          aria-checked={visible}
+                          onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
+                        >
+                          <span className="switch__thumb" />
+                        </button>
+                      </SettingsRow>
+                    )
+                  })}
+                </div>
+              </section>
+            )
+          })}
+        </div>
+      ) : (
+        <div className="model-settings__empty">
+          <Boxes size={18} aria-hidden />
+          <p>No models are available from your connected providers yet.</p>
+        </div>
+      )}
     </SettingsPanel>
   )
 }
@@ -1268,9 +1307,14 @@ function PlannedRow(props: { title: string; note: string }) {
   )
 }
 
-function SettingsRow(props: { title: string; note: string; children?: ReactNode }) {
+function SettingsRow(props: {
+  title: string
+  note: string
+  className?: string
+  children?: ReactNode
+}) {
   return (
-    <div className="settings__row">
+    <div className={`settings__row${props.className ? ` ${props.className}` : ''}`}>
       <div className="settings__row-copy">
         <p className="settings__row-title">{props.title}</p>
         <p className="settings__row-note">{props.note}</p>
