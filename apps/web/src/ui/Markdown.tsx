@@ -93,6 +93,11 @@ const STREAMDOWN_COMPONENTS = {
   inlineCode: InlineCode,
 } satisfies Components
 
+// Streamdown uses these identities to preserve its context values. Recreating
+// them per token invalidates completed Markdown blocks above the live tail.
+const STREAMDOWN_PLUGINS = { code: shikiPlugin }
+const STREAMDOWN_CONTROLS = { code: true, table: true, mermaid: false }
+
 /**
  * Nothing upstream paces the output: a provider emits a chunk, the server
  * forwards it, and the client coalesces a frame's worth. With no stagger every
@@ -141,8 +146,8 @@ export const Markdown = memo(function Markdown({
       isAnimating={streaming}
       animated={STREAM_ANIMATION}
       parseIncompleteMarkdown
-      plugins={{ code: shikiPlugin }}
-      controls={{ code: true, table: true, mermaid: false }}
+      plugins={STREAMDOWN_PLUGINS}
+      controls={STREAMDOWN_CONTROLS}
       icons={STREAMDOWN_ICONS}
       components={STREAMDOWN_COMPONENTS}
     >
