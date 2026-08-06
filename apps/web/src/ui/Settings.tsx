@@ -91,6 +91,15 @@ const ACCENT_OPTIONS = [
   { value: 'lavender', label: 'Lavender' },
 ] as const satisfies ReadonlyArray<{ value: AccentPreference; label: string }>
 
+/** Stepped, not a raw range: four honest strengths beat 13 near-identical
+ *  stops, and the picker matches the other appearance choices. */
+const GLASS_OPTIONS = [
+  { value: 0, label: 'Off' },
+  { value: 20, label: 'Subtle' },
+  { value: 35, label: 'Medium' },
+  { value: 50, label: 'Strong' },
+] as const satisfies ReadonlyArray<{ value: number; label: string }>
+
 const BACKDROP_OPTIONS = [
   { value: 'default', label: 'Graphite' },
   { value: 'slate', label: 'Slate' },
@@ -934,33 +943,34 @@ function AppearanceSettings(props: {
         </fieldset>
       </div>
       <div className="appearance__text">
-        <h2 className="settings__group-title">Sidebar</h2>
-        <div className="settings__group">
-          <SettingsRow title="Translucent sidebar">
-            <div className="settings__inline-controls">
-              <input
-                className="settings__slider"
-                type="range"
-                aria-label="Sidebar translucency"
-                min={0}
-                max={60}
-                step={5}
-                value={props.sidebarGlass}
-                onChange={(event) => props.onSidebarGlassChange(event.currentTarget.valueAsNumber)}
-              />
+        <h2 className="settings__group-title">Sidebar translucency</h2>
+        <fieldset className="appearance-picker" aria-label="Sidebar translucency">
+          {GLASS_OPTIONS.map((option) => {
+            // Legacy values from the old 0–60 range snap to the nearest stop.
+            const selected = GLASS_OPTIONS.reduce((best, candidate) =>
+              Math.abs(candidate.value - props.sidebarGlass) <
+              Math.abs(best.value - props.sidebarGlass)
+                ? candidate
+                : best,
+            )
+            return (
               <button
-                className={`switch${props.sidebarGlass > 0 ? ' is-on' : ''}`}
+                className={`appearance-choice${selected.value === option.value ? ' is-selected' : ''}`}
                 type="button"
-                role="switch"
-                aria-label="Translucent sidebar"
-                aria-checked={props.sidebarGlass > 0}
-                onClick={() => props.onSidebarGlassChange(props.sidebarGlass > 0 ? 0 : 35)}
+                aria-pressed={selected.value === option.value}
+                onClick={() => props.onSidebarGlassChange(option.value)}
+                key={option.value}
               >
-                <span className="switch__thumb" />
+                <span
+                  className="appearance-choice__swatch"
+                  data-glass-preview={option.value}
+                  aria-hidden
+                />
+                <span>{option.label}</span>
               </button>
-            </div>
-          </SettingsRow>
-        </div>
+            )
+          })}
+        </fieldset>
       </div>
       <div className="appearance__text">
         <h2 className="settings__group-title">Accent palette</h2>

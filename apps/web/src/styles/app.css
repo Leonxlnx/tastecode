@@ -5679,7 +5679,11 @@
 }
 
 .menu--settings {
-  width: min(calc(var(--rail-w) - 20px), calc(100vw - 16px));
+  /* Flush with the account trigger: same left edge, same width. The
+     fallback only exists for the first frame before positioning runs, and
+     min-width must yield or the base .menu minimum wins over the match. */
+  min-width: 0;
+  width: min(var(--menu-trigger-w, calc(var(--rail-w) - 20px)), calc(100vw - 16px));
 }
 
 .menu--sidebar {
@@ -7316,7 +7320,6 @@
   -webkit-backdrop-filter: blur(16px) saturate(1.15);
 }
 
-:root[data-glass='on'] .shell,
 :root[data-backdrop]:not([data-backdrop='default']) .shell {
   background-image:
     radial-gradient(
@@ -7330,6 +7333,55 @@
       transparent 70%
     );
   background-attachment: fixed;
+}
+
+/* With glass on, the glow scales with the chosen strength — a fixed 6% glow
+   behind a barely-transparent rail was invisible on Graphite, which read as
+   "the slider does nothing". At Strong (0.5) this reaches ~15%/12%. */
+:root[data-glass='on'] .shell {
+  background-image:
+    radial-gradient(
+      60% 42% at 8% 0%,
+      color-mix(in srgb, var(--attention) calc(4% + var(--rail-glass, 0) * 22%), transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      50% 38% at 100% 100%,
+      color-mix(in srgb, var(--effort) calc(3% + var(--rail-glass, 0) * 18%), transparent),
+      transparent 70%
+    );
+  background-attachment: fixed;
+}
+
+/* Glass previews: an accent glow behind a rail-colored pane whose opacity
+   drops with each step, so the four stops read as what they do. */
+.appearance-choice__swatch[data-glass-preview] {
+  background-image:
+    linear-gradient(
+      var(--glass-preview-pane, var(--bg-rail)),
+      var(--glass-preview-pane, var(--bg-rail))
+    ),
+    radial-gradient(
+      120% 130% at 18% 0%,
+      color-mix(in srgb, var(--attention) 55%, transparent),
+      color-mix(in srgb, var(--effort) 40%, transparent)
+    );
+}
+
+.appearance-choice__swatch[data-glass-preview='0'] {
+  --glass-preview-pane: var(--bg-rail);
+}
+
+.appearance-choice__swatch[data-glass-preview='20'] {
+  --glass-preview-pane: color-mix(in srgb, var(--bg-rail) 80%, transparent);
+}
+
+.appearance-choice__swatch[data-glass-preview='35'] {
+  --glass-preview-pane: color-mix(in srgb, var(--bg-rail) 62%, transparent);
+}
+
+.appearance-choice__swatch[data-glass-preview='50'] {
+  --glass-preview-pane: color-mix(in srgb, var(--bg-rail) 45%, transparent);
 }
 
 .appearance-choice__swatch[data-backdrop-preview='default'] {
@@ -7360,11 +7412,6 @@
 .appearance-choice__swatch[data-backdrop-preview='plum'] {
   --swatch-a: #161217;
   --swatch-b: #4d3a52;
-}
-
-.settings__slider {
-  width: 130px;
-  accent-color: var(--attention);
 }
 
 /* ---------------------------------------------------------------------------

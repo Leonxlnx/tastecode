@@ -80,6 +80,12 @@ export function Menu(props: {
       const menuBounds = panel.current?.getBoundingClientRect()
       if ((!triggerBounds && !contextPoint) || !menuBounds) return
 
+      // Panels that want to sit flush with their trigger (the account popup)
+      // read this; everyone else keeps their intrinsic width.
+      if (triggerBounds && panel.current) {
+        panel.current.style.setProperty('--menu-trigger-w', `${triggerBounds.width}px`)
+      }
+
       const preferredDrop = props.drop ?? 'up'
       const gap = contextPoint ? 0 : MENU_GAP
       const anchorTop = contextPoint?.y ?? triggerBounds?.top ?? 0
