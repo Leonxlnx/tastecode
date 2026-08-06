@@ -35,6 +35,13 @@ import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './z
 const here = path.dirname(fileURLToPath(import.meta.url))
 const devServer = process.env['HARNESS_DEV_SERVER']
 const MAX_PASTED_IMAGE_BYTES = 25 * 1024 * 1024
+const CAPTURE_SETTLE_SCRIPT = `new Promise(resolve => requestAnimationFrame(resolve))
+  .then(() => Promise.race([
+    Promise.allSettled(document.getAnimations().map(animation => animation.finished)),
+    new Promise(resolve => setTimeout(resolve, 1000)),
+  ]))
+  .then(() => document.fonts?.ready)
+  .then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))`
 
 function createWindow(): void {
   const initialTheme = windowThemeOptions('dark')
@@ -166,9 +173,7 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
     const screenshots = []
     for (const viewport of request.viewports) {
       preview.setContentSize(viewport.width, viewport.height)
-      await preview.webContents.executeJavaScript(
-        'document.fonts?.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))',
-      )
+      await preview.webContents.executeJavaScript(CAPTURE_SETTLE_SCRIPT)
       const destination = path.join(directory, `${viewport.width}x${viewport.height}.png`)
       await writeFile(destination, (await preview.webContents.capturePage()).toPNG(), {
         flag: 'wx',
