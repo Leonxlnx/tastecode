@@ -8,7 +8,15 @@ import { z } from 'zod'
  * engine-specific may leak past an adapter.
  */
 
-export const ProviderIdSchema = z.enum(['codex', 'claude-code', 'cursor', 'opencode', 'acp', 'api'])
+export const ProviderIdSchema = z.enum([
+  'codex',
+  'claude-code',
+  'cursor',
+  'opencode',
+  'antigravity',
+  'acp',
+  'api',
+])
 export type ProviderId = z.infer<typeof ProviderIdSchema>
 
 /**
