@@ -1,4 +1,5 @@
 import { detectAgents, findAgentSpec } from '@harness/adapter-acp'
+import { ANTIGRAVITY_CAPABILITIES } from '@harness/adapter-antigravity'
 import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex'
 import { CURSOR_CAPABILITIES, CURSOR_SUPPORTED_VERSION } from '@harness/adapter-cursor'
@@ -78,6 +79,19 @@ const PROBES: Probe[] = [
       login: 'provider',
     },
     loginCommand: 'opencode auth login',
+  },
+  {
+    id: 'antigravity',
+    displayName: 'Antigravity',
+    command: 'agy',
+    capabilities: ANTIGRAVITY_CAPABILITIES,
+    setup: {
+      installUrl: 'https://antigravity.google/docs/cli',
+      login: 'provider',
+    },
+    // First interactive run signs in with the user's Google account; there is
+    // no separate login subcommand as of agy 1.1.10.
+    loginCommand: 'agy',
   },
 ]
 
