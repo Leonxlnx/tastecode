@@ -71,6 +71,51 @@ describe('thread at scale', () => {
     ).toBe('Searching…')
   })
 
+  it('keeps one working rail mounted across the first response item', () => {
+    // The rail used to render in two tree positions — after the runway before
+    // any response item existed, then inside the virtualized row at
+    // firstResponseIndex. The move is an unmount, so the orb and its entrance
+    // animation restarted exactly at the first token.
+    cleanup() // earlier renders would satisfy the queries below with stale DOM
+    const props = {
+      running: true,
+      activeTurn: { id: 'turn-1', startedAt: 0 },
+      plan: [],
+      diff: undefined,
+      approvals: [],
+      userInputs: [],
+      reviews: [],
+      onDecide: () => {},
+      onAnswerUserInput: () => {},
+    }
+    const asked: Item = {
+      id: 'u1',
+      turnId: 'turn-1',
+      type: 'message',
+      role: 'user',
+      status: 'completed',
+      text: 'hi',
+      createdAt: 1,
+    }
+    const rendered = render(<Thread {...props} items={[asked]} />)
+    const orb = rendered.container.querySelector('.activity__working-orb canvas')
+    expect(orb).not.toBeNull()
+
+    const reply: Item = {
+      id: 'a1',
+      turnId: 'turn-1',
+      type: 'message',
+      role: 'assistant',
+      status: 'started',
+      text: 'Hello',
+      createdAt: 2,
+    }
+    rendered.rerender(<Thread {...props} items={[asked, reply]} />)
+    expect(rendered.container.querySelectorAll('.activity--working')).toHaveLength(1)
+    expect(rendered.container.querySelector('.activity__working-orb canvas')).toBe(orb)
+    cleanup()
+  })
+
   it('names the latest active work without depending on a provider', () => {
     const items: Item[] = [
       {

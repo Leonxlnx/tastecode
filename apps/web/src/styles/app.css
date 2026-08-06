@@ -2965,6 +2965,11 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* The working rail's full footprint: the 36px summary line plus the gap to
+     the response below it. The rail itself is absolutely positioned so it can
+     stay mounted for the whole turn; is-rail-anchor and .thread__rail-spacer
+     reserve exactly this much space for it to overlay. */
+  --working-rail-h: 54px;
 }
 
 /* Holds the full scroll height while only the visible rows exist. */
@@ -2991,6 +2996,27 @@
 
 .thread__row.is-live-activity {
   padding-bottom: 10px;
+}
+
+/* The working rail overlays this padding; see --working-rail-h. */
+.thread__row.is-rail-anchor {
+  padding-top: var(--working-rail-h);
+}
+
+/* One mount for the whole turn, positioned like a row rather than rendered as
+   one — a rail inside the virtualized row unmounts (and restarts the orb)
+   when the anchor row changes tree position or leaves the overscan window. */
+.thread__rail {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
+/* Holds the rail's space in the column while no response row exists yet. */
+.thread__rail-spacer {
+  flex: none;
+  height: var(--working-rail-h);
 }
 
 .thread__row.is-entering > :is(.reply, .aux, .activity) {
@@ -3138,7 +3164,8 @@
 }
 
 .activity--working {
-  margin-bottom: 18px;
+  /* No margin below: the rail is absolutely positioned, so the gap to the
+     response is part of --working-rail-h instead. */
   animation: activity-in 260ms var(--ease-out) both;
 }
 

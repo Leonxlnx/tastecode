@@ -272,6 +272,24 @@ export function Thread(props: {
 
   const rows = virtualizer.getVirtualItems()
 
+  // The working rail mounts in exactly one place — inside the runway, after
+  // the rows — for the whole turn. Rendering it inside the row at
+  // firstResponseIndex remounted it at the first token (a different tree
+  // position is an unmount) and again whenever that row left the overscan
+  // window, restarting the orb and its entrance animation mid-turn. Instead
+  // the rail is translated to sit above the first response row, whose
+  // .is-rail-anchor padding reserves the space it overlays.
+  //
+  // measurementsCache, not getOffsetForIndex: the latter clamps to the
+  // maximum scroll offset, which is below the anchor row's true start
+  // whenever the thread is shorter than the viewport.
+  const railIndex =
+    props.running && props.activeTurn ? activePresentation?.firstResponseIndex : undefined
+  const railOffset =
+    railIndex === undefined
+      ? virtualizer.getTotalSize()
+      : (virtualizer.measurementsCache[railIndex]?.start ?? virtualizer.getTotalSize())
+
   return (
     // The overlays live OUTSIDE the scroller: an absolutely positioned child
     // of a scroll container scrolls away with the content — Ctrl+F used to
@@ -300,10 +318,11 @@ export function Thread(props: {
               const suppressed = compactedActivity && !activityLead
               const liveActivity = live && isActivity(item)
               const settling = settledTurnId === item.turnId
+              const railAnchor = live && presentation?.firstResponseIndex === row.index
               return (
                 <div
                   key={row.key}
-                  className={`thread__row${suppressed ? ' is-suppressed' : ''}${liveActivity ? ' is-live-activity' : ''}${enteringItemIds.has(item.id) ? ' is-entering' : ''}${settling ? ' is-settling' : ''}`}
+                  className={`thread__row${suppressed ? ' is-suppressed' : ''}${liveActivity ? ' is-live-activity' : ''}${enteringItemIds.has(item.id) ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
                   data-index={row.index}
                   ref={virtualizer.measureElement}
                   style={{ transform: `translateY(${row.start}px)` }}
@@ -316,9 +335,6 @@ export function Thread(props: {
                     live={live}
                     responseText={responseLead ? presentation.responseText : undefined}
                     settling={settling}
-                    showWorkingRail={live && presentation?.firstResponseIndex === row.index}
-                    workLabel={activeWorkLabel}
-                    startedAt={props.activeTurn?.startedAt}
                     showCompletionRail={
                       !live &&
                       presentation?.complete === true &&
@@ -332,12 +348,22 @@ export function Thread(props: {
                 </div>
               )
             })}
+            {props.running && props.activeTurn ? (
+              // Keyed by turn so the entrance replays at turn boundaries and
+              // only there. Before any response row exists the rail sits at
+              // the end of the runway, over the space the spacer below holds.
+              <div
+                key={props.activeTurn.id}
+                className="thread__rail"
+                style={{ transform: `translateY(${railOffset}px)` }}
+              >
+                <WorkingRail startedAt={props.activeTurn.startedAt} label={activeWorkLabel} />
+              </div>
+            ) : null}
           </div>
 
-          {props.running &&
-          props.activeTurn &&
-          activePresentation?.firstResponseIndex === undefined ? (
-            <WorkingRail startedAt={props.activeTurn.startedAt} label={activeWorkLabel} />
+          {props.running && props.activeTurn && railIndex === undefined ? (
+            <div className="thread__rail-spacer" aria-hidden />
           ) : null}
 
           {/* Above the plan and the diff: it is the only thing here that blocks
@@ -521,9 +547,6 @@ function Row({
   live,
   responseText,
   settling,
-  showWorkingRail,
-  workLabel,
-  startedAt,
   showCompletionRail,
   onEditMessage,
   checkpoint,
@@ -536,9 +559,6 @@ function Row({
   live: boolean
   responseText: string | undefined
   settling: boolean
-  showWorkingRail: boolean
-  workLabel: string
-  startedAt: number | undefined
   showCompletionRail: boolean
   onEditMessage: ((text: string) => void) | undefined
   checkpoint: Checkpoint | undefined
@@ -588,48 +608,38 @@ function Row({
   if (item.type === 'message') {
     const text = responseText ?? item.text ?? ''
     return (
-      <>
-        {showWorkingRail && startedAt !== undefined ? (
-          <WorkingRail startedAt={startedAt} label={workLabel} />
+      <div className={`reply${live ? ' is-streaming' : ''}`}>
+        {showCompletionRail ? (
+          <CompletionRail activity={[]} elapsedMs={elapsedMs ?? 0} settling={settling} />
         ) : null}
-        <div className={`reply${live ? ' is-streaming' : ''}`}>
-          {showCompletionRail ? (
-            <CompletionRail activity={[]} elapsedMs={elapsedMs ?? 0} settling={settling} />
-          ) : null}
-          <Markdown text={text} streaming={live && item.status === 'started'} />
-          {!live && item.status === 'completed' && text ? (
-            <ResponseActions text={text} createdAt={item.createdAt} />
-          ) : null}
-        </div>
-      </>
+        <Markdown text={text} streaming={live && item.status === 'started'} />
+        {!live && item.status === 'completed' && text ? (
+          <ResponseActions text={text} createdAt={item.createdAt} />
+        ) : null}
+      </div>
     )
   }
 
   return (
-    <>
-      {showWorkingRail && startedAt !== undefined ? (
-        <WorkingRail startedAt={startedAt} label={workLabel} />
-      ) : null}
-      <details className={`aux aux--${item.type} ${live ? 'aux--live' : ''}`}>
-        <summary className="aux__row">
-          <span className="aux__glyph" aria-hidden>
-            {glyph(item)}
-          </span>
-          <span className="aux__label">{live ? summariseLive(item) : summarise(item)}</span>
-          {item.exitCode !== undefined && item.exitCode !== 0 ? (
-            <span className="aux__code">exit {item.exitCode}</span>
-          ) : null}
-          {/* Only worth showing once it is long enough to have been noticed. */}
-          {item.durationMs !== undefined && item.durationMs >= 1000 ? (
-            <span className="aux__time">{duration(item.durationMs)}</span>
-          ) : null}
-          {!live && item.status === 'started' ? (
-            <LoaderCircle className="spinner" aria-hidden />
-          ) : null}
-        </summary>
-        {item.text ? <pre className="aux__out">{item.text}</pre> : null}
-      </details>
-    </>
+    <details className={`aux aux--${item.type} ${live ? 'aux--live' : ''}`}>
+      <summary className="aux__row">
+        <span className="aux__glyph" aria-hidden>
+          {glyph(item)}
+        </span>
+        <span className="aux__label">{live ? summariseLive(item) : summarise(item)}</span>
+        {item.exitCode !== undefined && item.exitCode !== 0 ? (
+          <span className="aux__code">exit {item.exitCode}</span>
+        ) : null}
+        {/* Only worth showing once it is long enough to have been noticed. */}
+        {item.durationMs !== undefined && item.durationMs >= 1000 ? (
+          <span className="aux__time">{duration(item.durationMs)}</span>
+        ) : null}
+        {!live && item.status === 'started' ? (
+          <LoaderCircle className="spinner" aria-hidden />
+        ) : null}
+      </summary>
+      {item.text ? <pre className="aux__out">{item.text}</pre> : null}
+    </details>
   )
 }
 
