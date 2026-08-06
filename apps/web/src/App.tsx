@@ -2386,6 +2386,8 @@ function providerName(id: ProviderId, acpAgentName?: string): string {
       return 'Cursor'
     case 'opencode':
       return 'OpenCode'
+    case 'antigravity':
+      return 'Antigravity'
     default:
       return id
   }

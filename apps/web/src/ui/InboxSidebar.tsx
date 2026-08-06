@@ -955,6 +955,7 @@ function providerName(session: Session): string {
   if (session.provider === 'acp') return session.agent ?? 'Agent'
   if (session.provider === 'codex') return 'Codex'
   if (session.provider === 'opencode') return 'OpenCode'
+  if (session.provider === 'antigravity') return 'Antigravity'
   return session.provider
 }
 

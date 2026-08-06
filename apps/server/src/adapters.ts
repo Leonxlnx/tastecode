@@ -1,4 +1,5 @@
 import { AcpAdapter } from '@harness/adapter-acp'
+import { AntigravityAdapter } from '@harness/adapter-antigravity'
 import {
   ApiAgentSession,
   createAnthropicMessagesTransport,
@@ -174,8 +175,40 @@ export function providerRuntime(
       return cursorRuntime(onLog)
     case 'opencode':
       return openCodeRuntime(onLog)
+    case 'antigravity':
+      return antigravityRuntime(onLog)
     default:
       throw new Error(`provider "${provider}" is not implemented yet`)
+  }
+}
+
+function antigravityRuntime(onLog: (line: string) => void): ProviderRuntime {
+  return {
+    async start(workspacePath, options) {
+      const adapter = new AntigravityAdapter()
+      adapter.on('log', onLog)
+      const thread = await adapter.startThread(workspacePath, {
+        model: options.model,
+        approval: options.approval,
+        instructions: options.instructions,
+      })
+      return {
+        thread,
+        session: {
+          capabilities: adapter.capabilities,
+          sendTurn: (threadId, text, attachments) => adapter.sendTurn(threadId, text, attachments),
+          interrupt: () => adapter.interrupt(),
+          // Print mode decides permissions from the launch switches; there is
+          // no mid-turn callback to answer.
+          respondToApproval: () => {},
+          dispose: () => adapter.dispose(),
+          on: (event: 'event' | 'log', listener: never) => adapter.on(event, listener),
+        },
+      }
+    },
+    async listModels() {
+      return new AntigravityAdapter().listModels()
+    },
   }
 }
 

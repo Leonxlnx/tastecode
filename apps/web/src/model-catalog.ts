@@ -10,6 +10,7 @@ export type ProviderMark =
   | 'gemini'
   | 'qwen'
   | 'zai'
+  | 'antigravity'
   | 'acp'
   | 'custom'
 

@@ -15,6 +15,7 @@
     { "path": "../../packages/adapter-codex" },
     { "path": "../../packages/adapter-cursor" },
     { "path": "../../packages/adapter-opencode" },
-    { "path": "../../packages/adapter-claude-code" }
+    { "path": "../../packages/adapter-claude-code" },
+    { "path": "../../packages/adapter-antigravity" }
   ]
 }
