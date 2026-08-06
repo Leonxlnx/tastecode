@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { readBrandSystem, writeBrandSystem } from './brand.js'
+import { parseBrandSystem, readBrandSystem, writeBrandSystem } from './brand.js'
 
 const brand = {
   version: 1,
@@ -56,5 +56,14 @@ describe('brand system handoff', () => {
     expect(() => writeBrandSystem('ignored', { ...brand, typefaces: [] })).toThrow(
       'typefaces must be a non-empty array',
     )
+  })
+
+  it('normalizes numeric font weights from provider JSON', () => {
+    expect(
+      parseBrandSystem({
+        ...brand,
+        typefaces: [{ ...brand.typefaces[0], weights: ['400', '700'] }],
+      }).typefaces[0]?.weights,
+    ).toEqual([400, 700])
   })
 })

@@ -134,12 +134,14 @@ function strings(value: unknown, field: string): string[] {
 }
 
 function weights(value: unknown, field: string): number[] {
-  if (
-    !Array.isArray(value) ||
-    value.length === 0 ||
-    !value.every((item) => Number.isInteger(item) && item >= 1 && item <= 1000)
-  ) {
+  if (!Array.isArray(value) || value.length === 0) {
     throw new Error(`${field} must contain font weights between 1 and 1000`)
   }
-  return value
+  const normalized = value.map((item) =>
+    typeof item === 'string' && /^\d{1,4}$/.test(item) ? Number(item) : item,
+  )
+  if (!normalized.every((item) => Number.isInteger(item) && item >= 1 && item <= 1000)) {
+    throw new Error(`${field} must contain font weights between 1 and 1000`)
+  }
+  return normalized as number[]
 }
