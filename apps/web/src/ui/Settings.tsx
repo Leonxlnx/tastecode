@@ -247,23 +247,33 @@ function WorkflowSettings(props: {
   return (
     <SettingsPanel title="Workflows" groupTitle="Sidebar">
       <SettingsRow
-        title="Inbox sidebar"
-        note="Show one work queue across projects, with snoozed and settled shelves."
+        title="Sidebar version"
+        note="V2 is a stable cross-project inbox with snoozed and settled shelves."
       >
-        <button
-          className={`switch${inbox ? ' is-on' : ''}`}
-          type="button"
-          role="switch"
-          aria-label="Inbox sidebar"
-          aria-checked={inbox}
-          onClick={() => props.onSidebarSettingsChange({ mode: inbox ? 'classic' : 'inbox' })}
-        >
-          <span className="switch__thumb" />
-        </button>
+        <div className="settings__sidebar-switcher" role="radiogroup" aria-label="Sidebar version">
+          <button
+            className={!inbox ? 'is-selected' : ''}
+            type="button"
+            role="radio"
+            aria-checked={!inbox}
+            onClick={() => props.onSidebarSettingsChange({ mode: 'classic' })}
+          >
+            V1 Classic
+          </button>
+          <button
+            className={inbox ? 'is-selected' : ''}
+            type="button"
+            role="radio"
+            aria-checked={inbox}
+            onClick={() => props.onSidebarSettingsChange({ mode: 'inbox' })}
+          >
+            V2 Inbox
+          </button>
+        </div>
       </SettingsRow>
       <SettingsRow
-        title="Settle inactive chats"
-        note="Move eligible inactive work out of the queue after this many days."
+        title="Settle inactive threads"
+        note="Move eligible inactive work out of the inbox after this many days."
       >
         <div className="settings__inline-controls">
           <input

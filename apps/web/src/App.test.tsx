@@ -276,6 +276,16 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+function openSettings() {
+  const direct = screen.queryByRole('button', { name: 'Settings' })
+  if (direct) {
+    fireEvent.click(direct)
+    return
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+  fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
+}
+
 describe('web client', () => {
   it('discovers models separately for each installed ACP agent', async () => {
     const request = transport.request.getMockImplementation()
@@ -767,8 +777,7 @@ describe('new chats', () => {
 
     expect(document.documentElement.classList.contains('is-macos-font-smoothing')).toBe(true)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
+    openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
 
     const toggle = screen.getByRole('switch', { name: 'Font smoothing' })
@@ -785,13 +794,12 @@ describe('new chats', () => {
     serverSidebarSettings.mode = 'inbox'
     render(<App />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
+    openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Workflows' }))
 
-    const inbox = screen.getByRole('switch', { name: 'Inbox sidebar' })
+    const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
     expect(inbox.getAttribute('aria-checked')).toBe('true')
-    fireEvent.click(inbox)
+    fireEvent.click(screen.getByRole('radio', { name: 'V1 Classic' }))
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Auto-settle days' }), {
       target: { value: '7' },
     })
@@ -830,8 +838,7 @@ describe('new chats', () => {
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(document.documentElement.classList.contains('dark')).toBe(true)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
+    openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
 
     const lightTheme = screen.getByRole('radio', { name: 'Light' })
@@ -852,8 +859,7 @@ describe('new chats', () => {
 
   it('persists the selected interface font', async () => {
     const first = render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
+    openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
     expect(
       within(screen.getByRole('group', { name: 'Interface font' })).getAllByRole('button'),
@@ -873,8 +879,7 @@ describe('new chats', () => {
 
   it('persists the selected accent palette', async () => {
     const first = render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
+    openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
     expect(
       within(screen.getByRole('group', { name: 'Accent palette' })).getAllByRole('button'),
@@ -912,8 +917,7 @@ describe('new chats', () => {
     )
 
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
+    openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
     fireEvent.click(screen.getByRole('radio', { name: 'System' }))
 
