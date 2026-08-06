@@ -41,7 +41,7 @@
   --queue-action: #8a8a8a;
   --queue-hover: #2b2b2b;
   --composer-placeholder: #6f6f6f;
-  --composer-review: #4c9dff;
+  --composer-review: #65b8ff;
   --composer-danger: #fe8549;
   --composer-shadow: 0 14px 34px -26px rgb(0 0 0 / 70%);
   --composer-orb: #ededed;
@@ -263,7 +263,7 @@
   --queue-action: #96969a;
   --queue-hover: #f5f5f6;
   --composer-placeholder: #c7c7ca;
-  --composer-review: #2563eb;
+  --composer-review: #2d72dc;
   --composer-danger: #ef4d05;
   --composer-shadow: 0 12px 30px -18px rgb(24 24 27 / 18%);
   --composer-orb: #1d1d1f;
