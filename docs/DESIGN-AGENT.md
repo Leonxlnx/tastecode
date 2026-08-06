@@ -137,7 +137,6 @@ Implemented and locally covered:
 
 Still required before the workflow meets the definition of done:
 
-- live desktop exercise of a real provider-driven build through screenshot Review and Repair;
 - replacement of the explicit judgment prompts with the jointly authored TasteSkill v2 rules.
 
 The screenshot bridge uses an explicit shared client capability and protocol rather than a
