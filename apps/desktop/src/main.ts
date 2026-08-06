@@ -12,7 +12,13 @@ import {
   systemPreferences,
   type WebContents,
 } from 'electron'
+import {
+  PreviewCaptureRequestSchema,
+  type PreviewCaptureRequest,
+  type PreviewCaptureResult,
+} from '@harness/contracts'
 import { allowsMicrophoneRequest } from './media-permissions.js'
+import { allowsPreviewNavigation } from './preview-navigation.js'
 import { revealablePath } from './reveal-path.js'
 import { windowThemeOptions } from './window-theme.js'
 import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './zoom-shortcuts.js'
@@ -110,10 +116,76 @@ ipcMain.handle('harness:setTheme', (event, theme: unknown) => {
   window.setTitleBarOverlay(options.titleBarOverlay)
 })
 
+ipcMain.handle('harness:capturePreview', async (event, value: unknown) => {
+  if (!isOwnRenderer(event.sender)) throw new Error('Preview capture requires the app renderer')
+  const parsed = PreviewCaptureRequestSchema.safeParse(value)
+  if (!parsed.success) throw new Error('Invalid preview capture request')
+  return capturePreview(parsed.data)
+})
+
 function applyZoom(window: BrowserWindow, action: ZoomAction): void {
   const factor = nextZoomFactor(window.webContents.getZoomFactor(), action)
   window.webContents.setZoomFactor(factor)
   window.webContents.send('harness:zoomChanged', factor)
+}
+
+async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCaptureResult> {
+  const directory = path.join(
+    app.getPath('temp'),
+    'Personal Harness',
+    'preview-captures',
+    request.requestId,
+  )
+  const preview = new BrowserWindow({
+    width: request.viewports[0]!.width,
+    height: request.viewports[0]!.height,
+    show: false,
+    frame: false,
+    useContentSize: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      spellcheck: false,
+      partition: `preview-capture-${request.requestId}`,
+    },
+  })
+
+  preview.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
+    callback(false),
+  )
+  preview.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  preview.webContents.on('will-navigate', (event, url) => {
+    if (!allowsPreviewNavigation(request.url, url)) event.preventDefault()
+  })
+
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 })
+    await preview.loadURL(request.url)
+    const screenshots = []
+    for (const viewport of request.viewports) {
+      preview.setContentSize(viewport.width, viewport.height)
+      await preview.webContents.executeJavaScript(
+        'document.fonts?.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))',
+      )
+      const destination = path.join(directory, `${viewport.width}x${viewport.height}.png`)
+      await writeFile(destination, (await preview.webContents.capturePage()).toPNG(), {
+        flag: 'wx',
+        mode: 0o600,
+      })
+      screenshots.push({ path: destination, ...viewport })
+    }
+    return { status: 'completed', requestId: request.requestId, screenshots }
+  } catch (error) {
+    return {
+      status: 'failed',
+      requestId: request.requestId,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  } finally {
+    preview.destroy()
+  }
 }
 
 /**

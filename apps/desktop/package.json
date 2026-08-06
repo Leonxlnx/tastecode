@@ -10,6 +10,9 @@
     "start": "tsc -b && node scripts/build-preload.js && electron .",
     "test": "vitest run --passWithNoTests"
   },
+  "dependencies": {
+    "@harness/contracts": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^26.1.1",
     "electron": "^43.2.0",
