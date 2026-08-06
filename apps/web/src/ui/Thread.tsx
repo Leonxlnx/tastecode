@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type {
   ApprovalDecision,
@@ -34,7 +34,7 @@ import { Diff } from './Diff.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
 import { ThreadSearch } from './ThreadSearch.js'
-import { findTurns, neighbourTurn, presentTurns } from './turns.js'
+import { createThreadProjector, neighbourTurn } from './turns.js'
 import { isAtBottom, modeForNewTurn, shouldReleaseAnchor, type ScrollMode } from './scroll-mode.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
@@ -215,8 +215,8 @@ export function Thread(props: {
     [virtualizer],
   )
 
-  const turns = useMemo(() => findTurns(props.items), [props.items])
-  const presentations = useMemo(() => presentTurns(props.items), [props.items])
+  const projectThread = useMemo(createThreadProjector, [props.threadId])
+  const { turns, presentations } = projectThread(props.items)
   const activePresentation = props.activeTurn ? presentations.get(props.activeTurn.id) : undefined
   const rawWorkLabel = useMemo(
     () => workLabel(props.items, props.activeTurn?.id, props.searching),
@@ -538,7 +538,7 @@ function isAssistantMessage(item: Item): boolean {
   return item.type === 'message' && item.role === 'assistant'
 }
 
-function Row({
+const Row = memo(function Row({
   item,
   hidden,
   activity,
@@ -640,7 +640,7 @@ function Row({
       {item.text ? <pre className="aux__out">{item.text}</pre> : null}
     </details>
   )
-}
+})
 
 function checkpointFor(item: Item, checkpoints: Checkpoint[]): Checkpoint | undefined {
   if (item.type !== 'message' || item.role !== 'user' || !item.text) return undefined

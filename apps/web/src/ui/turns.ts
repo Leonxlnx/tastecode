@@ -27,6 +27,43 @@ export type TurnPresentation = {
   complete: boolean
 }
 
+export type ThreadProjection = {
+  turns: TurnMark[]
+  presentations: ReadonlyMap<string, TurnPresentation>
+}
+
+/**
+ * Retains transcript-wide layout metadata while only the live answer's text
+ * changes. The reducer replaces exactly one item per event and preserves every
+ * other item identity, so an unchanged penultimate item proves the normal
+ * streamed-tail path without walking the transcript. A history replacement or
+ * an out-of-order update misses that proof and takes the full, safe rebuild.
+ */
+export function createThreadProjector(): (items: Item[]) => ThreadProjection {
+  let previousItems: Item[] | undefined
+  let previousProjection: ThreadProjection | undefined
+
+  return (items) => {
+    if (items === previousItems && previousProjection) return previousProjection
+
+    if (
+      previousItems &&
+      previousProjection &&
+      isStartedAssistantTailTextUpdate(previousItems, items)
+    ) {
+      previousItems = items
+      return previousProjection
+    }
+
+    previousItems = items
+    previousProjection = {
+      turns: findTurns(items),
+      presentations: presentTurns(items),
+    }
+    return previousProjection
+  }
+}
+
 export function findTurns(items: Item[]): TurnMark[] {
   const turns: TurnMark[] = []
 
@@ -117,6 +154,35 @@ export function presentTurns(items: Item[]): ReadonlyMap<string, TurnPresentatio
         },
       ]
     }),
+  )
+}
+
+function isStartedAssistantTailTextUpdate(previous: Item[], next: Item[]): boolean {
+  if (previous.length === 0 || previous.length !== next.length) return false
+
+  const index = next.length - 1
+  if (index > 0 && previous[index - 1] !== next[index - 1]) return false
+
+  const before = previous[index]
+  const after = next[index]
+  return (
+    before !== after &&
+    before?.type === 'message' &&
+    before.role === 'assistant' &&
+    before.status === 'started' &&
+    after?.type === before.type &&
+    after.role === before.role &&
+    after.status === before.status &&
+    after.id === before.id &&
+    after.turnId === before.turnId &&
+    after.createdAt === before.createdAt &&
+    after.command === before.command &&
+    after.exitCode === before.exitCode &&
+    after.durationMs === before.durationMs &&
+    after.path === before.path &&
+    after.linesAdded === before.linesAdded &&
+    after.linesRemoved === before.linesRemoved &&
+    after.text !== before.text
   )
 }
 

@@ -12,6 +12,7 @@ import type { CSSProperties } from 'react'
 import { LoaderCircle } from 'lucide-react'
 import type {
   Account,
+  ApprovalDecision,
   ApprovalMode,
   DomainEvent,
   ModelConnection,
@@ -1510,6 +1511,35 @@ export function App() {
     [transport, activeId],
   )
 
+  const decideApproval = useCallback(
+    (approvalId: string, decision: ApprovalDecision) => {
+      const threadId = activeIdRef.current
+      if (!threadId) return
+      void transport.request('thread.respondToApproval', { threadId, approvalId, decision })
+    },
+    [transport],
+  )
+  const answerUserInput = useCallback(
+    (requestId: string, answers: Record<string, string[]>) => {
+      const threadId = activeIdRef.current
+      if (!threadId) return
+      void transport.request('thread.respondToUserInput', { threadId, requestId, answers })
+    },
+    [transport],
+  )
+  const editMessage = useCallback((text: string) => {
+    setComposerDraft((current) => ({ text, request: (current?.request ?? 0) + 1 }))
+    setComposerFocusRequest((request) => request + 1)
+  }, [])
+  const revertCheckpoint = useCallback(
+    (checkpoint: Checkpoint) => {
+      setRollbackInspection(undefined)
+      setRollbackOpen(true)
+      void inspectCheckpoint(checkpoint)
+    },
+    [inspectCheckpoint],
+  )
+
   const restoreCheckpoint = useCallback(async () => {
     if (!activeId || !rollbackInspection) return
     setRollbackRestoring(true)
@@ -2110,31 +2140,10 @@ export function App() {
                 userInputs={thread.userInputs}
                 reviews={reviewList}
                 checkpoints={thread.running ? EMPTY_CHECKPOINTS : checkpoints}
-                onDecide={(approvalId, decision) => {
-                  if (!activeId) return
-                  void transport.request('thread.respondToApproval', {
-                    threadId: activeId,
-                    approvalId,
-                    decision,
-                  })
-                }}
-                onAnswerUserInput={(requestId, answers) => {
-                  if (!activeId) return
-                  void transport.request('thread.respondToUserInput', {
-                    threadId: activeId,
-                    requestId,
-                    answers,
-                  })
-                }}
-                onEditMessage={(text) => {
-                  setComposerDraft((current) => ({ text, request: (current?.request ?? 0) + 1 }))
-                  setComposerFocusRequest((request) => request + 1)
-                }}
-                onRevertCheckpoint={(checkpoint) => {
-                  setRollbackInspection(undefined)
-                  setRollbackOpen(true)
-                  void inspectCheckpoint(checkpoint)
-                }}
+                onDecide={decideApproval}
+                onAnswerUserInput={answerUserInput}
+                onEditMessage={editMessage}
+                onRevertCheckpoint={revertCheckpoint}
               />
             ) : (
               <Empty projects={projects} activePath={activePath} loaded={projectsLoaded} />

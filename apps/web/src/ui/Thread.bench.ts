@@ -2,9 +2,10 @@ import { bench, describe } from 'vitest'
 import type { DomainEvent, Item } from '@harness/contracts'
 import { emptyThread, reduce, type ThreadState } from '../thread-store.js'
 import { makeFixtureThread } from './fixture.js'
-import { findTurns, presentTurns } from './turns.js'
+import { createThreadProjector, findTurns, presentTurns } from './turns.js'
 
 const OPTIONS = { time: 1_200, warmupTime: 300 }
+const FAST_OPTIONS = { iterations: 1_000_000, time: 0, warmupIterations: 100_000, warmupTime: 0 }
 const transcript = makeFixtureThread(1_000)
 
 const liveItem: Item = {
@@ -23,6 +24,10 @@ const streamingState: ThreadState = {
   running: true,
   activeTurn: { id: liveItem.turnId, startedAt: 0 },
 }
+const streamedFrames = [streamingState.items, [...transcript, { ...liveItem, text: 'next frame' }]]
+const projectThread = createThreadProjector()
+projectThread(streamedFrames[0]!)
+let streamedFrame = 0
 
 const deltas: DomainEvent[] = Array.from({ length: 500 }, () => ({
   type: 'item.delta',
@@ -39,6 +44,15 @@ describe('long-thread hot paths', () => {
       presentTurns(transcript)
     },
     OPTIONS,
+  )
+
+  bench(
+    'projects a streamed tail update in a 1,000-item thread',
+    () => {
+      streamedFrame = streamedFrame === 0 ? 1 : 0
+      projectThread(streamedFrames[streamedFrame]!)
+    },
+    FAST_OPTIONS,
   )
 
   bench(

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Item } from '@harness/contracts'
-import { findTurns, neighbourTurn, presentTurns } from './turns.js'
+import { createThreadProjector, findTurns, neighbourTurn, presentTurns } from './turns.js'
 
 const item = (id: string, turnId: string): Item => ({
   id,
@@ -102,5 +102,42 @@ describe('turn boundaries', () => {
       finalAnswerIndex: 5,
       complete: true,
     })
+  })
+
+  it('reuses transcript layout while only the live answer text changes', () => {
+    const project = createThreadProjector()
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', text: 'Question' },
+      {
+        ...item('answer', 't1'),
+        role: 'assistant',
+        status: 'started',
+        text: 'Hel',
+      },
+    ]
+    const initial = project(items)
+    const streamed = project([items[0]!, { ...items[1]!, text: 'Hello' }])
+
+    expect(streamed).toBe(initial)
+  })
+
+  it('rebuilds transcript layout when a streamed answer completes or history is replaced', () => {
+    const project = createThreadProjector()
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', text: 'Question' },
+      {
+        ...item('answer', 't1'),
+        role: 'assistant',
+        status: 'started',
+        text: 'Hello',
+      },
+    ]
+    const initial = project(items)
+    const completed = project([items[0]!, { ...items[1]!, status: 'completed', text: 'Hello.' }])
+    const replaced = project(items.map((entry) => ({ ...entry })))
+
+    expect(completed).not.toBe(initial)
+    expect(completed.presentations.get('t1')?.responseText).toBe('Hello.')
+    expect(replaced).not.toBe(completed)
   })
 })
