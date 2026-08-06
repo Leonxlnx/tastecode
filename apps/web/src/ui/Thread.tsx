@@ -736,7 +736,13 @@ function CopyAction({ text, label }: { text: string; label: string }) {
   )
 }
 
-function WorkingRail({ startedAt, label }: { startedAt: number; label: string }) {
+const WorkingRail = memo(function WorkingRail({
+  startedAt,
+  label,
+}: {
+  startedAt: number
+  label: string
+}) {
   return (
     <div className="activity activity--working">
       <div className="activity__summary">
@@ -756,7 +762,7 @@ function WorkingRail({ startedAt, label }: { startedAt: number; label: string })
       </div>
     </div>
   )
-}
+})
 
 export function workLabel(
   items: Item[],

@@ -4,6 +4,7 @@ import { act, cleanup, render } from '@testing-library/react'
 import type { Item } from '@harness/contracts'
 
 const markdownRender = vi.hoisted(() => vi.fn())
+const orbRender = vi.hoisted(() => vi.fn())
 
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({ count }: { count: number }) => {
@@ -31,6 +32,13 @@ vi.mock('./Markdown.js', () => ({
   Markdown: ({ text, streaming = false }: { text: string; streaming?: boolean }) => {
     markdownRender({ text, streaming })
     return <span>{text}</span>
+  },
+}))
+
+vi.mock('thinking-orbs', () => ({
+  ThinkingOrb: (props: { state: string; size: number }) => {
+    orbRender(props)
+    return <canvas aria-label={props.state} />
   },
 }))
 
@@ -78,6 +86,7 @@ afterEach(() => {
   cleanup()
   vi.useRealTimers()
   markdownRender.mockReset()
+  orbRender.mockReset()
 })
 
 describe('streamed thread renders', () => {
@@ -96,6 +105,20 @@ describe('streamed thread renders', () => {
     expect(initialRenders).toBe(2)
     expect(markdownRender).toHaveBeenCalledTimes(initialRenders + 1)
     expect(markdownRender).toHaveBeenLastCalledWith({ text: 'Hello', streaming: true })
+  })
+
+  it('does not reconcile the working animation for streamed text updates', () => {
+    const items: Item[] = [
+      message({ id: 'user-1', turnId: 'turn-2', role: 'user', text: 'Question' }),
+      message({ id: 'answer-1', turnId: 'turn-2', status: 'started', text: 'Hel' }),
+    ]
+    const rendered = render(view(items))
+    const initialRenders = orbRender.mock.calls.length
+
+    rendered.rerender(view([...items.slice(0, -1), { ...items.at(-1)!, text: 'Hello' }]))
+
+    expect(initialRenders).toBe(1)
+    expect(orbRender).toHaveBeenCalledTimes(initialRenders)
   })
 
   it('does not restart the entry animation timer for streamed text updates', () => {
