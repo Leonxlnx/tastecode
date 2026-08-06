@@ -92,34 +92,6 @@ export const APPROVAL_MODES: {
   },
 ]
 
-const SLASH_COMMANDS: { name: string; detail: string; text: string }[] = [
-  {
-    name: '/review',
-    detail: 'Review the current diff',
-    text: 'Review my current changes and tell me what is wrong before I commit.',
-  },
-  {
-    name: '/test',
-    detail: 'Run the test suite',
-    text: 'Run the tests and fix anything that fails.',
-  },
-  {
-    name: '/explain',
-    detail: 'Explain this codebase',
-    text: 'Explain how this project is structured and where the important parts live.',
-  },
-  {
-    name: '/tidy',
-    detail: 'Clean up without behaviour changes',
-    text: 'Tidy the code you can see without changing any behaviour. No new features.',
-  },
-  {
-    name: '/commit',
-    detail: 'Stage and commit what changed',
-    text: 'Commit the current changes with a clear message explaining why, not what.',
-  },
-]
-
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i
 const COMPOSER_MIN_HEIGHT = 68
 const COMPOSER_MAX_HEIGHT = 242
@@ -196,7 +168,6 @@ function ComposerComponent(props: {
   const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle')
   const [voiceError, setVoiceError] = useState<string>()
   const [dragging, setDragging] = useState(false)
-  const [slashOpen, setSlashOpen] = useState(false)
   const [sending, setSending] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
   const voiceRequest = useRef<string | undefined>(undefined)
@@ -275,10 +246,6 @@ function ComposerComponent(props: {
   const showModelPlaceholder = props.models.length === 0 && !props.modelsLoaded
   const approval = APPROVAL_MODES.find((m) => m.id === props.approval) ?? APPROVAL_MODES[0]!
   const ApprovalIcon = approval.icon
-
-  const matches = slashOpen
-    ? SLASH_COMMANDS.filter((c) => c.name.startsWith(text.trim().toLowerCase()))
-    : []
 
   const grow = () => {
     const el = area.current
@@ -397,7 +364,6 @@ function ComposerComponent(props: {
     textRef.current = ''
     setText('')
     clearAttachments()
-    setSlashOpen(false)
     if (el) {
       if (resizeFrame.current !== undefined) window.cancelAnimationFrame(resizeFrame.current)
       el.style.height = `${currentHeight}px`
@@ -769,19 +735,13 @@ function ComposerComponent(props: {
                   disabled={props.disabled}
                   aria-keyshortcuts={shortcutAria(SHORTCUTS.focusComposer)}
                   onChange={(e) => {
-                    const value = e.target.value
-                    setText(value)
-                    setSlashOpen(value.startsWith('/') && !value.includes(' '))
+                    setText(e.target.value)
                     grow()
                   }}
                   onKeyDown={(e) => {
                     // IME users press Escape to dismiss the candidate window;
                     // that must never reach the shortcuts below (interrupt!).
                     if (e.nativeEvent.isComposing) return
-                    if (e.key === 'Escape' && slashOpen) {
-                      setSlashOpen(false)
-                      return
-                    }
                     // Typing turns the orb into Queue, which made the agent
                     // unstoppable mid-draft. Esc stays the brake.
                     if (e.key === 'Escape' && props.running) {
@@ -791,11 +751,6 @@ function ComposerComponent(props: {
                     }
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
-                      if (slashOpen && matches[0]) {
-                        setValue(matches[0].text)
-                        setSlashOpen(false)
-                        return
-                      }
                       submit(
                         props.running && props.canSteerQueue && (e.ctrlKey || e.metaKey)
                           ? 'steer'
@@ -818,63 +773,20 @@ function ComposerComponent(props: {
                   }}
                   placeholder={props.disabled ? 'Add a project folder first' : 'Do anything'}
                 />
-
-                {slashOpen && matches.length > 0 ? (
-                  <div className="slash" role="listbox">
-                    {matches.map((command) => (
-                      <button
-                        key={command.name}
-                        className="menu__item"
-                        onClick={() => {
-                          setValue(command.text)
-                          setSlashOpen(false)
-                        }}
-                      >
-                        <span className="menu__name">{command.name}</span>
-                        <span className="menu__desc">{command.detail}</span>
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
               </div>
 
               <div className="tools">
-                <Menu
-                  label="Add"
+                <button
+                  type="button"
+                  className="menutrigger composer__add"
                   disabled={props.disabled}
-                  triggerClassName="composer__add"
-                  trigger={() => (
-                    <span className="tool tool--icon">
-                      <Plus size={15} aria-hidden />
-                    </span>
-                  )}
+                  aria-label="Attach files"
+                  onClick={() => void pickFiles().then(addFiles)}
                 >
-                  {(close) => (
-                    <>
-                      <MenuItem
-                        title="Attach files"
-                        detail="Or drag them onto the box"
-                        onClick={() => {
-                          close()
-                          void pickFiles().then(addFiles)
-                        }}
-                      />
-                      <div className="menu__rule" />
-                      <p className="menu__group">Commands</p>
-                      {SLASH_COMMANDS.map((command) => (
-                        <MenuItem
-                          key={command.name}
-                          title={command.name}
-                          detail={command.detail}
-                          onClick={() => {
-                            setValue(command.text)
-                            close()
-                          }}
-                        />
-                      ))}
-                    </>
-                  )}
-                </Menu>
+                  <span className="tool tool--icon">
+                    <Plus size={15} aria-hidden />
+                  </span>
+                </button>
 
                 <Menu
                   label="Permissions"

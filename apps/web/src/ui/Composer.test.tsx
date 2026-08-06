@@ -4,15 +4,17 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { Composer } from './Composer.js'
 
 const bridge = vi.hoisted(() => ({
+  pickFiles: vi.fn(),
   savePastedImage: vi.fn(),
 }))
 
 vi.mock('../bridge.js', () => ({
-  pickFiles: vi.fn(async () => []),
+  pickFiles: bridge.pickFiles,
   savePastedImage: bridge.savePastedImage,
 }))
 
 beforeEach(() => {
+  bridge.pickFiles.mockResolvedValue([])
   bridge.savePastedImage.mockResolvedValue('/tmp/pasted-image.png')
   Object.defineProperty(URL, 'createObjectURL', {
     configurable: true,
@@ -160,6 +162,32 @@ describe('Composer queue', () => {
       'Polish the queue',
     )
     expect(onDeleteQueuedTurn).toHaveBeenCalledWith('queued-1')
+  })
+})
+
+describe('Composer prompts', () => {
+  it('opens the file picker directly from the plus button', () => {
+    renderComposer(vi.fn())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
+
+    expect(bridge.pickFiles).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it('sends slash-prefixed text without offering built-in commands', () => {
+    const onSend = vi.fn()
+    renderComposer(onSend)
+
+    expect(screen.queryByText('Commands')).toBeNull()
+    expect(screen.queryByText('/review')).toBeNull()
+
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: '/review' } })
+    expect(screen.queryByRole('listbox')).toBeNull()
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).toHaveBeenCalledWith('/review', [])
   })
 })
 
