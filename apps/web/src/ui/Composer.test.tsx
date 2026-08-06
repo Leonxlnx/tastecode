@@ -164,15 +164,41 @@ describe('Composer queue', () => {
 })
 
 describe('Composer permissions', () => {
-  it('offers auto-review only when the selected provider supports it', () => {
+  it('shows an icon for every mode and offers auto-review only when supported', () => {
     const unsupported = renderComposer(vi.fn())
     fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
     expect(screen.queryByRole('menuitem', { name: /Auto-review/ })).toBeNull()
+    expect(screen.getByRole('menuitem', { name: /Ask first/ }).querySelector('svg')).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: /Auto-approve/ }).querySelector('svg')).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: /Full access/ }).querySelector('svg')).toBeTruthy()
 
     unsupported.unmount()
     renderComposer(vi.fn(), { autoReviewSupported: true })
     fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
-    expect(screen.getByRole('menuitem', { name: /Auto-review/ })).toBeTruthy()
+    const autoReview = screen.getByRole('menuitem', { name: /Auto-review/ })
+    expect(autoReview.querySelector('svg')).toBeTruthy()
+    expect(autoReview.classList.contains('composer__permission-option--auto-review')).toBe(true)
+    expect(
+      screen
+        .getByRole('menuitem', { name: /Full access/ })
+        .classList.contains('composer__permission-option--full'),
+    ).toBe(true)
+  })
+
+  it('colors the selected auto-review and full-access triggers', () => {
+    const autoReview = renderComposer(vi.fn(), {
+      approval: 'auto-review',
+      autoReviewSupported: true,
+    })
+    expect(
+      screen.getByRole('button', { name: 'Permissions' }).querySelector('.tool--review'),
+    ).toBeTruthy()
+
+    autoReview.unmount()
+    renderComposer(vi.fn(), { approval: 'full' })
+    expect(
+      screen.getByRole('button', { name: 'Permissions' }).querySelector('.tool--danger'),
+    ).toBeTruthy()
   })
 })
 

@@ -880,7 +880,9 @@ function ComposerComponent(props: {
                   disabled={props.running}
                   triggerClassName="composer__permission"
                   trigger={() => (
-                    <span className={`tool ${props.approval === 'full' ? 'tool--danger' : ''}`}>
+                    <span
+                      className={`tool${props.approval === 'auto-review' ? ' tool--review' : ''}${props.approval === 'full' ? ' tool--danger' : ''}`}
+                    >
                       <ApprovalIcon size={13} aria-hidden />
                       <span>{approval.short}</span>
                     </span>
@@ -890,18 +892,23 @@ function ComposerComponent(props: {
                     <>
                       {APPROVAL_MODES.filter(
                         (mode) => mode.id !== 'auto-review' || props.autoReviewSupported,
-                      ).map((mode) => (
-                        <MenuItem
-                          key={mode.id}
-                          title={mode.title}
-                          detail={mode.detail}
-                          active={mode.id === props.approval}
-                          onClick={() => {
-                            props.onApprovalChange(mode.id)
-                            close()
-                          }}
-                        />
-                      ))}
+                      ).map((mode) => {
+                        const ModeIcon = mode.icon
+                        return (
+                          <MenuItem
+                            key={mode.id}
+                            title={mode.title}
+                            detail={mode.detail}
+                            icon={<ModeIcon size={14} aria-hidden />}
+                            className={`composer__permission-option composer__permission-option--${mode.id}`}
+                            active={mode.id === props.approval}
+                            onClick={() => {
+                              props.onApprovalChange(mode.id)
+                              close()
+                            }}
+                          />
+                        )
+                      })}
                     </>
                   )}
                 </Menu>

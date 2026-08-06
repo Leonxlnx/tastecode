@@ -176,18 +176,23 @@ export function MenuItem(props: {
   active?: boolean
   title: string
   detail?: string | undefined
+  icon?: ReactNode
+  className?: string
   shortcut?: string
   shortcutAria?: string
 }) {
   return (
     <button
-      className={`menu__item ${props.active ? 'is-active' : ''}`}
+      className={`menu__item${props.className ? ` ${props.className}` : ''}${props.active ? ' is-active' : ''}`}
       onClick={props.onClick}
       role="menuitem"
       aria-keyshortcuts={props.shortcutAria}
     >
       <span className="menu__name">
-        <span>{props.title}</span>
+        <span className="menu__label">
+          {props.icon}
+          <span>{props.title}</span>
+        </span>
         <span className="menu__meta">
           {props.active ? <Check size={13} aria-hidden /> : null}
           {props.shortcut ? <ShortcutHint>{props.shortcut}</ShortcutHint> : null}

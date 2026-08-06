@@ -5160,6 +5160,11 @@
   flex: none;
 }
 
+.tool--review,
+.tool--review svg {
+  color: var(--composer-review);
+}
+
 .tool--danger,
 .tool--danger svg {
   color: var(--composer-danger);
@@ -5264,8 +5269,8 @@
   border-radius: 50%;
 }
 
-.tools :is(.composer__add, .composer__permission) .tool:not(.tool--danger),
-.tools :is(.composer__add, .composer__permission) .tool:not(.tool--danger) svg,
+.tools :is(.composer__add, .composer__permission) .tool:not(.tool--review):not(.tool--danger),
+.tools :is(.composer__add, .composer__permission) .tool:not(.tool--review):not(.tool--danger) svg,
 .tools .composer__design:not(.is-active),
 .tools .composer__design:not(.is-active) svg {
   color: color-mix(in srgb, var(--text) 55%, var(--text-2));
@@ -5564,6 +5569,27 @@
 
 .menu__name svg {
   color: var(--text-3);
+}
+
+.menu__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.menu__label > svg {
+  flex: none;
+}
+
+.composer__permission-option--auto-review .menu__label,
+.composer__permission-option--auto-review .menu__label > svg {
+  color: var(--composer-review);
+}
+
+.composer__permission-option--full .menu__label,
+.composer__permission-option--full .menu__label > svg {
+  color: var(--composer-danger);
 }
 
 .menu__meta {
@@ -6063,7 +6089,10 @@
 
   .tools
     :is(.composer__add, .composer__permission):hover:not(:disabled)
-    :is(.tool:not(.tool--danger), .tool:not(.tool--danger) svg) {
+    :is(
+      .tool:not(.tool--review):not(.tool--danger),
+      .tool:not(.tool--review):not(.tool--danger) svg
+    ) {
     color: var(--text);
   }
 }
