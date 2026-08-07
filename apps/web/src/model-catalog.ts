@@ -3,6 +3,7 @@ import type { Model, ModelConnectionPreset, ProviderId } from '@harness/contract
 export type ProviderMark =
   | 'openai'
   | 'anthropic'
+  | 'grok'
   | 'cursor'
   | 'opencode'
   | 'openrouter'

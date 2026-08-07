@@ -11,6 +11,7 @@ import { z } from 'zod'
 export const ProviderIdSchema = z.enum([
   'codex',
   'claude-code',
+  'grok',
   'cursor',
   'opencode',
   'antigravity',
