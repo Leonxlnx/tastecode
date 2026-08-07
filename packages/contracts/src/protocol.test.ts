@@ -238,6 +238,34 @@ describe('protocol envelopes', () => {
     ).toEqual({ path: 'D:\\x', branch: 'feature/shelf' })
   })
 
+  it('keeps durable device credentials out of pairing offers', () => {
+    const offer = methods['connections.startPairing'].result.parse({
+      enabled: true,
+      serverName: 'Studio Mac',
+      port: 4312,
+      addresses: [
+        {
+          kind: 'tailscale',
+          label: 'Tailscale 100.101.22.33',
+          url: 'ws://100.101.22.33:4312',
+        },
+      ],
+      devices: [],
+      pairingUri: 'harness://pair?payload=short-lived-ticket',
+      expiresAt: Date.now() + 300_000,
+    })
+
+    expect(offer.pairingUri).toContain('harness://pair')
+    expect('deviceToken' in offer).toBe(false)
+    expect(() => methods['connections.claim'].params.parse({ name: '' })).toThrow()
+    expect(
+      ResponseSchema.parse({
+        id: 'device-request',
+        error: { code: ErrorCode.FORBIDDEN, message: 'This device cannot perform that action' },
+      }),
+    ).toMatchObject({ error: { code: 'forbidden' } })
+  })
+
   it('reports every panic-stop target as interrupted or failed', () => {
     const result = methods['system.panicStop'].result.parse({
       sessions: [
