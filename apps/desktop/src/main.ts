@@ -70,6 +70,13 @@ function createWindow(): void {
     minWidth: 720,
     minHeight: 520,
     backgroundColor: initialTheme.backgroundColor,
+    // Real glass, the way Codex does it: the OS draws its blur material
+    // behind the window, and the renderer keeps every surface opaque except
+    // the sidebar column, which is where the material shows through. CSS
+    // backdrop-filter cannot do this — inside the page there is nothing
+    // behind the sidebar to blur.
+    ...(process.platform === 'win32' ? { backgroundMaterial: 'acrylic' as const } : {}),
+    ...(process.platform === 'darwin' ? { vibrancy: 'sidebar' as const } : {}),
     // Draw our own top bar, but keep native window controls on Windows.
     titleBarStyle: 'hidden',
     // Height and colour must match --titlebar-h and --titlebar-bg in the renderer's
@@ -156,7 +163,12 @@ ipcMain.handle('harness:setTheme', (event, theme: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window) throw new Error('No window for theme change')
   const options = windowThemeOptions(theme)
-  window.setBackgroundColor(options.backgroundColor)
+  // Repainting an opaque background would sit on top of the acrylic/vibrancy
+  // material and kill the sidebar glass; on those platforms the material owns
+  // the window background and only the caption colours follow the theme.
+  if (process.platform !== 'win32' && process.platform !== 'darwin') {
+    window.setBackgroundColor(options.backgroundColor)
+  }
   if (process.platform === 'win32' || process.platform === 'linux') {
     window.setTitleBarOverlay(options.titleBarOverlay)
   }

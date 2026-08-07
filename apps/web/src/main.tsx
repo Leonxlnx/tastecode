@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import 'streamdown/styles.css'
 import { App } from './App.js'
+import { isDesktop } from './bridge.js'
 import {
   applyAccentPreference,
   applyFontPreference,
@@ -20,6 +21,10 @@ if (!root) throw new Error('missing #root')
 applyTheme(resolveTheme(readThemePreference()))
 applyFontPreference(readFontPreference())
 applyAccentPreference(readAccentPreference())
+
+// The stylesheet needs to know whether an OS blur material exists behind the
+// window (Electron acrylic/vibrancy) — that is what the sidebar glass shows.
+document.documentElement.dataset['shell'] = isDesktop ? 'desktop' : 'web'
 
 createRoot(root).render(
   <StrictMode>

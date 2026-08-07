@@ -7244,9 +7244,9 @@
    --------------------------------------------------------------------------- */
 
 :root[data-glass='on'] .rail {
-  /* Real frosted glass: the pane thins faster than the strength value so
-     even Subtle reads as glass, a heavier blur does the frosting, and a
-     hairline highlight on the edge sells the material. */
+  /* A thinner pane per strength step, plus a hairline edge highlight. What
+     shows through is the OS blur material behind the window (see below) —
+     never a painted gradient. */
   background: color-mix(
     in srgb,
     var(--bg-rail) calc(100% - var(--rail-glass, 0) * 130%),
@@ -7256,6 +7256,19 @@
   -webkit-backdrop-filter: blur(26px) saturate(1.4);
   border-right: 1px solid
     color-mix(in srgb, #fff calc(4% + var(--rail-glass, 0) * 10%), transparent);
+}
+
+/* Real glass, the way Codex does it: on desktop the OS draws acrylic (Windows)
+   or vibrancy (macOS) behind the window. Everything stays opaque except the
+   sidebar column, so the material shows through exactly there — a clean blur
+   of whatever is behind the window. In a plain browser no material exists and
+   the rail keeps its quiet translucent tint. */
+:root[data-glass='on'][data-shell='desktop'] body {
+  background: transparent;
+}
+
+:root[data-glass='on'][data-shell='desktop'] .shell__body > :not(.rail-slot) {
+  background: var(--bg);
 }
 
 :root[data-glass='on'] .titlebar::after {
