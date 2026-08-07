@@ -20,7 +20,10 @@ export const THEME_KEY = 'harness.theme'
 export const FONT_KEY = 'harness.font'
 export const ACCENT_KEY = 'harness.accent'
 export const BACKDROP_KEY = 'harness.backdrop'
-export const GLASS_KEY = 'harness.sidebarGlass'
+// v2: the default changed from Off to Medium. The v1 key is deliberately
+// abandoned — every install under the old default had "0" auto-written on
+// mount, which would pin the new default to Off forever.
+export const GLASS_KEY = 'harness.sidebarGlass2'
 export const DARK_THEME_QUERY = '(prefers-color-scheme: dark)'
 
 export function readThemePreference(): ThemePreference {
@@ -88,12 +91,15 @@ export function applyBackdropPreference(backdrop: BackdropPreference): void {
 }
 
 /**
- * Sidebar translucency in percent, 0 (opaque, the default) to 60. Anything
- * above that makes text sit on too little contrast to read comfortably.
+ * Sidebar translucency in percent, 0 (opaque) to 60 — anything above that
+ * makes text sit on too little contrast to read comfortably. Defaults to
+ * Medium (35): the glass is meant to be seen, not discovered in a submenu.
  */
 export function readGlassPreference(): number {
-  const stored = Number(readStored(GLASS_KEY))
-  return Number.isFinite(stored) ? Math.min(60, Math.max(0, Math.round(stored))) : 0
+  const raw = readStored(GLASS_KEY)
+  if (raw === null || raw === '') return 35
+  const stored = Number(raw)
+  return Number.isFinite(stored) ? Math.min(60, Math.max(0, Math.round(stored))) : 35
 }
 
 export function applyGlassPreference(glass: number): void {

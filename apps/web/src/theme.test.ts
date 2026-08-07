@@ -45,9 +45,16 @@ describe('glass preference', () => {
     localStorage.setItem(GLASS_KEY, '-10')
     expect(readGlassPreference()).toBe(0)
     localStorage.setItem(GLASS_KEY, 'opaque')
-    expect(readGlassPreference()).toBe(0)
+    expect(readGlassPreference()).toBe(35)
     localStorage.setItem(GLASS_KEY, '33.4')
     expect(readGlassPreference()).toBe(33)
+  })
+
+  it('defaults to Medium when nothing is stored, and honors an explicit Off', () => {
+    localStorage.removeItem(GLASS_KEY)
+    expect(readGlassPreference()).toBe(35)
+    localStorage.setItem(GLASS_KEY, '0')
+    expect(readGlassPreference()).toBe(0)
   })
 
   it('applies as a data flag plus a 0-1 custom property', () => {
