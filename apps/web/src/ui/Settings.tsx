@@ -413,11 +413,22 @@ function ProviderSettings(props: {
   providerName: string
   account: Account | undefined
   providerStatuses: ProviderStatus[]
+  acpAgents: ResultOf<'acp.agents'>['agents']
+  modelConnections: ModelConnection[]
   transport: Transport
   onConnectionsChanged: () => void
   onAccountChange: (provider: ProviderId, account: Account) => void
 }) {
+  const [adding, setAdding] = useState(false)
+  const [preset, setPreset] = useState<ModelConnectionPreset>('openai')
+  const [name, setName] = useState('OpenAI API')
+  const [baseUrl, setBaseUrl] = useState(CONNECTION_PRESETS.openai.baseUrl)
+  const [defaultModel, setDefaultModel] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [error, setError] = useState<string>()
+  const [saving, setSaving] = useState(false)
   const [accounts, setAccounts] = useState<Partial<Record<ProviderId, Account>>>({})
+  const [agentAccounts, setAgentAccounts] = useState<Record<string, Account>>({})
   const [authBusy, setAuthBusy] = useState<ProviderId>()
   const [authError, setAuthError] = useState<string>()
 
@@ -430,6 +441,17 @@ function ProviderSettings(props: {
     [props.transport, props.onAccountChange],
   )
 
+  const refreshAgentAccount = useCallback(
+    async (agentId: string) => {
+      const account = await props.transport.request('auth.status', {
+        provider: 'acp',
+        agent: agentId,
+      })
+      setAgentAccounts((current) => ({ ...current, [agentId]: account }))
+    },
+    [props.transport],
+  )
+
   useEffect(() => {
     for (const status of props.providerStatuses) {
       if (status.installed && status.id !== 'acp') {
@@ -437,6 +459,9 @@ function ProviderSettings(props: {
           setAccounts((current) => ({ ...current, [status.id]: { signedIn: false } })),
         )
       }
+    }
+    for (const agent of props.acpAgents) {
+      if (agent.installed) void refreshAgentAccount(agent.id).catch(() => {})
     }
     return props.transport.on('auth.event', (event) => {
       if (event.agent) return
@@ -450,7 +475,13 @@ function ProviderSettings(props: {
         setAuthError(event.error ?? 'Sign-in was cancelled.')
       }
     })
-  }, [props.transport, props.providerStatuses, refreshAccount])
+  }, [
+    props.transport,
+    props.providerStatuses,
+    props.acpAgents,
+    refreshAccount,
+    refreshAgentAccount,
+  ])
 
   const signIn = async (provider: ProviderId) => {
     setAuthBusy(provider)
@@ -476,6 +507,42 @@ function ProviderSettings(props: {
       setAuthError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setAuthBusy(undefined)
+    }
+  }
+
+  const choosePreset = (next: ModelConnectionPreset) => {
+    const config = CONNECTION_PRESETS[next]
+    setPreset(next)
+    setName(config.label)
+    setBaseUrl(config.baseUrl)
+    setDefaultModel('')
+  }
+
+  const addConnection = async () => {
+    setSaving(true)
+    setError(undefined)
+    try {
+      const id = `${preset}-${crypto.randomUUID()}`
+      await props.transport.request('connections.upsert', {
+        id,
+        displayName: name.trim(),
+        preset,
+        transport: CONNECTION_PRESETS[preset].transport,
+        baseUrl: baseUrl.trim(),
+        ...(defaultModel.trim() ? { defaultModel: defaultModel.trim() } : {}),
+        enabled: true,
+      })
+      await props.transport.request('connections.setCredential', {
+        connectionId: id,
+        apiKey: apiKey.trim(),
+      })
+      setAdding(false)
+      setApiKey('')
+      props.onConnectionsChanged()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -552,11 +619,13 @@ function ProviderSettings(props: {
     )
   }
 
-  // Public beta scope: exactly the three subscription plans the server lists
-  // (Codex, Claude Code, Grok). The ACP agents, Cursor, OpenCode, Antigravity
-  // and API-connection surfaces are parked, not deleted — see AGENTS.md.
   const direct = props.providerStatuses.filter((status) => status.id !== 'acp')
   const byId = (id: ProviderId) => direct.filter((status) => status.id === id)
+  const agentById = (id: string) => props.acpAgents.filter((agent) => agent.id === id)
+  // 'gemini' stays in this set although it has no row: it is retired (the
+  // server no longer lists it), and the set keeps an older server's listing
+  // out of the unknown-agents catch-all below.
+  const knownAgents = new Set(['gemini', 'kimi', 'qwen'])
 
   return (
     <SettingsPanel title="Providers">
@@ -568,9 +637,185 @@ function ProviderSettings(props: {
       {byId('codex').map(renderProviderRow)}
       {byId('claude-code').map(renderProviderRow)}
       {byId('grok').map(renderProviderRow)}
+      {byId('cursor').map(renderProviderRow)}
+      {byId('opencode').map(renderProviderRow)}
       {direct
-        .filter((status) => !['codex', 'claude-code', 'grok'].includes(status.id))
+        .filter(
+          (status) => !['codex', 'claude-code', 'grok', 'cursor', 'opencode'].includes(status.id),
+        )
         .map(renderProviderRow)}
+
+      <PlannedRow title="Pi" mark="pi" />
+      {[
+        ...agentById('kimi'),
+        ...agentById('qwen'),
+        ...props.acpAgents.filter((agent) => !knownAgents.has(agent.id)),
+      ].map((agent) =>
+        // A signed-in CLI must not keep offering "Sign in" — that ran the
+        // whole login flow against an already-authenticated binary. Signing
+        // out removes the credential the login left behind, so the row works
+        // like every direct provider's.
+        agent.installed && agentAccounts[agent.id]?.signedIn ? (
+          <SettingsRow key={agent.id} title={agent.name}>
+            <div className="provider-settings__actions">
+              <span className="settings__status">Signed in</span>
+              <ProviderIcon mark={agentMark(agent.id)} size={17} />
+              <button
+                className="settings__action"
+                type="button"
+                onClick={() => {
+                  void props.transport
+                    .request('auth.signOut', { provider: 'acp', agent: agent.id })
+                    .then(() => refreshAgentAccount(agent.id))
+                    .catch((cause) =>
+                      setAuthError(cause instanceof Error ? cause.message : String(cause)),
+                    )
+                }}
+              >
+                <LogOut size={13} aria-hidden />
+                Sign out
+              </button>
+            </div>
+          </SettingsRow>
+        ) : agent.installed ? (
+          <CliSignInRow
+            key={agent.id}
+            title={agent.name}
+            idleNote={agent.problem}
+            icon={<ProviderIcon mark={agentMark(agent.id)} size={17} />}
+            target={{ provider: 'acp', agent: agent.id }}
+            transport={props.transport}
+            onSignedIn={() => {
+              props.onConnectionsChanged()
+              void refreshAgentAccount(agent.id).catch(() => {})
+            }}
+          />
+        ) : (
+          <InstallableRow
+            key={agent.id}
+            title={agent.name}
+            icon={<ProviderIcon mark={agentMark(agent.id)} size={17} />}
+            target={{ provider: 'acp', agent: agent.id }}
+            setup={agent.setup}
+            transport={props.transport}
+            onInstalled={props.onConnectionsChanged}
+          />
+        ),
+      )}
+
+      <h2 className="settings__group-title settings__group-title--inside">API connections</h2>
+      {props.modelConnections.map((connection) => (
+        <SettingsRow key={connection.id} title={connection.displayName}>
+          <div className="provider-settings__actions">
+            <span
+              className={`settings__status${connection.credentialConfigured ? '' : ' is-warning'}`}
+            >
+              {connection.credentialConfigured
+                ? CONNECTION_PRESETS[connection.preset].label
+                : 'Key missing'}
+            </span>
+            <ProviderIcon mark={connectionMark(connection.preset)} size={17} />
+            <button
+              className="settings__action is-danger"
+              type="button"
+              onClick={() => {
+                void props.transport
+                  .request('connections.remove', { connectionId: connection.id })
+                  .then(props.onConnectionsChanged)
+              }}
+            >
+              Remove
+            </button>
+          </div>
+        </SettingsRow>
+      ))}
+      {adding ? (
+        <div className="provider-form">
+          <div className="provider-form__field">
+            <span>Provider</span>
+            <Menu
+              align="left"
+              drop="down"
+              label={`Provider, ${CONNECTION_PRESETS[preset].label}`}
+              panelLabel="API provider"
+              panelClassName="provider-form__menu"
+              triggerClassName="provider-form__select"
+              trigger={(open) => (
+                <>
+                  <span className="provider-form__select-value">
+                    <ProviderIcon mark={connectionMark(preset)} size={16} />
+                    {CONNECTION_PRESETS[preset].label}
+                  </span>
+                  <ChevronDown className={open ? 'is-open' : undefined} size={14} aria-hidden />
+                </>
+              )}
+            >
+              {(close) =>
+                Object.entries(CONNECTION_PRESETS).map(([value, config]) => (
+                  <MenuItem
+                    key={value}
+                    title={config.label}
+                    active={value === preset}
+                    onClick={() => {
+                      choosePreset(value as ModelConnectionPreset)
+                      close()
+                    }}
+                  />
+                ))
+              }
+            </Menu>
+          </div>
+          <label>
+            <span>Name</span>
+            <input value={name} onChange={(event) => setName(event.target.value)} />
+          </label>
+          <label className="provider-form__wide">
+            <span>Base URL</span>
+            <input
+              value={baseUrl}
+              onChange={(event) => setBaseUrl(event.target.value)}
+              spellCheck={false}
+            />
+          </label>
+          <label>
+            <span>Default model</span>
+            <input
+              value={defaultModel}
+              onChange={(event) => setDefaultModel(event.target.value)}
+              placeholder={CONNECTION_PRESETS[preset].placeholder}
+              spellCheck={false}
+            />
+          </label>
+          <label className="provider-form__wide">
+            <span>API key</span>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+              autoComplete="off"
+            />
+          </label>
+          {error ? <p className="provider-form__error">{error}</p> : null}
+          <div className="provider-form__actions">
+            <button className="ghost" type="button" onClick={() => setAdding(false)}>
+              Cancel
+            </button>
+            <button
+              className="btn"
+              type="button"
+              disabled={saving || !name.trim() || !baseUrl.trim() || !apiKey.trim()}
+              onClick={() => void addConnection()}
+            >
+              {saving ? 'Connecting…' : 'Connect'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button className="provider-settings__add" type="button" onClick={() => setAdding(true)}>
+          <KeyRound size={15} aria-hidden />
+          Connect another plan or API
+        </button>
+      )}
     </SettingsPanel>
   )
 }

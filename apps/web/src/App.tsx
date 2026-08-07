@@ -587,11 +587,57 @@ export function App() {
             )
           }),
       )
-      // Public beta scope: the picker holds only the three direct plans the
-      // server lists. ACP-agent and API-connection catalogs are parked, not
-      // deleted — they return with their rosters after the beta.
+      const acp = (agentsResult?.agents ?? [])
+        .filter((agent) => agent.installed)
+        .map(async (agent) => {
+          const result = await transport
+            .request('models.list', { provider: 'acp', agent: agent.id })
+            .catch(() => ({ models: [] }))
+          return choicesFor(
+            {
+              provider: 'acp',
+              sourceName: agent.name,
+              mark: agentMark(agent.id),
+              agent: { id: agent.id, name: agent.name },
+            },
+            result.models,
+            false,
+          )
+        })
+      const api = (
+        await Promise.all(
+          connections
+            .filter((connection) => connection.enabled && connection.credentialConfigured)
+            .map(async (connection) => {
+              const result = await transport
+                .request('connections.models', { connectionId: connection.id })
+                .catch(() => ({ models: [] }))
+              return choicesFor(
+                {
+                  provider: 'api',
+                  connectionId: connection.id,
+                  sourceName: connection.displayName,
+                  mark: connectionMark(connection.preset),
+                },
+                result.models.length > 0
+                  ? result.models
+                  : connection.defaultModel
+                    ? [
+                        {
+                          id: connection.defaultModel,
+                          displayName: connection.defaultModel,
+                          isDefault: true,
+                          reasoningEfforts: [],
+                          serviceTiers: [],
+                        },
+                      ]
+                    : [],
+              )
+            }),
+        )
+      ).flat()
       if (cancelled) return
-      const catalog = direct.flat()
+      const catalog = [...direct.flat(), ...(await Promise.all(acp)).flat(), ...api]
       setProviderStatuses(providers)
       setAcpAgents(agentsResult?.agents ?? [])
       setModelConnections(connections)

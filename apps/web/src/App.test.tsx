@@ -437,13 +437,30 @@ describe('web client', () => {
     expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
   })
 
-  it('never fetches ACP agent models in the beta scope', async () => {
+  it('discovers models separately for each installed ACP agent', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'acp.agents') {
         return Promise.resolve({
-          agents: [{ id: 'kimi', name: 'Kimi CLI', installed: true, verified: true }],
+          agents: [
+            { id: 'gemini', name: 'Gemini CLI', installed: true, verified: true },
+            { id: 'kimi', name: 'Kimi CLI', installed: true, verified: true },
+          ],
+        })
+      }
+      if (method === 'models.list' && (params as { provider?: string }).provider === 'acp') {
+        const agent = (params as { agent: string }).agent
+        return Promise.resolve({
+          models: [
+            {
+              id: `${agent}-model`,
+              displayName: `${agent} model`,
+              isDefault: true,
+              reasoningEfforts: [],
+              serviceTiers: [],
+            },
+          ],
         })
       }
       return request(method, params)
@@ -451,14 +468,16 @@ describe('web client', () => {
 
     render(<App />)
 
-    // The catalog settles once the direct providers answered.
     await waitFor(() => {
-      expect(transport.request).toHaveBeenCalledWith('providers.list', {})
+      expect(transport.request).toHaveBeenCalledWith('models.list', {
+        provider: 'acp',
+        agent: 'gemini',
+      })
+      expect(transport.request).toHaveBeenCalledWith('models.list', {
+        provider: 'acp',
+        agent: 'kimi',
+      })
     })
-    expect(transport.request).not.toHaveBeenCalledWith(
-      'models.list',
-      expect.objectContaining({ provider: 'acp' }),
-    )
   })
 
   it('does not invent Automatic choices for empty agent model catalogs', async () => {

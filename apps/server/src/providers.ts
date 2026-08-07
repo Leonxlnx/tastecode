@@ -1,7 +1,10 @@
 import { detectAgents, findAgentSpec } from '@harness/adapter-acp'
+import { ANTIGRAVITY_CAPABILITIES } from '@harness/adapter-antigravity'
 import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex'
 import { GROK_CAPABILITIES } from '@harness/adapter-grok'
+import { CURSOR_CAPABILITIES, CURSOR_SUPPORTED_VERSION } from '@harness/adapter-cursor'
+import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode'
 import type { ProviderSetup, ProviderStatus } from '@harness/contracts'
 import { commandVersion, isInstalled } from '@harness/proc'
 
@@ -67,14 +70,43 @@ const PROBES: Probe[] = [
     // Device flow in the CLI's own terminal, same shape as `kimi login`.
     loginCommand: 'grok login',
   },
+  {
+    id: 'cursor',
+    displayName: 'Cursor',
+    command: 'cursor-agent',
+    capabilities: CURSOR_CAPABILITIES,
+    supportedVersion: CURSOR_SUPPORTED_VERSION,
+    setup: {
+      installUrl: 'https://docs.cursor.com/en/cli/installation',
+      login: 'app',
+    },
+  },
+  {
+    id: 'opencode',
+    displayName: 'OpenCode',
+    command: 'opencode',
+    capabilities: OPENCODE_CAPABILITIES,
+    setup: {
+      installUrl: 'https://opencode.ai/en/docs',
+      installCommand: 'npm install -g opencode-ai',
+      login: 'provider',
+    },
+    loginCommand: 'opencode auth login',
+  },
+  {
+    id: 'antigravity',
+    displayName: 'Antigravity',
+    command: 'agy',
+    capabilities: ANTIGRAVITY_CAPABILITIES,
+    setup: {
+      installUrl: 'https://antigravity.google/docs/cli',
+      login: 'provider',
+    },
+    // First interactive run signs in with the user's Google account; there is
+    // no separate login subcommand as of agy 1.1.10.
+    loginCommand: 'agy',
+  },
 ]
-
-/**
- * The public beta ships exactly three subscription plans: Codex, Claude Code
- * and Grok (Leon's release scope, 2026-08-07). The Cursor, OpenCode,
- * Antigravity and ACP adapters stay in the repo fully working and return to
- * this roster after the beta — docs/dashboard.html tracks that list.
- */
 
 /**
  * The machine, as far as this file is concerned.
@@ -148,9 +180,10 @@ export function detectProviders(system: SystemProbe = REAL_SYSTEM): Promise<Prov
   const current = providerDetections.get(system)
   if (current) return current
 
-  // Beta roster: direct probes only. The ACP aggregate row returns together
-  // with the parked adapters after the beta.
-  const detection = Promise.all(PROBES.map((entry) => probe(entry, system)))
+  const detection = Promise.all([
+    Promise.all(PROBES.map((entry) => probe(entry, system))),
+    acpStatus(system),
+  ]).then(([direct, acp]) => [...direct, acp])
   providerDetections.set(system, detection)
   const clear = () => {
     if (providerDetections.get(system) === detection) providerDetections.delete(system)
@@ -196,5 +229,24 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
     ...(unsupported
       ? { problem: `Adapter supports ${entry.supportedVersion}.x; installed version is ${version}` }
       : {}),
+  }
+}
+
+/**
+ * ACP is one integration over many agents, so "installed" means at least one
+ * of them is present, and the names of those go in the version field — there is
+ * no single binary whose version would mean anything here.
+ */
+async function acpStatus(system: SystemProbe): Promise<ProviderStatus> {
+  const agents = await system.acpAgents()
+  const present = agents.filter((agent) => agent.installed)
+
+  return {
+    id: 'acp',
+    displayName: 'ACP agents',
+    installed: present.length > 0,
+    auth: 'unknown',
+    ...(present.length > 0 ? { version: present.map((agent) => agent.name).join(', ') } : {}),
+    ...(present.length === 0 ? { problem: 'No ACP agent found on PATH' } : {}),
   }
 }
