@@ -43,7 +43,7 @@ describe('detectProviders', () => {
     const second = detectProviders(sharedSystem)
     expect(first).toBe(second)
     await Promise.resolve()
-    expect(installedChecks).toBe(6)
+    expect(installedChecks).toBe(3)
 
     release()
     await Promise.all([first, second])
@@ -74,16 +74,6 @@ describe('detectProviders', () => {
     expect(claude.setup?.login).toBe('app')
   })
 
-  it('reports when the installed Cursor wire version is unsupported', async () => {
-    const providers = await detectProviders(
-      system({ isInstalled: async () => true, version: async () => '2025.12.1' }),
-    )
-
-    const cursor = find(providers, 'cursor')
-    expect(cursor.installed).toBe(true)
-    expect(cursor.problem).toContain('supports 2026.07')
-  })
-
   it('omits the version when the binary would not say', async () => {
     const providers = await detectProviders(
       system({ isInstalled: async () => true, version: async () => undefined }),
@@ -101,72 +91,23 @@ describe('detectProviders', () => {
     expect(providers.every((entry) => entry.auth === 'unknown')).toBe(true)
   })
 
-  it('counts ACP as installed when any one agent is present', async () => {
-    const providers = await detectProviders(
-      system({
-        acpAgents: async () => [
-          { name: 'Gemini CLI', installed: true },
-          { name: 'Qwen Code', installed: false },
-        ],
-      }),
-    )
-
-    const acp = find(providers, 'acp')
-    expect(acp.installed).toBe(true)
-    // There is no single binary whose version means anything here, so the
-    // field carries which agents were found instead.
-    expect(acp.version).toBe('Gemini CLI')
-    expect(acp.problem).toBeUndefined()
-  })
-
-  it('lists every ACP agent it found, not just the first', async () => {
-    const providers = await detectProviders(
-      system({
-        acpAgents: async () => [
-          { name: 'Gemini CLI', installed: true },
-          { name: 'Kimi CLI', installed: true },
-        ],
-      }),
-    )
-
-    expect(find(providers, 'acp').version).toBe('Gemini CLI, Kimi CLI')
-  })
-
-  it('explains ACP being unavailable when no agent is present', async () => {
-    const providers = await detectProviders(
-      system({ acpAgents: async () => [{ name: 'Gemini CLI', installed: false }] }),
-    )
-
-    const acp = find(providers, 'acp')
-    expect(acp.installed).toBe(false)
-    expect(acp.problem).toContain('No ACP agent')
-  })
-
   it('reports every provider we know about, installed or not', async () => {
     const providers = await detectProviders(system())
 
-    expect(providers.map((entry) => entry.id).sort()).toEqual([
-      'acp',
-      'antigravity',
-      'claude-code',
-      'codex',
-      'cursor',
-      'grok',
-      'opencode',
-    ])
+    expect(providers.map((entry) => entry.id).sort()).toEqual(['claude-code', 'codex', 'grok'])
   })
 })
 
 describe('install command resolution', () => {
   it('resolves install commands from the server-side tables only', () => {
-    expect(installCommandFor('opencode')).toBe('npm install -g opencode-ai')
+    expect(installCommandFor('acp', 'kimi')).toBe('npm install -g @moonshot-ai/kimi-code')
     expect(installCommandFor('claude-code')).toBe('npm install -g @anthropic-ai/claude-code')
     expect(installCommandFor('acp', 'gemini')).toBe('npm install -g @google/gemini-cli')
   })
 
   it('refuses targets it cannot script instead of guessing', () => {
-    // Cursor ships its own installer; there is no command worth running blind.
-    expect(() => installCommandFor('cursor')).toThrow(/no scripted install/)
+    // Grok ships its own installer; there is no command worth running blind.
+    expect(() => installCommandFor('grok')).toThrow(/no scripted install/)
     expect(() => installCommandFor('acp', 'nonexistent')).toThrow(/unknown install target/)
     expect(() => installCommandFor('acp')).toThrow(/unknown install target/)
   })
@@ -177,7 +118,7 @@ describe('sign-in launch command resolution', () => {
     expect(launchCommandFor('acp', 'gemini')).toBe('gemini')
     expect(launchCommandFor('acp', 'kimi')).toBe('kimi')
     expect(launchCommandFor('acp', 'qwen')).toBe('qwen')
-    expect(launchCommandFor('opencode')).toBe('opencode auth login')
+    expect(launchCommandFor('grok')).toBe('grok login')
   })
 
   it('refuses providers whose sign-in happens in the app, and unknown targets', () => {

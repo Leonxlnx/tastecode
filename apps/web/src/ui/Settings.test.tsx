@@ -119,7 +119,7 @@ describe('provider settings', () => {
     const accounts: Record<string, Account> = {
       codex: { signedIn: true, plan: 'pro' },
       'claude-code': { signedIn: true, plan: 'pro' },
-      cursor: { signedIn: false },
+      grok: { signedIn: false },
     }
     const transport = {
       request: vi.fn(async (method: string, params: { provider?: ProviderId; agent?: string }) => {
@@ -156,7 +156,13 @@ describe('provider settings', () => {
             installed: true,
             auth: 'authenticated',
           },
-          { id: 'cursor', displayName: 'Cursor', installed: true, auth: 'unauthenticated' },
+          {
+            id: 'grok',
+            displayName: 'Grok',
+            installed: true,
+            auth: 'unauthenticated',
+            setup: { installUrl: 'https://example.test/grok', login: 'provider' },
+          },
         ]}
         acpAgents={[
           // A stale server may still list retired gemini; the row must not render.
@@ -220,28 +226,19 @@ describe('provider settings', () => {
       />,
     )
 
-    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Sign out' })).toHaveLength(3))
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Sign out' })).toHaveLength(2))
     expect(screen.getAllByText('Codex')).toHaveLength(1)
-    expect(screen.queryByText('Gemini CLI')).toBeNull()
-    expect(screen.getByText('Qwen Code')).toBeTruthy()
-    expect(screen.getByText('Kimi CLI')).toBeTruthy()
 
-    // Kimi's CLI is already authenticated: the row says so inline and offers
-    // the same Sign out as every direct provider (it removes the credential).
-    const kimiRow = screen.getByText('Kimi CLI').closest<HTMLElement>('.settings__row')
-    if (!kimiRow) throw new Error('Kimi row missing')
-    await waitFor(() => expect(within(kimiRow).getByText('Signed in')).toBeTruthy())
-    fireEvent.click(within(kimiRow).getByRole('button', { name: 'Sign out' }))
-    await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('auth.signOut', {
-        provider: 'acp',
-        agent: 'kimi',
-      }),
-    )
+    // Beta scope: agent rows and the API-connection form stay out entirely,
+    // even when the server still reports agents.
+    expect(screen.queryByText('Gemini CLI')).toBeNull()
+    expect(screen.queryByText('Qwen Code')).toBeNull()
+    expect(screen.queryByText('Kimi CLI')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Connect another plan or API' })).toBeNull()
 
     const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
-    const cursorRow = screen.getByText('Cursor').closest<HTMLElement>('.settings__row')
-    if (!claudeRow || !cursorRow) throw new Error('provider row missing')
+    const grokRow = screen.getByText('Grok').closest<HTMLElement>('.settings__row')
+    if (!claudeRow || !grokRow) throw new Error('provider row missing')
     fireEvent.click(within(claudeRow).getByRole('button', { name: 'Sign out' }))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('auth.signOut', {
@@ -249,41 +246,9 @@ describe('provider settings', () => {
       }),
     )
 
-    fireEvent.click(within(cursorRow).getByRole('button', { name: 'Sign in' }))
-    await waitFor(() => {
-      expect(transport.request).toHaveBeenCalledWith('auth.startLogin', { provider: 'cursor' })
-      expect(open).toHaveBeenCalledWith(
-        'https://auth.example.test/',
-        '_blank',
-        'noopener,noreferrer',
-      )
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Connect another plan or API' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Provider, OpenAI API' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Anthropic API' }))
-    expect(screen.getByRole('button', { name: 'Provider, Anthropic API' })).toBeTruthy()
-    expect(screen.getByDisplayValue('https://api.anthropic.com/v1')).toBeTruthy()
-
-    const qwenRow = screen.getByText('Qwen Code').closest<HTMLElement>('.settings__row')
-    if (!qwenRow) throw new Error('Qwen provider row missing')
-    fireEvent.click(within(qwenRow).getByRole('button', { name: 'Install' }))
-    await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('providers.install', {
-        provider: 'acp',
-        agent: 'qwen',
-        columns: 100,
-        rows: 30,
-      }),
-    )
-    expect(open).not.toHaveBeenCalledWith(
-      'https://example.test/gemini',
-      '_blank',
-      'noopener,noreferrer',
-    )
-    await waitFor(() =>
-      expect(within(qwenRow).getByRole('button', { name: 'Installing…' })).toBeTruthy(),
-    )
+    // Grok signs in through its own CLI: the row offers the guided card flow.
+    expect(within(grokRow).getByRole('button', { name: 'Sign in' })).toBeTruthy()
+    expect(open).not.toHaveBeenCalled()
   })
 
   it('runs installs in the background and refreshes once the install exits cleanly', async () => {
@@ -410,13 +375,12 @@ describe('provider settings', () => {
         account={undefined}
         providerStatuses={[
           {
-            id: 'opencode',
-            displayName: 'OpenCode',
+            id: 'grok',
+            displayName: 'Grok',
             installed: true,
             auth: 'unknown',
             setup: {
-              installUrl: 'https://example.test/opencode',
-              installCommand: 'npm install -g opencode-ai',
+              installUrl: 'https://example.test/grok',
               login: 'provider',
             },
           },
@@ -461,12 +425,12 @@ describe('provider settings', () => {
       />,
     )
 
-    const opencodeRow = screen.getByText('OpenCode').closest<HTMLElement>('.settings__row')
-    if (!opencodeRow) throw new Error('OpenCode row missing')
-    fireEvent.click(within(opencodeRow).getByRole('button', { name: 'Sign in' }))
+    const grokRow = screen.getByText('Grok').closest<HTMLElement>('.settings__row')
+    if (!grokRow) throw new Error('Grok row missing')
+    fireEvent.click(within(grokRow).getByRole('button', { name: 'Sign in' }))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('providers.launch', {
-        provider: 'opencode',
+        provider: 'grok',
         columns: 320,
         rows: 30,
       }),
@@ -497,25 +461,11 @@ describe('provider settings', () => {
 
     emit('terminal.exit', { terminalId: 'term-login-3', exitCode: 0 })
     await waitFor(() => expect(screen.queryByTestId('install-terminal')).toBeNull())
-    expect(within(opencodeRow).getByRole('button', { name: 'Sign in' })).toBeTruthy()
+    expect(within(grokRow).getByRole('button', { name: 'Sign in' })).toBeTruthy()
 
-    const kimiRow = screen.getByText('Kimi CLI').closest<HTMLElement>('.settings__row')
-    if (!kimiRow) throw new Error('Kimi row missing')
-    // An impaired agent leads with the vendor's story, not a generic note —
-    // but sign-in stays offered for the accounts that still work.
-    expect(within(kimiRow).getByText('Vendor ended individual sign-in.')).toBeTruthy()
-    fireEvent.click(within(kimiRow).getByRole('button', { name: 'Sign in' }))
-    await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('providers.launch', {
-        provider: 'acp',
-        agent: 'kimi',
-        columns: 320,
-        rows: 30,
-      }),
-    )
-    emit('terminal.exit', { terminalId: 'term-login-3', exitCode: 0 })
-    await waitFor(() => expect(onConnectionsChanged).toHaveBeenCalled())
-    // Still only the one auto-open from the OpenCode flow above.
+    // Beta scope: agent rows never render, even when the server reports one.
+    expect(screen.queryByText('Kimi CLI')).toBeNull()
     expect(open).toHaveBeenCalledTimes(1)
+    expect(onConnectionsChanged).not.toHaveBeenCalled()
   })
 })
