@@ -33,6 +33,7 @@ export const PROTOCOL_VERSION = 2
 /** Bumped whenever a client and server can no longer understand each other. */
 export const ErrorCode = {
   BAD_REQUEST: 'bad_request',
+  FORBIDDEN: 'forbidden',
   NOT_FOUND: 'not_found',
   PROVIDER_UNAVAILABLE: 'provider_unavailable',
   STALE_SNAPSHOT: 'stale_snapshot',
@@ -40,12 +41,37 @@ export const ErrorCode = {
 } as const
 export const ErrorCodeSchema = z.enum([
   ErrorCode.BAD_REQUEST,
+  ErrorCode.FORBIDDEN,
   ErrorCode.NOT_FOUND,
   ErrorCode.PROVIDER_UNAVAILABLE,
   ErrorCode.STALE_SNAPSHOT,
   ErrorCode.INTERNAL,
 ])
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>
+
+export const ConnectionAddressSchema = z.object({
+  kind: z.enum(['tailscale', 'lan']),
+  label: z.string().min(1),
+  url: z.string().regex(/^wss?:\/\//i, 'expected a WebSocket URL'),
+})
+export type ConnectionAddress = z.infer<typeof ConnectionAddressSchema>
+
+export const PairedDeviceSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(80),
+  createdAt: z.number().int().nonnegative(),
+  lastSeenAt: z.number().int().nonnegative(),
+})
+export type PairedDevice = z.infer<typeof PairedDeviceSchema>
+
+export const ConnectionsStatusSchema = z.object({
+  enabled: z.boolean(),
+  serverName: z.string().min(1),
+  port: z.number().int().min(0).max(65_535),
+  addresses: z.array(ConnectionAddressSchema),
+  devices: z.array(PairedDeviceSchema),
+})
+export type ConnectionsStatus = z.infer<typeof ConnectionsStatusSchema>
 
 // ---------------------------------------------------------------------------
 // Requests
@@ -685,6 +711,45 @@ export const methods = {
     params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
     result: z.object({ models: z.array(ModelSchema) }),
   },
+  /** Reports the separate listener used by paired native clients. */
+  'connections.status': {
+    params: z.object({}),
+    result: ConnectionsStatusSchema,
+  },
+  /** Starts remote access and creates a short-lived, single-use pairing ticket. */
+  'connections.startPairing': {
+    params: z.object({}),
+    result: ConnectionsStatusSchema.extend({
+      pairingUri: z.string().startsWith('harness://pair?'),
+      expiresAt: z.number().int().nonnegative(),
+    }),
+  },
+  'connections.stop': {
+    params: z.object({}),
+    result: z.object({}),
+  },
+  'connections.revoke': {
+    params: z.object({ deviceId: z.string().min(1) }),
+    result: z.object({}),
+  },
+  /** Lets a paired device refresh routes without receiving the admin device list. */
+  'connections.deviceStatus': {
+    params: z.object({}),
+    result: z.object({
+      serverName: z.string().min(1),
+      addresses: z.array(ConnectionAddressSchema),
+    }),
+  },
+  /** The only method available to a one-time pairing connection. */
+  'connections.claim': {
+    params: z.object({ name: z.string().trim().min(1).max(80) }),
+    result: z.object({
+      deviceId: z.string().min(1),
+      deviceToken: z.string().min(1),
+      serverName: z.string().min(1),
+      addresses: z.array(ConnectionAddressSchema),
+    }),
+  },
   /**
    * Whether this provider can accept a recorded clip. Availability is account-
    * and binary-specific, so the renderer asks instead of inferring it from a mic API.
@@ -819,6 +884,23 @@ export const methods = {
   'terminal.close': {
     params: z.object({ terminalId: TerminalIdSchema }),
     result: z.object({}),
+  },
+  /** Materialize a browser clipboard image where the local agents can read it. */
+  'attachments.saveImage': {
+    params: z.object({
+      mimeType: z.string(),
+      data: z.string().max(34_952_536),
+    }),
+    result: z.object({ path: z.string() }),
+  },
+  /** Materialize a remote-client attachment where local agents can read it. */
+  'attachments.saveFile': {
+    params: z.object({
+      name: z.string().trim().min(1).max(255),
+      mimeType: z.string().trim().min(1).max(255),
+      data: z.string().max(34_952_536),
+    }),
+    result: z.object({ path: z.string() }),
   },
   'thread.rename': {
     params: z.object({ threadId: z.string(), title: z.string() }),
