@@ -23,6 +23,7 @@ import { detectProviders, installCommandFor, launchCommandFor } from './provider
 import { checkForUpdates } from './update-check.js'
 import { PushBus } from './push-bus.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
+import { browseProjectDirectory } from './project-directory-browser.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
@@ -69,6 +70,7 @@ export function startServer(
     mobilePort?: number
     mobileNetworkInterfaces?: () => NodeJS.Dict<NetworkInterfaceInfo[]>
     resolveTailscaleAddresses?: () => Promise<ReadonlySet<string>>
+    projectBrowserHome?: string
   } = {},
 ) {
   const port = options.port ?? DEFAULT_PORT
@@ -560,6 +562,11 @@ export function startServer(
           })),
         }
 
+      case 'projects.browse': {
+        const p = params as ParamsOf<'projects.browse'>
+        return browseProjectDirectory(p.path, options.projectBrowserHome)
+      }
+
       case 'projects.add': {
         const p = params as { path: string; name?: string }
         return store.addProject(p.path, p.name)
@@ -978,6 +985,8 @@ const DEVICE_METHODS = new Set<MethodName>([
   'models.list',
   'acp.agents',
   'projects.list',
+  'projects.browse',
+  'projects.add',
   'attachments.saveFile',
   'thread.history',
   'thread.queue',

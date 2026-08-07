@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { once } from 'node:events'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -32,6 +32,11 @@ afterEach(() => {
 describe('server mobile trust boundary', () => {
   it('keeps pairing sockets bootstrap-only and devices outside administration', async () => {
     const dataDir = mkdtempSync(path.join(os.tmpdir(), 'harness-mobile-server-'))
+    const projectBrowserHome = path.join(dataDir, 'home')
+    const browsableProject = path.join(projectBrowserHome, 'Developer', 'harness')
+    mkdirSync(browsableProject, { recursive: true })
+    const canonicalProjectBrowserHome = realpathSync(projectBrowserHome)
+    const canonicalBrowsableProject = realpathSync(browsableProject)
     process.env['HARNESS_DATA_DIR'] = dataDir
     const port = await availablePort()
     const server = startServer({
@@ -40,6 +45,7 @@ describe('server mobile trust boundary', () => {
       mobilePort: 0,
       mobileNetworkInterfaces: () => INTERFACES,
       resolveTailscaleAddresses: async () => new Set(['100.101.22.33']),
+      projectBrowserHome: canonicalProjectBrowserHome,
     })
     const sockets = new Set<WebSocket>()
     let attachmentPath: string | undefined
@@ -70,6 +76,18 @@ describe('server mobile trust boundary', () => {
       await expect(request(device, 'projects', 'projects.list', {})).resolves.toEqual({
         projects: [],
       })
+      const directory = methods['projects.browse'].result.parse(
+        await request(device, 'browse', 'projects.browse', {}),
+      )
+      expect(directory.path).toBe(canonicalProjectBrowserHome)
+      expect(directory.entries).toMatchObject([{ name: 'Developer', kind: 'directory' }])
+
+      const addedProject = methods['projects.add'].result.parse(
+        await request(device, 'add-project', 'projects.add', {
+          path: canonicalBrowsableProject,
+        }),
+      )
+      expect(addedProject.path).toBe(canonicalBrowsableProject)
       await expect(request(device, 'admin', 'connections.status', {})).rejects.toThrow(
         '[forbidden]',
       )
