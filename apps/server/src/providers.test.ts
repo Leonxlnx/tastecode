@@ -127,6 +127,7 @@ describe('detectProviders', () => {
       'claude-code',
       'codex',
       'cursor',
+      'grok',
       'opencode',
     ])
   })

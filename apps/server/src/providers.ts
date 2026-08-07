@@ -2,6 +2,7 @@ import { detectAgents, findAgentSpec } from '@harness/adapter-acp'
 import { ANTIGRAVITY_CAPABILITIES } from '@harness/adapter-antigravity'
 import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex'
+import { GROK_CAPABILITIES } from '@harness/adapter-grok'
 import { CURSOR_CAPABILITIES, CURSOR_SUPPORTED_VERSION } from '@harness/adapter-cursor'
 import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode'
 import type { ProviderSetup, ProviderStatus } from '@harness/contracts'
@@ -56,6 +57,18 @@ const PROBES: Probe[] = [
       installCommand: 'npm install -g @anthropic-ai/claude-code',
       login: 'app',
     },
+  },
+  {
+    id: 'grok',
+    displayName: 'Grok',
+    command: 'grok',
+    capabilities: GROK_CAPABILITIES,
+    setup: {
+      installUrl: 'https://x.ai/',
+      login: 'provider',
+    },
+    // Device flow in the CLI's own terminal, same shape as `kimi login`.
+    loginCommand: 'grok login',
   },
   {
     id: 'cursor',

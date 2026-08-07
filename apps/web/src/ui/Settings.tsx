@@ -594,7 +594,7 @@ function ProviderSettings(props: {
       ) : null}
       {byId('codex').map(renderProviderRow)}
       {byId('claude-code').map(renderProviderRow)}
-      <PlannedRow title="Grok" note="xAI's agent — not integrated yet, planned." />
+      {byId('grok').map(renderProviderRow)}
       {byId('cursor').map(renderProviderRow)}
       {byId('opencode').map(renderProviderRow)}
       {direct

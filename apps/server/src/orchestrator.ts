@@ -4,6 +4,7 @@ import {
   CodexAdapter,
 } from '@harness/adapter-codex'
 import { acpAccount, acpSignOut } from '@harness/adapter-acp'
+import { grokAccount, signOutGrok } from '@harness/adapter-grok'
 import { claudeAccount, signOutClaude, startClaudeLogin } from '@harness/adapter-claude-code'
 import { cursorAccount, signOutCursor, startCursorLogin } from '@harness/adapter-cursor'
 import {
@@ -701,6 +702,7 @@ export class Orchestrator {
     if (provider === 'codex') return (await this.#controlAdapter()).account()
     if (provider === 'claude-code') return claudeAccount()
     if (provider === 'cursor') return cursorAccount()
+    if (provider === 'grok') return grokAccount()
     if (provider === 'acp' && agent) return acpAccount(agent)
     return { signedIn: false }
   }
@@ -752,6 +754,7 @@ export class Orchestrator {
     if (provider === 'codex') return (await this.#controlAdapter()).signOut()
     if (provider === 'claude-code') return signOutClaude()
     if (provider === 'cursor') return signOutCursor()
+    if (provider === 'grok') return signOutGrok()
     if (provider === 'acp' && agent) return acpSignOut(agent)
   }
 

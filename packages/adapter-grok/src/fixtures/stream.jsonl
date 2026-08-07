@@ -1,0 +1,9 @@
+{"type":"available_commands","tools":["run_terminal_command","read_file","search_replace","write"],"commands":["compact","review"]}
+{"type":"thought","data":"The user wants"}
+{"type":"thought","data":" a file."}
+{"type":"tool_call","toolCallId":"call-46077f29-2c60-4a04-9570-43f0740cd374-0","title":"write","kind":"write","status":"pending","toolName":"write","rawInput":{"file_path":"C:\\repo\\hello.txt","content":"hi\n"},"content":[],"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-46077f29-2c60-4a04-9570-43f0740cd374-0","status":null,"content":[{"type":"diff","path":"C:\\repo\\hello.txt","oldText":"","newText":"hi\n"}],"rawOutput":null,"locations":[{"path":"C:\\repo\\hello.txt"}]}
+{"type":"tool_call_update","toolCallId":"call-46077f29-2c60-4a04-9570-43f0740cd374-0","status":"completed","content":[{"type":"diff","path":"C:\\repo\\hello.txt","oldText":"","newText":"hi\n"}],"rawOutput":{"type":"SearchReplace"},"locations":[]}
+{"type":"text","data":"done"}
+{"type":"usage","usage":{"input_tokens":10983,"output_tokens":22,"cache_read_input_tokens":2816,"cache_creation_input_tokens":0,"reasoning_tokens":17},"signature":"REDACTED"}
+{"type":"end","stopReason":"end_turn","sessionId":"019fd9b0-1c9b-7dd3-85a2-2b7b628382d3","requestId":"434cd666-8098-4e75-917e-c46091ae1fdc","usage":{"input_tokens":22116,"cache_read_input_tokens":5376,"cache_creation_input_tokens":0,"output_tokens":91,"reasoning_tokens":83,"total_tokens":27583},"num_turns":2,"total_cost_usd":0.0463908}
