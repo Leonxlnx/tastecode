@@ -11,8 +11,10 @@ For any coding agent working in this repo — Claude Code, Codex, Cursor, an ACP
 subscription plans — Codex, Claude Code and Grok — with the design agent kept simple and
 MCP/Skills at their current size. The Cursor, OpenCode, Antigravity and ACP adapters, the
 API-connection surface, the Qwen route and mobile are **parked, not deleted**: their code
-stays in the repo fully working and returns to the roster after the beta. Do not re-add a
-parked provider to the server roster or the UI without Leon saying so.
+stays in the repo fully working and returns to the roster after the beta. The branch
+`post-beta/full-providers` carries main with the full roster restored (all gates green) —
+rebase it onto main occasionally, never merge it before Leon calls the end of the beta. Do
+not re-add a parked provider to the server roster or the UI without Leon saying so.
 [docs/dashboard.html](./docs/dashboard.html) is the release checklist for this scope.
 
 ## Read first
