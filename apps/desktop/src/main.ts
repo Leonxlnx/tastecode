@@ -7,9 +7,12 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
+  nativeImage,
   session,
   shell,
   systemPreferences,
+  Tray,
   type WebContents,
 } from 'electron'
 import {
@@ -17,6 +20,7 @@ import {
   type PreviewCaptureRequest,
   type PreviewCaptureResult,
 } from '@harness/contracts'
+import { shouldHideWindowOnClose } from './background-lifecycle.js'
 import { allowsMicrophoneRequest } from './media-permissions.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
 import { revealablePath } from './reveal-path.js'
@@ -61,8 +65,19 @@ const CAPTURE_SETTLE_SCRIPT = `new Promise(resolve => requestAnimationFrame(reso
   ]))
   .then(() => document.fonts?.ready)
   .then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))`
+const ownsSingleInstance = app.requestSingleInstanceLock()
+let mainWindow: BrowserWindow | undefined
+let tray: Tray | undefined
+let appIsQuitting = false
+
+if (!ownsSingleInstance) app.quit()
 
 function createWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    showMainWindow()
+    return
+  }
+
   const initialTheme = windowThemeOptions('dark')
   const window = new BrowserWindow({
     width: 1180,
@@ -99,6 +114,16 @@ function createWindow(): void {
       spellcheck: false,
       preload: path.join(here, 'preload.cjs'),
     },
+  })
+  mainWindow = window
+
+  window.on('close', (event) => {
+    if (!shouldHideWindowOnClose(process.platform, appIsQuitting)) return
+    event.preventDefault()
+    window.hide()
+  })
+  window.on('closed', () => {
+    if (mainWindow === window) mainWindow = undefined
   })
 
   // Avoid the white flash before React paints.
@@ -148,6 +173,40 @@ function createWindow(): void {
 
 function appWindows(): BrowserWindow[] {
   return BrowserWindow.getAllWindows().filter((window) => !captureWindows.has(window))
+}
+
+function showMainWindow(): void {
+  const window = mainWindow
+  if (!window || window.isDestroyed()) {
+    createWindow()
+    return
+  }
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+}
+
+function createBackgroundTray(): void {
+  if (process.platform === 'darwin' || tray) return
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">',
+    '<rect width="32" height="32" rx="8" fill="#111113"/>',
+    '<path fill="#fff" d="M8 8h4v6h8V8h4v16h-4v-6h-8v6H8z"/>',
+    '</svg>',
+  ].join('')
+  const icon = nativeImage
+    .createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`)
+    .resize({ width: 20, height: 20 })
+  tray = new Tray(icon)
+  tray.setToolTip('Harness')
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Open Harness', click: showMainWindow },
+      { type: 'separator' },
+      { label: 'Quit Harness', click: () => app.quit() },
+    ]),
+  )
+  tray.on('click', showMainWindow)
 }
 
 ipcMain.handle('harness:setZoom', (event, action: unknown) => {
@@ -337,14 +396,24 @@ ipcMain.handle('harness:savePastedImage', async (event, payload: unknown) => {
   return destination
 })
 
-void app.whenReady().then(() => {
-  configureMediaPermissions()
-  void sweepStaleCaptures()
-  createWindow()
-  app.on('activate', () => {
-    if (appWindows().length === 0) createWindow()
+if (ownsSingleInstance) {
+  app.on('second-instance', showMainWindow)
+  app.on('before-quit', () => {
+    appIsQuitting = true
   })
-})
+  app.on('will-quit', () => {
+    tray?.destroy()
+    tray = undefined
+  })
+
+  void app.whenReady().then(() => {
+    configureMediaPermissions()
+    void sweepStaleCaptures()
+    createWindow()
+    createBackgroundTray()
+    app.on('activate', showMainWindow)
+  })
+}
 
 /** Allow this app's own renderer to request audio, never video or another origin. */
 function configureMediaPermissions(): void {
@@ -394,7 +463,8 @@ function isOwnRenderer(webContents: WebContents): boolean {
 }
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  // The core server belongs to the application lifecycle, not to a renderer
+  // window. A real app quit still tears down the process and its mobile socket.
 })
 
 function pastedImage(payload: unknown): { bytes: Buffer; extension: string } {
