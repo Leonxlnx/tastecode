@@ -7258,6 +7258,36 @@
     color-mix(in srgb, #fff calc(4% + var(--rail-glass, 0) * 10%), transparent);
 }
 
+/* Glass needs something to frost. The app background behind the rail is one
+   flat color, so a translucent pane over it looked identical to an opaque one
+   (all anyone saw was the hairline highlight). This paints the same accent
+   bloom the Appearance previews promise behind the real rail; the frosted
+   pane above blurs it into soft color. Lives inside .rail-slot so it
+   collapses with the rail and never bleeds under the thread. */
+:root[data-glass='on'] .rail-slot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      65% 34% at 14% 4%,
+      color-mix(in srgb, var(--attention) 34%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      55% 30% at -6% 44%,
+      color-mix(in srgb, var(--effort) 22%, transparent),
+      transparent 74%
+    ),
+    radial-gradient(
+      60% 32% at 30% 100%,
+      color-mix(in srgb, var(--file-reference) 24%, transparent),
+      transparent 72%
+    );
+  opacity: calc(0.25 + var(--rail-glass, 0) * 1.4);
+}
+
 :root[data-glass='on'] .titlebar::after {
   background: color-mix(in srgb, #fff calc(4% + var(--rail-glass, 0) * 10%), transparent);
 }
