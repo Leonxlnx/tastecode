@@ -22,6 +22,7 @@ import type {
 } from '@harness/contracts'
 import {
   ArrowLeft,
+  CircleAlert,
   Blocks,
   ChevronDown,
   Database,
@@ -1091,16 +1092,16 @@ function AboutSettings(props: { transport: Transport }) {
   }
 
   const short = (sha: string) => sha.slice(0, 7)
-  // Only a verdict earns a second line; the idle row explains nothing.
-  const updateNote = !result
+  // Verdicts stay on the row's one line; a failure goes behind the red dot.
+  const updateStatus = !result
     ? undefined
     : result.error
-      ? result.error
+      ? undefined
       : result.upToDate
-        ? `Up to date · ${short(result.remote?.sha ?? '')} is the newest commit.`
+        ? `Up to date · ${short(result.remote?.sha ?? '')}`
         : result.remote
-          ? `Newer commit on GitHub${result.remote.message ? `: "${result.remote.message}"` : ''} (${short(result.remote.sha)}). Pull and restart to update.`
-          : 'Could not determine a verdict.'
+          ? `Newer: ${short(result.remote.sha)} — pull and restart`
+          : 'No verdict'
 
   return (
     <SettingsPanel title="About">
@@ -1109,7 +1110,11 @@ function AboutSettings(props: { transport: Transport }) {
           {`${isDesktop ? 'Desktop' : 'Browser'} · pre-release${result?.localCommit ? ` · ${short(result.localCommit)}` : ''}`}
         </span>
       </SettingsRow>
-      <SettingsRow title="Updates" note={updateNote}>
+      <SettingsRow title="Updates">
+        {result?.error ? (
+          <RowIssue message={result.error} tip="Check your network or GitHub access, then retry." />
+        ) : null}
+        {updateStatus ? <span className="settings__status">{updateStatus}</span> : null}
         <button
           className="settings__action"
           type="button"
@@ -1210,19 +1215,30 @@ function InstallableRow(props: {
     )
   }
 
-  const note =
+  const status =
     install?.phase === 'running'
       ? install.lastLine || 'Installing…'
-      : install?.phase === 'failed'
-        ? `Install failed${install.exitCode === null ? '' : ` (exit ${install.exitCode})`} — finish it in the terminal below, or retry.`
-        : install?.phase === 'succeeded'
-          ? 'Installed · refreshing…'
-          : (startError ?? props.idleNote)
+      : install?.phase === 'succeeded'
+        ? 'Installed · refreshing…'
+        : undefined
+  const issue =
+    install?.phase === 'failed'
+      ? {
+          message: `Install failed${install.exitCode === null ? '' : ` (exit ${install.exitCode})`}.`,
+          tip: 'Open the terminal below for the log, then retry.',
+        }
+      : startError
+        ? { message: startError, tip: 'Retry, or install it from the terminal yourself.' }
+        : props.idleNote
+          ? { message: props.idleNote, tip: 'Install it here, then come back to sign in.' }
+          : undefined
 
   return (
     <>
-      <SettingsRow title={props.title} note={note}>
+      <SettingsRow title={props.title}>
         <div className="provider-settings__actions">
+          {issue ? <RowIssue message={issue.message} tip={issue.tip} /> : null}
+          {status ? <span className="settings__status">{status}</span> : null}
           {props.icon}
           {!props.setup?.installCommand ? (
             <button
@@ -1306,19 +1322,30 @@ function CliSignInRow(props: {
     )
   }
 
-  const note =
+  const status =
     login?.phase === 'running'
       ? login.openedAuthUrl
-        ? 'Browser opened — approve the sign-in there. The terminal below follows along.'
-        : 'Complete the sign-in in the terminal below, then exit the CLI.'
-      : login?.phase === 'failed'
-        ? `The CLI exited${login.exitCode === null ? '' : ` (exit ${login.exitCode})`} — check the terminal, or retry.`
-        : (startError ?? props.idleNote)
+        ? 'Approve the sign-in in your browser'
+        : 'Finish the sign-in in the terminal below'
+      : undefined
+  const issue =
+    login?.phase === 'failed'
+      ? {
+          message: `The CLI exited${login.exitCode === null ? '' : ` (exit ${login.exitCode})`}.`,
+          tip: 'Check the terminal below for what happened, then retry.',
+        }
+      : startError
+        ? { message: startError, tip: 'Retry, or run the login in your own terminal.' }
+        : props.idleNote
+          ? { message: props.idleNote, tip: undefined }
+          : undefined
 
   return (
     <>
-      <SettingsRow title={props.title} note={note}>
+      <SettingsRow title={props.title}>
         <div className="provider-settings__actions">
+          {issue ? <RowIssue message={issue.message} tip={issue.tip} /> : null}
+          {status ? <span className="settings__status">{status}</span> : null}
           {props.icon}
           {login?.phase === 'running' ? (
             <button
@@ -1365,6 +1392,25 @@ function PlannedRow(props: { title: string }) {
         </button>
       </div>
     </SettingsRow>
+  )
+}
+
+/**
+ * Errors never grow a second line: every row keeps one height, and problems
+ * live behind a red dot whose bubble carries the message plus a tip. Hover
+ * or focus opens it — it is a real button so keyboards reach it too.
+ */
+function RowIssue(props: { message: string; tip?: string | undefined }) {
+  return (
+    <span className="row-issue">
+      <button type="button" className="row-issue__dot" aria-label={'Problem: ' + props.message}>
+        <CircleAlert size={14} aria-hidden />
+      </button>
+      <span role="tooltip" className="row-issue__bubble">
+        {props.message}
+        {props.tip ? <span className="row-issue__tip">{props.tip}</span> : null}
+      </span>
+    </span>
   )
 }
 

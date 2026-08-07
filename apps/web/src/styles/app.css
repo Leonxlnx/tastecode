@@ -1338,6 +1338,65 @@
   color: var(--text-2);
 }
 
+/* Errors never grow a second line: a red dot next to the row's control
+   opens a bubble with the message and a tip on hover or focus. */
+.row-issue {
+  position: relative;
+  display: inline-flex;
+}
+
+.row-issue__dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: color-mix(in srgb, var(--error) 14%, transparent);
+  border: 0;
+  border-radius: 50%;
+  color: var(--error);
+  cursor: help;
+  font: inherit;
+}
+
+.row-issue__bubble {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 90;
+  width: max-content;
+  max-width: 300px;
+  padding: 8px 10px;
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-flyout);
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 400;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(2px);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.row-issue:hover .row-issue__bubble,
+.row-issue:focus-within .row-issue__bubble {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+.row-issue__tip {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-3);
+}
+
 /* One-line rows: state that used to be a note sits inline, muted, before
    the row's control. Warning states keep their color so they stay findable. */
 .settings__status {
@@ -1354,7 +1413,11 @@
 }
 
 .settings__row-control {
+  display: flex;
   flex: none;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 
 .settings__inline-controls {
@@ -7311,13 +7374,20 @@
    --------------------------------------------------------------------------- */
 
 :root[data-glass='on'] .rail {
+  /* Real frosted glass: the pane thins faster than the strength value so
+     even Subtle reads as glass, a heavier blur does the frosting, and a
+     hairline highlight on the edge sells the material. */
   background: color-mix(
     in srgb,
-    var(--bg-rail) calc(100% - var(--rail-glass, 0) * 100%),
+    var(--bg-rail) calc(100% - var(--rail-glass, 0) * 130%),
     transparent
   );
-  backdrop-filter: blur(16px) saturate(1.15);
-  -webkit-backdrop-filter: blur(16px) saturate(1.15);
+  backdrop-filter: blur(26px) saturate(1.4);
+  -webkit-backdrop-filter: blur(26px) saturate(1.4);
+  border-right: 1px solid
+    color-mix(in srgb, #fff calc(4% + var(--rail-glass, 0) * 10%), transparent);
+  box-shadow: inset 0 1px 0
+    color-mix(in srgb, #fff calc(3% + var(--rail-glass, 0) * 8%), transparent);
 }
 
 :root[data-backdrop]:not([data-backdrop='default']) .shell {
