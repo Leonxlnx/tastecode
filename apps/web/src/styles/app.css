@@ -1408,6 +1408,32 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Masked and full email stack in one grid cell: the wider full form always
+   reserves the space, so revealing it never shifts the row. */
+.settings__email {
+  display: inline-grid;
+  vertical-align: bottom;
+}
+
+.settings__email > span {
+  grid-area: 1 / 1;
+  white-space: nowrap;
+}
+
+.settings__email-full {
+  visibility: hidden;
+}
+
+.settings__email:hover .settings__email-full,
+.settings__email:focus-visible .settings__email-full {
+  visibility: visible;
+}
+
+.settings__email:hover .settings__email-masked,
+.settings__email:focus-visible .settings__email-masked {
+  visibility: hidden;
+}
+
 .settings__status.is-warning {
   color: var(--error);
 }

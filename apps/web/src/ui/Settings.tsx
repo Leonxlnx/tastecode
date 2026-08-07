@@ -551,9 +551,19 @@ function ProviderSettings(props: {
         />
       )
     }
-    const accountStatus = account?.signedIn
-      ? [account.email, account.plan].filter(Boolean).join(' · ') || 'Signed in'
-      : 'Not signed in'
+    const accountStatus = account?.signedIn ? (
+      account.email || account.plan ? (
+        <>
+          {account.email ? <AccountEmail email={account.email} /> : null}
+          {account.email && account.plan ? ' · ' : null}
+          {account.plan}
+        </>
+      ) : (
+        'Signed in'
+      )
+    ) : (
+      'Not signed in'
+    )
     const busy = authBusy === status.id
     return (
       <SettingsRow key={status.id} title={status.displayName}>
@@ -1388,6 +1398,28 @@ function ProviderTerminal(props: { transport: Transport; installKey: string }) {
  * omitting it — "not supported yet" and "not installed" must stay
  * distinguishable, and the roadmap belongs in the product, not a doc.
  */
+function maskEmail(email: string): string {
+  const at = email.indexOf('@')
+  if (at <= 1) return email
+  return `${email[0]}…${email.slice(at)}`
+}
+
+/**
+ * Privacy by default: the address shows masked until pointed at or focused.
+ * Both forms render stacked in one grid cell so the row never shifts when
+ * the longer full address appears.
+ */
+function AccountEmail(props: { email: string }) {
+  return (
+    <span className="settings__email" tabIndex={0} aria-label={'Account email, hover to reveal'}>
+      <span className="settings__email-masked" aria-hidden>
+        {maskEmail(props.email)}
+      </span>
+      <span className="settings__email-full">{props.email}</span>
+    </span>
+  )
+}
+
 function PlannedRow(props: { title: string; mark?: ProviderMark }) {
   return (
     <SettingsRow title={props.title}>
