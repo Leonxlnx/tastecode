@@ -61,6 +61,11 @@ controls, a real terminal, MCP and Agent Skills. M4 (the design agent) is next. 
 - Conventional Commits. The body says _why_, not what the diff already shows.
 - Do not create a handoff snapshot. Keep durable facts in `docs/`, current ownership in
   assigned issues and active changes in draft PRs so a restarted agent reads live state.
+- **Keep `docs/dashboard.html` current.** It is the human-readable snapshot of progress —
+  milestones, the kanban board, and the provider matrix. Whenever your change moves any of
+  that (a PR merges, an issue opens or closes, a provider's status or the roadmap shifts),
+  update the dashboard in the same PR or immediately after merging, and bump its
+  updated-date and main SHA. A stale dashboard is worse than none.
 
 ## Before you mark a PR ready
 

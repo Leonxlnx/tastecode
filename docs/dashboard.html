@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Personal Harness — Progress</title>
+    <style>
+      :root {
+        --bg: #0f0f0f;
+        --surface: #161616;
+        --surface-2: #1d1d1d;
+        --line: #262626;
+        --line-strong: #333;
+        --text: #ededed;
+        --text-2: #a3a3a3;
+        --text-3: #6f6f6f;
+        --done: #6fbf8e;
+        --active: #4c9dff;
+        --open: #a3a3a3;
+        --blocked: #e5687a;
+        --r: 6px;
+        font-size: 14px;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font:
+          400 1rem/1.5 'Geist',
+          'Segoe UI Variable Text',
+          system-ui,
+          sans-serif;
+        padding: 40px clamp(16px, 5vw, 64px) 80px;
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+      header {
+        margin-bottom: 36px;
+      }
+      h1 {
+        font-size: 1.45rem;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .meta {
+        color: var(--text-3);
+        font-size: 0.86rem;
+        margin-top: 4px;
+      }
+      .meta code {
+        font-family: 'Geist Mono', ui-monospace, monospace;
+        font-size: 0.82rem;
+      }
+
+      h2 {
+        font-size: 0.86rem;
+        font-weight: 500;
+        color: var(--text-2);
+        margin: 40px 0 12px;
+      }
+
+      /* Milestone rail */
+      .milestones {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .ms {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+        padding: 8px 12px;
+        min-width: 132px;
+      }
+      .ms b {
+        font-weight: 600;
+        font-size: 0.92rem;
+      }
+      .ms span {
+        color: var(--text-3);
+        font-size: 0.82rem;
+      }
+      .ms::before {
+        content: '';
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        flex: none;
+      }
+      .ms.done::before {
+        background: var(--done);
+      }
+      .ms.active::before {
+        background: var(--active);
+      }
+      .ms.open::before {
+        background: var(--line-strong);
+      }
+      .ms.active {
+        border-color: color-mix(in srgb, var(--active) 40%, var(--line));
+      }
+
+      /* Kanban */
+      .board {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 14px;
+      }
+      .col {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+        padding: 12px;
+      }
+      .col > h3 {
+        font-size: 0.82rem;
+        font-weight: 500;
+        color: var(--text-2);
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        padding: 2px 4px 10px;
+      }
+      .col > h3 small {
+        color: var(--text-3);
+        font-weight: 400;
+      }
+      .card {
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+        padding: 9px 11px;
+        margin-bottom: 8px;
+      }
+      .card:last-child {
+        margin-bottom: 0;
+      }
+      .card b {
+        font-weight: 500;
+        font-size: 0.94rem;
+        display: block;
+      }
+      .card p {
+        color: var(--text-2);
+        font-size: 0.85rem;
+        margin-top: 3px;
+      }
+      .card .ref {
+        color: var(--text-3);
+        font-size: 0.78rem;
+        font-family: 'Geist Mono', ui-monospace, monospace;
+        margin-top: 5px;
+        display: block;
+      }
+      .card.blocked {
+        border-left: 2px solid var(--blocked);
+      }
+      .card.owner {
+        border-left: 2px solid var(--active);
+      }
+
+      /* Provider matrix */
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88rem;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 7px 12px;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      th {
+        color: var(--text-3);
+        font-weight: 500;
+        font-size: 0.8rem;
+      }
+      td:first-child {
+        font-weight: 500;
+      }
+      .ok {
+        color: var(--done);
+      }
+      .no {
+        color: var(--text-3);
+      }
+      .warn {
+        color: var(--blocked);
+      }
+      .table-wrap {
+        overflow-x: auto;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+      }
+
+      footer {
+        margin-top: 44px;
+        color: var(--text-3);
+        font-size: 0.8rem;
+        border-top: 1px solid var(--line);
+        padding-top: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Personal Harness — Progress</h1>
+      <p class="meta">
+        Updated 2026-08-07 · main <code>16286c4</code> · keep this file current after every merged
+        PR, opened/closed issue, and roadmap change (rule in AGENTS.md)
+      </p>
+    </header>
+
+    <h2>Milestones</h2>
+    <div class="milestones">
+      <div class="ms done"><b>M0</b><span>Skeleton</span></div>
+      <div class="ms done"><b>M1</b><span>Thread</span></div>
+      <div class="ms done"><b>M2</b><span>Many agents</span></div>
+      <div class="ms done"><b>M3</b><span>Review &amp; control</span></div>
+      <div class="ms done"><b>Providers</b><span>v1 track</span></div>
+      <div class="ms active"><b>M4</b><span>Design agent</span></div>
+      <div class="ms open"><b>M5</b><span>Visual pass</span></div>
+      <div class="ms open"><b>M6</b><span>Ship Windows</span></div>
+      <div class="ms open"><b>M7</b><span>Open source</span></div>
+      <div class="ms open"><b>M8</b><span>Mobile</span></div>
+    </div>
+
+    <h2>Board</h2>
+    <div class="board">
+      <div class="col">
+        <h3>Done <small>recent highlights</small></h3>
+        <div class="card">
+          <b>Seven working agent engines</b>
+          <p>
+            Codex, Claude Code, Cursor, OpenCode, Antigravity, Grok, Kimi (ACP) — all against real
+            wire captures.
+          </p>
+          <span class="ref">#397 #403 #412 #415</span>
+        </div>
+        <div class="card">
+          <b>Effort on every capable provider</b>
+          <p>
+            Claude Code --effort wired per the documented table; Cursor and Antigravity per-effort
+            model ids collapsed onto the slider.
+          </p>
+          <span class="ref">#403 #414 #415</span>
+        </div>
+        <div class="card">
+          <b>API connections</b>
+          <p>
+            OpenAI, Anthropic, OpenRouter, Kimi, Z.ai, custom endpoint — one compatible transport,
+            presets not copies.
+          </p>
+        </div>
+        <div class="card">
+          <b>Guided sign-in card</b>
+          <p>
+            OAuth link auto-opens, device code as copyable chip, terminal demoted to a Details
+            fallback.
+          </p>
+          <span class="ref">#420</span>
+        </div>
+        <div class="card">
+          <b>Settings & appearance pass</b>
+          <p>
+            46px single-line rows, error dots with hover bubbles, frosted sidebar on by default,
+            squarer radii, masked emails, limit windows in the account popup.
+          </p>
+          <span class="ref">#407 #408 #417 #418 #419</span>
+        </div>
+        <div class="card">
+          <b>Per-source model memory</b>
+          <p>Model, effort and tier restored per provider across sessions.</p>
+          <span class="ref">#406</span>
+        </div>
+        <div class="card">
+          <b>Retired honestly</b>
+          <p>
+            Gemini CLI (replaced by Antigravity) and Qwen removed from the roster; sign-out deletes
+            the ACP credential.
+          </p>
+          <span class="ref">#401 #410</span>
+        </div>
+      </div>
+
+      <div class="col">
+        <h3>In progress <small>live branches &amp; owners</small></h3>
+        <div class="card owner">
+          <b>M4 — Design agent + TasteSkill</b>
+          <p>
+            Owned by the Codex chat; design-agent runtime and TasteSkill v2 land separately from
+            this session's work.
+          </p>
+        </div>
+        <div class="card owner">
+          <b>Interactive control polish</b>
+          <p>Draft, design review pending.</p>
+          <span class="ref">PR #421</span>
+        </div>
+        <div class="card owner">
+          <b>Dev launch stability</b>
+          <p>Draft.</p>
+          <span class="ref">PR #422</span>
+        </div>
+        <div class="card owner">
+          <b>Mobile access stack</b>
+          <p>Blueemi's branches — treat all mobile branches as active work, never clean them up.</p>
+          <span class="ref">M8 · closed PRs, work continues</span>
+        </div>
+      </div>
+
+      <div class="col">
+        <h3>Open <small>issues &amp; known gaps</small></h3>
+        <div class="card">
+          <b>Qwen models selectable again</b>
+          <p>Offer Qwen through a working route after the agent retirement.</p>
+          <span class="ref">#380</span>
+        </div>
+        <div class="card">
+          <b>Cursor argv newline truncation</b>
+          <p>Prompt is argv-borne; newlines truncate on Windows cmd.exe.</p>
+          <span class="ref">#379</span>
+        </div>
+        <div class="card">
+          <b>Kimi Code + GLM coding plans</b>
+          <p>Coding-plan credentials through ACP / configured agents.</p>
+          <span class="ref">#168</span>
+        </div>
+        <div class="card">
+          <b>Settings as a real preferences surface</b>
+          <p>Broader prefs beyond the current sections.</p>
+          <span class="ref">#29</span>
+        </div>
+        <div class="card">
+          <b>Profile &amp; activity insights view</b>
+          <p>Codex-app-style usage insights.</p>
+          <span class="ref">#25</span>
+        </div>
+        <div class="card">
+          <b>Empty and error states</b>
+          <p>Every blank screen says something. M5 scope.</p>
+          <span class="ref">#15</span>
+        </div>
+        <div class="card blocked">
+          <b>Pi agent</b>
+          <p>No Pi CLI exists — stays a Planned row until one ships. No facades.</p>
+          <span class="ref">#147</span>
+        </div>
+        <div class="card blocked">
+          <b>Windows code signing</b>
+          <p>Eligibility unresolved; weeks of lead time. Blocks M6.</p>
+        </div>
+        <div class="card blocked">
+          <b>Product name + domain</b>
+          <p>Human decision. Blocks M5/M6.</p>
+        </div>
+      </div>
+    </div>
+
+    <h2>Provider matrix</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Status</th>
+            <th>Models</th>
+            <th>Effort</th>
+            <th>Limits shown</th>
+            <th>Sign-in state</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Codex</td>
+            <td class="ok">Working</td>
+            <td>Live list</td>
+            <td class="ok">Yes</td>
+            <td class="ok">5h + weekly</td>
+            <td class="ok">Email · plan</td>
+          </tr>
+          <tr>
+            <td>Claude Code</td>
+            <td class="ok">Working</td>
+            <td>Aliases + pinned</td>
+            <td class="ok">Yes (not Haiku)</td>
+            <td class="no">CLI exposes none</td>
+            <td class="ok">Email · plan</td>
+          </tr>
+          <tr>
+            <td>Grok</td>
+            <td class="ok">Working</td>
+            <td>Live list</td>
+            <td class="ok">Yes</td>
+            <td class="no">CLI exposes none</td>
+            <td class="ok">Via CLI probe</td>
+          </tr>
+          <tr>
+            <td>Cursor</td>
+            <td class="ok">Working</td>
+            <td>Collapsed variants</td>
+            <td class="ok">Yes + Fast tier</td>
+            <td class="no">CLI exposes none</td>
+            <td class="ok">Via CLI probe</td>
+          </tr>
+          <tr>
+            <td>OpenCode</td>
+            <td class="ok">Working</td>
+            <td>Live list</td>
+            <td class="no">No CLI surface</td>
+            <td class="no">CLI exposes none</td>
+            <td class="no">Unknown</td>
+          </tr>
+          <tr>
+            <td>Antigravity</td>
+            <td class="ok">Working</td>
+            <td>Collapsed variants</td>
+            <td class="ok">Yes</td>
+            <td class="no">CLI exposes none</td>
+            <td class="warn">No probe possible</td>
+          </tr>
+          <tr>
+            <td>Kimi CLI (ACP)</td>
+            <td class="ok">Working</td>
+            <td>Live list</td>
+            <td class="no">No CLI surface</td>
+            <td class="no">CLI exposes none</td>
+            <td class="ok">Credential probe</td>
+          </tr>
+          <tr>
+            <td>API (6 presets)</td>
+            <td class="ok">Working</td>
+            <td>Per connection</td>
+            <td class="no">Transport-dependent</td>
+            <td class="no">n/a</td>
+            <td class="ok">Key in OS store</td>
+          </tr>
+          <tr>
+            <td>Pi</td>
+            <td class="no">Planned</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>Gemini CLI / Qwen</td>
+            <td class="no">Retired</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <footer>
+      Source of truth stays GitHub (issues, PRs) and docs/ROADMAP.md — this page is the readable
+      snapshot of both. Update it in the same PR as the change it reflects, or immediately after
+      merging.
+    </footer>
+  </body>
+</html>
