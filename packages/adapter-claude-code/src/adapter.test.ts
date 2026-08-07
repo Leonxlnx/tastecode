@@ -27,6 +27,28 @@ describe('Claude Code turn invocation', () => {
     expect(args).not.toContain('--append-system-prompt-file')
   })
 
+  it('passes the selected effort and omits the flag when none is chosen', () => {
+    const withEffort = claudeTurnArgs({ model: 'opus', effort: 'xhigh' }, undefined, undefined)
+    expect(withEffort).toContain('--effort')
+    expect(withEffort[withEffort.indexOf('--effort') + 1]).toBe('xhigh')
+    const withoutEffort = claudeTurnArgs({ model: 'opus' }, undefined, undefined)
+    expect(withoutEffort).not.toContain('--effort')
+  })
+
+  it('mirrors the documented per-model effort table', () => {
+    const byId = new Map(CLAUDE_MODELS.map((model) => [model.id, model]))
+    expect(byId.get('fable')?.reasoningEfforts).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    expect(byId.get('fable')?.defaultReasoningEffort).toBe('high')
+    expect(byId.get('claude-opus-4-7')?.defaultReasoningEffort).toBe('xhigh')
+    expect(byId.get('claude-sonnet-4-6')?.reasoningEfforts).toEqual([
+      'low',
+      'medium',
+      'high',
+      'max',
+    ])
+    expect(byId.get('haiku')?.reasoningEfforts).toEqual([])
+  })
+
   it('encodes the prompt as one stream-json user message line', () => {
     const line = claudeUserMessage('first line\nsecond line')
     expect(line.endsWith('\n')).toBe(true)

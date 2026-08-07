@@ -54,24 +54,46 @@ export const CLAUDE_CAPABILITIES: Capabilities = {
  * pinned full names (`--help` documents the full-name form, e.g.
  * 'claude-fable-5') for users who want the model an alias just moved off
  * of. Current as of claude-code 2.1.222.
+ *
+ * Effort levels come from the docs' per-model table (docs/en/model-config):
+ * every effort-capable model takes low..max, the 4.6 generation lacks xhigh,
+ * and the default is high everywhere except Opus 4.7 (xhigh).
  */
+const FULL_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 export const CLAUDE_MODELS: Model[] = [
-  claudeAlias('fable', 'Fable 5', 'Most capable — flagship tier', true),
-  claudeAlias('opus', 'Opus 5', 'Deep reasoning'),
-  claudeAlias('sonnet', 'Sonnet 5', 'Balanced speed and capability'),
-  claudeAlias('haiku', 'Haiku 4.5', 'Fastest and cheapest'),
-  claudeAlias('claude-opus-4-8', 'Opus 4.8', 'Previous Opus generation'),
-  claudeAlias('claude-opus-4-7', 'Opus 4.7', 'Older Opus generation'),
-  claudeAlias('claude-sonnet-4-6', 'Sonnet 4.6', 'Previous Sonnet generation'),
+  claudeAlias('fable', 'Fable 5', 'Most capable — flagship tier', FULL_EFFORTS, true),
+  claudeAlias('opus', 'Opus 5', 'Deep reasoning', FULL_EFFORTS),
+  claudeAlias('sonnet', 'Sonnet 5', 'Balanced speed and capability', FULL_EFFORTS),
+  // Haiku is absent from the docs' effort table; models not listed there do
+  // not support effort, so it gets no slider rather than a dead one.
+  claudeAlias('haiku', 'Haiku 4.5', 'Fastest and cheapest', []),
+  claudeAlias('claude-opus-4-8', 'Opus 4.8', 'Previous Opus generation', FULL_EFFORTS),
+  claudeAlias('claude-opus-4-7', 'Opus 4.7', 'Older Opus generation', FULL_EFFORTS, false, 'xhigh'),
+  claudeAlias('claude-sonnet-4-6', 'Sonnet 4.6', 'Previous Sonnet generation', [
+    'low',
+    'medium',
+    'high',
+    'max',
+  ]),
 ]
 
 function claudeAlias(
   id: string,
   displayName: string,
   description: string,
+  reasoningEfforts: string[],
   isDefault = false,
+  defaultReasoningEffort = 'high',
 ): Model {
-  return { id, displayName, description, isDefault, reasoningEfforts: [], serviceTiers: [] }
+  return {
+    id,
+    displayName,
+    description,
+    isDefault,
+    reasoningEfforts,
+    serviceTiers: [],
+    ...(reasoningEfforts.length > 0 ? { defaultReasoningEffort } : {}),
+  }
 }
 
 /** Claude Code names its permission modes differently; ours map on cleanly. */
@@ -89,6 +111,7 @@ export type ClaudeAdapterEvents = {
 export type ClaudeStartOptions = {
   instructions?: string | undefined
   model?: string | undefined
+  effort?: string | undefined
   approval?: ApprovalMode | undefined
 }
 
@@ -121,6 +144,9 @@ export function claudeTurnArgs(
     '--input-format',
     'stream-json',
     ...(options.model ? ['--model', options.model] : []),
+    // Documented session flag (low, medium, high, xhigh, max); the CLI clamps
+    // levels a model does not support to its nearest lower one itself.
+    ...(options.effort ? ['--effort', options.effort] : []),
     ...(permissionMode ? ['--permission-mode', permissionMode] : []),
     ...(instructionsFile ? ['--append-system-prompt-file', instructionsFile] : []),
     // Continuity: without this every turn starts a fresh context and the

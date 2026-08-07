@@ -441,6 +441,7 @@ function claudeRuntime(onLog: (line: string) => void): ProviderRuntime {
       adapter.on('log', onLog)
       const thread = await adapter.startThread(workspacePath, {
         model: options.model,
+        effort: options.effort,
         approval: options.approval,
         instructions: options.instructions,
       })
