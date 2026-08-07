@@ -111,7 +111,7 @@ function SidebarComponent(props: {
   const [scope, setScope] = useState('')
   const macOS = isMacOS()
   const inbox = props.mode === 'inbox' && props.inbox !== undefined
-  const primaryUsage = props.usageSummary?.limits[0]
+  const limits = props.usageSummary?.limits ?? []
 
   const closeOnNarrowViewport = () => {
     if (globalThis.matchMedia?.('(max-width: 700px)').matches) props.onClose()
@@ -327,12 +327,45 @@ function SidebarComponent(props: {
               {(close) => (
                 <>
                   <div className="account-menu__usage">
-                    <Gauge size={14} aria-hidden />
-                    <span>
-                      {primaryUsage
-                        ? `${Math.round(100 - primaryUsage.usedPercent)}% left`
-                        : 'Limits unavailable'}
-                    </span>
+                    <div className="account-menu__usage-head">
+                      <Gauge size={14} aria-hidden />
+                      <span>Limits</span>
+                    </div>
+                    {limits.length > 0 ? (
+                      limits.map((limit) => (
+                        <div className="account-menu__limit" key={limit.label}>
+                          <div className="account-menu__limit-row">
+                            <span className="account-menu__limit-label">{limit.label}</span>
+                            <span>{Math.round(100 - limit.usedPercent)}% left</span>
+                          </div>
+                          <div
+                            className="account-menu__limit-bar"
+                            role="progressbar"
+                            aria-label={`${limit.label} used`}
+                            aria-valuenow={Math.round(limit.usedPercent)}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                          >
+                            <span
+                              style={{
+                                width: `${Math.min(100, Math.max(0, limit.usedPercent))}%`,
+                              }}
+                            />
+                          </div>
+                          {limit.resetsAt ? (
+                            <span className="account-menu__limit-reset">
+                              Resets {resetLabel(limit.resetsAt)}
+                            </span>
+                          ) : null}
+                        </div>
+                      ))
+                    ) : (
+                      // Honest, not vague: of the wired CLIs only Codex
+                      // answers with subscription windows today.
+                      <span className="account-menu__usage-note">
+                        {props.providerName} reports no limits
+                      </span>
+                    )}
                   </div>
                   <MenuItem
                     title="Settings"
@@ -917,6 +950,18 @@ function displayName(project: Project): string {
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] ?? path
+}
+
+/** A reset within the week reads as weekday and time; further out, as a date. */
+function resetLabel(at: number): string {
+  const date = new Date(at)
+  const withinWeek = at - Date.now() < 6 * 86_400_000
+  return date.toLocaleString(
+    undefined,
+    withinWeek
+      ? { weekday: 'short', hour: '2-digit', minute: '2-digit' }
+      : { month: 'short', day: 'numeric' },
+  )
 }
 
 function initial(account: Account | undefined, fallback: string): string {
