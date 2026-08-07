@@ -65,7 +65,9 @@ controls, a real terminal, MCP and Agent Skills. M4 (the design agent) is next. 
   milestones, the kanban board, and the provider matrix. Whenever your change moves any of
   that (a PR merges, an issue opens or closes, a provider's status or the roadmap shifts),
   update the dashboard in the same PR or immediately after merging, and bump its
-  updated-date and main SHA. A stale dashboard is worse than none.
+  updated-date and main SHA. A stale dashboard is worse than none. The same applies to
+  `docs/feature-inventory.html`, the exhaustive feature checklist: when a feature ships,
+  changes shape, or is removed, its line changes in the same PR.
 
 ## Before you mark a PR ready
 

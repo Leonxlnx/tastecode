@@ -1,0 +1,1241 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Personal Harness Feature Inventory</title>
+    <style>
+      :root {
+        --bg: #0e0e0e;
+        --surface: #151515;
+        --surface-2: #1b1b1b;
+        --surface-3: #232323;
+        --line: #262626;
+        --text: #f0f0f0;
+        --text-2: #a8a8a8;
+        --text-3: #6f6f6f;
+        --green: #52b788;
+        --green-dim: rgb(82 183 136 / 14%);
+        --blue: #5ba8ff;
+        --blue-dim: rgb(91 168 255 / 14%);
+        --red: #e5687a;
+        --red-dim: rgb(229 104 122 / 14%);
+        --grey-dim: rgb(160 160 160 / 10%);
+        --r: 6px;
+        font-size: 14px;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font:
+          400 1rem/1.5 'Geist',
+          'Segoe UI Variable Text',
+          system-ui,
+          sans-serif;
+      }
+      .wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 0 clamp(16px, 4vw, 48px) 100px;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: color-mix(in srgb, var(--bg) 88%, transparent);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid var(--line);
+      }
+      .topbar-inner {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 11px clamp(16px, 4vw, 48px);
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+      .topbar h1 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin-right: auto;
+      }
+      .topbar .total {
+        font-size: 0.82rem;
+        color: var(--text-2);
+        background: var(--surface-3);
+        border-radius: 99px;
+        padding: 3px 11px;
+        font-variant-numeric: tabular-nums;
+      }
+      .topbar .meta {
+        color: var(--text-3);
+        font-size: 0.78rem;
+        font-family: 'Geist Mono', ui-monospace, monospace;
+      }
+
+      .intro {
+        padding-top: 26px;
+        color: var(--text-2);
+        font-size: 0.9rem;
+        max-width: 70ch;
+      }
+
+      /* Section index */
+      .toc {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 16px;
+      }
+      .toc a {
+        color: var(--text-2);
+        text-decoration: none;
+        font-size: 0.82rem;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 99px;
+        padding: 4px 12px;
+        transition: 140ms ease;
+      }
+      .toc a:hover {
+        color: var(--text);
+        border-color: var(--text-3);
+      }
+
+      section {
+        padding-top: 34px;
+      }
+      section > header {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 8px;
+        margin-bottom: 12px;
+      }
+      section > header h2 {
+        font-size: 1rem;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      section > header .count {
+        margin-left: auto;
+        color: var(--text-3);
+        font-size: 0.8rem;
+        font-variant-numeric: tabular-nums;
+      }
+
+      h3 {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--text-2);
+        margin: 18px 0 6px;
+      }
+
+      ul.check {
+        list-style: none;
+        padding: 0;
+        display: grid;
+        gap: 2px;
+      }
+      ul.check li {
+        border-radius: var(--r);
+        transition: background 120ms ease;
+      }
+      ul.check li:hover {
+        background: var(--surface);
+      }
+      ul.check label {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        padding: 5px 8px;
+        cursor: pointer;
+        font-size: 0.9rem;
+      }
+      ul.check input {
+        accent-color: var(--green);
+        width: 14px;
+        height: 14px;
+        flex: none;
+        transform: translateY(1px);
+        cursor: pointer;
+      }
+      ul.check .d {
+        color: var(--text-3);
+        font-size: 0.84rem;
+      }
+      ul.check input:checked ~ span {
+        color: var(--text-2);
+      }
+
+      .note {
+        color: var(--text-3);
+        font-size: 0.82rem;
+        margin-top: 8px;
+      }
+      code {
+        font-family: 'Geist Mono', ui-monospace, monospace;
+        font-size: 0.82em;
+        background: var(--surface-2);
+        border-radius: 4px;
+        padding: 1px 5px;
+      }
+      .swatch {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 3px;
+        transform: translateY(1px);
+        border: 1px solid rgb(255 255 255 / 15%);
+      }
+
+      footer {
+        margin-top: 52px;
+        color: var(--text-3);
+        font-size: 0.8rem;
+        border-top: 1px solid var(--line);
+        padding-top: 14px;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="topbar">
+      <div class="topbar-inner">
+        <h1>Feature Inventory</h1>
+        <span class="total" id="total">0 checked</span>
+        <span class="meta">2026-08-07 dcc1ae9</span>
+      </div>
+    </div>
+
+    <div class="wrap">
+      <p class="intro">
+        Every feature the app has today, as concrete as it gets. This is the working checklist for
+        deciding the first release scope: tick a box to mark a feature as keep. Ticks are saved in
+        this browser only. Nothing here is a plan, everything listed exists and runs right now.
+      </p>
+
+      <div class="toc">
+        <a href="#providers">Providers</a>
+        <a href="#composer">Composer</a>
+        <a href="#thread">Thread</a>
+        <a href="#review">Review and safety</a>
+        <a href="#git">Projects, sessions, git</a>
+        <a href="#sidebar">Sidebar</a>
+        <a href="#search">Search and palette</a>
+        <a href="#extensions">MCP, Skills, Workflows</a>
+        <a href="#appearance">Appearance</a>
+        <a href="#settings">Settings</a>
+        <a href="#shell">Desktop shell and security</a>
+      </div>
+
+      <section id="providers">
+        <header>
+          <h2>Providers</h2>
+          <span class="count"></span>
+        </header>
+
+        <h3>Codex (native app-server protocol)</h3>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Sign in with real ChatGPT OAuth, shows email and plan in Settings</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Live model list from the provider
+                <span class="d"
+                  >GPT-5.6 Sol, Terra, Luna, GPT-5.5, 5.4, 5.4-Mini, 5.3-Codex-Spark</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Reasoning effort per model, service tier toggle
+                <span class="d">Priority routing</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Steer mid-turn, fork a thread, interrupt, streamed reasoning</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Approval cards answered mid-turn, auto-review mode, agent questions back to the
+                user</span
+              ></label
+            >
+          </li>
+          <li>
+            <label><input type="checkbox" /><span>Image attachments in the prompt</span></label>
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Rate limit windows in the account popup
+                <span class="d">5 hour and weekly, with reset times</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Voice dictation in the composer
+                <span class="d">Codex-backed, the one approved provider exception</span></span
+              ></label
+            >
+          </li>
+        </ul>
+
+        <h3>Claude Code (structured CLI, stream-json)</h3>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Sign-in state with email and plan, sign out from Settings</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Model aliases plus pinned previous generations
+                <span class="d"
+                  >Fable 5, Opus 5, Sonnet 5, Haiku 4.5, Opus 4.8, Opus 4.7, Sonnet 4.6</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Effort slider per the documented table
+                <span class="d">low to max, Haiku has none, Opus 4.7 defaults xhigh</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Interrupt, streamed reasoning, session resume across turns</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Permission modes mapped to the CLI
+                <span class="d">ask, accept edits, bypass</span></span
+              ></label
+            >
+          </li>
+        </ul>
+
+        <h3>Cursor (cursor-agent stream-json)</h3>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Forty-plus wire variants collapsed to base models, effort on the slider</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Fast twin as a service tier toggle instead of separate models</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Sign-in detection via CLI probe, app-side login flow</span
+              ></label
+            >
+          </li>
+        </ul>
+
+        <h3>OpenCode (local server, HTTP/SSE)</h3>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Live model catalog across its configured providers
+                <span class="d">free tier, MiniMax plans, and more</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Own MCP servers and credentials passed through</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Sign in through its own CLI in the guided card</span
+              ></label
+            >
+          </li>
+        </ul>
+
+        <h3>Antigravity (agy, stream-json)</h3>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Per-effort slugs collapsed to clean names
+                <span class="d"
+                  >Gemini 3.6 Flash, Gemini 3.1 Pro, Claude Sonnet 4.6, GPT-OSS 120B</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Effort resolves back to the real slug from the captured listing</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Conversation resume, interrupt, permission mapping</span
+              ></label
+            >
+          </li>
+        </ul>
+
+        <h3>Grok (grok CLI, streaming-json)</h3>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Full turn streaming with reasoning items, file changes, and commands</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Effort low to max, session resume, interrupt</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Signed-in detection through the CLI itself, sign out runs grok logout</span
+              ></label
+            >
+          </li>
+        </ul>
+
+        <h3>Kimi CLI (over ACP)</h3>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Full agent loop through the shared ACP adapter
+                <span class="d">K2.7 Coding, K2.7 Highspeed, K3, K3-256k</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Signed-in state via credential existence probe, sign out removes the
+                credential</span
+              ></label
+            >
+          </li>
+        </ul>
+
+        <h3>Direct API connections (Harness-owned agent loop)</h3>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Six presets
+                <span class="d"
+                  >OpenAI API, Anthropic API, OpenRouter, Kimi API, Z.ai API, custom endpoint</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >One shared OpenAI-compatible transport, Anthropic native Messages API</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >API keys stored only in the OS credential store, renderer never sees values</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Custom endpoints require HTTPS unless loopback</span
+              ></label
+            >
+          </li>
+        </ul>
+
+        <h3>Provider management</h3>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Auto-detect installed CLIs with version check and mismatch warning</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Guided install per provider in an in-app terminal</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Guided sign-in card
+                <span class="d"
+                  >browser opens itself, device code as copy chip, live status line, terminal only
+                  behind Details</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Error state as a red dot with hover bubble, never a second row line</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Email masked for privacy, full address on hover</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Honest rows for what does not exist
+                <span class="d">Pi planned, Gemini CLI and Qwen retired</span></span
+              ></label
+            >
+          </li>
+        </ul>
+      </section>
+
+      <section id="composer">
+        <header>
+          <h2>Composer</h2>
+          <span class="count"></span>
+        </header>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Auto-growing prompt field with queued sends while a turn runs</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Queued prompts are editable and reorderable before they fire</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Steer mid-turn where the engine supports it</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Model picker grouped by source with provider logos, stays open after
+                selection</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Per-model effort slider and Fast toggle, helper text only on hover</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Model, effort, and tier remembered per provider across sessions</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Hide single models or whole sources from the picker in Settings</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Context chip with git branch and live diff stats</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Context window usage shown beside the picker</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Permission mode selector <span class="d">ask, auto, auto-review, full</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Image attachments where the engine takes them</span
+              ></label
+            >
+          </li>
+          <li>
+            <label><input type="checkbox" /><span>Voice dictation with a recorder bar</span></label>
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Design mode entry point in the prompt bar</span
+              ></label
+            >
+          </li>
+        </ul>
+      </section>
+
+      <section id="thread">
+        <header>
+          <h2>Thread</h2>
+          <span class="count"></span>
+        </header>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Streaming markdown with syntax highlighting</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Every item type first class
+                <span class="d"
+                  >message, reasoning, plan, command, file change, tool call, error</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Virtualized list, folded deltas once per frame, no full-thread re-render while
+                streaming</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Single working orb that never restarts mid-turn</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Collapse and expand per item, reasoning collapsed by default</span
+              ></label
+            >
+          </li>
+          <li>
+            <label><input type="checkbox" /><span>Turn navigation, jump between turns</span></label>
+          </li>
+          <li>
+            <label><input type="checkbox" /><span>In-thread search</span></label>
+          </li>
+          <li>
+            <label><input type="checkbox" /><span>Interrupt a running turn</span></label>
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span>Copy, Edit, and Revert on user messages</span></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Optimistic first message, no chat remount</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Live token spend, command duration and exit codes on command items</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >The agent's plan for the turn rendered as its own item</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Image viewer overlay for attached and produced images</span
+              ></label
+            >
+          </li>
+        </ul>
+      </section>
+
+      <section id="review">
+        <header>
+          <h2>Review and safety</h2>
+          <span class="count"></span>
+        </header>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span>Turn-level diff, expandable per file</span></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span>Per-hunk and per-file accept or reject</span></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Approval cards with command and working directory, answerable mid-turn</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Auto-review mode where the provider supports it</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Checkpoint every turn, reversible rollback with changed-file inspection</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Permission mode visible at all times in the composer</span
+              ></label
+            >
+          </li>
+        </ul>
+      </section>
+
+      <section id="git">
+        <header>
+          <h2>Projects, sessions, git</h2>
+          <span class="count"></span>
+        </header>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Add project by folder, multiple projects at once</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Multiple concurrent sessions per project with live status</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Sessions survive restart, server-owned SQLite event log</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Private git worktree per session, requested and managed from the UI</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Worktree branch shown as a tag on the session row</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Checkout discard dialog before destructive switches</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Git branch and diff stats detected live for the context chip</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Persistent per-session and per-day usage accounting
+                <span class="d">money only when the provider reports real cost</span></span
+              ></label
+            >
+          </li>
+        </ul>
+      </section>
+
+      <section id="sidebar">
+        <header>
+          <h2>Sidebar</h2>
+          <span class="count"></span>
+        </header>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Two versions switchable in Settings
+                <span class="d">V1 Classic and V2 Inbox with auto-settle after N days</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Projects with sessions, both renameable inline</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Pin projects and pin sessions, pinned float to the top</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Drag to reorder sessions inside a project</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Drag the edge to resize <span class="d">148 to 420 px</span>, drag past the minimum
+                to collapse</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span>Collapsed rail reveals on edge hover</span></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Braille spinner for running sessions, unread markers, elapsed status labels</span
+              ></label
+            >
+          </li>
+          <li>
+            <label><input type="checkbox" /><span>Archive a whole project's sessions</span></label>
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Account popup exactly as wide as its button
+                <span class="d">limit windows, then Settings</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Frosted glass over the app backdrop
+                <span class="d">blur 26 px, saturation boost, inset highlights</span></span
+              ></label
+            >
+          </li>
+        </ul>
+      </section>
+
+      <section id="search">
+        <header>
+          <h2>Search and palette</h2>
+          <span class="count"></span>
+        </header>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span>Command palette with keyboard shortcuts</span></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Cross-session full-text search, scopable to one project</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Keyboard shortcuts with hints rendered in the UI
+                <span class="d">new chat, new project, settings, search</span></span
+              ></label
+            >
+          </li>
+        </ul>
+      </section>
+
+      <section id="extensions">
+        <header>
+          <h2>MCP, Skills, Workflows</h2>
+          <span class="count"></span>
+        </header>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >MCP servers: add, enable and disable, inspect, per-project scope</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >MCP OAuth sign-in handled by the server, credentials in the OS store</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >MCP servers reloadable into a running session</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Agent Skills: browse, enable per project, progressive loading</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Workflows section: sidebar version switch and inbox auto-settle</span
+              ></label
+            >
+          </li>
+        </ul>
+      </section>
+
+      <section id="appearance">
+        <header>
+          <h2>Appearance</h2>
+          <span class="count"></span>
+        </header>
+        <ul class="check">
+          <li>
+            <label><input type="checkbox" /><span>Theme: System, Light, Dark</span></label>
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Six fonts
+                <span class="d">Geist, System, Humanist, Rounded, Editorial, Mono</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Seven accents
+                <span class="d"
+                  ><i class="swatch" style="background: #4c9dff"></i>Neutral
+                  <i class="swatch" style="background: #65b8ff"></i>Ocean
+                  <i class="swatch" style="background: #71c695"></i>Forest
+                  <i class="swatch" style="background: #c69cff"></i>Sunset
+                  <i class="swatch" style="background: #e0ad61"></i>Amber
+                  <i class="swatch" style="background: #e593ad"></i>Rose
+                  <i class="swatch" style="background: #ae9eea"></i>Lavender</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Six backdrops
+                <span class="d">Graphite, Slate, Mocha, Forest, Midnight, Plum</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Sidebar translucency in four steps
+                <span class="d">Off, Subtle, Medium, Strong, default Medium</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Color only ever means something
+                <span class="d">running, error, success, attention, never decoration</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >macOS font smoothing toggle where relevant</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Design tokens throughout, no raw values downstream</span
+              ></label
+            >
+          </li>
+        </ul>
+      </section>
+
+      <section id="settings">
+        <header>
+          <h2>Settings</h2>
+          <span class="count"></span>
+        </header>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Eight sections
+                <span class="d"
+                  >Providers, Models, MCP, Skills, Workflows, Appearance, Data, About</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span>Every row one line at 46 px, no subtext</span></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Models: per-source and per-model visibility toggles for the picker</span
+              ></label
+            >
+          </li>
+          <li>
+            <label><input type="checkbox" /><span>Data: project count and full reset</span></label>
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >About: version, update check with inline status</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Full keyboard dialog behavior
+                <span class="d">focus trapped, Escape closes</span></span
+              ></label
+            >
+          </li>
+        </ul>
+      </section>
+
+      <section id="shell">
+        <header>
+          <h2>Desktop shell and security</h2>
+          <span class="count"></span>
+        </header>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Hardened Electron shell, renderer never spawns processes or reads the
+                filesystem</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >One local WebSocket server with typed zod contracts
+                <span class="d">127.0.0.1:4311</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span>Loopback origin gate on every connection</span></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Secrets only in Windows Credential Manager or macOS Keychain</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Credential files never read, existence checks only</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Windows title bar via the real Window Controls Overlay</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Real PTY terminal sessions server-side
+                <span class="d">installs, sign-ins, session terminals</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Windows and macOS behave the same, CI runs both</span
+              ></label
+            >
+          </li>
+          <li>
+            <label><input type="checkbox" /><span>Onboarding with real vendor sign-in</span></label>
+          </li>
+        </ul>
+      </section>
+
+      <footer>
+        Companion to docs/dashboard.html. Everything listed is implemented on main as of the commit
+        in the top bar. Ticks live in your browser's local storage, nothing is sent anywhere.
+      </footer>
+    </div>
+
+    <script>
+      const KEY = 'harness.featureInventory.v1'
+      const saved = new Set(JSON.parse(localStorage.getItem(KEY) ?? '[]'))
+      const boxes = [...document.querySelectorAll('ul.check input')]
+      boxes.forEach((box, index) => {
+        box.dataset.id = String(index)
+        box.checked = saved.has(String(index))
+        box.addEventListener('change', () => {
+          box.checked ? saved.add(box.dataset.id) : saved.delete(box.dataset.id)
+          localStorage.setItem(KEY, JSON.stringify([...saved]))
+          update()
+        })
+      })
+      function update() {
+        for (const section of document.querySelectorAll('section')) {
+          const inputs = section.querySelectorAll('ul.check input')
+          if (!inputs.length) continue
+          const checked = [...inputs].filter((i) => i.checked).length
+          section.querySelector('.count').textContent = checked + ' of ' + inputs.length + ' kept'
+        }
+        const total = boxes.filter((b) => b.checked).length
+        document.getElementById('total').textContent = total + ' of ' + boxes.length + ' kept'
+      }
+      update()
+    </script>
+  </body>
+</html>
