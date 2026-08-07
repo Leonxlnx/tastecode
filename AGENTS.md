@@ -4,10 +4,16 @@ For any coding agent working in this repo — Claude Code, Codex, Cursor, an ACP
 
 `pnpm dev` starts the server, renderer and desktop shell together.
 
-**Where the project is:** M0 through M3 are done. Codex, Claude Code and any ACP agent
-(Gemini, Kimi, Qwen) run with parallel sessions, isolated worktrees, rollback, review
-controls, a real terminal, MCP and Agent Skills. M4 (the design agent) is next. See
+**Where the project is:** M0 through M3 are done. M4 (the design agent) is next. See
 [docs/ROADMAP.md](./docs/ROADMAP.md) for durable status and GitHub issues/PRs for live work.
+
+**Public beta scope (Leon, 2026-08-07):** the first release ships exactly three
+subscription plans — Codex, Claude Code and Grok — with the design agent kept simple and
+MCP/Skills at their current size. The Cursor, OpenCode, Antigravity and ACP adapters, the
+API-connection surface, the Qwen route and mobile are **parked, not deleted**: their code
+stays in the repo fully working and returns to the roster after the beta. Do not re-add a
+parked provider to the server roster or the UI without Leon saying so.
+[docs/dashboard.html](./docs/dashboard.html) is the release checklist for this scope.
 
 ## Read first
 

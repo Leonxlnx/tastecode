@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Personal Harness Progress</title>
+    <title>Personal Harness Release Roadmap</title>
     <style>
       :root {
         --bg: #0e0e0e;
@@ -41,12 +41,11 @@
           sans-serif;
       }
       .wrap {
-        max-width: 1280px;
+        max-width: 1240px;
         margin: 0 auto;
         padding: 0 clamp(16px, 4vw, 48px) 90px;
       }
 
-      /* Sticky nav: you always know where you are and can jump anywhere. */
       .topbar {
         position: sticky;
         top: 0;
@@ -56,12 +55,12 @@
         border-bottom: 1px solid var(--line);
       }
       .topbar-inner {
-        max-width: 1280px;
+        max-width: 1240px;
         margin: 0 auto;
         padding: 12px clamp(16px, 4vw, 48px);
         display: flex;
         align-items: center;
-        gap: 20px;
+        gap: 18px;
         flex-wrap: wrap;
       }
       .topbar h1 {
@@ -88,29 +87,30 @@
       }
       .meta {
         color: var(--text-3);
-        font-size: 0.8rem;
+        font-size: 0.78rem;
         font-family: 'Geist Mono', ui-monospace, monospace;
       }
 
       section {
-        padding-top: 34px;
+        padding-top: 36px;
       }
       section > h2 {
-        font-size: 1.02rem;
+        font-size: 1.05rem;
         font-weight: 600;
         letter-spacing: -0.01em;
         margin-bottom: 4px;
       }
       section > .sub {
         color: var(--text-3);
-        font-size: 0.85rem;
+        font-size: 0.86rem;
         margin-bottom: 16px;
+        max-width: 78ch;
       }
 
-      /* Overview: one glance = how far the project is. */
+      /* Hero: the release in one line */
       .hero {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
         gap: 10px;
       }
       .kpi {
@@ -121,7 +121,7 @@
       }
       .kpi b {
         display: block;
-        font-size: 1.6rem;
+        font-size: 1.55rem;
         font-weight: 600;
         line-height: 1.15;
         letter-spacing: -0.02em;
@@ -137,59 +137,6 @@
         margin-top: 2px;
       }
 
-      /* Milestone track: one bar, left to right, done fills green. */
-      .track {
-        display: grid;
-        grid-template-columns: repeat(10, 1fr);
-        gap: 4px;
-        margin-top: 14px;
-      }
-      .seg {
-        border-radius: 4px;
-        padding: 8px 6px 7px;
-        background: var(--grey-dim);
-        border: 1px solid transparent;
-        min-width: 0;
-      }
-      .seg b {
-        display: block;
-        font-size: 0.82rem;
-        font-weight: 600;
-      }
-      .seg span {
-        display: block;
-        font-size: 0.72rem;
-        color: var(--text-3);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .seg.done {
-        background: var(--green-dim);
-        border-color: rgb(82 183 136 / 25%);
-      }
-      .seg.done b {
-        color: var(--green);
-      }
-      .seg.active {
-        background: var(--blue-dim);
-        border-color: rgb(91 168 255 / 35%);
-      }
-      .seg.active b {
-        color: var(--blue);
-      }
-      @media (max-width: 900px) {
-        .track {
-          grid-template-columns: repeat(5, 1fr);
-        }
-      }
-      @media (max-width: 480px) {
-        .track {
-          grid-template-columns: repeat(2, 1fr);
-        }
-      }
-
-      /* Status language used everywhere: pill = state, always the same colors. */
       .pill {
         display: inline-block;
         font-size: 0.74rem;
@@ -215,20 +162,20 @@
         background: var(--grey-dim);
       }
 
-      /* Board: each column carries its color on the header, count included. */
-      .board {
+      /* Checklist lanes */
+      .lanes {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(min(310px, 100%), 1fr));
         gap: 14px;
         align-items: start;
       }
-      .col {
+      .lane {
         background: var(--surface);
         border: 1px solid var(--line);
         border-radius: var(--r);
         overflow: hidden;
       }
-      .col header {
+      .lane header {
         display: flex;
         align-items: center;
         gap: 10px;
@@ -237,7 +184,7 @@
         font-size: 0.88rem;
         font-weight: 600;
       }
-      .col header .count {
+      .lane header .count {
         margin-left: auto;
         font-size: 0.78rem;
         font-weight: 500;
@@ -246,96 +193,78 @@
         border-radius: 99px;
         padding: 1px 9px;
       }
-      .col.c-done header {
+      .lane.l-done header {
         box-shadow: inset 0 2px var(--green);
       }
-      .col.c-active header {
+      .lane.l-active header {
         box-shadow: inset 0 2px var(--blue);
       }
-      .col.c-open header {
-        box-shadow: inset 0 2px var(--text-3);
+      .lane.l-todo header {
+        box-shadow: inset 0 2px var(--red);
       }
-      .col ul {
+      .lane ul {
         list-style: none;
-        padding: 10px;
+        padding: 8px;
         display: grid;
-        gap: 8px;
+        gap: 2px;
       }
-      .card {
-        background: var(--surface-2);
-        border: 1px solid var(--line);
-        border-radius: var(--r);
-        padding: 10px 12px;
-        transition: border-color 140ms ease;
-      }
-      .card:hover {
-        border-color: var(--text-3);
-      }
-      .card .head {
+      .lane li {
         display: flex;
-        align-items: baseline;
         gap: 10px;
-        justify-content: space-between;
-      }
-      .card .head b {
-        font-weight: 550;
-        font-size: 0.92rem;
-      }
-      .card p {
-        color: var(--text-2);
-        font-size: 0.84rem;
-        margin-top: 4px;
-      }
-      .card .ref {
-        color: var(--text-3);
-        font-size: 0.76rem;
-        font-family: 'Geist Mono', ui-monospace, monospace;
-        margin-top: 6px;
-        display: block;
-      }
-
-      /* Provider matrix */
-      .table-wrap {
-        overflow-x: auto;
-        background: var(--surface);
-        border: 1px solid var(--line);
+        align-items: baseline;
+        padding: 6px 8px;
         border-radius: var(--r);
+        font-size: 0.9rem;
+        transition: background 120ms ease;
       }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.87rem;
-      }
-      th,
-      td {
-        text-align: left;
-        padding: 9px 14px;
-        border-bottom: 1px solid var(--line);
-        white-space: nowrap;
-      }
-      tr:last-child td {
-        border-bottom: 0;
-      }
-      th {
-        color: var(--text-3);
-        font-weight: 500;
-        font-size: 0.78rem;
+      .lane li:hover {
         background: var(--surface-2);
       }
-      td:first-child {
-        font-weight: 550;
+      .lane li .tick {
+        flex: none;
+        width: 15px;
+        height: 15px;
+        border-radius: 4px;
+        transform: translateY(2px);
+        display: grid;
+        place-items: center;
+        font-size: 11px;
+        line-height: 1;
       }
-      tbody tr {
-        transition: background 140ms ease;
-      }
-      tbody tr:hover {
-        background: var(--surface-2);
-      }
-      td .y {
+      .l-done .tick {
+        background: var(--green-dim);
         color: var(--green);
       }
-      td .n {
+      .l-active .tick {
+        background: var(--blue-dim);
+        color: var(--blue);
+      }
+      .l-todo .tick {
+        background: var(--grey-dim);
         color: var(--text-3);
+      }
+      .lane li .d {
+        color: var(--text-3);
+        font-size: 0.82rem;
+        display: block;
+      }
+      .lane li > span {
+        min-width: 0;
+      }
+
+      /* Parked strip */
+      .parked {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .parked span {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 99px;
+        padding: 5px 13px;
+        color: var(--text-2);
+        font-size: 0.85rem;
       }
 
       footer {
@@ -346,6 +275,9 @@
         padding-top: 14px;
         line-height: 1.6;
       }
+      footer a {
+        color: var(--text-2);
+      }
     </style>
   </head>
   <body>
@@ -353,321 +285,225 @@
       <div class="topbar-inner">
         <h1>Personal Harness</h1>
         <nav>
-          <a href="#overview">Overview</a>
-          <a href="#board">Board</a>
-          <a href="#providers">Providers</a>
+          <a href="#scope">Scope</a>
+          <a href="#ready">Checklist</a>
+          <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-07 fdaf539</span>
+        <span class="meta">2026-08-07 df79baf</span>
       </div>
     </div>
 
     <div class="wrap">
-      <section id="overview">
-        <h2>Overview</h2>
+      <section id="scope">
+        <h2>Public Beta</h2>
         <p class="sub">
-          Where the project stands right now. Details live on GitHub and in docs/ROADMAP.md.
+          The first release ships three subscription plans and nothing else: Codex, Claude Code, and
+          Grok. Everything below either exists and is checked, is being worked on, or must happen
+          before the beta goes out. Parked features stay built in the repo and return afterwards.
         </p>
         <div class="hero">
           <div class="kpi">
-            <b>50%</b>
-            <span>of the roadmap done</span>
-            <small>M0 to M3 plus the provider track</small>
+            <b>3</b>
+            <span>providers in the beta</span>
+            <small>Codex, Claude Code, Grok. All working today</small>
           </div>
           <div class="kpi">
-            <b>7</b>
-            <span>working agent engines</span>
-            <small>every one against captured wire output</small>
+            <b>Ready</b>
+            <span>core app</span>
+            <small>thread, review, sessions, git, settings</small>
           </div>
           <div class="kpi">
-            <b>6</b>
-            <span>API connection presets</span>
-            <small>one shared transport</small>
+            <b>2</b>
+            <span>workstreams running</span>
+            <small>design agent, visual polish</small>
           </div>
           <div class="kpi">
-            <b>0</b>
-            <span>open pull requests</span>
-            <small>9 open issues</small>
+            <b>8</b>
+            <span>items open before release</span>
+            <small>two of them are human decisions</small>
           </div>
-          <div class="kpi">
-            <b>M4</b>
-            <span>is the active milestone</span>
-            <small>design agent, owned by the Codex chat</small>
-          </div>
-        </div>
-        <div class="track">
-          <div class="seg done"><b>M0</b><span>Skeleton</span></div>
-          <div class="seg done"><b>M1</b><span>Thread</span></div>
-          <div class="seg done"><b>M2</b><span>Many agents</span></div>
-          <div class="seg done"><b>M3</b><span>Review</span></div>
-          <div class="seg done"><b>P</b><span>Providers v1</span></div>
-          <div class="seg active"><b>M4</b><span>Design agent</span></div>
-          <div class="seg"><b>M5</b><span>Visual pass</span></div>
-          <div class="seg"><b>M6</b><span>Ship Windows</span></div>
-          <div class="seg"><b>M7</b><span>Open source</span></div>
-          <div class="seg"><b>M8</b><span>Mobile</span></div>
         </div>
       </section>
 
-      <section id="board">
-        <h2>Board</h2>
-        <p class="sub">
-          Shipped highlights on the left, live work in the middle, everything still open on the
-          right.
-        </p>
-        <div class="board">
-          <div class="col c-done">
-            <header>Shipped <span class="count">7</span></header>
+      <section id="ready">
+        <h2>Release checklist</h2>
+        <p class="sub">Checked means it works on main right now, verified in the running app.</p>
+        <div class="lanes">
+          <div class="lane l-done">
+            <header>Ready <span class="count">10</span></header>
             <ul>
-              <li class="card">
-                <div class="head">
-                  <b>Seven agent engines</b><span class="pill green">Shipped</span>
-                </div>
-                <p>Codex, Claude Code, Cursor, OpenCode, Antigravity, Grok, and Kimi over ACP.</p>
-                <span class="ref">#397 #403 #412 #415</span>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Codex plan
+                  <span class="d">OAuth, live models, effort, steer, approvals, limits, voice</span>
+                </span>
               </li>
-              <li class="card">
-                <div class="head">
-                  <b>Effort everywhere it exists</b><span class="pill green">Shipped</span>
-                </div>
-                <p>
-                  Claude Code effort flag wired. Cursor and Antigravity variants collapsed onto the
-                  slider.
-                </p>
-                <span class="ref">#403 #414 #415</span>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Claude Code plan
+                  <span class="d">models with effort per the docs, resume, permission modes</span>
+                </span>
               </li>
-              <li class="card">
-                <div class="head">
-                  <b>Six API connections</b><span class="pill green">Shipped</span>
-                </div>
-                <p>
-                  OpenAI, Anthropic, OpenRouter, Kimi, Z.ai, and custom endpoints on one transport.
-                </p>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Grok plan
+                  <span class="d">streaming, reasoning, effort, resume, sign in and out</span>
+                </span>
               </li>
-              <li class="card">
-                <div class="head"><b>Guided sign-in</b><span class="pill green">Shipped</span></div>
-                <p>
-                  Browser opens itself, device code as a copyable chip, terminal only as fallback.
-                </p>
-                <span class="ref">#420</span>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Thread and composer
+                  <span class="d">streaming, all item types, queue, steer, interrupt</span>
+                </span>
               </li>
-              <li class="card">
-                <div class="head">
-                  <b>Settings and appearance pass</b><span class="pill green">Shipped</span>
-                </div>
-                <p>
-                  Single-line rows, error dots, frosted sidebar by default, squarer corners, masked
-                  emails, limit windows.
-                </p>
-                <span class="ref">#407 #408 #417 #418 #419</span>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Review and safety
+                  <span class="d">per-hunk diff review, approvals, checkpoints, modes</span>
+                </span>
               </li>
-              <li class="card">
-                <div class="head">
-                  <b>Model choice remembered</b><span class="pill green">Shipped</span>
-                </div>
-                <p>Model, effort, and tier restore per provider across sessions.</p>
-                <span class="ref">#406</span>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Sessions and git
+                  <span class="d">projects, parallel sessions, worktrees, usage accounting</span>
+                </span>
               </li>
-              <li class="card">
-                <div class="head">
-                  <b>Honest retirements</b><span class="pill green">Shipped</span>
-                </div>
-                <p>Gemini CLI and Qwen left the roster. Sign-out removes the stored credential.</p>
-                <span class="ref">#401 #410</span>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Guided sign-in
+                  <span class="d">browser opens itself, code chip, no raw terminal</span>
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Settings <span class="d">one-line rows, masked emails, limits in the popup</span>
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Appearance
+                  <span class="d"
+                    >themes, fonts, accents, backdrops, frosted sidebar that shows</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >MCP and Skills, kept simple
+                  <span class="d"
+                    >add, enable, per-project scope. Stays this size for the beta</span
+                  >
+                </span>
               </li>
             </ul>
           </div>
 
-          <div class="col c-active">
+          <div class="lane l-active">
             <header>In progress <span class="count">2</span></header>
             <ul>
-              <li class="card">
-                <div class="head"><b>M4: Design agent</b><span class="pill blue">Active</span></div>
-                <p>
-                  TasteSkill v2 and the design agent runtime. Owned by the Codex chat, lands
-                  separately.
-                </p>
+              <li>
+                <i class="tick">●</i>
+                <span
+                  >Design agent, simple for now
+                  <span class="d">appearance-focused, owned by the Codex chat</span>
+                </span>
               </li>
-              <li class="card">
-                <div class="head">
-                  <b>Mobile access stack</b><span class="pill blue">Active</span>
-                </div>
-                <p>
-                  Blueemi's branches toward M8. Mobile branches are live work, never clean them up.
-                </p>
+              <li>
+                <i class="tick">●</i>
+                <span
+                  >Visual polish toward M5
+                  <span class="d">screen-by-screen pass, empty and error states (#15)</span>
+                </span>
               </li>
             </ul>
           </div>
 
-          <div class="col c-open">
-            <header>Open <span class="count">9</span></header>
+          <div class="lane l-todo">
+            <header>To do before beta <span class="count">8</span></header>
             <ul>
-              <li class="card">
-                <div class="head">
-                  <b>Qwen models selectable again</b><span class="pill grey">Issue</span>
-                </div>
-                <span class="ref">#380</span>
+              <li>
+                <i class="tick"></i>
+                <span
+                  >Product name and domain
+                  <span class="d">human decision, blocks everything visual</span>
+                </span>
               </li>
-              <li class="card">
-                <div class="head">
-                  <b>Cursor newline truncation</b><span class="pill grey">Issue</span>
-                </div>
-                <p>The prompt travels on argv and truncates at newlines on Windows.</p>
-                <span class="ref">#379</span>
+              <li>
+                <i class="tick"></i>
+                <span
+                  >Windows code signing <span class="d">human decision, weeks of lead time</span>
+                </span>
               </li>
-              <li class="card">
-                <div class="head">
-                  <b>Kimi Code and GLM coding plans</b><span class="pill grey">Issue</span>
-                </div>
-                <span class="ref">#168</span>
+              <li>
+                <i class="tick"></i>
+                <span>Installer <span class="d">NSIS, no SmartScreen warning</span></span>
               </li>
-              <li class="card">
-                <div class="head">
-                  <b>Settings as a preferences surface</b><span class="pill grey">Issue</span>
-                </div>
-                <span class="ref">#29</span>
+              <li>
+                <i class="tick"></i>
+                <span>Auto-update with rollback</span>
               </li>
-              <li class="card">
-                <div class="head">
-                  <b>Profile and activity insights</b><span class="pill grey">Issue</span>
-                </div>
-                <span class="ref">#25</span>
+              <li>
+                <i class="tick"></i>
+                <span>Crash reporting, opt in</span>
               </li>
-              <li class="card">
-                <div class="head">
-                  <b>Empty and error states</b><span class="pill grey">M5</span>
-                </div>
-                <span class="ref">#15</span>
+              <li>
+                <i class="tick"></i>
+                <span
+                  >Clean-VM install test
+                  <span class="d">fresh Windows to first agent answer in under five minutes</span>
+                </span>
               </li>
-              <li class="card">
-                <div class="head"><b>Pi agent</b><span class="pill red">Blocked</span></div>
-                <p>No Pi CLI exists yet. The row stays Planned, no facades.</p>
-                <span class="ref">#147</span>
+              <li>
+                <i class="tick"></i>
+                <span>Landing page and docs</span>
               </li>
-              <li class="card">
-                <div class="head">
-                  <b>Windows code signing</b><span class="pill red">Blocked</span>
-                </div>
-                <p>Eligibility unresolved, weeks of lead time. Blocks M6.</p>
-              </li>
-              <li class="card">
-                <div class="head">
-                  <b>Product name and domain</b><span class="pill red">Blocked</span>
-                </div>
-                <p>Human decision. Blocks M5 and M6.</p>
+              <li>
+                <i class="tick"></i>
+                <span
+                  >Onboarding hardening
+                  <span class="d">first-run flow covers exactly the three beta plans</span>
+                </span>
               </li>
             </ul>
           </div>
         </div>
       </section>
 
-      <section id="providers">
-        <h2>Providers</h2>
+      <section id="parked">
+        <h2>Parked until after the beta</h2>
         <p class="sub">
-          What each provider can actually do today. Empty means the CLI offers nothing to show.
+          Built and tested, deliberately out of the first release. The code stays in the repo;
+          returning any of these is a roster change, not a rebuild.
         </p>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Provider</th>
-                <th>Status</th>
-                <th>Models</th>
-                <th>Effort</th>
-                <th>Limits</th>
-                <th>Sign-in state</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>Codex</td>
-                <td><span class="pill green">Working</span></td>
-                <td>Live list</td>
-                <td><span class="y">Yes</span></td>
-                <td><span class="y">5h and weekly</span></td>
-                <td>Email and plan</td>
-              </tr>
-              <tr>
-                <td>Claude Code</td>
-                <td><span class="pill green">Working</span></td>
-                <td>Aliases and pinned</td>
-                <td><span class="y">Yes</span> <span class="n">(not Haiku)</span></td>
-                <td><span class="n">none exposed</span></td>
-                <td>Email and plan</td>
-              </tr>
-              <tr>
-                <td>Grok</td>
-                <td><span class="pill green">Working</span></td>
-                <td>Live list</td>
-                <td><span class="y">Yes</span></td>
-                <td><span class="n">none exposed</span></td>
-                <td>CLI probe</td>
-              </tr>
-              <tr>
-                <td>Cursor</td>
-                <td><span class="pill green">Working</span></td>
-                <td>Collapsed variants</td>
-                <td><span class="y">Yes</span> plus Fast tier</td>
-                <td><span class="n">none exposed</span></td>
-                <td>CLI probe</td>
-              </tr>
-              <tr>
-                <td>OpenCode</td>
-                <td><span class="pill green">Working</span></td>
-                <td>Live list</td>
-                <td><span class="n">none</span></td>
-                <td><span class="n">none exposed</span></td>
-                <td><span class="n">unknown</span></td>
-              </tr>
-              <tr>
-                <td>Antigravity</td>
-                <td><span class="pill green">Working</span></td>
-                <td>Collapsed variants</td>
-                <td><span class="y">Yes</span></td>
-                <td><span class="n">none exposed</span></td>
-                <td><span class="n">no probe possible</span></td>
-              </tr>
-              <tr>
-                <td>Kimi CLI</td>
-                <td><span class="pill green">Working</span></td>
-                <td>Live list</td>
-                <td><span class="n">none</span></td>
-                <td><span class="n">none exposed</span></td>
-                <td>Credential probe</td>
-              </tr>
-              <tr>
-                <td>API presets</td>
-                <td><span class="pill green">Working</span></td>
-                <td>Per connection</td>
-                <td><span class="n">transport dependent</span></td>
-                <td></td>
-                <td>Key in OS store</td>
-              </tr>
-              <tr>
-                <td>Pi</td>
-                <td><span class="pill grey">Planned</span></td>
-                <td><span class="n">no CLI exists</span></td>
-                <td></td>
-                <td></td>
-                <td></td>
-              </tr>
-              <tr>
-                <td>Gemini CLI, Qwen</td>
-                <td><span class="pill grey">Retired</span></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="parked">
+          <span>Cursor adapter</span>
+          <span>OpenCode adapter</span>
+          <span>Antigravity adapter</span>
+          <span>Kimi CLI over ACP</span>
+          <span>API connections, 6 presets</span>
+          <span>GLM and Z.ai coding plans</span>
+          <span>Qwen route (#380)</span>
+          <span>Pi agent (#147, no CLI exists)</span>
+          <span>Mobile app (M8)</span>
         </div>
       </section>
 
       <footer>
         GitHub issues, pull requests, and docs/ROADMAP.md stay the source of truth. This page is the
-        readable snapshot of them. Update it in the same PR as the change it reflects, then bump the
-        date and the commit in the top bar.
+        release view of them and is updated in the same PR as any change it reflects (rule in
+        AGENTS.md). The exhaustive per-feature checklist lives in
+        <a href="./feature-inventory.html">feature-inventory.html</a>.
       </footer>
     </div>
   </body>

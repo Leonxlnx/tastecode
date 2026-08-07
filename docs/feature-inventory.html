@@ -134,6 +134,16 @@
         font-variant-numeric: tabular-nums;
       }
 
+      .pill-parked {
+        font-weight: 500;
+        font-size: 0.72rem;
+        color: var(--text-3);
+        background: var(--grey-dim);
+        border-radius: 99px;
+        padding: 2px 9px;
+        margin-left: 6px;
+        vertical-align: middle;
+      }
       h3 {
         font-size: 0.85rem;
         font-weight: 600;
@@ -223,7 +233,8 @@
       <p class="intro">
         Every feature the app has today, as concrete as it gets. This is the working checklist for
         deciding the first release scope: tick a box to mark a feature as keep. Ticks are saved in
-        this browser only. Nothing here is a plan, everything listed exists and runs right now.
+        this browser only. Nothing here is a plan: everything listed is implemented. Sections marked
+        parked are built and tested but out of the beta UI (see dashboard.html).
       </p>
 
       <div class="toc">
@@ -353,7 +364,9 @@
           </li>
         </ul>
 
-        <h3>Cursor (cursor-agent stream-json)</h3>
+        <h3>
+          Cursor (cursor-agent stream-json) <span class="pill-parked">parked for the beta</span>
+        </h3>
         <ul class="check">
           <li>
             <label
@@ -378,7 +391,9 @@
           </li>
         </ul>
 
-        <h3>OpenCode (local server, HTTP/SSE)</h3>
+        <h3>
+          OpenCode (local server, HTTP/SSE) <span class="pill-parked">parked for the beta</span>
+        </h3>
         <ul class="check">
           <li>
             <label
@@ -404,7 +419,7 @@
           </li>
         </ul>
 
-        <h3>Antigravity (agy, stream-json)</h3>
+        <h3>Antigravity (agy, stream-json) <span class="pill-parked">parked for the beta</span></h3>
         <ul class="check">
           <li>
             <label
@@ -457,7 +472,7 @@
           </li>
         </ul>
 
-        <h3>Kimi CLI (over ACP)</h3>
+        <h3>Kimi CLI (over ACP) <span class="pill-parked">parked for the beta</span></h3>
         <ul class="check">
           <li>
             <label
@@ -477,7 +492,10 @@
           </li>
         </ul>
 
-        <h3>Direct API connections (Harness-owned agent loop)</h3>
+        <h3>
+          Direct API connections (Harness-owned agent loop)
+          <span class="pill-parked">parked for the beta</span>
+        </h3>
         <ul class="check">
           <li>
             <label
