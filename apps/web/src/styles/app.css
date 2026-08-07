@@ -5661,7 +5661,10 @@
 
 .menu {
   position: fixed;
-  z-index: 30;
+  /* Above the modal surfaces menus open from (settings 60, palette 70) —
+     at 30 the connection-preset dropdown rendered BEHIND the settings
+     dialog: invisible, unclickable, and it read as "there is only OpenAI". */
+  z-index: 80;
   min-width: min(260px, calc(100vw - 16px));
   max-width: calc(100vw - 16px);
   max-height: min(340px, calc(100vh - 16px));
