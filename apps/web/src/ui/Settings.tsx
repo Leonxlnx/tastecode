@@ -598,7 +598,9 @@ function ProviderSettings(props: {
       {byId('cursor').map(renderProviderRow)}
       {byId('opencode').map(renderProviderRow)}
       {direct
-        .filter((status) => !['codex', 'claude-code', 'cursor', 'opencode'].includes(status.id))
+        .filter(
+          (status) => !['codex', 'claude-code', 'grok', 'cursor', 'opencode'].includes(status.id),
+        )
         .map(renderProviderRow)}
 
       <h2 className="settings__group-title settings__group-title--inside">Other agents</h2>
