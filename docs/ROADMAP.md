@@ -115,8 +115,9 @@ empty repo._
 
 ### M8 — Mobile
 
-Expo app reusing the same protocol. Session list, push notifications, read, approve, steer,
-diff review, voice. Connection over Tailscale/LAN first — a relay only later, opt-in, and
+Native SwiftUI app reusing the same protocol. Pairing, project and session browsing,
+attachments, read, approve, steer and diff review are implemented; push notifications and voice
+finish the milestone. Connection over Tailscale/LAN first — a relay only later, opt-in, and
 end-to-end encrypted.
 → _Approve a diff from your phone._
 
