@@ -12,6 +12,7 @@ export type ProviderMark =
   | 'qwen'
   | 'zai'
   | 'antigravity'
+  | 'pi'
   | 'acp'
   | 'custom'
 

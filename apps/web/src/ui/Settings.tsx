@@ -36,7 +36,13 @@ import {
   RotateCcw,
   UserRound,
 } from 'lucide-react'
-import { agentMark, connectionMark, providerMark, type ModelChoice } from '../model-catalog.js'
+import {
+  agentMark,
+  connectionMark,
+  providerMark,
+  type ModelChoice,
+  type ProviderMark,
+} from '../model-catalog.js'
 import { isDesktop } from '../bridge.js'
 import {
   beginInstall,
@@ -605,7 +611,7 @@ function ProviderSettings(props: {
         )
         .map(renderProviderRow)}
 
-      <PlannedRow title="Pi" />
+      <PlannedRow title="Pi" mark="pi" />
       {[
         ...agentById('kimi'),
         ...agentById('qwen'),
@@ -1382,11 +1388,11 @@ function ProviderTerminal(props: { transport: Transport; installKey: string }) {
  * omitting it — "not supported yet" and "not installed" must stay
  * distinguishable, and the roadmap belongs in the product, not a doc.
  */
-function PlannedRow(props: { title: string }) {
+function PlannedRow(props: { title: string; mark?: ProviderMark }) {
   return (
     <SettingsRow title={props.title}>
       <div className="provider-settings__actions">
-        <ProviderIcon mark="custom" size={17} />
+        <ProviderIcon mark={props.mark ?? 'custom'} size={17} />
         <button className="settings__action" type="button" disabled>
           Planned
         </button>
