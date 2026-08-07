@@ -379,12 +379,29 @@ describe('provider settings', () => {
       }),
     )
     expect(open).not.toHaveBeenCalled()
-    await waitFor(() => expect(screen.getByTestId('install-terminal')).toBeTruthy())
-    expect(screen.getByRole('button', { name: 'Hide terminal' })).toBeTruthy()
+    // The guided card leads; the raw terminal waits behind Details.
+    await waitFor(() => expect(screen.getByText('Starting the provider sign-in…')).toBeTruthy())
+    expect(screen.queryByTestId('install-terminal')).toBeNull()
 
     const emit = (channel: string, data: unknown) => {
       for (const listener of channels.get(channel) ?? []) listener(data)
     }
+    emit('terminal.output', {
+      terminalId: 'term-login-3',
+      data: 'Visit https://example.test/device then enter code: WDJB-MJHT \r\n',
+    })
+    // The OAuth link opens once by itself; the code becomes a copyable chip.
+    await waitFor(() => expect(screen.getByText('WDJB-MJHT')).toBeTruthy())
+    expect(open).toHaveBeenCalledWith(
+      'https://example.test/device',
+      '_blank',
+      'noopener,noreferrer',
+    )
+    expect(screen.getByRole('button', { name: 'Open link again' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+    await waitFor(() => expect(screen.getByTestId('install-terminal')).toBeTruthy())
+
     emit('terminal.exit', { terminalId: 'term-login-3', exitCode: 0 })
     await waitFor(() => expect(screen.queryByTestId('install-terminal')).toBeNull())
     expect(within(opencodeRow).getByRole('button', { name: 'Sign in' })).toBeTruthy()
@@ -405,6 +422,7 @@ describe('provider settings', () => {
     )
     emit('terminal.exit', { terminalId: 'term-login-3', exitCode: 0 })
     await waitFor(() => expect(onConnectionsChanged).toHaveBeenCalled())
-    expect(open).not.toHaveBeenCalled()
+    // Still only the one auto-open from the OpenCode flow above.
+    expect(open).toHaveBeenCalledTimes(1)
   })
 })

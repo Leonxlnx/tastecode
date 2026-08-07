@@ -112,6 +112,24 @@ export function firstAuthUrl(log: string): string | undefined {
   return match?.[1]
 }
 
+/**
+ * The device/user code a sign-in CLI asks the user to confirm in the browser.
+ *
+ * URLs are stripped first — OAuth links often carry the code as a path or
+ * query segment, and matching inside them would show a chip before the CLI
+ * has actually presented a code. A labelled form ("code: XXXX-XXXX") wins
+ * over the bare dashed pattern; both must be upper-case or digits so prose
+ * never matches. Absence just means no chip — the URL flow still works.
+ */
+export function deviceCode(log: string): string | undefined {
+  const printable = log.replace(ANSI, '').replace(/https?:\/\/[^\s'"<>)]+/g, ' ')
+  const labeled =
+    /code[^\S\r\n]*[:=]?[^\S\r\n]+([A-Z0-9]{3,5}-[A-Z0-9]{3,5}|\d{6,9})(?![\w-])/i.exec(printable)
+  if (labeled) return labeled[1]
+  const dashed = /\b([A-Z0-9]{4}-[A-Z0-9]{4})(?![\w-])/.exec(printable)
+  return dashed?.[1]
+}
+
 /** Wide enough that no OAuth URL soft-wraps; an attached terminal resizes. */
 const LOGIN_COLUMNS = 320
 

@@ -3,6 +3,7 @@ import type { Transport } from './transport.js'
 import {
   beginInstall,
   beginLogin,
+  deviceCode,
   firstAuthUrl,
   installKey,
   installState,
@@ -36,6 +37,27 @@ describe('lastPrintableLine', () => {
 
   it('is empty when nothing printable arrived yet', () => {
     expect(lastPrintableLine(`${ESC}[2J`)).toBe('')
+  })
+})
+
+describe('deviceCode', () => {
+  it('finds a labelled user code', () => {
+    expect(deviceCode('Enter the code: WDJB-MJHT to continue')).toBe('WDJB-MJHT')
+    expect(deviceCode('Your one-time code 384756 expires in 15 minutes')).toBe('384756')
+  })
+
+  it('finds a bare dashed code without a label', () => {
+    expect(deviceCode('First, copy this\n\n  ABCD-1234\n\nthen press Enter')).toBe('ABCD-1234')
+  })
+
+  it('never reads a code out of a URL', () => {
+    expect(deviceCode('Visit https://example.com/activate?user_code=WDJB-MJHT')).toBeUndefined()
+    expect(deviceCode('https://github.com/login/device and code XKCD-4096\n')).toBe('XKCD-4096')
+  })
+
+  it('ignores prose and control noise', () => {
+    expect(deviceCode(`${ESC}[32mWaiting for browser approval...${ESC}[0m`)).toBeUndefined()
+    expect(deviceCode('open your dashboard for details')).toBeUndefined()
   })
 })
 

@@ -1118,6 +1118,55 @@
   border-top: 1px solid var(--line);
 }
 
+/* The sign-in flow as a card: code chip, browser hint, one live line. The
+   terminal stays available behind "Details" but never leads. */
+.signin-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 12px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font-size: var(--t-sm);
+  color: var(--text-2);
+}
+
+.signin-card__code-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.signin-card__code {
+  font-family: var(--font-mono);
+  font-size: var(--t-lg);
+  letter-spacing: 0.08em;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  padding: 3px 9px;
+  user-select: all;
+}
+
+.signin-card__hint {
+  color: var(--text-2);
+}
+
+.signin-card__live {
+  flex-basis: 100%;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .install-terminal {
   height: 240px;
   padding: 8px 12px;

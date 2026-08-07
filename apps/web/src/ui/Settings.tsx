@@ -48,6 +48,7 @@ import {
   beginInstall,
   beginLogin,
   clearInstall,
+  deviceCode,
   installKey,
   installState,
   loginKey,
@@ -1310,8 +1311,11 @@ function CliSignInRow(props: {
 }) {
   const key = loginKey(props.target)
   const login = useSyncExternalStore(subscribeInstalls, () => installState(key))
-  const [showTerminal, setShowTerminal] = useState(true)
+  // The terminal is the fallback, not the flow: it stays hidden until asked
+  // for, and opens itself only when a failure makes it the evidence.
+  const [showTerminal, setShowTerminal] = useState(false)
   const [startError, setStartError] = useState<string>()
+  const [copied, setCopied] = useState(false)
   const { onSignedIn } = props
 
   // Latched like InstallableRow: onSignedIn may get a new identity from any
@@ -1330,20 +1334,21 @@ function CliSignInRow(props: {
     }
   }, [login?.phase, key, onSignedIn])
 
+  useEffect(() => {
+    if (login?.phase === 'failed') setShowTerminal(true)
+  }, [login?.phase])
+
   const start = () => {
     setStartError(undefined)
-    setShowTerminal(true)
+    setShowTerminal(false)
+    setCopied(false)
     void beginLogin(props.transport, props.target).catch((cause: unknown) =>
       setStartError(cause instanceof Error ? cause.message : String(cause)),
     )
   }
 
-  const status =
-    login?.phase === 'running'
-      ? login.openedAuthUrl
-        ? 'Approve the sign-in in your browser'
-        : 'Finish the sign-in in the terminal below'
-      : undefined
+  const running = login?.phase === 'running'
+  const code = running ? deviceCode(login.log) : undefined
   const issue =
     login?.phase === 'failed'
       ? {
@@ -1361,15 +1366,15 @@ function CliSignInRow(props: {
       <SettingsRow title={props.title}>
         <div className="provider-settings__actions">
           {issue ? <RowIssue message={issue.message} tip={issue.tip} /> : null}
-          {status ? <span className="settings__status">{status}</span> : null}
+          {running ? <span className="settings__status">Signing in…</span> : null}
           {props.icon}
-          {login?.phase === 'running' ? (
+          {running ? (
             <button
               className="settings__action"
               type="button"
               onClick={() => setShowTerminal((visible) => !visible)}
             >
-              {showTerminal ? 'Hide terminal' : 'Show terminal'}
+              {showTerminal ? 'Hide details' : 'Details'}
             </button>
           ) : (
             <button className="settings__action" type="button" onClick={start}>
@@ -1378,6 +1383,45 @@ function CliSignInRow(props: {
           )}
         </div>
       </SettingsRow>
+      {running ? (
+        <div className="signin-card">
+          {code ? (
+            <div className="signin-card__code-row">
+              <span className="signin-card__hint">Confirm this code in your browser</span>
+              <code className="signin-card__code">{code}</code>
+              <button
+                className="settings__action"
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(code).then(() => setCopied(true))
+                }}
+              >
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          ) : (
+            <span className="signin-card__hint">
+              {login.openedAuthUrl
+                ? 'Your browser opened — approve the sign-in there'
+                : 'Starting the provider sign-in…'}
+            </span>
+          )}
+          {login.openedAuthUrl ? (
+            <button
+              className="settings__action"
+              type="button"
+              onClick={() => window.open(login.openedAuthUrl, '_blank', 'noopener,noreferrer')}
+            >
+              Open link again
+            </button>
+          ) : null}
+          {!showTerminal && login.lastLine ? (
+            <span className="signin-card__live" aria-live="polite">
+              {login.lastLine}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {login && showTerminal ? (
         <ProviderTerminal transport={props.transport} installKey={key} />
       ) : null}
