@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 import { methods } from '@harness/contracts'
 import { WebSocket } from 'ws'
@@ -113,6 +114,71 @@ describe('server mobile trust boundary', () => {
       rmSync(dataDir, { recursive: true, force: true })
     }
   })
+
+  it('restores mobile access and the saved device credential after a server restart', async () => {
+    const dataDir = mkdtempSync(path.join(os.tmpdir(), 'harness-mobile-restart-'))
+    process.env['HARNESS_DATA_DIR'] = dataDir
+    const port = await availablePort()
+    const firstServer = startServer({
+      port,
+      accessToken: 'desktop-admin',
+      mobilePort: 0,
+      mobileNetworkInterfaces: () => INTERFACES,
+      resolveTailscaleAddresses: async () => new Set(['100.101.22.33']),
+    })
+    const sockets = new Set<WebSocket>()
+    let firstServerClosed = false
+    let secondServer: ReturnType<typeof startServer> | undefined
+
+    try {
+      const admin = await openSocket(
+        sockets,
+        `ws://127.0.0.1:${port}/?token=${encodeURIComponent('desktop-admin')}`,
+      )
+      const offer = methods['connections.startPairing'].result.parse(
+        await request(admin, 'pair', 'connections.startPairing', {}),
+      )
+      const bootstrap = await openSocket(
+        sockets,
+        `ws://127.0.0.1:${offer.port}/?pairing_ticket=${encodeURIComponent(pairingTicket(offer.pairingUri))}`,
+      )
+      const claimed = methods['connections.claim'].result.parse(
+        await request(bootstrap, 'claim', 'connections.claim', { name: 'Persistent phone' }),
+      )
+      bootstrap.close()
+
+      const connected = await openSocket(
+        sockets,
+        `ws://127.0.0.1:${offer.port}/?token=${encodeURIComponent(claimed.deviceToken)}`,
+      )
+      const disconnected = once(connected, 'close')
+      await firstServer.close()
+      firstServerClosed = true
+      await disconnected
+
+      secondServer = startServer({
+        port,
+        accessToken: 'desktop-admin',
+        mobilePort: offer.port,
+        mobileNetworkInterfaces: () => INTERFACES,
+        resolveTailscaleAddresses: async () => new Set(['100.101.22.33']),
+      })
+      await waitForPort(offer.port)
+      const restored = await openSocket(
+        sockets,
+        `ws://127.0.0.1:${offer.port}/?token=${encodeURIComponent(claimed.deviceToken)}`,
+      )
+
+      await expect(request(restored, 'projects', 'projects.list', {})).resolves.toEqual({
+        projects: [],
+      })
+    } finally {
+      for (const socket of sockets) socket.terminate()
+      if (secondServer) await secondServer.close()
+      if (!firstServerClosed) await firstServer.close()
+      rmSync(dataDir, { recursive: true, force: true })
+    }
+  })
 })
 
 async function availablePort(): Promise<number> {
@@ -125,6 +191,23 @@ async function availablePort(): Promise<number> {
   if (!address || typeof address === 'string') throw new Error('could not reserve test port')
   await new Promise<void>((resolve) => server.close(() => resolve()))
   return address.port
+}
+
+async function waitForPort(port: number, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const open = await new Promise<boolean>((resolve) => {
+      const socket = net.connect(port, '127.0.0.1')
+      socket.once('connect', () => {
+        socket.destroy()
+        resolve(true)
+      })
+      socket.once('error', () => resolve(false))
+    })
+    if (open) return
+    await delay(25)
+  }
+  throw new Error(`mobile listener on port ${port} did not restart`)
 }
 
 async function openSocket(sockets: Set<WebSocket>, url: string): Promise<WebSocket> {
