@@ -137,16 +137,25 @@ describe('Antigravity model list', () => {
     await expect(listing).resolves.toMatchObject([{ id: 'gemini-3.6-flash-high' }])
   })
 
-  it('parses the captured agy models output as plain slugs', () => {
+  it('collapses the agy models output into base models with efforts', () => {
     const models = parseAntigravityModels(
       'gemini-3.6-flash-high\ngemini-3.6-flash-low\nclaude-sonnet-4-6\n',
     )
     expect(models).toMatchObject([
-      { id: 'gemini-3.6-flash-high', displayName: 'gemini-3.6-flash-high', isDefault: true },
-      { id: 'gemini-3.6-flash-low', isDefault: false },
-      { id: 'claude-sonnet-4-6', isDefault: false },
+      {
+        id: 'gemini-3.6-flash-high',
+        displayName: 'Gemini 3.6 Flash',
+        isDefault: true,
+        reasoningEfforts: ['low', 'high'],
+        defaultReasoningEffort: 'high',
+      },
+      {
+        id: 'claude-sonnet-4-6',
+        displayName: 'Claude Sonnet 4.6',
+        isDefault: false,
+        reasoningEfforts: [],
+      },
     ])
-    expect(models.every((model) => model.description === undefined)).toBe(true)
   })
 
   it('declares the print-mode capability set', () => {

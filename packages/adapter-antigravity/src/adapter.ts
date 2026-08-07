@@ -4,6 +4,12 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { killTree, readNdjson } from '@harness/proc'
+import {
+  collapseAntigravityModels,
+  getAntigravityIndex,
+  rememberAntigravityIndex,
+  resolveAntigravityModel,
+} from './models.js'
 
 /**
  * Tier 3 adapter: drives Google's Antigravity CLI (`agy`) in headless
@@ -42,6 +48,7 @@ export const ANTIGRAVITY_CAPABILITIES: Capabilities = {
 export type AntigravityStartOptions = {
   instructions?: string | undefined
   model?: string | undefined
+  effort?: string | undefined
   approval?: ApprovalMode | undefined
 }
 
@@ -54,12 +61,17 @@ export function antigravityTurnArgs(
   options: AntigravityStartOptions,
   conversationId: string | undefined,
 ): string[] {
+  // The picker holds a collapsed base id; the wire wants the concrete
+  // per-effort slug from the listing.
+  const model = options.model
+    ? resolveAntigravityModel(getAntigravityIndex(), options.model, options.effort)
+    : undefined
   return [
     '-p',
     prompt,
     '--output-format',
     'stream-json',
-    ...(options.model ? ['--model', options.model] : []),
+    ...(model ? ['--model', model] : []),
     // ask -> the CLI's default permission behavior; auto -> accept edits but
     // not commands; full -> the CLI's own skip-everything switch.
     ...(options.approval === 'auto' ? ['--mode', 'accept-edits'] : []),
@@ -286,8 +298,9 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
   }
 
   /**
-   * `agy models` prints one model slug per line; efforts are baked into the
-   * slugs, so the list is offered as-is. Verified against agy 1.1.10.
+   * `agy models` prints one model slug per line with efforts baked into the
+   * slugs; the listing is collapsed into base models so effort lives on the
+   * slider (see models.ts). Verified against agy 1.1.10.
    *
    * The CLI blocks forever on a piped stdin that never closes — captured: an
    * open-stdin `agy models` never exits, a closed one answers in under two
@@ -339,17 +352,13 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 }
 
 export function parseAntigravityModels(output: string): Model[] {
-  return output
+  const slugs = output
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((slug, index) => ({
-      id: slug,
-      displayName: slug,
-      isDefault: index === 0,
-      reasoningEfforts: [],
-      serviceTiers: [],
-    }))
+  const { models, index } = collapseAntigravityModels(slugs)
+  rememberAntigravityIndex(index)
+  return models
 }
 
 export { SUPPORTED as ANTIGRAVITY_SUPPORTED_VERSION }

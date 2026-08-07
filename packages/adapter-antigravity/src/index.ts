@@ -7,3 +7,12 @@ export {
   parseAntigravityModels,
   type AntigravityStartOptions,
 } from './adapter.js'
+export {
+  antigravityDisplayName,
+  collapseAntigravityModels,
+  resolveAntigravityModel,
+  rememberAntigravityIndex,
+  getAntigravityIndex,
+  resetAntigravityIndexForTests,
+  type AntigravityModelIndex,
+} from './models.js'
