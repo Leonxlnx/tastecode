@@ -229,6 +229,21 @@ describe('protocol envelopes', () => {
     })
     expect(projects.projects[0]?.sessions[0]?.worktreeBranch).toBe('harness/th1')
     expect(projects.projects[0]?.sessions[0]?.pinned).toBe(true)
+    const directory = methods['projects.browse'].result.parse({
+      path: '/Users/me',
+      name: 'me',
+      entries: [
+        {
+          path: '/Users/me/Developer',
+          name: 'Developer',
+          kind: 'directory',
+          modifiedAt: 1_000,
+        },
+      ],
+    })
+    expect(directory.entries[0]?.kind).toBe('directory')
+    expect(methods['projects.browse'].params.parse({})).toEqual({})
+    expect(() => methods['projects.browse'].params.parse({ path: '' })).toThrow()
     expect(methods['thread.pin'].params.parse({ threadId: 'th1', pinned: true })).toEqual({
       threadId: 'th1',
       pinned: true,

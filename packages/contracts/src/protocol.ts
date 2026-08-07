@@ -847,6 +847,23 @@ export const methods = {
       ),
     }),
   },
+  /** Browse the server user's home directory when choosing a project remotely. */
+  'projects.browse': {
+    params: z.object({ path: z.string().min(1).optional() }),
+    result: z.object({
+      path: z.string().min(1),
+      name: z.string().min(1),
+      parent: z.string().min(1).optional(),
+      entries: z.array(
+        z.object({
+          path: z.string().min(1),
+          name: z.string().min(1),
+          kind: z.enum(['directory', 'file']),
+          modifiedAt: z.number().nonnegative(),
+        }),
+      ),
+    }),
+  },
   'projects.add': {
     params: z.object({ path: z.string(), name: z.string().optional() }),
     result: z.object({
