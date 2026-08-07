@@ -166,11 +166,7 @@ export async function requestPairingFromRunningServer(
       }
       if (!isResponseFrame(frame) || frame.id !== requestId) return
       if ('error' in frame) {
-        finish(
-          new Error(
-            `The running Harness server could not create a pairing link: ${frame.error.message}`,
-          ),
-        )
+        finish(new Error(pairingServerErrorMessage(frame.error.message, port)))
         return
       }
       const parsed = methods['connections.startPairing'].result.safeParse(frame.result)
@@ -202,6 +198,17 @@ export async function requestPairingFromRunningServer(
       )
     })
   })
+}
+
+export function pairingServerErrorMessage(message: string, port: number): string {
+  if (message === 'unknown method: connections.startPairing') {
+    return (
+      `The Harness desktop server on port ${port} is running without mobile pairing support. ` +
+      'Quit and restart the desktop app from this checkout, then run ' +
+      '`pnpm harness pair --no-qr` again.'
+    )
+  }
+  return `The running Harness server could not create a pairing link: ${message}`
 }
 
 export function pairingMessage(offer: PairingOffer, terminalQr?: string): string {

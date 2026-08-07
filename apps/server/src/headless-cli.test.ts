@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pairingMessage, parseCliOptions } from './headless-cli.js'
+import { pairingMessage, pairingServerErrorMessage, parseCliOptions } from './headless-cli.js'
 
 describe('headless CLI', () => {
   it('parses pair and listener options without exposing the admin socket', () => {
@@ -44,5 +44,16 @@ describe('headless CLI', () => {
     expect(message).toContain('harness://pair?payload=short-lived-ticket')
     expect(message).toContain('Tailscale · 100.101.22.33')
     expect(message).toContain('Do not share this link')
+  })
+
+  it('explains how to replace a running desktop server that predates mobile pairing', () => {
+    expect(pairingServerErrorMessage('unknown method: connections.startPairing', 4311)).toBe(
+      'The Harness desktop server on port 4311 is running without mobile pairing support. ' +
+        'Quit and restart the desktop app from this checkout, then run ' +
+        '`pnpm harness pair --no-qr` again.',
+    )
+    expect(pairingServerErrorMessage('pairing failed', 4311)).toBe(
+      'The running Harness server could not create a pairing link: pairing failed',
+    )
   })
 })
