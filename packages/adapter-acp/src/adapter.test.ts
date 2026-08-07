@@ -6,6 +6,7 @@ import { parseAcpThreadId } from './adapter.js'
 import {
   LISTED_AGENTS,
   acpAccount,
+  acpSignOut,
   discoverAgentModels,
   findAgentSpec,
   parseKimiModels,
@@ -29,6 +30,7 @@ describe('ACP persisted sessions', () => {
   it('hides retired agents from listings but keeps them resumable', () => {
     // Gemini CLI is superseded by Antigravity; old threads must still resume.
     expect(LISTED_AGENTS.some((agent) => agent.id === 'gemini')).toBe(false)
+    expect(LISTED_AGENTS.some((agent) => agent.id === 'qwen')).toBe(false)
     expect(findAgentSpec('gemini')).toMatchObject({ command: 'gemini', retired: true })
   })
 
@@ -42,6 +44,10 @@ describe('ACP persisted sessions', () => {
       // No probe declared for Qwen: state is unknown, reported signed-out so
       // the sign-in flow stays reachable.
       expect(acpAccount('qwen', home)).toEqual({ signedIn: false })
+      // Sign-out deletes exactly the file the login left, and nothing else.
+      acpSignOut('kimi', home)
+      expect(acpAccount('kimi', home)).toEqual({ signedIn: false })
+      expect(() => acpSignOut('qwen', home)).toThrow('does not support')
     } finally {
       rmSync(home, { recursive: true, force: true })
     }

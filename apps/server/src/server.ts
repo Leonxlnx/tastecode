@@ -386,7 +386,7 @@ export function startServer(
 
       case 'auth.signOut': {
         const p = params as { provider: ProviderId; agent?: string }
-        await orchestrator.signOut(p.provider)
+        await orchestrator.signOut(p.provider, p.agent)
         return {}
       }
 

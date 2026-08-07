@@ -608,15 +608,33 @@ function ProviderSettings(props: {
         ...props.acpAgents.filter((agent) => !knownAgents.has(agent.id)),
       ].map((agent) =>
         // A signed-in CLI must not keep offering "Sign in" — that ran the
-        // whole login flow against an already-authenticated binary. The CLIs
-        // have no sign-out command, so the signed-in row carries no action.
+        // whole login flow against an already-authenticated binary. Signing
+        // out removes the credential the login left behind, so the row works
+        // like every direct provider's.
         agent.installed && agentAccounts[agent.id]?.signedIn ? (
           <SettingsRow
             key={agent.id}
             title={agent.name}
             note="Signed in · managed by the provider CLI."
           >
-            <ProviderIcon mark={agentMark(agent.id)} size={17} />
+            <div className="provider-settings__actions">
+              <ProviderIcon mark={agentMark(agent.id)} size={17} />
+              <button
+                className="settings__action"
+                type="button"
+                onClick={() => {
+                  void props.transport
+                    .request('auth.signOut', { provider: 'acp', agent: agent.id })
+                    .then(() => refreshAgentAccount(agent.id))
+                    .catch((cause) =>
+                      setAuthError(cause instanceof Error ? cause.message : String(cause)),
+                    )
+                }}
+              >
+                <LogOut size={13} aria-hidden />
+                Sign out
+              </button>
+            </div>
           </SettingsRow>
         ) : agent.installed ? (
           <CliSignInRow

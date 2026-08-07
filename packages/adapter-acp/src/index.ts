@@ -3,6 +3,7 @@ export {
   ACP_AGENTS,
   LISTED_AGENTS,
   acpAccount,
+  acpSignOut,
   detectAgents,
   discoverAgentModels,
   findAgentSpec,

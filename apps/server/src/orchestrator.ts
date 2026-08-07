@@ -3,7 +3,7 @@ import {
   CODEX_SKILL_CAPABILITIES,
   CodexAdapter,
 } from '@harness/adapter-codex'
-import { acpAccount } from '@harness/adapter-acp'
+import { acpAccount, acpSignOut } from '@harness/adapter-acp'
 import { claudeAccount, signOutClaude, startClaudeLogin } from '@harness/adapter-claude-code'
 import { cursorAccount, signOutCursor, startCursorLogin } from '@harness/adapter-cursor'
 import {
@@ -748,10 +748,11 @@ export class Orchestrator {
     return (await this.#controlAdapter()).useApiKey(apiKey)
   }
 
-  async signOut(provider: ProviderId): Promise<void> {
+  async signOut(provider: ProviderId, agent?: string): Promise<void> {
     if (provider === 'codex') return (await this.#controlAdapter()).signOut()
     if (provider === 'claude-code') return signOutClaude()
     if (provider === 'cursor') return signOutCursor()
+    if (provider === 'acp' && agent) return acpSignOut(agent)
   }
 
   async voiceStatus(provider: ProviderId): Promise<{

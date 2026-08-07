@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Account, Model, ProviderSetup } from '@harness/contracts'
@@ -109,6 +109,9 @@ export const ACP_AGENTS: AcpAgentSpec[] = [
       installCommand: 'npm install -g @qwen-code/qwen-code@latest',
       login: 'provider',
     },
+    // Dropped from the roster on Leon's call (2026-08-08); existing qwen
+    // threads still resume through this spec, same as gemini.
+    retired: true,
   },
 ]
 
@@ -137,6 +140,20 @@ export function acpAccount(agentId: string, home = homedir()): Account {
   const spec = findAgentSpec(agentId)
   if (!spec?.credentialProbe) return { signedIn: false }
   return { signedIn: existsSync(join(home, spec.credentialProbe)) }
+}
+
+/**
+ * Sign out by removing the credential the login left behind — the CLIs
+ * offer no logout command, and deleting the file is exactly what one would
+ * do. The file is removed, never read. Throws for agents without a probe so
+ * the UI knows not to offer the action.
+ */
+export function acpSignOut(agentId: string, home = homedir()): void {
+  const spec = findAgentSpec(agentId)
+  if (!spec?.credentialProbe) {
+    throw new Error(`${spec?.name ?? agentId} does not support signing out from here`)
+  }
+  rmSync(join(home, spec.credentialProbe), { force: true })
 }
 
 /**

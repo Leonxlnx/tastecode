@@ -127,20 +127,26 @@ describe('provider settings', () => {
       />,
     )
 
-    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Sign out' })).toHaveLength(2))
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Sign out' })).toHaveLength(3))
     expect(screen.getAllByText('Codex')).toHaveLength(1)
     expect(screen.queryByText('Gemini CLI')).toBeNull()
     expect(screen.getByText('Qwen Code')).toBeTruthy()
     expect(screen.getByText('Kimi CLI')).toBeTruthy()
 
-    // Kimi's CLI is already authenticated: the row must say so and offer no
-    // sign-in — the CLIs have no sign-out either, so no action at all.
+    // Kimi's CLI is already authenticated: the row says so and offers the
+    // same Sign out as every direct provider (it removes the credential).
     await waitFor(() =>
       expect(screen.getByText('Signed in · managed by the provider CLI.')).toBeTruthy(),
     )
     const kimiRow = screen.getByText('Kimi CLI').closest<HTMLElement>('.settings__row')
     if (!kimiRow) throw new Error('Kimi row missing')
-    expect(within(kimiRow).queryByRole('button')).toBeNull()
+    fireEvent.click(within(kimiRow).getByRole('button', { name: 'Sign out' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('auth.signOut', {
+        provider: 'acp',
+        agent: 'kimi',
+      }),
+    )
 
     const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
     const cursorRow = screen.getByText('Cursor').closest<HTMLElement>('.settings__row')
