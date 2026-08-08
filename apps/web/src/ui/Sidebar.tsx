@@ -79,6 +79,12 @@ const MIN_RAIL_WIDTH = 240
 const COLLAPSE_WIDTH = Math.round(MIN_RAIL_WIDTH * 0.5)
 /** Mirrors --dur-rail: how long a fold or unfold takes to play out. */
 const RAIL_FOLD_MS = 380
+/** How far past the rail's own edge still counts as "at the rail" while it is
+ *  revealed. Generous on purpose: the pointer travels diagonally toward the
+ *  title bar toggle, and clipping that path retracted the rail mid-aim. */
+const REVEAL_KEEP_BUFFER = 96
+/** Grace before a revealed rail hides, so a moment's drift does not close it. */
+const REVEAL_GRACE_MS = 500
 const MAX_RAIL_WIDTH = 420
 const COLLAPSED_PROJECT_SESSION_COUNT = 5
 
@@ -153,18 +159,19 @@ function SidebarComponent(props: {
   }
   const scheduleRevealHide = () => {
     cancelRevealHide()
-    revealHide.current = window.setTimeout(() => setEdgeRevealed(false), 350)
+    revealHide.current = window.setTimeout(() => setEdgeRevealed(false), REVEAL_GRACE_MS)
   }
   useEffect(() => cancelRevealHide, [])
 
-  /* The rail slot cannot see the title bar above it, but the pointer resting
-     top-left (over the toggle) is exactly where someone aims to pin the rail
-     open — the reveal must not fold under them. While revealed, anywhere
-     inside the rail's column counts as inside. */
+  /* What keeps a revealed rail in place. The slot's own mouse events cannot
+     see the title bar above it, and that is exactly where someone aims to pin
+     the rail open — so the whole column counts as inside, plus a buffer past
+     its edge. Retracting while the user is still travelling toward the toggle
+     is what made the reveal feel like it snapped back on its own. */
   useEffect(() => {
     if (!edgeRevealed || !props.collapsed) return
     const onMove = (event: MouseEvent) => {
-      if (event.clientX <= props.width) cancelRevealHide()
+      if (event.clientX <= props.width + REVEAL_KEEP_BUFFER) cancelRevealHide()
       else scheduleRevealHide()
     }
     window.addEventListener('mousemove', onMove)

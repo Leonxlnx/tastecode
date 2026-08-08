@@ -456,6 +456,69 @@ describe('Sidebar chat actions', () => {
     }
   })
 
+  it('keeps a revealed rail in place while the pointer travels to the toggle', () => {
+    const view = (collapsed: boolean) => (
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={collapsed}
+        width={240}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    )
+    const { container, rerender } = render(view(true))
+    const slot = container.querySelector('.rail-slot')
+    fireEvent.mouseEnter(container.querySelector('.rail__edge')!)
+    expect(slot?.classList).toContain('is-revealed')
+
+    vi.useFakeTimers()
+    try {
+      // Aiming at the title bar toggle leaves the slot but stays at the rail.
+      fireEvent.mouseLeave(slot!)
+      fireEvent.mouseMove(window, { clientX: 300, clientY: 12 })
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+      expect(slot?.classList).toContain('is-revealed')
+
+      // Pressing it docks the rail open for good: no collapsed flyout left.
+      rerender(view(false))
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+      expect(slot?.classList).not.toContain('is-collapsed')
+      expect(slot?.classList).not.toContain('is-revealed')
+
+      // Well clear of the rail it retracts as before.
+      rerender(view(true))
+      fireEvent.mouseEnter(container.querySelector('.rail__edge')!)
+      expect(slot?.classList).toContain('is-revealed')
+      fireEvent.mouseMove(window, { clientX: 900, clientY: 400 })
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+      expect(slot?.classList).not.toContain('is-revealed')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('resizes with pointer or keyboard and collapses below the threshold', () => {
     const onClose = vi.fn()
     const onWidthChange = vi.fn()
