@@ -70,13 +70,6 @@
   transition: none;
 }
 
-/* The frame in which a drag fold becomes a real collapse: the flyout must not
-   animate its translate in from nothing, which would show the rail at full
-   width before it slides away. Set and cleared around React's commit. */
-.rail-slot.is-settling .rail {
-  transition: none;
-}
-
 /* ---------- title bar ---------- */
 
 .titlebar {
@@ -142,6 +135,15 @@
   transition:
     transform var(--dur-rail) var(--ease-rail),
     box-shadow var(--dur-rail) var(--ease-rail);
+}
+
+/* The frame in which a drag fold becomes a real collapse. The flyout must
+   not animate its translate in from nothing — that shows the rail at full
+   width before it slides away. Carries is-collapsed as well: without it this
+   ties the rule above on specificity and loses to it on order, which is why
+   an earlier attempt at this had no effect at all. */
+.rail-slot.is-collapsed.is-settling .rail {
+  transition: none;
 }
 
 .rail-slot.is-collapsed.is-revealed .rail {
