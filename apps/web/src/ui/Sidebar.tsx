@@ -110,6 +110,7 @@ function SidebarComponent(props: {
   onOpenSettings: () => void
 }) {
   const [edgeRevealed, setEdgeRevealed] = useState(false)
+  const slotRef = useRef<HTMLDivElement>(null)
   /* Hiding the reveal only after a grace period lets the pointer travel up to
      the title bar toggle without the flyout flickering away underneath it. */
   const revealHide = useRef<number | undefined>(undefined)
@@ -144,7 +145,21 @@ function SidebarComponent(props: {
   }
 
   useEffect(() => {
-    if (!props.collapsed) setEdgeRevealed(false)
+    if (props.collapsed) return
+    // Opening from the temporary reveal must dock in place: the flyout and
+    // the grid rail occupy the same pixels, so the column animation is
+    // suppressed for a frame — otherwise the rail visibly closed and
+    // re-opened on the toggle click.
+    const slot = slotRef.current
+    if (edgeRevealed && slot) {
+      const shell = slot.closest<HTMLElement>('.shell')
+      shell?.classList.add('is-resizing')
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => shell?.classList.remove('is-resizing')),
+      )
+    }
+    setEdgeRevealed(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reveal state is read, not a trigger
   }, [props.collapsed])
 
   useEffect(() => {
@@ -177,6 +192,7 @@ function SidebarComponent(props: {
 
   return (
     <div
+      ref={slotRef}
       className={`rail-slot ${props.collapsed ? 'is-collapsed' : ''} ${
         edgeRevealed ? 'is-revealed' : ''
       }`}

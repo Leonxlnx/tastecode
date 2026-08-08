@@ -3162,7 +3162,7 @@
   /* No standing reservation for the hover actions: they overlay the right
      edge with their own fade, so the title keeps the full row width and the
      rail stays honest at any size. */
-  padding: 0 10px 0 32px;
+  padding: 0 16px 0 32px;
   text-align: left;
   min-width: 0;
   transition: color var(--dur-fast) var(--ease-out);
@@ -3173,19 +3173,6 @@
 
 .sess:hover {
   color: var(--text);
-}
-
-/* A quiet accent tick marks the active session without shouting. */
-.sessrow.is-active::before {
-  position: absolute;
-  top: 7px;
-  bottom: 7px;
-  left: 0;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--attention);
-  content: '';
-  opacity: 0.85;
 }
 
 .sessrow.is-active .sess {
