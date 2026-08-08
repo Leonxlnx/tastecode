@@ -3124,6 +3124,13 @@
   list-style: none;
   margin: 1px 0 4px;
   padding: 0;
+  /* THE truncation fix. As a grid item the list defaults to min-width auto,
+     so a long nowrap title made it wider than the drawer and the overflow
+     clip cut rows hard at the rail edge — the title's own ellipsis boundary
+     sat invisibly beyond it. Allowed to shrink, the width chain reaches the
+     title and the ellipsis actually renders. */
+  min-width: 0;
+  max-width: 100%;
 }
 
 .proj__sessions-toggle {
