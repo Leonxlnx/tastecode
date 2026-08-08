@@ -4,6 +4,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -115,6 +116,32 @@ function SidebarComponent(props: {
 }) {
   const [edgeRevealed, setEdgeRevealed] = useState(false)
   const slotRef = useRef<HTMLDivElement>(null)
+  /** Set by the resize handle when its release is what collapsed the rail. */
+  const foldedByDrag = useRef(false)
+
+  /* Collapsing hands the rail to the absolute flyout, whose translate would
+     animate in from no transform at all — the rail appearing at full width
+     before sliding away. After a drag fold it is already gone, so that reads
+     as it flashing open and shut. This runs on React's commit, before the
+     browser paints, which is the only point where suppressing it is reliable;
+     the handle cannot do it, since collapsing unmounts the handle. */
+  useLayoutEffect(() => {
+    const slot = slotRef.current
+    if (!props.collapsed || !foldedByDrag.current || !slot) {
+      foldedByDrag.current = false
+      return
+    }
+    foldedByDrag.current = false
+    const shell = slot.closest<HTMLElement>('.shell')
+    slot.classList.add('is-settling')
+    // Commit the collapsed layout while it still cannot animate.
+    void slot.offsetWidth
+    const frame = requestAnimationFrame(() => {
+      slot.classList.remove('is-settling')
+      shell?.classList.remove('is-resizing')
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [props.collapsed])
   /* Hiding the reveal only after a grace period lets the pointer travel up to
      the title bar toggle without the flyout flickering away underneath it. */
   const revealHide = useRef<number | undefined>(undefined)
@@ -430,7 +457,10 @@ function SidebarComponent(props: {
         <RailResizeHandle
           width={props.width}
           onWidthChange={props.onWidthChange}
-          onCollapse={props.onClose}
+          onCollapse={() => {
+            foldedByDrag.current = true
+            props.onClose()
+          }}
         />
       ) : null}
     </div>
@@ -551,20 +581,14 @@ function RailResizeHandle(props: {
         drag.current = undefined
         target.releasePointerCapture?.(event.pointerId)
         if (folded) {
-          // The rail is already folded away. Collapsing hands it to the
-          // absolute flyout at its stored width, whose transform would then
-          // animate out from nothing — the flash of the rail opening and
-          // closing again. Suppress until that layout is committed.
-          setResizing(target, true)
+          // Restore the stored width behind the fold so the reveal and the
+          // next expand come back at it, with animation suppressed so the
+          // column does not slide open on the way into the collapsed layout.
+          // The Sidebar clears both classes on its commit — this handle is
+          // unmounted by then and could not do it itself.
+          if (shell) shell.classList.add('is-resizing')
           preview(target, props.width)
           props.onCollapse()
-          requestAnimationFrame(() => {
-            if (!shell) return
-            // Commit the collapsed layout while it still cannot animate,
-            // then hand animation back for the next interaction.
-            void shell.offsetWidth
-            shell.classList.remove('is-resizing')
-          })
           return
         }
         setResizing(target, false)

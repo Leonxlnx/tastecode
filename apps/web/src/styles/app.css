@@ -65,12 +65,15 @@
 }
 
 /* While a pointer drags the rail edge the column must track it 1:1 — the
-   transition is only for collapse and expand. The flyout is covered too:
-   releasing a folded drag swaps the rail to the absolute flyout at full
-   width, and its transform would otherwise animate out from nothing, which
-   reads as the rail flashing open before it closes. */
-.shell.is-resizing .shell__body,
-.shell.is-resizing .rail-slot.is-collapsed .rail {
+   transition is only for collapse and expand. */
+.shell.is-resizing .shell__body {
+  transition: none;
+}
+
+/* The frame in which a drag fold becomes a real collapse: the flyout must not
+   animate its translate in from nothing, which would show the rail at full
+   width before it slides away. Set and cleared around React's commit. */
+.rail-slot.is-settling .rail {
   transition: none;
 }
 
@@ -3392,10 +3395,11 @@
 .stage__body.is-new-session {
   align-content: center;
   grid-template-rows: auto auto;
-  /* Optical centering: dead-center reads as sitting too low, so bias the
-     block upward. Padding, not transform — a transformed ancestor would
-     re-anchor the position:fixed flyout menus. */
-  padding-bottom: clamp(0px, 16vh, 148px);
+  /* Optical centering: dead-center reads as sitting slightly low, so bias the
+     block up by a little — enough to feel deliberate, not enough to look like
+     it is floating in the top half. Padding, not transform: a transformed
+     ancestor would re-anchor the position:fixed flyout menus. */
+  padding-bottom: clamp(0px, 5vh, 48px);
 }
 
 .stage__body.has-terminal {
