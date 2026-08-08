@@ -68,7 +68,11 @@
   padding-left: max(12px, env(titlebar-area-x, 12px));
   padding-right: 12px;
   width: 100%;
-  background: linear-gradient(to right, var(--bg-rail) 0 var(--rail-w), var(--bg) var(--rail-w));
+  /* One element with the sidebar: the whole bar carries the rail colour
+     (native caption buttons match via titleBarOverlay in window-theme.ts)
+     and closes with its own hairline, in both themes. */
+  background: var(--bg-rail);
+  border-bottom: 1px solid var(--line);
   -webkit-app-region: drag;
   user-select: none;
 }
@@ -88,7 +92,7 @@
 }
 
 .shell.is-narrow .titlebar {
-  background: var(--bg);
+  background: var(--bg-rail);
 }
 
 .shell.is-narrow .titlebar::after {
@@ -5910,7 +5914,14 @@
     transform var(--dur-press) var(--ease-out);
 }
 
-.tools :is(.composer__add, .composer__permission, .composer__design) {
+.tools
+  :is(
+    .composer__add,
+    .composer__permission,
+    .composer__design,
+    .menutrigger--model-selector,
+    .composer-voice-button
+  ) {
   background: var(--composer-action-bg);
   border-color: var(--composer-action-border);
   box-shadow: var(--composer-action-shadow);
@@ -5938,14 +5949,14 @@
 }
 
 .tools .menutrigger--model-selector {
-  min-height: 32px;
+  min-height: 34px;
   padding: 5px 13px;
   border-radius: 10px;
 }
 
 .composer-voice-button {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
 }
 
@@ -5967,7 +5978,14 @@
   transform: scale(0.97);
 }
 
-.tools :is(.composer__add, .composer__permission, .composer__design):active:not(:disabled) {
+.tools
+  :is(
+    .composer__add,
+    .composer__permission,
+    .composer__design,
+    .menutrigger--model-selector,
+    .composer-voice-button
+  ):active:not(:disabled) {
   box-shadow: var(--composer-action-shadow-active);
 }
 
@@ -6881,7 +6899,14 @@
     box-shadow: var(--composer-control-shadow-hover);
   }
 
-  .tools :is(.composer__add, .composer__permission, .composer__design):hover:not(:disabled) {
+  .tools
+    :is(
+      .composer__add,
+      .composer__permission,
+      .composer__design,
+      .menutrigger--model-selector,
+      .composer-voice-button
+    ):hover:not(:disabled) {
     background: var(--composer-action-bg-hover);
     border-color: var(--composer-action-border-hover);
     box-shadow: var(--composer-action-shadow-hover);
