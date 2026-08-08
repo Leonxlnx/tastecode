@@ -83,8 +83,12 @@ const RAIL_FOLD_MS = 380
  *  revealed. Generous on purpose: the pointer travels diagonally toward the
  *  title bar toggle, and clipping that path retracted the rail mid-aim. */
 const REVEAL_KEEP_BUFFER = 96
-/** Grace before a revealed rail hides, so a moment's drift does not close it. */
-const REVEAL_GRACE_MS = 500
+/** Grace before a revealed rail hides. Short, because position alone decides
+ *  whether to arm it at all: it never fires while the pointer is still at the
+ *  rail, so it no longer has to cover the walk to the toggle. */
+const REVEAL_GRACE_MS = 180
+/** Mirrors --dur-reveal: how long the retract itself takes. */
+const REVEAL_OUT_MS = 160
 const MAX_RAIL_WIDTH = 420
 const COLLAPSED_PROJECT_SESSION_COUNT = 5
 
@@ -124,6 +128,11 @@ function SidebarComponent(props: {
   const slotRef = useRef<HTMLDivElement>(null)
   /** Set by the resize handle when its release is what collapsed the rail. */
   const foldedByDrag = useRef(false)
+  /** True while the edge is being dragged: widening a revealed rail carries the
+   *  pointer well clear of it, which must not read as leaving. */
+  const resizing = useRef(false)
+  /** Previous reveal state, so the hide direction can be told from the show. */
+  const wasRevealed = useRef(false)
 
   /* Collapsing hands the rail to the absolute flyout, whose translate would
      animate in from no transform at all — the rail appearing at full width
@@ -148,6 +157,22 @@ function SidebarComponent(props: {
     })
     return () => cancelAnimationFrame(frame)
   }, [props.collapsed])
+  /* A reveal that retracts is its own motion, quicker than a deliberate
+     collapse. Removing the revealed class alone cannot express that: the
+     resulting state is plain "collapsed", identical to a real collapse. A
+     marker set on the same commit distinguishes them, and it has to be a
+     layout effect — after paint would be too late, the slow transition would
+     already be running. */
+  useLayoutEffect(() => {
+    const slot = slotRef.current
+    const retracting = wasRevealed.current && !edgeRevealed && props.collapsed
+    wasRevealed.current = edgeRevealed
+    if (!retracting || !slot) return
+    slot.classList.add('is-reveal-out')
+    const done = window.setTimeout(() => slot.classList.remove('is-reveal-out'), REVEAL_OUT_MS)
+    return () => clearTimeout(done)
+  }, [edgeRevealed, props.collapsed])
+
   /* Hiding the reveal only after a grace period lets the pointer travel up to
      the title bar toggle without the flyout flickering away underneath it. */
   const revealHide = useRef<number | undefined>(undefined)
@@ -171,7 +196,7 @@ function SidebarComponent(props: {
   useEffect(() => {
     if (!edgeRevealed || !props.collapsed) return
     const onMove = (event: MouseEvent) => {
-      if (event.clientX <= props.width + REVEAL_KEEP_BUFFER) cancelRevealHide()
+      if (resizing.current || event.clientX <= props.width + REVEAL_KEEP_BUFFER) cancelRevealHide()
       else scheduleRevealHide()
     }
     // Pointer position decides, and only this listener decides: the slot's own
@@ -469,10 +494,18 @@ function SidebarComponent(props: {
           </Menu>
         </div>
       </nav>
-      {!props.collapsed ? (
+      {!props.collapsed || edgeRevealed ? (
         <RailResizeHandle
           width={props.width}
+          /* A revealed rail is already collapsed, so there is nothing to fold:
+             the drag only resizes it, and the new width is what the next
+             reveal and the next expand come back at. */
+          foldable={!props.collapsed}
           onWidthChange={props.onWidthChange}
+          onResizingChange={(active) => {
+            resizing.current = active
+            if (active) cancelRevealHide()
+          }}
           onCollapse={() => {
             foldedByDrag.current = true
             props.onClose()
@@ -485,7 +518,10 @@ function SidebarComponent(props: {
 
 function RailResizeHandle(props: {
   width: number
+  /** False on a revealed rail: it is already collapsed, so the drag only sizes it. */
+  foldable: boolean
   onWidthChange: (width: number) => void
+  onResizingChange: (active: boolean) => void
   onCollapse: () => void
 }) {
   const drag = useRef<
@@ -554,6 +590,7 @@ function RailResizeHandle(props: {
       onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
         event.currentTarget.setPointerCapture?.(event.pointerId)
         setResizing(event.currentTarget, true)
+        props.onResizingChange(true)
         drag.current = {
           startX: event.clientX,
           width: props.width,
@@ -568,7 +605,7 @@ function RailResizeHandle(props: {
         // alive, so pulling back right unfolds it again. Only releasing while
         // folded makes the collapse real. Both the fold and the unfold run
         // with the transition on; ordinary tracking keeps it off.
-        const folded = raw <= COLLAPSE_WIDTH
+        const folded = props.foldable && raw <= COLLAPSE_WIDTH
         if (folded !== drag.current.folded) {
           drag.current.folded = folded
           if (!folded) drag.current.current = clampRailWidth(raw)
@@ -596,6 +633,7 @@ function RailResizeHandle(props: {
         const { current: width, folded } = drag.current
         drag.current = undefined
         target.releasePointerCapture?.(event.pointerId)
+        props.onResizingChange(false)
         if (folded) {
           // Restore the stored width behind the fold so the reveal and the
           // next expand come back at it, with animation suppressed so the

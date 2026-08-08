@@ -522,6 +522,63 @@ describe('Sidebar chat actions', () => {
     }
   })
 
+  it('resizes a revealed rail without collapsing it', () => {
+    const onClose = vi.fn()
+    const onWidthChange = vi.fn()
+    const { container } = render(
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed
+        width={248}
+        onWidthChange={onWidthChange}
+        onClose={onClose}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    // A collapsed rail has no drag edge until it is revealed.
+    expect(screen.queryByRole('separator', { name: 'Resize sidebar' })).toBeNull()
+    fireEvent.mouseEnter(container.querySelector('.rail__edge')!)
+    const handle = screen.getByRole('separator', { name: 'Resize sidebar' })
+
+    // Dragging it narrow keeps the reveal: there is nothing left to collapse.
+    fireEvent.pointerDown(handle, { clientX: 248, pointerId: 1 })
+    fireEvent.pointerMove(handle, { clientX: 60, pointerId: 1 })
+    fireEvent.pointerUp(handle, { clientX: 60, pointerId: 1 })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(onWidthChange).toHaveBeenCalledWith(240)
+
+    // Widening carries the pointer clear of the rail, which must not retract it.
+    vi.useFakeTimers()
+    try {
+      fireEvent.pointerDown(handle, { clientX: 248, pointerId: 2 })
+      fireEvent.pointerMove(handle, { clientX: 420, pointerId: 2 })
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+      expect(container.querySelector('.rail-slot')?.classList).toContain('is-revealed')
+      fireEvent.pointerUp(handle, { clientX: 420, pointerId: 2 })
+      expect(onWidthChange).toHaveBeenCalledWith(420)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('resizes with pointer or keyboard and collapses below the threshold', () => {
     const onClose = vi.fn()
     const onWidthChange = vi.fn()

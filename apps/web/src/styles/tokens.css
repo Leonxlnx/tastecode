@@ -190,6 +190,9 @@
      whole column; this curve keeps a steady middle and settles instead. */
   --ease-rail: cubic-bezier(0.32, 0.72, 0, 1);
   --dur-rail: 380ms;
+  /* The hover reveal is a flyout, not a layout change: it comes and goes
+     quickly. Only the deliberate collapse keeps the slower --dur-rail. */
+  --dur-reveal: 160ms;
 }
 
 :root[data-font='system'] {

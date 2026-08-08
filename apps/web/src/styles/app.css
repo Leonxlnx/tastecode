@@ -151,6 +151,23 @@
   transform: translateX(0);
 }
 
+/* Showing and retracting the flyout run at their own quicker pace; entering
+   the collapsed state for real keeps --dur-rail. is-reveal-out is set for the
+   length of the retract, since by then the revealed class is already gone. */
+.rail-slot.is-collapsed.is-revealed .rail,
+.rail-slot.is-collapsed.is-reveal-out .rail {
+  transition:
+    transform var(--dur-reveal) var(--ease-rail),
+    box-shadow var(--dur-reveal) var(--ease-rail);
+}
+
+/* While revealed, the drag edge rides the flyout's right side instead of the
+   zero-width column the rail slot collapses to. */
+.rail-slot.is-collapsed.is-revealed .rail__resize {
+  left: calc(var(--rail-w) - 3px);
+  right: auto;
+}
+
 .rail__backdrop {
   display: none;
 }
