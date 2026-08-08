@@ -125,6 +125,21 @@ function SidebarComponent(props: {
     revealHide.current = window.setTimeout(() => setEdgeRevealed(false), 350)
   }
   useEffect(() => cancelRevealHide, [])
+
+  /* The rail slot cannot see the title bar above it, but the pointer resting
+     top-left (over the toggle) is exactly where someone aims to pin the rail
+     open — the reveal must not fold under them. While revealed, anywhere
+     inside the rail's column counts as inside. */
+  useEffect(() => {
+    if (!edgeRevealed || !props.collapsed) return
+    const onMove = (event: MouseEvent) => {
+      if (event.clientX <= props.width) cancelRevealHide()
+      else scheduleRevealHide()
+    }
+    window.addEventListener('mousemove', onMove)
+    return () => window.removeEventListener('mousemove', onMove)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the two schedulers are stable module-shape helpers
+  }, [edgeRevealed, props.collapsed, props.width])
   const [scope, setScope] = useState('')
   const macOS = isMacOS()
   const inbox = props.mode === 'inbox' && props.inbox !== undefined
