@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { Thread } from './Thread.js'
+import type { Item } from '@harness/contracts'
+import { Thread, isRepeatedDesignRow } from './Thread.js'
 
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
@@ -19,6 +20,44 @@ vi.mock('@tanstack/react-virtual', () => ({
 }))
 
 afterEach(cleanup)
+
+describe('design activity rows', () => {
+  const marker = (id: string, text: string): Item => ({
+    id,
+    turnId: `turn-${id}`,
+    type: 'tool_call',
+    status: 'completed',
+    text,
+    createdAt: 1,
+  })
+
+  it('renders the design phase label instead of the internal slug', () => {
+    render(
+      <Thread
+        items={[marker('m1', 'design:brief')]}
+        running={false}
+        activeTurn={undefined}
+        plan={[]}
+        diff={undefined}
+        approvals={[]}
+        userInputs={[]}
+        reviews={[]}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+    expect(screen.getByText('Preparing questions')).toBeTruthy()
+    expect(screen.queryByText('design:brief')).toBeNull()
+  })
+
+  it('collapses phase markers repeated by retried provider turns', () => {
+    const first = marker('m1', 'design:build')
+    expect(isRepeatedDesignRow(marker('m2', 'design:build'), first)).toBe(true)
+    expect(isRepeatedDesignRow(marker('m2', 'design:review'), first)).toBe(false)
+    expect(isRepeatedDesignRow(marker('m2', 'some other tool'), first)).toBe(false)
+    expect(isRepeatedDesignRow(first, undefined)).toBe(false)
+  })
+})
 
 describe('thread message actions', () => {
   it('copies the user prompt', async () => {

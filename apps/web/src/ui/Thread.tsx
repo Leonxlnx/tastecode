@@ -21,6 +21,7 @@ import {
   Images,
   ListChecks,
   LoaderCircle,
+  Palette,
   Pencil,
   RotateCcw,
   Search,
@@ -315,7 +316,9 @@ export function Thread(props: {
                 !live &&
                 presentation?.complete === true &&
                 presentation.finalAnswerIndex === row.index
-              const suppressed = compactedActivity && !activityLead
+              const suppressed =
+                (compactedActivity && !activityLead) ||
+                isRepeatedDesignRow(item, props.items[row.index - 1])
               const liveActivity = live && isActivity(item)
               const settling = settledTurnId === item.turnId
               const railAnchor = live && presentation?.firstResponseIndex === row.index
@@ -644,7 +647,10 @@ const Row = memo(function Row({
           <LoaderCircle className="spinner" aria-hidden />
         ) : null}
       </summary>
-      {item.text ? <pre className="aux__out">{item.text}</pre> : null}
+      {/* Design markers have no output worth expanding — their text is the slug. */}
+      {item.text && !(item.type === 'tool_call' && designPhaseLabel(toolText(item))) ? (
+        <pre className="aux__out">{item.text}</pre>
+      ) : null}
     </details>
   )
 })
@@ -834,6 +840,7 @@ function glyph(item: Item) {
       return <FilePenLine size={13} />
     case 'tool_call':
       if (toolText(item).includes('image')) return <Images size={14} />
+      if (designPhaseLabel(toolText(item))) return <Palette size={13} />
       if (toolText(item).match(/read|open|file/)) return <BookOpen size={14} />
       if (toolText(item).includes('search')) return <Search size={14} />
       return <Wrench size={13} />
@@ -897,7 +904,9 @@ function summarise(item: Item): string {
     case 'file_change':
       return 'Edited files'
     case 'tool_call':
-      return item.text ?? 'Tool call'
+      // Design phase markers carry an internal slug; the reader gets the
+      // same human label the working rail used while the phase ran.
+      return designPhaseLabel(toolText(item)) ?? item.text ?? 'Tool call'
     case 'plan':
       return 'Plan'
     case 'error':
@@ -905,4 +914,13 @@ function summarise(item: Item): string {
     default:
       return item.type
   }
+}
+
+/** A phase that retried produces one marker per provider turn; the reader
+ *  cares that the phase happened, not how many turns it took. */
+export function isRepeatedDesignRow(item: Item, prior: Item | undefined): boolean {
+  if (!prior) return false
+  if (item.type !== 'tool_call' || prior.type !== 'tool_call') return false
+  const phase = designPhaseLabel(toolText(item))
+  return phase !== undefined && phase === designPhaseLabel(toolText(prior))
 }
