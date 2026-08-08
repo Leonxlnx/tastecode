@@ -96,15 +96,6 @@
   left: 0;
 }
 
-.titlebar::after {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 calc(var(--rail-w) - 1px);
-  width: 1px;
-  background: var(--line);
-  pointer-events: none;
-}
-
 .titlebar__toggle {
   color: var(--titlebar-symbol);
   -webkit-app-region: no-drag;
@@ -112,10 +103,6 @@
 
 .shell.is-narrow .titlebar {
   background: var(--bg-rail);
-}
-
-.shell.is-narrow .titlebar::after {
-  display: none;
 }
 
 /* ---------- rail ---------- */
@@ -7418,10 +7405,6 @@
 
 :root[data-glass='on'][data-shell='desktop'] .shell__body > :not(.rail-slot) {
   background: var(--bg);
-}
-
-:root[data-glass='on'] .titlebar::after {
-  background: color-mix(in srgb, #fff calc(4% + var(--rail-glass, 0) * 10%), transparent);
 }
 
 /* Glass previews: an accent glow behind a rail-colored pane whose opacity
