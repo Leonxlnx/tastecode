@@ -68,6 +68,7 @@ import {
 import type {
   Account,
   ApprovalDecision,
+  ApprovalMode,
   DiffDecision,
   DomainEvent,
   McpCapabilities,
@@ -299,6 +300,8 @@ const UNSUPPORTED_SKILL_CAPABILITIES: SkillCapabilities = {
  */
 export class Orchestrator {
   #threads = new Map<string, { thread: Thread; session: AgentSession; worktree?: Worktree }>()
+  /** Approval mode each live thread was started with; not persisted. */
+  #threadApprovals = new Map<string, ApprovalMode>()
   #activeTurns = new Set<string>()
   #startingTurns = new Set<string>()
   #reviewingDiffs = new Set<string>()
@@ -839,6 +842,7 @@ export class Orchestrator {
       ...(worktree ? { worktreePath: worktree.path, worktreeBranch: worktree.branch } : {}),
     })
     this.#attachThread(thread, session, workspacePath, worktree)
+    if (options.approval) this.#threadApprovals.set(thread.id, options.approval)
     return thread
   }
 
@@ -890,12 +894,26 @@ export class Orchestrator {
         }
         this.#designFlows.set(threadId, flow)
         this.#saveDesignFlow(threadId)
-        return await this.#sendDesignTurn(
+        const turnId = await this.#sendDesignTurn(
           threadId,
           designBriefingPrompt(text),
           attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT),
           this.#designTurnOptions(flow),
         )
+        // Ask-first cannot answer a permission prompt on an agent without
+        // interactive approvals, so its Build writes get denied one by one.
+        // Say so up front instead of letting the run die on it.
+        if (
+          this.#threadApprovals.get(threadId) === 'ask' &&
+          !this.#get(threadId).session.capabilities.approvals
+        ) {
+          this.#recordDesignNote(
+            threadId,
+            turnId,
+            'Heads up: this agent cannot ask for permission mid-run, so Ask-first may block its file writes during the build. Auto or Full approval works better for Design mode.',
+          )
+        }
+        return turnId
       }
       return await this.#get(threadId).session.sendTurn(threadId, text, attachments, options)
     } finally {
@@ -1434,6 +1452,7 @@ export class Orchestrator {
           }),
         )
         this.#saveDesignFlow(threadId)
+        this.#recordDesignNote(threadId, designInput.turnId, 'Got it, thanks.')
       }
       if (noMoreDetails && flow.pendingBrief) {
         try {
@@ -1526,6 +1545,7 @@ export class Orchestrator {
       entry.session.dispose()
       this.#threads.delete(threadId)
     }
+    this.#threadApprovals.delete(threadId)
     this.#activeTurns.delete(threadId)
     this.#startingTurns.delete(threadId)
     this.#reviewingDiffs.delete(threadId)
@@ -1920,11 +1940,12 @@ export class Orchestrator {
     const output = parseBriefingOutput(text)
     flow.correcting = false
     if (output.status === 'questions') {
+      const round = flow.askedQuestions ? 'follow-up' : 'first'
       flow.askedQuestions = true
       flow.finalAsked = false
       flow.pendingBrief = undefined
       this.#saveDesignFlow(threadId)
-      this.#requestDesignInput(threadId, turnId, output.questions, false)
+      this.#requestDesignInput(threadId, turnId, output.questions, false, round)
       return
     }
     if (output.status === 'not_design') {
@@ -1953,12 +1974,42 @@ export class Orchestrator {
     this.#completeDesignBrief(threadId, turnId, output.brief)
   }
 
+  #recordDesignNote(threadId: string, turnId: string, text: string): void {
+    this.#record(threadId, {
+      type: 'item.completed',
+      item: {
+        id: `design-note-${crypto.randomUUID()}`,
+        turnId,
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text,
+        createdAt: Date.now(),
+      },
+    })
+  }
+
   #requestDesignInput(
     threadId: string,
     turnId: string,
     questions: BriefingQuestion[],
     final: boolean,
+    round: 'first' | 'follow-up' | 'final' = 'final',
   ): void {
+    if (round === 'first') {
+      this.#recordDesignNote(
+        threadId,
+        turnId,
+        'I have a few questions before designing — they are right below.',
+      )
+    }
+    if (round === 'follow-up') {
+      this.#recordDesignNote(
+        threadId,
+        turnId,
+        'Some answers need one more pass — please take another look below.',
+      )
+    }
     const id = crypto.randomUUID()
     this.#designInputs.set(id, { threadId, turnId, questions, final })
     this.#designInputByThread.set(threadId, id)
@@ -1990,6 +2041,7 @@ export class Orchestrator {
         ? { ...brief, explicitAnswers: flow.explicitAnswers }
         : brief,
     )
+    this.#recordDesignNote(threadId, turnId, 'Brief locked in. Starting the design.')
     flow.phase = 'brand'
     const prompt = designBrandPrompt(saved)
     if (this.#activeTurns.has(threadId)) {
@@ -2187,11 +2239,13 @@ export class Orchestrator {
 
   #failDesignFlow(threadId: string, error: unknown): void {
     this.#clearDesignFlow(threadId)
-    this.#record(threadId, {
-      type: 'thread.error',
-      threadId,
-      message: `Design mode failed: ${error instanceof Error ? error.message : String(error)}`,
-    })
+    const detail = error instanceof Error ? error.message : String(error)
+    // A raw JSON.parse message reads as gibberish in the transcript; name
+    // what actually happened before quoting it.
+    const message = /JSON|Unexpected token/i.test(detail)
+      ? `Design mode failed: the agent answered in prose instead of the structured report Harness expects. Running the design again usually recovers. (${detail})`
+      : `Design mode failed: ${detail}`
+    this.#record(threadId, { type: 'thread.error', threadId, message })
     // Prompts typed during the flow queued behind the design guard; every
     // other design exit drains, and this one stranding them meant a failed
     // design run left "queued" messages sitting until the user sent another.

@@ -367,6 +367,28 @@ describe('provider-neutral design briefing', () => {
         expect(sessions[0]?.userInputs).toEqual([])
         expect(sessions[0]?.sent[3]).toContain('Brand phase')
 
+        // The transcript walks the user through the briefing in plain words:
+        // an invitation, an ack per answer round, a clarify nudge, a close.
+        const notes = received
+          .filter(
+            ({ event }) =>
+              event.type === 'item.completed' &&
+              event.item.type === 'message' &&
+              event.item.id.startsWith('design-note-'),
+          )
+          .map(({ event }) =>
+            event.type === 'item.completed' && event.item.type === 'message'
+              ? event.item.text
+              : undefined,
+          )
+        expect(notes).toEqual([
+          'I have a few questions before designing — they are right below.',
+          'Got it, thanks.',
+          'Some answers need one more pass — please take another look below.',
+          'Got it, thanks.',
+          'Brief locked in. Starting the design.',
+        ])
+
         sessions[0]?.emit(
           message(
             JSON.stringify({
