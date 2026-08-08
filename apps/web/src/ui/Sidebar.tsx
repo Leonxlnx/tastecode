@@ -174,8 +174,18 @@ function SidebarComponent(props: {
       if (event.clientX <= props.width + REVEAL_KEEP_BUFFER) cancelRevealHide()
       else scheduleRevealHide()
     }
+    // Pointer position decides, and only this listener decides: the slot's own
+    // mouseleave used to schedule the hide unconditionally, so travelling up
+    // into the title bar armed it — and if the pointer then came to rest, no
+    // further move arrived to disarm it and the rail folded away under the
+    // toggle the user was about to press.
     window.addEventListener('mousemove', onMove)
-    return () => window.removeEventListener('mousemove', onMove)
+    // Leaving the window entirely produces no more moves, so it is its own signal.
+    document.addEventListener('mouseleave', scheduleRevealHide)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseleave', scheduleRevealHide)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the two schedulers are stable module-shape helpers
   }, [edgeRevealed, props.collapsed, props.width])
   const [scope, setScope] = useState('')
@@ -250,7 +260,6 @@ function SidebarComponent(props: {
         edgeRevealed ? 'is-revealed' : ''
       }`}
       onMouseEnter={cancelRevealHide}
-      onMouseLeave={scheduleRevealHide}
     >
       {props.collapsed ? (
         <div

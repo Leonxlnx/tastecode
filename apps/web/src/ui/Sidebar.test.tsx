@@ -440,14 +440,16 @@ describe('Sidebar chat actions', () => {
     // the title bar toggle without the flyout flickering away.
     vi.useFakeTimers()
     try {
-      fireEvent.mouseLeave(slot!)
-      expect(slot?.classList).toContain('is-revealed')
-      fireEvent.mouseEnter(slot!)
-      vi.advanceTimersByTime(600)
-      expect(slot?.classList).toContain('is-revealed')
+      // Coming to rest anywhere in the rail's column keeps it, however the
+      // pointer got there — this is the path to the title bar toggle.
       fireEvent.mouseLeave(slot!)
       act(() => {
-        vi.advanceTimersByTime(600)
+        vi.advanceTimersByTime(1_000)
+      })
+      expect(slot?.classList).toContain('is-revealed')
+      fireEvent.mouseMove(window, { clientX: 900, clientY: 400 })
+      act(() => {
+        vi.advanceTimersByTime(1_000)
       })
       expect(slot?.classList).not.toContain('is-revealed')
       expect(rail?.hasAttribute('inert')).toBe(true)
@@ -492,6 +494,7 @@ describe('Sidebar chat actions', () => {
       // Aiming at the title bar toggle leaves the slot but stays at the rail.
       fireEvent.mouseLeave(slot!)
       fireEvent.mouseMove(window, { clientX: 300, clientY: 12 })
+      // And once it comes to rest there, with no further moves at all.
       act(() => {
         vi.advanceTimersByTime(1_000)
       })
