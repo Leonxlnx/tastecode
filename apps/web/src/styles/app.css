@@ -3397,11 +3397,11 @@
 .stage__body.is-new-session {
   align-content: center;
   grid-template-rows: auto auto;
-  /* Optical centering: dead-center reads as sitting slightly low, so bias the
-     block up by a little — enough to feel deliberate, not enough to look like
-     it is floating in the top half. Padding, not transform: a transformed
-     ancestor would re-anchor the position:fixed flyout menus. */
-  padding-bottom: clamp(0px, 5vh, 48px);
+  /* Very close to true center, with only a hair of upward bias left. The
+     earlier 5vh lift read as the block floating in the top half of a tall
+     window. Padding, not transform: a transformed ancestor would re-anchor
+     the position:fixed flyout menus. */
+  padding-bottom: clamp(0px, 1.5vh, 14px);
 }
 
 .stage__body.has-terminal {
