@@ -86,7 +86,7 @@ const REVEAL_KEEP_BUFFER = 96
 /** Grace before a revealed rail hides. Short, because position alone decides
  *  whether to arm it at all: it never fires while the pointer is still at the
  *  rail, so it no longer has to cover the walk to the toggle. */
-const REVEAL_GRACE_MS = 180
+const REVEAL_GRACE_MS = 120
 /** Mirrors --dur-reveal: how long the retract itself takes. */
 const REVEAL_OUT_MS = 160
 const MAX_RAIL_WIDTH = 420
@@ -183,7 +183,11 @@ function SidebarComponent(props: {
     }
   }
   const scheduleRevealHide = () => {
-    cancelRevealHide()
+    // Never restarted. This is called from every mouse move outside the rail,
+    // and re-arming each time meant the grace only elapsed once the pointer
+    // came to a complete stop — so a rail left behind while the mouse kept
+    // moving stayed open for as long as the movement lasted.
+    if (revealHide.current !== undefined) return
     revealHide.current = window.setTimeout(() => setEdgeRevealed(false), REVEAL_GRACE_MS)
   }
   useEffect(() => cancelRevealHide, [])

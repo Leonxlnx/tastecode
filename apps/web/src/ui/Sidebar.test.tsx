@@ -447,9 +447,17 @@ describe('Sidebar chat actions', () => {
         vi.advanceTimersByTime(1_000)
       })
       expect(slot?.classList).toContain('is-revealed')
+
+      // Moving away arms the hide once. Carrying on moving must not postpone
+      // it, or the rail would stay out until the mouse came to a full stop.
       fireEvent.mouseMove(window, { clientX: 900, clientY: 400 })
       act(() => {
-        vi.advanceTimersByTime(1_000)
+        vi.advanceTimersByTime(60)
+      })
+      fireEvent.mouseMove(window, { clientX: 905, clientY: 405 })
+      fireEvent.mouseMove(window, { clientX: 910, clientY: 410 })
+      act(() => {
+        vi.advanceTimersByTime(80)
       })
       expect(slot?.classList).not.toContain('is-revealed')
       expect(rail?.hasAttribute('inert')).toBe(true)
