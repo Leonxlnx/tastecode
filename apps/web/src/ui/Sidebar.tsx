@@ -72,8 +72,10 @@ const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦',
 /** Narrowest width at which the New chat row and the chat rows stay
  *  roomy — the narrowest rail still looks deliberate, never squeezed. */
 const MIN_RAIL_WIDTH = 240
-/** Dragging this far past the stop reads as intent: collapse entirely. */
-const COLLAPSE_OVERSHOOT = 68
+/** Pulling the rail down to half its narrowest width reads as intent to
+ *  collapse. A ratio rather than a pixel overshoot, so it keeps meaning the
+ *  same thing when MIN_RAIL_WIDTH moves. */
+const COLLAPSE_WIDTH = Math.round(MIN_RAIL_WIDTH * 0.5)
 /** Mirrors --dur-rail: how long a fold or unfold takes to play out. */
 const RAIL_FOLD_MS = 380
 const MAX_RAIL_WIDTH = 420
@@ -520,7 +522,7 @@ function RailResizeHandle(props: {
         // alive, so pulling back right unfolds it again. Only releasing while
         // folded makes the collapse real. Both the fold and the unfold run
         // with the transition on; ordinary tracking keeps it off.
-        const folded = raw <= MIN_RAIL_WIDTH - COLLAPSE_OVERSHOOT
+        const folded = raw <= COLLAPSE_WIDTH
         if (folded !== drag.current.folded) {
           drag.current.folded = folded
           if (!folded) drag.current.current = clampRailWidth(raw)
