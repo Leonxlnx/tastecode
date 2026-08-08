@@ -89,6 +89,13 @@ const REVEAL_KEEP_BUFFER = 96
 const REVEAL_GRACE_MS = 120
 /** Mirrors --dur-reveal: how long the retract itself takes. */
 const REVEAL_OUT_MS = 160
+/** Folding by drag leaves the pointer sitting on the very edge that reveals the
+ *  rail, so the release used to flash it straight back out. The reveal is held
+ *  off for this long; afterwards a pointer still at the edge reveals it as
+ *  usual, which is the behaviour someone parked there would expect. */
+const REVEAL_COOLDOWN_MS = 1250
+/** Matches the .rail__edge hit strip. */
+const REVEAL_EDGE_WIDTH = 6
 const MAX_RAIL_WIDTH = 420
 const COLLAPSED_PROJECT_SESSION_COUNT = 5
 
@@ -133,6 +140,40 @@ function SidebarComponent(props: {
   const resizing = useRef(false)
   /** Previous reveal state, so the hide direction can be told from the show. */
   const wasRevealed = useRef(false)
+  /** Running while a just-folded rail refuses to reveal again. */
+  const [cooling, setCooling] = useState(false)
+  const coolDown = useRef<number | undefined>(undefined)
+  /** Where the pointer was last seen during that wait. */
+  const pointerX = useRef(Number.POSITIVE_INFINITY)
+
+  const endCooldown = () => {
+    if (coolDown.current !== undefined) clearTimeout(coolDown.current)
+    coolDown.current = undefined
+    setCooling(false)
+  }
+
+  const startCooldown = (releaseX: number) => {
+    pointerX.current = releaseX
+    if (coolDown.current !== undefined) clearTimeout(coolDown.current)
+    setCooling(true)
+    coolDown.current = window.setTimeout(() => {
+      coolDown.current = undefined
+      setCooling(false)
+      // The wait is over: a pointer still parked at the edge gets its reveal.
+      if (pointerX.current <= REVEAL_EDGE_WIDTH) setEdgeRevealed(true)
+    }, REVEAL_COOLDOWN_MS)
+  }
+
+  useEffect(() => endCooldown, [])
+
+  useEffect(() => {
+    if (!cooling) return
+    const onMove = (event: MouseEvent) => {
+      pointerX.current = event.clientX
+    }
+    window.addEventListener('mousemove', onMove)
+    return () => window.removeEventListener('mousemove', onMove)
+  }, [cooling])
 
   /* Collapsing hands the rail to the absolute flyout, whose translate would
      animate in from no transform at all — the rail appearing at full width
@@ -142,6 +183,9 @@ function SidebarComponent(props: {
      the handle cannot do it, since collapsing unmounts the handle. */
   useLayoutEffect(() => {
     const slot = slotRef.current
+    // Expanding the rail by any other means ends the wait: it only exists to
+    // stop a just-folded rail from springing back out.
+    if (!props.collapsed) endCooldown()
     if (!props.collapsed || !foldedByDrag.current || !slot) {
       foldedByDrag.current = false
       return
@@ -295,6 +339,9 @@ function SidebarComponent(props: {
           className="rail__edge"
           aria-hidden
           onMouseEnter={() => {
+            // A rail just folded by dragging stays folded, even though the
+            // pointer is still resting on this strip.
+            if (coolDown.current !== undefined) return
             cancelRevealHide()
             setEdgeRevealed(true)
           }}
@@ -510,8 +557,9 @@ function SidebarComponent(props: {
             resizing.current = active
             if (active) cancelRevealHide()
           }}
-          onCollapse={() => {
+          onCollapse={(releaseX) => {
             foldedByDrag.current = true
+            startCooldown(releaseX)
             props.onClose()
           }}
         />
@@ -526,7 +574,7 @@ function RailResizeHandle(props: {
   foldable: boolean
   onWidthChange: (width: number) => void
   onResizingChange: (active: boolean) => void
-  onCollapse: () => void
+  onCollapse: (releaseX: number) => void
 }) {
   const drag = useRef<
     { startX: number; width: number; current: number; folded: boolean } | undefined
@@ -574,7 +622,7 @@ function RailResizeHandle(props: {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
     event.preventDefault()
     if (event.key === 'ArrowLeft' && props.width <= MIN_RAIL_WIDTH) {
-      props.onCollapse()
+      props.onCollapse(Number.POSITIVE_INFINITY)
       return
     }
     props.onWidthChange(clampRailWidth(props.width + (event.key === 'ArrowLeft' ? -8 : 8)))
@@ -646,7 +694,7 @@ function RailResizeHandle(props: {
           // unmounted by then and could not do it itself.
           if (shell) shell.classList.add('is-resizing')
           preview(target, props.width)
-          props.onCollapse()
+          props.onCollapse(event.clientX)
           return
         }
         setResizing(target, false)

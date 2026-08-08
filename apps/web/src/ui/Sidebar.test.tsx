@@ -530,6 +530,63 @@ describe('Sidebar chat actions', () => {
     }
   })
 
+  it('a rail folded by dragging does not spring back out under the pointer', () => {
+    const onClose = vi.fn()
+    const view = (collapsed: boolean) => (
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={collapsed}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={onClose}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    )
+    const { container, rerender } = render(view(false))
+    const handle = screen.getByRole('separator', { name: 'Resize sidebar' })
+
+    vi.useFakeTimers()
+    try {
+      // Fold it and let go with the pointer resting on the reveal strip.
+      fireEvent.pointerDown(handle, { clientX: 248, pointerId: 1 })
+      fireEvent.pointerMove(handle, { clientX: 80, pointerId: 1 })
+      fireEvent.pointerUp(handle, { clientX: 3, pointerId: 1 })
+      expect(onClose).toHaveBeenCalledOnce()
+      rerender(view(true))
+
+      const slot = container.querySelector('.rail-slot')
+      // Hovering the strip during the wait is ignored.
+      fireEvent.mouseEnter(container.querySelector('.rail__edge')!)
+      act(() => {
+        vi.advanceTimersByTime(600)
+      })
+      expect(slot?.classList).not.toContain('is-revealed')
+
+      // Once it passes, a pointer still parked there gets its reveal.
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+      expect(slot?.classList).toContain('is-revealed')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('resizes a revealed rail without collapsing it', () => {
     const onClose = vi.fn()
     const onWidthChange = vi.fn()
