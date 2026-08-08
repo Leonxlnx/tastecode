@@ -69,11 +69,11 @@ export type Project = {
 type DropPosition = 'before' | 'after'
 
 const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
-/** Narrowest width at which the New chat row row and the chat rows stay
+/** Narrowest width at which the New chat row and the chat rows stay
  *  comfortable — the drag stops well before anything gets tight. */
-const MIN_RAIL_WIDTH = 190
+const MIN_RAIL_WIDTH = 210
 /** Dragging this far past the stop reads as intent: collapse entirely. */
-const COLLAPSE_OVERSHOOT = 95
+const COLLAPSE_OVERSHOOT = 105
 const MAX_RAIL_WIDTH = 420
 const COLLAPSED_PROJECT_SESSION_COUNT = 5
 

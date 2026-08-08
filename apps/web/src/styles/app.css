@@ -3202,6 +3202,9 @@
 
 .sess__title {
   flex: 1;
+  /* min-width lets the title shrink and ellipsize first, so the status dot
+     and spinner never get pushed out of the row at narrow widths. */
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

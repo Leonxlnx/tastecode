@@ -494,7 +494,7 @@ describe('Sidebar chat actions', () => {
     fireEvent.pointerDown(handle, { clientX: 248, pointerId: 1 })
     fireEvent.pointerMove(handle, { clientX: 150, pointerId: 1 })
     fireEvent.pointerUp(handle, { clientX: 150, pointerId: 1 })
-    expect(onWidthChange).toHaveBeenCalledWith(190)
+    expect(onWidthChange).toHaveBeenCalledWith(210)
     expect(onClose).not.toHaveBeenCalled()
 
     // Dragging far past the stop is intent: the rail folds mid-drag.
