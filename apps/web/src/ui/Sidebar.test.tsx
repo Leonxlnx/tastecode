@@ -474,9 +474,17 @@ describe('Sidebar chat actions', () => {
     fireEvent.keyDown(handle, { key: 'ArrowRight' })
     expect(onWidthChange).toHaveBeenCalledWith(256)
 
+    // Dragging a little past the stop clamps at the minimum instead of
+    // squeezing the content, and does not collapse.
     fireEvent.pointerDown(handle, { clientX: 248, pointerId: 1 })
-    fireEvent.pointerMove(handle, { clientX: 160, pointerId: 1 })
-    fireEvent.pointerUp(handle, { clientX: 160, pointerId: 1 })
+    fireEvent.pointerMove(handle, { clientX: 150, pointerId: 1 })
+    fireEvent.pointerUp(handle, { clientX: 150, pointerId: 1 })
+    expect(onWidthChange).toHaveBeenCalledWith(164)
+    expect(onClose).not.toHaveBeenCalled()
+
+    // Dragging far past the stop is intent: the rail folds mid-drag.
+    fireEvent.pointerDown(handle, { clientX: 248, pointerId: 2 })
+    fireEvent.pointerMove(handle, { clientX: 80, pointerId: 2 })
     expect(onClose).toHaveBeenCalledOnce()
   })
 })

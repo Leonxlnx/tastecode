@@ -69,8 +69,11 @@ export type Project = {
 type DropPosition = 'before' | 'after'
 
 const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
-const MIN_RAIL_WIDTH = 148
-const COLLAPSE_RAIL_WIDTH = 176
+/** Narrowest width at which the New chat row still shows its search icon
+ *  untouched — the drag stops here instead of squeezing the content. */
+const MIN_RAIL_WIDTH = 164
+/** Dragging this far past the stop reads as intent: collapse entirely. */
+const COLLAPSE_OVERSHOOT = 82
 const MAX_RAIL_WIDTH = 420
 const COLLAPSED_PROJECT_SESSION_COUNT = 5
 
@@ -388,20 +391,20 @@ function RailResizeHandle(props: {
     target.closest<HTMLElement>('.shell')?.style.setProperty('--rail-w', `${width}px`)
   }
 
-  const finish = (target: HTMLElement, width: number) => {
-    if (width <= COLLAPSE_RAIL_WIDTH) {
-      preview(target, props.width)
-      props.onCollapse()
-    } else {
-      props.onWidthChange(width)
-    }
+  /* The grid-column transition is for collapse and expand; while a pointer is
+     dragging it made the rail rubber-band behind the cursor. */
+  const setResizing = (target: HTMLElement, active: boolean) => {
+    target.closest<HTMLElement>('.shell')?.classList.toggle('is-resizing', active)
   }
 
   const resizeWithKeyboard = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
     event.preventDefault()
-    const next = clampRailWidth(props.width + (event.key === 'ArrowLeft' ? -8 : 8))
-    finish(event.currentTarget, next)
+    if (event.key === 'ArrowLeft' && props.width <= MIN_RAIL_WIDTH) {
+      props.onCollapse()
+      return
+    }
+    props.onWidthChange(clampRailWidth(props.width + (event.key === 'ArrowLeft' ? -8 : 8)))
   }
 
   return (
@@ -417,11 +420,23 @@ function RailResizeHandle(props: {
       onKeyDown={resizeWithKeyboard}
       onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
         event.currentTarget.setPointerCapture?.(event.pointerId)
+        setResizing(event.currentTarget, true)
         drag.current = { startX: event.clientX, width: props.width, current: props.width }
       }}
       onPointerMove={(event: PointerEvent<HTMLButtonElement>) => {
         if (!drag.current) return
-        const next = clampRailWidth(drag.current.width + event.clientX - drag.current.startX)
+        const raw = drag.current.width + event.clientX - drag.current.startX
+        // Well past the stop is intent, not overshoot: collapse right away,
+        // with the transition back on so the fold animates.
+        if (raw <= MIN_RAIL_WIDTH - COLLAPSE_OVERSHOOT) {
+          drag.current = undefined
+          event.currentTarget.releasePointerCapture?.(event.pointerId)
+          setResizing(event.currentTarget, false)
+          preview(event.currentTarget, props.width)
+          props.onCollapse()
+          return
+        }
+        const next = clampRailWidth(raw)
         drag.current.current = next
         preview(event.currentTarget, next)
       }}
@@ -430,7 +445,8 @@ function RailResizeHandle(props: {
         const width = drag.current.current
         drag.current = undefined
         event.currentTarget.releasePointerCapture?.(event.pointerId)
-        finish(event.currentTarget, width)
+        setResizing(event.currentTarget, false)
+        props.onWidthChange(width)
       }}
     />
   )

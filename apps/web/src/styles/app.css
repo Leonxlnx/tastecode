@@ -64,6 +64,12 @@
   grid-template-columns: 0 minmax(0, 1fr);
 }
 
+/* While a pointer drags the rail edge the column must track it 1:1 — the
+   transition is only for collapse and expand. */
+.shell.is-resizing .shell__body {
+  transition: none;
+}
+
 /* ---------- title bar ---------- */
 
 .titlebar {
@@ -157,7 +163,10 @@
 .rail__resize::after {
   content: '';
   position: absolute;
-  inset: 0 2px;
+  /* Stops short of the stage's rounded corner above and mirrors it below,
+     with rounded ends of its own. */
+  inset: 12px 2px;
+  border-radius: 99px;
   background: var(--line-strong);
   opacity: 0;
   transition: opacity var(--dur-fast) var(--ease-out);
