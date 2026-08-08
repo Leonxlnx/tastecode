@@ -49,7 +49,7 @@
   min-height: 0;
   /* Grid tracks animate cleanly, so collapsing the rail slides the thread out
      to fill the window instead of snapping. */
-  transition: grid-template-columns var(--dur-slow) var(--ease-out);
+  transition: grid-template-columns var(--dur-rail) var(--ease-rail);
   /* Rail colour behind everything in this row: it is what shows through the
      stage's rounded top-left corner, so the notch reads as part of the rail. */
   background: var(--bg-rail);
@@ -133,8 +133,8 @@
   border-radius: 0 10px 10px 0;
   transform: translateX(-100%);
   transition:
-    transform var(--dur-slow) var(--ease-out),
-    box-shadow var(--dur-slow) var(--ease-out);
+    transform var(--dur-rail) var(--ease-rail),
+    box-shadow var(--dur-rail) var(--ease-rail);
 }
 
 .rail-slot.is-collapsed.is-revealed .rail {

@@ -184,6 +184,12 @@
   --dur-press: 140ms;
   --dur-fast: 180ms;
   --dur-slow: 260ms;
+
+  /* The rail is the largest thing that moves. The quick ease-out above spends
+     most of its distance in the first few frames, which reads as a snap on a
+     whole column; this curve keeps a steady middle and settles instead. */
+  --ease-rail: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur-rail: 380ms;
 }
 
 :root[data-font='system'] {

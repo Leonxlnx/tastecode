@@ -74,6 +74,8 @@ const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦',
 const MIN_RAIL_WIDTH = 210
 /** Dragging this far past the stop reads as intent: collapse entirely. */
 const COLLAPSE_OVERSHOOT = 105
+/** Mirrors --dur-rail: how long a fold or unfold takes to play out. */
+const RAIL_FOLD_MS = 380
 const MAX_RAIL_WIDTH = 420
 const COLLAPSED_PROJECT_SESSION_COUNT = 5
 
@@ -442,6 +444,16 @@ function RailResizeHandle(props: {
     { startX: number; width: number; current: number; folded: boolean } | undefined
   >(undefined)
 
+  /** Set while a fold or unfold is playing out, so tracking does not cut the
+   *  animation off mid-flight on the next mouse move. */
+  const settling = useRef<number | undefined>(undefined)
+  useEffect(
+    () => () => {
+      if (settling.current !== undefined) clearTimeout(settling.current)
+    },
+    [],
+  )
+
   const preview = (target: HTMLElement, width: number) => {
     target.closest<HTMLElement>('.shell')?.style.setProperty('--rail-w', `${width}px`)
   }
@@ -449,7 +461,25 @@ function RailResizeHandle(props: {
   /* The grid-column transition is for collapse and expand; while a pointer is
      dragging it made the rail rubber-band behind the cursor. */
   const setResizing = (target: HTMLElement, active: boolean) => {
-    target.closest<HTMLElement>('.shell')?.classList.toggle('is-resizing', active)
+    const shell = target.closest<HTMLElement>('.shell')
+    if (!shell) return
+    if (active) {
+      shell.classList.add('is-resizing')
+      return
+    }
+    shell.classList.remove('is-resizing')
+    // Re-enabling the transition and changing the width inside one event can
+    // collapse into a single style recalculation that starts no animation —
+    // which is why unfolding mid-drag used to jump. Reading a layout value
+    // commits the transition-less state first, so the change animates.
+    void shell.offsetWidth
+  }
+
+  const holdTransition = () => {
+    if (settling.current !== undefined) clearTimeout(settling.current)
+    settling.current = window.setTimeout(() => {
+      settling.current = undefined
+    }, RAIL_FOLD_MS)
   }
 
   const resizeWithKeyboard = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -495,28 +525,37 @@ function RailResizeHandle(props: {
           drag.current.folded = folded
           if (!folded) drag.current.current = clampRailWidth(raw)
           setResizing(event.currentTarget, false)
+          holdTransition()
           preview(event.currentTarget, folded ? 0 : drag.current.current)
           return
         }
         if (folded) return
-        setResizing(event.currentTarget, true)
+        // Straight after a fold or unfold the transition stays on, so the rail
+        // eases into the cursor rather than snapping out of a half-played
+        // animation. Once it has settled, tracking is 1:1 again.
+        if (settling.current === undefined) setResizing(event.currentTarget, true)
         const next = clampRailWidth(raw)
         drag.current.current = next
         preview(event.currentTarget, next)
       }}
       onPointerUp={(event: PointerEvent<HTMLButtonElement>) => {
         if (!drag.current) return
+        const target = event.currentTarget
         const { current: width, folded } = drag.current
         drag.current = undefined
-        event.currentTarget.releasePointerCapture?.(event.pointerId)
-        setResizing(event.currentTarget, false)
+        target.releasePointerCapture?.(event.pointerId)
         if (folded) {
           // The stored width survives the collapse: the edge reveal and the
-          // next expand come back at it.
-          preview(event.currentTarget, props.width)
+          // next expand come back at it. Restoring it with the transition
+          // suppressed keeps the rail from sliding open for a frame before
+          // the collapsed layout zeroes the column.
+          setResizing(target, true)
+          preview(target, props.width)
           props.onCollapse()
+          requestAnimationFrame(() => setResizing(target, false))
           return
         }
+        setResizing(target, false)
         props.onWidthChange(width)
       }}
     />
