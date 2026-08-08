@@ -565,6 +565,13 @@ const Row = memo(function Row({
 }) {
   if (hidden) return null
 
+  // The working rail already announces the running design phase by name; a
+  // second row with the same label reads as a duplicate. The row appears once
+  // the phase completes, with its duration.
+  if (item.type === 'tool_call' && item.status === 'started' && designPhaseLabel(toolText(item))) {
+    return null
+  }
+
   if (activity) {
     return <CompletionRail activity={activity} elapsedMs={elapsedMs ?? 0} settling={settling} />
   }

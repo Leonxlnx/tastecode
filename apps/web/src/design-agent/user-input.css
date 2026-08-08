@@ -247,19 +247,9 @@
   animation: brief-spin 700ms linear infinite;
 }
 
-/* Design briefing owns the working label while its question request is pending. */
-.shell:has(.composer__design.is-active) .activity--working .activity__summary > span:last-child {
-  font-size: 0;
-}
-
-.shell:has(.composer__design.is-active)
-  .activity--working
-  .activity__summary
-  > span:last-child::after {
-  content: 'Preparing questions…';
-  font-size: var(--t-lg);
-}
-
+/* The working rail's own label already names the design phase; replacing the
+   timer with a second copy of it was a relic from when the rail only knew
+   "Working". */
 .shell:has(.composer__design.is-active) .aux--reasoning.aux--live,
 .stage__body:has(.brief-input) .activity--working {
   display: none;
