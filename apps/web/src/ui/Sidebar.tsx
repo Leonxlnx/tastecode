@@ -543,18 +543,28 @@ function RailResizeHandle(props: {
       onPointerUp={(event: PointerEvent<HTMLButtonElement>) => {
         if (!drag.current) return
         const target = event.currentTarget
+        // Captured now: collapsing unmounts this handle, and a detached button
+        // can no longer find the shell — which is how the suppression class
+        // used to get stuck on it and kill every later animation.
+        const shell = target.closest<HTMLElement>('.shell')
         const { current: width, folded } = drag.current
         drag.current = undefined
         target.releasePointerCapture?.(event.pointerId)
         if (folded) {
-          // The stored width survives the collapse: the edge reveal and the
-          // next expand come back at it. Restoring it with the transition
-          // suppressed keeps the rail from sliding open for a frame before
-          // the collapsed layout zeroes the column.
+          // The rail is already folded away. Collapsing hands it to the
+          // absolute flyout at its stored width, whose transform would then
+          // animate out from nothing — the flash of the rail opening and
+          // closing again. Suppress until that layout is committed.
           setResizing(target, true)
           preview(target, props.width)
           props.onCollapse()
-          requestAnimationFrame(() => setResizing(target, false))
+          requestAnimationFrame(() => {
+            if (!shell) return
+            // Commit the collapsed layout while it still cannot animate,
+            // then hand animation back for the next interaction.
+            void shell.offsetWidth
+            shell.classList.remove('is-resizing')
+          })
           return
         }
         setResizing(target, false)

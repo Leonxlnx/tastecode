@@ -65,8 +65,12 @@
 }
 
 /* While a pointer drags the rail edge the column must track it 1:1 — the
-   transition is only for collapse and expand. */
-.shell.is-resizing .shell__body {
+   transition is only for collapse and expand. The flyout is covered too:
+   releasing a folded drag swaps the rail to the absolute flyout at full
+   width, and its transform would otherwise animate out from nothing, which
+   reads as the rail flashing open before it closes. */
+.shell.is-resizing .shell__body,
+.shell.is-resizing .rail-slot.is-collapsed .rail {
   transition: none;
 }
 
