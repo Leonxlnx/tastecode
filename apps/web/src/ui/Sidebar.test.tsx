@@ -492,9 +492,9 @@ describe('Sidebar chat actions', () => {
     // Dragging a little past the stop clamps at the minimum instead of
     // squeezing the content, and does not collapse.
     fireEvent.pointerDown(handle, { clientX: 248, pointerId: 1 })
-    fireEvent.pointerMove(handle, { clientX: 150, pointerId: 1 })
-    fireEvent.pointerUp(handle, { clientX: 150, pointerId: 1 })
-    expect(onWidthChange).toHaveBeenCalledWith(210)
+    fireEvent.pointerMove(handle, { clientX: 200, pointerId: 1 })
+    fireEvent.pointerUp(handle, { clientX: 200, pointerId: 1 })
+    expect(onWidthChange).toHaveBeenCalledWith(240)
     expect(onClose).not.toHaveBeenCalled()
 
     // Far past the stop the rail folds as a preview; pulling back while still
@@ -502,10 +502,10 @@ describe('Sidebar chat actions', () => {
     fireEvent.pointerDown(handle, { clientX: 248, pointerId: 2 })
     fireEvent.pointerMove(handle, { clientX: 80, pointerId: 2 })
     expect(onClose).not.toHaveBeenCalled()
-    fireEvent.pointerMove(handle, { clientX: 230, pointerId: 2 })
-    fireEvent.pointerUp(handle, { clientX: 230, pointerId: 2 })
+    fireEvent.pointerMove(handle, { clientX: 270, pointerId: 2 })
+    fireEvent.pointerUp(handle, { clientX: 270, pointerId: 2 })
     expect(onClose).not.toHaveBeenCalled()
-    expect(onWidthChange).toHaveBeenCalledWith(230)
+    expect(onWidthChange).toHaveBeenCalledWith(270)
 
     // Releasing while folded makes the collapse real.
     fireEvent.pointerDown(handle, { clientX: 248, pointerId: 3 })

@@ -70,8 +70,8 @@ type DropPosition = 'before' | 'after'
 
 const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
 /** Narrowest width at which the New chat row and the chat rows stay
- *  comfortable — the drag stops well before anything gets tight. */
-const MIN_RAIL_WIDTH = 210
+ *  roomy — the narrowest rail still looks deliberate, never squeezed. */
+const MIN_RAIL_WIDTH = 240
 /** Dragging this far past the stop reads as intent: collapse entirely. */
 const COLLAPSE_OVERSHOOT = 68
 /** Mirrors --dur-rail: how long a fold or unfold takes to play out. */
