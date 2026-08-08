@@ -50,6 +50,14 @@
   /* Grid tracks animate cleanly, so collapsing the rail slides the thread out
      to fill the window instead of snapping. */
   transition: grid-template-columns var(--dur-slow) var(--ease-out);
+  /* Rail colour behind everything in this row: it is what shows through the
+     stage's rounded top-left corner, so the notch reads as part of the rail. */
+  background: var(--bg-rail);
+}
+
+:root[data-glass='on'][data-shell='desktop'] .shell__body {
+  /* The OS blur material must stay visible behind the sidebar column. */
+  background: transparent;
 }
 
 .shell.is-narrow .shell__body {
@@ -69,31 +77,12 @@
   padding-right: 12px;
   width: 100%;
   /* One element with the sidebar: the whole bar carries the rail colour
-     (native caption buttons match via titleBarOverlay in window-theme.ts). */
+     (native caption buttons match via titleBarOverlay in window-theme.ts).
+     The content hairline lives on .stage, not here — a bar-positioned line
+     tracked --rail-w instantly while the grid column animated behind it. */
   background: var(--bg-rail);
-  /* The hairline pseudo below must paint over the first content pixel. */
-  z-index: 5;
   -webkit-app-region: drag;
   user-select: none;
-}
-
-/* The bar's hairline. It starts after the sidebar column — over the rail the
-   bar and the sidebar are one surface, so a line there read as a stray cross —
-   and it sits one pixel below the bar: Windows paints the caption buttons over
-   the bar's own height, which swallowed an inside border under them. */
-.titlebar::before {
-  content: '';
-  position: absolute;
-  top: 100%;
-  left: var(--rail-w);
-  right: 0;
-  height: 1px;
-  background: var(--line);
-  pointer-events: none;
-}
-
-.shell.is-narrow .titlebar::before {
-  left: 0;
 }
 
 .titlebar__toggle {
@@ -119,8 +108,8 @@
   height: 100%;
   min-height: 0;
   background: var(--bg-rail);
-  border-right: 1px solid var(--line);
-  box-shadow: inset -1px 0 var(--chrome-highlight);
+  /* No border of its own: the stage's left hairline draws the column divider,
+     so the line and the rounded corner belong to one element. */
 }
 
 .rail-slot.is-collapsed {
@@ -3359,6 +3348,20 @@
   grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
+  /* The content pane owns its frame: top and left hairline with a rounded
+     top-left corner, over the rail-coloured row behind it. Living on the pane
+     itself, the line moves in the same grid animation as the column — the
+     old bar-positioned hairline lagged the rail while resizing. */
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  border-top-left-radius: 10px;
+  overflow: hidden;
+}
+
+.shell.is-narrow .stage {
+  border-left: 0;
+  border-top-left-radius: 0;
 }
 
 .stage__body {
@@ -7390,8 +7393,6 @@
   );
   backdrop-filter: blur(26px) saturate(1.4);
   -webkit-backdrop-filter: blur(26px) saturate(1.4);
-  border-right: 1px solid
-    color-mix(in srgb, #fff calc(4% + var(--rail-glass, 0) * 10%), transparent);
 }
 
 /* Real glass, the way Codex does it: on desktop the OS draws acrylic (Windows)
