@@ -69,12 +69,31 @@
   padding-right: 12px;
   width: 100%;
   /* One element with the sidebar: the whole bar carries the rail colour
-     (native caption buttons match via titleBarOverlay in window-theme.ts)
-     and closes with its own hairline, in both themes. */
+     (native caption buttons match via titleBarOverlay in window-theme.ts). */
   background: var(--bg-rail);
-  border-bottom: 1px solid var(--line);
+  /* The hairline pseudo below must paint over the first content pixel. */
+  z-index: 5;
   -webkit-app-region: drag;
   user-select: none;
+}
+
+/* The bar's hairline. It starts after the sidebar column — over the rail the
+   bar and the sidebar are one surface, so a line there read as a stray cross —
+   and it sits one pixel below the bar: Windows paints the caption buttons over
+   the bar's own height, which swallowed an inside border under them. */
+.titlebar::before {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: var(--rail-w);
+  right: 0;
+  height: 1px;
+  background: var(--line);
+  pointer-events: none;
+}
+
+.shell.is-narrow .titlebar::before {
+  left: 0;
 }
 
 .titlebar::after {
@@ -179,10 +198,18 @@
   gap: 1px;
 }
 
-.rail__utility-row {
+/* New chat and search share one row: the search icon rides on the right,
+   quiet by default, surfaced only on hover or focus. */
+.rail__row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rail__row .navitem {
+  flex: 1;
+  min-width: 0;
 }
 
 .rail__new-project {
@@ -198,38 +225,24 @@
 
 .rail__search {
   flex: none;
-  width: 30px;
-  height: 30px;
-  background: var(--chrome-recessed);
-  border: 1px solid var(--chrome-border);
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: 0;
   border-radius: var(--r-md);
-  box-shadow: var(--chrome-inset-shadow);
   color: var(--text-3);
   cursor: pointer;
   font: inherit;
-  font-size: var(--t-xs);
   transition:
     background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color var(--dur-fast) var(--ease-out);
 }
 
-/* The search button also carries .icon-btn, which is declared later at equal
-   specificity and was overriding all of the above — a 22px transparent icon
-   next to the 30px recessed toggle it is meant to match. */
-.rail__utility-row .rail__search.icon-btn {
-  width: 30px;
-  height: 30px;
-  background: var(--chrome-recessed);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  color: var(--text-3);
-}
-
-.rail__utility-row .rail__search.icon-btn:is(:hover, :focus-visible) {
-  background: var(--chrome-recessed);
-  border-color: color-mix(in srgb, var(--text-3) 35%, var(--chrome-border));
-  color: var(--text-2);
+.rail__search:is(:hover, :focus-visible) {
+  background: var(--control-hover);
+  color: var(--text);
 }
 
 .navitem {

@@ -202,25 +202,37 @@ function SidebarComponent(props: {
         ) : (
           <>
             <div className="rail__actions">
-              <button
-                className="navitem"
-                aria-keyshortcuts={shortcutAria(SHORTCUTS.newChat)}
-                onClick={() => {
-                  const project =
-                    props.projects.find(
-                      (candidate) => candidate.path === props.activeProjectPath,
-                    ) ?? props.projects[0]
-                  if (project) newSession(project.path)
-                  else {
-                    props.onAddProject()
-                    closeOnNarrowViewport()
-                  }
-                }}
-              >
-                <Plus size={15} aria-hidden />
-                <span>New chat</span>
-                <ShortcutHint>{shortcutLabel(SHORTCUTS.newChat, macOS)}</ShortcutHint>
-              </button>
+              <div className="rail__row">
+                <button
+                  className="navitem"
+                  aria-keyshortcuts={shortcutAria(SHORTCUTS.newChat)}
+                  onClick={() => {
+                    const project =
+                      props.projects.find(
+                        (candidate) => candidate.path === props.activeProjectPath,
+                      ) ?? props.projects[0]
+                    if (project) newSession(project.path)
+                    else {
+                      props.onAddProject()
+                      closeOnNarrowViewport()
+                    }
+                  }}
+                >
+                  <Plus size={15} aria-hidden />
+                  <span>New chat</span>
+                  <ShortcutHint>{shortcutLabel(SHORTCUTS.newChat, macOS)}</ShortcutHint>
+                </button>
+                <button
+                  type="button"
+                  className="rail__search"
+                  onClick={() => props.onOpenSearch()}
+                  aria-label="Search chats"
+                  title={`Search chats (${shortcutLabel(SHORTCUTS.searchSessions, macOS)})`}
+                  aria-keyshortcuts={shortcutAria(SHORTCUTS.searchSessions)}
+                >
+                  <Search size={14} aria-hidden />
+                </button>
+              </div>
               <button
                 className="navitem rail__new-project"
                 onClick={() => {
@@ -233,18 +245,6 @@ function SidebarComponent(props: {
                 <span>New project</span>
                 <ShortcutHint>{shortcutLabel(SHORTCUTS.newProject, macOS)}</ShortcutHint>
               </button>
-              <div className="rail__utility-row">
-                <button
-                  type="button"
-                  className="icon-btn icon-btn--always rail__search"
-                  onClick={() => props.onOpenSearch()}
-                  aria-label="Search chats"
-                  title={`Search chats (${shortcutLabel(SHORTCUTS.searchSessions, macOS)})`}
-                  aria-keyshortcuts={shortcutAria(SHORTCUTS.searchSessions)}
-                >
-                  <Search size={14} aria-hidden />
-                </button>
-              </div>
             </div>
 
             <div className="rail__body">
