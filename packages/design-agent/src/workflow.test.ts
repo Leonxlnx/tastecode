@@ -18,9 +18,14 @@ describe('provider-neutral briefing workflow', () => {
   it('asks every provider for the same adaptive JSON protocol', () => {
     const prompt = designBriefingPrompt('Create a modern studio website.')
     expect(prompt).toContain('There is no total question limit')
+    expect(prompt).toContain('materially changes the result')
     expect(prompt).toContain('Personal Harness presents them one at a time')
     expect(prompt).toContain('Do not include the final open-ended check yourself')
     expect(prompt).toContain('Create a modern studio website.')
+    // The UI always offers a free-text answer and never renders label tags,
+    // so the model must not duplicate either.
+    expect(prompt).toContain('the UI always shows a free-text field')
+    expect(prompt).toContain('Never suffix a label with "(Recommended)"')
   })
 
   it('parses questions and continues with their answers', () => {
@@ -53,5 +58,7 @@ describe('provider-neutral briefing workflow', () => {
     expect(FINAL_BRIEFING_QUESTION.question).toBe(
       "Before I finalize your brief, is there anything else you'd like me to know?",
     )
+    // No "(Recommended)" tag on the no-more-details answer.
+    expect(FINAL_BRIEFING_QUESTION.options[0]?.label).toBe("No, that's everything")
   })
 })

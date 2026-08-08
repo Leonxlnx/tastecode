@@ -7,7 +7,7 @@ export const FINAL_BRIEFING_QUESTION = {
   allowOther: true,
   options: [
     {
-      label: "No, that's everything (Recommended)",
+      label: "No, that's everything",
       description: 'Finalize the brief using the information already provided.',
     },
   ],
@@ -28,7 +28,7 @@ export type BriefingOutput =
 
 const PROTOCOL = `Return JSON only, without Markdown fences, using exactly one of these shapes:
 
-{"status":"questions","message":"Preparing questions.","questions":[{"id":"stable_snake_case_id","header":"Short label","question":"A concise question?","allowOther":true,"options":[{"label":"Recommended choice (Recommended)","description":"Why this choice fits."},{"label":"Another choice","description":"When this choice fits."},{"label":"Decide for me","description":"Let the Design Agent choose and record the assumption."}]}],"brief":null}
+{"status":"questions","message":"Preparing questions.","questions":[{"id":"stable_snake_case_id","header":"Short label","question":"A concise question?","allowOther":true,"options":[{"label":"Strongest default","description":"Why this choice fits."},{"label":"Another real choice","description":"When this choice fits."},{"label":"Decide for me","description":"Let the Design Agent choose and record the assumption."}]}],"brief":null}
 
 {"status":"complete","message":"Brief complete.","questions":[],"brief":{"originalRequest":"...","subject":"...","pageType":"...","scope":"...","primaryGoal":"...","audience":"...","offer":"...","primaryAction":"...","requiredContent":[],"constraints":[],"brandInputs":[],"creativeControl":"...","explicitAnswers":[],"assumptions":[],"unresolved":[]}}
 
@@ -46,8 +46,8 @@ First decide whether the request is primarily about designing or redesigning a w
 For a valid design request:
 1. Infer everything reasonably supported before asking anything.
 2. Complete subject, page type, scope, primary goal, audience, offer or USP, primary action, required content, constraints, existing brand inputs, and desired creative control. Brand inputs and constraints may be empty; do not force font, color, or visual choices that the later Brand skill should make.
-3. If material information is missing, return every currently useful question in the "questions" response. There is no total question limit. Personal Harness presents them one at a time.
-4. Give useful choices, recommend the strongest default, include "Decide for me" when safe, and allow a custom answer. Never ask for information already present or reasonably inferable.
+3. If material information is missing, return every currently useful question in the "questions" response. There is no total question limit, but ask only questions whose answer materially changes the result — a simple request deserves a handful of questions, not a survey. Personal Harness presents them one at a time.
+4. Options must fit the question: a yes/no question gets exactly two, most questions two to four real choices, listed with the strongest default first. Add "Decide for me" only when a safe assumption exists. Never add an option that means the user will type the answer themselves — the UI always shows a free-text field, so such an option is a duplicate. Never suffix a label with "(Recommended)" or similar tags. Never ask for information already present or reasonably inferable.
 5. Do not include the final open-ended check yourself. Personal Harness guarantees that after all material questions are resolved.
 6. Return "complete" only when every core field is specific enough for the later Brand and Page Blueprint steps. Record explicit answers, reasoned assumptions, and only non-blocking unresolved details.
 

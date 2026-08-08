@@ -354,7 +354,7 @@ describe('provider-neutral design briefing', () => {
         expect(finalRequest.request.questions[0]?.id).toBe('final_note')
 
         orchestrator.respondToUserInput(thread.id, finalRequest.request.id, {
-          final_note: ["No, that's everything (Recommended)"],
+          final_note: ["No, that's everything"],
         })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(4))
         expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand' })
