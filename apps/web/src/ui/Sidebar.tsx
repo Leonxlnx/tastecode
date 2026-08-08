@@ -438,7 +438,9 @@ function RailResizeHandle(props: {
   onWidthChange: (width: number) => void
   onCollapse: () => void
 }) {
-  const drag = useRef<{ startX: number; width: number; current: number } | undefined>(undefined)
+  const drag = useRef<
+    { startX: number; width: number; current: number; folded: boolean } | undefined
+  >(undefined)
 
   const preview = (target: HTMLElement, width: number) => {
     target.closest<HTMLElement>('.shell')?.style.setProperty('--rail-w', `${width}px`)
@@ -474,31 +476,47 @@ function RailResizeHandle(props: {
       onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
         event.currentTarget.setPointerCapture?.(event.pointerId)
         setResizing(event.currentTarget, true)
-        drag.current = { startX: event.clientX, width: props.width, current: props.width }
+        drag.current = {
+          startX: event.clientX,
+          width: props.width,
+          current: props.width,
+          folded: false,
+        }
       }}
       onPointerMove={(event: PointerEvent<HTMLButtonElement>) => {
         if (!drag.current) return
         const raw = drag.current.width + event.clientX - drag.current.startX
-        // Well past the stop is intent, not overshoot: collapse right away,
-        // with the transition back on so the fold animates.
-        if (raw <= MIN_RAIL_WIDTH - COLLAPSE_OVERSHOOT) {
-          drag.current = undefined
-          event.currentTarget.releasePointerCapture?.(event.pointerId)
+        // Well past the stop the rail folds shut as a preview — the drag stays
+        // alive, so pulling back right unfolds it again. Only releasing while
+        // folded makes the collapse real. Both the fold and the unfold run
+        // with the transition on; ordinary tracking keeps it off.
+        const folded = raw <= MIN_RAIL_WIDTH - COLLAPSE_OVERSHOOT
+        if (folded !== drag.current.folded) {
+          drag.current.folded = folded
+          if (!folded) drag.current.current = clampRailWidth(raw)
           setResizing(event.currentTarget, false)
-          preview(event.currentTarget, props.width)
-          props.onCollapse()
+          preview(event.currentTarget, folded ? 0 : drag.current.current)
           return
         }
+        if (folded) return
+        setResizing(event.currentTarget, true)
         const next = clampRailWidth(raw)
         drag.current.current = next
         preview(event.currentTarget, next)
       }}
       onPointerUp={(event: PointerEvent<HTMLButtonElement>) => {
         if (!drag.current) return
-        const width = drag.current.current
+        const { current: width, folded } = drag.current
         drag.current = undefined
         event.currentTarget.releasePointerCapture?.(event.pointerId)
         setResizing(event.currentTarget, false)
+        if (folded) {
+          // The stored width survives the collapse: the edge reveal and the
+          // next expand come back at it.
+          preview(event.currentTarget, props.width)
+          props.onCollapse()
+          return
+        }
         props.onWidthChange(width)
       }}
     />

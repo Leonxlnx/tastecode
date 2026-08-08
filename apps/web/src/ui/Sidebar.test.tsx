@@ -497,9 +497,20 @@ describe('Sidebar chat actions', () => {
     expect(onWidthChange).toHaveBeenCalledWith(210)
     expect(onClose).not.toHaveBeenCalled()
 
-    // Dragging far past the stop is intent: the rail folds mid-drag.
+    // Far past the stop the rail folds as a preview; pulling back while still
+    // holding unfolds it again, and releasing keeps it open at that width.
     fireEvent.pointerDown(handle, { clientX: 248, pointerId: 2 })
     fireEvent.pointerMove(handle, { clientX: 80, pointerId: 2 })
+    expect(onClose).not.toHaveBeenCalled()
+    fireEvent.pointerMove(handle, { clientX: 230, pointerId: 2 })
+    fireEvent.pointerUp(handle, { clientX: 230, pointerId: 2 })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(onWidthChange).toHaveBeenCalledWith(230)
+
+    // Releasing while folded makes the collapse real.
+    fireEvent.pointerDown(handle, { clientX: 248, pointerId: 3 })
+    fireEvent.pointerMove(handle, { clientX: 80, pointerId: 3 })
+    fireEvent.pointerUp(handle, { clientX: 80, pointerId: 3 })
     expect(onClose).toHaveBeenCalledOnce()
   })
 })
