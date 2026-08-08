@@ -3154,7 +3154,10 @@
   cursor: pointer;
   font: inherit;
   font-size: var(--t-sm);
-  padding: 0 61px 0 32px;
+  /* No standing reservation for the hover actions: they overlay the right
+     edge with their own fade, so the title keeps the full row width and the
+     rail stays honest at any size. */
+  padding: 0 10px 0 32px;
   text-align: left;
   min-width: 0;
   transition: color var(--dur-fast) var(--ease-out);
