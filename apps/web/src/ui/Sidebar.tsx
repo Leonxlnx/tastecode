@@ -73,7 +73,7 @@ const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦',
  *  comfortable — the drag stops well before anything gets tight. */
 const MIN_RAIL_WIDTH = 210
 /** Dragging this far past the stop reads as intent: collapse entirely. */
-const COLLAPSE_OVERSHOOT = 105
+const COLLAPSE_OVERSHOOT = 68
 /** Mirrors --dur-rail: how long a fold or unfold takes to play out. */
 const RAIL_FOLD_MS = 380
 const MAX_RAIL_WIDTH = 420
