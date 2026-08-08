@@ -192,14 +192,22 @@ function SidebarComponent(props: {
     }
     foldedByDrag.current = false
     const shell = slot.closest<HTMLElement>('.shell')
-    slot.classList.add('is-settling')
+    if (!shell) return
+    // The stored width is restored here, not on release: the collapsed layout
+    // is already committed at this point, so the column reads 0 whatever
+    // --rail-w says. Written from the handler it landed a moment too early,
+    // while the collapsed class was still missing, and the column really was
+    // that wide for a frame — the jump right and back that survived every
+    // earlier attempt at this.
+    shell.dataset['resizing'] = ''
+    shell.style.setProperty('--rail-w', `${props.width}px`)
     // Commit the collapsed layout while it still cannot animate.
-    void slot.offsetWidth
+    void shell.offsetWidth
     const frame = requestAnimationFrame(() => {
-      slot.classList.remove('is-settling')
-      shell?.classList.remove('is-resizing')
+      delete shell.dataset['resizing']
     })
     return () => cancelAnimationFrame(frame)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- width is read, not a trigger
   }, [props.collapsed])
   /* A reveal that retracts is its own motion, quicker than a deliberate
      collapse. Removing the revealed class alone cannot express that: the
@@ -287,12 +295,10 @@ function SidebarComponent(props: {
     // suppressed for a frame — otherwise the rail visibly closed and
     // re-opened on the toggle click.
     const slot = slotRef.current
-    if (edgeRevealed && slot) {
-      const shell = slot.closest<HTMLElement>('.shell')
-      shell?.classList.add('is-resizing')
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() => shell?.classList.remove('is-resizing')),
-      )
+    const shell = slot?.closest<HTMLElement>('.shell')
+    if (edgeRevealed && shell) {
+      shell.dataset['resizing'] = ''
+      requestAnimationFrame(() => requestAnimationFrame(() => delete shell.dataset['resizing']))
     }
     setEdgeRevealed(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reveal state is read, not a trigger
@@ -600,10 +606,10 @@ function RailResizeHandle(props: {
     const shell = target.closest<HTMLElement>('.shell')
     if (!shell) return
     if (active) {
-      shell.classList.add('is-resizing')
+      shell.dataset['resizing'] = ''
       return
     }
-    shell.classList.remove('is-resizing')
+    delete shell.dataset['resizing']
     // Re-enabling the transition and changing the width inside one event can
     // collapse into a single style recalculation that starts no animation —
     // which is why unfolding mid-drag used to jump. Reading a layout value
@@ -678,22 +684,18 @@ function RailResizeHandle(props: {
       onPointerUp={(event: PointerEvent<HTMLButtonElement>) => {
         if (!drag.current) return
         const target = event.currentTarget
-        // Captured now: collapsing unmounts this handle, and a detached button
-        // can no longer find the shell — which is how the suppression class
-        // used to get stuck on it and kill every later animation.
-        const shell = target.closest<HTMLElement>('.shell')
         const { current: width, folded } = drag.current
         drag.current = undefined
         target.releasePointerCapture?.(event.pointerId)
         props.onResizingChange(false)
         if (folded) {
-          // Restore the stored width behind the fold so the reveal and the
-          // next expand come back at it, with animation suppressed so the
-          // column does not slide open on the way into the collapsed layout.
-          // The Sidebar clears both classes on its commit — this handle is
+          // The rail stays at the folded width here. Restoring the stored one
+          // is the Sidebar's job on the commit that adds the collapsed class,
+          // where the column reads 0 regardless; doing it now would widen the
+          // column for real, because that class does not exist yet.
+          // Suppression stays on and is cleared there too: this handle is
           // unmounted by then and could not do it itself.
-          if (shell) shell.classList.add('is-resizing')
-          preview(target, props.width)
+          setResizing(target, true)
           props.onCollapse(event.clientX)
           return
         }

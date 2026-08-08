@@ -64,9 +64,16 @@
   grid-template-columns: 0 minmax(0, 1fr);
 }
 
-/* While a pointer drags the rail edge the column must track it 1:1 — the
-   transition is only for collapse and expand. */
-.shell.is-resizing .shell__body {
+/* Nothing animates while the rail edge is being dragged, nor across the commit
+   that turns a fold into a real collapse: the column has to track the pointer
+   1:1, and the flyout must not slide out from full width afterwards.
+
+   A data attribute rather than a class, deliberately. The .shell class
+   attribute belongs to React, which rewrites the whole string whenever the
+   collapsed flag changes and silently drops anything added from here — in the
+   exact commit this suppression exists to cover. */
+.shell[data-resizing] .shell__body,
+.shell[data-resizing] .rail-slot.is-collapsed .rail {
   transition: none;
 }
 
@@ -135,15 +142,6 @@
   transition:
     transform var(--dur-rail) var(--ease-rail),
     box-shadow var(--dur-rail) var(--ease-rail);
-}
-
-/* The frame in which a drag fold becomes a real collapse. The flyout must
-   not animate its translate in from nothing — that shows the rail at full
-   width before it slides away. Carries is-collapsed as well: without it this
-   ties the rule above on specificity and loses to it on order, which is why
-   an earlier attempt at this had no effect at all. */
-.rail-slot.is-collapsed.is-settling .rail {
-  transition: none;
 }
 
 .rail-slot.is-collapsed.is-revealed .rail {
