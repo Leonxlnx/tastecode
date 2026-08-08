@@ -110,6 +110,20 @@ function SidebarComponent(props: {
   onOpenSettings: () => void
 }) {
   const [edgeRevealed, setEdgeRevealed] = useState(false)
+  /* Hiding the reveal only after a grace period lets the pointer travel up to
+     the title bar toggle without the flyout flickering away underneath it. */
+  const revealHide = useRef<number | undefined>(undefined)
+  const cancelRevealHide = () => {
+    if (revealHide.current !== undefined) {
+      clearTimeout(revealHide.current)
+      revealHide.current = undefined
+    }
+  }
+  const scheduleRevealHide = () => {
+    cancelRevealHide()
+    revealHide.current = window.setTimeout(() => setEdgeRevealed(false), 350)
+  }
+  useEffect(() => cancelRevealHide, [])
   const [scope, setScope] = useState('')
   const macOS = isMacOS()
   const inbox = props.mode === 'inbox' && props.inbox !== undefined
@@ -166,10 +180,18 @@ function SidebarComponent(props: {
       className={`rail-slot ${props.collapsed ? 'is-collapsed' : ''} ${
         edgeRevealed ? 'is-revealed' : ''
       }`}
-      onMouseLeave={() => setEdgeRevealed(false)}
+      onMouseEnter={cancelRevealHide}
+      onMouseLeave={scheduleRevealHide}
     >
       {props.collapsed ? (
-        <div className="rail__edge" aria-hidden onMouseEnter={() => setEdgeRevealed(true)} />
+        <div
+          className="rail__edge"
+          aria-hidden
+          onMouseEnter={() => {
+            cancelRevealHide()
+            setEdgeRevealed(true)
+          }}
+        />
       ) : null}
 
       {!props.collapsed ? (

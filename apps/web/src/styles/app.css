@@ -125,7 +125,12 @@
 .rail-slot.is-collapsed .rail {
   position: absolute;
   inset: 0 auto 0 0;
+  /* The temporary reveal is the real sidebar: same width as before the
+     collapse and a proper frame of its own, not a bare slab. */
   width: var(--rail-w);
+  border: 1px solid var(--line);
+  border-left: 0;
+  border-radius: 0 10px 10px 0;
   transform: translateX(-100%);
   transition:
     transform var(--dur-slow) var(--ease-out),

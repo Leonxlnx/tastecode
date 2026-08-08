@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { Sidebar } from './Sidebar.js'
 
 vi.mock('../bridge.js', async (importOriginal) => ({
@@ -436,9 +436,24 @@ describe('Sidebar chat actions', () => {
     expect(slot?.classList).toContain('is-revealed')
     expect(rail?.hasAttribute('inert')).toBe(false)
 
-    fireEvent.mouseLeave(slot!)
-    expect(slot?.classList).not.toContain('is-revealed')
-    expect(rail?.hasAttribute('inert')).toBe(true)
+    // Leaving hides only after a grace period, so the pointer can travel to
+    // the title bar toggle without the flyout flickering away.
+    vi.useFakeTimers()
+    try {
+      fireEvent.mouseLeave(slot!)
+      expect(slot?.classList).toContain('is-revealed')
+      fireEvent.mouseEnter(slot!)
+      vi.advanceTimersByTime(600)
+      expect(slot?.classList).toContain('is-revealed')
+      fireEvent.mouseLeave(slot!)
+      act(() => {
+        vi.advanceTimersByTime(600)
+      })
+      expect(slot?.classList).not.toContain('is-revealed')
+      expect(rail?.hasAttribute('inert')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('resizes with pointer or keyboard and collapses below the threshold', () => {
