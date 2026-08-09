@@ -454,6 +454,85 @@ export const SessionDiffSchema = z.object({
 })
 export type SessionDiff = z.infer<typeof SessionDiffSchema>
 
+export const UsageHistoryRangeSchema = z.enum(['7d', '30d', '90d', '365d', 'all'])
+export type UsageHistoryRange = z.infer<typeof UsageHistoryRangeSchema>
+
+export const UsageHistoryTotalsSchema = z.object({
+  uncachedInputTokens: z.number().int().nonnegative(),
+  cachedInputTokens: z.number().int().nonnegative(),
+  cacheWriteInputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  reasoningTokens: z.number().int().nonnegative(),
+  processedTokens: z.number().int().nonnegative(),
+  estimatedCostUsd: z.number().nonnegative(),
+  cacheSavingsUsd: z.number().nonnegative(),
+  providerReportedCostUsd: z.number().nonnegative(),
+  providerReportedTokens: z.number().int().nonnegative(),
+  pricedTokens: z.number().int().nonnegative(),
+  unpricedTokens: z.number().int().nonnegative(),
+})
+export type UsageHistoryTotals = z.infer<typeof UsageHistoryTotalsSchema>
+
+export const UsageHistoryProviderSchema = z.object({
+  provider: ProviderIdSchema,
+  sessionCount: z.number().int().nonnegative(),
+  totals: UsageHistoryTotalsSchema,
+})
+export type UsageHistoryProvider = z.infer<typeof UsageHistoryProviderSchema>
+
+export const UsageHistoryModelSchema = z.object({
+  provider: ProviderIdSchema,
+  model: z.string().min(1),
+  sessionCount: z.number().int().nonnegative(),
+  pricing: z.enum(['exact', 'family', 'unpriced']),
+  totals: UsageHistoryTotalsSchema,
+})
+export type UsageHistoryModel = z.infer<typeof UsageHistoryModelSchema>
+
+export const UsageHistoryDaySchema = z.object({
+  date: z.string().date(),
+  sessionCount: z.number().int().nonnegative(),
+  totals: UsageHistoryTotalsSchema,
+  providers: z.array(
+    z.object({
+      provider: ProviderIdSchema,
+      tokens: z.number().int().nonnegative(),
+      estimatedCostUsd: z.number().nonnegative(),
+    }),
+  ),
+})
+export type UsageHistoryDay = z.infer<typeof UsageHistoryDaySchema>
+
+export const UsageHistoryScanSchema = z.object({
+  status: z.enum(['idle', 'scanning']),
+  filesProcessed: z.number().int().nonnegative(),
+  filesTotal: z.number().int().nonnegative(),
+})
+export type UsageHistoryScan = z.infer<typeof UsageHistoryScanSchema>
+
+export const UsageHistoryResultSchema = z.object({
+  range: UsageHistoryRangeSchema,
+  startDate: z.string().date(),
+  endDate: z.string().date(),
+  generatedAt: z.number().int().nonnegative(),
+  sessionCount: z.number().int().nonnegative(),
+  activeDays: z.number().int().nonnegative(),
+  totals: UsageHistoryTotalsSchema,
+  providers: z.array(UsageHistoryProviderSchema),
+  models: z.array(UsageHistoryModelSchema),
+  daily: z.array(UsageHistoryDaySchema),
+  sources: z.array(
+    z.object({
+      provider: ProviderIdSchema,
+      available: z.boolean(),
+      sessionCount: z.number().int().nonnegative(),
+    }),
+  ),
+  scan: UsageHistoryScanSchema,
+  warnings: z.array(z.string()),
+})
+export type UsageHistoryResult = z.infer<typeof UsageHistoryResultSchema>
+
 /**
  * Method table. Adding a method means adding it here first — this object is the
  * single source of truth that the server routes against and the client calls.
@@ -993,8 +1072,18 @@ export const methods = {
   'usage.summary': {
     params: z.union([z.object({ threadId: z.string() }), z.object({ provider: ProviderIdSchema })]),
     result: z.object({
-      session: UsageSchema.omit({ contextWindow: true }),
-      today: UsageSchema.omit({ contextWindow: true }),
+      session: UsageSchema.omit({
+        contextWindow: true,
+        model: true,
+        cumulative: true,
+        inputIncludesCached: true,
+      }),
+      today: UsageSchema.omit({
+        contextWindow: true,
+        model: true,
+        cumulative: true,
+        inputIncludesCached: true,
+      }),
       /** Provider-reported subscription windows. Empty when unavailable. */
       limits: z.array(
         z.object({
@@ -1005,6 +1094,23 @@ export const methods = {
         }),
       ),
     }),
+  },
+  /**
+   * Local, model-attributed usage history. Dollar values are API-equivalent
+   * estimates, and pricing coverage is returned with the estimate so clients
+   * can show when a model could not be priced.
+   */
+  'usage.history': {
+    params: z.object({
+      range: UsageHistoryRangeSchema,
+      refresh: z.boolean().optional(),
+    }),
+    result: UsageHistoryResultSchema,
+  },
+  /** Clears the generated local usage index and starts a cold background scan. */
+  'usage.resetHistory': {
+    params: z.object({}),
+    result: z.object({ started: z.literal(true) }),
   },
   'thread.start': {
     params: z

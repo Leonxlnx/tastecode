@@ -172,6 +172,12 @@ export const UsageSchema = z.object({
   outputTokens: z.number(),
   reasoningTokens: z.number(),
   totalTokens: z.number(),
+  /** Model that produced this usage, when the runtime can identify it. */
+  model: z.string().min(1).optional(),
+  /** True when the counters cover the whole session rather than one response. */
+  cumulative: z.boolean().optional(),
+  /** Whether cached input is already included in `inputTokens`. */
+  inputIncludesCached: z.boolean().optional(),
   /** Actual cost reported by the provider. Absent when it would be an estimate. */
   costUsd: z.number().nonnegative().optional(),
   contextWindow: z.number().optional(),
