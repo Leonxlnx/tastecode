@@ -701,4 +701,48 @@ describe('Sidebar chat actions', () => {
     fireEvent.pointerUp(handle, { clientX: 80, pointerId: 3 })
     expect(onClose).toHaveBeenCalledOnce()
   })
+
+  it('releases a sidebar resize when native window movement cancels its pointer', () => {
+    const onWidthChange = vi.fn()
+    render(
+      <div className="shell">
+        <Sidebar
+          projects={[]}
+          activeProjectPath={undefined}
+          activeSessionId={undefined}
+          account={undefined}
+          providerName="Codex"
+          collapsed={false}
+          width={248}
+          onWidthChange={onWidthChange}
+          onClose={vi.fn()}
+          onAddProject={vi.fn()}
+          onNewSession={vi.fn()}
+          onSelectSession={vi.fn()}
+          onRenameProject={vi.fn()}
+          onRemoveProject={vi.fn()}
+          onTogglePin={vi.fn()}
+          onRenameSession={vi.fn()}
+          onDeleteSession={vi.fn()}
+          onArchiveProject={vi.fn()}
+          onReorderSession={vi.fn()}
+          onOpenSearch={vi.fn()}
+          onOpenSettings={vi.fn()}
+        />
+      </div>,
+    )
+    const handle = screen.getByRole('separator', { name: 'Resize sidebar' })
+    const shell = handle.closest('.shell')
+
+    fireEvent.pointerDown(handle, { clientX: 248, pointerId: 7 })
+    fireEvent.pointerMove(handle, { clientX: 320, pointerId: 7 })
+    expect(shell?.hasAttribute('data-resizing')).toBe(true)
+
+    fireEvent.pointerCancel(handle, { clientX: 320, pointerId: 7 })
+    expect(onWidthChange).toHaveBeenCalledWith(320)
+    expect(shell?.hasAttribute('data-resizing')).toBe(false)
+
+    fireEvent.pointerMove(handle, { clientX: 400, pointerId: 7 })
+    expect(onWidthChange).toHaveBeenCalledTimes(1)
+  })
 })

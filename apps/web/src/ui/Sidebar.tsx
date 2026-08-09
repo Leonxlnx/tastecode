@@ -624,6 +624,23 @@ function RailResizeHandle(props: {
     }, RAIL_FOLD_MS)
   }
 
+  const cancelResize = (event: PointerEvent<HTMLButtonElement>) => {
+    const current = drag.current
+    if (!current) return
+    const target = event.currentTarget
+    drag.current = undefined
+    if (target.hasPointerCapture?.(event.pointerId)) {
+      target.releasePointerCapture?.(event.pointerId)
+    }
+    // A cancelled fold preview left --rail-w at zero even though React still
+    // considered the rail open. Restore the last real width before handing
+    // input back to the titlebar or the rest of the window.
+    preview(target, current.current)
+    setResizing(target, false)
+    props.onResizingChange(false)
+    props.onWidthChange(current.current)
+  }
+
   const resizeWithKeyboard = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
     event.preventDefault()
@@ -702,6 +719,8 @@ function RailResizeHandle(props: {
         setResizing(target, false)
         props.onWidthChange(width)
       }}
+      onPointerCancel={cancelResize}
+      onLostPointerCapture={cancelResize}
     />
   )
 }

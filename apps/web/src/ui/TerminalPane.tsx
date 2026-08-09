@@ -26,6 +26,7 @@ export const TerminalPane = memo(function TerminalPane(props: {
   const host = useRef<HTMLDivElement>(null)
   const terminal = useRef<Terminal>(null)
   const reconnect = useRef<() => void>(() => {})
+  const resizeCleanup = useRef<() => void>(() => {})
   const heightRef = useRef(props.height)
   const [height, setHeight] = useState(props.height)
   const [status, setStatus] = useState<TerminalStatus>({ state: 'connecting' })
@@ -165,6 +166,7 @@ export const TerminalPane = memo(function TerminalPane(props: {
 
     return () => {
       disposed = true
+      resizeCleanup.current()
       if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
       observer.disconnect()
       input.dispose()
@@ -189,19 +191,30 @@ export const TerminalPane = memo(function TerminalPane(props: {
 
   const beginResize = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault()
+    resizeCleanup.current()
     const startY = event.clientY
     const startHeight = heightRef.current
+    let active = true
     const move = (next: globalThis.PointerEvent) => {
       const maximum = Math.max(MIN_HEIGHT, Math.floor(window.innerHeight * 0.72))
       setHeight(Math.min(maximum, Math.max(MIN_HEIGHT, startHeight + startY - next.clientY)))
     }
-    const finish = () => {
+    const cleanup = (commit: boolean) => {
+      if (!active) return
+      active = false
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', finish)
-      props.onHeightChange(heightRef.current)
+      window.removeEventListener('pointercancel', finish)
+      window.removeEventListener('blur', finish)
+      resizeCleanup.current = () => {}
+      if (commit) props.onHeightChange(heightRef.current)
     }
+    const finish = () => cleanup(true)
+    resizeCleanup.current = () => cleanup(false)
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', finish, { once: true })
+    window.addEventListener('pointercancel', finish, { once: true })
+    window.addEventListener('blur', finish, { once: true })
   }
 
   return (

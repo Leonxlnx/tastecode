@@ -4238,11 +4238,15 @@
   /* Without this the session title and token count push the header wider than
      the grid column, and the whole app shifts sideways. */
   min-width: 0;
+  /* The titlebar behind this header is the one stable native drag region.
+     Let its hit target pass through instead of stacking a second draggable
+     rectangle whose native gesture can outlive a renderer pointer capture. */
+  pointer-events: none;
   user-select: none;
-  -webkit-app-region: drag;
 }
 
 .stagehead button {
+  pointer-events: auto;
   -webkit-app-region: no-drag;
 }
 
@@ -4270,6 +4274,8 @@
   gap: 8px;
   margin-left: auto;
   flex: none;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
 }
 
 .zoom-hud {

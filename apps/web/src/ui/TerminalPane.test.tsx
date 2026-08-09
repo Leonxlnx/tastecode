@@ -150,6 +150,37 @@ describe('TerminalPane', () => {
       harness.request.mock.calls.filter(([method]) => method === 'terminal.close'),
     ).toHaveLength(1)
   })
+
+  it('ends terminal resizing when the window loses focus', async () => {
+    const harness = fakeTransport()
+    const onHeightChange = vi.fn()
+    render(
+      <TerminalPane
+        transport={harness.transport}
+        threadId="thread-resize"
+        height={260}
+        theme="dark"
+        onHeightChange={onHeightChange}
+        onClose={vi.fn()}
+      />,
+    )
+    await waitFor(() =>
+      expect(harness.request).toHaveBeenCalledWith('terminal.open', {
+        threadId: 'thread-resize',
+        columns: 80,
+        rows: 24,
+      }),
+    )
+
+    const handle = screen.getByRole('separator', { name: 'Resize terminal' })
+    fireEvent.pointerDown(handle, { clientY: 260, pointerId: 9 })
+    fireEvent.pointerMove(window, { clientY: 220, pointerId: 9 })
+    fireEvent.blur(window)
+
+    expect(onHeightChange).toHaveBeenCalledWith(300)
+    fireEvent.pointerMove(window, { clientY: 180, pointerId: 9 })
+    expect(onHeightChange).toHaveBeenCalledTimes(1)
+  })
 })
 
 function fakeTransport() {

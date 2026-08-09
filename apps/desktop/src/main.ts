@@ -161,6 +161,17 @@ function createWindow(): void {
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = undefined
   })
+  window.on('unresponsive', () => {
+    console.error('[desktop] main window renderer became unresponsive')
+  })
+  window.on('responsive', () => {
+    console.info('[desktop] main window renderer recovered')
+  })
+  window.webContents.on('render-process-gone', (_event, details) => {
+    console.error(
+      `[desktop] main window renderer exited: ${details.reason} (code ${details.exitCode})`,
+    )
+  })
 
   // Avoid the white flash before React paints.
   window.once('ready-to-show', () => window.show())
