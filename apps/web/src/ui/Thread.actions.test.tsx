@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Item } from '@harness/contracts'
-import { Thread, isRepeatedDesignRow } from './Thread.js'
+import { Thread, isRepeatedDesignRow, workLabel } from './Thread.js'
 
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
@@ -14,6 +14,7 @@ vi.mock('@tanstack/react-virtual', () => ({
       })),
     getTotalSize: () => count * 72,
     measureElement: () => undefined,
+    measurementsCache: [],
     getOffsetForIndex: () => [0],
     scrollToIndex: () => undefined,
   }),
@@ -48,6 +49,39 @@ describe('design activity rows', () => {
     )
     expect(screen.getByText('Preparing questions')).toBeTruthy()
     expect(screen.queryByText('design:brief')).toBeNull()
+  })
+
+  it('keeps a design turn to its phase story, without raw provider activity', () => {
+    const items: Item[] = [
+      { ...marker('m1', 'design:build'), status: 'started' },
+      {
+        id: 'cmd-1',
+        turnId: 'turn-m1',
+        type: 'command',
+        status: 'completed',
+        command: 'pwsh -Command Get-ChildItem',
+        createdAt: 2,
+      },
+      { id: 'think-1', turnId: 'turn-m1', type: 'reasoning', status: 'completed', createdAt: 3 },
+    ]
+    render(
+      <Thread
+        items={items}
+        running={true}
+        activeTurn={{ id: 'turn-m1', threadId: 't', status: 'running', createdAt: 1 }}
+        plan={[]}
+        diff={undefined}
+        approvals={[]}
+        userInputs={[]}
+        reviews={[]}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+    expect(screen.queryByText(/Get-ChildItem/)).toBeNull()
+    expect(screen.queryByText('Thinking')).toBeNull()
+    // The rail names the phase even while a tool runs inside the turn.
+    expect(workLabel(items, 'turn-m1', false)).toBe('Building the website')
   })
 
   it('collapses phase markers repeated by retried provider turns', () => {

@@ -318,7 +318,13 @@ export function Thread(props: {
                 presentation.finalAnswerIndex === row.index
               const suppressed =
                 (compactedActivity && !activityLead) ||
-                isRepeatedDesignRow(item, props.items[row.index - 1])
+                isRepeatedDesignRow(item, props.items[row.index - 1]) ||
+                // A design turn tells its story through the phase labels and
+                // Harness notes; the provider's raw commands, tool calls, and
+                // thinking would drown that story in noise.
+                (presentation?.design === true &&
+                  isActivity(item) &&
+                  !designPhaseLabel(toolText(item)))
               const liveActivity = live && isActivity(item)
               const settling = settledTurnId === item.turnId
               const railAnchor = live && presentation?.firstResponseIndex === row.index
@@ -788,14 +794,22 @@ export function workLabel(
   // The active turn's items are the tail of the transcript; once the walk
   // leaves them there is nothing further back worth scanning — without the
   // break this was a full-transcript scan per streamed frame.
+  let latest: string | undefined
   for (let index = items.length - 1; index >= 0; index--) {
     const item = items[index]
     if (!item) continue
     if (item.turnId !== turnId) break
-    if (item.status === 'started' && isActivity(item)) return summariseLive(item)
+    if (item.status !== 'started' || !isActivity(item)) continue
+    // A design phase owns its whole turn: its label must not flicker to
+    // "Running a command" for every tool the provider uses inside it.
+    if (item.type === 'tool_call') {
+      const phase = designPhaseLabel(toolText(item))
+      if (phase) return phase
+    }
+    latest ??= summariseLive(item)
   }
 
-  return 'Working'
+  return latest ?? 'Working'
 }
 
 // Updating this text node directly avoids committing the virtualized thread

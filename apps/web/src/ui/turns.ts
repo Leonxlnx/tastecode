@@ -25,6 +25,9 @@ export type TurnPresentation = {
   finalAnswerIndex: number | undefined
   elapsedMs: number
   complete: boolean
+  /** Turns carrying a design:* phase marker tell their story through the
+   *  phase labels; raw provider activity stays out of the transcript. */
+  design: boolean
 }
 
 export type ThreadProjection = {
@@ -100,6 +103,7 @@ export function presentTurns(items: Item[]): ReadonlyMap<string, TurnPresentatio
       earliest: number
       latest: number
       hasRunningActivity: boolean
+      design: boolean
     }
   >()
 
@@ -111,10 +115,12 @@ export function presentTurns(items: Item[]): ReadonlyMap<string, TurnPresentatio
       earliest: item.createdAt,
       latest: item.createdAt,
       hasRunningActivity: false,
+      design: false,
     }
 
     draft.earliest = Math.min(draft.earliest, item.createdAt)
     draft.latest = Math.max(draft.latest, item.createdAt)
+    draft.design ||= item.type === 'tool_call' && item.text?.startsWith('design:') === true
 
     if (item.type !== 'message' || item.role !== 'user') {
       draft.firstResponseIndex ??= index
@@ -151,6 +157,7 @@ export function presentTurns(items: Item[]): ReadonlyMap<string, TurnPresentatio
           finalAnswerIndex: finalAnswer?.index,
           elapsedMs: Math.max(0, draft.latest - draft.earliest),
           complete: finalAnswer !== undefined && !draft.hasRunningActivity,
+          design: draft.design,
         },
       ]
     }),
