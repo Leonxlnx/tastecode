@@ -5,7 +5,7 @@ import type { Account, ProviderId } from '@harness/contracts'
 import type { ModelChoice } from '../model-catalog.js'
 import { resetInstalls } from '../provider-install.js'
 import type { Transport } from '../transport.js'
-import { Settings } from './Settings.js'
+import { formatDeviceNote, Settings } from './Settings.js'
 
 // The real component boots xterm, which needs a canvas happy-dom does not
 // have. What these tests care about is *when* a terminal is offered, not how
@@ -21,6 +21,18 @@ afterEach(() => {
   vi.restoreAllMocks()
   resetInstalls()
   Reflect.deleteProperty(navigator, 'clipboard')
+})
+
+describe('paired device timestamps', () => {
+  it.each([
+    [0, 'Seen just now'],
+    [37 * 60_000, 'Seen 37m ago'],
+    [3 * 60 * 60_000, 'Seen 3h ago'],
+    [2_272 * 60_000, 'Seen 1d ago'],
+  ])('formats an age of %i milliseconds', (age, expected) => {
+    const now = Date.now()
+    expect(formatDeviceNote(now - age, now)).toBe(expected)
+  })
 })
 
 describe('model settings', () => {

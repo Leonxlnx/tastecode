@@ -20,7 +20,6 @@ import type {
   ProviderId,
   ProviderSetup,
   ProviderStatus,
-  PairedDevice,
   ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
@@ -909,7 +908,11 @@ function MobileAccessSettings(props: { transport: Transport }) {
       <h2 className="settings__group-title settings__group-title--inside">Paired devices</h2>
       {status?.devices.length ? (
         status.devices.map((device) => (
-          <SettingsRow key={device.id} title={device.name} note={formatDeviceNote(device, now)}>
+          <SettingsRow
+            key={device.id}
+            title={device.name}
+            note={formatDeviceNote(device.lastSeenAt, now)}
+          >
             <button
               className="settings__action is-danger"
               type="button"
@@ -941,9 +944,14 @@ function formatCountdown(ms: number): string {
   return seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`
 }
 
-function formatDeviceNote(device: PairedDevice, now: number): string {
-  const minutes = Math.max(0, Math.floor((now - device.lastSeenAt) / 60_000))
-  return minutes === 0 ? 'Seen just now' : `Seen ${minutes}m ago`
+export function formatDeviceNote(lastSeenAt: number, now: number): string {
+  const minutes = Math.max(0, Math.floor((now - lastSeenAt) / 60_000))
+  if (minutes === 0) return 'Seen just now'
+  if (minutes < 60) return `Seen ${minutes}m ago`
+
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `Seen ${hours}h ago`
+  return `Seen ${Math.floor(hours / 24)}d ago`
 }
 
 function AppearanceSettings(props: {
