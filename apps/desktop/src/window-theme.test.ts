@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { windowThemeOptions } from './window-theme.js'
+import { windowThemeOptions, windowThemeSource } from './window-theme.js'
 
 describe('windowThemeOptions', () => {
   it('matches native chrome to the selected app theme', () => {
@@ -15,5 +15,7 @@ describe('windowThemeOptions', () => {
 
   it('rejects untrusted renderer values', () => {
     expect(() => windowThemeOptions('system')).toThrow('Invalid window theme')
+    expect(windowThemeSource('system')).toBe('system')
+    expect(() => windowThemeSource('sepia')).toThrow('Invalid window theme preference')
   })
 })

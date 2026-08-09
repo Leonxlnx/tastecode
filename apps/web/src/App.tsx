@@ -350,8 +350,8 @@ export function App() {
 
   useLayoutEffect(() => {
     applyTheme(theme)
-    void setDesktopTheme(theme)
-  }, [theme])
+    void setDesktopTheme(themePreference)
+  }, [theme, themePreference])
 
   useEffect(() => {
     writeSetting(THEME_KEY, themePreference)

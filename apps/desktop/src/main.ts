@@ -10,6 +10,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  nativeTheme,
   session,
   shell,
   systemPreferences,
@@ -26,7 +27,7 @@ import { allowsMicrophoneRequest } from './media-permissions.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
 import { revealablePath } from './reveal-path.js'
 import { ServerSupervisor } from './server-supervisor.js'
-import { windowThemeOptions } from './window-theme.js'
+import { windowThemeOptions, windowThemeSource } from './window-theme.js'
 import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './zoom-shortcuts.js'
 
 /**
@@ -264,10 +265,12 @@ ipcMain.handle('harness:setZoom', (event, action: unknown) => {
   applyZoom(window, action)
 })
 
-ipcMain.handle('harness:setTheme', (event, theme: unknown) => {
+ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
   requireOwnRenderer(event.sender)
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window) throw new Error('No window for theme change')
+  nativeTheme.themeSource = windowThemeSource(preference)
+  const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
   const options = windowThemeOptions(theme)
   // Repainting an opaque background would sit on top of the acrylic/vibrancy
   // material and kill the sidebar glass; on those platforms the material owns

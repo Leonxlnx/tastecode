@@ -13,7 +13,7 @@ type Bridge = {
   savePastedImage: (image: { type: string; bytes: ArrayBuffer }) => Promise<string>
   writeClipboardText?: (text: string) => Promise<void>
   setZoom: (action: ZoomAction) => Promise<void>
-  setTheme: (theme: AppTheme) => Promise<void>
+  setTheme: (preference: AppThemePreference) => Promise<void>
   capturePreview: (request: PreviewCaptureRequest) => Promise<PreviewCaptureResult>
   onZoomChange: (listener: (factor: number) => void) => () => void
   isDesktop: true
@@ -21,6 +21,7 @@ type Bridge = {
 
 export type ZoomAction = 'in' | 'out' | 'reset'
 export type AppTheme = 'light' | 'dark'
+export type AppThemePreference = AppTheme | 'system'
 
 const bridge = (globalThis as { harness?: Bridge }).harness
 
@@ -66,8 +67,8 @@ export function setAppZoom(action: ZoomAction): Promise<void> {
   return bridge?.setZoom(action) ?? Promise.resolve()
 }
 
-export function setDesktopTheme(theme: AppTheme): Promise<void> {
-  return bridge?.setTheme(theme) ?? Promise.resolve()
+export function setDesktopTheme(preference: AppThemePreference): Promise<void> {
+  return bridge?.setTheme(preference) ?? Promise.resolve()
 }
 
 export function onAppZoomChange(listener: (factor: number) => void): () => void {

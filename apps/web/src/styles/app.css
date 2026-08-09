@@ -8241,6 +8241,22 @@
   -webkit-backdrop-filter: blur(26px) saturate(1.4);
 }
 
+/* Light chrome is deliberately opaque. Its exact colour must not depend on
+   the OS material or the glass strength. */
+:root[data-theme='light'][data-glass='on'] .rail {
+  background: color-mix(
+    in srgb,
+    var(--bg-rail-tint) calc(100% - var(--rail-glass, 0) * var(--rail-glass-fade, 20%)),
+    transparent
+  );
+}
+
+/* The stage's rounded top-left corner exposes its parent. Paint that backing
+   layer too, otherwise the transparent desktop window leaves a dark wedge. */
+:root[data-theme='light'][data-glass='on'][data-shell='desktop'] .shell__body {
+  background: var(--bg-rail-tint);
+}
+
 /* Real glass, the way Codex does it: on desktop the OS draws acrylic (Windows)
    or vibrancy (macOS) behind the window. Everything stays opaque except the
    sidebar column, so the material shows through exactly there — a clean blur
@@ -8272,7 +8288,7 @@
 }
 
 .appearance-choice__swatch[data-glass-preview='0'] {
-  --glass-preview-pane: var(--bg-rail);
+  --glass-preview-pane: var(--bg-rail-tint);
 }
 
 .appearance-choice__swatch[data-glass-preview='20'] {

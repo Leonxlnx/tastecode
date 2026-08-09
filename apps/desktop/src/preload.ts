@@ -20,8 +20,8 @@ const api = {
     ipcRenderer.invoke('harness:writeClipboardText', text),
   setZoom: (action: 'in' | 'out' | 'reset'): Promise<void> =>
     ipcRenderer.invoke('harness:setZoom', action),
-  setTheme: (theme: 'light' | 'dark'): Promise<void> =>
-    ipcRenderer.invoke('harness:setTheme', theme),
+  setTheme: (preference: 'system' | 'light' | 'dark'): Promise<void> =>
+    ipcRenderer.invoke('harness:setTheme', preference),
   capturePreview: (request: PreviewCaptureRequest): Promise<PreviewCaptureResult> =>
     ipcRenderer.invoke('harness:capturePreview', request),
   onZoomChange: (listener: (factor: number) => void): (() => void) => {
