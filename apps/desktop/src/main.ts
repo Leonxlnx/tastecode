@@ -25,6 +25,7 @@ import { shouldHideWindowOnClose } from './background-lifecycle.js'
 import { allowsMicrophoneRequest } from './media-permissions.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
 import { revealablePath } from './reveal-path.js'
+import { ServerSupervisor } from './server-supervisor.js'
 import { windowThemeOptions } from './window-theme.js'
 import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './zoom-shortcuts.js'
 
@@ -71,8 +72,41 @@ const ownsSingleInstance = app.requestSingleInstanceLock()
 let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let appIsQuitting = false
+let serverSupervisor: ServerSupervisor | undefined
 
 if (!ownsSingleInstance) app.quit()
+
+/**
+ * Outside development the shell owns its core server: without this a packaged
+ * app has nothing listening on the socket and every feature sits behind a
+ * permanent "Reconnecting…". In dev, dev.js runs the server with a watcher and
+ * signals that through HARNESS_DEV_SERVER.
+ *
+ * The child is this same Electron binary in Node mode — the one runtime an
+ * installed app is guaranteed to carry, with the Node version the server was
+ * built against.
+ */
+function startOwnedServer(): void {
+  if (devServer || serverSupervisor) return
+  const serverEntry = path.join(here, '../../server/dist/main.js')
+  serverSupervisor = new ServerSupervisor({
+    command: process.execPath,
+    args: [serverEntry],
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    onLog: (line) => console.log('[server]', line),
+    onGaveUp: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        void dialog.showMessageBox(mainWindow, {
+          type: 'error',
+          title: 'Harness',
+          message: 'The core server keeps crashing.',
+          detail: 'Restart the app. If this keeps happening, reinstall it.',
+        })
+      }
+    },
+  })
+  serverSupervisor.start()
+}
 
 function createWindow(): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -412,11 +446,14 @@ if (ownsSingleInstance) {
     appIsQuitting = true
   })
   app.on('will-quit', () => {
+    serverSupervisor?.stop()
+    serverSupervisor = undefined
     tray?.destroy()
     tray = undefined
   })
 
   void app.whenReady().then(() => {
+    startOwnedServer()
     configureMediaPermissions()
     void sweepStaleCaptures()
     createWindow()
