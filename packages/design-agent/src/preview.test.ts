@@ -43,6 +43,16 @@ describe('preview plan', () => {
     )
   })
 
+  it('rejects disallowed executables at parse time, so the model can correct', () => {
+    // Leon's run died at execution with 'preview command is not allowed'
+    // after the model chose python; parse-time rejection feeds the one
+    // correction attempt instead of failing the whole flow.
+    expect(() => parsePreviewPlan({ ...plan, command: 'python' })).toThrow(
+      'must be one of bun, node, npm, pnpm, yarn',
+    )
+    expect(() => parsePreviewPlan({ ...plan, command: 'npx' })).toThrow('is not executed')
+  })
+
   it('rejects cwd traversal', () => {
     expect(() => parsePreviewPlan({ ...plan, cwd: '../other-project' })).toThrow(
       'must stay inside the workspace',

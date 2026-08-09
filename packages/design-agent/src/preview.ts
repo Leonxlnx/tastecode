@@ -19,7 +19,9 @@ const PREVIEW_PROTOCOL = `Return the preview plan as JSON only, without Markdown
 export function designPreviewPrompt(): string {
   return `You are running the Preview Setup phase of Personal Harness Design Mode.
 
-Inspect the implemented project's real package scripts and configuration. Choose the existing development or preview command that serves the built page on 127.0.0.1 with an explicit port. Do not install dependencies, edit files, start the server, use a shell string, or choose a remote URL. The command is an executable name and args is its argv array. cwd is relative to the current workspace.
+Inspect the implemented project's real package scripts and configuration. Choose the existing development or preview command that serves the built page on 127.0.0.1 with an explicit port. Do not install dependencies, start the server yourself, use a shell string, or choose a remote URL. The command is an executable name and args is its argv array. cwd is relative to the current workspace.
+
+Personal Harness executes only these commands: bun, node, npm, pnpm, yarn. Anything else — npx, python, deno, a path to a binary — is rejected. A package-manager command must run a script that exists in the workspace's package.json; a node command must point at a script file inside the workspace. If the project is static files with no scripts, first write one small static file server (plain node:http, no dependencies) into the project and return a node plan for it.
 
 Include one representative desktop viewport and one representative mobile viewport. Use readyPattern only when the command has a stable output fragment that indicates readiness. Personal Harness will validate and execute this plan.
 
@@ -71,10 +73,20 @@ function localUrl(value: unknown): string {
   return result.href
 }
 
+/** Kept in sync with the runner's allowlist. Rejecting here, at parse time,
+ *  turns a wrong choice into a correctable validation error instead of a
+ *  hard flow failure when the plan is executed. */
+const ALLOWED_COMMANDS = new Set(['bun', 'node', 'npm', 'pnpm', 'yarn'])
+
 function executable(value: unknown): string {
   const result = string(value, 'preview command')
   if (result.includes('/') || result.includes('\\') || /[\s;&|<>]/.test(result)) {
     throw new Error('preview command must be an executable name')
+  }
+  if (!ALLOWED_COMMANDS.has(result)) {
+    throw new Error(
+      `preview command must be one of ${[...ALLOWED_COMMANDS].join(', ')} — "${result}" is not executed`,
+    )
   }
   return result
 }
