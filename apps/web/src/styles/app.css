@@ -7427,7 +7427,7 @@
      never a painted gradient. */
   background: color-mix(
     in srgb,
-    var(--bg-rail) calc(100% - var(--rail-glass, 0) * 130%),
+    var(--bg-rail-tint) calc(100% - var(--rail-glass, 0) * 130%),
     transparent
   );
   backdrop-filter: blur(26px) saturate(1.4);
@@ -7452,8 +7452,8 @@
 .appearance-choice__swatch[data-glass-preview] {
   background-image:
     linear-gradient(
-      var(--glass-preview-pane, var(--bg-rail)),
-      var(--glass-preview-pane, var(--bg-rail))
+      var(--glass-preview-pane, var(--bg-rail-tint)),
+      var(--glass-preview-pane, var(--bg-rail-tint))
     ),
     radial-gradient(
       120% 130% at 18% 0%,
@@ -7467,15 +7467,15 @@
 }
 
 .appearance-choice__swatch[data-glass-preview='20'] {
-  --glass-preview-pane: color-mix(in srgb, var(--bg-rail) 80%, transparent);
+  --glass-preview-pane: color-mix(in srgb, var(--bg-rail-tint) 80%, transparent);
 }
 
 .appearance-choice__swatch[data-glass-preview='35'] {
-  --glass-preview-pane: color-mix(in srgb, var(--bg-rail) 62%, transparent);
+  --glass-preview-pane: color-mix(in srgb, var(--bg-rail-tint) 62%, transparent);
 }
 
 .appearance-choice__swatch[data-glass-preview='50'] {
-  --glass-preview-pane: color-mix(in srgb, var(--bg-rail) 45%, transparent);
+  --glass-preview-pane: color-mix(in srgb, var(--bg-rail-tint) 45%, transparent);
 }
 
 .appearance-choice__swatch[data-backdrop-preview='default'] {

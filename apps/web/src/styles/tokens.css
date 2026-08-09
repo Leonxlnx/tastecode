@@ -18,6 +18,10 @@
 
   --bg: #0f0f0f;
   --bg-rail: #131313;
+  /* Always a solid colour. The glass tint mixes this with transparent, and
+     color-mix() rejects a gradient — light mode's gradient rail made the whole
+     declaration invalid, so the frosted rail turned fully transparent there. */
+  --bg-rail-tint: var(--bg-rail);
   --bg-prompt: #1a1a1a;
   --bg-shelf: #222222;
   --bg-queue: #222222;
@@ -260,6 +264,8 @@
 
   --bg: #fdfdfd;
   --bg-rail: var(--chrome-raised);
+  /* The rail itself may be a gradient; the glass tint must stay a solid. */
+  --bg-rail-tint: #fcfcfc;
   --bg-prompt: #ffffff;
   --bg-shelf: #fafafa;
   --bg-queue: #ffffff;
