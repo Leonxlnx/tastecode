@@ -133,6 +133,7 @@ type GrokFrame = {
   rawInput?: { file_path?: string; command?: string }
   stopReason?: string
   sessionId?: string
+  total_cost_usd?: number
   usage?: {
     input_tokens?: number
     output_tokens?: number
@@ -308,14 +309,20 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
           message.complete(turnId, 'message', this)
           const usage = frame.usage
           if (usage) {
+            const reasoningTokens = usage.reasoning_tokens ?? 0
             this.emit('event', {
               type: 'usage.updated',
               usage: {
+                ...(this.#options.model ? { model: this.#options.model } : {}),
                 inputTokens: usage.input_tokens ?? 0,
                 cachedInputTokens: usage.cache_read_input_tokens ?? 0,
-                outputTokens: usage.output_tokens ?? 0,
-                reasoningTokens: usage.reasoning_tokens ?? 0,
+                outputTokens: (usage.output_tokens ?? 0) + reasoningTokens,
+                reasoningTokens,
                 totalTokens: usage.total_tokens ?? 0,
+                inputIncludesCached: false,
+                ...(typeof frame.total_cost_usd === 'number'
+                  ? { costUsd: frame.total_cost_usd }
+                  : {}),
               },
             })
           }

@@ -72,6 +72,36 @@ describe('ApiAgentSession', () => {
     await resumed.waitForTurn(resumedTurn)
   })
 
+  it('attributes usage to the configured model for persisted history', async () => {
+    const session = new ApiAgentSession({
+      model: 'gpt-5.6-luna',
+      transport: transport(
+        {
+          type: 'usage',
+          usage: {
+            inputTokens: 100,
+            cachedInputTokens: 20,
+            outputTokens: 10,
+            reasoningTokens: 0,
+            totalTokens: 110,
+            inputIncludesCached: true,
+          },
+        },
+        { type: 'finish', reason: 'stop' },
+      ),
+    })
+    const events: unknown[] = []
+    session.on('event', (event) => events.push(event))
+    const thread = session.startThread('C:\\repo', 'connection-1')
+    const turn = await session.sendTurn(thread.id, 'Hi')
+    await session.waitForTurn(turn)
+
+    expect(events).toContainEqual({
+      type: 'usage.updated',
+      usage: expect.objectContaining({ model: 'gpt-5.6-luna', inputTokens: 100 }),
+    })
+  })
+
   it('runs approved tools through the injected Harness executor', async () => {
     let request = 0
     const seenMessages: unknown[] = []

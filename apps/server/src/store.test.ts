@@ -25,7 +25,7 @@ const message = (text: string): DomainEvent => ({
   },
 })
 
-const usage = (totalTokens: number, costUsd?: number): DomainEvent => ({
+const usage = (totalTokens: number, costUsd?: number, cumulative = false): DomainEvent => ({
   type: 'usage.updated',
   usage: {
     inputTokens: totalTokens,
@@ -33,6 +33,7 @@ const usage = (totalTokens: number, costUsd?: number): DomainEvent => ({
     outputTokens: 0,
     reasoningTokens: 0,
     totalTokens,
+    ...(cumulative ? { cumulative: true } : {}),
     ...(costUsd === undefined ? {} : { costUsd }),
   },
 })
@@ -545,10 +546,10 @@ describe('usage totals', () => {
       store.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
       store.addThread({ id: 'two', projectPath: '/repo', provider: 'codex', title: 'Two' })
       vi.setSystemTime(new Date('2026-07-30T23:50:00'))
-      store.append('one', usage(100))
+      store.append('one', usage(100, undefined, true))
       vi.setSystemTime(new Date('2026-07-31T00:10:00'))
-      store.append('one', usage(140))
-      store.append('two', usage(50))
+      store.append('one', usage(140, undefined, true))
+      store.append('two', usage(50, undefined, true))
 
       expect(store.usageSummary('one', new Date('2026-07-31T00:00:00').getTime())).toEqual({
         session: expect.objectContaining({ totalTokens: 140 }),
@@ -571,6 +572,35 @@ describe('usage totals', () => {
       session: expect.objectContaining({ totalTokens: 30, costUsd: 0.05 }),
       today: expect.objectContaining({ totalTokens: 70, costUsd: 0.09 }),
     })
+  })
+
+  it('exposes persisted usage metadata for the historical usage page', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'one', projectPath: '/repo', provider: 'api', title: 'One' })
+    store.append('one', {
+      type: 'usage.updated',
+      usage: {
+        inputTokens: 100,
+        cachedInputTokens: 40,
+        outputTokens: 20,
+        reasoningTokens: 5,
+        totalTokens: 120,
+        model: 'gpt-5.6-luna',
+        inputIncludesCached: true,
+      },
+    })
+
+    expect(store.usageEvents()).toEqual([
+      expect.objectContaining({
+        threadId: 'one',
+        provider: 'api',
+        usage: expect.objectContaining({
+          model: 'gpt-5.6-luna',
+          inputTokens: 100,
+          inputIncludesCached: true,
+        }),
+      }),
+    ])
   })
 })
 

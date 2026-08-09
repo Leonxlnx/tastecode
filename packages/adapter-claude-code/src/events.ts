@@ -165,6 +165,7 @@ export function toUsage(usage: ClaudeUsage | undefined, costUsd?: number): Usage
     // Claude Code does not report reasoning tokens separately.
     reasoningTokens: 0,
     totalTokens: input + output + cached + (usage.cache_creation_input_tokens ?? 0),
+    inputIncludesCached: false,
     ...(costUsd === undefined ? {} : { costUsd }),
   }
 }

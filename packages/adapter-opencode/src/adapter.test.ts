@@ -56,12 +56,14 @@ describe('OpenCode adapter', () => {
         expect.objectContaining({
           type: 'usage.updated',
           usage: {
+            model: 'provider-1/model-1',
             inputTokens: 10,
             cachedInputTokens: 3,
-            outputTokens: 5,
+            outputTokens: 7,
             reasoningTokens: 2,
-            totalTokens: 17,
+            totalTokens: 20,
             costUsd: 0.01,
+            inputIncludesCached: false,
           },
         }),
         expect.objectContaining({ type: 'turn.completed', status: 'completed' }),
@@ -273,12 +275,14 @@ describe('OpenCode adapter', () => {
         expect.objectContaining({
           type: 'usage.updated',
           usage: {
+            model: 'provider-1/model-1',
             inputTokens: 10,
             cachedInputTokens: 3,
-            outputTokens: 5,
+            outputTokens: 7,
             reasoningTokens: 2,
-            totalTokens: 17,
+            totalTokens: 20,
             costUsd: 0.01,
+            inputIncludesCached: false,
           },
         }),
         expect.objectContaining({ type: 'turn.completed', status: 'completed' }),

@@ -11,6 +11,7 @@ import { spawnCli, StdioJsonRpc } from '@harness/proc'
 import { discoverAgentModels, findAgentSpec, type AcpAgentSpec } from './agents.js'
 import { optionFor, type PermissionOption } from './approvals.js'
 import { Streamer } from './events.js'
+import { acpSessionUsage, acpTurnUsage } from './usage.js'
 import {
   PROTOCOL_VERSION,
   type InitializeResult,
@@ -50,6 +51,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   #spec: AcpAgentSpec
   #rpc: StdioJsonRpc | undefined
   #sessionId: string | undefined
+  #model: string | undefined
   #streamer: Streamer | undefined
   #turnCounter = 0
   #instructions: string | undefined
@@ -92,6 +94,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#setApproval(options.approval)
     this.#instructions = options.instructions
     this.#instructionsPending = Boolean(options.instructions)
+    this.#model = options.model
     const rpc = await this.#connect(workspacePath, options.model)
 
     const session = await rpc
@@ -129,6 +132,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#setApproval(options.approval)
     this.#instructions = options.instructions
     this.#instructionsPending = false
+    this.#model = options.model
     const sessionId = parseAcpThreadId(threadId, this.#spec.id)
     const rpc = await this.#connect(workspacePath, options.model)
     if (!this.#loadSession) {
@@ -174,7 +178,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
         sessionId: this.#sessionId,
         prompt: [{ type: 'text', text: prompt }],
       })
-      .then((result) => this.#finishTurn(threadId, turnId, result.stopReason, streamer))
+      .then((result) => this.#finishTurn(threadId, turnId, result, streamer))
       .catch((error: unknown) => {
         this.emit('event', {
           type: 'thread.error',
@@ -221,6 +225,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#rpc?.dispose()
     this.#rpc = undefined
     this.#sessionId = undefined
+    this.#model = undefined
     this.#loadSession = false
     this.#pendingApprovals.clear()
   }
@@ -285,7 +290,15 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   #onNotification(method: string, params: unknown): void {
     if (method !== 'session/update') return
     const update = (params as SessionNotification | undefined)?.update
-    if (!update || !this.#streamer) return
+    if (!update) return
+
+    if (update.sessionUpdate === 'usage_update') {
+      const usage = acpSessionUsage(update, this.#model)
+      if (usage) this.emit('event', { type: 'usage.updated', usage })
+      return
+    }
+
+    if (!this.#streamer) return
 
     if (
       update.sessionUpdate === 'available_commands' ||
@@ -373,17 +386,15 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     return undefined
   }
 
-  #finishTurn(
-    threadId: string,
-    turnId: string,
-    stopReason: PromptResult['stopReason'],
-    streamer?: Streamer,
-  ): void {
+  #finishTurn(threadId: string, turnId: string, result: PromptResult, streamer?: Streamer): void {
+    const stopReason = result.stopReason
     // Finish the streamer this turn owns, never whichever one is current —
     // a late completion must not close the next turn's open items.
     const owned = streamer ?? this.#streamer
     if (owned === this.#streamer) this.#streamer = undefined
     for (const event of owned?.finish() ?? []) this.emit('event', event)
+    const usage = acpTurnUsage(result.usage, this.#model)
+    if (usage) this.emit('event', { type: 'usage.updated', usage })
 
     // Anything still waiting is now unanswerable — the turn it belonged to is
     // over. The agent is still blocked on its request, so it must hear

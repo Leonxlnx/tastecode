@@ -1,3 +1,5 @@
+import type { AcpSessionUsageUpdate, AcpTurnTokenUsage } from './usage.js'
+
 /**
  * The Agent Client Protocol, as agents actually speak it.
  *
@@ -47,6 +49,7 @@ export type StopReason = 'end_turn' | 'max_tokens' | 'max_turn_requests' | 'refu
 
 export type PromptResult = {
   stopReason?: StopReason
+  usage?: AcpTurnTokenUsage | null
 }
 
 export type ToolKind =
@@ -81,18 +84,19 @@ export type ToolCallFields = {
  * onto this object directly, which is why they are intersected rather than
  * nested.
  */
-export type SessionUpdate = Omit<ToolCallFields, 'content'> & {
-  sessionUpdate?: string
-  /**
-   * Overloaded by the protocol: a single block on a text chunk, an array on a
-   * tool call. Intersecting the two would cancel out to `never`, so the
-   * tool-call field is omitted above and the union declared once here.
-   */
-  content?: ContentBlock | ToolCallContent[]
-  entries?: Array<{ content?: string; status?: string; priority?: string }>
-  availableCommands?: Array<{ name?: string; description?: string }>
-  currentModeId?: string
-}
+export type SessionUpdate = Omit<ToolCallFields, 'content'> &
+  AcpSessionUsageUpdate & {
+    sessionUpdate?: string
+    /**
+     * Overloaded by the protocol: a single block on a text chunk, an array on a
+     * tool call. Intersecting the two would cancel out to `never`, so the
+     * tool-call field is omitted above and the union declared once here.
+     */
+    content?: ContentBlock | ToolCallContent[]
+    entries?: Array<{ content?: string; status?: string; priority?: string }>
+    availableCommands?: Array<{ name?: string; description?: string }>
+    currentModeId?: string
+  }
 
 export type SessionNotification = {
   sessionId?: string

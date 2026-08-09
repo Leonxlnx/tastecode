@@ -137,6 +137,7 @@ describe('claude event translation', () => {
         reasoningTokens: 0,
         totalTokens: 5,
         costUsd: 0.04,
+        inputIncludesCached: false,
       },
     })
   })

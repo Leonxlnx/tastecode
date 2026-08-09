@@ -27,6 +27,7 @@ import { browseProjectDirectory } from './project-directory-browser.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
+import { UsageHistoryService } from './usage-history.js'
 import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
 
 export const SERVER_VERSION = '0.0.0'
@@ -98,7 +99,13 @@ export function startServer(
     process.exit(1)
   })
 
-  const store = new Store(storeLocation())
+  const databasePath = storeLocation()
+  const store = new Store(databasePath)
+  const usageHistory = new UsageHistoryService({
+    cacheFile: path.join(path.dirname(databasePath), 'usage-history.json'),
+    harnessUsage: () => store.usageEvents(),
+  })
+  void usageHistory.startBackgroundRefresh()
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event, seq) => push.broadcast('thread.event', { threadId, event, seq }),
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
@@ -751,6 +758,15 @@ export function startServer(
         }
       }
 
+      case 'usage.history': {
+        const p = params as ParamsOf<'usage.history'>
+        return usageHistory.history(p.range, p.refresh ?? false)
+      }
+
+      case 'usage.resetHistory':
+        await usageHistory.resetAndRefresh()
+        return { started: true as const }
+
       case 'thread.start': {
         const p = params as {
           provider: ProviderId
@@ -925,6 +941,7 @@ export function startServer(
     startPairing,
     close: async () => {
       clearInterval(lifecycleTimer)
+      usageHistory.dispose()
       orchestrator.disposeAll()
       for (const socket of wss.clients) socket.terminate()
       await Promise.all([

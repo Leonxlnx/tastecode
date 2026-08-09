@@ -15,13 +15,15 @@ export type OpenCodeWireEvent = Event | OpenCodeV2Event
 
 export class OpenCodeEventMapper {
   readonly #turnId: string
+  readonly #model: string | undefined
   readonly #open = new Map<string, Item>()
   readonly #text = new Map<string, string>()
   readonly #completed = new Set<string>()
   readonly #v2Tools = new Map<string, { name: string; input?: Record<string, unknown> }>()
 
-  constructor(turnId: string) {
+  constructor(turnId: string, model?: string) {
     this.#turnId = turnId
+    this.#model = model
   }
 
   translate(event: OpenCodeWireEvent): DomainEvent[] {
@@ -30,7 +32,9 @@ export class OpenCodeEventMapper {
       return this.#part(event.properties.part, event.properties.delta)
     if (event.type === 'message.updated') {
       const info = event.properties.info
-      if (info.role === 'assistant' && info.time.completed) return [usage(info.tokens, info.cost)]
+      if (info.role === 'assistant' && info.time.completed) {
+        return [usage(info.tokens, info.cost, `${info.providerID}/${info.modelID}`)]
+      }
     }
     if (event.type === 'session.diff') {
       return event.properties.diff.map((diff, index) => ({
@@ -70,7 +74,7 @@ export class OpenCodeEventMapper {
     // v2 emits both `session.step.ended` and a cumulative
     // `session.usage.updated` for the same step. The latter is the stable
     // turn-level value; mapping both would publish every usage update twice.
-    if (event.type === 'session.usage.updated') return [v2Usage(data)]
+    if (event.type === 'session.usage.updated') return [v2Usage(data, this.#model)]
     return []
   }
 
@@ -268,33 +272,40 @@ function usage(
     cache: { read: number; write: number }
   },
   cost: number,
+  model?: string,
 ): DomainEvent {
+  const output = tokens.output + tokens.reasoning
   const value: Usage = {
+    ...(model ? { model } : {}),
     inputTokens: tokens.input,
     cachedInputTokens: tokens.cache.read,
-    outputTokens: tokens.output,
+    outputTokens: output,
     reasoningTokens: tokens.reasoning,
-    totalTokens: tokens.input + tokens.output + tokens.reasoning,
+    totalTokens: tokens.input + tokens.cache.read + tokens.cache.write + output,
     costUsd: cost,
+    inputIncludesCached: false,
   }
   return { type: 'usage.updated', usage: value }
 }
 
-function v2Usage(data: Record<string, unknown>): DomainEvent {
+function v2Usage(data: Record<string, unknown>, model?: string): DomainEvent {
   const tokens = record(data.tokens)
   const cache = record(tokens.cache)
   const input = number(tokens.input)
   const output = number(tokens.output)
   const reasoning = number(tokens.reasoning)
+  const normalizedOutput = output + reasoning
   return {
     type: 'usage.updated',
     usage: {
+      ...(model ? { model } : {}),
       inputTokens: input,
       cachedInputTokens: number(cache.read),
-      outputTokens: output,
+      outputTokens: normalizedOutput,
       reasoningTokens: reasoning,
-      totalTokens: input + output + reasoning,
+      totalTokens: input + number(cache.read) + number(cache.write) + normalizedOutput,
       costUsd: number(data.cost),
+      inputIncludesCached: false,
     },
   }
 }

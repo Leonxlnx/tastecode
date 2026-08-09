@@ -333,7 +333,10 @@ export class ApiAgentSession extends EventEmitter<Events> {
       } else if (event.type === 'tool_call') {
         calls.push(event.call)
       } else if (event.type === 'usage') {
-        this.emit('event', { type: 'usage.updated', usage: event.usage })
+        this.emit('event', {
+          type: 'usage.updated',
+          usage: { ...event.usage, model: this.#model },
+        })
       } else if (event.type === 'state') {
         state = event.value
       } else if (event.type === 'finish') {

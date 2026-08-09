@@ -1,0 +1,200 @@
+import { createReadStream } from 'node:fs'
+import readline from 'node:readline'
+import type { LocalUsageRecord } from '@harness/contracts'
+
+type CodexUsage = {
+  inputTokens: number
+  cachedInputTokens: number
+  cacheWriteInputTokens: number
+  outputTokens: number
+  reasoningTokens: number
+}
+
+/** Reads Codex JSONL without exposing its cumulative wire format to the core. */
+export async function readCodexUsageHistory(filePath: string): Promise<LocalUsageRecord[]> {
+  const entries = new Map<string, LocalUsageRecord>()
+  let sessionId = filePath
+  let currentModel = 'Unknown model'
+  let previous: CodexUsage | undefined
+  let turnStarted = false
+  const lines = readline.createInterface({
+    input: createReadStream(filePath, { encoding: 'utf8', highWaterMark: 1024 * 1024 }),
+    crlfDelay: Infinity,
+  })
+
+  for await (const line of lines) {
+    const tokenLine = line.includes('"token_count"')
+    const contextLine =
+      !tokenLine &&
+      line.length < 2 * 1024 * 1024 &&
+      (line.includes('"turn_context"') ||
+        line.includes('"session_meta"') ||
+        line.includes('"model"'))
+    if (!tokenLine && !contextLine) continue
+
+    const record = parseRecord(line)
+    if (!record) continue
+    const payload = asRecord(record['payload'])
+    if (record['type'] === 'session_meta') {
+      const id = stringValue(payload?.['id']) ?? stringValue(record['session_id'])
+      if (id) sessionId = id
+    }
+    const model = extractModel(payload)
+    if (model) currentModel = model
+    if (record['type'] === 'turn_context') turnStarted = true
+    if (record['type'] !== 'event_msg' || payload?.['type'] !== 'token_count') continue
+
+    const timestamp = dateValue(record['timestamp'])
+    const info = asRecord(payload['info'])
+    const total = normalizeUsage(asRecord(info?.['total_token_usage']))
+    const last = normalizeUsage(asRecord(info?.['last_token_usage']))
+    let delta: CodexUsage | undefined
+    if (total) {
+      delta = rolledBack(total, previous) ? (last ?? total) : subtractUsage(total, previous)
+      previous = total
+    } else if (last) {
+      delta = last
+      previous = addUsage(previous, last)
+    }
+
+    // Forks and resumed rollouts start with their parent's cumulative
+    // snapshot. It establishes the subtraction baseline, but it was already
+    // paid for in the original session and must not be counted again.
+    if (!turnStarted || !timestamp || !delta || delta.inputTokens + delta.outputTokens <= 0) {
+      continue
+    }
+
+    mergeUsageRecord(entries, {
+      date: localDateKey(timestamp),
+      model: model ?? currentModel,
+      sessionId,
+      longContext: delta.inputTokens > 272_000,
+      tokens: {
+        uncachedInputTokens: Math.max(
+          delta.inputTokens - delta.cachedInputTokens - delta.cacheWriteInputTokens,
+          0,
+        ),
+        cachedInputTokens: delta.cachedInputTokens,
+        cacheWrite5mInputTokens: delta.cacheWriteInputTokens,
+        cacheWrite1hInputTokens: 0,
+        outputTokens: delta.outputTokens,
+        reasoningTokens: delta.reasoningTokens,
+        providerReportedCostUsd: 0,
+      },
+    })
+  }
+  return [...entries.values()]
+}
+
+function normalizeUsage(value: Record<string, unknown> | undefined): CodexUsage | undefined {
+  if (!value) return undefined
+  return {
+    inputTokens: numberValue(value['input_tokens']),
+    cachedInputTokens: numberValue(
+      value['cached_input_tokens'] ?? value['cache_read_input_tokens'],
+    ),
+    cacheWriteInputTokens: numberValue(value['cache_write_input_tokens']),
+    outputTokens: numberValue(value['output_tokens']),
+    reasoningTokens: numberValue(value['reasoning_output_tokens']),
+  }
+}
+
+function rolledBack(current: CodexUsage, previous: CodexUsage | undefined): boolean {
+  if (!previous) return false
+  return (
+    current.inputTokens < previous.inputTokens ||
+    current.cachedInputTokens < previous.cachedInputTokens ||
+    current.cacheWriteInputTokens < previous.cacheWriteInputTokens ||
+    current.outputTokens < previous.outputTokens ||
+    current.reasoningTokens < previous.reasoningTokens
+  )
+}
+
+function subtractUsage(current: CodexUsage, previous: CodexUsage | undefined): CodexUsage {
+  return {
+    inputTokens: Math.max(current.inputTokens - (previous?.inputTokens ?? 0), 0),
+    cachedInputTokens: Math.max(current.cachedInputTokens - (previous?.cachedInputTokens ?? 0), 0),
+    cacheWriteInputTokens: Math.max(
+      current.cacheWriteInputTokens - (previous?.cacheWriteInputTokens ?? 0),
+      0,
+    ),
+    outputTokens: Math.max(current.outputTokens - (previous?.outputTokens ?? 0), 0),
+    reasoningTokens: Math.max(current.reasoningTokens - (previous?.reasoningTokens ?? 0), 0),
+  }
+}
+
+function addUsage(previous: CodexUsage | undefined, delta: CodexUsage): CodexUsage {
+  return {
+    inputTokens: (previous?.inputTokens ?? 0) + delta.inputTokens,
+    cachedInputTokens: (previous?.cachedInputTokens ?? 0) + delta.cachedInputTokens,
+    cacheWriteInputTokens: (previous?.cacheWriteInputTokens ?? 0) + delta.cacheWriteInputTokens,
+    outputTokens: (previous?.outputTokens ?? 0) + delta.outputTokens,
+    reasoningTokens: (previous?.reasoningTokens ?? 0) + delta.reasoningTokens,
+  }
+}
+
+function mergeUsageRecord(entries: Map<string, LocalUsageRecord>, entry: LocalUsageRecord): void {
+  const key = `${entry.date}\u0000${entry.model}\u0000${entry.sessionId}\u0000${entry.longContext}`
+  const prior = entries.get(key)
+  if (!prior) {
+    entries.set(key, entry)
+    return
+  }
+  prior.tokens.uncachedInputTokens += entry.tokens.uncachedInputTokens
+  prior.tokens.cachedInputTokens += entry.tokens.cachedInputTokens
+  prior.tokens.cacheWrite5mInputTokens += entry.tokens.cacheWrite5mInputTokens
+  prior.tokens.cacheWrite1hInputTokens += entry.tokens.cacheWrite1hInputTokens
+  prior.tokens.outputTokens += entry.tokens.outputTokens
+  prior.tokens.reasoningTokens += entry.tokens.reasoningTokens
+  prior.tokens.providerReportedCostUsd += entry.tokens.providerReportedCostUsd
+}
+
+function extractModel(payload: Record<string, unknown> | undefined): string | undefined {
+  if (!payload) return undefined
+  const info = asRecord(payload['info'])
+  const metadata = asRecord(payload['metadata'])
+  const infoMetadata = asRecord(info?.['metadata'])
+  return (
+    stringValue(payload['model']) ??
+    stringValue(payload['model_name']) ??
+    stringValue(info?.['model']) ??
+    stringValue(info?.['model_name']) ??
+    stringValue(infoMetadata?.['model']) ??
+    stringValue(metadata?.['model'])
+  )
+}
+
+function parseRecord(line: string): Record<string, unknown> | undefined {
+  try {
+    return asRecord(JSON.parse(line))
+  } catch {
+    return undefined
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
+}
+
+function dateValue(value: unknown): Date | undefined {
+  if (typeof value !== 'string' && typeof value !== 'number') return undefined
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? undefined : date
+}
+
+function localDateKey(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}

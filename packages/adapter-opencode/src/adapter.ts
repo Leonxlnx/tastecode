@@ -305,7 +305,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     const turnId = `${threadId}-turn-${++this.#turnCounter}`
     this.#turnId = turnId
     this.#turnSawActivity = false
-    this.#mapper = new OpenCodeEventMapper(turnId)
+    this.#mapper = new OpenCodeEventMapper(turnId, this.#model)
     this.emit('event', {
       type: 'turn.started',
       turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },

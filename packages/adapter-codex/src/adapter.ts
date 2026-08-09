@@ -274,6 +274,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #mcpStartup = new Map<string, McpStartupStatus>()
   #mcpInventory = new Map<string, McpServer[]>()
   #mcpInventoryLoads = new Map<string, Promise<void>>()
+  #threadModels = new Map<string, string>()
   #mcpServers: Record<string, JsonValue>
   #mcpEnvironment: NodeJS.ProcessEnv
   #mcpLogins = new Map<string, string>()
@@ -577,6 +578,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       ...(Object.keys(config).length ? { config } : {}),
       ...(approval ?? {}),
     })
+    this.#threadModels.set(response.thread.id, response.model)
     return {
       id: response.thread.id,
       provider: 'codex',
@@ -598,6 +600,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         ? { config: { mcp_servers: this.#mcpServers } }
         : {}),
     })
+    this.#threadModels.set(response.thread.id, response.model)
     return {
       id: response.thread.id,
       provider: 'codex',
@@ -634,6 +637,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         ),
       ],
     })
+    if (options.model) this.#threadModels.set(threadId, options.model)
     return response.turn.id
   }
 
@@ -690,6 +694,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#mcpStartup.clear()
     this.#mcpInventory.clear()
     this.#mcpInventoryLoads.clear()
+    this.#threadModels.clear()
     // Held responders close over the dead transport; answering one after
     // disposal would write into nothing. Drop them with the process.
     this.#approvals.clear()
@@ -910,14 +915,18 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       case 'thread/tokenUsage/updated': {
         const p = params as ThreadTokenUsageUpdatedNotification
         const total = p.tokenUsage.total
+        const model = this.#threadModels.get(p.threadId)
         emit({
           type: 'usage.updated',
           usage: {
+            ...(model ? { model } : {}),
             inputTokens: total.inputTokens,
             cachedInputTokens: total.cachedInputTokens,
             outputTokens: total.outputTokens,
             reasoningTokens: total.reasoningOutputTokens,
             totalTokens: total.totalTokens,
+            cumulative: true,
+            inputIncludesCached: true,
             ...(p.tokenUsage.modelContextWindow
               ? { contextWindow: p.tokenUsage.modelContextWindow }
               : {}),

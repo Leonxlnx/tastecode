@@ -26,6 +26,8 @@ import type {
 } from '@harness/contracts'
 import {
   ArrowLeft,
+  BarChart3,
+  Bug,
   CircleAlert,
   Blocks,
   ChevronDown,
@@ -74,6 +76,7 @@ import { ModelSearchField } from './ModelSearchField.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { renderQrSvg } from './qr-code.js'
+import { UsageSettings } from './UsageSettings.js'
 
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
@@ -86,8 +89,10 @@ type SettingsSection =
   | 'skills'
   | 'workflows'
   | 'mobile'
+  | 'usage'
   | 'appearance'
   | 'data'
+  | 'debug'
   | 'about'
 
 const THEME_OPTIONS = [
@@ -246,6 +251,12 @@ function SettingsComponent(props: {
             onClick={() => setSection('mobile')}
           />
           <SettingsNavItem
+            active={section === 'usage'}
+            icon={<BarChart3 size={15} aria-hidden />}
+            label="Usage"
+            onClick={() => setSection('usage')}
+          />
+          <SettingsNavItem
             active={section === 'appearance'}
             icon={<Palette size={15} aria-hidden />}
             label="Appearance"
@@ -258,6 +269,12 @@ function SettingsComponent(props: {
             onClick={() => setSection('data')}
           />
           <SettingsNavItem
+            active={section === 'debug'}
+            icon={<Bug size={15} aria-hidden />}
+            label="Debug"
+            onClick={() => setSection('debug')}
+          />
+          <SettingsNavItem
             active={section === 'about'}
             icon={<Info size={15} aria-hidden />}
             label="About"
@@ -267,15 +284,19 @@ function SettingsComponent(props: {
       </aside>
 
       <main className="settings__main">
-        <div className="settings__content">
+        <div
+          className={`settings__content${section === 'usage' ? ' settings__content--usage' : ''}`}
+        >
           {section === 'providers' ? <ProviderSettings {...props} /> : null}
           {section === 'models' ? <ModelSettings {...props} /> : null}
           {section === 'mcp' ? <McpSettings {...props} /> : null}
           {section === 'skills' ? <SkillsSettings {...props} /> : null}
           {section === 'workflows' ? <WorkflowSettings {...props} /> : null}
           {section === 'mobile' ? <MobileAccessSettings transport={props.transport} /> : null}
+          {section === 'usage' ? <UsageSettings transport={props.transport} /> : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
           {section === 'data' ? <DataSettings {...props} /> : null}
+          {section === 'debug' ? <DebugSettings transport={props.transport} /> : null}
           {section === 'about' ? <AboutSettings transport={props.transport} /> : null}
         </div>
       </main>
@@ -1117,6 +1138,50 @@ function DataSettings(props: { projectCount: number; onReset: () => void }) {
         <button className="settings__action" type="button" onClick={props.onReset}>
           <RotateCcw size={13} aria-hidden />
           <span>Reset app</span>
+        </button>
+      </SettingsRow>
+    </SettingsPanel>
+  )
+}
+
+export function DebugSettings(props: { transport: Transport }) {
+  const [state, setState] = useState<'idle' | 'resetting' | 'started' | 'error'>('idle')
+  const [error, setError] = useState<string>()
+
+  const resetUsage = async () => {
+    setState('resetting')
+    setError(undefined)
+    try {
+      await props.transport.request('usage.resetHistory', {})
+      setState('started')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+      setState('error')
+    }
+  }
+
+  return (
+    <SettingsPanel title="Debug">
+      <SettingsRow
+        title="Usage history index"
+        note="Clears the generated cache and reparses every local provider history. Sessions and Harness data are not deleted."
+      >
+        {state === 'started' ? (
+          <span className="settings__status is-on" role="status">
+            Scan started
+          </span>
+        ) : null}
+        {state === 'error' && error ? (
+          <RowIssue message={error} tip="Restart the app, then try the reset again." />
+        ) : null}
+        <button
+          className="settings__action"
+          type="button"
+          disabled={state === 'resetting'}
+          onClick={() => void resetUsage()}
+        >
+          <RotateCcw size={13} aria-hidden />
+          <span>{state === 'resetting' ? 'Resetting…' : 'Reset and rescan'}</span>
         </button>
       </SettingsRow>
     </SettingsPanel>

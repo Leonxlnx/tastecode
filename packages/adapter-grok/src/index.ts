@@ -11,3 +11,4 @@ export {
   parseGrokModels,
   signOutGrok,
 } from './adapter.js'
+export { readGrokUsageHistory } from './usage-history.js'

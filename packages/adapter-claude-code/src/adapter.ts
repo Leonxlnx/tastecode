@@ -219,6 +219,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   readonly #run: RunFn
   #workspacePath = ''
   #options: ClaudeStartOptions = {}
+  #reportedModel: string | undefined
   /** Claude Code's own session id, so follow-up turns resume rather than restart. */
   #sessionId: string | undefined
   #child: ChildProcessWithoutNullStreams | undefined
@@ -249,6 +250,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
     this.#workspacePath = workspacePath
     this.#options = options
+    this.#reportedModel = options.model
     this.#sessionId = undefined
     this.#clearInstructionsFile()
     if (options.instructions) {
@@ -278,6 +280,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   ): Promise<string> {
     if (attachments.length) throw new Error('Claude Code attachments are not supported yet')
     this.#options = applyClaudeTurnOptions(this.#options, options)
+    if ('model' in options) this.#reportedModel = this.#options.model
     const turnId = `${threadId}-turn-${++this.#turnCounter}`
     const args = claudeTurnArgs(this.#options, this.#sessionId, this.#instructionsFile)
 
@@ -383,6 +386,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   }
 
   #onEvent(event: ClaudeEvent, turnId: string): void {
+    if (event.message?.model) this.#reportedModel = event.message.model
     // The init event carries the session id we need for the next turn.
     if (event.type === 'system' && event.subtype === 'init' && event.session_id) {
       this.#sessionId = event.session_id
@@ -405,7 +409,14 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
 
     for (const domainEvent of toDomainEvents(event, turnId)) {
-      this.emit('event', domainEvent)
+      if (domainEvent.type === 'usage.updated' && this.#reportedModel) {
+        this.emit('event', {
+          ...domainEvent,
+          usage: { ...domainEvent.usage, model: this.#reportedModel },
+        })
+      } else {
+        this.emit('event', domainEvent)
+      }
     }
   }
 }

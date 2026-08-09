@@ -93,7 +93,14 @@ describe('Grok adapter', () => {
         }),
         expect.objectContaining({
           type: 'usage.updated',
-          usage: expect.objectContaining({ inputTokens: 22116, reasoningTokens: 83 }),
+          usage: expect.objectContaining({
+            model: 'grok-4.5',
+            inputTokens: 22116,
+            cachedInputTokens: 5376,
+            reasoningTokens: 83,
+            inputIncludesCached: false,
+            costUsd: 0.0463908,
+          }),
         }),
         expect.objectContaining({ type: 'turn.completed', status: 'completed' }),
       ]),

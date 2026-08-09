@@ -74,6 +74,13 @@ export type StoredCheckpoint = {
   createdAt: number
 }
 
+export type StoredUsageEvent = {
+  threadId: string
+  provider: ProviderId
+  at: number
+  usage: Usage
+}
+
 export type SessionSearchOptions = {
   query: string
   projectPath?: string | undefined
@@ -802,6 +809,30 @@ export class Store {
   }
 
   /** Persistent totals derived from the event log that already owns usage. */
+  usageEvents(): StoredUsageEvent[] {
+    const rows = this.#db
+      .prepare(
+        `SELECT e.thread_id, e.at, e.payload, t.provider
+         FROM events e JOIN threads t ON t.id = e.thread_id
+         WHERE e.payload LIKE '%"usage.updated"%'
+         ORDER BY e.thread_id, e.seq`,
+      )
+      .all() as Array<{ thread_id: string; at: number; payload: string; provider: ProviderId }>
+
+    const events: StoredUsageEvent[] = []
+    for (const row of rows) {
+      const event = JSON.parse(row.payload) as DomainEvent
+      if (event.type !== 'usage.updated') continue
+      events.push({
+        threadId: row.thread_id,
+        provider: row.provider,
+        at: row.at,
+        usage: event.usage,
+      })
+    }
+    return events
+  }
+
   usageSummary(threadId: string, since: number): { session: UsageTotal; today: UsageTotal } {
     const thread = this.thread(threadId)
     if (!thread) return { session: emptyUsage(), today: emptyUsage() }
@@ -814,9 +845,13 @@ export class Store {
     // Two bounded scans instead of one unbounded one: the session total only
     // needs this thread's rows, and "today" only needs rows since midnight —
     // across every provider, because the user's day is not provider-scoped.
-    const parseUsage = (payload: string): UsageTotal | undefined => {
+    const parseUsage = (
+      payload: string,
+    ): { total: UsageTotal; cumulative: boolean } | undefined => {
       const event = JSON.parse(payload) as DomainEvent
-      return event.type === 'usage.updated' ? withoutContext(event.usage) : undefined
+      return event.type === 'usage.updated'
+        ? { total: withoutContext(event.usage), cumulative: event.usage.cumulative === true }
+        : undefined
     }
 
     let session = emptyUsage()
@@ -829,12 +864,11 @@ export class Store {
         .all(threadId) as Array<{ payload: string }>
       let previous: UsageTotal | undefined
       for (const row of rows) {
-        const current = parseUsage(row.payload)
-        if (!current) continue
-        // Codex reports a running thread total. Claude reports one completed turn.
-        const increment =
-          thread.provider === 'claude-code' ? current : usageIncrement(current, previous)
-        previous = current
+        const sample = parseUsage(row.payload)
+        if (!sample) continue
+        const current = sample.total
+        const increment = sample.cumulative ? usageIncrement(current, previous) : current
+        if (sample.cumulative) previous = current
         session = addUsage(session, increment)
       }
     }
@@ -856,7 +890,7 @@ export class Store {
         .all(since) as Array<{ thread_id: string; payload: string }>
       for (const seed of seeds) {
         const usage = parseUsage(seed.payload)
-        if (usage) previous.set(seed.thread_id, usage)
+        if (usage?.cumulative) previous.set(seed.thread_id, usage.total)
       }
 
       const rows = this.#db
@@ -868,13 +902,13 @@ export class Store {
         )
         .all(since) as Array<{ thread_id: string; payload: string; provider: string }>
       for (const row of rows) {
-        const current = parseUsage(row.payload)
-        if (!current) continue
-        const increment =
-          row.provider === 'claude-code'
-            ? current
-            : usageIncrement(current, previous.get(row.thread_id))
-        previous.set(row.thread_id, current)
+        const sample = parseUsage(row.payload)
+        if (!sample) continue
+        const current = sample.total
+        const increment = sample.cumulative
+          ? usageIncrement(current, previous.get(row.thread_id))
+          : current
+        if (sample.cumulative) previous.set(row.thread_id, current)
         today = addUsage(today, increment)
       }
     }
@@ -1146,7 +1180,7 @@ function parseSnippet(value: string): SessionSearchResult['snippet'] {
   return parts.length > 0 ? parts : [{ text: value, highlighted: false }]
 }
 
-type UsageTotal = Omit<Usage, 'contextWindow'>
+type UsageTotal = Omit<Usage, 'contextWindow' | 'model' | 'cumulative' | 'inputIncludesCached'>
 
 function emptyUsage(): UsageTotal {
   return {
@@ -1159,8 +1193,23 @@ function emptyUsage(): UsageTotal {
 }
 
 function withoutContext(usage: Usage): UsageTotal {
-  const { contextWindow: _contextWindow, ...total } = usage
-  return total
+  const {
+    contextWindow: _contextWindow,
+    model: _model,
+    cumulative: _cumulative,
+    inputIncludesCached: _inputIncludesCached,
+    ...total
+  } = usage
+  // ACP can report context occupancy and cumulative cost without end-turn
+  // token accounting. Keep the cost, but don't turn "tokens currently in
+  // context" into tokens processed by the session summary.
+  return usage.contextWindow &&
+    total.inputTokens === 0 &&
+    total.cachedInputTokens === 0 &&
+    total.outputTokens === 0 &&
+    total.reasoningTokens === 0
+    ? { ...total, totalTokens: 0 }
+    : total
 }
 
 function addUsage(left: UsageTotal, right: UsageTotal): UsageTotal {

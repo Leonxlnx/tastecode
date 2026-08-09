@@ -81,6 +81,7 @@ export function createOpenAiResponsesTransport(options: OpenAiOptions): ApiTrans
               outputTokens: number(usage.output_tokens),
               reasoningTokens: number(object(usage.output_tokens_details).reasoning_tokens),
               totalTokens: number(usage.total_tokens),
+              inputIncludesCached: true,
             },
           } satisfies ApiStreamEvent
         }
