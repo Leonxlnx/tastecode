@@ -25,6 +25,16 @@ describe('usage settings', () => {
     await screen.findByText('$12.34', { selector: '.usage-cost__value' })
     expect(screen.getAllByText('1.23M').length).toBeGreaterThan(0)
     expect(screen.getByText('gpt-5.6-sol')).toBeTruthy()
+    expect(screen.getByRole('columnheader', { name: 'Cache hit rate' })).toBeTruthy()
+    expect(screen.getByText('82.6%')).toBeTruthy()
+    for (const metric of ['processed', 'cached', 'uncached', 'output', 'savings']) {
+      const tooltipId = `usage-metric-${metric}-details`
+      const tooltip = document.getElementById(tooltipId)
+      expect(
+        document.querySelector(`[aria-describedby="${tooltipId}"]`)?.getAttribute('tabindex'),
+      ).toBe('0')
+      expect(tooltip?.getAttribute('role')).toBe('tooltip')
+    }
     expect(request).toHaveBeenNthCalledWith(1, 'usage.history', { range: '30d' })
 
     fireEvent.click(screen.getByRole('radio', { name: '7 days' }))
@@ -96,9 +106,12 @@ describe('usage settings', () => {
     render(<UsageSettings transport={transport} />)
 
     await screen.findByRole('heading', { name: 'Usage' })
+    const breakdown = document.getElementById('usage-metric-processed-details')
     for (const provider of providers) {
       expect(screen.getAllByText(provider.label).length).toBeGreaterThan(0)
+      expect(breakdown?.textContent).toContain(provider.label)
     }
+    expect(breakdown?.textContent).toContain('12.5%')
   })
 })
 

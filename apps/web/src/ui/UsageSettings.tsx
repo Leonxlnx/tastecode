@@ -237,8 +237,7 @@ function CostSummary(props: { data: ResultOf<'usage.history'> }) {
 
 function MetricStrip(props: { data: ResultOf<'usage.history'> }) {
   const totals = props.data.totals
-  const observedInput = totals.uncachedInputTokens + totals.cachedInputTokens
-  const cacheShare = observedInput > 0 ? totals.cachedInputTokens / observedInput : 0
+  const hitRate = cacheHitRate(totals)
   const perActiveDay =
     props.data.activeDays > 0 ? totals.processedTokens / props.data.activeDays : 0
   const savingsMultiple =
@@ -246,42 +245,135 @@ function MetricStrip(props: { data: ResultOf<'usage.history'> }) {
   return (
     <section className="usage-metrics" aria-label="Token totals">
       <Metric
+        id="processed"
         label="Processed tokens"
         value={formatTokens(totals.processedTokens)}
         detail={`${formatTokens(perActiveDay)} per active day`}
+        providers={metricProviderDetails(
+          props.data.providers,
+          (providerTotals) => providerTotals.processedTokens,
+          formatTokens,
+        )}
       />
       <Metric
+        id="cached"
         label="Cached input"
         value={formatTokens(totals.cachedInputTokens)}
-        detail={`${formatPercent(cacheShare)} of observed input`}
+        detail={
+          hitRate === undefined ? 'No observed input' : `${formatPercent(hitRate)} cache hit rate`
+        }
+        providers={metricProviderDetails(
+          props.data.providers,
+          (providerTotals) => providerTotals.cachedInputTokens,
+          formatTokens,
+        )}
       />
       <Metric
+        id="uncached"
         label="Uncached input"
         value={formatTokens(totals.uncachedInputTokens)}
         detail={`${formatTokens(totals.cacheWriteInputTokens)} cache writes`}
+        providers={metricProviderDetails(
+          props.data.providers,
+          (providerTotals) => providerTotals.uncachedInputTokens,
+          formatTokens,
+        )}
       />
       <Metric
+        id="output"
         label="Output"
         value={formatTokens(totals.outputTokens)}
         detail={`includes ${formatTokens(totals.reasoningTokens)} reasoning`}
+        providers={metricProviderDetails(
+          props.data.providers,
+          (providerTotals) => providerTotals.outputTokens,
+          formatTokens,
+        )}
       />
       <Metric
+        id="savings"
         label="Cache savings"
         value={formatMoney(totals.cacheSavingsUsd)}
         detail={`${formatDecimal(savingsMultiple)}× the raw token cost`}
+        providers={metricProviderDetails(
+          props.data.providers,
+          (providerTotals) => providerTotals.cacheSavingsUsd,
+          formatMoney,
+        )}
       />
     </section>
   )
 }
 
-function Metric(props: { label: string; value: string; detail: string }) {
+type MetricProviderDetail = {
+  provider: ProviderId
+  value: string
+  share: string
+}
+
+function Metric(props: {
+  id: string
+  label: string
+  value: string
+  detail: string
+  providers: ReadonlyArray<MetricProviderDetail>
+}) {
+  const tooltipId = `usage-metric-${props.id}-details`
   return (
-    <div className="usage-metric">
+    <div
+      className="usage-metric"
+      tabIndex={0}
+      aria-label={`${props.label}: ${props.value}. ${props.detail}`}
+      aria-describedby={tooltipId}
+    >
       <p>{props.label}</p>
       <strong>{props.value}</strong>
       <span>{props.detail}</span>
+      <div className="usage-metric__tooltip" id={tooltipId} role="tooltip">
+        <div className="usage-metric__tooltip-heading">
+          <strong>{props.label} by provider</strong>
+          <span>Value · share</span>
+        </div>
+        {props.providers.length > 0 ? (
+          <ul>
+            {props.providers.map((provider) => (
+              <li data-provider={provider.provider} key={provider.provider}>
+                <span className="usage-metric__provider-name">
+                  <ProviderIcon mark={providerMark(provider.provider)} size={15} />
+                  {providerLabel(provider.provider)}
+                </span>
+                <span className="usage-metric__provider-value">
+                  <b>{provider.value}</b>
+                  <small>{provider.share}</small>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="usage-metric__tooltip-empty">No provider usage in this period.</p>
+        )}
+      </div>
     </div>
   )
+}
+
+function metricProviderDetails(
+  providers: ResultOf<'usage.history'>['providers'],
+  valueFor: (totals: UsageHistoryTotals) => number,
+  formatValue: (value: number) => string,
+): ReadonlyArray<MetricProviderDetail> {
+  const values = providers.map((provider) => ({
+    provider: provider.provider,
+    rawValue: valueFor(provider.totals),
+  }))
+  const total = values.reduce((sum, provider) => sum + provider.rawValue, 0)
+  return values
+    .toSorted((left, right) => right.rawValue - left.rawValue)
+    .map((provider) => ({
+      provider: provider.provider,
+      value: formatValue(provider.rawValue),
+      share: total > 0 ? formatPercent(provider.rawValue / total) : '—',
+    }))
 }
 
 function DailyUsageChart(props: { data: ResultOf<'usage.history'> }) {
@@ -516,6 +608,7 @@ function UsageBreakdown(props: { data: ResultOf<'usage.history'> }) {
                 <th scope="col">Cost</th>
                 <th scope="col">Share</th>
                 <th scope="col">Tokens</th>
+                <th scope="col">Cache hit rate</th>
                 <th scope="col">Sessions</th>
               </tr>
             </thead>
@@ -528,6 +621,7 @@ function UsageBreakdown(props: { data: ResultOf<'usage.history'> }) {
                       ? row.totals.processedTokens / tokenDenominator
                       : 0
                 const badge = pricingLabel(row.pricing, row.totals)
+                const hitRate = cacheHitRate(row.totals)
                 return (
                   <tr key={row.key}>
                     <th scope="row">
@@ -548,6 +642,7 @@ function UsageBreakdown(props: { data: ResultOf<'usage.history'> }) {
                     </td>
                     <td>{formatPercent(share)}</td>
                     <td>{formatTokens(row.totals.processedTokens)}</td>
+                    <td>{hitRate === undefined ? '—' : formatPercent(hitRate)}</td>
                     <td>{formatInteger(row.sessions)}</td>
                   </tr>
                 )
@@ -684,6 +779,12 @@ function costQuality(totals: UsageHistoryTotals) {
     modelPriced: totals.pricedTokens / denominator,
     unpriced: totals.unpricedTokens / denominator,
   }
+}
+
+function cacheHitRate(totals: UsageHistoryTotals): number | undefined {
+  const inputTokens =
+    totals.uncachedInputTokens + totals.cachedInputTokens + totals.cacheWriteInputTokens
+  return inputTokens > 0 ? totals.cachedInputTokens / inputTokens : undefined
 }
 
 function pricingLabel(
