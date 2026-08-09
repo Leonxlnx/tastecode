@@ -73,10 +73,16 @@ describe('design preview runner', () => {
         viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
       })
 
-    // Fetches and executes a package off the network.
-    await expect(startDesignPreview(workspace, plan('npx', ['some-package']))).rejects.toThrow(
-      'not allowed',
-    )
+    // Fetches and executes a package off the network. The parser now rejects
+    // npx before a plan exists, so the runner's own defense is exercised with
+    // a hand-built plan that skipped parsing.
+    await expect(
+      startDesignPreview(workspace, {
+        ...plan('pnpm', ['run', 'dev']),
+        command: 'npx',
+        args: ['some-package'],
+      }),
+    ).rejects.toThrow('not allowed')
     // A script the project does not declare.
     await expect(startDesignPreview(workspace, plan('pnpm', ['run', 'evil']))).rejects.toThrow(
       'not declared in package.json',
