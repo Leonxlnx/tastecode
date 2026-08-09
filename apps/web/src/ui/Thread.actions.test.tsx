@@ -68,7 +68,7 @@ describe('design activity rows', () => {
       <Thread
         items={items}
         running={true}
-        activeTurn={{ id: 'turn-m1', threadId: 't', status: 'running', createdAt: 1 }}
+        activeTurn={{ id: 'turn-m1', startedAt: 1 }}
         plan={[]}
         diff={undefined}
         approvals={[]}
