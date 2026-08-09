@@ -270,7 +270,10 @@
   --bg-rail: var(--chrome-raised);
   /* The rail itself may be a gradient; the glass tint must stay a solid. */
   --bg-rail-tint: #fcfcfc;
-  --rail-glass-fade: 55%;
+  /* Light never shows the desktop through the window: the pane sits over the
+     app itself, so it stays close to opaque and the blur frosts app content
+     (the revealed flyout over the stage) rather than the wallpaper. */
+  --rail-glass-fade: 20%;
   --bg-prompt: #ffffff;
   --bg-shelf: #fafafa;
   --bg-queue: #ffffff;

@@ -55,7 +55,7 @@
   background: var(--bg-rail);
 }
 
-:root[data-glass='on'][data-shell='desktop'] .shell__body {
+:root[data-glass='on'][data-shell='desktop']:not([data-theme='light']) .shell__body {
   /* The OS blur material must stay visible behind the sidebar column. */
   background: transparent;
 }
@@ -7439,11 +7439,13 @@
    sidebar column, so the material shows through exactly there — a clean blur
    of whatever is behind the window. In a plain browser no material exists and
    the rail keeps its quiet translucent tint. */
-:root[data-glass='on'][data-shell='desktop'] body {
+:root[data-glass='on'][data-shell='desktop']:not([data-theme='light']) body {
   background: transparent;
 }
 
-:root[data-glass='on'][data-shell='desktop'] .shell__body > :not(.rail-slot) {
+:root[data-glass='on'][data-shell='desktop']:not([data-theme='light'])
+  .shell__body
+  > :not(.rail-slot) {
   background: var(--bg);
 }
 
