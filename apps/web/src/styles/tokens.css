@@ -22,6 +22,10 @@
      color-mix() rejects a gradient — light mode's gradient rail made the whole
      declaration invalid, so the frosted rail turned fully transparent there. */
   --bg-rail-tint: var(--bg-rail);
+  /* How strongly the glass strength thins the pane. Dark can afford a thin
+     pane over the dark blur; light over an arbitrary desktop turns to grey
+     mud below ~75% opacity, so it fades far less per step. */
+  --rail-glass-fade: 130%;
   --bg-prompt: #1a1a1a;
   --bg-shelf: #222222;
   --bg-queue: #222222;
@@ -266,6 +270,7 @@
   --bg-rail: var(--chrome-raised);
   /* The rail itself may be a gradient; the glass tint must stay a solid. */
   --bg-rail-tint: #fcfcfc;
+  --rail-glass-fade: 55%;
   --bg-prompt: #ffffff;
   --bg-shelf: #fafafa;
   --bg-queue: #ffffff;

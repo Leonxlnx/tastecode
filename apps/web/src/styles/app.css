@@ -7427,7 +7427,7 @@
      never a painted gradient. */
   background: color-mix(
     in srgb,
-    var(--bg-rail-tint) calc(100% - var(--rail-glass, 0) * 130%),
+    var(--bg-rail-tint) calc(100% - var(--rail-glass, 0) * var(--rail-glass-fade, 130%)),
     transparent
   );
   backdrop-filter: blur(26px) saturate(1.4);
