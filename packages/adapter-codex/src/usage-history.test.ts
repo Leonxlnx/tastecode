@@ -1,0 +1,111 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { readCodexUsageHistory } from './usage-history.js'
+
+const temporaryDirectories: string[] = []
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true })),
+  )
+})
+
+describe('Codex usage history', () => {
+  it('matches CodexProfilePro cumulative and cache token accounting', async () => {
+    const filePath = await usageFile([
+      tokenCount('2026-06-02T10:01:00.000Z', {
+        input_tokens: 1_000,
+        cached_input_tokens: 400,
+        cache_write_tokens: 200,
+        output_tokens: 100,
+        reasoning_output_tokens: 20,
+        total_tokens: 1_100,
+      }),
+      tokenCount('2026-06-02T10:02:00.000Z', {
+        input_tokens: 1_800,
+        cached_input_tokens: 500,
+        cache_write_tokens: 300,
+        output_tokens: 180,
+        reasoning_output_tokens: 40,
+        total_tokens: 1_980,
+      }),
+    ])
+
+    const [usage] = await readCodexUsageHistory(filePath)
+    expect(usage?.tokens).toEqual({
+      observedInputTokens: 1_800,
+      uncachedInputTokens: 1_000,
+      cachedInputTokens: 500,
+      cacheWrite5mInputTokens: 300,
+      cacheWrite1hInputTokens: 0,
+      outputTokens: 180,
+      reasoningTokens: 40,
+      processedTokens: 1_980,
+      providerReportedCostUsd: 0,
+    })
+  })
+
+  it('uses nested cache details and last usage after a cumulative rollback', async () => {
+    const filePath = await usageFile([
+      tokenCount('2026-06-02T10:01:00.000Z', {
+        input_tokens: 1_000,
+        output_tokens: 100,
+        total_tokens: 1_100,
+        input_tokens_details: { cached_tokens: 400, cache_write_tokens: 100 },
+      }),
+      tokenCount(
+        '2026-06-02T10:02:00.000Z',
+        {
+          input_tokens: 300,
+          output_tokens: 30,
+          total_tokens: 330,
+        },
+        {
+          input_tokens: 300,
+          cache_read_input_tokens: 100,
+          cache_write_input_tokens: 50,
+          output_tokens: 30,
+          total_tokens: 330,
+        },
+      ),
+    ])
+
+    const [usage] = await readCodexUsageHistory(filePath)
+    expect(usage?.tokens).toMatchObject({
+      observedInputTokens: 1_300,
+      uncachedInputTokens: 650,
+      cachedInputTokens: 500,
+      cacheWrite5mInputTokens: 150,
+      outputTokens: 130,
+      processedTokens: 1_430,
+    })
+  })
+})
+
+async function usageFile(records: unknown[]): Promise<string> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'harness-codex-usage-'))
+  temporaryDirectories.push(directory)
+  const filePath = path.join(directory, 'session.jsonl')
+  await writeFile(filePath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+  return filePath
+}
+
+function tokenCount(
+  timestamp: string,
+  total: Record<string, unknown>,
+  last?: Record<string, unknown>,
+): unknown {
+  return {
+    timestamp,
+    type: 'event_msg',
+    payload: {
+      type: 'token_count',
+      info: {
+        total_token_usage: total,
+        ...(last ? { last_token_usage: last } : {}),
+      },
+    },
+  }
+}

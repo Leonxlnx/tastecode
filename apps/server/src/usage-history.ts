@@ -19,7 +19,7 @@ import type {
 } from '@harness/contracts'
 import type { StoredUsageEvent } from './store.js'
 
-const CACHE_VERSION = 4
+const CACHE_VERSION = 5
 const PARSE_CONCURRENCY = 8
 const AUTO_REFRESH_INTERVAL_MS = 60_000
 const HARNESS_USAGE_CACHE_MS = 5_000
@@ -993,9 +993,13 @@ function addEntry(
   priced: ReturnType<typeof priceEntry>,
 ): void {
   const processed = processedTokens(tokens)
-  totals.uncachedInputTokens += tokens.uncachedInputTokens
+  const cacheWriteInputTokens = tokens.cacheWrite5mInputTokens + tokens.cacheWrite1hInputTokens
+  totals.uncachedInputTokens +=
+    tokens.observedInputTokens === undefined
+      ? tokens.uncachedInputTokens
+      : tokens.observedInputTokens - tokens.cachedInputTokens - cacheWriteInputTokens
   totals.cachedInputTokens += tokens.cachedInputTokens
-  totals.cacheWriteInputTokens += tokens.cacheWrite5mInputTokens + tokens.cacheWrite1hInputTokens
+  totals.cacheWriteInputTokens += cacheWriteInputTokens
   totals.outputTokens += tokens.outputTokens
   totals.reasoningTokens += tokens.reasoningTokens
   totals.processedTokens += processed
@@ -1014,11 +1018,12 @@ function addEntry(
 
 function processedTokens(tokens: TokenCounts): number {
   return (
-    tokens.uncachedInputTokens +
-    tokens.cachedInputTokens +
-    tokens.cacheWrite5mInputTokens +
-    tokens.cacheWrite1hInputTokens +
-    tokens.outputTokens
+    tokens.processedTokens ??
+    (tokens.observedInputTokens ??
+      tokens.uncachedInputTokens +
+        tokens.cachedInputTokens +
+        tokens.cacheWrite5mInputTokens +
+        tokens.cacheWrite1hInputTokens) + tokens.outputTokens
   )
 }
 

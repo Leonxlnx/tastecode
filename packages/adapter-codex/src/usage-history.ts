@@ -8,6 +8,7 @@ type CodexUsage = {
   cacheWriteInputTokens: number
   outputTokens: number
   reasoningTokens: number
+  totalTokens: number
 }
 
 /** Reads Codex JSONL without exposing its cumulative wire format to the core. */
@@ -16,7 +17,6 @@ export async function readCodexUsageHistory(filePath: string): Promise<LocalUsag
   let sessionId = filePath
   let currentModel = 'Unknown model'
   let previous: CodexUsage | undefined
-  let turnStarted = false
   const lines = readline.createInterface({
     input: createReadStream(filePath, { encoding: 'utf8', highWaterMark: 1024 * 1024 }),
     crlfDelay: Infinity,
@@ -41,7 +41,6 @@ export async function readCodexUsageHistory(filePath: string): Promise<LocalUsag
     }
     const model = extractModel(payload)
     if (model) currentModel = model
-    if (record['type'] === 'turn_context') turnStarted = true
     if (record['type'] !== 'event_msg' || payload?.['type'] !== 'token_count') continue
 
     const timestamp = dateValue(record['timestamp'])
@@ -57,12 +56,7 @@ export async function readCodexUsageHistory(filePath: string): Promise<LocalUsag
       previous = addUsage(previous, last)
     }
 
-    // Forks and resumed rollouts start with their parent's cumulative
-    // snapshot. It establishes the subtraction baseline, but it was already
-    // paid for in the original session and must not be counted again.
-    if (!turnStarted || !timestamp || !delta || delta.inputTokens + delta.outputTokens <= 0) {
-      continue
-    }
+    if (!timestamp || !delta || delta.totalTokens <= 0) continue
 
     mergeUsageRecord(entries, {
       date: localDateKey(timestamp),
@@ -70,6 +64,7 @@ export async function readCodexUsageHistory(filePath: string): Promise<LocalUsag
       sessionId,
       longContext: delta.inputTokens > 272_000,
       tokens: {
+        observedInputTokens: delta.inputTokens,
         uncachedInputTokens: Math.max(
           delta.inputTokens - delta.cachedInputTokens - delta.cacheWriteInputTokens,
           0,
@@ -79,6 +74,7 @@ export async function readCodexUsageHistory(filePath: string): Promise<LocalUsag
         cacheWrite1hInputTokens: 0,
         outputTokens: delta.outputTokens,
         reasoningTokens: delta.reasoningTokens,
+        processedTokens: delta.totalTokens,
         providerReportedCostUsd: 0,
       },
     })
@@ -88,14 +84,25 @@ export async function readCodexUsageHistory(filePath: string): Promise<LocalUsag
 
 function normalizeUsage(value: Record<string, unknown> | undefined): CodexUsage | undefined {
   if (!value) return undefined
+  const inputTokens = numberValue(value['input_tokens'])
+  const outputTokens = numberValue(value['output_tokens'])
+  const inputDetails = asRecord(value['input_tokens_details'])
+  const reportedTotal = numberValue(value['total_tokens'])
   return {
-    inputTokens: numberValue(value['input_tokens']),
+    inputTokens,
     cachedInputTokens: numberValue(
-      value['cached_input_tokens'] ?? value['cache_read_input_tokens'],
+      value['cached_input_tokens'] ??
+        value['cache_read_input_tokens'] ??
+        inputDetails?.['cached_tokens'],
     ),
-    cacheWriteInputTokens: numberValue(value['cache_write_input_tokens']),
-    outputTokens: numberValue(value['output_tokens']),
+    cacheWriteInputTokens: numberValue(
+      value['cache_write_tokens'] ??
+        value['cache_write_input_tokens'] ??
+        inputDetails?.['cache_write_tokens'],
+    ),
+    outputTokens,
     reasoningTokens: numberValue(value['reasoning_output_tokens']),
+    totalTokens: reportedTotal > 0 ? reportedTotal : inputTokens + outputTokens,
   }
 }
 
@@ -106,7 +113,8 @@ function rolledBack(current: CodexUsage, previous: CodexUsage | undefined): bool
     current.cachedInputTokens < previous.cachedInputTokens ||
     current.cacheWriteInputTokens < previous.cacheWriteInputTokens ||
     current.outputTokens < previous.outputTokens ||
-    current.reasoningTokens < previous.reasoningTokens
+    current.reasoningTokens < previous.reasoningTokens ||
+    current.totalTokens < previous.totalTokens
   )
 }
 
@@ -120,6 +128,7 @@ function subtractUsage(current: CodexUsage, previous: CodexUsage | undefined): C
     ),
     outputTokens: Math.max(current.outputTokens - (previous?.outputTokens ?? 0), 0),
     reasoningTokens: Math.max(current.reasoningTokens - (previous?.reasoningTokens ?? 0), 0),
+    totalTokens: Math.max(current.totalTokens - (previous?.totalTokens ?? 0), 0),
   }
 }
 
@@ -130,6 +139,7 @@ function addUsage(previous: CodexUsage | undefined, delta: CodexUsage): CodexUsa
     cacheWriteInputTokens: (previous?.cacheWriteInputTokens ?? 0) + delta.cacheWriteInputTokens,
     outputTokens: (previous?.outputTokens ?? 0) + delta.outputTokens,
     reasoningTokens: (previous?.reasoningTokens ?? 0) + delta.reasoningTokens,
+    totalTokens: (previous?.totalTokens ?? 0) + delta.totalTokens,
   }
 }
 
@@ -140,6 +150,10 @@ function mergeUsageRecord(entries: Map<string, LocalUsageRecord>, entry: LocalUs
     entries.set(key, entry)
     return
   }
+  prior.tokens.processedTokens =
+    (prior.tokens.processedTokens ?? 0) + (entry.tokens.processedTokens ?? 0)
+  prior.tokens.observedInputTokens =
+    (prior.tokens.observedInputTokens ?? 0) + (entry.tokens.observedInputTokens ?? 0)
   prior.tokens.uncachedInputTokens += entry.tokens.uncachedInputTokens
   prior.tokens.cachedInputTokens += entry.tokens.cachedInputTokens
   prior.tokens.cacheWrite5mInputTokens += entry.tokens.cacheWrite5mInputTokens

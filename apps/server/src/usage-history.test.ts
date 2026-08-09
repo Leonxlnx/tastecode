@@ -133,7 +133,7 @@ describe('local usage history', () => {
     )
   })
 
-  it('reuses unchanged files and reparses a session after it grows', async () => {
+  it('counts the first cumulative snapshot and reparses a session after it grows', async () => {
     const root = temporaryDirectory()
     const codexRoot = path.join(root, 'codex')
     const claudeRoot = path.join(root, 'claude')
@@ -169,7 +169,7 @@ describe('local usage history', () => {
     }
     const service = usageService(options)
 
-    expect((await settledHistory(service, 'all')).totals.processedTokens).toBe(110)
+    expect((await settledHistory(service, 'all')).totals.processedTokens).toBe(1_210)
     records.push(
       codexTokenRecord('2026-08-08T09:02:00.000Z', {
         input_tokens: 1_250,
@@ -177,11 +177,55 @@ describe('local usage history', () => {
       }),
     )
     writeJsonLines(codexFile, records)
-    expect((await settledHistory(service, 'all', true)).totals.processedTokens).toBe(275)
+    expect((await settledHistory(service, 'all', true)).totals.processedTokens).toBe(1_375)
 
     const restarted = usageService(options)
-    expect((await restarted.history('all')).totals.processedTokens).toBe(275)
+    expect((await restarted.history('all')).totals.processedTokens).toBe(1_375)
     await restarted.waitForRefresh()
+  })
+
+  it('preserves reported input totals when a cache delta exceeds its input delta', async () => {
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex')
+    const claudeRoot = path.join(root, 'claude')
+    mkdirSync(codexRoot, { recursive: true })
+    mkdirSync(claudeRoot, { recursive: true })
+    writeJsonLines(path.join(codexRoot, 'session.jsonl'), [
+      {
+        timestamp: '2026-08-08T09:00:00.000Z',
+        type: 'turn_context',
+        payload: { model: 'gpt-5.6-sol' },
+      },
+      codexTokenRecord('2026-08-08T09:01:00.000Z', {
+        input_tokens: 1_000,
+        cached_input_tokens: 100,
+        output_tokens: 100,
+        total_tokens: 1_100,
+      }),
+      codexTokenRecord('2026-08-08T09:02:00.000Z', {
+        input_tokens: 1_100,
+        cached_input_tokens: 300,
+        output_tokens: 110,
+        total_tokens: 1_210,
+      }),
+    ])
+
+    const history = await settledHistory(
+      usageService({
+        cacheFile: path.join(root, 'cache', 'usage.json'),
+        codexSessionsRoot: codexRoot,
+        claudeProjectsRoot: claudeRoot,
+        now: () => new Date('2026-08-08T12:00:00.000Z'),
+      }),
+      'all',
+    )
+
+    expect(history.totals).toMatchObject({
+      uncachedInputTokens: 800,
+      cachedInputTokens: 300,
+      outputTokens: 110,
+      processedTokens: 1_210,
+    })
   })
 
   it('clears the generated index and starts a true cold background rescan', async () => {
@@ -516,7 +560,7 @@ describe('local usage history', () => {
     )
 
     const cache = await readUsageCache(cacheFile)
-    expect(cache.version).toBe(4)
+    expect(cache.version).toBe(5)
     expect(cache.generatedAt).toBe(123)
     expect(cache.sources).toContainEqual({ provider: 'codex', label: 'Codex', available: true })
   })
