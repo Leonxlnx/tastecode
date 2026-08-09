@@ -690,6 +690,35 @@ describe('new chats', () => {
     expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
       'false',
     )
+
+    // A finished or failed run releases the toggle too, so a follow-up prompt
+    // is a normal turn instead of restarting the whole design flow.
+    fireEvent.click(screen.getByRole('button', { name: 'Design' }))
+    emitThreadEvent('thread-1', {
+      type: 'item.completed',
+      item: {
+        id: 'design-complete',
+        turnId: 'turn-2',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: 'Website built. Preview ready at http://127.0.0.1:5173/.',
+        createdAt: 2,
+      },
+    })
+    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
+      'false',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Design' }))
+    emitThreadEvent('thread-1', {
+      type: 'thread.error',
+      threadId: 'thread-1',
+      message: 'Design mode failed: preview command is not allowed',
+    })
+    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
+      'false',
+    )
   })
 
   it('sends the design brief through a provider without structured input', async () => {

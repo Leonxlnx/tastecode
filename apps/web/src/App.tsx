@@ -2550,12 +2550,19 @@ function promoteSession(projects: Project[], threadId: string): Project[] {
   })
 }
 
+/**
+ * A finished design run — built, failed, or rejected — releases the toggle,
+ * so the next prompt in the thread is a normal turn instead of restarting
+ * the whole design flow from scratch.
+ */
 function endsDesignBriefing(event: DomainEvent): boolean {
+  if (event.type === 'thread.error') return event.message.startsWith('Design mode failed')
   if (event.type !== 'item.completed' || event.item.role !== 'assistant') return false
   const text = event.item.text ?? ''
   return (
     text.trim() ===
       'Design mode was turned off because this request is not a website design task.' ||
+    text.startsWith('Website built.') ||
     text.includes('DEBUG FINISHED · NO WEBSITE BUILT')
   )
 }
