@@ -16,7 +16,6 @@ import type {
 import { CalendarDays, CircleAlert, RefreshCw } from 'lucide-react'
 import { providerMark } from '../model-catalog.js'
 import type { Transport } from '../transport.js'
-import { DitherAreaChart } from './dither-kit/DitherAreaChart.js'
 import { ProviderIcon } from './ProviderIcon.js'
 
 const RANGE_OPTIONS = [
@@ -439,13 +438,6 @@ function DailyUsageChart(props: { data: ResultOf<'usage.history'> }) {
       </header>
 
       <div className="usage-chart__canvas">
-        <DitherAreaChart
-          series={chart.series}
-          viewBoxWidth={CHART_WIDTH}
-          viewBoxHeight={CHART_HEIGHT}
-          plotLeft={CHART_LEFT}
-          plotRight={CHART_RIGHT}
-        />
         <svg
           viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
           role="img"
@@ -462,12 +454,13 @@ function DailyUsageChart(props: { data: ResultOf<'usage.history'> }) {
               </text>
             </g>
           ))}
-          {chart.series.toReversed().map((series) => (
+          {chart.series.map((series) => (
             <g
               className="usage-chart__series"
               data-provider={series.provider}
               key={series.provider}
             >
+              <path className="usage-chart__area" d={series.areaPath} />
               <path
                 className="usage-chart__line"
                 d={series.linePath}
@@ -696,10 +689,12 @@ function buildChart(data: ResultOf<'usage.history'>, mode: 'cost' | 'tokens') {
   const running = data.daily.map(() => 0)
   const series = data.providers.map((provider) => {
     const lowerValues = [...running]
-    const values = data.daily.map((day) => {
-      const providerDay = day.providers.find((entry) => entry.provider === provider.provider)
-      return mode === 'cost' ? (providerDay?.estimatedCostUsd ?? 0) : (providerDay?.tokens ?? 0)
-    })
+    const values = smoothChartValues(
+      data.daily.map((day) => {
+        const providerDay = day.providers.find((entry) => entry.provider === provider.provider)
+        return mode === 'cost' ? (providerDay?.estimatedCostUsd ?? 0) : (providerDay?.tokens ?? 0)
+      }),
+    )
     values.forEach((value, index) => {
       running[index] = (running[index] ?? 0) + value
     })
@@ -722,10 +717,6 @@ function buildChart(data: ResultOf<'usage.history'>, mode: 'cost' | 'tokens') {
       provider: entry.provider,
       linePath: smoothPath(upperPoints),
       areaPath: stackedAreaPath(upperPoints, lowerPoints),
-      areaTop:
-        upperPoints.length > 0 ? Math.min(...upperPoints.map((point) => point.y)) : CHART_BOTTOM,
-      areaBottom:
-        lowerPoints.length > 0 ? Math.max(...lowerPoints.map((point) => point.y)) : CHART_BOTTOM,
     }
   })
   const ticks = [0, 0.5, 1].map((ratio) => ({
@@ -733,6 +724,18 @@ function buildChart(data: ResultOf<'usage.history'>, mode: 'cost' | 'tokens') {
     y: CHART_TOP + plotHeight * ratio,
   }))
   return { series: paths, ticks }
+}
+
+function smoothChartValues(values: ReadonlyArray<number>): number[] {
+  const smoothPass = (input: ReadonlyArray<number>) =>
+    input.map((value, index) => {
+      const previous = input[index - 1] ?? value
+      const next = input[index + 1] ?? value
+      return previous * 0.2 + value * 0.6 + next * 0.2
+    })
+
+  const firstPass = smoothPass(values)
+  return values.length >= 14 ? smoothPass(firstPass) : firstPass
 }
 
 function smoothPath(points: ReadonlyArray<{ x: number; y: number }>): string {

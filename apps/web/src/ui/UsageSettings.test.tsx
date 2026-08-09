@@ -52,14 +52,25 @@ describe('usage settings', () => {
   })
 
   it('switches the graph and table to their alternate views', async () => {
+    const result = historyResult('30d')
+    const day = result.daily[0]!
+    result.daily = [0, 1_230_000, 0].map((tokens, index) => ({
+      ...day,
+      date: `2026-08-0${index + 6}`,
+      providers: [{ provider: 'codex', tokens, estimatedCostUsd: tokens / 100_000 }],
+    }))
     const transport = {
-      request: vi.fn(async () => historyResult('30d')),
+      request: vi.fn(async () => result),
     } as unknown as Transport
     render(<UsageSettings transport={transport} />)
     await screen.findByText('gpt-5.6-sol')
 
     fireEvent.click(screen.getByRole('radio', { name: 'Tokens' }))
     expect(screen.getByRole('heading', { name: 'Tokens over time' })).toBeTruthy()
+    expect(document.querySelector('.usage-chart canvas')).toBeNull()
+    expect(document.querySelector('.usage-chart polyline')).toBeNull()
+    expect(document.querySelector('.usage-chart__line')?.getAttribute('d')).toContain(' C ')
+    expect(document.querySelector('.usage-chart__area')?.getAttribute('d')).toMatch(/ C .* Z$/)
 
     fireEvent.click(screen.getByRole('radio', { name: 'Day' }))
     expect(screen.getByRole('columnheader', { name: 'Day' })).toBeTruthy()

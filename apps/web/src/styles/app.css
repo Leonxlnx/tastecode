@@ -1134,6 +1134,7 @@
 
 .usage-chart__grid line {
   stroke: var(--line);
+  stroke-opacity: 0.72;
   stroke-width: 1;
 }
 
@@ -1144,53 +1145,9 @@
   font-size: 11px;
 }
 
-.dither-area-chart {
-  position: absolute;
-  z-index: 0;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.dither-area-chart__canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  image-rendering: pixelated;
-}
-
-.dither-area-chart__texture {
-  opacity: 0.82;
-}
-
-.dither-area-chart__bloom {
-  filter: blur(1.25px) brightness(1.12);
-  opacity: 0.16;
-  image-rendering: auto;
-  mix-blend-mode: plus-lighter;
-}
-
-.dither-area-chart__palette {
-  position: absolute;
-  width: 0;
-  height: 0;
-  overflow: hidden;
-  visibility: hidden;
-}
-
-.dither-area-chart__swatch {
-  color: var(--usage-provider-color);
-}
-
-:root[data-theme='light'] .dither-area-chart__texture {
-  opacity: 0.68;
-}
-
-:root[data-theme='light'] .dither-area-chart__bloom {
-  filter: blur(0.75px);
-  opacity: 0.08;
-  mix-blend-mode: multiply;
+.usage-chart__area {
+  fill: var(--usage-provider-color);
+  fill-opacity: 0.12;
 }
 
 .usage-chart__line {
@@ -1198,7 +1155,7 @@
   stroke: var(--usage-provider-color);
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.6;
+  stroke-width: 1.8;
 }
 
 .usage-chart__crosshair {
