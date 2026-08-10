@@ -4,8 +4,13 @@ import {
   CodexAdapter,
 } from '@harness/adapter-codex'
 import { acpAccount, acpSignOut } from '@harness/adapter-acp'
-import { grokAccount, signOutGrok } from '@harness/adapter-grok'
-import { claudeAccount, signOutClaude, startClaudeLogin } from '@harness/adapter-claude-code'
+import { grokAccount, grokLimits, signOutGrok } from '@harness/adapter-grok'
+import {
+  claudeAccount,
+  claudeLimits,
+  signOutClaude,
+  startClaudeLogin,
+} from '@harness/adapter-claude-code'
 import { cursorAccount, signOutCursor, startCursorLogin } from '@harness/adapter-cursor'
 import {
   DESIGN_BRIEF_ATTACHMENT,
@@ -718,11 +723,18 @@ export class Orchestrator {
     return { signedIn: false }
   }
 
-  async usageLimits(
-    provider: ProviderId,
-  ): Promise<Array<{ label: string; usedPercent: number; resetsAt?: number | undefined }>> {
-    if (provider !== 'codex') return []
-    return (await this.#controlAdapter()).rateLimits()
+  async usageLimits(provider: ProviderId): Promise<
+    Array<{
+      label: string
+      usedPercent: number
+      resetsAt?: number | undefined
+      valueLabel?: string | undefined
+    }>
+  > {
+    if (provider === 'codex') return (await this.#controlAdapter()).rateLimits()
+    if (provider === 'claude-code') return claudeLimits()
+    if (provider === 'grok') return grokLimits()
+    return []
   }
 
   async startLogin(provider: ProviderId): Promise<{ loginId: string; authUrl?: string }> {

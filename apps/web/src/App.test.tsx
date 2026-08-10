@@ -1622,6 +1622,9 @@ describe('new chats', () => {
       return request(method, params)
     })
 
+    // The flow below walks providers through the rail layout's provider tabs.
+    localStorage.setItem('harness.modelPickerLayout', 'rail')
+
     render(<App />)
 
     // Codex: push effort to the top of Sol's ladder.
@@ -1666,6 +1669,7 @@ describe('new chats', () => {
         'Effort: Low',
       )
     })
+    localStorage.removeItem('harness.modelPickerLayout')
   })
 })
 

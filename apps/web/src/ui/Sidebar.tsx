@@ -538,22 +538,26 @@ function SidebarComponent(props: {
                       <div className="account-menu__limit" key={limit.label}>
                         <div className="account-menu__limit-row">
                           <span className="account-menu__limit-label">{limit.label}</span>
-                          <span>{Math.round(100 - limit.usedPercent)}% left</span>
+                          <span>
+                            {limit.valueLabel ?? `${Math.round(100 - limit.usedPercent)}% left`}
+                          </span>
                         </div>
-                        <div
-                          className="account-menu__limit-bar"
-                          role="progressbar"
-                          aria-label={`${limit.label} left`}
-                          aria-valuenow={Math.round(100 - limit.usedPercent)}
-                          aria-valuemin={0}
-                          aria-valuemax={100}
-                        >
-                          <span
-                            style={{
-                              width: `${Math.min(100, Math.max(0, 100 - limit.usedPercent))}%`,
-                            }}
-                          />
-                        </div>
+                        {limit.valueLabel === undefined ? (
+                          <div
+                            className="account-menu__limit-bar"
+                            role="progressbar"
+                            aria-label={`${limit.label} left`}
+                            aria-valuenow={Math.round(100 - limit.usedPercent)}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                          >
+                            <span
+                              style={{
+                                width: `${Math.min(100, Math.max(0, 100 - limit.usedPercent))}%`,
+                              }}
+                            />
+                          </div>
+                        ) : null}
                         {limit.resetsAt ? (
                           <span className="account-menu__limit-reset">
                             Resets {resetLabel(limit.resetsAt)}
@@ -562,8 +566,6 @@ function SidebarComponent(props: {
                       </div>
                     ))
                   ) : (
-                    // Honest, not vague: of the wired CLIs only Codex
-                    // answers with subscription windows today.
                     <span className="account-menu__usage-note">
                       {props.providerName} reports no limits
                     </span>

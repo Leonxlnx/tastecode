@@ -1142,6 +1142,8 @@ export const methods = {
           usedPercent: z.number().min(0).max(100),
           /** Unix time in milliseconds. */
           resetsAt: z.number().optional(),
+          /** Non-percent rows (credit balances, reset counts) render this text instead of a bar. */
+          valueLabel: z.string().optional(),
         }),
       ),
     }),
