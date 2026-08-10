@@ -44,8 +44,6 @@ vi.mock('./Menu.js', () => ({
 import {
   ModelSelector,
   getCompactModelName,
-  getEffortIndexFromPointer,
-  getEffortProgressFromPointer,
   getFastModeOffValue,
   getFriendlyEffortLabel,
   groupModelsBySource,
@@ -211,51 +209,24 @@ describe('ModelSelector', () => {
     expect(getFastModeOffValue(fastDefaultModel.model)).toBeUndefined()
   })
 
-  it('uses pointer capture for the effort slider preview and commits on release', () => {
+  it('renders effort as plain buttons and commits the clicked value', () => {
     const { onEffortChange } = renderSelector({ effort: 'medium' })
 
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
-    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
-    vi.spyOn(slider, 'getBoundingClientRect').mockReturnValue({
-      x: 0,
-      y: 0,
-      left: 100,
-      top: 20,
-      width: 280,
-      height: 44,
-      right: 380,
-      bottom: 64,
-      toJSON: () => ({}),
-    })
-
-    fireEvent.pointerDown(slider, { clientX: 110, pointerId: 4 })
-    fireEvent.pointerMove(slider, { clientX: 350, pointerId: 4 })
-    expect(slider.getAttribute('aria-valuetext')).toBe('Extra High')
+    const group = screen.getByRole('radiogroup', { name: 'Reasoning effort' })
+    const options = Array.from(group.querySelectorAll('button')).map((b) => b.textContent)
+    expect(options).toEqual(['Low', 'Medium', 'High', 'Extra High'])
+    expect(screen.getByRole('radio', { name: 'Medium' }).getAttribute('aria-checked')).toBe('true')
     expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
-      'Effort: Extra High',
+      'Effort: Medium',
     )
-    expect(onEffortChange).not.toHaveBeenCalled()
-    expect(slider.querySelectorAll('canvas')).toHaveLength(2)
-    expect(slider.querySelectorAll('.model-selector__slider-stop')).toHaveLength(4)
-    expect(slider.querySelector('.model-selector__slider-thumb')).toBeNull()
 
-    fireEvent.pointerUp(slider, { clientX: 350, pointerId: 4 })
+    fireEvent.click(screen.getByRole('radio', { name: 'Extra High' }))
     expect(onEffortChange).toHaveBeenCalledWith('xhigh')
-  })
 
-  it('supports arrow and Home/End keyboard movement on the discrete slider', () => {
-    const { onEffortChange } = renderSelector({ effort: 'medium' })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
-    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
-
-    fireEvent.keyDown(slider, { key: 'ArrowRight' })
-    fireEvent.keyDown(slider, { key: 'End' })
-    fireEvent.keyDown(slider, { key: 'Home' })
-
-    expect(onEffortChange).toHaveBeenNthCalledWith(1, 'high')
-    expect(onEffortChange).toHaveBeenNthCalledWith(2, 'xhigh')
-    expect(onEffortChange).toHaveBeenNthCalledWith(3, 'low')
+    // Re-clicking the current value is a no-op, not a redundant commit.
+    fireEvent.click(screen.getByRole('radio', { name: 'Medium' }))
+    expect(onEffortChange).toHaveBeenCalledTimes(1)
   })
 
   it('shows compact models immediately and leaves effort and tier to the owner', () => {
@@ -374,31 +345,4 @@ describe('ModelSelector', () => {
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
   })
 
-  it('maps pointer positions onto discrete effort stops', () => {
-    expect(
-      getEffortIndexFromPointer({
-        clientX: 114,
-        left: 100,
-        width: 280,
-        stopCount: 4,
-      }),
-    ).toBe(0)
-
-    expect(
-      getEffortIndexFromPointer({
-        clientX: 352,
-        left: 100,
-        width: 280,
-        stopCount: 4,
-      }),
-    ).toBe(3)
-
-    expect(
-      getEffortProgressFromPointer({
-        clientX: 240,
-        left: 100,
-        width: 280,
-      }),
-    ).toBeCloseTo(0.405, 3)
-  })
 })
