@@ -229,7 +229,6 @@
 .rail__new-project {
   min-width: 0;
   width: 100%;
-  border-radius: var(--r-xl);
 }
 
 .rail__new-project > span {
@@ -301,21 +300,12 @@
   color: var(--text-2);
 }
 
-.rail__new-chat {
-  background: var(--composer-action-bg);
-  border: 1px solid var(--composer-action-border);
-  border-radius: var(--r-xl);
-  box-shadow: var(--composer-action-shadow);
-}
-
-.rail__new-chat:is(:hover, :focus-visible) {
-  background: var(--composer-action-bg-hover);
-  border-color: var(--composer-action-border-hover);
-  box-shadow: var(--composer-action-shadow-hover);
-}
-
-.rail__new-chat:active {
-  box-shadow: var(--composer-action-shadow-active);
+/* All three top actions share the quiet navitem look at a tighter height;
+   the transparent border keeps them the exact size of the active PR state. */
+.rail__actions .navitem {
+  min-height: 28px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
 }
 
 .rail__pull-requests {
@@ -4238,6 +4228,33 @@
   padding: 6px 8px 4px;
 }
 
+.section--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 4px;
+}
+
+.section__add {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.section__add:is(:hover, :focus-visible) {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
 .rail__hint {
   color: var(--text-3);
   font-size: var(--t-sm);
@@ -5688,10 +5705,13 @@
   padding: 9px 13px;
 }
 
+/* Padding, not offset, bridges bubble and buttons: with a gap between them
+   the pointer left .said on the way down and the actions vanished mid-reach. */
 .said__actions {
   position: absolute;
-  top: calc(100% + 2px);
+  top: 100%;
   right: 0;
+  padding-top: 3px;
   justify-content: flex-end;
   margin: 0;
 }
@@ -8361,6 +8381,10 @@
 
 .model-selector__menu {
   width: min(382px, calc(100vw - 16px));
+  /* The generic .menu clamp (340px) is shorter than list + effort controls,
+     and with overflow hidden it silently amputated the effort bar. The list
+     scrolls internally, so the panel may size to its content. */
+  max-height: calc(100vh - 16px);
   padding: 0;
   overflow: hidden;
   background: var(--model-picker-bg);
@@ -8666,6 +8690,28 @@
   min-height: 0;
   overflow-y: auto;
   padding: 6px;
+}
+
+/* Flat layout (the default): one scrolling list, providers as inline
+   headings — the provider-rail catalog is the Settings opt-in. */
+.model-selector__models--flat {
+  height: auto;
+  max-height: min(246px, 42vh);
+  max-height: min(246px, 42dvh);
+}
+
+.model-selector__models--flat .model-selector__group + .model-selector__group {
+  margin-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+  padding-top: 4px;
+}
+
+.model-selector__models--flat .model-selector__group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 3px;
+  background: var(--model-picker-title-bg);
 }
 
 .model-selector__group-head {

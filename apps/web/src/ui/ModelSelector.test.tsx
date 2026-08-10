@@ -137,6 +137,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  localStorage.removeItem('harness.modelPickerLayout')
 })
 
 describe('ModelSelector', () => {
@@ -278,7 +279,17 @@ describe('ModelSelector', () => {
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
   })
 
+  it('defaults to the flat list with inline provider headings', () => {
+    renderSelector()
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+
+    expect(screen.queryByRole('group', { name: 'Providers' })).toBeNull()
+    expect(document.querySelector('.model-selector__models--flat')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
+  })
+
   it('filters the model list through a provider logo rail', () => {
+    localStorage.setItem('harness.modelPickerLayout', 'rail')
     const claudeModel: ModelChoice = {
       key: 'claude-code:sonnet',
       provider: 'claude-code',
@@ -327,6 +338,7 @@ describe('ModelSelector', () => {
   })
 
   it('searches the active provider without changing the selected model', () => {
+    localStorage.setItem('harness.modelPickerLayout', 'rail')
     const claudeModel: ModelChoice = {
       key: 'claude-code:sonnet',
       provider: 'claude-code',

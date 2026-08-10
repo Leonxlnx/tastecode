@@ -2,10 +2,15 @@ import {
   useDeferredValue,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type KeyboardEvent,
   type PointerEvent,
 } from 'react'
+import {
+  readModelPickerLayout,
+  subscribeModelPickerLayout,
+} from '../model-picker-layout.js'
 import { Check, ChevronDown, Zap } from 'lucide-react'
 import {
   filterModelChoicesByQuery,
@@ -236,6 +241,47 @@ function ProviderModelList(props: {
   )
 }
 
+/** The original picker layout: one flat scrolling list, providers as inline
+ *  section headings. Default; the provider-rail catalog is opt-in in Settings. */
+function FlatModelList(props: {
+  models: ModelChoice[]
+  selectedChoice: ModelChoice | undefined
+  onModelSelect: (choice: ModelChoice) => void
+}) {
+  return (
+    <div
+      className="model-selector__models model-selector__models--flat"
+      role="group"
+      aria-label="Models"
+    >
+      {groupModelsBySource(props.models).map((group) => (
+        <section className="model-selector__group" key={group.key}>
+          <p className="model-selector__group-title">
+            <ProviderIcon mark={group.mark} size={13} />
+            {group.name}
+          </p>
+          {group.entries.map((entry) => {
+            const selected = entry.key === props.selectedChoice?.key
+            return (
+              <button
+                key={entry.key}
+                type="button"
+                className={`model-selector__model${selected ? ' is-selected' : ''}`}
+                aria-pressed={selected}
+                aria-label={`Use ${entry.model.displayName} through ${entry.sourceName}`}
+                onClick={() => props.onModelSelect(entry)}
+              >
+                <span className="model-selector__model-name">{entry.model.displayName}</span>
+                {selected ? <Check size={14} aria-hidden /> : null}
+              </button>
+            )
+          })}
+        </section>
+      ))}
+    </div>
+  )
+}
+
 /** Carries fast *intent* across models whose fast tiers use different ids
  *  (Codex 'priority', Cursor 'fast'). Used by the owner when a model changes. */
 export function getNextServiceTierForModel(input: {
@@ -425,6 +471,7 @@ function DitherChoiceRow(props: {
 
 export function ModelSelector(props: ModelSelectorProps) {
   const [previewEffortIndex, setPreviewEffortIndex] = useState<number | null>(null)
+  const pickerLayout = useSyncExternalStore(subscribeModelPickerLayout, readModelPickerLayout)
   const choice = getSelectedChoice(props.models, props.modelId)
   const model = choice?.model
   const selectedEffort = getSelectedEffort(model, props.effort)
@@ -484,12 +531,20 @@ export function ModelSelector(props: ModelSelectorProps) {
     >
       {() => (
         <div className="model-selector">
-          <ProviderModelList
-            key={choice ? modelSourceKey(choice) : 'no-model'}
-            models={props.models}
-            selectedChoice={choice}
-            onModelSelect={handleModelSelect}
-          />
+          {pickerLayout === 'rail' ? (
+            <ProviderModelList
+              key={choice ? modelSourceKey(choice) : 'no-model'}
+              models={props.models}
+              selectedChoice={choice}
+              onModelSelect={handleModelSelect}
+            />
+          ) : (
+            <FlatModelList
+              models={props.models}
+              selectedChoice={choice}
+              onModelSelect={handleModelSelect}
+            />
+          )}
 
           <div className="model-selector__controls">
             <div className="model-selector__controls-head">

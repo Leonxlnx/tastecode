@@ -479,7 +479,21 @@ function SidebarComponent(props: {
                   </ul>
                 </>
               ) : null}
-              <p className="section">Projects</p>
+              <div className="section section--row">
+                <span>Projects</span>
+                <button
+                  type="button"
+                  className="section__add"
+                  aria-label="New project"
+                  title="New project"
+                  onClick={() => {
+                    props.onAddProject()
+                    closeOnNarrowViewport()
+                  }}
+                >
+                  <Plus size={13} aria-hidden />
+                </button>
+              </div>
               {orderedProjects.length === 0 ? (
                 <p className="rail__hint">Nothing here yet.</p>
               ) : (

@@ -77,6 +77,10 @@ import type {
   FontPreference,
   ThemePreference,
 } from '../theme.js'
+import {
+  readModelPickerLayout,
+  writeModelPickerLayout,
+} from '../model-picker-layout.js'
 import { McpSettings } from './McpSettings.js'
 import { Menu, MenuItem } from './Menu.js'
 import { ModelSearchField } from './ModelSearchField.js'
@@ -1250,6 +1254,7 @@ function AppearanceSettings(props: {
           })}
         </fieldset>
       </div>
+      <ModelPickerLayoutSetting />
       <div className="appearance__text">
         <h2 className="settings__group-title">Accent palette</h2>
         <fieldset
@@ -1294,6 +1299,36 @@ function AppearanceSettings(props: {
         </div>
       ) : null}
     </SettingsPanel>
+  )
+}
+
+/** Self-contained: the layout choice lives in localStorage, not App state —
+ *  the open picker listens for the change event and re-renders on flip. */
+function ModelPickerLayoutSetting() {
+  const [layout, setLayout] = useState(readModelPickerLayout)
+  const railOn = layout === 'rail'
+  return (
+    <div className="appearance__text">
+      <h2 className="settings__group-title">Model picker</h2>
+      <div className="settings__group">
+        <SettingsRow title="Provider rail layout">
+          <button
+            className={`switch${railOn ? ' is-on' : ''}`}
+            type="button"
+            role="switch"
+            aria-label="Provider rail layout"
+            aria-checked={railOn}
+            onClick={() => {
+              const next = railOn ? 'list' : 'rail'
+              writeModelPickerLayout(next)
+              setLayout(next)
+            }}
+          >
+            <span className="switch__thumb" />
+          </button>
+        </SettingsRow>
+      </div>
+    </div>
   )
 }
 
