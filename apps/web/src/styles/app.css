@@ -16,27 +16,6 @@
   user-select: text;
 }
 
-:where(svg.lucide, svg[width][height], svg[aria-hidden='true']) {
-  transform-origin: center;
-  transition: rotate var(--dur-fast) var(--ease-out);
-}
-
-@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
-  :where(
-      button,
-      a,
-      summary,
-      [role='button'],
-      [role='menuitem'],
-      [role='tab'],
-      [role='switch']
-    ):hover
-    :where(svg.lucide, svg[width][height], svg[aria-hidden='true']),
-  :where(svg.lucide, svg[width][height], svg[aria-hidden='true']):hover {
-    rotate: 3deg;
-  }
-}
-
 .shell {
   display: grid;
   grid-template-rows: var(--titlebar-h) 1fr;
