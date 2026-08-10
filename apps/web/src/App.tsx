@@ -2464,7 +2464,6 @@ export function App() {
                   modelId={modelId}
                   effort={effort}
                   serviceTier={serviceTier}
-                  providers={customModelProviders}
                   usage={thread.usage}
                   approval={approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval}
                   autoReviewSupported={autoReviewSupported}
@@ -2481,7 +2480,6 @@ export function App() {
                   onModelChange={selectModel}
                   onEffortChange={setEffort}
                   onServiceTierChange={setServiceTier}
-                  onCustomModelAdd={addCustomModel}
                   onApprovalChange={changeApproval}
                   onIsolateChange={setIsolateSession}
                   onDesignModeChange={setDesignMode}

@@ -90,7 +90,6 @@ function renderSelector(overrides: RenderOverrides = {}) {
   const onModelChange = vi.fn()
   const onEffortChange = vi.fn()
   const onServiceTierChange = vi.fn()
-  const onCustomModelAdd = vi.fn()
 
   render(
     <ModelSelector
@@ -99,19 +98,14 @@ function renderSelector(overrides: RenderOverrides = {}) {
       effort="xhigh"
       serviceTier="standard"
       disabled={false}
-      providers={[
-        { id: 'codex', name: 'Codex' },
-        { id: 'opencode', name: 'OpenCode' },
-      ]}
       onModelChange={onModelChange}
       onEffortChange={onEffortChange}
       onServiceTierChange={onServiceTierChange}
-      onCustomModelAdd={onCustomModelAdd}
       {...overrides}
     />,
   )
 
-  return { onModelChange, onEffortChange, onServiceTierChange, onCustomModelAdd }
+  return { onModelChange, onEffortChange, onServiceTierChange }
 }
 
 beforeEach(() => {
@@ -203,11 +197,9 @@ describe('ModelSelector', () => {
         effort="low"
         serviceTier="fast"
         disabled={false}
-        providers={[{ id: 'codex', name: 'Codex' }]}
         onModelChange={vi.fn()}
         onEffortChange={vi.fn()}
         onServiceTierChange={toggleFastOff}
-        onCustomModelAdd={vi.fn()}
       />,
     )
 
@@ -396,52 +388,5 @@ describe('ModelSelector', () => {
         width: 280,
       }),
     ).toBeCloseTo(0.405, 3)
-  })
-})
-
-describe('custom models', () => {
-  it('adds a custom model from the footer and reports the completed entry', () => {
-    const { onCustomModelAdd } = renderSelector()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Add custom model' }))
-
-    expect(screen.getByLabelText('Provider')).toBeTruthy()
-    fireEvent.change(screen.getByLabelText('Model id'), { target: { value: 'qwen-max' } })
-    fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Qwen Max' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Add model' }))
-
-    expect(onCustomModelAdd).toHaveBeenCalledWith({
-      provider: 'codex',
-      modelId: 'qwen-max',
-      displayName: 'Qwen Max',
-    })
-  })
-
-  it('defaults the provider to the selected model’s engine', () => {
-    const { onCustomModelAdd } = renderSelector()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Add custom model' }))
-
-    expect((screen.getByLabelText('Provider') as HTMLSelectElement).value).toBe('codex')
-    fireEvent.change(screen.getByLabelText('Model id'), { target: { value: 'kimi-k2' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Add model' }))
-    expect(onCustomModelAdd).toHaveBeenCalledWith({
-      provider: 'codex',
-      modelId: 'kimi-k2',
-      displayName: '',
-    })
-  })
-
-  it('requires a model id before adding', () => {
-    const { onCustomModelAdd } = renderSelector()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Add custom model' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Add model' }))
-
-    expect(onCustomModelAdd).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert').textContent).toMatch(/model id/i)
   })
 })

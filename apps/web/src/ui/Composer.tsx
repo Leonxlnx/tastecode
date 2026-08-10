@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, memo } from 'react'
-import type { ApprovalMode, ProviderId, QueuedTurn, Usage } from '@harness/contracts'
-import type { CustomModelInput, ModelChoice } from '../model-catalog.js'
+import type { ApprovalMode, QueuedTurn, Usage } from '@harness/contracts'
+import type { ModelChoice } from '../model-catalog.js'
 import { BorderBeam } from 'border-beam'
 import {
   ArrowDown,
@@ -128,8 +128,6 @@ function ComposerComponent(props: {
   modelId: string | undefined
   effort: string | undefined
   serviceTier: string | undefined
-  /** Engines a custom model can be attached to. */
-  providers: { id: ProviderId; name: string }[]
   usage?: Usage | undefined
   approval: ApprovalMode
   autoReviewSupported: boolean
@@ -146,7 +144,6 @@ function ComposerComponent(props: {
   onModelChange: (id: string) => void
   onEffortChange: (effort: string) => void
   onServiceTierChange: (serviceTier: string | undefined) => void
-  onCustomModelAdd: (input: CustomModelInput) => void
   onApprovalChange: (mode: ApprovalMode) => void
   onIsolateChange: (isolate: boolean) => void
   onDesignModeChange: (enabled: boolean) => void
@@ -859,11 +856,9 @@ function ComposerComponent(props: {
                     effort={props.effort}
                     serviceTier={props.serviceTier}
                     disabled={props.running}
-                    providers={props.providers}
                     onModelChange={props.onModelChange}
                     onEffortChange={props.onEffortChange}
                     onServiceTierChange={props.onServiceTierChange}
-                    onCustomModelAdd={props.onCustomModelAdd}
                   />
                 ) : voiceState === 'idle' && showModelPlaceholder ? (
                   <span className="tool tool--quiet">Loading models…</span>
