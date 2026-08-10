@@ -424,7 +424,7 @@ function SidebarComponent(props: {
                   title="Search chats"
                   aria-keyshortcuts={shortcutAria(SHORTCUTS.searchSessions)}
                 >
-                  <Search size={14} aria-hidden />
+                  <Search size={15} aria-hidden />
                 </button>
               </div>
               <button
