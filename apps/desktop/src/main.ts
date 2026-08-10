@@ -28,6 +28,7 @@ import { allowsPreviewNavigation } from './preview-navigation.js'
 import { revealablePath } from './reveal-path.js'
 import { ServerSupervisor } from './server-supervisor.js'
 import { restoreMainWindowPresence } from './window-presence.js'
+import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
 import { windowThemeOptions, windowThemeSource } from './window-theme.js'
 import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './zoom-shortcuts.js'
 
@@ -70,6 +71,21 @@ const CAPTURE_SETTLE_SCRIPT = `new Promise(resolve => requestAnimationFrame(reso
   ]))
   .then(() => document.fonts?.ready)
   .then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))`
+// Windows' native occlusion tracker can wrongly decide the window is fully
+// covered and stick there: the page keeps running with visibilityState
+// 'hidden' while the window shows nothing but its background colour — the
+// intermittent all-black window. Verified over CDP: DOM complete, renderer
+// healthy, compositor off. The watchdog below covers whatever this misses.
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
+}
+// Diagnostics for the field: software rendering and a DevTools port, both
+// opt-in via environment so a broken machine can be inspected.
+if (process.env['HARNESS_DISABLE_GPU'] === '1') app.disableHardwareAcceleration()
+if (process.env['HARNESS_DEBUG_PORT']) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env['HARNESS_DEBUG_PORT'])
+}
+
 const ownsSingleInstance = app.requestSingleInstanceLock()
 let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
@@ -161,6 +177,8 @@ function createWindow(): void {
   })
   mainWindow = window
   restoreMainWindowPresence(process.platform, app, window)
+  const stopWatchdog = startVisibilityWatchdog(window, (line) => console.warn('[desktop]', line))
+  window.on('closed', stopWatchdog)
 
   window.on('close', (event) => {
     if (!shouldHideWindowOnClose(process.platform, appIsQuitting)) return
