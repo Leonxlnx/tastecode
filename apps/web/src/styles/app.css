@@ -206,10 +206,10 @@
 }
 
 .rail__actions {
-  padding: 12px 10px 10px;
+  padding: 6px 8px 4px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 1px;
 }
 
 /* New chat and search share one row: the search icon rides on the right,
