@@ -52,6 +52,7 @@ describe('cross-session search', () => {
   afterEach(() => {
     cleanup()
     vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
   it('finds titles immediately, searches quickly, and supports keyboard navigation', async () => {
@@ -237,5 +238,54 @@ describe('cross-session search', () => {
     expect(onSelect).toHaveBeenNthCalledWith(1, 'thread-1', 'turn-2')
     expect(onSelect).toHaveBeenNthCalledWith(2, 'thread-1', 'turn-2')
     expect(consoleError.mock.calls.flat().join(' ')).not.toContain('same key')
+  })
+
+  it('keeps the focused result selected when title rows are inserted ahead of it', async () => {
+    const transport = {
+      request: vi.fn(async () => ({
+        results: [{ ...RESULT, resultId: 'message:item-1' }],
+        nextCursor: null,
+      })),
+    }
+    const view = render(
+      <SessionSearch
+        transport={transport as unknown as Transport}
+        projects={PROJECTS}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText('Search every chat'), {
+      target: { value: 'regression' },
+    })
+    const contentHit = await screen.findByRole('option', { name: /Fix regression/ })
+    act(() => contentHit.focus())
+    await waitFor(() => expect(contentHit.getAttribute('aria-selected')).toBe('true'))
+
+    view.rerender(
+      <SessionSearch
+        transport={transport as unknown as Transport}
+        projects={[
+          {
+            ...PROJECTS[0]!,
+            sessions: [
+              ...PROJECTS[0]!.sessions,
+              {
+                id: 'new-title-thread',
+                title: 'Regression urgent',
+                provider: 'codex' as const,
+                createdAt: 100,
+              },
+            ],
+          },
+        ]}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+
+    expect(screen.getByRole('option', { name: /Fix regression/ })).toBe(contentHit)
+    expect(document.activeElement).toBe(contentHit)
+    expect(contentHit.getAttribute('aria-selected')).toBe('true')
   })
 })

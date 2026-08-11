@@ -65,7 +65,7 @@ function SessionSearchComponent(props: {
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string>()
   const [retry, setRetry] = useState(0)
-  const [selected, setSelected] = useState(0)
+  const [selectedKey, setSelectedKey] = useState<string>()
   const revision = useRef(0)
   const input = useRef<HTMLInputElement>(null)
   const resultList = useRef<HTMLDivElement>(null)
@@ -156,6 +156,11 @@ function SessionSearchComponent(props: {
       })),
     ]
   }, [results, sourceNames, titleResults])
+  const selected = useMemo(() => {
+    if (displayResults.length === 0) return -1
+    const index = displayResults.findIndex((result) => result.key === selectedKey)
+    return index >= 0 ? index : 0
+  }, [displayResults, selectedKey])
 
   useEffect(() => input.current?.focus(), [])
 
@@ -202,11 +207,13 @@ function SessionSearchComponent(props: {
     }
   }, [props.transport, term, searchable, projectPath, provider, retry])
 
-  useEffect(() => setSelected(0), [term, projectPath, provider])
+  useEffect(() => setSelectedKey(undefined), [term, projectPath, provider])
 
   useEffect(() => {
-    setSelected((current) => Math.min(current, Math.max(displayResults.length - 1, 0)))
-  }, [displayResults.length])
+    if (selectedKey && !displayResults.some((result) => result.key === selectedKey)) {
+      setSelectedKey(displayResults[0]?.key)
+    }
+  }, [displayResults, selectedKey])
 
   useEffect(() => {
     resultList.current
@@ -269,16 +276,14 @@ function SessionSearchComponent(props: {
                 event.preventDefault()
                 if (displayResults.length === 0) return
                 const direction = event.key === 'ArrowDown' ? 1 : -1
-                setSelected(
-                  (current) =>
-                    (current + direction + displayResults.length) % displayResults.length,
-                )
+                const next = (selected + direction + displayResults.length) % displayResults.length
+                setSelectedKey(displayResults[next]?.key)
               } else if (event.key === 'Home' && displayResults.length > 0) {
                 event.preventDefault()
-                setSelected(0)
+                setSelectedKey(displayResults[0]?.key)
               } else if (event.key === 'End' && displayResults.length > 0) {
                 event.preventDefault()
-                setSelected(displayResults.length - 1)
+                setSelectedKey(displayResults.at(-1)?.key)
               } else if (event.key === 'Enter') {
                 event.preventDefault()
                 choose(displayResults[selected])
@@ -366,8 +371,8 @@ function SessionSearchComponent(props: {
                       data-search-index={index}
                       className={`session-search__result ${index === selected ? 'is-selected' : ''}`}
                       onClick={() => choose(result)}
-                      onMouseEnter={() => setSelected(index)}
-                      onFocus={() => setSelected(index)}
+                      onMouseEnter={() => setSelectedKey(result.key)}
+                      onFocus={() => setSelectedKey(result.key)}
                       role="option"
                       aria-selected={index === selected}
                       aria-label={`${result.threadTitle}, ${result.kind === 'title' ? 'title match, ' : ''}${result.projectName}, ${resultProviderLabel(result)}`}
