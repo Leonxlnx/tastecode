@@ -12,6 +12,7 @@ import type {
   ThreadLifecycle,
   Usage,
 } from '@harness/contracts'
+import type { TurnOptions } from './adapters.js'
 
 /**
  * Everything that has to survive a restart.
@@ -79,6 +80,17 @@ export type StoredUsageEvent = {
   provider: ProviderId
   at: number
   usage: Usage
+}
+
+export type StoredQueuedTurn = {
+  id: string
+  threadId: string
+  clientSubmissionId?: string | undefined
+  text: string
+  attachments: string[]
+  options: TurnOptions
+  createdAt: number
+  intent: 'normal' | 'steer'
 }
 
 export type SessionSearchOptions = {
@@ -190,6 +202,27 @@ CREATE TABLE IF NOT EXISTS events (
   payload   TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS queued_turn_events (
+  seq       INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  queue_id  TEXT,
+  at        INTEGER NOT NULL,
+  mutation  TEXT NOT NULL,
+  payload   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS queued_turns (
+  thread_id            TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  queue_id             TEXT NOT NULL,
+  client_submission_id TEXT,
+  position             INTEGER NOT NULL,
+  state                TEXT NOT NULL CHECK (state IN ('queued', 'dispatching')),
+  intent               TEXT NOT NULL CHECK (intent IN ('normal', 'steer')),
+  payload              TEXT NOT NULL,
+  created_at           INTEGER NOT NULL,
+  PRIMARY KEY (thread_id, queue_id)
+);
+
 CREATE TABLE IF NOT EXISTS checkpoints (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   thread_id  TEXT NOT NULL,
@@ -248,6 +281,13 @@ CREATE TABLE IF NOT EXISTS paired_devices (
 
 CREATE INDEX IF NOT EXISTS checkpoints_by_thread ON checkpoints (thread_id, seq);
 CREATE INDEX IF NOT EXISTS events_by_thread ON events (thread_id, seq);
+CREATE INDEX IF NOT EXISTS queued_turn_events_by_thread
+  ON queued_turn_events (thread_id, seq);
+CREATE INDEX IF NOT EXISTS queued_turns_by_thread
+  ON queued_turns (thread_id, state, position);
+CREATE UNIQUE INDEX IF NOT EXISTS queued_turn_submission_id
+  ON queued_turns (thread_id, client_submission_id)
+  WHERE client_submission_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS threads_by_project ON threads (project_path);
 `
 
@@ -311,6 +351,7 @@ export class Store {
        VALUES (?, ?, ?, ?, ?, ?)`,
     )
     this.#migrate()
+    this.#recoverQueuedTurnClaims()
     const searchIndexReady = this.#db
       .prepare(`SELECT 1 FROM schema_migrations WHERE name = ?`)
       .get(SEARCH_INDEX_VERSION)
@@ -639,7 +680,10 @@ export class Store {
    * process; it does not mean the user wanted the transcript gone.
    */
   closeThread(id: string): void {
-    this.#db.prepare(`UPDATE threads SET closed_at = ? WHERE id = ?`).run(Date.now(), id)
+    this.#transaction(() => {
+      this.#clearQueuedTurns(id)
+      this.#db.prepare(`UPDATE threads SET closed_at = ? WHERE id = ?`).run(Date.now(), id)
+    })
   }
 
   deleteThread(id: string): void {
@@ -682,6 +726,239 @@ export class Store {
 
   deleteDesignRun(threadId: string): void {
     this.#db.prepare(`DELETE FROM design_runs WHERE thread_id = ?`).run(threadId)
+  }
+
+  // ---- queued turns -----------------------------------------------------
+
+  queuedTurns(threadId: string): StoredQueuedTurn[] {
+    return this.#db
+      .prepare(
+        `SELECT queued_turns.* FROM queued_turns
+         INNER JOIN threads ON threads.id = queued_turns.thread_id
+         WHERE queued_turns.thread_id = ? AND queued_turns.state = 'queued'
+           AND threads.closed_at IS NULL
+         ORDER BY queued_turns.position`,
+      )
+      .all(threadId)
+      .map(toQueuedTurn)
+  }
+
+  hasQueuedSubmission(threadId: string, clientSubmissionId: string): boolean {
+    return (
+      this.#db
+        .prepare(
+          `SELECT 1 FROM queued_turns
+           WHERE thread_id = ? AND client_submission_id = ? LIMIT 1`,
+        )
+        .get(threadId, clientSubmissionId) !== undefined
+    )
+  }
+
+  enqueueQueuedTurn(turn: Omit<StoredQueuedTurn, 'intent'>): void {
+    const payload = JSON.stringify({
+      text: turn.text,
+      attachments: turn.attachments,
+      options: turn.options,
+    })
+    this.#transaction(() => {
+      const open = this.#db
+        .prepare(`SELECT 1 FROM threads WHERE id = ? AND closed_at IS NULL`)
+        .get(turn.threadId)
+      if (!open) throw new Error('thread not found')
+      const position = Number(
+        (
+          this.#db
+            .prepare(
+              `SELECT COALESCE(MAX(position), -1) + 1 AS position
+               FROM queued_turns WHERE thread_id = ?`,
+            )
+            .get(turn.threadId) as { position: number }
+        ).position,
+      )
+      this.#appendQueuedTurnEvent(turn.threadId, turn.id, 'enqueue', {
+        ...turn,
+        intent: 'normal',
+        position,
+      })
+      this.#db
+        .prepare(
+          `INSERT INTO queued_turns
+             (thread_id, queue_id, client_submission_id, position, state, intent, payload, created_at)
+           VALUES (?, ?, ?, ?, 'queued', 'normal', ?, ?)`,
+        )
+        .run(
+          turn.threadId,
+          turn.id,
+          turn.clientSubmissionId ?? null,
+          position,
+          payload,
+          turn.createdAt,
+        )
+    })
+  }
+
+  deleteQueuedTurn(threadId: string, queueId: string): boolean {
+    return this.#mutateQueuedTurn(threadId, queueId, 'delete', () => {
+      this.#db
+        .prepare(`DELETE FROM queued_turns WHERE thread_id = ? AND queue_id = ?`)
+        .run(threadId, queueId)
+    })
+  }
+
+  moveQueuedTurn(threadId: string, queueId: string, direction: 'up' | 'down'): boolean {
+    return this.#transaction(() => {
+      const current = this.#db
+        .prepare(
+          `SELECT position FROM queued_turns
+           WHERE thread_id = ? AND queue_id = ? AND state = 'queued'`,
+        )
+        .get(threadId, queueId) as { position: number } | undefined
+      if (!current) return false
+      const comparison = direction === 'up' ? '<' : '>'
+      const order = direction === 'up' ? 'DESC' : 'ASC'
+      const adjacent = this.#db
+        .prepare(
+          `SELECT queue_id, position FROM queued_turns
+           WHERE thread_id = ? AND state = 'queued' AND position ${comparison} ?
+           ORDER BY position ${order} LIMIT 1`,
+        )
+        .get(threadId, current.position) as { queue_id: string; position: number } | undefined
+      if (!adjacent) return false
+      this.#appendQueuedTurnEvent(threadId, queueId, 'move', { direction })
+      this.#db
+        .prepare(
+          `UPDATE queued_turns SET position = CASE queue_id WHEN ? THEN ? WHEN ? THEN ? END
+           WHERE thread_id = ? AND queue_id IN (?, ?)`,
+        )
+        .run(
+          queueId,
+          adjacent.position,
+          adjacent.queue_id,
+          current.position,
+          threadId,
+          queueId,
+          adjacent.queue_id,
+        )
+      return true
+    })
+  }
+
+  claimQueuedTurn(
+    threadId: string,
+    queueId: string,
+    intent: 'normal' | 'steer',
+  ): StoredQueuedTurn | undefined {
+    return this.#transaction(() => {
+      const row = this.#db
+        .prepare(
+          `SELECT * FROM queued_turns
+           WHERE thread_id = ? AND queue_id = ? AND state = 'queued'`,
+        )
+        .get(threadId, queueId)
+      if (!row) return undefined
+      this.#appendQueuedTurnEvent(threadId, queueId, 'claim', { intent })
+      this.#db
+        .prepare(
+          `UPDATE queued_turns SET state = 'dispatching', intent = ?
+           WHERE thread_id = ? AND queue_id = ?`,
+        )
+        .run(intent, threadId, queueId)
+      return { ...toQueuedTurn(row), intent }
+    })
+  }
+
+  restoreQueuedTurn(threadId: string, queueId: string): boolean {
+    return this.#mutateQueuedTurn(threadId, queueId, 'restore', () => {
+      this.#db
+        .prepare(
+          `UPDATE queued_turns SET state = 'queued', intent = 'normal'
+           WHERE thread_id = ? AND queue_id = ?`,
+        )
+        .run(threadId, queueId)
+    })
+  }
+
+  completeQueuedTurn(threadId: string, queueId: string): boolean {
+    return this.#mutateQueuedTurn(threadId, queueId, 'complete', () => {
+      this.#db
+        .prepare(`DELETE FROM queued_turns WHERE thread_id = ? AND queue_id = ?`)
+        .run(threadId, queueId)
+    })
+  }
+
+  clearQueuedTurns(threadId: string): void {
+    this.#transaction(() => this.#clearQueuedTurns(threadId))
+  }
+
+  #mutateQueuedTurn(
+    threadId: string,
+    queueId: string,
+    mutation: string,
+    project: () => void,
+  ): boolean {
+    return this.#transaction(() => {
+      const exists = this.#db
+        .prepare(`SELECT 1 FROM queued_turns WHERE thread_id = ? AND queue_id = ?`)
+        .get(threadId, queueId)
+      if (!exists) return false
+      this.#appendQueuedTurnEvent(threadId, queueId, mutation, {})
+      project()
+      return true
+    })
+  }
+
+  #clearQueuedTurns(threadId: string): void {
+    const exists = this.#db
+      .prepare(`SELECT 1 FROM queued_turns WHERE thread_id = ? LIMIT 1`)
+      .get(threadId)
+    if (!exists) return
+    this.#appendQueuedTurnEvent(threadId, null, 'clear', {})
+    this.#db.prepare(`DELETE FROM queued_turns WHERE thread_id = ?`).run(threadId)
+  }
+
+  #appendQueuedTurnEvent(
+    threadId: string,
+    queueId: string | null,
+    mutation: string,
+    payload: unknown,
+  ): void {
+    this.#db
+      .prepare(
+        `INSERT INTO queued_turn_events (thread_id, queue_id, at, mutation, payload)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(threadId, queueId, Date.now(), mutation, JSON.stringify(payload))
+  }
+
+  #recoverQueuedTurnClaims(): void {
+    const claims = this.#db
+      .prepare(`SELECT thread_id, queue_id, intent FROM queued_turns WHERE state = 'dispatching'`)
+      .all() as Array<{ thread_id: string; queue_id: string; intent: 'normal' | 'steer' }>
+    if (claims.length === 0) return
+    this.#transaction(() => {
+      for (const claim of claims) {
+        this.#appendQueuedTurnEvent(claim.thread_id, claim.queue_id, 'recover', {
+          intent: claim.intent,
+        })
+      }
+      this.#db
+        .prepare(
+          `UPDATE queued_turns SET state = 'queued', intent = 'normal' WHERE state = 'dispatching'`,
+        )
+        .run()
+    })
+  }
+
+  #transaction<T>(action: () => T): T {
+    this.#db.exec('BEGIN IMMEDIATE')
+    try {
+      const result = action()
+      this.#db.exec('COMMIT')
+      return result
+    } catch (error) {
+      this.#db.exec('ROLLBACK')
+      throw error
+    }
   }
 
   setDiffDecision(threadId: string, targetId: string, decision: DiffDecision): void {
@@ -1539,6 +1816,32 @@ function toProject(row: unknown): StoredProject {
     name: r.name,
     pinned: r.pinned === 1,
     createdAt: Number(r.created_at),
+  }
+}
+
+function toQueuedTurn(row: unknown): StoredQueuedTurn {
+  const r = row as {
+    thread_id: string
+    queue_id: string
+    client_submission_id: string | null
+    intent: 'normal' | 'steer'
+    payload: string
+    created_at: number
+  }
+  const payload = JSON.parse(r.payload) as {
+    text: string
+    attachments: string[]
+    options: TurnOptions
+  }
+  return {
+    id: r.queue_id,
+    threadId: r.thread_id,
+    ...(r.client_submission_id === null ? {} : { clientSubmissionId: r.client_submission_id }),
+    text: payload.text,
+    attachments: payload.attachments,
+    options: payload.options,
+    createdAt: Number(r.created_at),
+    intent: r.intent,
   }
 }
 
