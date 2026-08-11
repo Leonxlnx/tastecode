@@ -868,8 +868,27 @@ export function App() {
 
   resync.current = () => {
     const id = activeIdRef.current
-    if (id && !id.startsWith('pending:')) void loadHistory(id).catch(() => undefined)
+    if (id && !id.startsWith('pending:')) {
+      void loadHistory(id).catch(() => undefined)
+      void transport
+        .request('thread.queue', { threadId: id })
+        .then((state) => {
+          queueStates.current.set(id, state)
+          if (activeIdRef.current === id) {
+            setQueuedTurns(state.items)
+            setCanSteerQueue(state.canSteer)
+          }
+        })
+        .catch(() => undefined)
+      void transport
+        .request('usage.summary', { threadId: id })
+        .then((summary) => {
+          if (activeIdRef.current === id) setUsageSummary(summary)
+        })
+        .catch(() => undefined)
+    }
     void refreshProjects().catch(() => undefined)
+    void transport.request('sidebar.settings', {}).then(setSidebarSettings).catch(() => undefined)
   }
 
   useEffect(() => {

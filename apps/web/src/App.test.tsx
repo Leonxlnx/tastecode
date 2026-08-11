@@ -2725,7 +2725,45 @@ describe('reopening a session', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
       })
+      expect(transport.request).toHaveBeenCalledWith('thread.queue', {
+        threadId: 'untouched-thread',
+      })
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        threadId: 'untouched-thread',
+      })
       expect(transport.request).toHaveBeenCalledWith('projects.list', {})
+      expect(transport.request).toHaveBeenCalledWith('sidebar.settings', {})
+    })
+  })
+
+  it('resyncs active server-owned state after reconnecting mid-stream', async () => {
+    render(<App />)
+    await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'untouched-thread',
+      })
+    })
+    transport.request.mockClear()
+
+    act(() => {
+      for (const listener of transport.stateListeners) listener('reconnecting')
+      for (const listener of transport.stateListeners) listener('open')
+    })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'untouched-thread',
+      })
+      expect(transport.request).toHaveBeenCalledWith('thread.queue', {
+        threadId: 'untouched-thread',
+      })
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        threadId: 'untouched-thread',
+      })
+      expect(transport.request).toHaveBeenCalledWith('projects.list', {})
+      expect(transport.request).toHaveBeenCalledWith('sidebar.settings', {})
     })
   })
 })
