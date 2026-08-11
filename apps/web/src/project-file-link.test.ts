@@ -30,15 +30,26 @@ describe('project file links', () => {
   it('does not rewrite link examples inside inline or fenced code', () => {
     const markdown = [
       '`[inline](file:///E:/project/inline.ts)`',
+      '    [indented](file:///E:/project/indented.ts)',
       '```md',
+      '```not-a-close',
       '[fenced](file:///E:/project/fenced.ts)',
       '```',
+      '> ~~~md',
+      '> [quoted](file:///E:/project/quoted.ts)',
+      '> ~~~',
+      '- ~~~md',
+      '  [listed](file:///E:/project/listed.ts)',
+      '  ~~~',
       '[real](file:///E:/project/real.ts)',
     ].join('\n')
 
     const preserved = preserveProjectFileLinks(markdown)
     expect(preserved).toContain('`[inline](file:///E:/project/inline.ts)`')
+    expect(preserved).toContain('[indented](file:///E:/project/indented.ts)')
     expect(preserved).toContain('[fenced](file:///E:/project/fenced.ts)')
+    expect(preserved).toContain('[quoted](file:///E:/project/quoted.ts)')
+    expect(preserved).toContain('[listed](file:///E:/project/listed.ts)')
     expect(preserved).toContain(
       '[real](/__harness/project-file/file%3A%2F%2F%2FE%3A%2Fproject%2Freal.ts)',
     )

@@ -21,23 +21,29 @@ export function preserveProjectFileLinks(markdown: string): string {
 
   while (index < markdown.length) {
     if (index === lineStart) {
-      const marker = fenceMarkerAt(markdown, index)
-      if (marker && (!fence || (marker.marker === fence.marker && marker.length >= fence.length))) {
-        fence = fence ? undefined : marker
+      const line = markdownLineAt(markdown, index)
+      if (fence) {
+        if (
+          line.fence?.closing &&
+          line.fence.marker === fence.marker &&
+          line.fence.length >= fence.length
+        ) {
+          fence = undefined
+        }
         const newline = markdown.indexOf('\n', index)
         if (newline < 0) break
         index = newline + 1
         lineStart = index
         continue
       }
-    }
-
-    if (fence) {
-      const newline = markdown.indexOf('\n', index)
-      if (newline < 0) break
-      index = newline + 1
-      lineStart = index
-      continue
+      if (line.indented || line.fence) {
+        fence = line.fence
+        const newline = markdown.indexOf('\n', index)
+        if (newline < 0) break
+        index = newline + 1
+        lineStart = index
+        continue
+      }
     }
 
     if (markdown[index] === '\n') {
@@ -77,16 +83,50 @@ function encodeFileHref(href: string): string {
   )
 }
 
-function fenceMarkerAt(
+function markdownLineAt(
   markdown: string,
   lineStart: number,
-): { marker: string; length: number } | undefined {
+): {
+  indented: boolean
+  fence?: { marker: string; length: number; closing: boolean }
+} {
   let index = lineStart
-  while (index < lineStart + 3 && markdown[index] === ' ') index += 1
+  while (true) {
+    const indentStart = index
+    while (markdown[index] === ' ') index += 1
+    if (index - indentStart >= 4 || markdown[index] === '\t') return { indented: true }
+    if (markdown[index] === '>') {
+      index += markdown[index + 1] === ' ' ? 2 : 1
+      continue
+    }
+    const listEnd = listMarkerEnd(markdown, index)
+    if (listEnd !== undefined) {
+      index = listEnd
+      continue
+    }
+    break
+  }
+
   const marker = markdown[index]
-  if (marker !== '`' && marker !== '~') return undefined
+  if (marker !== '`' && marker !== '~') return { indented: false }
   const length = runLength(markdown, index, marker)
-  return length >= 3 ? { marker, length } : undefined
+  if (length < 3) return { indented: false }
+  const newline = markdown.indexOf('\n', index)
+  const rest = markdown.slice(index + length, newline < 0 ? markdown.length : newline)
+  return { indented: false, fence: { marker, length, closing: /^\s*$/.test(rest) } }
+}
+
+function listMarkerEnd(markdown: string, start: number): number | undefined {
+  let index = start
+  if (markdown[index] === '-' || markdown[index] === '+' || markdown[index] === '*') index += 1
+  else {
+    while (index - start < 9 && /\d/.test(markdown[index] ?? '')) index += 1
+    if (index === start || (markdown[index] !== '.' && markdown[index] !== ')')) return undefined
+    index += 1
+  }
+  if (markdown[index] !== ' ' && markdown[index] !== '\t') return undefined
+  while (markdown[index] === ' ' || markdown[index] === '\t') index += 1
+  return index
 }
 
 function runLength(value: string, start: number, character: string): number {
