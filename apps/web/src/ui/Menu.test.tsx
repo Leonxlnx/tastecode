@@ -124,25 +124,28 @@ describe('Menu', () => {
     ).toBe('true')
   })
 
-  it('enters a menu, roves past disabled items, typeaheads, and selects', () => {
+  it('roves, typeaheads, selects, and restores focus after dismissals', () => {
     const onSelect = vi.fn()
     render(
-      <Menu label="Actions" trigger={() => <span>Open</span>}>
-        {(close) => (
-          <>
-            <MenuItem title="Alpha" onClick={() => onSelect('Alpha')} />
-            <MenuItem title="Bravo" disabled onClick={() => onSelect('Bravo')} />
-            <MenuItem title="Charlie" onClick={() => onSelect('Charlie')} />
-            <MenuItem
-              title="Delta"
-              onClick={() => {
-                onSelect('Delta')
-                close()
-              }}
-            />
-          </>
-        )}
-      </Menu>,
+      <>
+        <button>Outside</button>
+        <Menu label="Actions" trigger={() => <span>Open</span>}>
+          {(close) => (
+            <>
+              <MenuItem title="Alpha" onClick={() => onSelect('Alpha')} />
+              <MenuItem title="Bravo" disabled onClick={() => onSelect('Bravo')} />
+              <MenuItem title="Charlie" onClick={() => onSelect('Charlie')} />
+              <MenuItem
+                title="Delta"
+                onClick={() => {
+                  onSelect('Delta')
+                  close()
+                }}
+              />
+            </>
+          )}
+        </Menu>
+      </>,
     )
 
     const trigger = screen.getByRole('button', { name: 'Actions' })
@@ -169,26 +172,9 @@ describe('Menu', () => {
     expect(onSelect).toHaveBeenCalledWith('Delta')
     expect(screen.queryByRole('menu')).toBeNull()
     expect(document.activeElement).toBe(trigger)
-  })
 
-  it('opens upward from the keyboard and restores focus after dismissals', () => {
-    render(
-      <>
-        <button>Outside</button>
-        <Menu label="Actions" trigger={() => <span>Open</span>}>
-          {(close) => (
-            <>
-              <MenuItem title="First" onClick={close} />
-              <MenuItem title="Last" onClick={close} />
-            </>
-          )}
-        </Menu>
-      </>,
-    )
-
-    const trigger = screen.getByRole('button', { name: 'Actions' })
     fireEvent.keyDown(trigger, { key: 'ArrowUp' })
-    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Last' }))
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Delta' }))
     fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' })
     expect(document.activeElement).toBe(trigger)
 
