@@ -555,10 +555,7 @@ export async function runUsageHistoryScan(
 export async function readUsageCache(filePath: string): Promise<UsageCache> {
   try {
     const value = JSON.parse(await readFile(filePath, 'utf8')) as Partial<UsageCache>
-    if (
-      (value.version === CACHE_VERSION || value.version === 3 || value.version === 2) &&
-      isCachedUsageFiles(value.files)
-    ) {
+    if (value.version === CACHE_VERSION && isCachedUsageFiles(value.files)) {
       const cachedProviders = new Set(value.files.map((file) => file.provider))
       return {
         version: CACHE_VERSION,

@@ -576,31 +576,34 @@ describe('local usage history', () => {
     ])
   })
 
-  it('reuses the existing blocking-scanner cache during the background-index upgrade', async () => {
-    const root = temporaryDirectory()
-    const cacheFile = path.join(root, 'usage.json')
-    writeFileSync(
-      cacheFile,
-      JSON.stringify({
-        version: 2,
-        generatedAt: 123,
-        files: [
-          {
-            path: path.join(root, 'session.jsonl'),
-            provider: 'codex',
-            mtimeMs: 1,
-            size: 1,
-            entries: [],
-          },
-        ],
-      }),
-    )
+  it.each([2, 3])(
+    'invalidates the blocking-scanner v%s cache after parser changes',
+    async (version) => {
+      const root = temporaryDirectory()
+      const cacheFile = path.join(root, 'usage.json')
+      writeFileSync(
+        cacheFile,
+        JSON.stringify({
+          version,
+          generatedAt: 123,
+          files: [
+            {
+              path: path.join(root, 'session.jsonl'),
+              provider: 'codex',
+              mtimeMs: 1,
+              size: 1,
+              entries: [],
+            },
+          ],
+        }),
+      )
 
-    const cache = await readUsageCache(cacheFile)
-    expect(cache.version).toBe(6)
-    expect(cache.generatedAt).toBe(123)
-    expect(cache.sources).toContainEqual({ provider: 'codex', label: 'Codex', available: true })
-  })
+      const cache = await readUsageCache(cacheFile)
+      expect(cache.version).toBe(6)
+      expect(cache.generatedAt).toBe(0)
+      expect(cache.files).toEqual([])
+    },
+  )
 
   it('treats a structurally invalid cache as a cold start', async () => {
     const root = temporaryDirectory()
