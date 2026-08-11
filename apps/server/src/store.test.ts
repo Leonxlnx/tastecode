@@ -73,6 +73,87 @@ const userInput = (id: string, turnId: string): DomainEvent => ({
   },
 })
 
+describe('durable queued turns', () => {
+  const queued = (id: string, text = 'Repeat this.') => ({
+    id,
+    threadId: 'thread-1',
+    clientSubmissionId: id,
+    text,
+    attachments: [`C:\\private\\${id}.png`],
+    options: { model: `model-${id}`, serviceTier: 'fast' },
+    createdAt: Number(id.at(-1)?.charCodeAt(0)),
+  })
+
+  it('replays exact records and mutations in order after a restart', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-queued-turns-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'Queue' })
+
+    seeded.enqueueQueuedTurn(queued('submission-a'))
+    seeded.enqueueQueuedTurn(queued('submission-b'))
+    seeded.moveQueuedTurn('thread-1', 'submission-b', 'up')
+    seeded.deleteQueuedTurn('thread-1', 'submission-a')
+    seeded.enqueueQueuedTurn(queued('submission-c', 'Third.'))
+    expect(seeded.claimQueuedTurn('thread-1', 'submission-b', 'steer')?.intent).toBe('steer')
+    for (let index = 0; index < 1_000; index += 1) {
+      seeded.append('thread-1', message(`old transcript delta ${index}`))
+    }
+    seeded.close()
+
+    const restarted = new Store(file)
+    try {
+      const parse = vi.spyOn(JSON, 'parse')
+      const replayed = restarted.queuedTurns('thread-1')
+      expect(parse).toHaveBeenCalledTimes(2)
+      parse.mockRestore()
+      expect(replayed.map(({ id, text, intent }) => [id, text, intent])).toEqual([
+        ['submission-b', 'Repeat this.', 'normal'],
+        ['submission-c', 'Third.', 'normal'],
+      ])
+      expect(replayed[0]).toMatchObject(queued('submission-b'))
+      expect(restarted.hasQueuedSubmission('thread-1', 'submission-b')).toBe(true)
+      expect(restarted.hasQueuedSubmission('thread-1', 'missing')).toBe(false)
+    } finally {
+      restarted.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('restores rejected claims and permanently completes accepted ones', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'api', title: 'Queue' })
+    store.enqueueQueuedTurn(queued('submission-1', 'Try this.'))
+
+    expect(store.claimQueuedTurn('thread-1', 'submission-1', 'normal')).toMatchObject({
+      id: 'submission-1',
+      intent: 'normal',
+    })
+    store.restoreQueuedTurn('thread-1', 'submission-1')
+    expect(store.queuedTurns('thread-1').map(({ id }) => id)).toEqual(['submission-1'])
+
+    store.claimQueuedTurn('thread-1', 'submission-1', 'normal')
+    store.completeQueuedTurn('thread-1', 'submission-1')
+    expect(store.queuedTurns('thread-1')).toEqual([])
+    expect(store.hasQueuedSubmission('thread-1', 'submission-1')).toBe(false)
+  })
+
+  it('cleans queued state for closed and deleted threads', () => {
+    store.addProject('/repo')
+    for (const threadId of ['closed', 'deleted']) {
+      store.addThread({ id: threadId, projectPath: '/repo', provider: 'codex', title: threadId })
+      store.enqueueQueuedTurn({ ...queued(`${threadId}-submission`), threadId })
+    }
+
+    store.closeThread('closed')
+    store.deleteThread('deleted')
+
+    expect(store.queuedTurns('closed')).toEqual([])
+    expect(store.queuedTurns('deleted')).toEqual([])
+  })
+})
+
 describe('recovering interrupted turns', () => {
   function seedThread(target: Store, id: string, turnId = `${id}-turn`): void {
     target.addThread({ id, projectPath: '/repo', provider: 'codex', title: 'Pending' })
