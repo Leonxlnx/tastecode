@@ -4,7 +4,7 @@ import { render, cleanup } from '@testing-library/react'
 import type { DomainEvent, Item } from '@harness/contracts'
 import { Thread, workLabel } from './Thread.js'
 import { makeFixtureThread } from './fixture.js'
-import { emptyThread, reduce } from '../thread-store.js'
+import { activeTurnIsSearching, emptyThread, reduce } from '../thread-store.js'
 
 /**
  * Performance budgets, enforced rather than aspired to.
@@ -204,5 +204,29 @@ describe('thread at scale', () => {
 
     expect(state.items).toHaveLength(1000)
     expect(elapsed).toBeLessThan(1000)
+  })
+
+  it('finds active search work without walking old transcript items', () => {
+    const history = makeFixtureThread(1_000)
+    const active: Item = {
+      id: 'active-search',
+      turnId: 'active-turn',
+      type: 'tool_call',
+      status: 'started',
+      text: 'search files',
+      createdAt: Date.now(),
+    }
+    let itemReads = 0
+    const items = new Proxy([...history, active], {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && /^\d+$/.test(property)) itemReads += 1
+        return Reflect.get(target, property, receiver)
+      },
+    })
+
+    expect(activeTurnIsSearching(items, active.turnId)).toBe(true)
+    // Complexity budget: the active tail has one item, so old history is not
+    // part of the per-frame cost. A forward scan reads all 1,001 entries.
+    expect(itemReads).toBeLessThan(10)
   })
 })

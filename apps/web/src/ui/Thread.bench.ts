@@ -1,6 +1,7 @@
 import { bench, describe } from 'vitest'
 import type { DomainEvent, Item } from '@harness/contracts'
 import {
+  activeTurnIsSearching,
   emptyThread,
   reduce,
   reduceDeltas,
@@ -32,6 +33,17 @@ const streamingState: ThreadState = {
   activeTurn: { id: liveItem.turnId, startedAt: 0 },
 }
 const streamedFrames = [streamingState.items, [...transcript, { ...liveItem, text: 'next frame' }]]
+const searchingTranscript: Item[] = [
+  ...transcript,
+  {
+    id: 'active-search',
+    turnId: 'active-turn',
+    type: 'tool_call',
+    status: 'started',
+    text: 'search files',
+    createdAt: 0,
+  },
+]
 const projectThread = createThreadProjector()
 projectThread(streamedFrames[0]!)
 let streamedFrame = 0
@@ -104,6 +116,16 @@ describe('long-thread hot paths', () => {
     () => {
       streamedFrame = streamedFrame === 0 ? 1 : 0
       projectThread(streamedFrames[streamedFrame]!)
+    },
+    FAST_OPTIONS,
+  )
+
+  bench(
+    'detects active search in a 1,000-item thread',
+    () => {
+      if (!activeTurnIsSearching(searchingTranscript, 'active-turn')) {
+        throw new Error('search state missing')
+      }
     },
     FAST_OPTIONS,
   )
