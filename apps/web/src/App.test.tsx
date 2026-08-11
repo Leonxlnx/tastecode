@@ -2370,6 +2370,8 @@ describe('live sessions', () => {
   it('opens chat search without rerendering the app shell', async () => {
     render(<App />)
     await screen.findByRole('button', { name: 'New session' })
+    const branchPicker = await screen.findByRole('button', { name: 'Choose branch' })
+    await waitFor(() => expect((branchPicker as HTMLButtonElement).disabled).toBe(false))
     appRenders.mockClear()
 
     fireEvent.click(screen.getByRole('button', { name: 'Search chats' }))
