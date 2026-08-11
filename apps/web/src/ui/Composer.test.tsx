@@ -186,7 +186,6 @@ describe('Composer queue', () => {
     const onDeleteQueuedTurn = vi.fn()
     const onMoveQueuedTurn = vi.fn()
     const onSteerQueuedTurn = vi.fn()
-    const onDraftChange = vi.fn()
     renderComposer(vi.fn(), {
       running: true,
       canSteerQueue: true,
@@ -207,7 +206,7 @@ describe('Composer queue', () => {
       onDeleteQueuedTurn,
       onMoveQueuedTurn,
       onSteerQueuedTurn,
-      onDraftChange,
+      onDraftChange: onDeleteQueuedTurn,
     })
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Steer' })[0]!)
@@ -221,7 +220,7 @@ describe('Composer queue', () => {
       'Polish the queue',
     )
     expect(onDeleteQueuedTurn).toHaveBeenCalledWith('queued-1')
-    expect(onDraftChange).toHaveBeenLastCalledWith('Polish the queue')
+    expect(onDeleteQueuedTurn).toHaveBeenCalledWith('Polish the queue')
   })
 })
 

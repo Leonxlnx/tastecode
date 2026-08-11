@@ -259,6 +259,7 @@ export function App() {
   const pendingSubmissions = useRef(new Map<string, Map<string, PendingSubmission>>())
   const rejectedDrafts = useRef(new Map<string, string>())
   const rejectedDraftOwner = useRef<string | undefined>(undefined)
+  const injectedDraftTransition = useRef(false)
   /** Live events parked while a history fetch for the thread is in flight. */
   const historyBuffers = useRef(
     new Map<string, Set<Array<{ seq: number | undefined; event: DomainEvent }>>>(),
@@ -587,6 +588,10 @@ export function App() {
     }
   }, [])
   useEffect(() => {
+    if (injectedDraftTransition.current) {
+      injectedDraftTransition.current = false
+      return
+    }
     const draft = activeId ? rejectedDrafts.current.get(activeId) : undefined
     if (draft === undefined && rejectedDraftOwner.current === undefined) return
     rejectedDraftOwner.current = draft === undefined ? undefined : activeId
@@ -1140,7 +1145,7 @@ export function App() {
     const activeId = activeIdRef.current
     const threadIds = new Set(pendingSubmissions.current.keys())
     if (activeId && !activeId.startsWith('pending:')) threadIds.add(activeId)
-    for (const id of threadIds) {
+    const resyncThread = (id: string, retry = true) => {
       const history = loadHistory(id).catch(() => undefined)
       const localQueueRevision = localQueueRevisions.current.get(id) ?? 0
       const serverQueueRevision = serverQueueRevisions.current.get(id) ?? 0
@@ -1153,6 +1158,7 @@ export function App() {
             (localQueueRevisions.current.get(id) ?? 0) !== localQueueRevision ||
             (serverQueueRevisions.current.get(id) ?? 0) !== serverQueueRevision
           ) {
+            if (retry) resyncThread(id, false)
             return
           }
           queueStates.current.set(id, state)
@@ -1164,6 +1170,7 @@ export function App() {
         })
         .catch(() => undefined)
     }
+    for (const id of threadIds) resyncThread(id)
     if (activeId && !activeId.startsWith('pending:')) {
       void transport
         .request('usage.summary', { threadId: activeId })
@@ -1603,8 +1610,13 @@ export function App() {
   )
 
   const beginSession = useCallback(
-    (projectPath: string) => {
+    (projectPath: string, draft?: string) => {
       setSurface('chat')
+      if (draft !== undefined) {
+        rejectedDraftOwner.current = undefined
+        injectedDraftTransition.current = activeIdRef.current !== undefined
+        setComposerDraft((current) => ({ text: draft, request: (current?.request ?? 0) + 1 }))
+      }
       // A session nobody typed into is bookkeeping, not history. Pressing "new
       // session" twice should not leave a trail of empty ones.
       const untouched = projects
@@ -2554,11 +2566,10 @@ export function App() {
   const openPullRequestChat = useCallback(
     (pullRequest: PullRequestListItem) => {
       if (!pullRequest.localProjectPath) return
-      beginSession(pullRequest.localProjectPath)
-      setComposerDraft((current) => ({
-        text: `I wanted to work on ${pullRequest.url} (${pullRequest.title}).`,
-        request: (current?.request ?? 0) + 1,
-      }))
+      beginSession(
+        pullRequest.localProjectPath,
+        `I wanted to work on ${pullRequest.url} (${pullRequest.title}).`,
+      )
       setComposerFocusRequest((request) => request + 1)
     },
     [beginSession],
