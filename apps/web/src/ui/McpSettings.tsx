@@ -259,7 +259,7 @@ export function McpSettings(props: {
         completeOAuth(pending.completion)
         return
       }
-      pending.completion = undefined
+      delete pending.completion
       const opened = window.open(result.authUrl, '_blank', 'noopener,noreferrer')
       if (!opened) {
         setNotice(`Your browser blocked the sign-in window. Open it yourself: ${result.authUrl}`)
