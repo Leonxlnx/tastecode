@@ -926,6 +926,17 @@ export class Store {
     this.#transaction(() => this.#clearQueuedTurns(threadId))
   }
 
+  clearAllQueuedTurns(): string[] {
+    return this.#transaction(() => {
+      const threadIds = this.#db
+        .prepare(`SELECT DISTINCT thread_id FROM queued_turns ORDER BY thread_id`)
+        .all()
+        .map((row) => String((row as { thread_id: unknown }).thread_id))
+      for (const threadId of threadIds) this.#clearQueuedTurns(threadId)
+      return threadIds
+    })
+  }
+
   #mutateQueuedTurn(
     threadId: string,
     queueId: string,

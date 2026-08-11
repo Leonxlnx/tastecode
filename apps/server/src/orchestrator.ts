@@ -1742,8 +1742,10 @@ export class Orchestrator {
     const sessions = [...this.#threads.entries()]
     this.#panicStopping = true
     this.#panicGeneration += 1
+    for (const threadId of this.#store.clearAllQueuedTurns()) {
+      if (this.#queuedTurns.delete(threadId)) this.#notifyQueue(threadId)
+    }
     for (const [threadId] of sessions) {
-      this.#store.clearQueuedTurns(threadId)
       if (this.#queuedTurns.delete(threadId)) this.#notifyQueue(threadId)
     }
 

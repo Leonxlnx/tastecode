@@ -1571,6 +1571,29 @@ describe('several sessions at once', () => {
     expect(sessions[0]!.sent).toEqual(['running'])
   })
 
+  it('drops durable queues that were never loaded into this process', async () => {
+    const store = new Store(':memory:')
+    store.addProject('/repo')
+    store.addThread({ id: 'persisted-thread', projectPath: '/repo', provider: 'codex', title: 'T' })
+    store.enqueueQueuedTurn({
+      id: 'submission-old',
+      threadId: 'persisted-thread',
+      clientSubmissionId: 'submission-old',
+      text: 'Do not run after Stop all.',
+      attachments: [],
+      options: {},
+      createdAt: 1,
+    })
+    const { sessions, orchestrator } = harness(undefined, store)
+
+    await expect(orchestrator.panicStop()).resolves.toEqual({ sessions: [] })
+    expect(store.queuedTurns('persisted-thread')).toEqual([])
+    await expect(
+      orchestrator.submitTurn('persisted-thread', 'New work.', [], {}, 'submission-new'),
+    ).resolves.toMatchObject({ queued: false })
+    expect(sessions[0]?.sent).toEqual(['New work.'])
+  })
+
   it('cancels a turn still waiting for its checkpoint', async () => {
     const { sessions, orchestrator } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
