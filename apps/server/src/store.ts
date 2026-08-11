@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createCipheriv, randomBytes, randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync, type StatementSync } from 'node:sqlite'
@@ -132,6 +132,7 @@ const RESTART_INTERRUPTION_MESSAGE =
 const SNIPPET_START = '\u0001'
 const SNIPPET_END = '\u0002'
 const SEARCH_INDEX_VERSION = 'session_search_v1'
+const SEARCH_RESULT_KEY_SETTING = 'search_result_key_v1'
 const SEARCH_SNAPSHOT_TTL_MS = 5 * 60 * 1_000
 const MAX_SEARCH_SNAPSHOTS = 32
 const SEARCH_TOKEN = /[\p{L}\p{N}][\p{L}\p{N}\p{M}_]*/gu
@@ -326,6 +327,7 @@ export class Store {
   #db: DatabaseSync
   #insertEvent: StatementSync
   #insertSearchEntry: StatementSync
+  #searchResultKey: Buffer
 
   /** `:memory:` in tests; a file under the user's data directory in the app. */
   constructor(location: string) {
@@ -341,6 +343,7 @@ export class Store {
     this.#db.exec('PRAGMA foreign_keys = ON')
     this.#db.exec(SCHEMA)
     this.#db.exec(SEARCH_SNAPSHOT_SCHEMA)
+    this.#searchResultKey = this.#loadSearchResultKey()
     // These statements run for every persisted event. Preparing them once
     // keeps SQLite compilation off the streamed-delta path.
     this.#insertEvent = this.#db.prepare(
@@ -373,6 +376,18 @@ export class Store {
 
   close(): void {
     this.#db.close()
+  }
+
+  #loadSearchResultKey(): Buffer {
+    this.#db
+      .prepare(`INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)`)
+      .run(SEARCH_RESULT_KEY_SETTING, randomBytes(32).toString('base64url'))
+    const row = this.#db
+      .prepare(`SELECT value FROM app_settings WHERE key = ?`)
+      .get(SEARCH_RESULT_KEY_SETTING) as { value: string }
+    const key = Buffer.from(row.value, 'base64url')
+    if (key.length !== 32) throw new Error('Search result identity key is invalid.')
+    return key
   }
 
   // ---- mobile connections -----------------------------------------------
@@ -1275,10 +1290,11 @@ export class Store {
     const rows = this.#db
       .prepare(
         `SELECT projects.path AS project_path, projects.name AS project_name,
-                threads.id AS thread_id, threads.title AS thread_title,
-                threads.provider, session_search.turn_id, session_search.created_at,
-                snapshot.position,
-                snapshot.snippet
+                 threads.id AS thread_id, threads.title AS thread_title,
+                 threads.provider, session_search.event_seq, session_search.turn_id,
+                 session_search.created_at,
+                 snapshot.position,
+                 snapshot.snippet
          FROM session_search_snapshot_rows AS snapshot
          JOIN session_search ON session_search.rowid = snapshot.search_rowid
          JOIN threads ON threads.id = session_search.thread_id
@@ -1293,6 +1309,7 @@ export class Store {
       thread_id: string
       thread_title: string
       provider: ProviderId
+      event_seq: number
       turn_id: string
       created_at: number
       position: number
@@ -1303,6 +1320,7 @@ export class Store {
     const last = page.at(-1)
     return {
       results: page.map((row) => ({
+        resultId: encodeSearchResultId(this.#searchResultKey, Number(row.event_seq)),
         projectPath: row.project_path,
         projectName: row.project_name,
         threadId: row.thread_id,
@@ -1697,6 +1715,15 @@ function searchableEntry(
           : undefined
   if (!text?.trim()) return undefined
   return { turnId: item.turnId, createdAt: item.createdAt, text }
+}
+
+function encodeSearchResultId(key: Buffer, eventSeq: number): string {
+  const source = Buffer.alloc(16)
+  source[0] = 1
+  source.writeBigUInt64BE(BigInt(eventSeq), 8)
+  const cipher = createCipheriv('aes-256-ecb', key, null)
+  cipher.setAutoPadding(false)
+  return `sr1_${Buffer.concat([cipher.update(source), cipher.final()]).toString('base64url')}`
 }
 
 function toFtsQuery(query: string): string | undefined {
