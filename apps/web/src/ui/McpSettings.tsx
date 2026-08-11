@@ -11,6 +11,17 @@ import type { Transport } from '../transport.js'
 
 type Inventory = ResultOf<'mcp.list'>
 type Editor = { mode: 'add' | 'edit'; id: string; displayName: string; transport: string }
+type OAuthCompletion = {
+  serverId: string
+  loginId: string
+  success: boolean
+  error: string | null
+}
+type PendingOAuth = {
+  serverId: string
+  loginId: string | undefined
+  completion?: OAuthCompletion
+}
 
 export function McpSettings(props: {
   transport: Transport
@@ -25,9 +36,7 @@ export function McpSettings(props: {
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
-  const pendingOAuth = useRef<{ serverId: string; loginId: string | undefined } | undefined>(
-    undefined,
-  )
+  const pendingOAuth = useRef<PendingOAuth | undefined>(undefined)
   const activeContext = useRef({
     transport: props.transport,
     provider: props.provider,
@@ -73,6 +82,22 @@ export function McpSettings(props: {
     }
   }, [props.transport, props.provider, props.projectPath])
 
+  const completeOAuth = useCallback(
+    (result: OAuthCompletion) => {
+      pendingOAuth.current = undefined
+      setBusy((current) => (current === result.serverId ? undefined : current))
+      if (result.success) {
+        setNotice('MCP sign-in completed.')
+        setError(undefined)
+        void refresh()
+      } else {
+        setNotice(undefined)
+        setError(result.error ?? 'MCP sign-in failed.')
+      }
+    },
+    [refresh],
+  )
+
   useEffect(() => {
     setInventory(undefined)
     setError(undefined)
@@ -89,20 +114,21 @@ export function McpSettings(props: {
     const offOAuth = props.transport.on('mcp.oauth', (result) => {
       if (result.provider !== props.provider || result.projectPath !== props.projectPath) return
       const pending = pendingOAuth.current
-      if (pending && (pending.serverId !== result.serverId || pending.loginId !== result.loginId)) {
-        if (result.success) void refresh()
-        return
+      if (pending) {
+        if (pending.serverId !== result.serverId) {
+          if (result.success) void refresh()
+          return
+        }
+        if (pending.loginId === undefined) {
+          pending.completion = result
+          return
+        }
+        if (pending.loginId !== result.loginId) {
+          if (result.success) void refresh()
+          return
+        }
       }
-      pendingOAuth.current = undefined
-      setBusy((current) => (current === result.serverId ? undefined : current))
-      if (result.success) {
-        setNotice('MCP sign-in completed.')
-        setError(undefined)
-        void refresh()
-      } else {
-        setNotice(undefined)
-        setError(result.error ?? 'MCP sign-in failed.')
-      }
+      completeOAuth(result)
     })
     const offChanged = props.transport.on('mcp.changed', ({ provider, projectPath }) => {
       if (provider === props.provider && projectPath === props.projectPath) void refresh()
@@ -120,7 +146,7 @@ export function McpSettings(props: {
       offChanged()
       offState()
     }
-  }, [props.transport, props.provider, props.projectPath, refresh])
+  }, [props.transport, props.provider, props.projectPath, refresh, completeOAuth])
 
   async function applyChange(action: () => Promise<unknown>, success: string): Promise<boolean> {
     setError(undefined)
@@ -226,7 +252,14 @@ export function McpSettings(props: {
         serverId: server.id,
       })
       if (!isCurrentContext()) return
-      pendingOAuth.current = { serverId: server.id, loginId: result.loginId }
+      const pending = pendingOAuth.current
+      if (!pending || pending.serverId !== server.id) return
+      pending.loginId = result.loginId
+      if (pending.completion?.loginId === result.loginId) {
+        completeOAuth(pending.completion)
+        return
+      }
+      pending.completion = undefined
       const opened = window.open(result.authUrl, '_blank', 'noopener,noreferrer')
       if (!opened) {
         setNotice(`Your browser blocked the sign-in window. Open it yourself: ${result.authUrl}`)

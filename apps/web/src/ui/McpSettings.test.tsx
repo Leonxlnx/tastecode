@@ -375,6 +375,83 @@ describe('MCP settings', () => {
     expect((signIn as HTMLButtonElement).disabled).toBe(false)
   })
 
+  it('settles OAuth when completion arrives before the start response', async () => {
+    const listeners = new Map<string, (value: never) => void>()
+    let resolveStart: ((value: { loginId: string; authUrl: string }) => void) | undefined
+    const start = new Promise<{ loginId: string; authUrl: string }>((resolve) => {
+      resolveStart = resolve
+    })
+    const transport = {
+      state: 'open',
+      request: vi.fn(async (method: string) => {
+        if (method === 'mcp.list') {
+          return {
+            capabilities: {
+              inventory: true,
+              add: false,
+              update: false,
+              remove: false,
+              reload: false,
+              startOAuth: true,
+              cancelOAuth: false,
+            },
+            servers: [
+              {
+                id: 'docs',
+                scope: 'global',
+                enabled: true,
+                auth: { status: 'sign_in_required', method: 'oauth' },
+                startup: { state: 'ready' },
+                tools: [],
+                resources: [],
+                resourceTemplates: [],
+              },
+            ],
+          }
+        }
+        if (method === 'mcp.startOAuth') return start
+        throw new Error(`unexpected ${method}`)
+      }),
+      on: vi.fn((channel: string, listener: (value: never) => void) => {
+        listeners.set(channel, listener)
+        return () => listeners.delete(channel)
+      }),
+      onState: vi.fn(() => () => {}),
+    } as unknown as Transport
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    const signIn = await screen.findByRole('button', { name: 'Sign in' })
+    fireEvent.click(signIn)
+    act(() =>
+      listeners.get('mcp.oauth')?.({
+        provider: 'codex',
+        projectPath: '/work/project',
+        serverId: 'docs',
+        loginId: 'login-1',
+        success: true,
+        error: null,
+      } as never),
+    )
+    expect((signIn as HTMLButtonElement).disabled).toBe(true)
+
+    await act(async () =>
+      resolveStart?.({ loginId: 'login-1', authUrl: 'https://auth.example.test/' }),
+    )
+
+    expect(await screen.findByText('MCP sign-in completed.')).toBeTruthy()
+    expect((signIn as HTMLButtonElement).disabled).toBe(false)
+    expect(open).not.toHaveBeenCalled()
+  })
+
   it('ignores a completed change after switching projects', async () => {
     let finishChange: (() => void) | undefined
     const change = new Promise<void>((resolve) => {
