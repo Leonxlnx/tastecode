@@ -231,6 +231,33 @@ describe('thread reducer', () => {
     ])
   })
 
+  it('keeps parallel subagent activity final after replay and stale events', () => {
+    const subagent = (id: string, status: Item['status'], text: string): Item =>
+      item({ id, type: 'tool_call', role: undefined, status, text })
+    const events: DomainEvent[] = [
+      { type: 'item.started', item: subagent('agent-a', 'started', 'Spawning a subagent') },
+      { type: 'item.started', item: subagent('agent-b', 'started', 'Spawning a subagent') },
+      { type: 'item.completed', item: subagent('agent-a', 'completed', 'Spawned a subagent') },
+      { type: 'item.completed', item: subagent('agent-b', 'failed', 'Subagent failed') },
+      // A buffered pre-completion event may be replayed after history has
+      // already restored the final item. Final items are immutable.
+      { type: 'item.delta', turnId: 't1', itemId: 'agent-a', textDelta: ' stale' },
+      { type: 'item.started', item: subagent('agent-a', 'started', 'Spawning a subagent') },
+    ]
+
+    const replayed = reduceEventLog(
+      emptyThread,
+      events.map((event, index) => ({ seq: index + 1, event })),
+    )
+    const live = events.reduce(reduce, emptyThread)
+
+    expect(replayed).toEqual(live)
+    expect(replayed.items.map(({ id, status, text }) => ({ id, status, text }))).toEqual([
+      { id: 'agent-a', status: 'completed', text: 'Spawned a subagent' },
+      { id: 'agent-b', status: 'failed', text: 'Subagent failed' },
+    ])
+  })
+
   it('replays only buffered events newer than restored history', () => {
     const started = apply([{ type: 'item.started', item: item({ text: '' }) }])
     const buffered = [

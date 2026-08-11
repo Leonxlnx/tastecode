@@ -134,6 +134,9 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
         // fill it in rather than appending a duplicate row.
         const existingIndex = state.items.findIndex((item) => item.id === event.item.id)
         if (existingIndex >= 0) {
+          // Completion is terminal. A buffered or retried start may arrive
+          // after restored history and must never resurrect finished work.
+          if (state.items[existingIndex]?.status !== 'started') return state
           const items = state.items.slice()
           const streamed = items[existingIndex]?.text
           items[existingIndex] = {
@@ -181,6 +184,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       }
       const existing = state.items[index]
       if (!existing) return state
+      if (existing.status !== 'started') return state
       const items = state.items.slice()
       items[index] = { ...existing, text: (existing.text ?? '') + event.textDelta }
       return { ...state, items }
@@ -257,7 +261,9 @@ export function reduceDeltas(state: ThreadState, deltas: ItemDeltaEvent[]): Thre
     }
 
     const existing = items[index]
-    if (existing) items[index] = { ...existing, text: (existing.text ?? '') + textDelta }
+    if (existing?.status === 'started') {
+      items[index] = { ...existing, text: (existing.text ?? '') + textDelta }
+    }
   }
 
   return { ...state, items }
