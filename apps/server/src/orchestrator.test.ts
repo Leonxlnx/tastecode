@@ -1719,6 +1719,74 @@ describe('rolling a session back', () => {
     }
   })
 
+  it('refuses restore and undo while a diff rejection is still in progress', async () => {
+    const trees = path.join(path.dirname(repo), 'trees')
+    const { orchestrator, store } = harness(trees)
+    const thread = await orchestrator.startThread('codex', repo, { isolate: true })
+    const worktree = store.thread(thread.id)!.worktreePath!
+    await orchestrator.sendTurn(thread.id, 'first task')
+    writeFileSync(path.join(worktree, 'file.txt'), 'work to restore later\n')
+    const first = orchestrator.checkpoints(thread.id)[0]!
+    const { undo } = await orchestrator.restoreCheckpoint(thread.id, first.id)
+
+    writeFileSync(path.join(worktree, 'file.txt'), 'reject this change\n')
+    const diff = await orchestrator.diff(thread.id)
+    const file = diff.files[0]!
+    const heldSnapshot = await checkpoint.takeSnapshot(worktree)
+    let release = (_value: checkpoint.Snapshot) => {}
+    const takeSnapshot = vi
+      .spyOn(checkpoint, 'takeSnapshot')
+      .mockClear()
+      .mockReturnValueOnce(new Promise<checkpoint.Snapshot>((resolve) => (release = resolve)))
+    const reviewing = orchestrator.reviewHunk(
+      thread.id,
+      diff.version,
+      file.path,
+      file.hunks[0]!.id,
+      'reject',
+    )
+    await vi.waitFor(() => expect(takeSnapshot).toHaveBeenCalledTimes(1))
+
+    try {
+      await expect(orchestrator.restoreCheckpoint(thread.id, first.id)).rejects.toThrow(
+        'cannot restore while a diff rejection is running',
+      )
+      await expect(orchestrator.undoRestore(thread.id, undo)).rejects.toThrow(
+        'cannot restore while a diff rejection is running',
+      )
+    } finally {
+      release(heldSnapshot)
+      await reviewing.catch(() => undefined)
+    }
+  })
+
+  it('refuses hunk and file rejection while a checkpoint restore is still in progress', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'first task')
+    const first = orchestrator.checkpoints(thread.id)[0]!
+
+    let release = (_value: checkpoint.Snapshot) => {}
+    const restoreSnapshot = vi
+      .spyOn(checkpoint, 'restoreSnapshot')
+      .mockClear()
+      .mockReturnValueOnce(new Promise<checkpoint.Snapshot>((resolve) => (release = resolve)))
+    const restoring = orchestrator.restoreCheckpoint(thread.id, first.id)
+    await vi.waitFor(() => expect(restoreSnapshot).toHaveBeenCalledTimes(1))
+
+    try {
+      await expect(
+        orchestrator.reviewHunk(thread.id, 'version', 'file.txt', 'hunk', 'reject'),
+      ).rejects.toThrow('Refresh the diff and try again.')
+      await expect(
+        orchestrator.reviewFile(thread.id, 'version', 'file.txt', 'reject'),
+      ).rejects.toThrow('Refresh the diff and try again.')
+    } finally {
+      release({ commit: 'replaced', clean: false })
+      await restoring
+    }
+  })
+
   it('does not fail a turn just because the folder is not a repository', async () => {
     const { orchestrator } = harness()
     const plain = mkdtempSync(path.join(os.tmpdir(), 'harness-plain-'))

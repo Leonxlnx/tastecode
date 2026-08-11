@@ -1307,6 +1307,7 @@ export class Orchestrator {
     if (this.isTurnRunning(threadId)) {
       throw new Error('cannot reject a diff while the agent turn is running')
     }
+    if (this.#restoringThreads.has(threadId)) throw new StaleDiffSnapshotError()
     // One rejection at a time per thread: two concurrent reverse-applies pass
     // the same staleness check and then patch the same worktree, and git's
     // fuzz can land the second one at the wrong offset silently. The client
@@ -1414,6 +1415,9 @@ export class Orchestrator {
     if (this.#restoringThreads.has(threadId)) {
       throw new Error('cannot restore while another restore is running')
     }
+    if (this.#reviewingDiffs.has(threadId)) {
+      throw new Error('cannot restore while a diff rejection is running')
+    }
     this.#restoringThreads.add(threadId)
     try {
       const stored = this.#store.thread(threadId)
@@ -1446,6 +1450,9 @@ export class Orchestrator {
     }
     if (this.#restoringThreads.has(threadId)) {
       throw new Error('cannot restore while another restore is running')
+    }
+    if (this.#reviewingDiffs.has(threadId)) {
+      throw new Error('cannot restore while a diff rejection is running')
     }
     this.#restoringThreads.add(threadId)
     try {
