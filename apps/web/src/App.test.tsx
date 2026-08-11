@@ -2632,4 +2632,63 @@ describe('reopening a session', () => {
       })
     })
   })
+
+  it('does not send a model from another provider to an existing session', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          {
+            id: 'claude-thread',
+            title: 'Claude thread',
+            provider: 'claude-code',
+            createdAt: 0,
+            running: false,
+          },
+        ],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models: [
+            {
+              id: 'gpt-5.6-sol',
+              displayName: 'GPT-5.6 Sol',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Sol',
+      )
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Claude thread' }))
+
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Use the session provider' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
+        threadId: 'claude-thread',
+        text: 'Use the session provider',
+      })
+    })
+  })
 })

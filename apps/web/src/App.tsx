@@ -1404,21 +1404,35 @@ export function App() {
       // A session created a moment ago is untitled by definition — `projects`
       // here is still the value from this render and cannot know about it yet,
       // so asking it would answer no every time and nothing would be named.
-      const untitled =
-        !titledOnCreate && findSession(projects, threadId)?.session.title === 'New session'
+      const existingSession = findSession(projects, threadId)?.session
+      const untitled = !titledOnCreate && existingSession?.title === 'New session'
       if (untitled) {
         const title = titleFrom(text)
         setProjects((current) => promoteSession(renameSession(current, threadId, title), threadId))
         void transport.request('thread.rename', { threadId, title }).catch(() => undefined)
       }
+      const turnChoice =
+        !existingSession ||
+        (selectedModelChoice &&
+          sourceKey({
+            provider: selectedModelChoice.provider,
+            connectionId: selectedModelChoice.connectionId,
+            agentId: selectedModelChoice.agent?.id,
+          }) ===
+            sourceKey({
+              provider: existingSession.provider,
+              agentId: existingSession.agent,
+            }))
+          ? selectedModelChoice
+          : undefined
       try {
         const result = await transport.request('thread.sendTurn', {
           threadId,
           text,
           ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
-          ...(selectedModelChoice?.model.id ? { model: selectedModelChoice.model.id } : {}),
-          ...(effort ? { effort } : {}),
-          ...(serviceTier ? { serviceTier } : {}),
+          ...(turnChoice?.model.id ? { model: turnChoice.model.id } : {}),
+          ...(turnChoice && effort ? { effort } : {}),
+          ...(turnChoice && serviceTier ? { serviceTier } : {}),
         })
         const current = threadStates.current.get(threadId) ?? emptyThread
         if (result.queued) {
