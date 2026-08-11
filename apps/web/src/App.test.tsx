@@ -99,7 +99,9 @@ vi.mock('./ui/Thread.js', () => ({
   }) => (
     <div data-testid="thread">
       {props.items.map((item) => (
-        <span key={item.id}>{item.text}</span>
+        <span key={item.id} data-item-id={item.id}>
+          {item.text}
+        </span>
       ))}
       {props.running && props.activeTurn ? <span>Working</span> : null}
     </div>
@@ -2688,27 +2690,27 @@ describe('live sessions', () => {
     expect(screen.getByLabelText('Queued prompts').textContent).toContain('Queue this next')
     expect(screen.getByTestId('thread').textContent).not.toContain('Queue this next')
 
+    let submissionId = ''
+    await waitFor(() => {
+      const call = transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')
+      submissionId = (call?.[1] as { clientSubmissionId?: string }).clientSubmissionId ?? ''
+      expect(submissionId).toMatch(/^local:/)
+    })
     await act(async () =>
       resolveSend?.({
         queued: true,
         queuedTurn: {
-          id: 'queued-1',
+          id: submissionId,
           text: 'Queue this next',
           attachments: [],
           createdAt: 1,
         },
       }),
     )
-    await waitFor(() => {
-      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
-        threadId: 'thread-1',
-        text: 'Queue this next',
-      })
-    })
     fireEvent.click(screen.getByRole('button', { name: 'Remove Queue this next from queue' }))
     expect(transport.request).toHaveBeenCalledWith('thread.deleteQueuedTurn', {
       threadId: 'thread-1',
-      queuedTurnId: 'queued-1',
+      queuedTurnId: submissionId,
     })
   })
 
@@ -2818,6 +2820,7 @@ describe('live sessions', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
+    let submissionId = ''
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'thread.history') {
         return Promise.resolve({
@@ -2839,10 +2842,11 @@ describe('live sessions', () => {
         })
       }
       if (method === 'thread.sendTurn') {
+        submissionId = (params as { clientSubmissionId?: string }).clientSubmissionId ?? ''
         return Promise.resolve({
           queued: true,
           queuedTurn: {
-            id: 'queued-steer',
+            id: submissionId,
             text: 'Use this direction now',
             attachments: [],
             createdAt: 1,
@@ -2875,15 +2879,30 @@ describe('live sessions', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'thread-1',
         text: 'Use this direction now',
+        clientSubmissionId: submissionId,
       }),
     )
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.steerQueuedTurn', {
         threadId: 'thread-1',
-        queuedTurnId: 'queued-steer',
+        queuedTurnId: submissionId,
       })
     })
-    expect(screen.getByTestId('thread').textContent).toContain('Use this direction now')
+    emitThreadEvent('thread-1', {
+      type: 'item.completed',
+      item: {
+        id: submissionId,
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: 'Use this direction now',
+        createdAt: 1,
+      },
+    })
+    expect(screen.getByText('Use this direction now').getAttribute('data-item-id')).toBe(
+      submissionId,
+    )
     expect(screen.queryByLabelText('Queued prompts')).toBeNull()
   })
 
@@ -3429,9 +3448,12 @@ describe('reopening a session', () => {
     fireEvent.keyDown(composer, { key: 'Enter' })
 
     await waitFor(() => {
+      const optimistic = screen.getByText('Use the session provider').getAttribute('data-item-id')
+      expect(optimistic).toMatch(/^local:/)
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'api-thread',
         text: 'Use the session provider',
+        clientSubmissionId: optimistic,
       })
     })
   })

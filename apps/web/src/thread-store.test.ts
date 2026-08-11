@@ -116,29 +116,31 @@ describe('thread reducer', () => {
     expect(state.items[0]?.text).toBe('streamed')
   })
 
-  it('replaces the optimistic user message with the agent’s canonical one', () => {
-    // Regression: the user's message rendered twice, once from the local echo
-    // and once from the item the agent reports back.
-    const echoed = appendUserMessage(emptyThread, 'do the thing')
+  it('replaces the exact optimistic user item with its durable completion', () => {
+    const echoed = appendUserMessage(emptyThread, 'repeat this', 'submission-1')
     const state = reduce(echoed, {
-      type: 'item.started',
-      item: item({ id: 'server-1', role: 'user', text: 'do the thing' }),
+      type: 'item.completed',
+      item: item({ id: 'submission-1', role: 'user', status: 'completed', text: 'repeat this' }),
     })
     expect(state.items).toHaveLength(1)
-    expect(state.items[0]?.id).toBe('server-1')
+    expect(state.items[0]).toMatchObject({ id: 'submission-1', turnId: 't1' })
   })
 
-  it('keeps later optimistic prompts when the first canonical message arrives', () => {
+  it('reconciles repeated prompts by exact id rather than text or order', () => {
     const echoed = appendUserMessage(
-      appendUserMessage(emptyThread, 'first prompt'),
-      'second prompt',
+      appendUserMessage(emptyThread, 'repeat this', 'submission-1'),
+      'repeat this',
+      'submission-2',
     )
     const state = reduce(echoed, {
-      type: 'item.started',
-      item: item({ id: 'server-1', role: 'user', text: 'first prompt' }),
+      type: 'item.completed',
+      item: item({ id: 'submission-1', role: 'user', status: 'completed', text: 'repeat this' }),
     })
 
-    expect(state.items.map((entry) => entry.text)).toEqual(['first prompt', 'second prompt'])
+    expect(state.items.map(({ id, turnId }) => [id, turnId])).toEqual([
+      ['submission-1', 't1'],
+      ['submission-2', ''],
+    ])
   })
 
   it('echoes a message when randomUUID is unavailable in an insecure mobile context', () => {
