@@ -2640,6 +2640,13 @@ describe('live sessions', () => {
       let historyCount = 0
       let resolveResync!: (value: { events: unknown[]; running: boolean }) => void
       let rejectSend!: (error: Error) => void
+      const staleStarted = {
+        seq: 1,
+        event: {
+          type: 'turn.started',
+          turn: { id: 't', threadId: 'thread-1', status: 'running', createdAt: 1 },
+        },
+      }
       transport.request.mockImplementation((method: string, params: unknown) => {
         if (method === 'thread.history' && historyCount++ > 0) {
           return new Promise((resolve) => (resolveResync = resolve))
@@ -2673,7 +2680,9 @@ describe('live sessions', () => {
       await act(async () =>
         resolveResync({
           events:
-            outcome === 'accepted' ? [completedUserEvent(submissionId, 'Submit exactly once')] : [],
+            outcome === 'accepted'
+              ? [completedUserEvent(submissionId, 'Submit exactly once')]
+              : [staleStarted],
           running: outcome === 'accepted',
         }),
       )
@@ -3370,22 +3379,17 @@ function emitThreadEvent(threadId: string, event: DomainEvent) {
   })
 }
 
-function completedUserEvent(id: string, text: string): { seq: number; event: DomainEvent } {
-  return {
-    seq: 1,
-    event: {
-      type: 'item.completed',
-      item: {
-        id,
-        turnId: 'turn-1',
-        type: 'message',
-        role: 'user',
-        status: 'completed',
-        text,
-        createdAt: 1,
-      },
-    },
-  }
+function completedUserEvent(id: string, text: string) {
+  const item = {
+    id,
+    turnId: 'turn-1',
+    type: 'message',
+    role: 'user',
+    status: 'completed',
+    text,
+    createdAt: 1,
+  } as const
+  return { seq: 1, event: { type: 'item.completed', item } } as const
 }
 
 function emitQueue(
@@ -3685,15 +3689,7 @@ describe('reopening a session', () => {
     })
   })
 
-  it('clears a replayed active turn when reconnect history says it is idle', async () => {
-    const request = transport.request.getMockImplementation()!
-    let reconnecting = false
-    let resolveResync!: (value: { events: unknown[]; running: false }) => void
-    transport.request.mockImplementation((method: string, params: unknown) =>
-      method === 'thread.history' && reconnecting
-        ? new Promise((resolve) => (resolveResync = resolve))
-        : request(method, params),
-    )
+  it('resyncs active server-owned state after reconnecting mid-stream', async () => {
     render(<App />)
     await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
     fireEvent.click(screen.getByRole('button', { name: 'New session' }))
@@ -3702,33 +3698,26 @@ describe('reopening a session', () => {
         threadId: 'untouched-thread',
       })
     })
-    reconnecting = true
+    transport.request.mockClear()
 
     act(() => {
       for (const listener of transport.stateListeners) listener('reconnecting')
       for (const listener of transport.stateListeners) listener('open')
     })
-    await waitFor(() => expect(resolveResync).toBeTypeOf('function'))
-    await act(async () =>
-      resolveResync({
-        events: [
-          {
-            seq: 1,
-            event: {
-              type: 'turn.started',
-              turn: {
-                id: 'orphan-turn',
-                threadId: 'untouched-thread',
-                status: 'running',
-                createdAt: 1,
-              },
-            },
-          },
-        ],
-        running: false,
-      }),
-    )
-    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'untouched-thread',
+      })
+      expect(transport.request).toHaveBeenCalledWith('thread.queue', {
+        threadId: 'untouched-thread',
+      })
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        threadId: 'untouched-thread',
+      })
+      expect(transport.request).toHaveBeenCalledWith('projects.list', {})
+      expect(transport.request).toHaveBeenCalledWith('sidebar.settings', {})
+    })
   })
 
   it('keeps newer durable and live events when an older history load resolves last', async () => {

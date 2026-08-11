@@ -257,6 +257,7 @@ export function App() {
   const threadStates = useRef(new Map<string, ThreadState>())
   const pendingSubmissions = useRef(new Map<string, Map<string, PendingSubmission>>())
   const rejectedDrafts = useRef(new Map<string, string>())
+  const rejectedDraftOwner = useRef<string | undefined>(undefined)
   /** Live events parked while a history fetch for the thread is in flight. */
   const historyBuffers = useRef(
     new Map<string, Set<Array<{ seq: number | undefined; event: DomainEvent }>>>(),
@@ -579,9 +580,16 @@ export function App() {
     const draft = current ? `${current}\n\n${text}` : text
     rejectedDrafts.current.set(threadId, draft)
     if (threadId === activeIdRef.current) {
+      rejectedDraftOwner.current = threadId
       setComposerDraft((request) => ({ text: draft, request: (request?.request ?? 0) + 1 }))
     }
   }, [])
+  useEffect(() => {
+    const draft = activeId ? rejectedDrafts.current.get(activeId) : undefined
+    if (draft === undefined && rejectedDraftOwner.current === undefined) return
+    rejectedDraftOwner.current = draft === undefined ? undefined : activeId
+    setComposerDraft((current) => ({ text: draft ?? '', request: (current?.request ?? 0) + 1 }))
+  }, [activeId])
   const projectsRef = useRef(projects)
   projectsRef.current = projects
   /** Refetch after an outage. Held in a ref because the transport effect is
@@ -1088,12 +1096,17 @@ export function App() {
         if (historyOwners.current.get(threadId) !== buffer) return
         const restored = reduceEventLog(emptyThread, events)
         const lastSeq = events.at(-1)?.seq ?? 0
-        const pending = preservePendingSubmissions(
-          reduceEventLog(restored, buffer, lastSeq),
+        const replayed = reduceEventLog(restored, buffer, lastSeq)
+        const authoritative = {
+          ...replayed,
+          running,
+          activeTurn: running ? replayed.activeTurn : undefined,
+        }
+        const withLive = preservePendingSubmissions(
+          authoritative,
           pendingSubmissions.current,
           threadId,
         )
-        const withLive = running && !pending.running ? { ...pending, running: true } : pending
         // The buffered events above already include any deltas still waiting
         // for a frame, so do not apply that pending batch a second time.
         pendingThreadDeltas.current.delete(threadId)
@@ -1745,6 +1758,7 @@ export function App() {
       }
       const optimisticState = threadStates.current.get(threadId) ?? emptyThread
       rejectedDrafts.current.delete(threadId)
+      if (rejectedDraftOwner.current === threadId) rejectedDraftOwner.current = undefined
       const pendingOptimisticTurn = optimisticState.activeTurn
       const pendingSubmission: PendingSubmission = {
         id: optimisticItemId,
@@ -2015,9 +2029,6 @@ export function App() {
   const selectSession = useCallback(
     async (id: string) => {
       setSurface('chat')
-      const leavingRejectedDraft = activeIdRef.current
-        ? rejectedDrafts.current.has(activeIdRef.current)
-        : false
       const found = findSession(projects, id)
       if (found?.session.provider) {
         const source = sourceKey({
@@ -2062,13 +2073,6 @@ export function App() {
       setActiveId(id)
       setThreadRevealRequest((request) => request + 1)
       setActivePath(found?.project.path)
-      const rejectedDraft = rejectedDrafts.current.get(id)
-      if (rejectedDraft !== undefined || leavingRejectedDraft) {
-        setComposerDraft((current) => ({
-          text: rejectedDraft ?? '',
-          request: (current?.request ?? 0) + 1,
-        }))
-      }
       const cached = threadStates.current.get(id)
       if (cached) {
         setThread(cached)
@@ -2203,7 +2207,6 @@ export function App() {
       await transport.request('thread.delete', { threadId: id })
       threadStates.current.delete(id)
       pendingSubmissions.current.delete(id)
-      rejectedDrafts.current.delete(id)
       setProjects((current) =>
         current.map((project) => ({
           ...project,
@@ -2215,6 +2218,7 @@ export function App() {
         setActiveId(undefined)
         setThread(emptyThread)
       }
+      rejectedDrafts.current.delete(id)
     },
     [transport],
   )
