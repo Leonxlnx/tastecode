@@ -1166,7 +1166,8 @@ export function App() {
         const provisional = threadStates.current.get(provisionalId) ?? emptyThread
         threadStates.current.delete(provisionalId)
         threadStates.current.set(threadId, provisional)
-        const pending = pendingSession.current?.id === provisionalId ? pendingSession.current : undefined
+        const pending =
+          pendingSession.current?.id === provisionalId ? pendingSession.current : undefined
         if (pending) pending.threadId = threadId
         const canonicalTitle = pending?.title ?? title
         setProjects((current) =>
