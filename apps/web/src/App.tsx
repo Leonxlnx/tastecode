@@ -42,7 +42,7 @@ import {
 import { CommandPalette, type CommandScope, type PaletteCommand } from './ui/CommandPalette.js'
 import { CheckoutDiscardDialog } from './ui/CheckoutDiscardDialog.js'
 import { Composer, type WorkspaceInfo } from './ui/Composer.js'
-import { getNextServiceTierForModel } from './ui/ModelSelector.js'
+import { getFastModeOffValue, getNextServiceTierForModel } from './ui/ModelSelector.js'
 import { RollbackDialog, type Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchHost.js'
 import { Settings, type SettingsSection } from './ui/Settings.js'
@@ -804,9 +804,19 @@ export function App() {
       const currentSource = currentSession
         ? sourceKey({ provider: currentSession.provider, agentId: currentSession.agent })
         : undefined
+      const storedSetup = readStoredModelChoice(customModelsRef.current)
+      const preferredSource = currentSource ?? (storedSetup ? modelSource(storedSetup) : undefined)
+      const preferredPool = preferredSource
+        ? visible.filter((choice) => modelSource(choice) === preferredSource)
+        : []
+      // Existing sessions never cross sources. New chats prefer their stored
+      // source while it still has a visible choice, but may fall back globally
+      // when that source disappears or is hidden in full.
       const selectionPool = currentSource
-        ? visible.filter((choice) => modelSource(choice) === currentSource)
-        : visible
+        ? preferredPool
+        : preferredPool.length > 0
+          ? preferredPool
+          : visible
       const selections = readSourceSelections()
       const storedSelection =
         selectionPool.find((choice) => choice.key === stored) ??
@@ -868,7 +878,7 @@ export function App() {
           return remembered.serviceTier &&
             selected.model.serviceTiers.some((tier) => tier.id === remembered.serviceTier)
             ? remembered.serviceTier
-            : (selected.model.defaultServiceTier ?? undefined)
+            : getFastModeOffValue(selected.model)
         }
         return getNextServiceTierForModel({
           currentServiceTier: current,
@@ -1174,7 +1184,13 @@ export function App() {
     // A visibility change derives its fallback before the persisted model key
     // catches up. Let commitModelChoice finish that transition before this
     // source is remembered, or it would remember a half-translated setup.
-    if (!selectedModelChoice || selectedModelChoice.key !== modelId) return
+    if (
+      !selectedModelChoice ||
+      selectedModelChoice.key !== modelId ||
+      unvalidatedModelKeys.has(selectedModelChoice.key)
+    ) {
+      return
+    }
     const source = sourceKey({
       provider: selectedModelChoice.provider,
       connectionId: selectedModelChoice.connectionId,
@@ -1196,7 +1212,7 @@ export function App() {
     }
     selections[source] = entry
     writeSetting(MODEL_BY_SOURCE_KEY, JSON.stringify(selections))
-  }, [selectedModelChoice, modelId, selectedEffort, selectedServiceTier])
+  }, [selectedModelChoice, modelId, selectedEffort, selectedServiceTier, unvalidatedModelKeys])
 
   useEffect(() => {
     writeSetting(APPROVAL_KEY, approval)
@@ -1244,7 +1260,7 @@ export function App() {
             : remembered.serviceTier &&
                 selected.model.serviceTiers.some((tier) => tier.id === remembered.serviceTier)
               ? remembered.serviceTier
-              : (selected.model.defaultServiceTier ?? undefined),
+              : getFastModeOffValue(selected.model),
         )
         return
       }

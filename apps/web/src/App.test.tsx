@@ -615,8 +615,21 @@ describe('web client', () => {
     expect(localStorage.getItem('harness.modelCatalog.v1')).toBeNull()
 
     cleanup()
+    transport.request.mockClear()
     render(<App />)
     expect(localStorage.getItem('harness.serviceTier')).toBe('priority')
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('workspace.info', { path: '/work/project' })
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Keep the valid tier' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ provider: 'codex', serviceTier: 'priority' }),
+      )
+    })
   })
 
   it('shows a validated model snapshot while discovery refreshes in the background', () => {
@@ -1888,7 +1901,8 @@ describe('new chats', () => {
               isDefault: false,
               reasoningEfforts: ['low', 'high'],
               defaultReasoningEffort: 'low',
-              serviceTiers: [],
+              serviceTiers: [{ id: 'fast', name: 'Fast', description: 'Faster responses' }],
+              defaultServiceTier: 'fast',
             },
           ],
         })
@@ -1942,6 +1956,7 @@ describe('new chats', () => {
       expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
         'Effort: Low',
       )
+      expect(screen.getByRole('button', { name: 'Enable fast mode' })).toBeTruthy()
     })
     localStorage.removeItem('harness.modelPickerLayout')
   })
@@ -1988,6 +2003,64 @@ describe('new chats', () => {
       expect(modelButton.textContent).toContain('Opus 5')
       expect(modelButton.textContent).toContain('Low')
       expect(localStorage.getItem('harness.serviceTier')).toBeNull()
+    })
+  })
+
+  it('prefers current source memory when discovery removes its selected model', async () => {
+    serverProviders = [
+      ...serverProviders,
+      {
+        ...(serverProviders[0] as Record<string, unknown>),
+        id: 'claude-code',
+        displayName: 'Claude Code',
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        const claude = (params as { provider: string }).provider === 'claude-code'
+        return Promise.resolve({
+          models: claude
+            ? [
+                {
+                  id: 'sonnet',
+                  displayName: 'Sonnet 5',
+                  isDefault: true,
+                  reasoningEfforts: ['low', 'high'],
+                  defaultReasoningEffort: 'low',
+                  serviceTiers: [],
+                },
+                {
+                  id: 'opus',
+                  displayName: 'Opus 5',
+                  isDefault: false,
+                  reasoningEfforts: ['low', 'high'],
+                  defaultReasoningEffort: 'low',
+                  serviceTiers: [],
+                },
+              ]
+            : [cachedCodexChoice().model],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.provider', 'claude-code')
+    localStorage.setItem('harness.model', 'claude-code:retired-model')
+    localStorage.setItem(
+      'harness.modelBySource',
+      JSON.stringify({
+        'claude-code': { modelKey: 'claude-code:opus', effort: 'high' },
+      }),
+    )
+
+    render(<App />)
+
+    await waitFor(() => {
+      const modelButton = screen.getByRole('button', { name: 'Model and reasoning' })
+      expect(modelButton.textContent).toContain('Opus 5')
+      expect(modelButton.textContent).toContain('High')
+      expect(localStorage.getItem('harness.model')).toBe('claude-code:opus')
     })
   })
 
