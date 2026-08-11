@@ -44,6 +44,10 @@ export const AssistantPhaseSchema = z.enum(['commentary', 'final_answer'])
 export type AssistantPhase = z.infer<typeof AssistantPhaseSchema>
 
 export const ItemSchema = z.object({
+  /**
+   * Stable identity for exactly one started -> deltas -> completed lifecycle.
+   * Producers must not reuse it; per-event validation cannot enforce uniqueness across a log.
+   */
   id: z.string(),
   turnId: z.string(),
   type: ItemTypeSchema,

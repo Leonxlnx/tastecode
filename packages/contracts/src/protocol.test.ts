@@ -81,6 +81,36 @@ describe('domain events', () => {
     expect(() => ItemSchema.parse({ ...legacy, phase: 'analysis' })).toThrow()
   })
 
+  it('carries one item ID through a complete lifecycle', () => {
+    const item = {
+      id: 'assistant-1',
+      turnId: 't1',
+      type: 'message',
+      status: 'started',
+      role: 'assistant',
+      createdAt: 1,
+    }
+    const events = [
+      DomainEventSchema.parse({ type: 'item.started', item }),
+      DomainEventSchema.parse({
+        type: 'item.delta',
+        turnId: item.turnId,
+        itemId: item.id,
+        textDelta: 'Done.',
+      }),
+      DomainEventSchema.parse({
+        type: 'item.completed',
+        item: { ...item, status: 'completed', text: 'Done.' },
+      }),
+    ]
+
+    expect(events.map((event) => ('item' in event ? event.item.id : event.itemId))).toEqual([
+      item.id,
+      item.id,
+      item.id,
+    ])
+  })
+
   it('accepts automatic approval review progress and results', () => {
     const review = {
       id: 'review-1',
