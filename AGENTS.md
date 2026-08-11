@@ -7,14 +7,14 @@ For any coding agent working in this repo — Claude Code, Codex, Cursor, an ACP
 **Where the project is:** M0 through M3 are done. M4 (the design agent) is next. See
 [docs/ROADMAP.md](./docs/ROADMAP.md) for durable status and GitHub issues/PRs for live work.
 
-**Branch model (Leon and Bluedev, 2026-08-08):** is the public beta for roughly the
-next four weeks and becomes the stable release at v1. is the integration branch:
+**Branch model (Leon and Bluedev, 2026-08-08):** `main` is the public beta for roughly the
+next four weeks and becomes the stable release at v1. `nightly` is the integration branch:
 every new change lands there first and nothing is hidden on it — it carries the full
 provider roster (Codex, Claude Code, Grok plus the parked Cursor, OpenCode, Antigravity,
 ACP and API-connection surfaces, all working). Work that the beta itself needs (fixes and
-polish for the three shipped plans) still goes to by PR and reaches nightly on the
-next rebase; everything else targets . Keep nightly rebased onto main. Do not
-un-park a provider on without Leon saying so. stays as an
+polish for the three shipped plans) still goes to `main` by PR and reaches `nightly` on the
+next rebase; everything else targets `nightly`. Keep `nightly` rebased onto `main`. Do not
+un-park a provider on `main` without Leon saying so. `harness-rust` stays as an
 experiment. [docs/dashboard.html](./docs/dashboard.html) is the release checklist.
 
 ## Read first
