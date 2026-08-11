@@ -71,11 +71,79 @@ export function mapThreadItem(
     case 'dynamicToolCall':
       return { ...base, type: 'tool_call', text: raw.tool }
 
+    case 'collabAgentToolCall': {
+      const failed = failedAgentCount(raw)
+      const targets = new Set([...raw.receiverThreadIds, ...Object.keys(raw.agentsStates)]).size
+      const status: ItemStatus =
+        raw.status === 'failed' || failed > 0
+          ? 'failed'
+          : raw.status === 'inProgress'
+            ? 'started'
+            : 'completed'
+      return {
+        ...base,
+        type: 'tool_call',
+        status,
+        text: collabAgentLabel(raw.tool, status, targets, failed),
+      }
+    }
+
+    case 'subAgentActivity':
+      return {
+        ...base,
+        type: 'tool_call',
+        status: raw.kind === 'interrupted' ? 'failed' : context.status,
+        text:
+          raw.kind === 'started'
+            ? 'Subagent started'
+            : raw.kind === 'interrupted'
+              ? 'Subagent interrupted'
+              : 'Subagent active',
+      }
+
     case 'webSearch':
       return { ...base, type: 'tool_call', text: 'web search' }
 
     default:
       return { ...base, type: 'unknown', text: `[${raw.type}]` }
+  }
+}
+
+function failedAgentCount(raw: Extract<ThreadItem, { type: 'collabAgentToolCall' }>): number {
+  return Object.values(raw.agentsStates).filter(
+    (state) =>
+      state?.status === 'errored' ||
+      state?.status === 'notFound' ||
+      state?.status === 'interrupted',
+  ).length
+}
+
+function collabAgentLabel(
+  tool: Extract<ThreadItem, { type: 'collabAgentToolCall' }>['tool'],
+  status: ItemStatus,
+  targets: number,
+  failed: number,
+): string {
+  if (failed > 0) {
+    return targets > 1 ? `${failed} of ${targets} subagents failed` : 'Subagent failed'
+  }
+
+  const plural = targets > 1
+  switch (tool) {
+    case 'spawnAgent':
+      if (status === 'failed') return 'Could not spawn a subagent'
+      if (status === 'started') return plural ? 'Spawning subagents' : 'Spawning a subagent'
+      return plural ? `Spawned ${targets} subagents` : 'Spawned a subagent'
+    case 'wait':
+      if (status === 'failed') return 'Subagent wait failed'
+      if (status === 'started') return 'Waiting for subagents'
+      return plural ? `${targets} subagents finished` : 'Subagent finished'
+    case 'sendInput':
+      return status === 'started' ? 'Sending input to a subagent' : 'Sent input to a subagent'
+    case 'resumeAgent':
+      return status === 'started' ? 'Resuming a subagent' : 'Resumed a subagent'
+    case 'closeAgent':
+      return status === 'started' ? 'Closing a subagent' : 'Closed a subagent'
   }
 }
 
