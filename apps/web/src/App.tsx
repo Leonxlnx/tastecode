@@ -245,6 +245,7 @@ export function App() {
         id: string
         promise: Promise<string | undefined>
         threadId?: string | undefined
+        title: string
       }
     | undefined
   >(undefined)
@@ -1162,7 +1163,9 @@ export function App() {
         const provisional = threadStates.current.get(provisionalId) ?? emptyThread
         threadStates.current.delete(provisionalId)
         threadStates.current.set(threadId, provisional)
-        if (pendingSession.current?.id === provisionalId) pendingSession.current.threadId = threadId
+        const pending = pendingSession.current?.id === provisionalId ? pendingSession.current : undefined
+        if (pending) pending.threadId = threadId
+        const canonicalTitle = pending?.title ?? title
         setProjects((current) =>
           current.map((project) =>
             project.path !== projectPath
@@ -1178,7 +1181,7 @@ export function App() {
                       : [
                           {
                             id: threadId,
-                            title,
+                            title: canonicalTitle,
                             provider: choice.provider,
                             ...(choice.agent ? { agent: choice.agent.id } : {}),
                             createdAt: Date.now(),
@@ -1198,7 +1201,7 @@ export function App() {
           setThread(provisional)
         }
         void transport
-          .request('thread.rename', { threadId, title })
+          .request('thread.rename', { threadId, title: canonicalTitle })
           .catch(() => undefined)
           .then(() => refreshProjects())
           .catch(() => undefined)
@@ -1340,7 +1343,7 @@ export function App() {
         setThread(provisional)
         setThreadRevealRequest((request) => request + 1)
         const promise = createSession(activePath, provisionalId, titleFrom(text))
-        pendingSession.current = { id: provisionalId, promise }
+        pendingSession.current = { id: provisionalId, promise, title: titleFrom(text) }
         threadId = await promise
         if (pendingSession.current?.id === provisionalId) pendingSession.current = undefined
         if (!threadId) {
@@ -2147,6 +2150,12 @@ export function App() {
   const renameSidebarSession = useCallback(
     (id: string, title: string) => {
       setProjects((current) => renameSession(current, id, title))
+      const pending = pendingSession.current
+      if (pending?.id === id) {
+        pending.title = title
+        if (!pending.threadId) return
+        id = pending.threadId
+      }
       void transport.request('thread.rename', { threadId: id, title }).catch(() => undefined)
     },
     [transport],

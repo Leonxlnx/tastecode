@@ -1963,6 +1963,44 @@ describe('global shortcuts', () => {
 })
 
 describe('live sessions', () => {
+  it('keeps a rename made while a provisional session is starting', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let resolveStart: ((value: { threadId: string }) => void) | undefined
+    const start = new Promise<{ threadId: string }>((resolve) => {
+      resolveStart = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.start' ? start : request(method, params),
+    )
+
+    render(<App />)
+    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('providers.list', {}))
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Initial request' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Rename Initial request' }))
+    const input = screen.getByDisplayValue('Initial request')
+    fireEvent.change(input, { target: { value: 'My custom title' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(transport.request).not.toHaveBeenCalledWith('thread.rename', {
+      threadId: expect.stringMatching(/^pending:/),
+      title: 'My custom title',
+    })
+    await act(async () => resolveStart?.({ threadId: 'thread-1' }))
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.rename', {
+        threadId: 'thread-1',
+        title: 'My custom title',
+      })
+    })
+  })
+
   it('shows an old-chat submission and working controls before the server resumes it', async () => {
     serverProjects = [
       {
