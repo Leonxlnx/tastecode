@@ -8,24 +8,13 @@ export type ProjectFileReference =
 
 /** Preserve real Markdown file-link destinations before the renderer blocks file: URLs. */
 export function preserveProjectFileLinks(markdown: string): string {
-  const candidatePattern = /\]\(\s*<?(?:file:\/\/|[a-z]:[\\/])/gi
-  let parseEnd = 0
-  let remainingScan = markdown.length
-  for (const candidate of markdown.matchAll(candidatePattern)) {
-    const resource = resourceEndAt(markdown, candidate.index + 1, remainingScan)
-    remainingScan -= resource.scanned
-    if (resource.end === undefined) {
-      parseEnd = markdown.length
-      break
-    }
-    parseEnd = Math.max(parseEnd, resource.end)
-  }
-  if (parseEnd === 0) return markdown
+  const parseWindow = projectFileLinkParseWindow(markdown)
+  if (parseWindow.end === 0) return markdown
 
   const events = postprocess(
     parse()
       .document()
-      .write(preprocess()(markdown.slice(0, parseEnd), 'utf8', true)),
+      .write(preprocess()(markdown.slice(0, parseWindow.end), 'utf8', true)),
   )
   const destinations: Array<{ start: number; end: number; href: string }> = []
   const owners: Array<'link' | 'image'> = []
@@ -62,6 +51,24 @@ export function preserveProjectFileLinks(markdown: string): string {
     cursor = destination.end
   }
   return result + markdown.slice(cursor)
+}
+
+export function projectFileLinkParseWindow(markdown: string): { end: number; scanned: number } {
+  const candidatePattern = /\]\(\s*<?(?:file:\/\/|[a-z]:[\\/])/gi
+  let parseEnd = 0
+  let scanned = 0
+  let remainingScan = markdown.length
+  for (const candidate of markdown.matchAll(candidatePattern)) {
+    const resource = resourceEndAt(markdown, candidate.index + 1, remainingScan)
+    scanned += resource.scanned
+    remainingScan -= resource.scanned
+    if (resource.end === undefined) {
+      parseEnd = markdown.length
+      break
+    }
+    parseEnd = Math.max(parseEnd, resource.end)
+  }
+  return { end: parseEnd, scanned }
 }
 
 function resourceEndAt(
