@@ -901,6 +901,27 @@ export class Store {
     })
   }
 
+  appendAndCompleteQueuedTurn(threadId: string, queueId: string, event: DomainEvent): number {
+    return this.#transaction(() => {
+      const claimed = this.#db
+        .prepare(
+          `SELECT 1 FROM queued_turns
+           WHERE thread_id = ? AND queue_id = ? AND state = 'dispatching'`,
+        )
+        .get(threadId, queueId)
+      if (!claimed) throw new Error('queued prompt is no longer claimed')
+      const seq = this.#appendEvent(threadId, event, Date.now())
+      this.#appendQueuedTurnEvent(threadId, queueId, 'complete', {})
+      this.#db
+        .prepare(
+          `DELETE FROM queued_turns
+           WHERE thread_id = ? AND queue_id = ? AND state = 'dispatching'`,
+        )
+        .run(threadId, queueId)
+      return seq
+    })
+  }
+
   clearQueuedTurns(threadId: string): void {
     this.#transaction(() => this.#clearQueuedTurns(threadId))
   }

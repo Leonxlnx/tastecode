@@ -107,7 +107,7 @@ import { TerminalManager } from './terminal.js'
 import { installLocalSkill } from './skill-install.js'
 import { startDesignPreview, type RunningPreview } from './design-preview-runner.js'
 
-type UserSubmission = { id: string; text: string; createdAt: number }
+type UserSubmission = { id: string; text: string; createdAt: number; queueId?: string }
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions; clientSubmissionId?: string }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
@@ -1092,8 +1092,8 @@ export class Orchestrator {
           id: item.clientSubmissionId,
           text: item.text,
           createdAt: item.createdAt,
+          queueId: item.id,
         })
-        this.#store.completeQueuedTurn(threadId, item.id)
       } else {
         this.#store.completeQueuedTurn(threadId, item.id)
       }
@@ -1186,7 +1186,7 @@ export class Orchestrator {
 
   #recordUserSubmission(threadId: string, turnId: string, submission: UserSubmission): void {
     this.#serverOwnedUserTurns.add(userTurnKey(threadId, turnId))
-    this.#record(threadId, {
+    const event: DomainEvent = {
       type: 'item.completed',
       item: {
         id: submission.id,
@@ -1197,7 +1197,13 @@ export class Orchestrator {
         text: submission.text,
         createdAt: submission.createdAt,
       },
-    })
+    }
+    if (submission.queueId) {
+      const seq = this.#store.appendAndCompleteQueuedTurn(threadId, submission.queueId, event)
+      this.#onEvent(threadId, event, seq)
+    } else {
+      this.#record(threadId, event)
+    }
   }
 
   /** A thread's history, for a client opening or reattaching to it. */
@@ -1484,7 +1490,12 @@ export class Orchestrator {
         next.attachments,
         next.options,
         next.clientSubmissionId
-          ? { id: next.clientSubmissionId, text: next.text, createdAt: next.createdAt }
+          ? {
+              id: next.clientSubmissionId,
+              text: next.text,
+              createdAt: next.createdAt,
+              queueId: next.id,
+            }
           : undefined,
       )
       if (generation !== this.#panicGeneration) {
@@ -1493,7 +1504,7 @@ export class Orchestrator {
         await this.#threads.get(threadId)?.session.interrupt(threadId)
         return
       }
-      this.#store.completeQueuedTurn(threadId, next.id)
+      if (!next.clientSubmissionId) this.#store.completeQueuedTurn(threadId, next.id)
       this.#activeTurns.add(threadId)
     } catch (error) {
       // After a panic the queue was emptied on purpose; putting the grabbed
