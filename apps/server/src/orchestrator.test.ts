@@ -399,7 +399,7 @@ describe('durable turn timing', () => {
       await expect(orchestrator.sendTurn(thread.id, 'Fails')).rejects.toThrow('provider rejected')
 
       session.sendError = undefined
-      session.turnIds.push('after-failure', 'before-dispose')
+      session.turnIds.push('after-failure', 'before-error', 'before-dispose')
       now.mockReturnValue(2_000)
       await orchestrator.sendTurn(thread.id, 'Retry')
       now.mockReturnValue(5_000)
@@ -409,12 +409,21 @@ describe('durable turn timing', () => {
       })
 
       now.mockReturnValue(6_000)
-      await orchestrator.sendTurn(thread.id, 'Dispose')
-      await orchestrator.disposeAll()
-      now.mockReturnValue(8_000)
+      await orchestrator.sendTurn(thread.id, 'Errors')
+      session.emit({ type: 'thread.error', threadId: thread.id, message: 'provider failed' })
+      now.mockReturnValue(7_000)
       session.emit({
         type: 'turn.started',
-        turn: { id: 'before-dispose', threadId: thread.id, status: 'running', createdAt: 8_000 },
+        turn: { id: 'before-error', threadId: thread.id, status: 'running', createdAt: 7_000 },
+      })
+
+      now.mockReturnValue(8_000)
+      await orchestrator.sendTurn(thread.id, 'Dispose')
+      await orchestrator.disposeAll()
+      now.mockReturnValue(9_000)
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 'before-dispose', threadId: thread.id, status: 'running', createdAt: 9_000 },
       })
 
       const starts = store
@@ -424,7 +433,7 @@ describe('durable turn timing', () => {
           (event): event is Extract<DomainEvent, { type: 'turn.started' }> =>
             event.type === 'turn.started',
         )
-      expect(starts.map(({ turn }) => turn.createdAt)).toEqual([2_000, 8_000])
+      expect(starts.map(({ turn }) => turn.createdAt)).toEqual([2_000, 7_000, 9_000])
     } finally {
       now.mockRestore()
       await orchestrator.disposeAll()

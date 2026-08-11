@@ -1080,6 +1080,10 @@ export class Orchestrator {
       this.#acceptedTurnStarts.get(threadId)?.delete(event.turnId)
       event = { ...event, completedAt: Date.now() }
     }
+    if (event.type === 'thread.error') {
+      this.#pendingTurnStarts.delete(threadId)
+      this.#acceptedTurnStarts.delete(threadId)
+    }
     if (event.type === 'turn.started') this.#activeTurns.add(threadId)
     if (event.type === 'turn.completed' || event.type === 'thread.error') {
       this.#activeTurns.delete(threadId)
