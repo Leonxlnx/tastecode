@@ -66,11 +66,11 @@ export class ServerSupervisor {
     child.stderr?.on('data', forward)
     child.on('error', (error) => {
       this.#options.onLog(`server failed to start: ${String(error)}`)
-      this.#onExit()
+      this.#onExit(child)
     })
     child.on('exit', (code, signal) => {
       this.#options.onLog(`server exited (code ${code ?? 'null'}, signal ${signal ?? 'null'})`)
-      this.#onExit()
+      this.#onExit(child)
     })
   }
 
@@ -83,7 +83,8 @@ export class ServerSupervisor {
     child?.kill()
   }
 
-  #onExit(): void {
+  #onExit(child: ChildProcess): void {
+    if (this.#child !== child) return
     this.#child = undefined
     if (this.#stopped) return
     const healthy = Date.now() - this.#startedAt >= HEALTHY_RUN_MS

@@ -100,6 +100,22 @@ describe('ServerSupervisor', () => {
     expect(again.children[0]!.killed).toBe(true)
   })
 
+  it('treats error followed by exit as one failed run', () => {
+    const { sup, children } = supervisor()
+    sup.start()
+
+    children[0]!.emit('error', new Error('spawn failed'))
+    vi.advanceTimersByTime(500)
+    expect(children).toHaveLength(2)
+
+    // Node may emit exit after error. A late exit from the old child must not
+    // make the supervisor forget the healthy replacement and spawn a third.
+    children[0]!.emit('exit', 1, null)
+    vi.advanceTimersByTime(1_000)
+
+    expect(children).toHaveLength(2)
+  })
+
   it('forwards child output line by line', () => {
     const { sup, children, logs } = supervisor()
     sup.start()
