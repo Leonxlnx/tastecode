@@ -1473,6 +1473,7 @@ export function App() {
             }))
           ? selectedModelChoice
           : undefined
+      let turnAccepted = false
       try {
         const result = await transport.request('thread.sendTurn', {
           threadId,
@@ -1482,6 +1483,7 @@ export function App() {
           ...(turnChoice && effort ? { effort } : {}),
           ...(turnChoice && serviceTier ? { serviceTier } : {}),
         })
+        turnAccepted = true
         const current = threadStates.current.get(threadId) ?? emptyThread
         if (result.queued) {
           if (steering) {
@@ -1539,18 +1541,25 @@ export function App() {
         if (optimisticQueueId) {
           updateQueue(threadId, (items) => items.filter((item) => item.id !== optimisticQueueId))
         }
-        const current = threadStates.current.get(threadId)
-        // Any locally-invented turn must be rolled back on failure, not only
-        // the one whose id this call happens to remember — a stranded
-        // optimistic turn keeps the composer stuck on Stop until a reload.
-        if (
-          current !== undefined &&
-          (current.activeTurn?.id === optimisticTurnId ||
-            current.activeTurn?.id.startsWith('local-turn:') === true)
-        ) {
-          const next: ThreadState = { ...current, running: false, activeTurn: undefined }
-          threadStates.current.set(threadId, next)
-          if (threadId === activeIdRef.current) setThread(next)
+        if (!turnAccepted) {
+          const current = threadStates.current.get(threadId)
+          if (current !== undefined) {
+            // The server did not accept this prompt. Remove only its local
+            // echo; a canonical event has a server id and remains.
+            let next = removeQueuedOptimisticMessage(current, text)
+            // Any locally-invented turn must be rolled back on failure, not
+            // only the one whose id this call happens to remember — a
+            // stranded optimistic turn leaves the composer stuck on Stop.
+            if (
+              current.activeTurn?.id === optimisticTurnId ||
+              current.activeTurn?.id.startsWith('local-turn:') === true
+            ) {
+              next = { ...next, running: false, activeTurn: undefined }
+            }
+            threadStates.current.set(threadId, next)
+            if (threadId === activeIdRef.current) setThread(next)
+          }
+          restoreDraft()
         }
         setNotice(error instanceof Error ? error.message : String(error))
       }

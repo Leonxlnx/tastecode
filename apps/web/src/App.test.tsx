@@ -2041,6 +2041,50 @@ describe('live sessions', () => {
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
   })
 
+  it('restores the draft and removes its optimistic row when the server rejects a turn', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Old chat', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let rejectSend: ((reason: Error) => void) | undefined
+    const pendingSend = new Promise((_, reject) => {
+      rejectSend = reject
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn' ? pendingSend : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Old chat' }))
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Keep this if restore wins' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(screen.getByTestId('thread').textContent).toContain('Keep this if restore wins')
+    expect(screen.getByText('Working')).toBeTruthy()
+    expect((composer as HTMLTextAreaElement).value).toBe('')
+
+    await act(async () => {
+      rejectSend?.(new Error('cannot start a turn while restoring a checkpoint'))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('thread').textContent).not.toContain('Keep this if restore wins')
+      expect((composer as HTMLTextAreaElement).value).toBe('Keep this if restore wins')
+    })
+    expect(screen.queryByText('Working')).toBeNull()
+    expect(screen.getByRole('alert').textContent).toContain(
+      'cannot start a turn while restoring a checkpoint',
+    )
+  })
+
   it('queues Enter submissions while the active session is running', async () => {
     serverProjects = [
       {
