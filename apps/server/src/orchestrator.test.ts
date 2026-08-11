@@ -1668,6 +1668,61 @@ describe('rolling a session back', () => {
     }
   })
 
+  it('refuses a second restore while the first restore is still in progress', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'first task')
+    const first = orchestrator.checkpoints(thread.id)[0]!
+
+    let release = (_value: checkpoint.Snapshot) => {}
+    const restoringSnapshot = new Promise<checkpoint.Snapshot>(
+      (resolve) => (release = resolve),
+    )
+    const restoreSnapshot = vi
+      .spyOn(checkpoint, 'restoreSnapshot')
+      .mockClear()
+      .mockReturnValueOnce(restoringSnapshot)
+    const restoring = orchestrator.restoreCheckpoint(thread.id, first.id)
+    await vi.waitFor(() => expect(restoreSnapshot).toHaveBeenCalledTimes(1))
+
+    try {
+      await expect(orchestrator.restoreCheckpoint(thread.id, first.id)).rejects.toThrow(
+        'cannot restore while another restore is running',
+      )
+    } finally {
+      release({ commit: 'replaced', clean: false })
+      await restoring
+    }
+  })
+
+  it('refuses a new turn while a checkpoint restore is still in progress', async () => {
+    const { orchestrator, sessions } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'first task')
+    const first = orchestrator.checkpoints(thread.id)[0]!
+
+    let release = (_value: checkpoint.Snapshot) => {}
+    const restoringSnapshot = new Promise<checkpoint.Snapshot>(
+      (resolve) => (release = resolve),
+    )
+    const restoreSnapshot = vi
+      .spyOn(checkpoint, 'restoreSnapshot')
+      .mockClear()
+      .mockReturnValueOnce(restoringSnapshot)
+    const restoring = orchestrator.restoreCheckpoint(thread.id, first.id)
+    await vi.waitFor(() => expect(restoreSnapshot).toHaveBeenCalledTimes(1))
+
+    try {
+      await expect(orchestrator.sendTurn(thread.id, 'too soon')).rejects.toThrow(
+        'cannot start a turn while restoring a checkpoint',
+      )
+      expect(sessions[0]!.sent).toEqual(['first task'])
+    } finally {
+      release({ commit: 'replaced', clean: false })
+      await restoring
+    }
+  })
+
   it('does not fail a turn just because the folder is not a repository', async () => {
     const { orchestrator } = harness()
     const plain = mkdtempSync(path.join(os.tmpdir(), 'harness-plain-'))

@@ -321,6 +321,7 @@ export class Orchestrator {
   #threadApprovals = new Map<string, ApprovalMode>()
   #activeTurns = new Set<string>()
   #startingTurns = new Set<string>()
+  #restoringThreads = new Set<string>()
   #reviewingDiffs = new Set<string>()
   #queuedTurns = new Map<string, QueuedTurnEntry[]>()
   #drainingQueues = new Set<string>()
@@ -889,6 +890,9 @@ export class Orchestrator {
     if (this.#reviewingDiffs.has(threadId)) {
       throw new Error('cannot start a turn while a diff rejection is running')
     }
+    if (this.#restoringThreads.has(threadId)) {
+      throw new Error('cannot start a turn while restoring a checkpoint')
+    }
     this.#wakeForActivity(threadId)
     const panicGeneration = this.#panicGeneration
     this.#startingTurns.add(threadId)
@@ -1407,23 +1411,31 @@ export class Orchestrator {
     if (this.#activeTurns.has(threadId) || this.#startingTurns.has(threadId)) {
       throw new Error('cannot restore during a running turn')
     }
-    const stored = this.#store.thread(threadId)
-    const checkpoint = this.#store.checkpoint(checkpointId)
-    if (!stored || !checkpoint || checkpoint.threadId !== threadId) {
-      throw new Error('no such checkpoint')
+    if (this.#restoringThreads.has(threadId)) {
+      throw new Error('cannot restore while another restore is running')
     }
-
-    const repoPath = this.#repoPath(threadId)
-    const replaced = await restoreSnapshot(repoPath, checkpoint.commit)
-
-    // Rolling the files back without this would leave the transcript
-    // describing work that no longer exists on disk.
+    this.#restoringThreads.add(threadId)
     try {
-      this.#dropInboxProjection(threadId)
-      return { undo: this.#store.saveRestoreUndo(threadId, checkpoint.seq, replaced.commit) }
-    } catch (error) {
-      await restoreSnapshot(repoPath, replaced.commit)
-      throw error
+      const stored = this.#store.thread(threadId)
+      const checkpoint = this.#store.checkpoint(checkpointId)
+      if (!stored || !checkpoint || checkpoint.threadId !== threadId) {
+        throw new Error('no such checkpoint')
+      }
+
+      const repoPath = this.#repoPath(threadId)
+      const replaced = await restoreSnapshot(repoPath, checkpoint.commit)
+
+      // Rolling the files back without this would leave the transcript
+      // describing work that no longer exists on disk.
+      try {
+        this.#dropInboxProjection(threadId)
+        return { undo: this.#store.saveRestoreUndo(threadId, checkpoint.seq, replaced.commit) }
+      } catch (error) {
+        await restoreSnapshot(repoPath, replaced.commit)
+        throw error
+      }
+    } finally {
+      this.#restoringThreads.delete(threadId)
     }
   }
 
@@ -1432,18 +1444,26 @@ export class Orchestrator {
     if (this.#activeTurns.has(threadId) || this.#startingTurns.has(threadId)) {
       throw new Error('cannot restore during a running turn')
     }
-    const stored = this.#store.thread(threadId)
-    const undo = this.#store.restoreUndo(threadId, token)
-    if (!stored || !undo) throw new Error('restore can no longer be undone')
-
-    const repoPath = this.#repoPath(threadId)
-    const replaced = await restoreSnapshot(repoPath, undo.commit)
+    if (this.#restoringThreads.has(threadId)) {
+      throw new Error('cannot restore while another restore is running')
+    }
+    this.#restoringThreads.add(threadId)
     try {
-      this.#store.applyRestoreUndo(threadId, token)
-      this.#dropInboxProjection(threadId)
-    } catch (error) {
-      await restoreSnapshot(repoPath, replaced.commit)
-      throw error
+      const stored = this.#store.thread(threadId)
+      const undo = this.#store.restoreUndo(threadId, token)
+      if (!stored || !undo) throw new Error('restore can no longer be undone')
+
+      const repoPath = this.#repoPath(threadId)
+      const replaced = await restoreSnapshot(repoPath, undo.commit)
+      try {
+        this.#store.applyRestoreUndo(threadId, token)
+        this.#dropInboxProjection(threadId)
+      } catch (error) {
+        await restoreSnapshot(repoPath, replaced.commit)
+        throw error
+      }
+    } finally {
+      this.#restoringThreads.delete(threadId)
     }
   }
 
