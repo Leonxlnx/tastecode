@@ -85,6 +85,25 @@ describe('project file links', () => {
     )
   })
 
+  it('preserves complete multiline resource boundaries', () => {
+    const markdown = [
+      '[plain](file:///E:/project/plain.ts\n "title")',
+      '[literal](<file:///E:/project/literal.ts>\n "title")',
+      '[leading](\nfile:///E:/project/leading.ts)',
+    ].join('\n')
+
+    const preserved = preserveProjectFileLinks(markdown)
+    expect(preserved).toContain(
+      '[plain](/__harness/project-file/file%3A%2F%2F%2FE%3A%2Fproject%2Fplain.ts\n "title")',
+    )
+    expect(preserved).toContain(
+      '[literal](/__harness/project-file/file%3A%2F%2F%2FE%3A%2Fproject%2Fliteral.ts\n "title")',
+    )
+    expect(preserved).toContain(
+      '[leading](\n/__harness/project-file/file%3A%2F%2F%2FE%3A%2Fproject%2Fleading.ts)',
+    )
+  })
+
   it('does not parse a large unrelated tail after the final candidate line', () => {
     const markdown = `[index](file:///E:/project/index.ts)\n${'ordinary text '.repeat(80_000)}`
     const started = performance.now()

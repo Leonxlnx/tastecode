@@ -12,7 +12,10 @@ export function preserveProjectFileLinks(markdown: string): string {
   let parseEnd = 0
   for (const candidate of markdown.matchAll(candidatePattern)) {
     const newline = markdown.indexOf('\n', candidate.index)
-    parseEnd = newline < 0 ? markdown.length : newline + 1
+    parseEnd = Math.max(
+      parseEnd,
+      resourceEndAt(markdown, candidate.index + 1) ?? (newline < 0 ? markdown.length : newline + 1),
+    )
   }
   if (parseEnd === 0) return markdown
 
@@ -56,6 +59,32 @@ export function preserveProjectFileLinks(markdown: string): string {
     cursor = destination.end
   }
   return result + markdown.slice(cursor)
+}
+
+function resourceEndAt(markdown: string, openingParenthesis: number): number | undefined {
+  let depth = 0
+  let quote: string | undefined
+  let angle = false
+  for (let index = openingParenthesis; index < markdown.length; index += 1) {
+    const character = markdown[index]
+    if (character === '\\') {
+      index += 1
+      continue
+    }
+    if (angle) {
+      if (character === '>') angle = false
+      continue
+    }
+    if (quote) {
+      if (character === quote) quote = undefined
+      continue
+    }
+    if (character === '<') angle = true
+    else if (character === '"' || character === "'") quote = character
+    else if (character === '(') depth += 1
+    else if (character === ')' && --depth === 0) return index + 1
+  }
+  return undefined
 }
 
 function encodeFileHref(href: string): string {
