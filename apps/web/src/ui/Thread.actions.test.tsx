@@ -28,6 +28,34 @@ vi.mock('@tanstack/react-virtual', () => ({
 
 afterEach(cleanup)
 
+function turnItem(id: string, createdAt: number, fields: Partial<Item>): Item {
+  return {
+    id,
+    turnId: 'turn-1',
+    type: 'message',
+    status: 'completed',
+    createdAt,
+    ...fields,
+  }
+}
+
+function renderCompleted(items: Item[]) {
+  return render(
+    <Thread
+      items={items}
+      running={false}
+      activeTurn={undefined}
+      plan={[]}
+      diff={undefined}
+      approvals={[]}
+      userInputs={[]}
+      reviews={[]}
+      onDecide={() => undefined}
+      onAnswerUserInput={() => undefined}
+    />,
+  )
+}
+
 describe('design activity rows', () => {
   const marker = (id: string, text: string): Item => ({
     id,
@@ -168,77 +196,26 @@ describe('completed activity disclosure', () => {
 
   it('preserves narration and activity in exact chronological groups', () => {
     const items: Item[] = [
-      {
-        id: 'prompt-1',
-        turnId: 'turn-1',
-        type: 'message',
-        role: 'user',
-        status: 'completed',
-        text: 'Fix it',
-        createdAt: 1,
-      },
-      {
-        id: 'update-1',
-        turnId: 'turn-1',
-        type: 'message',
+      turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
+      turnItem('update-1', 2, {
         role: 'assistant',
         phase: 'commentary',
-        status: 'completed',
         text: 'I found the cause.',
-        createdAt: 2,
-      },
-      {
-        id: 'command-1',
-        turnId: 'turn-1',
-        type: 'command',
-        status: 'completed',
-        command: 'pnpm test',
-        text: '12 passed',
-        createdAt: 3,
-      },
-      {
-        id: 'update-2',
-        turnId: 'turn-1',
-        type: 'message',
+      }),
+      turnItem('command-1', 3, { type: 'command', command: 'pnpm test', text: '12 passed' }),
+      turnItem('update-2', 4, {
         role: 'assistant',
         phase: 'commentary',
-        status: 'completed',
         text: 'The focused test passes.',
-        createdAt: 4,
-      },
-      {
-        id: 'files-1',
-        turnId: 'turn-1',
-        type: 'file_change',
-        status: 'completed',
-        path: 'src/chat.ts',
-        createdAt: 5,
-      },
-      {
-        id: 'answer-1',
-        turnId: 'turn-1',
-        type: 'message',
+      }),
+      turnItem('files-1', 5, { type: 'file_change', path: 'src/chat.ts' }),
+      turnItem('answer-1', 6, {
         role: 'assistant',
         phase: 'final_answer',
-        status: 'completed',
         text: 'Fixed.',
-        createdAt: 6,
-      },
+      }),
     ]
-    render(
-      <Thread
-        items={items}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
-        onDecide={() => undefined}
-        onAnswerUserInput={() => undefined}
-      />,
-    )
+    renderCompleted(items)
 
     const disclosures = screen.getAllByRole('button', { name: 'Worked for 1s' })
     expect(disclosures).toHaveLength(2)
@@ -263,64 +240,17 @@ describe('completed activity disclosure', () => {
 
   it('keeps every completed activity kind accessible after replay', () => {
     const items: Item[] = [
-      {
-        id: 'prompt-1',
-        turnId: 'turn-1',
-        type: 'message',
-        role: 'user',
-        status: 'completed',
-        text: 'Build it',
-        createdAt: 1,
-      },
-      {
-        id: 'reasoning-1',
-        turnId: 'turn-1',
-        type: 'reasoning',
-        status: 'completed',
-        text: 'Inspecting state',
-        createdAt: 2,
-      },
-      {
-        id: 'command-1',
-        turnId: 'turn-1',
-        type: 'command',
-        status: 'completed',
-        command: 'pnpm test',
-        createdAt: 3,
-      },
-      {
-        id: 'design-1',
-        turnId: 'turn-1',
-        type: 'tool_call',
-        status: 'completed',
-        text: 'design:build',
-        createdAt: 4,
-      },
-      {
-        id: 'answer-1',
-        turnId: 'turn-1',
-        type: 'message',
+      turnItem('prompt-1', 1, { role: 'user', text: 'Build it' }),
+      turnItem('reasoning-1', 2, { type: 'reasoning', text: 'Inspecting state' }),
+      turnItem('command-1', 3, { type: 'command', command: 'pnpm test' }),
+      turnItem('design-1', 4, { type: 'tool_call', text: 'design:build' }),
+      turnItem('answer-1', 5, {
         role: 'assistant',
         phase: 'final_answer',
-        status: 'completed',
         text: 'Built.',
-        createdAt: 5,
-      },
+      }),
     ]
-    render(
-      <Thread
-        items={items.map((entry) => ({ ...entry }))}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
-        onDecide={() => undefined}
-        onAnswerUserInput={() => undefined}
-      />,
-    )
+    renderCompleted(items.map((entry) => ({ ...entry })))
 
     fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
     expect(screen.getByText('Thinking')).toBeTruthy()
@@ -329,50 +259,19 @@ describe('completed activity disclosure', () => {
   })
 
   it('shows response actions only on the explicit final answer', () => {
-    render(
-      <Thread
-        items={[
-          {
-            id: 'prompt-1',
-            turnId: 'turn-1',
-            type: 'message',
-            role: 'user',
-            status: 'completed',
-            text: 'Fix it',
-            createdAt: 1,
-          },
-          {
-            id: 'update-1',
-            turnId: 'turn-1',
-            type: 'message',
-            role: 'assistant',
-            phase: 'commentary',
-            status: 'completed',
-            text: 'Checking.',
-            createdAt: 2,
-          },
-          {
-            id: 'answer-1',
-            turnId: 'turn-1',
-            type: 'message',
-            role: 'assistant',
-            phase: 'final_answer',
-            status: 'completed',
-            text: 'Fixed.',
-            createdAt: 3,
-          },
-        ]}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
-        onDecide={() => undefined}
-        onAnswerUserInput={() => undefined}
-      />,
-    )
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
+      turnItem('update-1', 2, {
+        role: 'assistant',
+        phase: 'commentary',
+        text: 'Checking.',
+      }),
+      turnItem('answer-1', 3, {
+        role: 'assistant',
+        phase: 'final_answer',
+        text: 'Fixed.',
+      }),
+    ])
 
     expect(screen.getAllByRole('button', { name: 'Copy response' })).toHaveLength(1)
   })
