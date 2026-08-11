@@ -140,6 +140,7 @@ CREATE TEMP TABLE session_search_snapshot_rows (
   search_rowid INTEGER NOT NULL,
   score        REAL NOT NULL,
   created_at   INTEGER NOT NULL,
+  snippet      TEXT NOT NULL,
   PRIMARY KEY (snapshot_id, search_rowid)
 );
 
@@ -976,14 +977,15 @@ export class Store {
         this.#db
           .prepare(
             `INSERT INTO session_search_snapshot_rows
-               (snapshot_id, search_rowid, score, created_at)
-             SELECT ?, session_search.rowid, bm25(session_search), session_search.created_at
+               (snapshot_id, search_rowid, score, created_at, snippet)
+             SELECT ?, session_search.rowid, bm25(session_search), session_search.created_at,
+                    snippet(session_search, 4, ?, ?, ' … ', 24)
              FROM session_search
              JOIN threads ON threads.id = session_search.thread_id
              JOIN projects ON projects.path = threads.project_path
              WHERE ${clauses.join(' AND ')}`,
           )
-          .run(snapshotId, ...parameters)
+          .run(snapshotId, SNIPPET_START, SNIPPET_END, ...parameters)
         this.#db.exec('RELEASE create_search_snapshot')
       } catch (error) {
         this.#db.exec('ROLLBACK TO create_search_snapshot')
@@ -1006,24 +1008,17 @@ export class Store {
                 threads.id AS thread_id, threads.title AS thread_title,
                 threads.provider, session_search.turn_id, snapshot.created_at,
                 snapshot.search_rowid, snapshot.score,
-                snippet(session_search, 4, ?, ?, ' … ', 24) AS snippet
+                snapshot.snippet
          FROM session_search_snapshot_rows AS snapshot
          JOIN session_search ON session_search.rowid = snapshot.search_rowid
          JOIN threads ON threads.id = session_search.thread_id
          JOIN projects ON projects.path = threads.project_path
-         WHERE snapshot.snapshot_id = ? AND session_search MATCH ?
+         WHERE snapshot.snapshot_id = ?
          ${cursorClause}
          ORDER BY snapshot.score, snapshot.created_at DESC, snapshot.search_rowid DESC
          LIMIT ?`,
       )
-      .all(
-        SNIPPET_START,
-        SNIPPET_END,
-        snapshotId,
-        ftsQuery,
-        ...cursorParameters,
-        limit + 1,
-      ) as Array<{
+      .all(snapshotId, ...cursorParameters, limit + 1) as Array<{
       project_path: string
       project_name: string
       thread_id: string
