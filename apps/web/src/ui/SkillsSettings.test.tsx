@@ -124,6 +124,38 @@ describe('Agent Skills settings', () => {
     await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
   })
 
+  it('reports a rejected folder picker without starting an install', async () => {
+    const transport = client(async (method) => {
+      if (method === 'skills.list') {
+        return {
+          capabilities: { inventory: true, configure: false, install: true },
+          skills: [skill],
+          errors: [],
+        }
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    pickSkillFolder.mockRejectedValueOnce(new Error('Folder picker unavailable'))
+    render(
+      <SkillsSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Install from folder' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Folder picker unavailable')
+    expect(
+      vi
+        .mocked(transport.request)
+        .mock.calls.some(([method]) => method === 'skills.installFromFolder'),
+    ).toBe(false)
+  })
+
   it('recovers inventory after the connection reopens', async () => {
     let onState: ((state: 'open' | 'reconnecting') => void) | undefined
     const transport = {
