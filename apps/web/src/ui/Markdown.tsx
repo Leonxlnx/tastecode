@@ -20,7 +20,7 @@ import {
   ZoomOut,
 } from 'lucide-react'
 import { Streamdown, type Components, type IconMap } from 'streamdown'
-import { revealProjectFile } from '../bridge.js'
+import { canRevealProjectFile, revealProjectFile } from '../bridge.js'
 import { preserveProjectFileLinks, projectFileReference } from '../project-file-link.js'
 import { FileTypeIcon, isFileReference } from './FileTypeIcon.js'
 import { onHighlighterChange, plainCodePlugin, shikiPlugin } from './highlighter.js'
@@ -63,7 +63,7 @@ function MarkdownLink({ children, href, node: _node, ...props }: MarkdownLinkPro
   if (filePath) {
     if (projectPath) {
       const reference = projectFileReference(filePath, projectPath)
-      if (reference?.kind === 'safe') {
+      if (reference?.kind === 'safe' && canRevealProjectFile) {
         return (
           <button
             className="md-file-link md-file-link--action"
@@ -124,6 +124,7 @@ function localFileReferencePath(href: string): string | undefined {
   if (!localPath) return undefined
 
   const withoutAnchor = decoded.replace(/[?#].*$/, '')
+  if (withoutAnchor.startsWith('/__harness/project-file/')) return withoutAnchor
   return isFileReference(withoutAnchor) ? withoutAnchor : undefined
 }
 

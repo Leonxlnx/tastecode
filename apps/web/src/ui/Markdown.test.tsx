@@ -1,7 +1,13 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { revealProjectFile } from '../bridge.js'
 import { Markdown } from './Markdown.js'
+
+vi.mock('../bridge.js', () => ({
+  canRevealProjectFile: true,
+  revealProjectFile: vi.fn(() => Promise.resolve()),
+}))
 
 afterEach(cleanup)
 
@@ -80,6 +86,27 @@ describe('Markdown inline references', () => {
     const action = screen.getByRole('button', { name: 'index.html' })
     expect(action.getAttribute('title')).toContain(
       'E:\\randomtesting\\A_personalharness\\site\\index.html',
+    )
+    fireEvent.click(action)
+    expect(revealProjectFile).toHaveBeenCalledWith(
+      'E:\\randomtesting\\A_personalharness\\site\\index.html',
+      'E:\\randomtesting\\A_personalharness\\site',
+    )
+  })
+
+  it('keeps preserved files with unknown extensions inside the project action flow', () => {
+    render(
+      <Markdown
+        text={'Saved [artifact.log](file:///E:/randomtesting/A_personalharness/site/artifact.log).'}
+        projectPath="E:\randomtesting\A_personalharness\site"
+      />,
+    )
+
+    const action = screen.getByRole('button', { name: 'artifact.log' })
+    fireEvent.click(action)
+    expect(revealProjectFile).toHaveBeenCalledWith(
+      'E:\\randomtesting\\A_personalharness\\site\\artifact.log',
+      'E:\\randomtesting\\A_personalharness\\site',
     )
   })
 
