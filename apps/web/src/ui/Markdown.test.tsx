@@ -2,12 +2,18 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { revealProjectFile } from '../bridge.js'
+import { preserveProjectFileLinks } from '../project-file-link.js'
 import { Markdown } from './Markdown.js'
 
 vi.mock('../bridge.js', () => ({
   canRevealProjectFile: true,
   revealProjectFile: vi.fn(() => Promise.resolve()),
 }))
+
+vi.mock('../project-file-link.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../project-file-link.js')>()
+  return { ...actual, preserveProjectFileLinks: vi.fn(actual.preserveProjectFileLinks) }
+})
 
 afterEach(cleanup)
 
@@ -136,6 +142,17 @@ describe('Markdown inline references', () => {
 })
 
 describe('Markdown streaming motion', () => {
+  it('defers full project-file parsing until the streamed message completes', () => {
+    const preserve = vi.mocked(preserveProjectFileLinks)
+    preserve.mockClear()
+    const text = 'Updated [index.html](file:///E:/project/index.html).'
+    const { rerender } = render(<Markdown text={text} streaming projectPath="E:\project" />)
+
+    expect(preserve).not.toHaveBeenCalled()
+    rerender(<Markdown text={text} projectPath="E:\project" />)
+    expect(preserve).toHaveBeenCalledOnce()
+  })
+
   it('marks newly streamed words for a zero-stagger reveal', () => {
     const { container } = render(<Markdown text="A smoother streamed reply" streaming />)
 

@@ -179,7 +179,13 @@ export const Markdown = memo(function Markdown({
   // identical either way, so nothing moves.
   const [, bump] = useState(0)
   useEffect(() => onHighlighterChange(() => bump((n) => n + 1)), [])
-  const renderedText = useMemo(() => preserveProjectFileLinks(text), [text])
+  // File destinations only become interactive after the message completes.
+  // Scanning a growing multi-megabyte live tail on every delta would make the
+  // full transcript part of the streaming critical path.
+  const renderedText = useMemo(
+    () => (streaming ? text : preserveProjectFileLinks(text)),
+    [streaming, text],
+  )
 
   return (
     <ProjectPathContext.Provider value={projectPath}>
