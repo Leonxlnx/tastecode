@@ -11,6 +11,7 @@ const transport = vi.hoisted(() => ({
   request: vi.fn(),
   listeners: new Map<string, (data: unknown) => void>(),
   stateListeners: new Set<(state: string) => void>(),
+  sequenceGapListeners: new Set<(expected: number, received: number) => void>(),
   urls: [] as string[],
   connect: vi.fn(),
   close: vi.fn(),
@@ -55,6 +56,12 @@ vi.mock('./transport.js', () => ({
       transport.stateListeners.add(listener)
       return () => {
         transport.stateListeners.delete(listener)
+      }
+    }
+    onSequenceGap(listener: (expected: number, received: number) => void) {
+      transport.sequenceGapListeners.add(listener)
+      return () => {
+        transport.sequenceGapListeners.delete(listener)
       }
     }
     request(method: string, params: unknown) {
@@ -191,6 +198,7 @@ beforeEach(() => {
   utilityRenders.terminalPane.mockClear()
   transport.listeners.clear()
   transport.stateListeners.clear()
+  transport.sequenceGapListeners.clear()
   transport.urls.length = 0
   window.location.hash = ''
   document.documentElement.removeAttribute('data-theme')
@@ -2695,6 +2703,29 @@ describe('reopening a session', () => {
         threadId: 'claude-thread',
         text: 'Use the session provider',
       })
+    })
+  })
+
+  it('resyncs the active thread when the transport detects a push gap', async () => {
+    render(<App />)
+    await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'untouched-thread',
+      })
+    })
+    transport.request.mockClear()
+
+    act(() => {
+      for (const listener of transport.sequenceGapListeners) listener(4, 6)
+    })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'untouched-thread',
+      })
+      expect(transport.request).toHaveBeenCalledWith('projects.list', {})
     })
   })
 })

@@ -580,6 +580,7 @@ export function App() {
       )
     })
     const offSidebarSettings = transport.on('sidebar.settings', setSidebarSettings)
+    const offSequenceGap = transport.onSequenceGap(() => resync.current())
     // Held back briefly: a clean reconnect takes ~500ms, and a banner that
     // appears and vanishes in that time is noise, not information.
     let announce: number | undefined
@@ -612,6 +613,7 @@ export function App() {
       offQueue()
       offLifecycle()
       offSidebarSettings()
+      offSequenceGap()
       offState()
       transport.close()
     }
