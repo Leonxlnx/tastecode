@@ -110,7 +110,7 @@ export function Thread(props: {
   }, [])
   const enteringItemIds = useEnteringItemIds(props.items, props.threadId)
   const settledTurnId = useSettledTurnId(props.running, props.activeTurn?.id)
-  const getItemKey = useVirtualItemKey(props.items, props.threadId, props.revealRequest ?? 0)
+  const getItemKey = useVirtualItemKey(props.items, props.threadId)
 
   const virtualizer = useVirtualizer({
     count: props.items.length,

@@ -54,13 +54,9 @@ function options(
 describe('virtualizer item keys', () => {
   it.each([100, 1_000, 10_000])('keeps streamed-render key reads bounded at %i items', (count) => {
     const initial = Array.from({ length: count }, (_, index) => message(`a-${index}`))
-    const hook = renderHook(
-      ({ items, threadId, historyGeneration }) =>
-        useVirtualItemKey(items, threadId, historyGeneration),
-      {
-        initialProps: { items: initial, threadId: 'thread-a', historyGeneration: 1 },
-      },
-    )
+    const hook = renderHook(({ items, threadId }) => useVirtualItemKey(items, threadId), {
+      initialProps: { items: initial, threadId: 'thread-a' },
+    })
     const initialGetter = hook.result.current
     const virtualizer = new Virtualizer(options(count, initialGetter))
     virtualizer.getTotalSize()
@@ -72,30 +68,49 @@ describe('virtualizer item keys', () => {
     hook.rerender({
       items: streamed.items,
       threadId: 'thread-a',
-      historyGeneration: 1,
     })
 
-    expect(hook.result.current).toBe(initialGetter)
     virtualizer.setOptions(options(count, hook.result.current))
     virtualizer.getTotalSize()
     expect(streamed.reads()).toBeLessThanOrEqual(2)
+    expect(hook.result.current).toBe(initialGetter)
+  })
+
+  it('keeps the key getter stable when a prompt is appended', () => {
+    const first = [message('a-0'), message('a-1')]
+    const hook = renderHook(({ items }) => useVirtualItemKey(items, 'thread-a'), {
+      initialProps: { items: first },
+    })
+    const initialGetter = hook.result.current
+
+    hook.rerender({ items: [...first, message('a-2')] })
+
+    expect(hook.result.current).toBe(initialGetter)
+    expect(hook.result.current(2)).toBe('a-2')
+  })
+
+  it('keeps a one-row streamed thread stable', () => {
+    const hook = renderHook(({ items }) => useVirtualItemKey(items, 'thread-a'), {
+      initialProps: { items: [message('a-0', 'Hel')] },
+    })
+    const initialGetter = hook.result.current
+
+    hook.rerender({ items: [message('a-0', 'Hello')] })
+
+    expect(hook.result.current).toBe(initialGetter)
   })
 
   it('invalidates same-length keys when the thread changes', () => {
     const first = [message('a-0'), message('a-1')]
     const second = [message('b-0'), message('b-1')]
-    const hook = renderHook(
-      ({ items, threadId, historyGeneration }) =>
-        useVirtualItemKey(items, threadId, historyGeneration),
-      {
-        initialProps: { items: first, threadId: 'thread-a', historyGeneration: 1 },
-      },
-    )
+    const hook = renderHook(({ items, threadId }) => useVirtualItemKey(items, threadId), {
+      initialProps: { items: first, threadId: 'thread-a' },
+    })
     const initialGetter = hook.result.current
     const virtualizer = new Virtualizer(options(first.length, initialGetter))
     virtualizer.getTotalSize()
 
-    hook.rerender({ items: second, threadId: 'thread-b', historyGeneration: 1 })
+    hook.rerender({ items: second, threadId: 'thread-b' })
 
     expect(hook.result.current).not.toBe(initialGetter)
     virtualizer.setOptions(options(second.length, hook.result.current))
@@ -105,18 +120,14 @@ describe('virtualizer item keys', () => {
   it('invalidates same-length keys when history is regenerated', () => {
     const first = [message('a-0'), message('a-1')]
     const reloaded = [message('history-0'), message('history-1')]
-    const hook = renderHook(
-      ({ items, threadId, historyGeneration }) =>
-        useVirtualItemKey(items, threadId, historyGeneration),
-      {
-        initialProps: { items: first, threadId: 'thread-a', historyGeneration: 1 },
-      },
-    )
+    const hook = renderHook(({ items, threadId }) => useVirtualItemKey(items, threadId), {
+      initialProps: { items: first, threadId: 'thread-a' },
+    })
     const initialGetter = hook.result.current
     const virtualizer = new Virtualizer(options(first.length, initialGetter))
     virtualizer.getTotalSize()
 
-    hook.rerender({ items: reloaded, threadId: 'thread-a', historyGeneration: 2 })
+    hook.rerender({ items: reloaded, threadId: 'thread-a' })
 
     expect(hook.result.current).not.toBe(initialGetter)
     virtualizer.setOptions(options(reloaded.length, hook.result.current))

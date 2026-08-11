@@ -117,9 +117,20 @@ describe('streamed thread renders', () => {
     const streamedGetter = virtualizerOptions.mock.lastCall?.[0].getItemKey
     expect(streamedGetter).toBe(initialGetter)
 
+    const appended = [
+      ...first.slice(0, -1),
+      { ...first.at(-1)!, text: 'Hello' },
+      message({ id: 'user-next', role: 'user', text: 'Next question' }),
+    ]
+    rendered.rerender(view(appended, true, { threadId: 'thread-a', revealRequest: 2 }))
+    const appendedGetter = virtualizerOptions.mock.lastCall?.[0].getItemKey
+    expect(appendedGetter).toBe(streamedGetter)
+    expect(appendedGetter?.(2)).toBe('user-next')
+
     const second = [
       message({ id: 'user-b', role: 'user', text: 'Another question' }),
       message({ id: 'answer-b', status: 'started', text: 'Another answer' }),
+      message({ id: 'tool-b', type: 'tool_call', text: 'Run command' }),
     ]
     rendered.rerender(view(second, true, { threadId: 'thread-b', revealRequest: 1 }))
     const switchedGetter = virtualizerOptions.mock.lastCall?.[0].getItemKey
@@ -129,8 +140,9 @@ describe('streamed thread renders', () => {
     const reloaded = [
       message({ id: 'history-user', role: 'user', text: 'Reloaded question' }),
       message({ id: 'history-answer', text: 'Reloaded answer' }),
+      message({ id: 'history-tool', type: 'tool_call', text: 'Reloaded command' }),
     ]
-    rendered.rerender(view(reloaded, false, { threadId: 'thread-b', revealRequest: 2 }))
+    rendered.rerender(view(reloaded, false, { threadId: 'thread-b', revealRequest: 1 }))
     const reloadedGetter = virtualizerOptions.mock.lastCall?.[0].getItemKey
     expect(reloadedGetter).not.toBe(switchedGetter)
     expect(reloadedGetter?.(0)).toBe('history-user')
