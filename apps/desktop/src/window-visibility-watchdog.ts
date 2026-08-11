@@ -17,6 +17,7 @@ type WatchedWindow = {
   isDestroyed(): boolean
   isVisible(): boolean
   isMinimized(): boolean
+  isFocused(): boolean
   hide(): void
   show(): void
   webContents: { executeJavaScript(code: string): Promise<unknown> }
@@ -29,9 +30,16 @@ export function needsCompositorNudge(state: {
   destroyed: boolean
   visible: boolean
   minimized: boolean
+  focused: boolean
   pageVisibility: string
 }): boolean {
-  return !state.destroyed && state.visible && !state.minimized && state.pageVisibility === 'hidden'
+  return (
+    !state.destroyed &&
+    state.visible &&
+    !state.minimized &&
+    state.focused &&
+    state.pageVisibility === 'hidden'
+  )
 }
 
 export function startVisibilityWatchdog(
@@ -39,9 +47,10 @@ export function startVisibilityWatchdog(
   onLog: (line: string) => void,
   intervalMs = WATCHDOG_INTERVAL_MS,
 ): () => void {
+  let stopped = false
   const timer = setInterval(() => {
     void (async () => {
-      if (window.isDestroyed()) return
+      if (stopped || window.isDestroyed()) return
       let pageVisibility: string
       try {
         pageVisibility = (await window.webContents.executeJavaScript(
@@ -50,10 +59,12 @@ export function startVisibilityWatchdog(
       } catch {
         return
       }
+      if (stopped || window.isDestroyed()) return
       const nudge = needsCompositorNudge({
-        destroyed: window.isDestroyed(),
+        destroyed: false,
         visible: window.isVisible(),
         minimized: window.isMinimized(),
+        focused: window.isFocused(),
         pageVisibility,
       })
       if (!nudge) return
@@ -62,5 +73,8 @@ export function startVisibilityWatchdog(
       window.show()
     })()
   }, intervalMs)
-  return () => clearInterval(timer)
+  return () => {
+    stopped = true
+    clearInterval(timer)
+  }
 }
