@@ -1,6 +1,8 @@
 import type { Item } from '@harness/contracts'
 
-const EMPTY_TURN_STARTED_AT: Readonly<Record<string, number>> = {}
+export type TurnTiming = Readonly<Record<string, { startedAt?: number; completedAt?: number }>>
+
+const EMPTY_TURN_TIMING: TurnTiming = {}
 
 /**
  * Turn boundaries within the flat item list.
@@ -46,21 +48,21 @@ export type ThreadProjection = {
  */
 export function createThreadProjector(): (
   items: Item[],
-  turnStartedAt?: Readonly<Record<string, number>>,
+  turnTiming?: TurnTiming,
 ) => ThreadProjection {
   let previousItems: Item[] | undefined
-  let previousTurnStartedAt: Readonly<Record<string, number>> | undefined
+  let previousTurnTiming: TurnTiming | undefined
   let previousProjection: ThreadProjection | undefined
 
-  return (items, turnStartedAt = EMPTY_TURN_STARTED_AT) => {
-    if (items === previousItems && turnStartedAt === previousTurnStartedAt && previousProjection) {
+  return (items, turnTiming = EMPTY_TURN_TIMING) => {
+    if (items === previousItems && turnTiming === previousTurnTiming && previousProjection) {
       return previousProjection
     }
 
     if (
       previousItems &&
       previousProjection &&
-      turnStartedAt === previousTurnStartedAt &&
+      turnTiming === previousTurnTiming &&
       isStartedAssistantTailTextUpdate(previousItems, items)
     ) {
       previousItems = items
@@ -68,10 +70,10 @@ export function createThreadProjector(): (
     }
 
     previousItems = items
-    previousTurnStartedAt = turnStartedAt
+    previousTurnTiming = turnTiming
     previousProjection = {
       turns: findTurns(items),
-      presentations: presentTurns(items, turnStartedAt),
+      presentations: presentTurns(items, turnTiming),
     }
     return previousProjection
   }
@@ -106,7 +108,7 @@ export function findTurns(items: Item[]): TurnMark[] {
  */
 export function presentTurns(
   items: Item[],
-  turnStartedAt: Readonly<Record<string, number>> = EMPTY_TURN_STARTED_AT,
+  turnTiming: TurnTiming = EMPTY_TURN_TIMING,
 ): ReadonlyMap<string, TurnPresentation> {
   const drafts = new Map<
     string,
@@ -125,7 +127,7 @@ export function presentTurns(
 
     const draft = drafts.get(item.turnId) ?? {
       work: [],
-      earliest: Math.min(item.createdAt, turnStartedAt[item.turnId] ?? item.createdAt),
+      earliest: item.createdAt,
       latest: item.createdAt,
       hasRunningActivity: false,
       design: false,
@@ -159,6 +161,7 @@ export function presentTurns(
       const activity = finalAnswer
         ? draft.work.filter((entry) => entry !== finalAnswer)
         : draft.work
+      const timing = turnTiming[turnId]
 
       return [
         turnId,
@@ -168,7 +171,10 @@ export function presentTurns(
           firstActivityIndex: activity[0]?.index,
           firstResponseIndex: draft.firstResponseIndex,
           finalAnswerIndex: finalAnswer?.index,
-          elapsedMs: Math.max(0, draft.latest - draft.earliest),
+          elapsedMs:
+            timing?.startedAt !== undefined && timing.completedAt !== undefined
+              ? Math.max(0, timing.completedAt - timing.startedAt)
+              : Math.max(0, draft.latest - draft.earliest),
           complete: finalAnswer !== undefined && !draft.hasRunningActivity,
           design: draft.design,
         },

@@ -37,7 +37,7 @@ import { Diff } from './Diff.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
 import { ThreadSearch } from './ThreadSearch.js'
-import { createThreadProjector, neighbourTurn } from './turns.js'
+import { createThreadProjector, neighbourTurn, type TurnTiming } from './turns.js'
 import { isAtBottom, modeForNewTurn, shouldReleaseAnchor, type ScrollMode } from './scroll-mode.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
@@ -59,7 +59,7 @@ export function Thread(props: {
   running: boolean
   searching?: boolean
   activeTurn: { id: string; startedAt: number } | undefined
-  turnStartedAt?: Readonly<Record<string, number>> | undefined
+  turnTiming?: TurnTiming | undefined
   plan: PlanStep[]
   diff: string | undefined
   threadId?: string | undefined
@@ -220,7 +220,7 @@ export function Thread(props: {
   )
 
   const projectThread = useMemo(createThreadProjector, [props.threadId])
-  const { turns, presentations } = projectThread(props.items, props.turnStartedAt)
+  const { turns, presentations } = projectThread(props.items, props.turnTiming)
   const activePresentation = props.activeTurn ? presentations.get(props.activeTurn.id) : undefined
   const rawWorkLabel = useMemo(
     () => workLabel(props.items, props.activeTurn?.id, props.searching),

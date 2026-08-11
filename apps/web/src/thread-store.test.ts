@@ -8,6 +8,7 @@ import {
   reduceDeltas,
   reduceEventLog,
 } from './thread-store.js'
+import { presentTurns } from './ui/turns.js'
 
 const item = (over: Partial<Item> = {}): Item => ({
   id: 'i1',
@@ -159,23 +160,24 @@ describe('thread reducer', () => {
     expect(state.activeTurn?.id).toMatch(/^local-turn:/)
   })
 
-  it('does not restart the timer when the server confirms an optimistic turn', () => {
+  it('reconciles a provisional local timer to the durable server boundary', () => {
     const optimistic = beginOptimisticTurn(emptyThread, 'resume this chat')
+    const acceptedAt = Date.now() + 5_000
     const confirmed = reduce(optimistic, {
       type: 'turn.started',
       turn: {
         id: 'server-turn',
         threadId: 'thread-1',
         status: 'running',
-        createdAt: Date.now() + 5_000,
+        createdAt: acceptedAt,
       },
     })
 
     expect(confirmed.activeTurn).toEqual({
       id: 'server-turn',
-      startedAt: optimistic.activeTurn?.startedAt,
+      startedAt: acceptedAt,
     })
-    expect(confirmed.turnStartedAt['server-turn']).toBe(optimistic.activeTurn?.startedAt)
+    expect(confirmed.turnTiming['server-turn']?.startedAt).toBe(acceptedAt)
   })
 
   it('does not restart the timer when the same turn-start event is replayed', () => {
@@ -189,7 +191,38 @@ describe('thread reducer', () => {
     })
 
     expect(replayed.activeTurn?.startedAt).toBe(10)
-    expect(replayed.turnStartedAt['server-turn']).toBe(10)
+    expect(replayed.turnTiming['server-turn']?.startedAt).toBe(10)
+  })
+
+  it('projects the same elapsed time live and after replay', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const optimistic = beginOptimisticTurn(emptyThread, 'resume this chat')
+    now.mockRestore()
+    const events: DomainEvent[] = [
+      {
+        type: 'turn.started',
+        turn: { id: 't1', threadId: 'th1', status: 'running', createdAt: 5_000 },
+      },
+      {
+        type: 'item.started',
+        item: item({ id: 'user', role: 'user', text: 'resume this chat', createdAt: 5_000 }),
+      },
+      {
+        type: 'item.completed',
+        item: item({ id: 'answer', status: 'completed', text: 'Done.', createdAt: 8_000 }),
+      },
+      { type: 'turn.completed', turnId: 't1', status: 'completed', completedAt: 8_000 },
+    ]
+
+    const live = events.reduce(reduce, optimistic)
+    const replayed = reduceEventLog(
+      emptyThread,
+      events.map((event, index) => ({ seq: index + 1, event })),
+    )
+
+    expect(live.turnTiming).toEqual(replayed.turnTiming)
+    expect(presentTurns(live.items, live.turnTiming).get('t1')?.elapsedMs).toBe(3_000)
+    expect(presentTurns(replayed.items, replayed.turnTiming).get('t1')?.elapsedMs).toBe(3_000)
   })
 
   it('rebuilds a whole conversation from a stored event log', () => {
@@ -214,7 +247,7 @@ describe('thread reducer', () => {
     expect(state.items.map((i) => i.text)).toEqual(['run the tests', 'All green.'])
     // A replayed turn is finished history, not something still in flight.
     expect(state.running).toBe(false)
-    expect(state.turnStartedAt.t1).toBe(0)
+    expect(state.turnTiming.t1?.startedAt).toBe(0)
   })
 
   it('renders restart recovery without a live-looking command or approval', () => {

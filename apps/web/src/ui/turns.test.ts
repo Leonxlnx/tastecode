@@ -76,13 +76,24 @@ describe('turn boundaries', () => {
     })
   })
 
-  it('includes the wait before the provider emits its first item', () => {
+  it('falls back to item timestamps when a durable boundary is incomplete', () => {
     const items: Item[] = [
       { ...item('user', 't1'), role: 'user', createdAt: 35_000 },
       { ...item('answer', 't1'), role: 'assistant', text: 'Done.', createdAt: 38_000 },
     ]
 
-    expect(presentTurns(items, { t1: 1_000 }).get('t1')?.elapsedMs).toBe(37_000)
+    expect(presentTurns(items, { t1: { startedAt: 1_000 } }).get('t1')?.elapsedMs).toBe(3_000)
+  })
+
+  it('uses durable completion instead of the final item as the elapsed endpoint', () => {
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', createdAt: 1_000 },
+      { ...item('answer', 't1'), role: 'assistant', text: 'Done.', createdAt: 4_000 },
+    ]
+
+    expect(
+      presentTurns(items, { t1: { startedAt: 1_000, completedAt: 32_000 } }).get('t1')?.elapsedMs,
+    ).toBe(31_000)
   })
 
   it('does not compact activity while the turn is still streaming', () => {

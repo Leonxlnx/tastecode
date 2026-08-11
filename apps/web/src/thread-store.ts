@@ -20,8 +20,8 @@ export type ThreadState = {
   running: boolean
   /** The live turn whose elapsed time and activity the UI is presenting. */
   activeTurn: { id: string; startedAt: number } | undefined
-  /** Stable wall-clock anchor for completed-turn elapsed labels and history replay. */
-  turnStartedAt: Readonly<Record<string, number>>
+  /** Durable server-owned lifecycle boundaries used by live and replayed elapsed labels. */
+  turnTiming: Readonly<Record<string, { startedAt?: number; completedAt?: number }>>
   /** The agent's plan for the current turn. Replaced wholesale when it changes. */
   plan: PlanStep[]
   usage?: Usage
@@ -39,7 +39,7 @@ export const emptyThread: ThreadState = {
   items: [],
   running: false,
   activeTurn: undefined,
-  turnStartedAt: {},
+  turnTiming: {},
   plan: [],
   approvals: [],
   userInputs: [],
@@ -72,11 +72,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
     case 'turn.started':
       // A new turn gets a fresh plan and diff; the previous ones described work
       // already finished, and leaving them up reads as stale instructions.
-      const startedAt =
-        state.activeTurn &&
-        (state.activeTurn.id.startsWith('local-turn:') || state.activeTurn.id === event.turn.id)
-          ? state.activeTurn.startedAt
-          : event.turn.createdAt
+      const startedAt = state.turnTiming[event.turn.id]?.startedAt ?? event.turn.createdAt
       return {
         ...state,
         running: true,
@@ -84,9 +80,9 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
           id: event.turn.id,
           startedAt,
         },
-        turnStartedAt: {
-          ...state.turnStartedAt,
-          [event.turn.id]: Math.min(state.turnStartedAt[event.turn.id] ?? startedAt, startedAt),
+        turnTiming: {
+          ...state.turnTiming,
+          [event.turn.id]: { ...state.turnTiming[event.turn.id], startedAt },
         },
         plan: [],
         diff: undefined,
@@ -97,7 +93,23 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       // resolve them server-side too; this covers logs written before that
       // fix). userInputs stay: design-briefing questions legitimately outlive
       // their turn and are answered to start the next one.
-      return { ...state, running: false, activeTurn: undefined, approvals: [] }
+      const timing = state.turnTiming[event.turnId]
+      return {
+        ...state,
+        running: false,
+        activeTurn: undefined,
+        approvals: [],
+        turnTiming:
+          event.completedAt === undefined
+            ? state.turnTiming
+            : {
+                ...state.turnTiming,
+                [event.turnId]: {
+                  ...timing,
+                  completedAt: timing?.completedAt ?? event.completedAt,
+                },
+              },
+      }
 
     case 'plan.updated':
       return { ...state, plan: event.steps }
