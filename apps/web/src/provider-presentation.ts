@@ -56,9 +56,10 @@ export function sourcePresentation(input: {
   mark?: ProviderMark | undefined
 }): ProviderPresentation {
   const fallback = providerPresentation(input.provider)
+  const sourceCanOverride = input.provider === 'acp' || input.provider === 'api'
   return {
-    label: input.sourceName?.trim() || fallback.label,
-    mark: input.mark ?? fallback.mark,
+    label: (sourceCanOverride ? input.sourceName?.trim() : undefined) || fallback.label,
+    mark: sourceCanOverride ? (input.mark ?? fallback.mark) : fallback.mark,
   }
 }
 

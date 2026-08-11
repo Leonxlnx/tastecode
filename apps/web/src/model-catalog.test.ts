@@ -85,6 +85,25 @@ describe('model catalog', () => {
     expect(first?.key).not.toBe(second?.key)
   })
 
+  it('canonicalizes direct model sources while preserving named API sources', () => {
+    const direct = choicesFor(
+      { provider: 'claude-code', sourceName: 'Claude', mark: 'custom' },
+      [model],
+    )[0]
+    const api = choicesFor(
+      {
+        provider: 'api',
+        connectionId: 'work',
+        sourceName: 'Work OpenRouter',
+        mark: 'openrouter',
+      },
+      [model],
+    )[0]
+
+    expect(direct).toMatchObject({ sourceName: 'Claude Code', mark: 'anthropic' })
+    expect(api).toMatchObject({ sourceName: 'Work OpenRouter', mark: 'openrouter' })
+  })
+
   it.each([
     ['gemini', 'gemini'],
     ['kimi', 'kimi'],

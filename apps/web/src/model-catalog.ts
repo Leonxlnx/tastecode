@@ -1,5 +1,6 @@
 import type { Model, ProviderId } from '@harness/contracts'
 import type { ProviderMark } from './provider-presentation.js'
+import { sourcePresentation } from './provider-presentation.js'
 
 export {
   agentMark,
@@ -161,10 +162,11 @@ export function customModelChoice(
   sourceName: string,
   mark: ProviderMark,
 ): ModelChoice {
+  const presentation = sourcePresentation({ provider: input.provider, sourceName, mark })
   return {
     provider: input.provider,
-    sourceName,
-    mark,
+    sourceName: presentation.label,
+    mark: presentation.mark,
     model: {
       id: input.modelId,
       displayName: input.displayName.trim() || input.modelId,
@@ -186,6 +188,7 @@ export function choicesFor(
   models: Model[],
   fallback = true,
 ): ModelChoice[] {
+  const presentation = sourcePresentation(input)
   const source = sourceKey({
     provider: input.provider,
     connectionId: input.connectionId,
@@ -193,6 +196,8 @@ export function choicesFor(
   })
   return (models.length > 0 ? models : fallback ? [automaticModel()] : []).map((model) => ({
     ...input,
+    sourceName: presentation.label,
+    mark: presentation.mark,
     model,
     key: modelChoiceKey(source, model.id),
   }))
