@@ -139,6 +139,7 @@ function ComposerComponent(props: {
   designMode: boolean
   focusRequest: number
   draftRequest?: { text: string; request: number } | undefined
+  onDraftChange?: ((text: string) => void) | undefined
   queuedTurns: QueuedTurn[]
   canSteerQueue: boolean
   onModelChange: (id: string) => void
@@ -734,6 +735,7 @@ function ComposerComponent(props: {
                   aria-keyshortcuts={shortcutAria(SHORTCUTS.focusComposer)}
                   onChange={(e) => {
                     setText(e.target.value)
+                    props.onDraftChange?.(e.target.value)
                     grow()
                   }}
                   onKeyDown={(e) => {

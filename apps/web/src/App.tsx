@@ -590,6 +590,10 @@ export function App() {
     rejectedDraftOwner.current = draft === undefined ? undefined : activeId
     setComposerDraft((current) => ({ text: draft ?? '', request: (current?.request ?? 0) + 1 }))
   }, [activeId])
+  const updateRejectedDraft = useCallback((text: string) => {
+    const owner = rejectedDraftOwner.current
+    if (owner) rejectedDrafts.current.set(owner, text)
+  }, [])
   const projectsRef = useRef(projects)
   projectsRef.current = projects
   /** Refetch after an outage. Held in a ref because the transport effect is
@@ -622,6 +626,7 @@ export function App() {
         } else if (
           submission.indeterminate &&
           !submission.accepted &&
+          running !== undefined &&
           (submission.kind !== 'turn' || running === false)
         ) {
           pending.delete(submission.id)
@@ -1096,14 +1101,13 @@ export function App() {
         if (historyOwners.current.get(threadId) !== buffer) return
         const restored = reduceEventLog(emptyThread, events)
         const lastSeq = events.at(-1)?.seq ?? 0
-        const replayed = reduceEventLog(restored, buffer, lastSeq)
         const authoritative = {
-          ...replayed,
+          ...restored,
           running,
-          activeTurn: running ? replayed.activeTurn : undefined,
+          activeTurn: running ? restored.activeTurn : undefined,
         }
         const withLive = preservePendingSubmissions(
-          authoritative,
+          reduceEventLog(authoritative, buffer, lastSeq),
           pendingSubmissions.current,
           threadId,
         )
@@ -1133,17 +1137,23 @@ export function App() {
     if (activeId && !activeId.startsWith('pending:')) threadIds.add(activeId)
     for (const id of threadIds) {
       const history = loadHistory(id).catch(() => undefined)
+      const queueRevision = queueRevisions.current.get(id) ?? 0
       void transport
         .request('thread.queue', { threadId: id })
         .then(async (state) => {
+          const loaded = await history
+          if (!loaded) return
+          if ((queueRevisions.current.get(id) ?? 0) !== queueRevision) {
+            const current = queueStates.current.get(id)
+            if (current) settleQueuedSubmissions(id, current.items, loaded.running)
+            return
+          }
           queueStates.current.set(id, state)
-          settleQueuedSubmissions(id, state.items)
+          settleQueuedSubmissions(id, state.items, loaded.running)
           if (activeIdRef.current === id) {
             setQueuedTurns(state.items)
             setCanSteerQueue(state.canSteer)
           }
-          const loaded = await history
-          if (loaded) settleQueuedSubmissions(id, state.items, loaded.running)
         })
         .catch(() => undefined)
     }
@@ -2907,6 +2917,7 @@ export function App() {
                   designMode={designMode}
                   focusRequest={composerFocusRequest}
                   draftRequest={composerDraft}
+                  onDraftChange={updateRejectedDraft}
                   queuedTurns={queuedTurns}
                   canSteerQueue={canSteerQueue}
                   onModelChange={selectModel}

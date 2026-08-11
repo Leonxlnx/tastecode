@@ -2624,29 +2624,22 @@ describe('live sessions', () => {
     expect(screen.getByTestId('thread').getAttribute('data-started-at')).toBe(startedAt)
   })
 
-  it.each(['accepted', 'rejected'] as const)(
-    'settles an indeterminate send as %s only after reconnect history',
-    async (outcome) => {
-      serverProjects = [
-        {
-          path: '/work/project',
-          name: 'project',
-          pinned: false,
-          createdAt: 0,
-          sessions: [{ id: 'thread-1', title: 'Old chat', running: false }],
-        },
-      ]
+  it.each([
+    ['turn', 'accepted'],
+    ['turn', 'rejected'],
+    ['queue', 'accepted'],
+    ['queue', 'rejected'],
+  ] as const)(
+    'settles an indeterminate %s as %s only after reconnect history',
+    async (kind, outcome) => {
+      setSessions([
+        { id: 'thread-1', title: 'Existing work', running: false },
+        { id: 'thread-2', title: 'Background', running: false },
+      ])
       const request = transport.request.getMockImplementation()!
       let historyCount = 0
       let resolveResync!: (value: { events: unknown[]; running: boolean }) => void
       let rejectSend!: (error: Error) => void
-      const staleStarted = {
-        seq: 1,
-        event: {
-          type: 'turn.started',
-          turn: { id: 't', threadId: 'thread-1', status: 'running', createdAt: 1 },
-        },
-      }
       transport.request.mockImplementation((method: string, params: unknown) => {
         if (method === 'thread.history' && historyCount++ > 0) {
           return new Promise((resolve) => (resolveResync = resolve))
@@ -2658,32 +2651,29 @@ describe('live sessions', () => {
       })
 
       render(<App />)
-      fireEvent.click(await screen.findByRole('button', { name: 'Old chat' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
+      if (kind === 'queue') emitThreadEvent('thread-1', staleTurnStartedEvent().event)
       const composer = screen.getByPlaceholderText('Do anything')
-      fireEvent.change(composer, { target: { value: 'Submit exactly once' } })
-      fireEvent.keyDown(composer, { key: 'Enter' })
-      const call = await waitFor(() => {
-        const found = transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')
-        expect(found).toBeTruthy()
-        return found!
-      })
-      const submissionId = (call[1] as { clientSubmissionId: string }).clientSubmissionId
+      const submissionId = await submitPrompt(composer, 'Submit exactly once')
+      const queued = () => screen.queryByLabelText('Queued prompts')
       await act(async () => rejectSend(new IndeterminateRequestError('socket lost')))
-      expect(screen.getByText('Submit exactly once')).toBeTruthy()
+      expect(
+        kind === 'queue' ? queued()?.textContent : screen.getByTestId('thread').textContent,
+      ).toContain('Submit exactly once')
       expect((composer as HTMLTextAreaElement).value).toBe('')
 
-      act(() => {
-        for (const listener of transport.stateListeners) listener('reconnecting')
-        for (const listener of transport.stateListeners) listener('open')
-      })
+      reconnectTransport()
       await waitFor(() => expect(resolveResync).toBeTypeOf('function'))
+      if (kind === 'queue') expect(queued()?.textContent).toContain('Submit exactly once')
       await act(async () =>
         resolveResync({
-          events:
-            outcome === 'accepted'
+          events: [
+            ...(kind === 'queue' || outcome === 'rejected' ? [staleTurnStartedEvent()] : []),
+            ...(outcome === 'accepted'
               ? [completedUserEvent(submissionId, 'Submit exactly once')]
-              : [staleStarted],
-          running: outcome === 'accepted',
+              : []),
+          ],
+          running: kind === 'queue' || outcome === 'accepted',
         }),
       )
       if (outcome === 'accepted') {
@@ -2693,9 +2683,22 @@ describe('live sessions', () => {
         )
       } else {
         expect(within(screen.getByTestId('thread')).queryByText('Submit exactly once')).toBeNull()
-        expect(screen.queryByText('Working')).toBeNull()
+        if (kind === 'turn') expect(screen.queryByText('Working')).toBeNull()
         expect((composer as HTMLTextAreaElement).value).toBe('Submit exactly once')
       }
+      if (kind !== 'queue') return
+
+      expect(queued()).toBeNull()
+      if (outcome === 'accepted') return
+      fireEvent.change(composer, { target: { value: 'Edited queue' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Background' }))
+      expect((composer as HTMLTextAreaElement).value).toBe('')
+      fireEvent.click(screen.getByRole('button', { name: /^Existing work/ }))
+      expect((composer as HTMLTextAreaElement).value).toBe('Edited queue')
+      fireEvent.change(composer, { target: { value: '' } })
+      fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+      fireEvent.click(screen.getByRole('button', { name: /^Existing work/ }))
+      expect((composer as HTMLTextAreaElement).value).toBe('')
     },
   )
 
@@ -2743,100 +2746,67 @@ describe('live sessions', () => {
     )
   })
 
-  it.each(['accepted', 'rejected'] as const)(
-    'settles an absent reconnect queue as %s only after history',
-    async (outcome) => {
-      serverProjects = [
-        {
-          path: '/work/project',
-          name: 'project',
-          pinned: false,
-          createdAt: 0,
-          sessions: [
-            { id: 'thread-1', title: 'Existing work', running: true },
-            { id: 'thread-2', title: 'Background', running: false },
-          ],
-        },
-      ]
-      const request = transport.request.getMockImplementation()
-      if (!request) throw new Error('missing request mock')
-      let rejectSend: ((error: Error) => void) | undefined
-      let reconnecting = false
-      let resolveResync!: (value: { events: unknown[]; running: true }) => void
-      const sendResult = new Promise((_, reject) => {
-        rejectSend = reject
-      })
-      transport.request.mockImplementation((method: string, params: unknown) => {
-        if (method === 'thread.sendTurn') {
-          return sendResult
-        }
-        if (method === 'thread.history') {
-          if (reconnecting) return new Promise((resolve) => (resolveResync = resolve))
-          const running = (params as { threadId: string }).threadId === 'thread-1'
-          return Promise.resolve({
-            events: running
-              ? [completedUserEvent('accepted-id', 'Accepted before provider start')]
-              : [],
-            running,
-          })
-        }
-        return request(method, params)
-      })
-
-      render(<App />)
-      fireEvent.click(await screen.findByRole('button', { name: 'Existing work, working' }))
-      const composer = screen.getByPlaceholderText('Do anything')
-      await screen.findByText('Accepted before provider start')
-      fireEvent.change(composer, { target: { value: 'Queue this next' } })
-      fireEvent.keyDown(composer, { key: 'Enter' })
-      expect(screen.getByLabelText('Queued prompts').textContent).toContain('Queue this next')
-      expect(screen.getByTestId('thread').textContent).not.toContain('Queue this next')
-
-      let submissionId = ''
-      await waitFor(() => {
-        const call = transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')
-        submissionId = (call?.[1] as { clientSubmissionId?: string }).clientSubmissionId ?? ''
-        expect(submissionId).toMatch(/^local:/)
-      })
-      await act(async () => rejectSend?.(new IndeterminateRequestError('socket lost')))
-      act(() => {
-        for (const listener of transport.stateListeners) listener('reconnecting')
-        reconnecting = true
-        for (const listener of transport.stateListeners) listener('open')
-      })
-      await waitFor(() => expect(resolveResync).toBeTypeOf('function'))
-      expect((composer as HTMLTextAreaElement).value).toBe('')
-      expect(screen.getByLabelText('Queued prompts').textContent).toContain('Queue this next')
-      await act(async () =>
-        resolveResync({
-          events: [
-            completedUserEvent('accepted-id', 'Accepted before provider start'),
-            ...(outcome === 'accepted'
-              ? [completedUserEvent(submissionId, 'Queue this next')]
-              : []),
-          ],
-          running: true,
-        }),
-      )
-      expect(screen.queryByLabelText('Queued prompts')).toBeNull()
-      if (outcome === 'accepted') {
-        expect((composer as HTMLTextAreaElement).value).toBe('')
-        return
+  it('queues Enter submissions while the active session is running', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Existing work', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let resolveSend: ((result: unknown) => void) | undefined
+    const sendResult = new Promise((resolve) => {
+      resolveSend = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.sendTurn') {
+        return sendResult
       }
+      return request(method, params)
+    })
 
-      await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe('Queue this next'))
-      fireEvent.change(composer, { target: { value: 'Edited queue' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Background' }))
-      expect((composer as HTMLTextAreaElement).value).toBe('')
-      fireEvent.click(screen.getByRole('button', { name: 'Existing work, working' }))
-      expect((composer as HTMLTextAreaElement).value).toBe('Edited queue')
-      fireEvent.change(composer, { target: { value: '' } })
-      fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
-      expect((composer as HTMLTextAreaElement).value).toBe('')
-      fireEvent.click(screen.getByRole('button', { name: 'Existing work, working' }))
-      expect((composer as HTMLTextAreaElement).value).toBe('')
-    },
-  )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
+    emitThreadEvent('thread-1', {
+      type: 'turn.started',
+      turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
+    })
+
+    const composer = screen.getByPlaceholderText('Do anything')
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
+    fireEvent.change(composer, { target: { value: 'Queue this next' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(screen.getByLabelText('Queued prompts').textContent).toContain('Queue this next')
+    expect(screen.getByTestId('thread').textContent).not.toContain('Queue this next')
+
+    let submissionId = ''
+    await waitFor(() => {
+      const call = transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')
+      submissionId = (call?.[1] as { clientSubmissionId?: string }).clientSubmissionId ?? ''
+      expect(submissionId).toMatch(/^local:/)
+    })
+    await act(async () =>
+      resolveSend?.({
+        queued: true,
+        queuedTurn: {
+          id: submissionId,
+          text: 'Queue this next',
+          attachments: [],
+          createdAt: 1,
+        },
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Queue this next from queue' }))
+    expect(transport.request).toHaveBeenCalledWith('thread.deleteQueuedTurn', {
+      threadId: 'thread-1',
+      queuedTurnId: submissionId,
+    })
+  })
 
   it('keeps rapid queued prompts ordered when acknowledgements arrive backwards', async () => {
     serverProjects = [
@@ -3078,12 +3048,6 @@ describe('live sessions', () => {
         createdAt: 0,
       },
     })
-    emitThreadEvent('untouched-thread', {
-      type: 'turn.completed',
-      turnId: 'turn-1',
-      status: 'completed',
-    })
-
     const frames: FrameRequestCallback[] = []
     const requestFrame = vi
       .spyOn(window, 'requestAnimationFrame')
@@ -3409,6 +3373,40 @@ function emitThreadEvent(threadId: string, event: DomainEvent) {
   act(() => {
     transport.listeners.get('thread.event')?.({ threadId, event })
   })
+}
+
+function setSessions(sessions: Array<{ id: string; title: string; running: boolean }>) {
+  serverProjects = [
+    { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions },
+  ]
+}
+
+function reconnectTransport() {
+  act(() => {
+    for (const listener of transport.stateListeners) listener('reconnecting')
+    for (const listener of transport.stateListeners) listener('open')
+  })
+}
+
+async function submitPrompt(composer: HTMLElement, text: string): Promise<string> {
+  fireEvent.change(composer, { target: { value: text } })
+  fireEvent.keyDown(composer, { key: 'Enter' })
+  return waitFor(() => {
+    const call = transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')
+    const id = (call?.[1] as { clientSubmissionId?: string }).clientSubmissionId ?? ''
+    expect(id).toMatch(/^local:/)
+    return id
+  })
+}
+
+function staleTurnStartedEvent() {
+  return {
+    seq: 1,
+    event: {
+      type: 'turn.started',
+      turn: { id: 't', threadId: 'thread-1', status: 'running', createdAt: 1 },
+    },
+  } as const
 }
 
 function completedUserEvent(id: string, text: string) {
@@ -3786,6 +3784,11 @@ describe('reopening a session', () => {
         text: 'Live during reconnect',
         createdAt: 3,
       },
+    })
+    emitThreadEvent('untouched-thread', {
+      type: 'turn.completed',
+      turnId: 'turn-1',
+      status: 'completed',
     })
 
     const historyEvent = (id: string, text: string): { seq: number; event: DomainEvent } => ({
