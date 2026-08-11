@@ -117,6 +117,29 @@ describe('Transport', () => {
     expect(userFrames(third)).toHaveLength(0)
   })
 
+  it('flushes queued mutations before open-state resync requests', () => {
+    const transport = new Transport('ws://test')
+    transport.connect()
+    const first = FakeSocket.instances[0]!
+    first.open()
+    first.close()
+
+    transport
+      .request('thread.rename', { threadId: 'thread-1', title: 'Queued rename' })
+      .catch(() => undefined)
+    transport.onState((state) => {
+      if (state === 'open') transport.request('projects.list', {}).catch(() => undefined)
+    })
+    vi.advanceTimersByTime(0)
+    const second = FakeSocket.instances[1]!
+    second.open()
+
+    expect(userFrames(second).map((frame) => JSON.parse(frame).method)).toEqual([
+      'thread.rename',
+      'projects.list',
+    ])
+  })
+
   it('replaces a half-dead open socket when a wake-up health check times out', async () => {
     const transport = new Transport('ws://test')
     transport.connect()

@@ -158,11 +158,14 @@ export class Transport {
       // Same replaced-socket guard as onmessage/onclose: an orphan socket
       // must not flush the queue into a connection whose replies are dropped.
       if (this.#socket !== socket) return
-      this.#setState('open')
       for (const entry of this.#queue.splice(0)) {
         socket.send(entry.payload)
         if (entry.id) this.#inFlight.add(entry.id)
       }
+      // State listeners may immediately issue resync reads. Announce the open
+      // socket only after older queued mutations are on the wire, preserving
+      // request order across the disconnect.
+      this.#setState('open')
       void this.request('client.capabilities', { previewCapture: canCapturePreview }).catch(
         () => undefined,
       )
