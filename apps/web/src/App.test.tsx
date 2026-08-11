@@ -2091,6 +2091,63 @@ describe('live sessions', () => {
     })
   })
 
+  it('keeps rapid queued prompts ordered when acknowledgements arrive backwards', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Existing work', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    const sends: Array<
+      (value: {
+        queued: true
+        queuedTurn: { id: string; text: string; attachments: string[]; createdAt: number }
+      }) => void
+    > = []
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn'
+        ? new Promise((resolve) => sends.push(resolve))
+        : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
+    emitThreadEvent('thread-1', {
+      type: 'turn.started',
+      turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    for (const text of ['First queued', 'Second queued']) {
+      fireEvent.change(composer, { target: { value: text } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+    }
+    await waitFor(() => expect(sends).toHaveLength(2))
+
+    await act(async () =>
+      sends[1]?.({
+        queued: true,
+        queuedTurn: { id: 'second', text: 'Second queued', attachments: [], createdAt: 2 },
+      }),
+    )
+    expect(
+      Array.from(document.querySelectorAll('.queue-row__text'), (row) => row.textContent),
+    ).toEqual(['First queued', 'Second queued'])
+    await act(async () =>
+      sends[0]?.({
+        queued: true,
+        queuedTurn: { id: 'first', text: 'First queued', attachments: [], createdAt: 1 },
+      }),
+    )
+
+    expect(
+      Array.from(document.querySelectorAll('.queue-row__text'), (row) => row.textContent),
+    ).toEqual(['First queued', 'Second queued'])
+  })
+
   it('acknowledges Stop instead of looking inert until the turn unwinds', async () => {
     // Providers can take a second or two to stop. With no acknowledged state
     // the button looked dead, so people pressed it repeatedly and concluded

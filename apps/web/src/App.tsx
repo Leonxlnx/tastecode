@@ -240,6 +240,7 @@ export function App() {
   )
   const pendingThreadDeltas = useRef(new Map<string, ItemDeltaEvent[]>())
   const queueStates = useRef(new Map<string, { items: QueuedTurn[]; canSteer: boolean }>())
+  const queueRevisions = useRef(new Map<string, number>())
   const pendingSession = useRef<
     | {
         id: string
@@ -570,6 +571,7 @@ export function App() {
       }
     })
     const offQueue = transport.on('thread.queue', ({ threadId, items, canSteer }) => {
+      queueRevisions.current.set(threadId, (queueRevisions.current.get(threadId) ?? 0) + 1)
       queueStates.current.set(threadId, { items, canSteer })
       if (threadId !== activeIdRef.current) return
       setQueuedTurns(items)
@@ -882,10 +884,11 @@ export function App() {
     setQueuedTurns(cached?.items ?? [])
     setCanSteerQueue(cached?.canSteer ?? false)
     let cancelled = false
+    const revision = queueRevisions.current.get(activeId) ?? 0
     void transport
       .request('thread.queue', { threadId: activeId })
       .then((state) => {
-        if (cancelled) return
+        if (cancelled || (queueRevisions.current.get(activeId) ?? 0) !== revision) return
         queueStates.current.set(activeId, state)
         if (activeIdRef.current !== activeId) return
         setQueuedTurns(state.items)
@@ -1275,6 +1278,7 @@ export function App() {
     (threadId: string, update: (items: QueuedTurn[]) => QueuedTurn[]) => {
       const current = queueStates.current.get(threadId) ?? { items: [], canSteer: false }
       const next = { ...current, items: update(current.items) }
+      queueRevisions.current.set(threadId, (queueRevisions.current.get(threadId) ?? 0) + 1)
       queueStates.current.set(threadId, next)
       if (activeIdRef.current === threadId) setQueuedTurns(next.items)
     },
@@ -1442,12 +1446,19 @@ export function App() {
             }
           } else {
             updateQueue(threadId, (items) => {
-              const withoutOptimistic = optimisticQueueId
-                ? items.filter((item) => item.id !== optimisticQueueId)
-                : items
-              return withoutOptimistic.some((item) => item.id === result.queuedTurn.id)
-                ? withoutOptimistic
-                : [...withoutOptimistic, result.queuedTurn]
+              const optimisticIndex = optimisticQueueId
+                ? items.findIndex((item) => item.id === optimisticQueueId)
+                : -1
+              if (optimisticIndex < 0) {
+                return items.some((item) => item.id === result.queuedTurn.id)
+                  ? items
+                  : [...items, result.queuedTurn]
+              }
+              const next = items.slice()
+              const canonicalIndex = next.findIndex((item) => item.id === result.queuedTurn.id)
+              if (canonicalIndex < 0) next[optimisticIndex] = result.queuedTurn
+              else next.splice(optimisticIndex, 1)
+              return next
             })
             if (!wasRunning) {
               const reconciled = removeQueuedOptimisticMessage(current, text)
