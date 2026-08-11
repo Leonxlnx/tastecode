@@ -208,7 +208,7 @@ describe('thread at scale', () => {
 
   it('finds active search work without walking old transcript items', () => {
     const history = makeFixtureThread(1_000)
-    const active: Item = {
+    const activeSearch: Item = {
       id: 'active-search',
       turnId: 'active-turn',
       type: 'tool_call',
@@ -216,17 +216,34 @@ describe('thread at scale', () => {
       text: 'search files',
       createdAt: Date.now(),
     }
+    const turnlessSteer: Item = {
+      id: 'local:steer',
+      turnId: '',
+      type: 'message',
+      role: 'user',
+      status: 'completed',
+      text: 'Keep going',
+      createdAt: Date.now(),
+    }
+    const activeTail: Item = {
+      id: 'active-tail',
+      turnId: activeSearch.turnId,
+      type: 'reasoning',
+      status: 'started',
+      text: 'Inspecting results',
+      createdAt: Date.now(),
+    }
     let itemReads = 0
-    const items = new Proxy([...history, active], {
+    const items = new Proxy([...history, activeSearch, turnlessSteer, activeTail], {
       get(target, property, receiver) {
         if (typeof property === 'string' && /^\d+$/.test(property)) itemReads += 1
         return Reflect.get(target, property, receiver)
       },
     })
 
-    expect(activeTurnIsSearching(items, active.turnId)).toBe(true)
-    // Complexity budget: the active tail has one item, so old history is not
-    // part of the per-frame cost. A forward scan reads all 1,001 entries.
+    expect(activeTurnIsSearching(items, activeSearch.turnId)).toBe(true)
+    // Complexity budget: even a turnless steer between active items must not
+    // put the old history on the per-frame path. A forward scan reads 1,003.
     expect(itemReads).toBeLessThan(10)
   })
 })

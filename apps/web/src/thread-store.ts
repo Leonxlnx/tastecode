@@ -338,6 +338,9 @@ export function activeTurnIsSearching(items: Item[], turnId: string | undefined)
     const item = items[index]
     if (!item) continue
     if (item.turnId !== turnId) {
+      // A locally echoed steer has no canonical turn id yet and may sit
+      // between two live items from the same provider turn.
+      if (item.turnId === '') continue
       if (enteredActiveTurn) break
       continue
     }
