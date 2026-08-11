@@ -660,6 +660,77 @@ describe('cross-session search', () => {
     ])
   })
 
+  it('traverses more than 100 unchanged pages without gaps or repeats', () => {
+    for (let index = 0; index < 205; index += 1) {
+      store.append('t1', message(`longpagination result-${index}`))
+    }
+
+    const seen = new Set<string>()
+    let cursor: string | undefined
+    let pages = 0
+    do {
+      const page = store.searchSessions({
+        query: 'longpagination',
+        limit: 2,
+        ...(cursor ? { cursor } : {}),
+      })
+      for (const result of page.results) {
+        const text = result.snippet.map((part) => part.text).join('')
+        expect(seen.has(text)).toBe(false)
+        seen.add(text)
+      }
+      cursor = page.nextCursor ?? undefined
+      pages += 1
+    } while (cursor)
+
+    expect(pages).toBe(103)
+    expect(seen.size).toBe(205)
+  })
+
+  it('binds continuation cursors to the original query and filters', () => {
+    store.append('t1', message('filtered snapshot first'))
+    store.append('t1', message('filtered snapshot second'))
+    const first = store.searchSessions({ query: 'filtered', projectPath: '/repo', limit: 1 })
+
+    expect(
+      store.searchSessions({
+        query: 'filtered',
+        projectPath: '/repo',
+        cursor: first.nextCursor!,
+        limit: 1,
+      }).results,
+    ).toHaveLength(1)
+    expect(() =>
+      store.searchSessions({
+        query: 'different',
+        projectPath: '/repo',
+        cursor: first.nextCursor!,
+        limit: 1,
+      }),
+    ).toThrow('does not match')
+    expect(() =>
+      store.searchSessions({ query: 'filtered', cursor: first.nextCursor!, limit: 1 }),
+    ).toThrow('does not match')
+  })
+
+  it('expires abandoned search snapshots', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-08-11T10:00:00Z'))
+      store.append('t1', message('expiring snapshot first'))
+      store.append('t1', message('expiring snapshot second'))
+      const first = store.searchSessions({ query: 'expiring', limit: 1 })
+
+      vi.advanceTimersByTime(5 * 60 * 1_000 + 1)
+
+      expect(() =>
+        store.searchSessions({ query: 'expiring', cursor: first.nextCursor!, limit: 1 }),
+      ).toThrow('expired')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('clamps internal page sizes and treats malformed cursors as a fresh search', () => {
     for (let index = 0; index < 101; index += 1) {
       store.append('t1', message(`bounded result ${index}`))
