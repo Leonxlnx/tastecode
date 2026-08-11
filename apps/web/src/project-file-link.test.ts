@@ -65,6 +65,35 @@ describe('project file links', () => {
     )
   })
 
+  it('rewrites only link-owned semantic destinations', () => {
+    expect(
+      preserveProjectFileLinks(
+        [
+          '[![local image](file:///E:/project/image.png)](https://example.com)',
+          '[![external image](https://example.com/image.png)](file:///E:/project/panel.tsx)',
+          '[escaped](E:/project/panel\\(test\\).tsx)',
+          '[entity](<file:///E:/project/a&amp;b.ts>)',
+        ].join('\n'),
+      ),
+    ).toBe(
+      [
+        '[![local image](file:///E:/project/image.png)](https://example.com)',
+        '[![external image](https://example.com/image.png)](/__harness/project-file/file%3A%2F%2F%2FE%3A%2Fproject%2Fpanel.tsx)',
+        '[escaped](/__harness/project-file/E%3A%2Fproject%2Fpanel%28test%29.tsx)',
+        '[entity](/__harness/project-file/file%3A%2F%2F%2FE%3A%2Fproject%2Fa%26b.ts)',
+      ].join('\n'),
+    )
+  })
+
+  it('does not parse a large unrelated tail after the final candidate line', () => {
+    const markdown = `[index](file:///E:/project/index.ts)\n${'ordinary text '.repeat(80_000)}`
+    const started = performance.now()
+    const preserved = preserveProjectFileLinks(markdown)
+
+    expect(performance.now() - started).toBeLessThan(50)
+    expect(preserved.endsWith('ordinary text ')).toBe(true)
+  })
+
   it('accepts Windows files on another drive when they stay inside the project', () => {
     expect(
       projectFileReference(

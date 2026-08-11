@@ -1,4 +1,5 @@
 import { parse, postprocess, preprocess } from 'micromark'
+import { decodeString } from 'micromark-util-decode-string'
 
 const INTERNAL_FILE_PREFIX = '/__harness/project-file/'
 
@@ -7,27 +8,38 @@ export type ProjectFileReference =
 
 /** Preserve real Markdown file-link destinations before the renderer blocks file: URLs. */
 export function preserveProjectFileLinks(markdown: string): string {
-  if (!/(?:file:\/\/|[a-z]:[\\/])/i.test(markdown)) return markdown
+  const candidatePattern = /\]\(\s*<?(?:file:\/\/|[a-z]:[\\/])/gi
+  let parseEnd = 0
+  for (const candidate of markdown.matchAll(candidatePattern)) {
+    const newline = markdown.indexOf('\n', candidate.index)
+    parseEnd = newline < 0 ? markdown.length : newline + 1
+  }
+  if (parseEnd === 0) return markdown
 
   const events = postprocess(
     parse()
       .document()
-      .write(preprocess()(markdown, 'utf8', true)),
+      .write(preprocess()(markdown.slice(0, parseEnd), 'utf8', true)),
   )
   const destinations: Array<{ start: number; end: number; href: string }> = []
-  let linkDepth = 0
+  const owners: Array<'link' | 'image'> = []
 
   for (const [kind, token] of events) {
-    if (token.type === 'link') {
-      linkDepth += kind === 'enter' ? 1 : -1
+    if (token.type === 'link' || token.type === 'image') {
+      if (kind === 'enter') owners.push(token.type)
+      else owners.pop()
       continue
     }
-    if (kind !== 'enter' || linkDepth === 0 || token.type !== 'resourceDestinationString') {
+    if (
+      kind !== 'enter' ||
+      owners.at(-1) !== 'link' ||
+      token.type !== 'resourceDestinationString'
+    ) {
       continue
     }
     const start = token.start.offset
     const end = token.end.offset
-    const href = markdown.slice(start, end)
+    const href = decodeString(markdown.slice(start, end))
     if (/^(?:file:\/\/|[a-z]:[\\/])/i.test(href)) {
       const literal = markdown[start - 1] === '<' && markdown[end] === '>'
       destinations.push({ start: literal ? start - 1 : start, end: literal ? end + 1 : end, href })

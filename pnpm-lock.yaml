@@ -148,6 +148,9 @@ importers:
       micromark:
         specifier: 4.0.2
         version: 4.0.2
+      micromark-util-decode-string:
+        specifier: 2.0.1
+        version: 2.0.1
       qrcode:
         specifier: 1.5.4
         version: 1.5.4
