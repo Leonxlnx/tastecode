@@ -2578,7 +2578,7 @@ describe('live sessions', () => {
     })
   })
 
-  it('shows an old-chat submission and working controls before the server resumes it', async () => {
+  it('keeps cold and reconnect history beneath newer optimistic progress', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -2590,10 +2590,12 @@ describe('live sessions', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    let resolveHistory!: (value: { events: []; running: false }) => void
+    const historyResolvers: Array<(value: { events: []; running: false }) => void> = []
     let resolveSend!: (value: { queued: false; turnId: string }) => void
     transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'thread.history') return new Promise((resolve) => (resolveHistory = resolve))
+      if (method === 'thread.history') {
+        return new Promise((resolve) => historyResolvers.push(resolve))
+      }
       if (method === 'thread.sendTurn') return new Promise((resolve) => (resolveSend = resolve))
       return request(method, params)
     })
@@ -2608,9 +2610,17 @@ describe('live sessions', () => {
     expect(screen.getByText('Working')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
 
-    await act(async () => resolveHistory({ events: [], running: false }))
+    await act(async () => historyResolvers[0]?.({ events: [], running: false }))
     expect(screen.getByTestId('thread').textContent).toContain('Continue immediately')
     expect(screen.getByText('Working')).toBeTruthy()
+
+    act(() => {
+      for (const listener of transport.stateListeners) listener('reconnecting')
+      for (const listener of transport.stateListeners) listener('open')
+    })
+    await waitFor(() => expect(historyResolvers).toHaveLength(2))
+    await act(async () => historyResolvers[1]?.({ events: [], running: false }))
+    expect(screen.getByTestId('thread').textContent).toContain('Continue immediately')
 
     emitThreadEvent('thread-1', {
       type: 'turn.started',
