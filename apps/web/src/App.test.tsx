@@ -2796,6 +2796,10 @@ describe('live sessions', () => {
     expect((composer as HTMLTextAreaElement).value).toBe('')
     fireEvent.click(screen.getByRole('button', { name: 'Existing work, working' }))
     expect((composer as HTMLTextAreaElement).value).toBe('Queue this next')
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    expect((composer as HTMLTextAreaElement).value).toBe('')
+    fireEvent.click(screen.getByRole('button', { name: 'Existing work, working' }))
+    expect((composer as HTMLTextAreaElement).value).toBe('Queue this next')
   })
 
   it('keeps rapid queued prompts ordered when acknowledgements arrive backwards', async () => {
@@ -3681,7 +3685,15 @@ describe('reopening a session', () => {
     })
   })
 
-  it('resyncs active server-owned state after reconnecting mid-stream', async () => {
+  it('clears a replayed active turn when reconnect history says it is idle', async () => {
+    const request = transport.request.getMockImplementation()!
+    let reconnecting = false
+    let resolveResync!: (value: { events: unknown[]; running: false }) => void
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.history' && reconnecting
+        ? new Promise((resolve) => (resolveResync = resolve))
+        : request(method, params),
+    )
     render(<App />)
     await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
     fireEvent.click(screen.getByRole('button', { name: 'New session' }))
@@ -3690,26 +3702,33 @@ describe('reopening a session', () => {
         threadId: 'untouched-thread',
       })
     })
-    transport.request.mockClear()
+    reconnecting = true
 
     act(() => {
       for (const listener of transport.stateListeners) listener('reconnecting')
       for (const listener of transport.stateListeners) listener('open')
     })
-
-    await waitFor(() => {
-      expect(transport.request).toHaveBeenCalledWith('thread.history', {
-        threadId: 'untouched-thread',
-      })
-      expect(transport.request).toHaveBeenCalledWith('thread.queue', {
-        threadId: 'untouched-thread',
-      })
-      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
-        threadId: 'untouched-thread',
-      })
-      expect(transport.request).toHaveBeenCalledWith('projects.list', {})
-      expect(transport.request).toHaveBeenCalledWith('sidebar.settings', {})
-    })
+    await waitFor(() => expect(resolveResync).toBeTypeOf('function'))
+    await act(async () =>
+      resolveResync({
+        events: [
+          {
+            seq: 1,
+            event: {
+              type: 'turn.started',
+              turn: {
+                id: 'orphan-turn',
+                threadId: 'untouched-thread',
+                status: 'running',
+                createdAt: 1,
+              },
+            },
+          },
+        ],
+        running: false,
+      }),
+    )
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
   })
 
   it('keeps newer durable and live events when an older history load resolves last', async () => {
