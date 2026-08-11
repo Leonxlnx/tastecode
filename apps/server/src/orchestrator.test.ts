@@ -1675,9 +1675,7 @@ describe('rolling a session back', () => {
     const first = orchestrator.checkpoints(thread.id)[0]!
 
     let release = (_value: checkpoint.Snapshot) => {}
-    const restoringSnapshot = new Promise<checkpoint.Snapshot>(
-      (resolve) => (release = resolve),
-    )
+    const restoringSnapshot = new Promise<checkpoint.Snapshot>((resolve) => (release = resolve))
     const restoreSnapshot = vi
       .spyOn(checkpoint, 'restoreSnapshot')
       .mockClear()
@@ -1702,9 +1700,7 @@ describe('rolling a session back', () => {
     const first = orchestrator.checkpoints(thread.id)[0]!
 
     let release = (_value: checkpoint.Snapshot) => {}
-    const restoringSnapshot = new Promise<checkpoint.Snapshot>(
-      (resolve) => (release = resolve),
-    )
+    const restoringSnapshot = new Promise<checkpoint.Snapshot>((resolve) => (release = resolve))
     const restoreSnapshot = vi
       .spyOn(checkpoint, 'restoreSnapshot')
       .mockClear()
