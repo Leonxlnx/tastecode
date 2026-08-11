@@ -615,6 +615,66 @@ describe('web client', () => {
     expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
   })
 
+  it('sends the normalized cached model setup before discovery finishes', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'providers.list') return new Promise(() => {})
+      return request(method, params)
+    })
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([
+        {
+          key: 'codex:gpt-5.6-sol',
+          provider: 'codex',
+          sourceName: 'Codex',
+          mark: 'openai',
+          model: {
+            id: 'gpt-5.6-sol',
+            displayName: 'GPT-5.6 Sol',
+            isDefault: true,
+            reasoningEfforts: ['low', 'high'],
+            defaultReasoningEffort: 'low',
+            serviceTiers: [],
+          },
+        },
+      ]),
+    )
+    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.effort', 'ultra')
+    localStorage.setItem('harness.serviceTier', 'priority')
+
+    render(<App />)
+
+    const modelButton = screen.getByRole('button', { name: 'Model and reasoning' })
+    expect(modelButton.textContent).toContain('High')
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('workspace.info', {
+        path: '/work/project',
+      })
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Use what the UI shows' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.start', {
+        provider: 'codex',
+        workspacePath: '/work/project',
+        approval: 'ask',
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+      })
+      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
+        threadId: 'thread-1',
+        text: 'Use what the UI shows',
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+      })
+    })
+  })
+
   it('never fetches ACP agent models in the beta scope', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -1834,6 +1894,162 @@ describe('new chats', () => {
       )
     })
     localStorage.removeItem('harness.modelPickerLayout')
+  })
+
+  it('moves the complete setup to the visible fallback when hiding the selected source', async () => {
+    serverProviders = [
+      ...serverProviders,
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        installed: true,
+        auth: 'authenticated',
+        capabilities: {
+          steer: false,
+          fork: false,
+          interrupt: true,
+          reasoningItems: true,
+          approvals: false,
+          userInput: false,
+          autoReview: false,
+          images: false,
+        },
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models:
+            (params as { provider: string }).provider === 'codex'
+              ? [
+                  {
+                    id: 'gpt-5.6-sol',
+                    displayName: 'GPT-5.6 Sol',
+                    isDefault: true,
+                    reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+                    defaultReasoningEffort: 'medium',
+                    serviceTiers: [
+                      { id: 'standard', name: 'Balanced', description: 'Standard speed' },
+                      { id: 'priority', name: 'Fast', description: 'Faster responses' },
+                    ],
+                    defaultServiceTier: 'standard',
+                  },
+                ]
+              : [
+                  {
+                    id: 'opus',
+                    displayName: 'Opus 5',
+                    isDefault: true,
+                    reasoningEfforts: ['low', 'high'],
+                    defaultReasoningEffort: 'low',
+                    serviceTiers: [],
+                  },
+                ],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.effort', 'xhigh')
+    localStorage.setItem('harness.serviceTier', 'priority')
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Sol',
+      )
+    })
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Models' }))
+    fireEvent.click(
+      await screen.findByRole('switch', { name: 'Show any models from Codex' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Back to app' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        'Opus 5',
+      )
+      expect(localStorage.getItem('harness.provider')).toBe('claude-code')
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Use the visible fallback' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.start', {
+        provider: 'claude-code',
+        workspacePath: '/work/project',
+        approval: 'ask',
+        model: 'opus',
+        effort: 'high',
+      })
+      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
+        threadId: 'thread-1',
+        text: 'Use the visible fallback',
+        model: 'opus',
+        effort: 'high',
+      })
+    })
+  })
+
+  it('has no internal model setup when every catalog model is hidden', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models: [
+            {
+              id: 'gpt-5.6-sol',
+              displayName: 'GPT-5.6 Sol',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [
+                { id: 'priority', name: 'Fast', description: 'Faster responses' },
+              ],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.effort', 'high')
+    localStorage.setItem('harness.serviceTier', 'priority')
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Sol',
+      )
+    })
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Models' }))
+    fireEvent.click(
+      await screen.findByRole('switch', { name: 'Show any models from Codex' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Back to app' }))
+
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.model')).toBeNull()
+      expect(localStorage.getItem('harness.effort')).toBeNull()
+      expect(localStorage.getItem('harness.serviceTier')).toBeNull()
+    })
+    transport.request.mockClear()
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Do not use a hidden model' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect((composer as HTMLTextAreaElement).value).toBe('Do not use a hidden model')
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
   })
 })
 
