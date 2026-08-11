@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { Streamdown, type Components, type IconMap } from 'streamdown'
 import { FileTypeIcon, isFileReference } from './FileTypeIcon.js'
-import { onHighlighterChange, shikiPlugin } from './highlighter.js'
+import { onHighlighterChange, plainCodePlugin, shikiPlugin } from './highlighter.js'
 
 const STREAMDOWN_ICONS = {
   CheckIcon: Check,
@@ -96,6 +96,7 @@ const STREAMDOWN_COMPONENTS = {
 // Streamdown uses these identities to preserve its context values. Recreating
 // them per token invalidates completed Markdown blocks above the live tail.
 const STREAMDOWN_PLUGINS = { code: shikiPlugin }
+const STREAMDOWN_STREAMING_PLUGINS = { code: plainCodePlugin }
 const STREAMDOWN_CONTROLS = { code: true, table: true, mermaid: false }
 
 /**
@@ -146,7 +147,7 @@ export const Markdown = memo(function Markdown({
       isAnimating={streaming}
       animated={STREAM_ANIMATION}
       parseIncompleteMarkdown
-      plugins={STREAMDOWN_PLUGINS}
+      plugins={streaming ? STREAMDOWN_STREAMING_PLUGINS : STREAMDOWN_PLUGINS}
       controls={STREAMDOWN_CONTROLS}
       icons={STREAMDOWN_ICONS}
       components={STREAMDOWN_COMPONENTS}

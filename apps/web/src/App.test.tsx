@@ -63,18 +63,22 @@ vi.mock('./transport.js', () => ({
   },
 }))
 
-vi.mock('./ui/highlighter.js', () => ({
-  onHighlighterChange: () => () => {},
-  shikiPlugin: {
+vi.mock('./ui/highlighter.js', () => {
+  const plugin = {
     type: 'code-highlighter',
     name: 'test-highlighter',
     getSupportedLanguages: () => [],
     getThemes: () => [],
     supportsLanguage: () => true,
     highlight: () => ({ tokens: [] }),
-  },
-  warmHighlighter: () => {},
-}))
+  }
+  return {
+    onHighlighterChange: () => () => {},
+    shikiPlugin: plugin,
+    plainCodePlugin: plugin,
+    warmHighlighter: () => {},
+  }
+})
 
 // App tests exercise session routing, while Thread's own tests cover its
 // virtualized renderer. happy-dom intentionally renders no virtual rows.
