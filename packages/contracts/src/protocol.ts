@@ -352,6 +352,13 @@ export const SearchSnippetPartSchema = z.object({
 export type SearchSnippetPart = z.infer<typeof SearchSnippetPartSchema>
 
 export const SessionSearchResultSchema = z.object({
+  /**
+   * Opaque server-owned identity for the indexed source record. When present,
+   * it stays stable across queries, pages, index rebuilds and process restarts,
+   * and is unique within that server's search corpus. Clients must not parse it.
+   * Optional only for staged compatibility with producers that predate it.
+   */
+  resultId: z.string().min(1).max(256).optional(),
   projectPath: z.string(),
   projectName: z.string(),
   threadId: z.string(),
