@@ -159,4 +159,102 @@ describe('Agent Skills settings', () => {
     expect(await screen.findByText('No skills were discovered for this project.')).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
   })
+
+  it('ignores a completed toggle after switching projects', async () => {
+    let finishToggle: ((value: { enabled: boolean }) => void) | undefined
+    const toggle = new Promise<{ enabled: boolean }>((resolve) => {
+      finishToggle = resolve
+    })
+    const transport = client(async (method, params) => {
+      const projectPath = (params as { projectPath: string }).projectPath
+      if (method === 'skills.list') {
+        return {
+          capabilities: { inventory: true, configure: true, install: false },
+          skills: [
+            {
+              ...skill,
+              id: 'shared-skill',
+              displayName: projectPath === '/work/alpha' ? 'Alpha Skill' : 'Beta Skill',
+              enabled: true,
+            },
+          ],
+          errors: [],
+        }
+      }
+      if (method === 'skills.setEnabled') return toggle
+      throw new Error(`unexpected ${method}`)
+    })
+    const view = render(
+      <SkillsSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/alpha"
+        projectName="Alpha"
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('switch', { name: 'Disable Alpha Skill' }))
+    view.rerender(
+      <SkillsSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/beta"
+        projectName="Beta"
+      />,
+    )
+    const beta = await screen.findByRole('switch', { name: 'Disable Beta Skill' })
+    expect((beta as HTMLButtonElement).disabled).toBe(false)
+
+    await act(async () => finishToggle?.({ enabled: false }))
+
+    expect(screen.getByRole('switch', { name: 'Disable Beta Skill' })).toBeTruthy()
+  })
+
+  it('keeps a confirmed toggle ahead of an older inventory refresh', async () => {
+    const listeners = new Map<string, (value: never) => void>()
+    let resolveRefresh: ((value: unknown) => void) | undefined
+    const staleRefresh = new Promise((resolve) => {
+      resolveRefresh = resolve
+    })
+    let lists = 0
+    const inventory = {
+      capabilities: { inventory: true, configure: true, install: false },
+      skills: [{ ...skill, dependencyErrors: [], enabled: true }],
+      errors: [],
+    }
+    const transport = {
+      state: 'open',
+      request: vi.fn(async (method: string) => {
+        if (method === 'skills.list') return lists++ === 0 ? inventory : staleRefresh
+        if (method === 'skills.setEnabled') return { enabled: false }
+        throw new Error(`unexpected ${method}`)
+      }),
+      on: vi.fn((channel: string, listener: (value: never) => void) => {
+        listeners.set(channel, listener)
+        return () => listeners.delete(channel)
+      }),
+      onState: vi.fn(() => () => {}),
+    } as unknown as Transport
+    render(
+      <SkillsSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('switch', { name: 'Disable Design Taste' }))
+    act(() =>
+      listeners.get('skills.changed')?.({ provider: 'codex', projectPath: '/work/project' } as never),
+    )
+    expect(await screen.findByRole('switch', { name: 'Enable Design Taste' })).toBeTruthy()
+
+    await act(async () => resolveRefresh?.(inventory))
+
+    expect(screen.getByRole('switch', { name: 'Enable Design Taste' })).toBeTruthy()
+  })
 })

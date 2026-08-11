@@ -25,6 +25,20 @@ export function McpSettings(props: {
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
+  const activeContext = useRef({
+    transport: props.transport,
+    provider: props.provider,
+    projectPath: props.projectPath,
+  })
+  activeContext.current = {
+    transport: props.transport,
+    provider: props.provider,
+    projectPath: props.projectPath,
+  }
+  const isCurrentContext = () =>
+    activeContext.current.transport === props.transport &&
+    activeContext.current.provider === props.provider &&
+    activeContext.current.projectPath === props.projectPath
 
   // Generation counter: a slow reply from a previous project must not land
   // on top of the current one's list (or arrive after unmount).
@@ -37,7 +51,7 @@ export function McpSettings(props: {
   )
 
   const refresh = useCallback(async () => {
-    if (!props.projectPath) return
+    if (!props.projectPath || !isCurrentContext()) return
     const generation = ++refreshGeneration.current
     setLoading(true)
     try {
@@ -45,14 +59,14 @@ export function McpSettings(props: {
         provider: props.provider,
         projectPath: props.projectPath,
       })
-      if (refreshGeneration.current !== generation) return
+      if (refreshGeneration.current !== generation || !isCurrentContext()) return
       setInventory(inventory)
       setError(undefined)
     } catch (cause) {
-      if (refreshGeneration.current !== generation) return
+      if (refreshGeneration.current !== generation || !isCurrentContext()) return
       setError(message(cause))
     } finally {
-      if (refreshGeneration.current === generation) setLoading(false)
+      if (refreshGeneration.current === generation && isCurrentContext()) setLoading(false)
     }
   }, [props.transport, props.provider, props.projectPath])
 
@@ -61,6 +75,8 @@ export function McpSettings(props: {
     setError(undefined)
     // "Server added." must not survive into an unrelated project's panel.
     setNotice(undefined)
+    setEditor(undefined)
+    setBusy(undefined)
     if (!props.projectPath) {
       setLoading(false)
       return
@@ -100,6 +116,7 @@ export function McpSettings(props: {
     setNotice(undefined)
     try {
       await action()
+      if (!isCurrentContext()) return false
       setNotice(success)
       if (inventory?.capabilities.reload && props.projectPath) {
         try {
@@ -107,18 +124,20 @@ export function McpSettings(props: {
             provider: props.provider,
             projectPath: props.projectPath,
           })
+          if (!isCurrentContext()) return false
           setNotice(`${success} Active sessions reloaded.`)
         } catch (cause) {
+          if (!isCurrentContext()) return false
           setNotice(`${success} ${message(cause)}`)
         }
       }
       await refresh()
       return true
     } catch (cause) {
-      setError(message(cause))
+      if (isCurrentContext()) setError(message(cause))
       return false
     } finally {
-      setBusy(undefined)
+      if (isCurrentContext()) setBusy(undefined)
     }
   }
 
@@ -194,6 +213,7 @@ export function McpSettings(props: {
         projectPath: props.projectPath,
         serverId: server.id,
       })
+      if (!isCurrentContext()) return
       const opened = window.open(result.authUrl, '_blank', 'noopener,noreferrer')
       if (!opened) {
         setNotice(`Your browser blocked the sign-in window. Open it yourself: ${result.authUrl}`)
@@ -201,8 +221,9 @@ export function McpSettings(props: {
       setNotice('Finish signing in in your browser.')
       setBusy(undefined)
     } catch (cause) {
-      setError(message(cause))
-      setBusy(undefined)
+      if (isCurrentContext()) setError(message(cause))
+    } finally {
+      if (isCurrentContext()) setBusy(undefined)
     }
   }
 

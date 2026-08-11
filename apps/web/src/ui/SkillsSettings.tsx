@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ProviderId, ResultOf, Skill } from '@harness/contracts'
 import { AlertTriangle, FolderPlus } from 'lucide-react'
 import { pickSkillFolder } from '../bridge.js'
@@ -18,38 +18,56 @@ export function SkillsSettings(props: {
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState<string>()
   const [reload, setReload] = useState(0)
+  const inventoryGeneration = useRef(0)
+  const activeContext = useRef({
+    transport: props.transport,
+    provider: props.provider,
+    projectPath: props.projectPath,
+  })
+  activeContext.current = {
+    transport: props.transport,
+    provider: props.provider,
+    projectPath: props.projectPath,
+  }
+  const isCurrentContext = () =>
+    activeContext.current.transport === props.transport &&
+    activeContext.current.provider === props.provider &&
+    activeContext.current.projectPath === props.projectPath
 
   useEffect(() => {
     if (!props.projectPath) {
+      inventoryGeneration.current += 1
       setInventory(undefined)
       setLoading(false)
+      setError(undefined)
+      setBusy(undefined)
       return
     }
 
     let active = true
     // Ordered: two overlapping refreshes (initial load racing a
     // skills.changed push) must not land out of order.
-    let generation = 0
     const load = async () => {
-      const mine = ++generation
+      const mine = ++inventoryGeneration.current
       setLoading(true)
       try {
         const next = await props.transport.request('skills.list', {
           provider: props.provider,
           projectPath: props.projectPath!,
         })
-        if (active && mine === generation) {
+        if (active && mine === inventoryGeneration.current) {
           setInventory(next)
           setError(undefined)
         }
       } catch (cause) {
-        if (active && mine === generation) setError(message(cause))
+        if (active && mine === inventoryGeneration.current) setError(message(cause))
       } finally {
-        if (active && mine === generation) setLoading(false)
+        if (active && mine === inventoryGeneration.current) setLoading(false)
       }
     }
     setInventory(undefined)
     setError(undefined)
+    setBusy(undefined)
     void load()
     const off = props.transport.on('skills.changed', ({ provider, projectPath }) => {
       if (provider === props.provider && projectPath === props.projectPath) void load()
@@ -80,6 +98,9 @@ export function SkillsSettings(props: {
         skillId: skill.id,
         enabled: !skill.enabled,
       })
+      if (!isCurrentContext()) return
+      inventoryGeneration.current += 1
+      setLoading(false)
       setInventory((current) =>
         current
           ? {
@@ -91,16 +112,16 @@ export function SkillsSettings(props: {
           : current,
       )
     } catch (cause) {
-      setError(message(cause))
+      if (isCurrentContext()) setError(message(cause))
     } finally {
-      setBusy(undefined)
+      if (isCurrentContext()) setBusy(undefined)
     }
   }
 
   async function install(): Promise<void> {
     if (!props.projectPath) return
     const folderPath = await pickSkillFolder()
-    if (!folderPath) return
+    if (!folderPath || !isCurrentContext()) return
     setBusy('install')
     setError(undefined)
     try {
@@ -109,6 +130,9 @@ export function SkillsSettings(props: {
         projectPath: props.projectPath,
         folderPath,
       })
+      if (!isCurrentContext()) return
+      inventoryGeneration.current += 1
+      setLoading(false)
       setInventory((current) =>
         current
           ? {
@@ -118,9 +142,9 @@ export function SkillsSettings(props: {
           : current,
       )
     } catch (cause) {
-      setError(message(cause))
+      if (isCurrentContext()) setError(message(cause))
     } finally {
-      setBusy(undefined)
+      if (isCurrentContext()) setBusy(undefined)
     }
   }
 

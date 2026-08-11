@@ -9,7 +9,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function client(request: (method: string) => Promise<unknown>): Transport {
+function client(request: (method: string, params: unknown) => Promise<unknown>): Transport {
   return {
     state: 'open',
     request: vi.fn(request),
@@ -214,6 +214,77 @@ describe('MCP settings', () => {
     await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(1))
     listeners.get('mcp.changed')?.({ provider: 'codex', projectPath: '/work/project' } as never)
     await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
+  })
+
+  it('ignores a completed change after switching projects', async () => {
+    let finishChange: (() => void) | undefined
+    const change = new Promise<void>((resolve) => {
+      finishChange = resolve
+    })
+    const inventory = (id: string) => ({
+      capabilities: {
+        inventory: true,
+        add: true,
+        update: false,
+        remove: true,
+        reload: false,
+        startOAuth: false,
+        cancelOAuth: false,
+      },
+      servers: [
+        {
+          id,
+          scope: 'global',
+          enabled: true,
+          auth: { status: 'not_required' },
+          startup: { state: 'ready' },
+          tools: [],
+          resources: [],
+          resourceTemplates: [],
+        },
+      ],
+    })
+    const transport = client(async (method, params) => {
+      const projectPath = (params as { projectPath: string }).projectPath
+      if (method === 'mcp.list') return inventory(projectPath === '/work/alpha' ? 'alpha' : 'beta')
+      if (method === 'mcp.add') return change
+      throw new Error(`unexpected ${method}`)
+    })
+    const view = render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/alpha"
+        projectName="Alpha"
+      />,
+    )
+
+    expect(await screen.findByText('alpha')).toBeTruthy()
+    fireEvent.click(screen.getByRole('switch', { name: 'Disable alpha for this project' }))
+    view.rerender(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/beta"
+        projectName="Beta"
+      />,
+    )
+    expect(await screen.findByText('beta')).toBeTruthy()
+
+    await act(async () => finishChange?.())
+
+    expect(screen.getByText('beta')).toBeTruthy()
+    expect(
+      vi
+        .mocked(transport.request)
+        .mock.calls.filter(
+          ([method, params]) =>
+            method === 'mcp.list' &&
+            (params as { projectPath: string }).projectPath === '/work/alpha',
+        ),
+    ).toHaveLength(1)
   })
 
   it('adds a project server and disables an inherited server', async () => {
