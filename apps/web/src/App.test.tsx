@@ -579,17 +579,21 @@ describe('web client', () => {
     })
   })
 
-  it('restores the selected model immediately on the first cache-enabled launch', () => {
+  it('restores the selected model immediately on the first cache-enabled launch', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'providers.list') return new Promise(() => {})
+      if (method === 'models.list') return Promise.reject(new Error('provider unavailable'))
       return request(method, params)
     })
     // Older builds persisted a bare model id rather than the source-qualified key.
     localStorage.setItem('harness.model', 'gpt-5.6-sol')
     localStorage.setItem('harness.effort', 'high')
     localStorage.setItem('harness.serviceTier', 'priority')
+    localStorage.setItem(
+      'harness.modelBySource',
+      JSON.stringify({ codex: { modelKey: 'codex:gpt-5.6-sol', serviceTier: 'priority' } }),
+    )
 
     render(<App />)
 
@@ -599,6 +603,19 @@ describe('web client', () => {
     expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
       'Effort: High',
     )
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', {
+        provider: 'codex',
+      }),
+    )
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(localStorage.getItem('harness.serviceTier')).toBe('priority')
+    expect(localStorage.getItem('harness.modelCatalog.v1')).toBeNull()
+
+    cleanup()
+    render(<App />)
     expect(localStorage.getItem('harness.serviceTier')).toBe('priority')
   })
 
@@ -1858,9 +1875,17 @@ describe('new chats', () => {
         return Promise.resolve({
           models: [
             {
+              id: 'sonnet',
+              displayName: 'Sonnet 5',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [],
+            },
+            {
               id: 'opus',
               displayName: 'Opus 5',
-              isDefault: true,
+              isDefault: false,
               reasoningEfforts: ['low', 'high'],
               defaultReasoningEffort: 'low',
               serviceTiers: [],
@@ -1950,6 +1975,7 @@ describe('new chats', () => {
     })
     localStorage.setItem('harness.model', 'codex:retired-model')
     localStorage.setItem('harness.effort', 'high')
+    localStorage.setItem('harness.serviceTier', 'priority')
     localStorage.setItem(
       'harness.modelBySource',
       JSON.stringify({ 'claude-code': { modelKey: 'claude-code:opus', effort: 'low' } }),
@@ -1961,6 +1987,7 @@ describe('new chats', () => {
       const modelButton = screen.getByRole('button', { name: 'Model and reasoning' })
       expect(modelButton.textContent).toContain('Opus 5')
       expect(modelButton.textContent).toContain('Low')
+      expect(localStorage.getItem('harness.serviceTier')).toBeNull()
     })
   })
 
@@ -3232,7 +3259,7 @@ describe('reopening a session', () => {
     })
   })
 
-  it('does not send a model from another provider to an existing session', async () => {
+  it('keeps a catalogless API session active when discovery finishes', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -3241,20 +3268,24 @@ describe('reopening a session', () => {
         createdAt: 0,
         sessions: [
           {
-            id: 'claude-thread',
-            title: 'Claude thread',
-            provider: 'claude-code',
+            id: 'api-thread',
+            title: 'API thread',
+            provider: 'api',
             createdAt: 0,
             running: false,
           },
         ],
       },
     ]
+    let releaseModels!: () => void
+    const modelsGate = new Promise<void>((resolve) => {
+      releaseModels = resolve
+    })
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'models.list') {
-        return Promise.resolve({
+        return modelsGate.then(() => ({
           models: [
             {
               id: 'gpt-5.6-sol',
@@ -3265,19 +3296,23 @@ describe('reopening a session', () => {
               serviceTiers: [],
             },
           ],
-        })
+        }))
       }
       return request(method, params)
     })
 
     render(<App />)
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
-        '5.6 Sol',
-      )
+    fireEvent.click(await screen.findByRole('button', { name: 'API thread' }))
+    await act(async () => {
+      releaseModels()
+      await modelsGate
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Claude thread' }))
+
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.provider')).toBe('api')
+      expect(screen.queryByRole('button', { name: 'Model and reasoning' })).toBeNull()
+    })
 
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Use the session provider' } })
@@ -3285,7 +3320,7 @@ describe('reopening a session', () => {
 
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
-        threadId: 'claude-thread',
+        threadId: 'api-thread',
         text: 'Use the session provider',
       })
     })

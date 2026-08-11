@@ -204,6 +204,14 @@ function mergeCustomModels(catalog: ModelChoice[], custom: CustomModel[]): Model
   return [...catalog.filter((choice) => !customKeys.has(choice.key)), ...customChoices]
 }
 
+function modelSource(choice: ModelChoice): string {
+  return sourceKey({
+    provider: choice.provider,
+    connectionId: choice.connectionId,
+    agentId: choice.agent?.id,
+  })
+}
+
 export function App() {
   const [connectionUrl, setConnectionUrl] = useState(() => serverUrl(SERVER_BASE_URL))
   const transport = useMemo(() => new Transport(connectionUrl), [connectionUrl])
@@ -413,27 +421,34 @@ export function App() {
         : undefined,
     [provider, acpAgent, acpAgentName],
   )
-  const activeModelSession = activeId ? findSession(projects, activeId)?.session : undefined
-  const matchesActiveSource = (choice: ModelChoice) =>
-    !activeModelSession ||
-    sourceKey({
-      provider: choice.provider,
-      connectionId: choice.connectionId,
-      agentId: choice.agent?.id,
-    }) ===
-      sourceKey({
-        provider: activeModelSession.provider,
-        agentId: activeModelSession.agent,
-      })
-  const selectableModels = activeModelSession
-    ? visibleModels.filter(matchesActiveSource)
-    : visibleModels
+  const activeModelSource = useMemo(() => {
+    const session = activeId ? findSession(projects, activeId)?.session : undefined
+    return session
+      ? sourceKey({
+          provider: session.provider,
+          agentId: session.agent,
+        })
+      : undefined
+  }, [activeId, projects])
+  const selectableModels = useMemo(
+    () =>
+      activeModelSource
+        ? visibleModels.filter((choice) => modelSource(choice) === activeModelSource)
+        : visibleModels,
+    [activeModelSource, visibleModels],
+  )
   const storedModelChoice = models.find((choice) => choice.key === modelId)
-  const sourceHasCatalogModels = activeModelSession && models.some(matchesActiveSource)
+  const sourceHasCatalogModels = useMemo(
+    () =>
+      activeModelSource
+        ? models.some((choice) => modelSource(choice) === activeModelSource)
+        : false,
+    [activeModelSource, models],
+  )
   const selectableImplicitChoice =
     implicitChoice &&
-    matchesActiveSource(implicitChoice) &&
-    (models.length === 0 || (activeModelSession && !sourceHasCatalogModels))
+    (!activeModelSource || modelSource(implicitChoice) === activeModelSource) &&
+    (models.length === 0 || (activeModelSource && !sourceHasCatalogModels))
       ? implicitChoice
       : undefined
   const selectedModelChoice =
@@ -546,6 +561,8 @@ export function App() {
 
   const activeIdRef = useRef(activeId)
   activeIdRef.current = activeId
+  const projectsRef = useRef(projects)
+  projectsRef.current = projects
   /** Refetch after an outage. Held in a ref because the transport effect is
    *  set up before the fetchers it needs are declared. */
   const resync = useRef<() => void>(() => {})
@@ -749,12 +766,7 @@ export function App() {
             } catch {
               const source = sourceKey({ provider: entry.id })
               const preserved = catalogModelsRef.current.filter(
-                (choice) =>
-                  sourceKey({
-                    provider: choice.provider,
-                    connectionId: choice.connectionId,
-                    agentId: choice.agent?.id,
-                  }) === source,
+                (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
               )
               for (const choice of preserved) {
                 if (unvalidatedModelKeys.has(choice.key)) unknownKeys.add(choice.key)
@@ -772,7 +784,11 @@ export function App() {
       setAcpAgents(agentsResult?.agents ?? [])
       setModelConnections(connections)
       setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
-      writeSetting(MODEL_CATALOG_KEY, serializeModelCatalogCache(catalog))
+      // A synthetic cache-miss entry has no tier metadata. Do not persist it
+      // as an authoritative snapshot after a transient discovery failure.
+      if (unknownKeys.size === 0) {
+        writeSetting(MODEL_CATALOG_KEY, serializeModelCatalogCache(catalog))
+      }
       const stored = readSetting(MODEL_KEY)
       // A hidden model cannot remain the internal selection. Otherwise the
       // picker shows no such choice while a turn can still silently use it.
@@ -782,26 +798,38 @@ export function App() {
       )
       const all = [...catalog, ...customPool]
       const visible = all.filter((choice) => !hidden.has(choice.key))
+      const currentSession = activeIdRef.current
+        ? findSession(projectsRef.current, activeIdRef.current)?.session
+        : undefined
+      const currentSource = currentSession
+        ? sourceKey({ provider: currentSession.provider, agentId: currentSession.agent })
+        : undefined
+      const selectionPool = currentSource
+        ? visible.filter((choice) => modelSource(choice) === currentSource)
+        : visible
+      const selections = readSourceSelections()
+      const storedSelection =
+        selectionPool.find((choice) => choice.key === stored) ??
+        selectionPool.find((choice) => choice.model.id === stored)
+      const fallback = selectionPool.find((choice) => choice.model.isDefault) ?? selectionPool[0]
+      const rememberedFallbackKey = fallback
+        ? selections[modelSource(fallback)]?.modelKey
+        : undefined
       const selected =
-        visible.find((choice) => choice.key === stored) ??
-        visible.find((choice) => choice.model.id === stored) ??
-        visible.find((choice) => choice.model.isDefault) ??
-        visible[0]
+        storedSelection ??
+        selectionPool.find((choice) => choice.key === rememberedFallbackKey) ??
+        fallback
       if (!selected) {
         setModelId(undefined)
         setEffort(undefined)
         setServiceTier(undefined)
         return
       }
-      const previous = modelsRef.current.find((choice) => choice.key === stored)
-      const remembered =
-        readSourceSelections()[
-          sourceKey({
-            provider: selected.provider,
-            connectionId: selected.connectionId,
-            agentId: selected.agent?.id,
-          })
-        ]
+      const previous =
+        modelsRef.current.find((choice) => choice.key === stored) ??
+        modelsRef.current.find((choice) => choice.model.id === stored)
+      const remembered = selections[modelSource(selected)]
+      const remembersSelected = remembered?.modelKey === selected.key
       setModelId(selected.key)
       setProvider(selected.provider)
       setAcpAgent(selected.agent?.id)
@@ -820,28 +848,34 @@ export function App() {
         removeSetting(AGENT_KEY)
         removeSetting(AGENT_NAME_KEY)
       }
-      setEffort((current) =>
-        remembered?.modelKey === selected.key &&
-        remembered.effort &&
-        selected.model.reasoningEfforts.includes(remembered.effort)
-          ? remembered.effort
-          : resolveReasoningEffort({
-              currentEffort: current,
-              currentModel: previous?.model,
-              nextModel: selected.model,
-            }),
-      )
-      setServiceTier((current) =>
-        remembered?.modelKey === selected.key &&
-        remembered.serviceTier &&
-        selected.model.serviceTiers.some((tier) => tier.id === remembered.serviceTier)
-          ? remembered.serviceTier
-          : getNextServiceTierForModel({
-              currentServiceTier: current,
-              currentModel: previous?.model,
-              nextModel: selected.model,
-            }),
-      )
+      setEffort((current) => {
+        if (remembersSelected) {
+          return remembered.effort && selected.model.reasoningEfforts.includes(remembered.effort)
+            ? remembered.effort
+            : resolveReasoningEffort({ currentEffort: undefined, nextModel: selected.model })
+        }
+        return resolveReasoningEffort({
+          currentEffort: current,
+          currentModel: previous?.model,
+          nextModel: selected.model,
+        })
+      })
+      setServiceTier((current) => {
+        if (unknownKeys.has(selected.key)) {
+          return remembersSelected ? remembered.serviceTier : current
+        }
+        if (remembersSelected) {
+          return remembered.serviceTier &&
+            selected.model.serviceTiers.some((tier) => tier.id === remembered.serviceTier)
+            ? remembered.serviceTier
+            : (selected.model.defaultServiceTier ?? undefined)
+        }
+        return getNextServiceTierForModel({
+          currentServiceTier: current,
+          currentModel: previous?.model,
+          nextModel: selected.model,
+        })
+      })
     })().catch(() => {
       if (!cancelled) setModelCatalog((current) => ({ ...current, loaded: true }))
     })
@@ -1205,10 +1239,12 @@ export function App() {
             : resolveReasoningEffort({ currentEffort: undefined, nextModel: selected.model }),
         )
         setServiceTier(
-          remembered.serviceTier &&
-            selected.model.serviceTiers.some((tier) => tier.id === remembered.serviceTier)
+          unvalidatedModelKeys.has(selected.key)
             ? remembered.serviceTier
-            : (selected.model.defaultServiceTier ?? undefined),
+            : remembered.serviceTier &&
+                selected.model.serviceTiers.some((tier) => tier.id === remembered.serviceTier)
+              ? remembered.serviceTier
+              : (selected.model.defaultServiceTier ?? undefined),
         )
         return
       }
@@ -1888,6 +1924,15 @@ export function App() {
         } else {
           setProvider(found.session.provider)
           setAcpAgent(found.session.agent)
+          setAcpAgentName(undefined)
+          writeSetting(SETUP_KEY, found.session.provider)
+          if (found.session.agent) {
+            writeSetting(AGENT_KEY, found.session.agent)
+            removeSetting(AGENT_NAME_KEY)
+          } else {
+            removeSetting(AGENT_KEY)
+            removeSetting(AGENT_NAME_KEY)
+          }
         }
       }
       setNotice(undefined)
