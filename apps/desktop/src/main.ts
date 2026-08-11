@@ -23,6 +23,7 @@ import {
   type PreviewCaptureResult,
 } from '@harness/contracts'
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
+import { clipboardText } from './clipboard-text.js'
 import { allowsMicrophoneRequest } from './media-permissions.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
 import { revealablePath } from './reveal-path.js'
@@ -63,7 +64,6 @@ const devServer = process.env['HARNESS_DEV_SERVER']
  *  "the app's windows" must not count them. */
 const captureWindows = new Set<BrowserWindow>()
 const MAX_PASTED_IMAGE_BYTES = 25 * 1024 * 1024
-const MAX_CLIPBOARD_TEXT_LENGTH = 64 * 1024
 const CAPTURE_SETTLE_SCRIPT = `new Promise(resolve => requestAnimationFrame(resolve))
   .then(() => Promise.race([
     Promise.allSettled(document.getAnimations().map(animation => animation.finished)),
@@ -314,10 +314,7 @@ ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
 
 ipcMain.handle('harness:writeClipboardText', (event, value: unknown) => {
   requireOwnRenderer(event.sender)
-  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_CLIPBOARD_TEXT_LENGTH) {
-    throw new Error('Invalid clipboard text')
-  }
-  clipboard.writeText(value)
+  clipboard.writeText(clipboardText(value))
 })
 
 ipcMain.handle('harness:capturePreview', async (event, value: unknown) => {
