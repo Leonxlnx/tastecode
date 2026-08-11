@@ -26,7 +26,13 @@ export function mapThreadItem(
       return { ...base, type: 'message', role: 'user', text: userInputToText(raw.content) }
 
     case 'agentMessage':
-      return { ...base, type: 'message', role: 'assistant', text: raw.text }
+      return {
+        ...base,
+        type: 'message',
+        role: 'assistant',
+        ...(raw.phase === null ? {} : { phase: raw.phase }),
+        text: raw.text,
+      }
 
     case 'reasoning':
       return {

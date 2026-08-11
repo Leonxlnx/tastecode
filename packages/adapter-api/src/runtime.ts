@@ -380,6 +380,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
           turnId,
           type: 'message',
           role: 'assistant',
+          phase: finish === 'tool_calls' ? 'commentary' : 'final_answer',
           status: 'completed',
           text,
           createdAt: Date.now(),
