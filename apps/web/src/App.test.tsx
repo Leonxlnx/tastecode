@@ -2766,4 +2766,43 @@ describe('reopening a session', () => {
       expect(transport.request).toHaveBeenCalledWith('sidebar.settings', {})
     })
   })
+
+  it('keeps live events when reconnect and session loads overlap', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const historyResolvers: Array<(value: { events: []; running: boolean }) => void> = []
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.history') {
+        return new Promise((resolve) => historyResolvers.push(resolve))
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+    await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+    await waitFor(() => expect(historyResolvers).toHaveLength(1))
+    act(() => {
+      for (const listener of transport.stateListeners) listener('reconnecting')
+      for (const listener of transport.stateListeners) listener('open')
+    })
+    await waitFor(() => expect(historyResolvers).toHaveLength(2))
+
+    emitThreadEvent('untouched-thread', {
+      type: 'item.started',
+      item: {
+        id: 'live-item',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'started',
+        text: 'Live during reconnect',
+        createdAt: 1,
+      },
+    })
+    await act(async () => historyResolvers[0]?.({ events: [], running: true }))
+    await act(async () => historyResolvers[1]?.({ events: [], running: true }))
+
+    expect(screen.getByTestId('thread').textContent).toContain('Live during reconnect')
+  })
 })

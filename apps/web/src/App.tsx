@@ -236,7 +236,7 @@ export function App() {
   const threadStates = useRef(new Map<string, ThreadState>())
   /** Live events parked while a history fetch for the thread is in flight. */
   const historyBuffers = useRef(
-    new Map<string, Array<{ seq: number | undefined; event: DomainEvent }>>(),
+    new Map<string, Set<Array<{ seq: number | undefined; event: DomainEvent }>>>(),
   )
   const pendingThreadDeltas = useRef(new Map<string, ItemDeltaEvent[]>())
   const queueStates = useRef(new Map<string, { items: QueuedTurn[]; canSteer: boolean }>())
@@ -514,7 +514,9 @@ export function App() {
       // While a history load is in flight, the fetched state will replace the
       // cache — record the event so it can be replayed on top. Non-deltas
       // apply immediately below; deltas join the same frame batch as rendering.
-      historyBuffers.current.get(threadId)?.push({ seq, event })
+      for (const buffer of historyBuffers.current.get(threadId) ?? []) {
+        buffer.push({ seq, event })
+      }
       if (event.type === 'item.delta') {
         const pending = pendingThreadDeltas.current.get(threadId)
         if (pending) pending.push(event)
@@ -846,13 +848,15 @@ export function App() {
       // Live pushes landing during this round trip are buffered (see the
       // thread.event handler) and re-applied on top of the fetched history —
       // overwriting the cache blindly used to silently drop them.
-      historyBuffers.current.set(threadId, [])
+      const buffer: Array<{ seq: number | undefined; event: DomainEvent }> = []
+      const buffers = historyBuffers.current.get(threadId) ?? new Set()
+      buffers.add(buffer)
+      historyBuffers.current.set(threadId, buffers)
       try {
         const { events } = await transport.request('thread.history', { threadId })
         const restored = reduceEventLog(emptyThread, events)
         const lastSeq = events.at(-1)?.seq ?? 0
-        const buffered = historyBuffers.current.get(threadId) ?? []
-        const withLive = reduceEventLog(restored, buffered, lastSeq)
+        const withLive = reduceEventLog(restored, buffer, lastSeq)
         // The buffered events above already include any deltas still waiting
         // for a frame, so do not apply that pending batch a second time.
         pendingThreadDeltas.current.delete(threadId)
@@ -860,7 +864,8 @@ export function App() {
         setProjects((current) => updateSession(current, threadId, markSessionRead))
         if (activeIdRef.current === threadId) setThread(withLive)
       } finally {
-        historyBuffers.current.delete(threadId)
+        buffers.delete(buffer)
+        if (buffers.size === 0) historyBuffers.current.delete(threadId)
       }
     },
     [transport],
