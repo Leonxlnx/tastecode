@@ -20,6 +20,7 @@ const transport = vi.hoisted(() => ({
 }))
 
 const shellRenders = vi.hoisted(() => ({
+  composer: vi.fn(),
   sidebar: vi.fn(),
   stageHeader: vi.fn(),
 }))
@@ -115,6 +116,16 @@ vi.mock('./ui/Sidebar.js', async (importOriginal) => {
   return { ...original, Sidebar }
 })
 
+vi.mock('./ui/Composer.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./ui/Composer.js')>()
+  const { memo } = await import('react')
+  const Composer = memo((props: ComponentProps<typeof original.Composer>) => {
+    shellRenders.composer()
+    return <original.Composer {...props} />
+  })
+  return { ...original, Composer }
+})
+
 vi.mock('./ui/StageHeader.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('./ui/StageHeader.js')>()
   const { memo } = await import('react')
@@ -191,6 +202,7 @@ let serverSidebarSettings: {
 
 beforeEach(() => {
   appRenders.mockClear()
+  shellRenders.composer.mockClear()
   shellRenders.sidebar.mockClear()
   shellRenders.stageHeader.mockClear()
   utilityRenders.commandPalette.mockClear()
@@ -682,6 +694,29 @@ describe('web client', () => {
       expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
         '5.6 Sol',
       )
+    })
+  })
+
+  it('keeps a custom bootstrap out of the recovered server catalog cache', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') return Promise.reject(new Error('provider unavailable'))
+      return request(method, params)
+    })
+    localStorage.setItem('harness.model', 'custom:codex:private-model')
+    localStorage.setItem(
+      'harness.customModels.v1',
+      JSON.stringify([{ provider: 'codex', modelId: 'private-model', displayName: '' }]),
+    )
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' })
+      const cache = localStorage.getItem('harness.modelCatalog.v1')
+      expect(cache).not.toBeNull()
+      expect(cache).not.toContain('private-model')
     })
   })
 
@@ -2955,6 +2990,7 @@ describe('live sessions', () => {
     })
     shellRenders.sidebar.mockClear()
     shellRenders.stageHeader.mockClear()
+    shellRenders.composer.mockClear()
 
     emitThreadEvent('untouched-thread', {
       type: 'item.delta',
@@ -2966,6 +3002,7 @@ describe('live sessions', () => {
 
     expect(shellRenders.sidebar).not.toHaveBeenCalled()
     expect(shellRenders.stageHeader).not.toHaveBeenCalled()
+    expect(shellRenders.composer).not.toHaveBeenCalled()
   })
 
   it('keeps open utility surfaces out of streamed-frame renders', async () => {
@@ -3396,6 +3433,40 @@ describe('reopening a session', () => {
         threadId: 'api-thread',
         text: 'Use the session provider',
       })
+    })
+  })
+
+  it('does not replace exact source memory with a catalogless ACP fallback', async () => {
+    serverProjects = [
+      {
+        ...(serverProjects[0] as Record<string, unknown>),
+        sessions: [
+          {
+            id: 'acp-thread',
+            title: 'ACP thread',
+            provider: 'acp',
+            agent: 'kimi',
+            createdAt: 0,
+            running: false,
+          },
+        ],
+      },
+    ]
+    localStorage.setItem(
+      'harness.modelBySource',
+      JSON.stringify({
+        'acp:kimi': { modelKey: 'acp:kimi:model-x', effort: 'high' },
+      }),
+    )
+
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'ACP thread' }))
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.model')).toBe('acp:kimi:automatic')
+    })
+    expect(JSON.parse(localStorage.getItem('harness.modelBySource') ?? '{}')).toMatchObject({
+      'acp:kimi': { modelKey: 'acp:kimi:model-x', effort: 'high' },
     })
   })
 

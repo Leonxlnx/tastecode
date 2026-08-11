@@ -1187,6 +1187,10 @@ export function App() {
     if (
       !selectedModelChoice ||
       selectedModelChoice.key !== modelId ||
+      // Provider-default fallbacks are synthetic, just like cache-miss
+      // choices. They may drive a catalogless session without replacing the
+      // exact model remembered for when that source's catalog returns.
+      selectedModelChoice.model.id.length === 0 ||
       unvalidatedModelKeys.has(selectedModelChoice.key)
     ) {
       return
