@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
+import { clipboardText } from './clipboard-text.js'
 
 /**
  * The entire native surface exposed to the renderer.
@@ -17,7 +18,7 @@ const api = {
   savePastedImage: (image: { type: string; bytes: ArrayBuffer }): Promise<string> =>
     ipcRenderer.invoke('harness:savePastedImage', image),
   writeClipboardText: (text: string): Promise<void> =>
-    ipcRenderer.invoke('harness:writeClipboardText', text),
+    ipcRenderer.invoke('harness:writeClipboardText', clipboardText(text)),
   setZoom: (action: 'in' | 'out' | 'reset'): Promise<void> =>
     ipcRenderer.invoke('harness:setZoom', action),
   setTheme: (preference: 'system' | 'light' | 'dark'): Promise<void> =>
