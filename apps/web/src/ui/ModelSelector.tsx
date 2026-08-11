@@ -7,10 +7,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from 'react'
-import {
-  readModelPickerLayout,
-  subscribeModelPickerLayout,
-} from '../model-picker-layout.js'
+import { readModelPickerLayout, subscribeModelPickerLayout } from '../model-picker-layout.js'
 import { Check, ChevronDown, Zap } from 'lucide-react'
 import {
   filterModelChoicesByQuery,

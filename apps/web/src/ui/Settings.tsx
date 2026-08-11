@@ -77,10 +77,7 @@ import type {
   FontPreference,
   ThemePreference,
 } from '../theme.js'
-import {
-  readModelPickerLayout,
-  writeModelPickerLayout,
-} from '../model-picker-layout.js'
+import { readModelPickerLayout, writeModelPickerLayout } from '../model-picker-layout.js'
 import { McpSettings } from './McpSettings.js'
 import { Menu, MenuItem } from './Menu.js'
 import { ModelSearchField } from './ModelSearchField.js'
