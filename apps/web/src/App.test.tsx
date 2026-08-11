@@ -7,6 +7,7 @@ import { App } from './App.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
 import type { ModelChoice } from './model-catalog.js'
+import { IndeterminateRequestError } from './transport.js'
 
 const transport = vi.hoisted(() => ({
   request: vi.fn(),
@@ -35,6 +36,8 @@ const utilityRenders = vi.hoisted(() => ({
 const appRenders = vi.hoisted(() => vi.fn())
 
 vi.mock('./transport.js', () => ({
+  IndeterminateRequestError: class IndeterminateRequestError extends Error {},
+  isIndeterminateRequestError: (error: unknown) => error instanceof Error && error.name === 'IndeterminateRequestError',
   Transport: class {
     constructor(url: string) {
       transport.urls.push(url)
@@ -95,9 +98,9 @@ vi.mock('./ui/Thread.js', () => ({
   Thread: (props: {
     items: { id: string; text?: string }[]
     running: boolean
-    activeTurn?: { id: string }
+    activeTurn?: { id: string; startedAt: number }
   }) => (
-    <div data-testid="thread">
+    <div data-testid="thread" data-started-at={props.activeTurn?.startedAt}>
       {props.items.map((item) => (
         <span key={item.id} data-item-id={item.id}>
           {item.text}
@@ -2584,7 +2587,7 @@ describe('live sessions', () => {
     })
   })
 
-  it('shows an old-chat submission and working controls before the server resumes it', async () => {
+  it('keeps an old-chat submission above a colder history response', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -2596,10 +2599,11 @@ describe('live sessions', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    const pendingSend = new Promise(() => {})
-    transport.request.mockImplementation((method: string, params: unknown) =>
-      method === 'thread.sendTurn' ? pendingSend : request(method, params),
-    )
+    let resolveHistory!: (value: { events: []; running: false }) => void
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.history') return new Promise((resolve) => (resolveHistory = resolve))
+      return method === 'thread.sendTurn' ? new Promise(() => {}) : request(method, params)
+    })
 
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Old chat' }))
@@ -2610,7 +2614,115 @@ describe('live sessions', () => {
     expect(screen.getByTestId('thread').textContent).toContain('Continue immediately')
     expect(screen.getByText('Working')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
+    const startedAt = screen.getByTestId('thread').getAttribute('data-started-at')
+
+    await act(async () => resolveHistory({ events: [], running: false }))
+    expect(screen.getByTestId('thread').textContent).toContain('Continue immediately')
+    expect(screen.getByTestId('thread').getAttribute('data-started-at')).toBe(startedAt)
   })
+
+  it.each(['accepted', 'rejected'] as const)(
+    'settles an indeterminate send as %s only after reconnect history',
+    async (outcome) => {
+      serverProjects = [
+        {
+          path: '/work/project',
+          name: 'project',
+          pinned: false,
+          createdAt: 0,
+          sessions: [{ id: 'thread-1', title: 'Old chat', running: false }],
+        },
+      ]
+      const request = transport.request.getMockImplementation()!
+      let historyCount = 0
+      let resolveResync!: (value: { events: unknown[]; running: boolean }) => void
+      let rejectSend!: (error: Error) => void
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method === 'thread.history' && historyCount++ > 0) {
+          return new Promise((resolve) => (resolveResync = resolve))
+        }
+        if (method === 'thread.sendTurn') {
+          return new Promise((_, reject) => (rejectSend = reject))
+        }
+        return request(method, params)
+      })
+
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Old chat' }))
+      const composer = screen.getByPlaceholderText('Do anything')
+      fireEvent.change(composer, { target: { value: 'Submit exactly once' } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+      const call = await waitFor(() => {
+        const found = transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')
+        expect(found).toBeTruthy()
+        return found!
+      })
+      const submissionId = (call[1] as { clientSubmissionId: string }).clientSubmissionId
+      const localStartedAt = screen.getByTestId('thread').getAttribute('data-started-at')
+
+      await act(async () => rejectSend(new IndeterminateRequestError('socket lost')))
+      expect(screen.getByText('Submit exactly once')).toBeTruthy()
+      expect(screen.getByText('Working')).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
+      expect((composer as HTMLTextAreaElement).value).toBe('')
+
+      act(() => {
+        for (const listener of transport.stateListeners) listener('reconnecting')
+        for (const listener of transport.stateListeners) listener('open')
+      })
+      await waitFor(() => expect(resolveResync).toBeTypeOf('function'))
+      await act(async () =>
+        resolveResync({
+          events:
+            outcome === 'accepted'
+              ? [
+                  {
+                    seq: 1,
+                    event: {
+                      type: 'turn.started',
+                      turn: {
+                        id: 'turn-accepted',
+                        threadId: 'thread-1',
+                        status: 'running',
+                        createdAt: 7,
+                      },
+                    },
+                  },
+                  {
+                    seq: 2,
+                    event: {
+                      type: 'item.completed',
+                      item: {
+                        id: submissionId,
+                        turnId: 'turn-accepted',
+                        type: 'message',
+                        role: 'user',
+                        status: 'completed',
+                        text: 'Submit exactly once',
+                        createdAt: 7,
+                      },
+                    },
+                  },
+                ]
+              : [],
+          running: outcome === 'accepted',
+        }),
+      )
+
+      if (outcome === 'accepted') {
+        expect(screen.getByText('Submit exactly once').getAttribute('data-item-id')).toBe(
+          submissionId,
+        )
+        expect(screen.getByTestId('thread').getAttribute('data-started-at')).toBe('7')
+        expect((composer as HTMLTextAreaElement).value).toBe('')
+      } else {
+        expect(screen.queryByText('Submit exactly once')).toBeNull()
+        expect(screen.queryByText('Working')).toBeNull()
+        expect((composer as HTMLTextAreaElement).value).toBe('Submit exactly once')
+        expect(localStartedAt).not.toBeNull()
+      }
+    },
+  )
 
   it('restores the draft and removes its optimistic row when the server rejects a turn', async () => {
     serverProjects = [

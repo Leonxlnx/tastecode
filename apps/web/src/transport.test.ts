@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Transport } from './transport.js'
+import { IndeterminateRequestError, Transport } from './transport.js'
 
 /**
  * The client half of the wire protocol had zero coverage — and its edges are
@@ -63,7 +63,7 @@ describe('Transport', () => {
     expect(userFrames(socket)).toHaveLength(1)
 
     socket.close()
-    await expect(pending).rejects.toThrow('Connection to the server was lost.')
+    await expect(pending).rejects.toBeInstanceOf(IndeterminateRequestError)
   })
 
   it('flushes requests queued while disconnected exactly once after reconnect', async () => {
