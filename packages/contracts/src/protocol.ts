@@ -1252,6 +1252,8 @@ export const methods = {
     params: z.object({
       threadId: z.string(),
       text: z.string(),
+      /** Stable renderer identity used to converge optimistic and durable user items. */
+      clientSubmissionId: z.string().min(1).max(256).optional(),
       /** Absolute paths the user attached. The agent reads them itself. */
       attachments: z.array(z.string()).optional(),
       model: z.string().optional(),

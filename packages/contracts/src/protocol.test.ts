@@ -258,11 +258,32 @@ describe('protocol envelopes', () => {
       methods['thread.sendTurn'].params.parse({
         threadId: 'th1',
         text: 'hello',
+        clientSubmissionId: 'submission-1',
         model: 'gpt-5.6-sol',
         effort: 'xhigh',
         serviceTier: 'priority',
       }),
-    ).toBeTruthy()
+    ).toMatchObject({ clientSubmissionId: 'submission-1' })
+    expect(
+      methods['thread.sendTurn'].params.parse({
+        threadId: 'legacy-thread',
+        text: 'legacy client',
+      }),
+    ).toEqual({ threadId: 'legacy-thread', text: 'legacy client' })
+    expect(() =>
+      methods['thread.sendTurn'].params.parse({
+        threadId: 'th1',
+        text: 'hello',
+        clientSubmissionId: '',
+      }),
+    ).toThrow()
+    expect(() =>
+      methods['thread.sendTurn'].params.parse({
+        threadId: 'th1',
+        text: 'hello',
+        clientSubmissionId: 'x'.repeat(257),
+      }),
+    ).toThrow()
     expect(
       methods['thread.sendTurn'].result.parse({
         queued: true,
