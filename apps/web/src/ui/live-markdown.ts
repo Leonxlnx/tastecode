@@ -31,18 +31,9 @@ export type LiveMarkdownUpdate = {
   carryCharacters: number
 }
 
-export type LiveMarkdownCompletion = {
-  source: string
-  sourceLength: number
-  totalScannedCharacters: number
-}
-
-/**
- * Produces text-safe operations for a deliberately small live Markdown subset.
- * The canonical source is handed to the full renderer on completion; this
- */
 export class LiveMarkdownParser {
-  private source = ''
+  private source: string[] = []
+  private sourceLength = 0
   private operations: LiveMarkdownOperation[] = []
   private block: LiveMarkdownNode | undefined
   private inline: LiveMarkdownNode[] = []
@@ -59,24 +50,27 @@ export class LiveMarkdownParser {
   append(delta: string): LiveMarkdownUpdate {
     if (this.completed) throw new Error('Cannot append after Markdown completion')
     this.operations = []
-    this.source += delta
+    this.source.push(delta)
+    this.sourceLength += delta.length
     for (let index = 0; index < delta.length; index += 1) this.consume(delta[index]!)
     return this.update('append', delta.length)
   }
 
   replace(text: string): LiveMarkdownUpdate {
+    if (this.completed) throw new Error('Cannot replace after Markdown completion')
     this.resetState()
     this.operations = [{ type: 'reset' }]
-    this.source = text
+    this.source = [text]
+    this.sourceLength = text.length
     for (let index = 0; index < text.length; index += 1) this.consume(text[index]!)
     return this.update('replace', text.length)
   }
 
-  complete(): LiveMarkdownCompletion {
+  complete() {
     this.completed = true
     return {
-      source: this.source,
-      sourceLength: this.source.length,
+      source: this.source.join(''),
+      sourceLength: this.sourceLength,
       totalScannedCharacters: this.totalScanned,
     }
   }
@@ -87,14 +81,15 @@ export class LiveMarkdownParser {
       kind,
       operations: this.operations,
       scannedCharacters,
-      sourceLength: this.source.length,
+      sourceLength: this.sourceLength,
       mutableLeafCharacters: this.leafLength,
       carryCharacters: this.prefix.length + Number(this.pendingStar),
     }
   }
 
   private resetState(): void {
-    this.source = ''
+    this.source = []
+    this.sourceLength = 0
     this.block = undefined
     this.inline = []
     this.listOpen = false
@@ -217,16 +212,16 @@ export class LiveMarkdownParser {
       if (character === '*') {
         if (this.pendingStar) {
           this.pendingStar = false
-          this.toggleInline('strong')
+          this.toggleInline('strong', '**')
         } else this.pendingStar = true
         continue
       }
       if (this.pendingStar) {
         this.pendingStar = false
-        this.toggleInline('emphasis')
+        this.toggleInline('emphasis', '*')
       }
-      if (character === '_') this.toggleInline('emphasis')
-      else if (character === '`') this.toggleInline('inline-code')
+      if (character === '_') this.toggleInline('emphasis', '_')
+      else if (character === '`') this.toggleInline('inline-code', '`')
       else this.write(character)
     }
   }
@@ -236,7 +231,7 @@ export class LiveMarkdownParser {
   }
 
   private openBlock(node: LiveMarkdownNode, language?: string): void {
-    if (this.block) this.closeBlock()
+    if (this.block || this.listOpen) this.closeBlock()
     this.operations.push({ type: 'node.open', node, ...(language ? { language } : {}) })
     this.block = node
   }
@@ -273,14 +268,14 @@ export class LiveMarkdownParser {
     }
   }
 
-  private toggleInline(node: 'strong' | 'emphasis' | 'inline-code'): void {
+  private toggleInline(node: 'strong' | 'emphasis' | 'inline-code', marker: string): void {
     this.ensureParagraph()
     if (this.inline.at(-1) === node) this.closeNode(this.inline.pop()!)
-    else {
+    else if (this.inline.length < LIVE_MARKDOWN_CARRY_LIMIT) {
       this.sealLeaf()
       this.operations.push({ type: 'node.open', node })
       this.inline.push(node)
-    }
+    } else this.write(marker)
   }
 
   private closeNode(node: LiveMarkdownNode): void {
