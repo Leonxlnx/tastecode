@@ -1726,6 +1726,7 @@ export class Orchestrator {
     const workspacePath = stored.worktreePath ?? resolveWorkspacePath(stored.projectPath)
     const result = await runtime.resume(threadId, workspacePath, {
       ...(stored.agent ? { agent: stored.agent } : {}),
+      instructions: REPLY_STYLE_INSTRUCTIONS,
       ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
     })
     if (result.thread.id !== threadId) {

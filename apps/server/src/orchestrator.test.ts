@@ -129,6 +129,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
   const startedOptions: StartOptions[] = []
   const resumedIds: string[] = []
   const resumedIn: string[] = []
+  const resumedOptions: StartOptions[] = []
   const capturePreview = vi.fn(
     async (_url: string, viewports: Array<{ width: number; height: number }>) =>
       viewports.map((viewport) => ({
@@ -159,9 +160,10 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     },
     ...(provider === 'codex'
       ? {
-          async resume(threadId: string, workspacePath: string) {
+          async resume(threadId: string, workspacePath: string, options: StartOptions) {
             resumedIds.push(threadId)
             resumedIn.push(workspacePath)
+            resumedOptions.push(options)
             const session = new FakeSession(`s${sessions.length + 1}`)
             sessions.push(session)
             return {
@@ -202,6 +204,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     startedOptions,
     resumedIds,
     resumedIn,
+    resumedOptions,
     capturePreview,
   }
 }
@@ -925,6 +928,23 @@ describe('persisted threads', () => {
 
     sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
     await vi.waitFor(() => expect(sessions[0]?.sent).toEqual(['first', 'second']))
+  })
+
+  it('restores the shared reply instructions when resuming a Codex thread', async () => {
+    const store = new Store(':memory:')
+    store.addProject('/repo')
+    store.addThread({
+      id: 'persisted-thread',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Persisted',
+    })
+    const { orchestrator, resumedOptions } = harness(undefined, store)
+
+    await orchestrator.submitTurn('persisted-thread', 'continue')
+
+    expect(resumedOptions[0]?.instructions).toContain('clear, capable teammate')
+    expect(resumedOptions[0]?.instructions).toContain('Do not use em dashes')
   })
 
   it('does not invent continuity for a provider without resume support', async () => {
