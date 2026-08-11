@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-11 main f1fd4ed1</span>
+        <span class="meta">2026-08-11 main 8c1ddd3a</span>
       </div>
     </div>
 
@@ -314,9 +314,12 @@
             <small>thread, review, sessions, git, settings</small>
           </div>
           <div class="kpi">
-            <b>7</b>
+            <b>8</b>
             <span>workstreams running</span>
-            <small>design, provider UX, prompt flow, narration, performance, files, search</small>
+            <small
+              >design, provider UX, prompt flow, narration, performance, files, search,
+              Nightly</small
+            >
           </div>
           <div class="kpi">
             <b>8</b>
@@ -334,7 +337,7 @@
         </p>
         <div class="lanes">
           <div class="lane l-done">
-            <header>Ready <span class="count">15</span></header>
+            <header>Ready <span class="count">16</span></header>
             <ul>
               <li>
                 <i class="tick">✓</i>
@@ -438,6 +441,16 @@
               <li>
                 <i class="tick">✓</i>
                 <span
+                  >Claude Code item identity
+                  <span class="d"
+                    >reused message IDs keep narration and tool blocks unique, chronological, and
+                    deterministic on replay</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
                   >Guided sign-in
                   <span class="d">browser opens itself, code chip, no raw terminal</span>
                 </span>
@@ -471,7 +484,7 @@
           </div>
 
           <div class="lane l-active">
-            <header>In progress <span class="count">7</span></header>
+            <header>In progress <span class="count">8</span></header>
             <ul>
               <li>
                 <i class="tick">●</i>
@@ -505,8 +518,8 @@
                 <span
                   >Narration and tool lifecycles
                   <span class="d"
-                    >keep commentary, commands, output, files, and final answers in chronological
-                    replay order (#612, #620, #633)</span
+                    >cross-provider adapter and UI normalization remains in #612 and #620; Grok live
+                    authentication evidence is still pending</span
                   >
                 </span>
               </li>
@@ -517,6 +530,16 @@
                   <span class="d"
                     >stable virtualizer identity plus bounded status and Markdown work (#598, #604,
                     #614)</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">●</i>
+                <span
+                  >Nightly provider-roster integration
+                  <span class="d"
+                    >restore the full roster through a reviewed stack after the branch-history
+                    decision (#637; Nightly, no milestone)</span
                   >
                 </span>
               </li>
