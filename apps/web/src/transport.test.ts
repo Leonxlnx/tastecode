@@ -170,4 +170,42 @@ describe('Transport', () => {
 
     await expect(pending).rejects.toThrow('The server reported an error.')
   })
+
+  it('applies a push sequence only once', () => {
+    const transport = new Transport('ws://test')
+    const listener = vi.fn()
+    transport.on('thread.event', listener)
+    transport.connect()
+    const socket = FakeSocket.instances[0]!
+    socket.open()
+
+    const frame = JSON.stringify({
+      channel: 'thread.event',
+      sequence: 1,
+      data: { threadId: 'thread-1', seq: 1, event: { type: 'turn.started', turnId: 'turn-1' } },
+    })
+    socket.onmessage?.({ data: frame })
+    socket.onmessage?.({ data: frame })
+
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports a forward sequence gap so the owner can resync', () => {
+    const transport = new Transport('ws://test')
+    const gap = vi.fn()
+    transport.onSequenceGap(gap)
+    transport.connect()
+    const socket = FakeSocket.instances[0]!
+    socket.open()
+
+    socket.onmessage?.({
+      data: JSON.stringify({ channel: 'server.welcome', sequence: 1, data: {} }),
+    })
+    socket.onmessage?.({
+      data: JSON.stringify({ channel: 'thread.event', sequence: 3, data: {} }),
+    })
+
+    expect(gap).toHaveBeenCalledOnce()
+    expect(gap).toHaveBeenCalledWith(2, 3)
+  })
 })

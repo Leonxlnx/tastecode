@@ -35,6 +35,7 @@ export class Transport {
   #healthCheck: Promise<void> | undefined
 
   #stateListeners = new Set<(s: ConnectionState) => void>()
+  #sequenceGapListeners = new Set<(expected: number, received: number) => void>()
   #channelListeners = new Map<string, Set<(data: unknown) => void>>()
 
   constructor(url: string) {
@@ -106,6 +107,11 @@ export class Transport {
   onState(listener: (state: ConnectionState) => void): () => void {
     this.#stateListeners.add(listener)
     return () => this.#stateListeners.delete(listener)
+  }
+
+  onSequenceGap(listener: (expected: number, received: number) => void): () => void {
+    this.#sequenceGapListeners.add(listener)
+    return () => this.#sequenceGapListeners.delete(listener)
   }
 
   on<C extends ChannelName>(channel: C, listener: (data: DataOf<C>) => void): () => void {
@@ -254,10 +260,16 @@ export class Transport {
     const sequence = message['sequence']
     if (typeof channel !== 'string' || typeof sequence !== 'number') return
 
-    // A gap means we missed a push. Loud, because silently diverging from the
-    // server is the bug you cannot reproduce later.
-    if (this.#lastSequence !== 0 && sequence !== this.#lastSequence + 1) {
-      console.warn(`[transport] push gap: expected ${this.#lastSequence + 1}, got ${sequence}`)
+    const expected = this.#lastSequence + 1
+    if (this.#lastSequence !== 0 && sequence <= this.#lastSequence) {
+      console.warn(`[transport] ignored stale push: last ${this.#lastSequence}, got ${sequence}`)
+      return
+    }
+    // A forward gap means durable pushes were missed. Tell the owner to
+    // resync instead of only logging state divergence it cannot repair.
+    if (this.#lastSequence !== 0 && sequence !== expected) {
+      console.warn(`[transport] push gap: expected ${expected}, got ${sequence}`)
+      for (const listener of this.#sequenceGapListeners) listener(expected, sequence)
     }
     this.#lastSequence = sequence
 
