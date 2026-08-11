@@ -31,11 +31,12 @@ import {
   activeTurnIsSearching,
   appendUserMessage,
   beginOptimisticTurn,
+  createOptimisticMessageId,
   emptyThread,
   reduce,
   reduceDeltas,
   reduceEventLog,
-  removeQueuedOptimisticMessage,
+  removeOptimisticMessage,
   type ItemDeltaEvent,
   type ThreadState,
 } from './thread-store.js'
@@ -1557,6 +1558,8 @@ export function App() {
       let threadId = activeId
       let optimisticAdded = false
       let optimisticTurnId: string | undefined
+      const optimisticItemId = createOptimisticMessageId()
+      const optimisticCreatedAt = Date.now()
       let titledOnCreate = false
       if (!threadId) {
         if (!activePath) {
@@ -1564,7 +1567,12 @@ export function App() {
           return
         }
         const provisionalId = `pending:${crypto.randomUUID()}`
-        const provisional = beginOptimisticTurn(emptyThread, text)
+        const provisional = beginOptimisticTurn(
+          emptyThread,
+          text,
+          optimisticItemId,
+          optimisticCreatedAt,
+        )
         const choice = selectedModelChoice
         if (!choice) {
           restoreDraft()
@@ -1621,6 +1629,8 @@ export function App() {
         const provisional = appendUserMessage(
           threadStates.current.get(targetId) ?? emptyThread,
           text,
+          optimisticItemId,
+          optimisticCreatedAt,
         )
         threadStates.current.set(targetId, provisional)
         if (activeIdRef.current === targetId) setThread(provisional)
@@ -1639,17 +1649,19 @@ export function App() {
       const before = threadStates.current.get(threadId) ?? emptyThread
       const wasRunning = before.running && !optimisticAdded
       const steering = submission === 'steer'
-      const beforeItemIds = new Set(before.items.map((item) => item.id))
-      const optimisticQueueId =
-        wasRunning && !steering ? `pending:${crypto.randomUUID()}` : undefined
+      const optimisticQueueId = wasRunning && !steering ? optimisticItemId : undefined
       if (!wasRunning && !optimisticAdded) {
-        const next = beginOptimisticTurn(before, text)
+        const next = beginOptimisticTurn(before, text, optimisticItemId, optimisticCreatedAt)
         optimisticTurnId = next.activeTurn?.id
         threadStates.current.set(threadId, next)
         if (threadId === activeIdRef.current) {
           setThread(next)
           setThreadRevealRequest((request) => request + 1)
         }
+      } else if (wasRunning && steering) {
+        const next = appendUserMessage(before, text, optimisticItemId, optimisticCreatedAt)
+        threadStates.current.set(threadId, next)
+        if (threadId === activeIdRef.current) setThread(next)
       }
       if (optimisticQueueId) {
         updateQueue(threadId, (items) => [
@@ -1690,6 +1702,7 @@ export function App() {
         const result = await transport.request('thread.sendTurn', {
           threadId,
           text,
+          clientSubmissionId: optimisticItemId,
           ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
           ...(turnChoice?.model.id ? { model: turnChoice.model.id } : {}),
           ...(turnChoice && selectedEffort ? { effort: selectedEffort } : {}),
@@ -1703,16 +1716,6 @@ export function App() {
               threadId,
               queuedTurnId: result.queuedTurn.id,
             })
-            const afterSteer = threadStates.current.get(threadId) ?? emptyThread
-            const canonicalArrived = afterSteer.items.some(
-              (item) =>
-                !beforeItemIds.has(item.id) && item.role === 'user' && item.text?.trim() === text,
-            )
-            if (!canonicalArrived) {
-              const next = appendUserMessage(afterSteer, text)
-              threadStates.current.set(threadId, next)
-              if (threadId === activeIdRef.current) setThread(next)
-            }
           } else {
             updateQueue(threadId, (items) => {
               const optimisticIndex = optimisticQueueId
@@ -1725,12 +1728,13 @@ export function App() {
               }
               const next = items.slice()
               const canonicalIndex = next.findIndex((item) => item.id === result.queuedTurn.id)
-              if (canonicalIndex < 0) next[optimisticIndex] = result.queuedTurn
+              if (canonicalIndex < 0 || canonicalIndex === optimisticIndex)
+                next[optimisticIndex] = result.queuedTurn
               else next.splice(optimisticIndex, 1)
               return next
             })
             if (!wasRunning) {
-              const reconciled = removeQueuedOptimisticMessage(current, text)
+              const reconciled = removeOptimisticMessage(current, optimisticItemId)
               threadStates.current.set(threadId, reconciled)
               if (threadId === activeIdRef.current) setThread(reconciled)
             }
@@ -1738,15 +1742,6 @@ export function App() {
         } else if (!result.queued && wasRunning) {
           if (optimisticQueueId) {
             updateQueue(threadId, (items) => items.filter((item) => item.id !== optimisticQueueId))
-          }
-          const canonicalArrived = current.items.some(
-            (item) =>
-              !beforeItemIds.has(item.id) && item.role === 'user' && item.text?.trim() === text,
-          )
-          if (!canonicalArrived) {
-            const next = appendUserMessage(current, text)
-            threadStates.current.set(threadId, next)
-            if (threadId === activeIdRef.current) setThread(next)
           }
         }
       } catch (error) {
@@ -1757,21 +1752,22 @@ export function App() {
           const current = threadStates.current.get(threadId)
           if (current !== undefined) {
             // The server did not accept this prompt. Remove only its local
-            // echo; a canonical event has a server id and remains.
-            let next = removeQueuedOptimisticMessage(current, text)
-            // Any locally-invented turn must be rolled back on failure, not
-            // only the one whose id this call happens to remember — a
-            // stranded optimistic turn leaves the composer stuck on Stop.
-            if (
-              current.activeTurn?.id === optimisticTurnId ||
-              current.activeTurn?.id.startsWith('local-turn:') === true
-            ) {
+            // echo; a durable item already bound to a turn remains.
+            let next = removeOptimisticMessage(current, optimisticItemId)
+            if (current.activeTurn?.id === optimisticTurnId) {
               next = { ...next, running: false, activeTurn: undefined }
             }
             threadStates.current.set(threadId, next)
             if (threadId === activeIdRef.current) setThread(next)
           }
           restoreDraft()
+        } else if (steering) {
+          const current = threadStates.current.get(threadId)
+          if (current) {
+            const next = removeOptimisticMessage(current, optimisticItemId)
+            threadStates.current.set(threadId, next)
+            if (threadId === activeIdRef.current) setThread(next)
+          }
         }
         setNotice(error instanceof Error ? error.message : String(error))
       }

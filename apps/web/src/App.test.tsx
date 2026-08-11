@@ -761,6 +761,7 @@ describe('web client', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'thread-1',
         text: 'Use what the UI shows',
+        clientSubmissionId: expect.stringMatching(/^local:/),
         model: 'gpt-5.6-sol',
         effort: 'high',
       })
@@ -1799,6 +1800,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'thread-1',
         text: 'Use the fast lane',
+        clientSubmissionId: expect.stringMatching(/^local:/),
         model: 'gpt-5.6-sol',
         effort: 'xhigh',
         serviceTier: 'priority',
@@ -1878,6 +1880,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'thread-1',
         text: 'Keep the rank',
+        clientSubmissionId: expect.stringMatching(/^local:/),
         model: 'gpt-5.6-mini',
         effort: 'high',
       })
@@ -2193,6 +2196,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'thread-1',
         text: 'Use the visible fallback',
+        clientSubmissionId: expect.stringMatching(/^local:/),
         model: 'opus',
         effort: 'high',
       })
@@ -3382,6 +3386,7 @@ describe('reopening a session', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'untouched-thread',
         text: 'Keep this model',
+        clientSubmissionId: expect.stringMatching(/^local:/),
         model: 'gpt-5.6-sol',
         effort: 'low',
       })
@@ -3543,6 +3548,7 @@ describe('reopening a session', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'untouched-thread',
         text: 'Stay with the session provider',
+        clientSubmissionId: expect.stringMatching(/^local:/),
       })
     })
   })
