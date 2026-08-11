@@ -135,6 +135,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
   const sessions: FakeSession[] = []
   const received: Array<{ threadId: string; event: DomainEvent }> = []
   const lifecycles: Array<{ threadId: string; lifecycle: ThreadLifecycle }> = []
+  const logs: string[] = []
 
   /** Where each session was actually told to run. */
   const startedIn: string[] = []
@@ -195,7 +196,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event) => received.push({ threadId, event }),
     onLifecycle: (threadId, lifecycle) => lifecycles.push({ threadId, lifecycle }),
-    onLog: () => {},
+    onLog: (line) => logs.push(line),
     onLogin: () => {},
     mcpConfig: new McpConfigStore(
       path.join(mkdtempSync(path.join(os.tmpdir(), 'harness-mcp-')), 'mcp.json'),
@@ -211,6 +212,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     sessions,
     received,
     lifecycles,
+    logs,
     orchestrator,
     startedIn,
     startedOptions,
@@ -1556,7 +1558,7 @@ describe('several sessions at once', () => {
   })
 
   it('drops queued prompts so interrupted sessions do not restart', async () => {
-    const { sessions, orchestrator } = harness()
+    const { sessions, orchestrator, store } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
     await orchestrator.submitTurn(thread.id, 'running')
     await orchestrator.submitTurn(thread.id, 'do not restart')
@@ -1565,6 +1567,7 @@ describe('several sessions at once', () => {
     sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' })
 
     await vi.waitFor(() => expect(orchestrator.queue(thread.id).items).toEqual([]))
+    expect(store.queuedTurns(thread.id)).toEqual([])
     expect(sessions[0]!.sent).toEqual(['running'])
   })
 
@@ -1688,6 +1691,110 @@ describe('sidebar inbox lifecycle', () => {
 })
 
 describe('queued turns', () => {
+  it('restores exact mutations and drains in order after a server restart', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-orchestrator-queue-'))
+    const file = path.join(dir, 'harness.db')
+    const seededStore = new Store(file)
+    const seeded = harness(undefined, seededStore)
+    try {
+      const thread = await seeded.orchestrator.startThread('codex', '/repo')
+      seeded.sessions[0]!.turnIds.push('active-turn')
+      await seeded.orchestrator.submitTurn(thread.id, 'Active.', [], {}, 'submission-active')
+      seeded.sessions[0]!.emit(turnStarted(thread.id, 'active-turn'))
+      for (const [id, attachment, model] of [
+        ['submission-a', 'C:\\private\\a.png', 'model-a'],
+        ['submission-b', 'C:\\private\\b.png', 'model-b'],
+        ['submission-c', 'C:\\private\\c.png', 'model-c'],
+      ] as const) {
+        await seeded.orchestrator.submitTurn(
+          thread.id,
+          'Repeat this.',
+          [attachment],
+          { model, effort: 'high' },
+          id,
+        )
+      }
+      seeded.orchestrator.moveQueuedTurn(thread.id, 'submission-c', 'up')
+      seeded.orchestrator.deleteQueuedTurn(thread.id, 'submission-a')
+      await seeded.orchestrator.disposeAll()
+      seededStore.close()
+
+      const restartedStore = new Store(file)
+      restartedStore.recoverInterruptedThreads()
+      const restarted = harness(undefined, restartedStore)
+      try {
+        expect(restarted.orchestrator.queue(thread.id).items.map(({ id }) => id)).toEqual([
+          'submission-c',
+          'submission-b',
+        ])
+        await expect(
+          restarted.orchestrator.submitTurn(
+            thread.id,
+            'Repeat this.',
+            ['C:\\private\\d.png'],
+            { model: 'model-d', effort: 'high' },
+            'submission-d',
+          ),
+        ).resolves.toMatchObject({ queued: true })
+        await vi.waitFor(() => expect(restarted.sessions[0]?.sent).toEqual(['Repeat this.']))
+        expect(restarted.sessions[0]?.sentAttachments[0]).toEqual(['C:\\private\\c.png'])
+        expect(restarted.sessions[0]?.sentOptions[0]).toEqual({ model: 'model-c', effort: 'high' })
+
+        restarted.sessions[0]!.turnIds.push('turn-b', 'turn-d')
+        restarted.sessions[0]!.emit({
+          type: 'turn.completed',
+          turnId: 's1-turn',
+          status: 'completed',
+        })
+        await vi.waitFor(() => expect(restarted.sessions[0]?.sent).toHaveLength(2))
+        restarted.sessions[0]!.emit({
+          type: 'turn.completed',
+          turnId: 'turn-b',
+          status: 'completed',
+        })
+        await vi.waitFor(() => expect(restarted.sessions[0]?.sent).toHaveLength(3))
+
+        const ids = restartedStore
+          .history(thread.id)
+          .flatMap(({ event }) =>
+            event.type === 'item.completed' && event.item.role === 'user' ? [event.item.id] : [],
+          )
+        expect(ids).toEqual(['submission-active', 'submission-c', 'submission-b', 'submission-d'])
+        expect(restartedStore.queuedTurns(thread.id)).toEqual([])
+      } finally {
+        await restarted.orchestrator.disposeAll()
+        restartedStore.close()
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('restores a provider-rejected drain without logging prompt content or paths', async () => {
+    const { sessions, orchestrator, store, logs } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'Active.')
+    await orchestrator.submitTurn(
+      thread.id,
+      'private prompt content',
+      ['C:\\secret\\private.png'],
+      {},
+      'submission-private',
+    )
+    sessions[0]!.sendError = new Error('provider rejected')
+
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+
+    await vi.waitFor(() => expect(logs).toContain('could not start queued turn: provider rejected'))
+    await vi.waitFor(() =>
+      expect(orchestrator.queue(thread.id).items.map(({ id }) => id)).toEqual([
+        'submission-private',
+      ]),
+    )
+    expect(store.queuedTurns(thread.id).map(({ id }) => id)).toEqual(['submission-private'])
+    expect(logs.join('\n')).not.toMatch(/private prompt content|secret\\private/)
+  })
+
   it('runs queued prompts in order after the active turn completes', async () => {
     const { sessions, orchestrator } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
