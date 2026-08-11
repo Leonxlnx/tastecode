@@ -1,10 +1,11 @@
 import { parentPort, workerData } from 'node:worker_threads'
-import {
-  runUsageHistoryScan,
-  type UsageScanProgress,
-  type UsageScanRequest,
-  type UsageScanResult,
+import type {
+  UsageScanProgress,
+  UsageScanRequest,
+  UsageScanResult,
 } from './usage-history.js'
+
+type UsageHistoryModule = typeof import('./usage-history.js')
 
 type WorkerMessage =
   | { type: 'progress'; progress: UsageScanProgress }
@@ -15,9 +16,14 @@ function send(message: WorkerMessage): void {
   parentPort?.postMessage(message)
 }
 
-void runUsageHistoryScan(workerData as UsageScanRequest, (progress) => {
-  send({ type: 'progress', progress })
-})
+const sourceExtension = import.meta.url.endsWith('.ts') ? 'ts' : 'js'
+
+void import(`./usage-history.${sourceExtension}`)
+  .then(({ runUsageHistoryScan }: UsageHistoryModule) =>
+    runUsageHistoryScan(workerData as UsageScanRequest, (progress) => {
+      send({ type: 'progress', progress })
+    }),
+  )
   .then((result) => send({ type: 'complete', result }))
   .catch((error: unknown) => {
     send({ type: 'error', message: error instanceof Error ? error.message : String(error) })
