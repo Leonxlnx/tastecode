@@ -401,11 +401,28 @@ export function App() {
         : undefined,
     [provider, acpAgent, acpAgentName],
   )
+  const storedModelChoice = models.find((choice) => choice.key === modelId)
   const selectedModelChoice =
-    models.find((choice) => choice.key === modelId) ??
+    visibleModels.find((choice) => choice.key === modelId) ??
     visibleModels[0] ??
-    models[0] ??
-    implicitChoice
+    (models.length === 0 ? implicitChoice : undefined)
+  // One effective setup drives both the picker and requests. State can briefly
+  // contain values from storage or the model that was just hidden; resolving
+  // in render prevents that transition from leaking into an immediate send.
+  const selectedEffort = selectedModelChoice
+    ? resolveReasoningEffort({
+        currentEffort: effort,
+        currentModel: storedModelChoice?.model,
+        nextModel: selectedModelChoice.model,
+      })
+    : undefined
+  const selectedServiceTier = selectedModelChoice
+    ? getNextServiceTierForModel({
+        currentServiceTier: serviceTier,
+        currentModel: storedModelChoice?.model,
+        nextModel: selectedModelChoice.model,
+      })
+    : undefined
 
   // Syntax grammars load in the background from the first frame, so the first
   // code block an agent produces is already coloured.
@@ -706,23 +723,25 @@ export function App() {
       setModelCatalog({ models: catalog, loaded: true })
       writeSetting(MODEL_CATALOG_KEY, serializeModelCatalogCache(catalog))
       const stored = readSetting(MODEL_KEY)
-      // Fallbacks respect hidden models: adding an API key must not silently
-      // switch the user onto a model they explicitly hid. An explicit stored
-      // choice still wins — hiding is about the list, not about revoking a
-      // selection the user made themselves.
+      // A hidden model cannot remain the internal selection. Otherwise the
+      // picker shows no such choice while a turn can still silently use it.
       const hidden = hiddenModelsRef.current
       const customPool = customModelsRef.current.map((entry) =>
         customModelChoice(entry, providerDisplayName(entry.provider), providerMark(entry.provider)),
       )
       const all = [...catalog, ...customPool]
       const visible = all.filter((choice) => !hidden.has(choice.key))
-      const pool = visible.length > 0 ? visible : all
       const selected =
-        all.find((choice) => choice.key === stored) ??
-        all.find((choice) => choice.model.id === stored) ??
-        pool.find((choice) => choice.model.isDefault) ??
-        pool[0]
-      if (!selected) return
+        visible.find((choice) => choice.key === stored) ??
+        visible.find((choice) => choice.model.id === stored) ??
+        visible.find((choice) => choice.model.isDefault) ??
+        visible[0]
+      if (!selected) {
+        setModelId(undefined)
+        setEffort(undefined)
+        setServiceTier(undefined)
+        return
+      }
       setModelId(selected.key)
       setProvider(selected.provider)
       setAcpAgent(selected.agent?.id)
@@ -1018,18 +1037,12 @@ export function App() {
 
   useEffect(() => {
     if (modelId) writeSetting(MODEL_KEY, modelId)
+    else removeSetting(MODEL_KEY)
   }, [modelId])
 
   useEffect(() => {
     writeSetting(HIDDEN_MODELS_KEY, JSON.stringify([...hiddenModels]))
   }, [hiddenModels])
-
-  useEffect(() => {
-    if (selectedModelChoice && hiddenModels.has(selectedModelChoice.key)) {
-      const fallback = visibleModels[0]
-      if (fallback) setModelId(fallback.key)
-    }
-  }, [hiddenModels, selectedModelChoice, visibleModels])
 
   useEffect(() => {
     if (effort) {
@@ -1050,7 +1063,10 @@ export function App() {
   // Remember the active source's exact setup, so returning to a provider
   // restores what was last used there instead of a best-guess translation.
   useEffect(() => {
-    if (!selectedModelChoice) return
+    // A visibility change derives its fallback before the persisted model key
+    // catches up. Let commitModelChoice finish that transition before this
+    // source is remembered, or it would remember a half-translated setup.
+    if (!selectedModelChoice || selectedModelChoice.key !== modelId) return
     const source = sourceKey({
       provider: selectedModelChoice.provider,
       connectionId: selectedModelChoice.connectionId,
@@ -1059,8 +1075,8 @@ export function App() {
     const selections = readSourceSelections()
     const entry: SourceSelection = {
       modelKey: selectedModelChoice.key,
-      ...(effort ? { effort } : {}),
-      ...(serviceTier ? { serviceTier } : {}),
+      ...(selectedEffort ? { effort: selectedEffort } : {}),
+      ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
     }
     const current = selections[source]
     if (
@@ -1072,7 +1088,7 @@ export function App() {
     }
     selections[source] = entry
     writeSetting(MODEL_BY_SOURCE_KEY, JSON.stringify(selections))
-  }, [selectedModelChoice, effort, serviceTier])
+  }, [selectedModelChoice, modelId, selectedEffort, selectedServiceTier])
 
   useEffect(() => {
     writeSetting(APPROVAL_KEY, approval)
@@ -1125,7 +1141,7 @@ export function App() {
       setEffort((current) =>
         resolveReasoningEffort({
           currentEffort: current,
-          currentModel: selectedModelChoice?.model,
+          currentModel: storedModelChoice?.model ?? selectedModelChoice?.model,
           nextModel: selected.model,
         }),
       )
@@ -1135,13 +1151,47 @@ export function App() {
       setServiceTier((current) =>
         getNextServiceTierForModel({
           nextModel: selected.model,
-          currentModel: selectedModelChoice?.model,
+          currentModel: storedModelChoice?.model ?? selectedModelChoice?.model,
           currentServiceTier: current,
         }),
       )
     },
-    [selectedModelChoice],
+    [selectedModelChoice, storedModelChoice],
   )
+
+  // Keep persisted selection state coherent after a visibility or cache
+  // transition. Requests already use the effective values above, so even an
+  // interaction before this effect runs cannot observe the stale setup.
+  useEffect(() => {
+    if (!selectedModelChoice) {
+      setModelId(undefined)
+      setEffort(undefined)
+      setServiceTier(undefined)
+      return
+    }
+    if (
+      modelId !== selectedModelChoice.key ||
+      provider !== selectedModelChoice.provider ||
+      acpAgent !== selectedModelChoice.agent?.id ||
+      acpAgentName !== selectedModelChoice.agent?.name
+    ) {
+      commitModelChoice(selectedModelChoice)
+      return
+    }
+    if (effort !== selectedEffort) setEffort(selectedEffort)
+    if (serviceTier !== selectedServiceTier) setServiceTier(selectedServiceTier)
+  }, [
+    selectedModelChoice,
+    modelId,
+    provider,
+    acpAgent,
+    acpAgentName,
+    effort,
+    serviceTier,
+    selectedEffort,
+    selectedServiceTier,
+    commitModelChoice,
+  ])
 
   const selectModel = useCallback(
     (id: string) => {
@@ -1229,8 +1279,8 @@ export function App() {
           ...(choice.agent ? { agent: choice.agent.id } : {}),
           ...(choice.connectionId ? { connectionId: choice.connectionId } : {}),
           ...(choice.model.id ? { model: choice.model.id } : {}),
-          ...(serviceTier ? { serviceTier } : {}),
-          ...(effort ? { effort } : {}),
+          ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+          ...(selectedEffort ? { effort: selectedEffort } : {}),
           ...(isolateSession ? { isolate: true } : {}),
         })
         const provisional = threadStates.current.get(provisionalId) ?? emptyThread
@@ -1300,8 +1350,8 @@ export function App() {
     [
       transport,
       selectedModelChoice,
-      serviceTier,
-      effort,
+      selectedServiceTier,
+      selectedEffort,
       approval,
       autoReviewSupported,
       isolateSession,
@@ -1510,8 +1560,8 @@ export function App() {
           text,
           ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
           ...(turnChoice?.model.id ? { model: turnChoice.model.id } : {}),
-          ...(turnChoice && effort ? { effort } : {}),
-          ...(turnChoice && serviceTier ? { serviceTier } : {}),
+          ...(turnChoice && selectedEffort ? { effort: selectedEffort } : {}),
+          ...(turnChoice && selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
         })
         turnAccepted = true
         const current = threadStates.current.get(threadId) ?? emptyThread
@@ -1601,8 +1651,8 @@ export function App() {
       createSession,
       projects,
       selectedModelChoice,
-      effort,
-      serviceTier,
+      selectedEffort,
+      selectedServiceTier,
       updateQueue,
       designMode,
     ],
@@ -2583,9 +2633,9 @@ export function App() {
                   branches={branches}
                   models={visibleModels}
                   modelsLoaded={modelsLoaded}
-                  modelId={modelId}
-                  effort={effort}
-                  serviceTier={serviceTier}
+                  modelId={selectedModelChoice?.key}
+                  effort={selectedEffort}
+                  serviceTier={selectedServiceTier}
                   usage={thread.usage}
                   approval={approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval}
                   autoReviewSupported={autoReviewSupported}
