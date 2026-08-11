@@ -39,6 +39,7 @@ import { Plan } from './Plan.js'
 import { ThreadSearch } from './ThreadSearch.js'
 import { createThreadProjector, neighbourTurn, type TurnTiming } from './turns.js'
 import { isAtBottom, modeForNewTurn, shouldReleaseAnchor, type ScrollMode } from './scroll-mode.js'
+import { useVirtualItemKey } from './use-virtual-item-key.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
 
@@ -109,6 +110,7 @@ export function Thread(props: {
   }, [])
   const enteringItemIds = useEnteringItemIds(props.items, props.threadId)
   const settledTurnId = useSettledTurnId(props.running, props.activeTurn?.id)
+  const getItemKey = useVirtualItemKey(props.items, props.threadId, props.revealRequest ?? 0)
 
   const virtualizer = useVirtualizer({
     count: props.items.length,
@@ -117,7 +119,7 @@ export function Thread(props: {
     estimateSize: () => 72,
     // Stable identity per item, never the index — index keys make every
     // insertion look like a change to every row after it.
-    getItemKey: (index) => props.items[index]?.id ?? index,
+    getItemKey,
     overscan: 8,
     // Assume a viewport for the very first render, before measurement has run.
     // Without it the first frame contains no rows at all, which reads as a
