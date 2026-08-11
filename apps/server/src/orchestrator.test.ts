@@ -1862,6 +1862,46 @@ describe('queued turns', () => {
     expect(store.thread(thread.id)?.closedAt).toBeDefined()
   })
 
+  it('does not touch the store when a queued send rejects after server disposal', async () => {
+    const { sessions, orchestrator, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'Active.')
+    await orchestrator.submitTurn(thread.id, 'Queued work.')
+    const restore = vi.spyOn(store, 'restoreQueuedTurn')
+    sessions[0]!.release = () => {}
+    sessions[0]!.sendError = new Error('provider stopped')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    await vi.waitFor(() => expect(sessions[0]!.sent).toHaveLength(2))
+
+    await orchestrator.disposeAll()
+    store.close()
+    sessions[0]!.release?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(restore).not.toHaveBeenCalled()
+  })
+
+  it('does not restore or drain a steer that resolves after server disposal', async () => {
+    const { sessions, orchestrator, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'Active.')
+    sessions[0]!.emit(turnStarted(thread.id, 'active-turn'))
+    const queued = await orchestrator.submitTurn(thread.id, 'Steer later.')
+    if (!queued.queued) throw new Error('expected the prompt to queue')
+    let release = () => {}
+    sessions[0]!.steerBarriers.push(new Promise<void>((resolve) => (release = resolve)))
+    const restore = vi.spyOn(store, 'restoreQueuedTurn')
+    const steering = orchestrator.steerQueuedTurn(thread.id, queued.queuedTurn.id)
+    await vi.waitFor(() => expect(sessions[0]!.steered).toEqual(['Steer later.']))
+
+    await orchestrator.disposeAll()
+    store.close()
+    release()
+
+    await expect(steering).resolves.toBeUndefined()
+    expect(restore).not.toHaveBeenCalled()
+  })
+
   it('runs queued prompts in order after the active turn completes', async () => {
     const { sessions, orchestrator } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')

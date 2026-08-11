@@ -1083,6 +1083,7 @@ export class Orchestrator {
     this.#drainingQueues.add(threadId)
     try {
       await session.steer(threadId, item.text, item.attachments)
+      if (!this.#threads.has(threadId)) return
       if (!this.#activeTurns.has(threadId) || this.#activeTurnIds.get(threadId) !== activeTurnId) {
         this.#store.restoreQueuedTurn(threadId, item.id)
         queue.splice(index, 0, item)
@@ -1098,6 +1099,7 @@ export class Orchestrator {
         this.#store.completeQueuedTurn(threadId, item.id)
       }
     } catch (error) {
+      if (!this.#threads.has(threadId)) throw error
       if (ownedTurnKey && !alreadyOwned) this.#serverOwnedUserTurns.delete(ownedTurnKey)
       this.#store.restoreQueuedTurn(threadId, item.id)
       queue.splice(index, 0, item)
@@ -1463,6 +1465,7 @@ export class Orchestrator {
 
   async #drainQueue(threadId: string): Promise<void> {
     if (
+      !this.#threads.has(threadId) ||
       // A panic stop empties every queue; a drain that was already in flight
       // must not start the turn it grabbed before the panic landed.
       this.#panicStopping ||
@@ -1498,6 +1501,7 @@ export class Orchestrator {
             }
           : undefined,
       )
+      if (!this.#threads.has(threadId)) return
       if (generation !== this.#panicGeneration) {
         // A panic landed while the adapter call was in flight: the user said
         // stop-everything, so this turn must neither run on nor re-queue.
@@ -1509,6 +1513,7 @@ export class Orchestrator {
         return
       this.#activeTurns.add(threadId)
     } catch {
+      if (!this.#threads.has(threadId)) return
       // After a panic the queue was emptied on purpose; putting the grabbed
       // prompt back would resurrect it.
       let restored = false
