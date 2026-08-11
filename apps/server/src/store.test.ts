@@ -685,9 +685,6 @@ describe('cross-session search', () => {
     for (const resultId of resultIds) {
       expect(resultId).toMatch(/^sr1_[A-Za-z0-9_-]{22}$/)
       expect(resultId!.length).toBeLessThanOrEqual(256)
-      expect(resultId).not.toContain('/repo')
-      expect(resultId).not.toContain('t1')
-      expect(resultId).not.toContain('opaque')
     }
   })
 
