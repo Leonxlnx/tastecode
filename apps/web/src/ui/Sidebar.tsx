@@ -554,6 +554,10 @@ function SidebarComponent(props: {
                             <span
                               style={{
                                 width: `${Math.min(100, Math.max(0, 100 - limit.usedPercent))}%`,
+                                background:
+                                  Math.round(100 - limit.usedPercent) <= 15
+                                    ? 'var(--error)'
+                                    : 'white',
                               }}
                             />
                           </div>
