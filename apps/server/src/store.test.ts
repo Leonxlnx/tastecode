@@ -679,6 +679,12 @@ describe('cross-session search', () => {
         expect(seen.has(text)).toBe(false)
         seen.add(text)
       }
+      if (page.nextCursor) {
+        const continuation = JSON.parse(
+          Buffer.from(page.nextCursor, 'base64url').toString('utf8'),
+        ) as { position: number }
+        expect(continuation.position).toBeGreaterThan(pages * 2)
+      }
       cursor = page.nextCursor ?? undefined
       pages += 1
     } while (cursor)

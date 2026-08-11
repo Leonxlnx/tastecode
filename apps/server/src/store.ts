@@ -96,9 +96,7 @@ export type SessionSearchPage = {
 
 type SearchCursor = {
   snapshotId: string
-  score: number
-  createdAt: number
-  rowid: number
+  position: number
 }
 
 type SearchSnapshot = {
@@ -136,16 +134,15 @@ CREATE TEMP TABLE session_search_snapshots (
 );
 
 CREATE TEMP TABLE session_search_snapshot_rows (
+  position     INTEGER PRIMARY KEY,
   snapshot_id  TEXT NOT NULL,
   search_rowid INTEGER NOT NULL,
-  score        REAL NOT NULL,
-  created_at   INTEGER NOT NULL,
   snippet      TEXT NOT NULL,
-  PRIMARY KEY (snapshot_id, search_rowid)
+  UNIQUE (snapshot_id, search_rowid)
 );
 
-CREATE INDEX session_search_snapshot_rank
-  ON session_search_snapshot_rows (snapshot_id, score, created_at DESC, search_rowid DESC);
+CREATE INDEX session_search_snapshot_page
+  ON session_search_snapshot_rows (snapshot_id, position);
 `
 
 const SCHEMA = `
@@ -977,13 +974,15 @@ export class Store {
         this.#db
           .prepare(
             `INSERT INTO session_search_snapshot_rows
-               (snapshot_id, search_rowid, score, created_at, snippet)
-             SELECT ?, session_search.rowid, bm25(session_search), session_search.created_at,
+               (snapshot_id, search_rowid, snippet)
+             SELECT ?, session_search.rowid,
                     snippet(session_search, 4, ?, ?, ' … ', 24)
              FROM session_search
              JOIN threads ON threads.id = session_search.thread_id
              JOIN projects ON projects.path = threads.project_path
-             WHERE ${clauses.join(' AND ')}`,
+             WHERE ${clauses.join(' AND ')}
+             ORDER BY bm25(session_search), session_search.created_at DESC,
+                      session_search.rowid DESC`,
           )
           .run(snapshotId, SNIPPET_START, SNIPPET_END, ...parameters)
         this.#db.exec('RELEASE create_search_snapshot')
@@ -994,31 +993,23 @@ export class Store {
       }
     }
 
-    const cursorClause = cursor
-      ? `AND (snapshot.score > ?
-            OR (snapshot.score = ? AND snapshot.created_at < ?)
-            OR (snapshot.score = ? AND snapshot.created_at = ? AND snapshot.search_rowid < ?))`
-      : ''
-    const cursorParameters = cursor
-      ? [cursor.score, cursor.score, cursor.createdAt, cursor.score, cursor.createdAt, cursor.rowid]
-      : []
+    const position = cursor?.position ?? 0
     const rows = this.#db
       .prepare(
         `SELECT projects.path AS project_path, projects.name AS project_name,
                 threads.id AS thread_id, threads.title AS thread_title,
-                threads.provider, session_search.turn_id, snapshot.created_at,
-                snapshot.search_rowid, snapshot.score,
+                threads.provider, session_search.turn_id, session_search.created_at,
+                snapshot.position,
                 snapshot.snippet
          FROM session_search_snapshot_rows AS snapshot
          JOIN session_search ON session_search.rowid = snapshot.search_rowid
          JOIN threads ON threads.id = session_search.thread_id
          JOIN projects ON projects.path = threads.project_path
-         WHERE snapshot.snapshot_id = ?
-         ${cursorClause}
-         ORDER BY snapshot.score, snapshot.created_at DESC, snapshot.search_rowid DESC
+         WHERE snapshot.snapshot_id = ? AND snapshot.position > ?
+         ORDER BY snapshot.position
          LIMIT ?`,
       )
-      .all(snapshotId, ...cursorParameters, limit + 1) as Array<{
+      .all(snapshotId, position, limit + 1) as Array<{
       project_path: string
       project_name: string
       thread_id: string
@@ -1026,8 +1017,7 @@ export class Store {
       provider: ProviderId
       turn_id: string
       created_at: number
-      search_rowid: number
-      score: number
+      position: number
       snippet: string
     }>
 
@@ -1048,9 +1038,7 @@ export class Store {
         rows.length > limit && last
           ? encodeCursor({
               snapshotId,
-              score: Number(last.score),
-              createdAt: Number(last.created_at),
-              rowid: Number(last.search_rowid),
+              position: Number(last.position),
             })
           : null,
     }
@@ -1451,11 +1439,8 @@ function decodeCursor(cursor: string | undefined): SearchCursor | undefined {
     if (
       typeof value.snapshotId !== 'string' ||
       value.snapshotId.length < 1 ||
-      !Number.isFinite(value.score) ||
-      !Number.isSafeInteger(value.createdAt) ||
-      value.createdAt < 0 ||
-      !Number.isSafeInteger(value.rowid) ||
-      value.rowid < 1
+      !Number.isSafeInteger(value.position) ||
+      value.position < 1
     ) {
       return undefined
     }
