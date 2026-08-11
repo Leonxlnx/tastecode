@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-11 main 72998d9c</span>
+        <span class="meta">2026-08-11 main 3da77de0</span>
       </div>
     </div>
 
@@ -314,9 +314,9 @@
             <small>thread, review, sessions, git, settings</small>
           </div>
           <div class="kpi">
-            <b>2</b>
+            <b>3</b>
             <span>workstreams running</span>
-            <small>design agent, visual polish</small>
+            <small>design agent, visual polish, turn timing</small>
           </div>
           <div class="kpi">
             <b>8</b>
@@ -328,10 +328,13 @@
 
       <section id="ready">
         <h2>Release checklist</h2>
-        <p class="sub">Checked means it works on main right now, verified in the running app.</p>
+        <p class="sub">
+          Checked means it works on main right now and passed the verification recorded with its
+          change.
+        </p>
         <div class="lanes">
           <div class="lane l-done">
-            <header>Ready <span class="count">10</span></header>
+            <header>Ready <span class="count">11</span></header>
             <ul>
               <li>
                 <i class="tick">✓</i>
@@ -385,6 +388,16 @@
               <li>
                 <i class="tick">✓</i>
                 <span
+                  >Lifecycle hardening
+                  <span class="d"
+                    >resumed threads retain reply guidance, malformed usage caches rebuild, failed
+                    scans back off, Windows PTY cleanup waits for exit</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
                   >Guided sign-in
                   <span class="d">browser opens itself, code chip, no raw terminal</span>
                 </span>
@@ -418,7 +431,7 @@
           </div>
 
           <div class="lane l-active">
-            <header>In progress <span class="count">2</span></header>
+            <header>In progress <span class="count">3</span></header>
             <ul>
               <li>
                 <i class="tick">●</i>
@@ -432,6 +445,16 @@
                 <span
                   >Visual polish toward M5
                   <span class="d">screen-by-screen pass, empty and error states (#15)</span>
+                </span>
+              </li>
+              <li>
+                <i class="tick">●</i>
+                <span
+                  >Durable completed-turn timing
+                  <span class="d"
+                    >completion timestamp contract shipped; server stamping and replayed timer are
+                    still follow-up work</span
+                  >
                 </span>
               </li>
             </ul>
