@@ -1,9 +1,5 @@
 import { parentPort, workerData } from 'node:worker_threads'
-import type {
-  UsageScanProgress,
-  UsageScanRequest,
-  UsageScanResult,
-} from './usage-history.js'
+import type { UsageScanProgress, UsageScanRequest, UsageScanResult } from './usage-history.js'
 
 type UsageHistoryModule = typeof import('./usage-history.js')
 
