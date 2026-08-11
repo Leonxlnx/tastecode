@@ -214,6 +214,57 @@ describe('thread reducer', () => {
     expect(state.running).toBe(false)
   })
 
+  it('renders restart recovery without a live-looking command or approval', () => {
+    const state = apply([
+      {
+        type: 'turn.started',
+        turn: { id: 't1', threadId: 'th1', status: 'running', createdAt: 0 },
+      },
+      {
+        type: 'item.started',
+        item: item({ id: 'command-1', type: 'command', role: undefined, command: 'pnpm test' }),
+      },
+      {
+        type: 'approval.requested',
+        request: {
+          id: 'approval-1',
+          kind: 'command',
+          command: 'pnpm test',
+          createdAt: 1,
+        },
+      },
+      {
+        type: 'item.completed',
+        item: item({
+          id: 'command-1',
+          type: 'command',
+          role: undefined,
+          status: 'failed',
+          command: 'pnpm test',
+        }),
+      },
+      { type: 'approval.resolved', id: 'approval-1' },
+      { type: 'turn.completed', turnId: 't1', status: 'interrupted' },
+      {
+        type: 'thread.error',
+        threadId: 'th1',
+        message:
+          'This turn stopped when Personal Harness restarted. Review any partial changes, then send a new message to continue.',
+      },
+    ])
+
+    expect(state.running).toBe(false)
+    expect(state.approvals).toEqual([])
+    expect(state.items).toEqual([
+      expect.objectContaining({ id: 'command-1', status: 'failed' }),
+      expect.objectContaining({
+        type: 'error',
+        status: 'completed',
+        text: expect.stringContaining('send a new message to continue'),
+      }),
+    ])
+  })
+
   it('batches stored deltas without changing replay semantics', () => {
     const events: DomainEvent[] = [
       {
