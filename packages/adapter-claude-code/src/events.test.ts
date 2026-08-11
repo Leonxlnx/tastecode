@@ -43,6 +43,51 @@ describe('claude event translation', () => {
     expect(events[1]).toMatchObject({ item: { type: 'command', command: 'node -v' } })
   })
 
+  it('keeps item identities unique when separate blocks reuse a message id', () => {
+    // Captured from claude-code 2.1.222: it reused one message id for a
+    // narration envelope and a later tool-use envelope, both at block index 0.
+    const captured = [
+      {
+        type: 'assistant',
+        message: {
+          id: 'msg_011CdwAM63bijViHvHrHysNR',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'I will inspect the fixture.' }],
+        },
+      },
+      {
+        type: 'assistant',
+        message: {
+          id: 'msg_011CdwAM63bijViHvHrHysNR',
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_018pJWfDcup4YmC285NtuAb5',
+              name: 'Read',
+              input: { file_path: 'inspection.txt' },
+            },
+          ],
+        },
+      },
+    ] as const
+
+    const translate = () => captured.flatMap((event) => toDomainEvents(event, 't1'))
+    const first = translate()
+    const replay = translate()
+    const itemIds = first.flatMap((event) =>
+      event.type === 'item.completed' ? [event.item.id] : [],
+    )
+
+    expect(itemIds).toHaveLength(2)
+    expect(new Set(itemIds)).toHaveLength(2)
+    expect(replay).toEqual(first)
+    expect(first).toMatchObject([
+      { type: 'item.completed', item: { type: 'message', text: 'I will inspect the fixture.' } },
+      { type: 'item.completed', item: { type: 'tool_call', text: 'Read' } },
+    ])
+  })
+
   it('reads an edit tool as a file change, not a generic tool call', () => {
     const events = toDomainEvents(
       {
