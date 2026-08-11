@@ -14,7 +14,7 @@ import type {
   UsageHistoryTotals,
 } from '@harness/contracts'
 import { CalendarDays, CircleAlert, RefreshCw } from 'lucide-react'
-import { providerMark } from '../model-catalog.js'
+import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
 import { ProviderIcon } from './ProviderIcon.js'
 
@@ -217,7 +217,7 @@ function CostSummary(props: { data: ResultOf<'usage.history'> }) {
                 <div className="usage-provider__heading">
                   <span>
                     <ProviderIcon mark={providerMark(provider.provider)} size={17} />
-                    {providerLabel(provider.provider)}
+                    {providerDisplayName(provider.provider)}
                   </span>
                   <strong>{formatMoney(provider.totals.estimatedCostUsd)}</strong>
                 </div>
@@ -343,7 +343,7 @@ function Metric(props: {
               <li data-provider={provider.provider} key={provider.provider}>
                 <span className="usage-metric__provider-name">
                   <ProviderIcon mark={providerMark(provider.provider)} size={15} />
-                  {providerLabel(provider.provider)}
+                  {providerDisplayName(provider.provider)}
                 </span>
                 <span className="usage-metric__provider-value">
                   <b>{provider.value}</b>
@@ -434,7 +434,7 @@ function DailyUsageChart(props: { data: ResultOf<'usage.history'> }) {
             {props.data.providers.map((provider) => (
               <span data-provider={provider.provider} key={provider.provider}>
                 <ProviderIcon mark={providerMark(provider.provider)} size={14} />
-                {providerLabel(provider.provider)}
+                {providerDisplayName(provider.provider)}
               </span>
             ))}
           </div>
@@ -529,7 +529,7 @@ function ChartTooltip(props: {
       </span>
       {props.day.providers.map((provider) => (
         <span data-provider={provider.provider} key={provider.provider}>
-          {providerLabel(provider.provider)}
+          {providerDisplayName(provider.provider)}
           <b>
             {props.mode === 'cost'
               ? formatMoney(provider.estimatedCostUsd)
@@ -799,19 +799,6 @@ function pricingLabel(
   if (pricing === 'family') return 'family price'
   if (pricing === 'unpriced') return 'unpriced'
   return undefined
-}
-
-function providerLabel(provider: ProviderId): string {
-  return {
-    codex: 'Codex',
-    'claude-code': 'Claude Code',
-    grok: 'Grok',
-    cursor: 'Cursor',
-    opencode: 'OpenCode',
-    antigravity: 'Antigravity',
-    acp: 'ACP',
-    api: 'API',
-  }[provider]
 }
 
 function formatMoney(value: number): string {

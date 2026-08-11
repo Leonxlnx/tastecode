@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Account, ProviderId, ResultOf, UsageHistoryDay } from '@harness/contracts'
+import type { Account, ResultOf, UsageHistoryDay } from '@harness/contracts'
 import { CircleAlert, RefreshCw } from 'lucide-react'
-import { providerMark } from '../model-catalog.js'
+import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
 import { ProviderIcon } from './ProviderIcon.js'
 
@@ -186,7 +186,9 @@ export function ProfileSettings(props: {
             />
             <ProfileInsight
               label="Top provider"
-              value={topProvider ? providerLabel(topProvider.provider) : 'No provider activity'}
+              value={
+                topProvider ? providerDisplayName(topProvider.provider) : 'No provider activity'
+              }
             />
             <ProfileInsight
               label="Cache hit rate"
@@ -360,7 +362,7 @@ function ActivityHeatmap(props: { daily: UsageHistoryDay[]; endDate: string }) {
                     <li data-provider={provider.provider} key={provider.provider}>
                       <span className="profile-activity__tooltip-provider-name">
                         <ProviderIcon mark={providerMark(provider.provider)} size={15} />
-                        {providerLabel(provider.provider)}
+                        {providerDisplayName(provider.provider)}
                       </span>
                       <span className="profile-activity__tooltip-provider-value">
                         <b>{formatTokens(provider.tokens)}</b>
@@ -501,18 +503,4 @@ function shiftDate(value: string, days: number): string {
 
 function dateFromKey(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`)
-}
-
-function providerLabel(provider: ProviderId): string {
-  const labels: Record<ProviderId, string> = {
-    codex: 'Codex',
-    'claude-code': 'Claude Code',
-    grok: 'Grok',
-    cursor: 'Cursor',
-    opencode: 'OpenCode',
-    antigravity: 'Antigravity',
-    acp: 'ACP',
-    api: 'API',
-  }
-  return labels[provider]
 }

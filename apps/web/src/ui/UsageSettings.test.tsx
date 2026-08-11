@@ -177,7 +177,7 @@ describe('usage settings', () => {
       { id: 'opencode', label: 'OpenCode' },
       { id: 'antigravity', label: 'Antigravity' },
       { id: 'acp', label: 'ACP' },
-      { id: 'api', label: 'API' },
+      { id: 'api', label: 'API connection' },
     ]
     const result = historyResult('30d')
     result.providers = providers.map((provider) => ({
