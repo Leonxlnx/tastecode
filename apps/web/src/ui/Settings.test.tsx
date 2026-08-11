@@ -1,8 +1,9 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { Account, ProviderId } from '@harness/contracts'
 import { customModelChoice, type ModelChoice } from '../model-catalog.js'
+import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker-layout.js'
 import { resetInstalls } from '../provider-install.js'
 import type { Transport } from '../transport.js'
 import { formatDeviceNote, Settings } from './Settings.js'
@@ -16,11 +17,73 @@ vi.mock('./InstallTerminal.js', () => ({
   ),
 }))
 
+function renderAppearanceSettings() {
+  const transport = {
+    request: vi.fn(),
+    on: vi.fn(() => () => {}),
+  } as unknown as Transport
+
+  return render(
+    <Settings
+      provider="codex"
+      providerName="Codex"
+      transport={transport}
+      projectPath={undefined}
+      projectName={undefined}
+      account={undefined}
+      providerStatuses={[]}
+      acpAgents={[]}
+      modelConnections={[]}
+      models={[]}
+      hiddenModels={new Set()}
+      onModelVisibilityChange={() => {}}
+      providers={[{ id: 'codex', name: 'Codex' }]}
+      onCustomModelAdd={() => {}}
+      onCustomModelRemove={() => {}}
+      onConnectionsChanged={() => {}}
+      projectCount={0}
+      sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
+      onSidebarSettingsChange={() => {}}
+      themePreference="system"
+      onThemePreferenceChange={() => {}}
+      fontPreference="geist"
+      onFontPreferenceChange={() => {}}
+      accentPreference="neutral"
+      onAccentPreferenceChange={() => {}}
+      backdropPreference="default"
+      onBackdropPreferenceChange={() => {}}
+      sidebarGlass={0}
+      onSidebarGlassChange={() => {}}
+      showMacOSFontSmoothing={false}
+      macOSFontSmoothing={true}
+      onMacOSFontSmoothingChange={() => {}}
+      onAccountChange={() => {}}
+      initialSection="appearance"
+      onReset={() => {}}
+      onClose={() => {}}
+    />,
+  )
+}
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   resetInstalls()
+  writeModelPickerLayout('list')
+  localStorage.removeItem(MODEL_PICKER_LAYOUT_KEY)
   Reflect.deleteProperty(navigator, 'clipboard')
+})
+
+describe('model picker layout setting', () => {
+  it('reflects changes from the shared layout preference', () => {
+    renderAppearanceSettings()
+    const toggle = screen.getByRole('switch', { name: 'Provider rail layout' })
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+
+    act(() => writeModelPickerLayout('rail'))
+
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+  })
 })
 
 describe('paired device timestamps', () => {

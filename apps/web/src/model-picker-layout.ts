@@ -7,8 +7,10 @@ export type ModelPickerLayout = 'list' | 'rail'
 
 export const MODEL_PICKER_LAYOUT_KEY = 'harness.modelPickerLayout'
 const CHANGE_EVENT = 'harness:model-picker-layout'
+let sessionLayout: ModelPickerLayout | undefined
 
 export function readModelPickerLayout(): ModelPickerLayout {
+  if (sessionLayout) return sessionLayout
   try {
     return localStorage.getItem(MODEL_PICKER_LAYOUT_KEY) === 'rail' ? 'rail' : 'list'
   } catch {
@@ -19,8 +21,11 @@ export function readModelPickerLayout(): ModelPickerLayout {
 export function writeModelPickerLayout(layout: ModelPickerLayout): void {
   try {
     localStorage.setItem(MODEL_PICKER_LAYOUT_KEY, layout)
+    sessionLayout = undefined
   } catch {
-    // Site data blocked: the preference just does not persist.
+    // Site data blocked: keep the choice for this session even though it
+    // cannot persist across launches.
+    sessionLayout = layout
   }
   window.dispatchEvent(new Event(CHANGE_EVENT))
 }

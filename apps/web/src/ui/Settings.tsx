@@ -77,7 +77,11 @@ import type {
   FontPreference,
   ThemePreference,
 } from '../theme.js'
-import { readModelPickerLayout, writeModelPickerLayout } from '../model-picker-layout.js'
+import {
+  readModelPickerLayout,
+  subscribeModelPickerLayout,
+  writeModelPickerLayout,
+} from '../model-picker-layout.js'
 import { McpSettings } from './McpSettings.js'
 import { Menu, MenuItem } from './Menu.js'
 import { ModelSearchField } from './ModelSearchField.js'
@@ -1299,10 +1303,10 @@ function AppearanceSettings(props: {
   )
 }
 
-/** Self-contained: the layout choice lives in localStorage, not App state —
- *  the open picker listens for the change event and re-renders on flip. */
+/** Self-contained: Settings and the open picker subscribe to the same layout
+ *  preference, including its in-memory fallback when storage is unavailable. */
 function ModelPickerLayoutSetting() {
-  const [layout, setLayout] = useState(readModelPickerLayout)
+  const layout = useSyncExternalStore(subscribeModelPickerLayout, readModelPickerLayout)
   const railOn = layout === 'rail'
   return (
     <div className="appearance__text">
@@ -1318,7 +1322,6 @@ function ModelPickerLayoutSetting() {
             onClick={() => {
               const next = railOn ? 'list' : 'rail'
               writeModelPickerLayout(next)
-              setLayout(next)
             }}
           >
             <span className="switch__thumb" />
