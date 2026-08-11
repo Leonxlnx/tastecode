@@ -32,6 +32,20 @@ describe('domain events', () => {
     expect(DomainEventSchema.parse(event)).toEqual(event)
   })
 
+  it('carries a durable turn completion boundary without rejecting legacy history', () => {
+    const completed = {
+      type: 'turn.completed',
+      turnId: 't1',
+      status: 'completed',
+      completedAt: 32_000,
+    }
+
+    expect(DomainEventSchema.parse(completed)).toEqual(completed)
+    expect(
+      DomainEventSchema.parse({ type: 'turn.completed', turnId: 'legacy', status: 'completed' }),
+    ).toEqual({ type: 'turn.completed', turnId: 'legacy', status: 'completed' })
+  })
+
   it('rejects an event with an unknown type instead of passing it through', () => {
     // Silently accepting unknown events is how a client and server drift apart
     // without anyone noticing. Adapters must map to `unknown` explicitly.

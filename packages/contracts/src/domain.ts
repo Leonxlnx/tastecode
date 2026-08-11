@@ -199,6 +199,8 @@ export const DomainEventSchema = z.discriminatedUnion('type', [
     type: z.literal('turn.completed'),
     turnId: z.string(),
     status: z.enum(['completed', 'interrupted', 'failed']),
+    /** Server receipt time. Optional so histories written before this field still replay. */
+    completedAt: z.number().optional(),
   }),
   z.object({ type: z.literal('thread.error'), threadId: z.string(), message: z.string() }),
   /** The agent's plan for this turn, replaced wholesale each time it changes. */
