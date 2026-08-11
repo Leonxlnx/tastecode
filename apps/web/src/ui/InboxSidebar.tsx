@@ -25,6 +25,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
+import { agentPresentation, providerDisplayName } from '../provider-presentation.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { Project, Session } from './Sidebar.js'
 
@@ -965,12 +966,10 @@ function relativeTime(at: number, now: number): string {
 }
 
 function providerName(session: Session): string {
-  if (session.provider === 'claude-code') return 'Claude Code'
-  if (session.provider === 'acp') return session.agent ?? 'Agent'
-  if (session.provider === 'codex') return 'Codex'
-  if (session.provider === 'opencode') return 'OpenCode'
-  if (session.provider === 'antigravity') return 'Antigravity'
-  return session.provider
+  if (session.provider === 'acp' && session.agent) {
+    return agentPresentation(session.agent).label
+  }
+  return providerDisplayName(session.provider)
 }
 
 function projectName(project: Project): string {

@@ -221,4 +221,18 @@ describe('InboxSidebar', () => {
     expect(onSettleMany).toHaveBeenCalledWith(['one', 'two'])
     expect(actions.onSettle).not.toHaveBeenCalled()
   })
+
+  it('uses canonical provider and ACP source names in thread metadata', () => {
+    const sessions: Session[] = [
+      { ...active('claude', 'Claude task', 4), provider: 'claude-code' },
+      { ...active('grok', 'Grok task', 3), provider: 'grok' },
+      { ...active('gemini', 'Gemini task', 2), provider: 'acp', agent: 'gemini' },
+      { ...active('api', 'API task', 1), provider: 'api' },
+    ]
+    render(<InboxSidebar {...props([{ path: '/alpha', sessions }])} />)
+
+    for (const label of ['Claude Code', 'Grok', 'Gemini CLI', 'API connection']) {
+      expect(screen.getByText(label)).toBeTruthy()
+    }
+  })
 })
