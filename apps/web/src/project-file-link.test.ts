@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { preserveProjectFileLinks, projectFileReference } from './project-file-link.js'
+import {
+  preserveProjectFileLinks,
+  projectFileLinkParseWindow,
+  projectFileReference,
+} from './project-file-link.js'
 
 describe('project file links', () => {
   it('preserves file URLs before the Markdown parser blocks them', () => {
@@ -106,10 +110,9 @@ describe('project file links', () => {
 
   it('does not parse a large unrelated tail after the final candidate line', () => {
     const markdown = `[index](file:///E:/project/index.ts)\n${'ordinary text '.repeat(80_000)}`
-    const started = performance.now()
     const preserved = preserveProjectFileLinks(markdown)
 
-    expect(performance.now() - started).toBeLessThan(50)
+    expect(projectFileLinkParseWindow(markdown).end).toBe(markdown.indexOf('\n'))
     expect(preserved.endsWith('ordinary text ')).toBe(true)
   })
 
@@ -119,10 +122,11 @@ describe('project file links', () => {
       (_, index) => `[file ${index}](file:///E:/project/${index}.ts`,
     ).join('\n')
     const markdown = `\`\`\`md\n${candidates}\n\`\`\``
-    const started = performance.now()
+    const parseWindow = projectFileLinkParseWindow(markdown)
 
     expect(preserveProjectFileLinks(markdown)).toBe(markdown)
-    expect(performance.now() - started).toBeLessThan(100)
+    expect(parseWindow.scanned).toBeLessThanOrEqual(markdown.length)
+    expect(parseWindow.end).toBe(markdown.length)
   })
 
   it('accepts Windows files on another drive when they stay inside the project', () => {
