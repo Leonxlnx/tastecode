@@ -204,4 +204,38 @@ describe('cross-session search', () => {
       expect(screen.getAllByRole('option', { name: /Gemini roadmap.*Gemini CLI/ })).toHaveLength(2)
     })
   })
+
+  it('keeps same-turn, same-timestamp content hits distinct by server identity', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const onSelect = vi.fn()
+    const transport = {
+      request: vi.fn(async () => ({
+        results: [
+          { ...RESULT, resultId: 'message:item-1' },
+          { ...RESULT, resultId: 'tool:item-2' },
+        ],
+        nextCursor: null,
+      })),
+    }
+    render(
+      <SessionSearch
+        transport={transport as unknown as Transport}
+        projects={[]}
+        onSelect={onSelect}
+        onClose={() => undefined}
+      />,
+    )
+
+    fireEvent.change(screen.getByLabelText('Search every chat'), {
+      target: { value: 'regression' },
+    })
+
+    const hits = await screen.findAllByRole('option', { name: /Fix regression/ })
+    expect(hits).toHaveLength(2)
+    fireEvent.click(hits[0]!)
+    fireEvent.click(hits[1]!)
+    expect(onSelect).toHaveBeenNthCalledWith(1, 'thread-1', 'turn-2')
+    expect(onSelect).toHaveBeenNthCalledWith(2, 'thread-1', 'turn-2')
+    expect(consoleError.mock.calls.flat().join(' ')).not.toContain('same key')
+  })
 })

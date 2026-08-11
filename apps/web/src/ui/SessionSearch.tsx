@@ -137,11 +137,12 @@ function SessionSearchComponent(props: {
       .map(({ rank: _rank, ...result }) => result)
   }, [projectPath, props.projects, provider, searchable, sourceNames, terms])
 
-  const displayResults = useMemo<DisplaySearchResult[]>(
-    () => [
+  const displayResults = useMemo<DisplaySearchResult[]>(() => {
+    const legacyOccurrences = new Map<string, number>()
+    return [
       ...titleResults,
       ...results.map((result) => ({
-        key: `content:${result.threadId}:${result.turnId}:${result.createdAt}`,
+        key: contentResultKey(result, legacyOccurrences),
         kind: 'content' as const,
         projectName: result.projectName,
         threadId: result.threadId,
@@ -153,9 +154,8 @@ function SessionSearchComponent(props: {
         titleParts: [{ text: result.threadTitle, highlighted: false }],
         snippet: result.snippet,
       })),
-    ],
-    [results, sourceNames, titleResults],
-  )
+    ]
+  }, [results, sourceNames, titleResults])
 
   useEffect(() => input.current?.focus(), [])
 
@@ -439,6 +439,27 @@ function SessionSearchComponent(props: {
 
 function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path
+}
+
+function contentResultKey(
+  result: SessionSearchResult,
+  legacyOccurrences: Map<string, number>,
+): string {
+  if (result.resultId) return `content:id:${result.resultId}`
+
+  const identity = JSON.stringify([
+    result.projectPath,
+    result.projectName,
+    result.threadId,
+    result.threadTitle,
+    result.turnId,
+    result.provider,
+    result.createdAt,
+    result.snippet.map((part) => [part.text, part.highlighted]),
+  ])
+  const occurrence = legacyOccurrences.get(identity) ?? 0
+  legacyOccurrences.set(identity, occurrence + 1)
+  return `content:legacy:${JSON.stringify([identity, occurrence])}`
 }
 
 function resultProviderLabel(result: DisplaySearchResult): string {
