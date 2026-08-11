@@ -68,7 +68,7 @@ export function mapGrokBilling(body: unknown): ProviderLimit[] {
   const period = record['currentPeriod'] as Record<string, unknown> | undefined
   if (period?.['type'] !== 'USAGE_PERIOD_TYPE_WEEKLY') return []
   const rawPercent = record['creditUsagePercent'] ?? 0
-  const numeric = typeof rawPercent === 'string' ? Number(rawPercent) : rawPercent
+  const numeric = typeof rawPercent === 'string' && rawPercent.trim() ? Number(rawPercent) : rawPercent
   if (typeof numeric !== 'number' || !Number.isFinite(numeric)) return []
   const end = typeof period['end'] === 'string' ? Date.parse(period['end']) : Number.NaN
   return [
@@ -86,7 +86,7 @@ async function refreshEntry(
   all: Record<string, GrokAuthEntry>,
 ): Promise<string | undefined> {
   const refreshToken = entry.refresh_token ?? entry.refresh
-  if (!refreshToken) return undefined
+  if (!refreshToken?.trim()) return undefined
   const clientId =
     entry.oidc_client_id ?? accountKey.split('::').at(-1)?.trim() ?? DEFAULT_CLIENT_ID
   const body = new URLSearchParams({
@@ -106,14 +106,16 @@ async function refreshEntry(
     refresh_token?: string
     expires_in?: number
   }
-  if (typeof json.access_token !== 'string') return undefined
+  if (typeof json.access_token !== 'string' || !json.access_token.trim()) return undefined
   const next: GrokAuthEntry = {
     ...entry,
     key: json.access_token,
-    ...(json.refresh_token ? { refresh_token: json.refresh_token } : {}),
-    ...(typeof json.expires_in === 'number'
-      ? { expires_at: new Date(Date.now() + json.expires_in * 1000).toISOString() }
-      : {}),
+    ...(json.refresh_token?.trim() ? { refresh_token: json.refresh_token } : {}),
+  }
+  delete next.expires_at
+  delete next.expires
+  if (Number.isFinite(json.expires_in) && (json.expires_in ?? 0) > 0) {
+    next.expires_at = new Date(Date.now() + (json.expires_in as number) * 1000).toISOString()
   }
   // Merge into the existing map so other accounts are never dropped.
   const path = authPath()
@@ -132,7 +134,9 @@ export async function grokLimits(): Promise<ProviderLimit[]> {
       return []
     }
     const all = JSON.parse(text) as Record<string, GrokAuthEntry>
-    const entries = Object.entries(all).filter(([, entry]) => typeof entry?.key === 'string')
+    const entries = Object.entries(all).filter(
+      ([, entry]) => typeof entry?.key === 'string' && Boolean(entry.key.trim()),
+    )
     const picked = entries[0]
     if (!picked) return []
     const [accountKey, entry] = picked
