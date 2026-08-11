@@ -23,7 +23,9 @@ function ContextMenuHarness() {
 
   return (
     <>
-      <button ref={target}>Project row</button>
+      <button ref={target} data-testid="context-target">
+        Project row
+      </button>
       <Menu
         drop="down"
         label="Project options"
@@ -36,13 +38,20 @@ function ContextMenuHarness() {
   )
 }
 
+const focusElement = HTMLElement.prototype.focus
+
 beforeEach(() => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 300 })
   Object.defineProperty(window, 'innerHeight', { configurable: true, value: 200 })
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    if (this.getAttribute('data-testid') === 'context-target') return rect(40, 60, 100, 20)
     if (this.classList.contains('menutrigger')) return rect(215, 170, 24, 24)
     if (this.classList.contains('menu')) return rect(0, 0, 260, 142)
     return rect(0, 0, 0, 0)
+  })
+  vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (this: HTMLElement) {
+    if (this.closest<HTMLElement>('.menu')?.style.visibility === 'hidden') return
+    focusElement.call(this)
   })
 })
 
@@ -122,6 +131,15 @@ describe('Menu', () => {
     expect(
       screen.getByRole('button', { name: 'Project options' }).getAttribute('aria-expanded'),
     ).toBe('true')
+
+    fireEvent.keyDown(menu, { key: 'Escape' })
+    const target = screen.getByTestId('context-target')
+    fireEvent.keyDown(target, { key: 'F10', shiftKey: true })
+    fireEvent.contextMenu(target, { clientX: 0, clientY: 0 })
+    const keyboardMenu = screen.getByRole('menu')
+    expect(keyboardMenu.dataset.inputModality).toBe('keyboard')
+    expect(keyboardMenu.style.left).toBe('40px')
+    expect(keyboardMenu.style.top).toBe('80px')
   })
 
   it('roves, typeaheads, selects, and restores focus after dismissals', () => {
@@ -182,6 +200,14 @@ describe('Menu', () => {
     fireEvent.mouseDown(screen.getByRole('button', { name: 'Outside' }))
     expect(screen.queryByRole('menu')).toBeNull()
     expect(document.activeElement).toBe(trigger)
+
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Alpha' }), {
+      key: 'Tab',
+      shiftKey: true,
+    })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Outside' }))
   })
 
   it('contains Tab only inside dialog-style panels', () => {
@@ -207,6 +233,7 @@ describe('Menu', () => {
     })
     const filter = screen.getByRole('textbox', { name: 'Filter models' })
     const apply = screen.getByRole('button', { name: 'Apply' })
+    expect(screen.getByRole('dialog').getAttribute('aria-modal')).toBe('true')
     expect(document.activeElement).toBe(filter)
 
     fireEvent.keyDown(filter, { key: 'Tab', shiftKey: true })
