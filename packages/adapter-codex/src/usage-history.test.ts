@@ -132,7 +132,7 @@ describe('Codex usage history', () => {
     ])
   })
 
-  it('waits for the subagent communication boundary after copied turn context', async () => {
+  it('waits for the first communication boundary and keeps usage after later markers', async () => {
     const filePath = await usageFile([
       {
         timestamp: '2026-06-02T10:00:00.000Z',
@@ -176,6 +176,16 @@ describe('Codex usage history', () => {
         output_tokens: 125,
         total_tokens: 1_275,
       }),
+      {
+        timestamp: '2026-06-02T10:01:01.000Z',
+        type: 'inter_agent_communication_metadata',
+        payload: {},
+      },
+      tokenCount('2026-06-02T10:02:00.000Z', {
+        input_tokens: 1_200,
+        output_tokens: 150,
+        total_tokens: 1_350,
+      }),
     ])
 
     expect(await readCodexUsageHistory(filePath)).toEqual([
@@ -183,9 +193,9 @@ describe('Codex usage history', () => {
         model: 'gpt-5.6-sol',
         sessionId: 'child-session',
         tokens: expect.objectContaining({
-          observedInputTokens: 150,
-          outputTokens: 25,
-          processedTokens: 175,
+          observedInputTokens: 200,
+          outputTokens: 50,
+          processedTokens: 250,
         }),
       }),
     ])
