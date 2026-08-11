@@ -80,3 +80,20 @@ describe('Codex collaboration items', () => {
     ).toMatchObject({ type: 'tool_call', status: 'failed', text: 'Subagent interrupted' })
   })
 })
+
+describe('Codex assistant messages', () => {
+  it.each(['commentary', 'final_answer'] as const)('preserves the %s phase', (phase) => {
+    expect(
+      mapThreadItem(
+        {
+          type: 'agentMessage',
+          id: `message-${phase}`,
+          text: 'Provider-authored text',
+          phase,
+          memoryCitation: null,
+        },
+        context,
+      ),
+    ).toMatchObject({ type: 'message', role: 'assistant', phase })
+  })
+})

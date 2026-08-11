@@ -1,3 +1,4 @@
+import type { DomainEvent } from '@harness/contracts'
 import { describe, expect, it } from 'vitest'
 import { ApiAgentSession, type ApiStreamEvent, type ApiTransport } from './runtime.js'
 
@@ -196,6 +197,48 @@ describe('ApiAgentSession', () => {
         toolCalls: [{ id: 'call-1', name: 'read_file', input: { path: 'README.md' } }],
       },
       { role: 'tool', content: 'hello', toolCallId: 'call-1', isError: false },
+    ])
+  })
+
+  it('classifies assistant text from the transport finish reason', async () => {
+    let request = 0
+    const events: unknown[] = []
+    const session = new ApiAgentSession({
+      model: 'test-model',
+      transport: async function* () {
+        if (request++ === 0) {
+          yield { type: 'text', delta: 'I will inspect it.' }
+          yield {
+            type: 'tool_call',
+            call: { id: 'call-1', name: 'read_file', input: { path: 'README.md' } },
+          }
+          yield { type: 'finish', reason: 'tool_calls' }
+        } else {
+          yield { type: 'text', delta: 'The file is valid.' }
+          yield { type: 'finish', reason: 'stop' }
+        }
+      },
+      executeTool: async () => ({ content: 'contents' }),
+    })
+    session.on('event', (event) => events.push(event))
+
+    const thread = session.startThread('C:\\repo', 'connection-1')
+    const turnId = await session.sendTurn(thread.id, 'Check it')
+    await session.waitForTurn(turnId)
+
+    const completed = events
+      .filter(
+        (event): event is Extract<DomainEvent, { type: 'item.completed' }> =>
+          typeof event === 'object' &&
+          event !== null &&
+          'type' in event &&
+          event.type === 'item.completed',
+      )
+      .map((event) => event.item)
+    expect(completed).toMatchObject([
+      { type: 'message', text: 'I will inspect it.', phase: 'commentary' },
+      { type: 'tool_call', text: 'read_file\ncontents' },
+      { type: 'message', text: 'The file is valid.', phase: 'final_answer' },
     ])
   })
 

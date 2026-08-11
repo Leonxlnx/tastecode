@@ -92,7 +92,11 @@ describe('Grok adapter', () => {
         }),
         expect.objectContaining({
           type: 'item.completed',
-          item: expect.objectContaining({ type: 'file_change', status: 'completed' }),
+          item: expect.objectContaining({
+            type: 'file_change',
+            status: 'completed',
+            text: expect.stringContaining('hello.txt'),
+          }),
         }),
         expect.objectContaining({
           type: 'item.completed',
@@ -124,6 +128,77 @@ describe('Grok adapter', () => {
       args.slice(args.indexOf('--reasoning-effort'), args.indexOf('--reasoning-effort') + 2),
     ).toEqual(['--reasoning-effort', 'low'])
     adapter.dispose()
+  })
+
+  it('keeps sequential tool and authored-text lifecycles distinct', async () => {
+    const child = new FakeChild()
+    const adapter = new GrokAdapter({
+      spawn: () => child as unknown as ChildProcessWithoutNullStreams,
+    })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'Create two files')
+    const completed = new Promise<void>((resolve) => {
+      adapter.on('event', (event) => {
+        if (event.type === 'turn.completed') resolve()
+      })
+    })
+
+    // Composed ordering probe using the captured 0.1.219 text, write, diff-update,
+    // and end frame shapes. Grok is also known to reuse toolCallId sequentially.
+    const frames = [
+      { type: 'text', data: 'First, I will create one. ' },
+      {
+        type: 'tool_call',
+        toolCallId: 'tool-1',
+        toolName: 'write',
+        title: 'write',
+        rawInput: { file_path: 'C:\\repo\\one.txt' },
+      },
+      {
+        type: 'tool_call_update',
+        toolCallId: 'tool-1',
+        status: 'completed',
+        content: [{ type: 'diff', path: 'C:\\repo\\one.txt', oldText: '', newText: 'one' }],
+        rawOutput: { type: 'SearchReplace' },
+      },
+      { type: 'text', data: 'Next, I will create two. ' },
+      {
+        type: 'tool_call',
+        toolCallId: 'tool-1',
+        toolName: 'write',
+        title: 'write',
+        rawInput: { file_path: 'C:\\repo\\two.txt' },
+      },
+      {
+        type: 'tool_call_update',
+        toolCallId: 'tool-1',
+        status: 'completed',
+        content: [{ type: 'diff', path: 'C:\\repo\\two.txt', oldText: '', newText: 'two' }],
+        rawOutput: { type: 'SearchReplace' },
+      },
+      { type: 'text', data: 'Both files are ready.' },
+      { type: 'end', stopReason: 'end_turn', sessionId: 'session-1' },
+    ]
+    child.stdout.end(frames.map((frame) => JSON.stringify(frame)).join('\n'))
+    await completed
+
+    const items = events
+      .filter(
+        (event): event is Extract<DomainEvent, { type: 'item.completed' }> =>
+          event.type === 'item.completed',
+      )
+      .map((event) => event.item)
+      .filter((item) => item.type === 'message' || item.type === 'file_change')
+    expect(items.map(({ id }) => id)).toHaveLength(new Set(items.map(({ id }) => id)).size)
+    expect(items).toMatchObject([
+      { type: 'message', text: 'First, I will create one.' },
+      { type: 'file_change', text: expect.stringContaining('one') },
+      { type: 'message', text: 'Next, I will create two.' },
+      { type: 'file_change', text: expect.stringContaining('two') },
+      { type: 'message', text: 'Both files are ready.' },
+    ])
   })
 
   it('keeps long unicode and multiline prompts off Windows argv', async () => {
