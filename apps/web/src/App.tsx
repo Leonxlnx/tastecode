@@ -238,6 +238,9 @@ export function App() {
   const historyBuffers = useRef(
     new Map<string, Set<Array<{ seq: number | undefined; event: DomainEvent }>>>(),
   )
+  const historyOwners = useRef(
+    new Map<string, Array<{ seq: number | undefined; event: DomainEvent }>>(),
+  )
   const pendingThreadDeltas = useRef(new Map<string, ItemDeltaEvent[]>())
   const queueStates = useRef(new Map<string, { items: QueuedTurn[]; canSteer: boolean }>())
   const pendingSession = useRef<
@@ -852,8 +855,13 @@ export function App() {
       const buffers = historyBuffers.current.get(threadId) ?? new Set()
       buffers.add(buffer)
       historyBuffers.current.set(threadId, buffers)
+      historyOwners.current.set(threadId, buffer)
       try {
         const { events } = await transport.request('thread.history', { threadId })
+        // A reconnect may have started a fresher request. The older response
+        // still owns its live-event buffer, but it must not replace newer
+        // durable history after resolving last.
+        if (historyOwners.current.get(threadId) !== buffer) return
         const restored = reduceEventLog(emptyThread, events)
         const lastSeq = events.at(-1)?.seq ?? 0
         const withLive = reduceEventLog(restored, buffer, lastSeq)
@@ -866,6 +874,9 @@ export function App() {
       } finally {
         buffers.delete(buffer)
         if (buffers.size === 0) historyBuffers.current.delete(threadId)
+        if (historyOwners.current.get(threadId) === buffer) {
+          historyOwners.current.delete(threadId)
+        }
       }
     },
     [transport],

@@ -2767,10 +2767,12 @@ describe('reopening a session', () => {
     })
   })
 
-  it('keeps live events when reconnect and session loads overlap', async () => {
+  it('keeps newer durable and live events when an older history load resolves last', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    const historyResolvers: Array<(value: { events: []; running: boolean }) => void> = []
+    const historyResolvers: Array<
+      (value: { events: Array<{ seq: number; event: DomainEvent }>; running: boolean }) => void
+    > = []
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'thread.history') {
         return new Promise((resolve) => historyResolvers.push(resolve))
@@ -2789,20 +2791,43 @@ describe('reopening a session', () => {
     await waitFor(() => expect(historyResolvers).toHaveLength(2))
 
     emitThreadEvent('untouched-thread', {
-      type: 'item.started',
+      type: 'item.completed',
       item: {
         id: 'live-item',
         turnId: 'turn-1',
         type: 'message',
         role: 'assistant',
-        status: 'started',
+        status: 'completed',
         text: 'Live during reconnect',
-        createdAt: 1,
+        createdAt: 3,
       },
     })
-    await act(async () => historyResolvers[0]?.({ events: [], running: true }))
-    await act(async () => historyResolvers[1]?.({ events: [], running: true }))
 
-    expect(screen.getByTestId('thread').textContent).toContain('Live during reconnect')
+    const historyEvent = (id: string, text: string): { seq: number; event: DomainEvent } => ({
+      seq: 1,
+      event: {
+        type: 'item.completed',
+        item: {
+          id,
+          turnId: 'turn-1',
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          text,
+          createdAt: 1,
+        },
+      },
+    })
+    await act(async () =>
+      historyResolvers[1]?.({ events: [historyEvent('newer', 'Newer history')], running: false }),
+    )
+    await act(async () =>
+      historyResolvers[0]?.({ events: [historyEvent('older', 'Older history')], running: false }),
+    )
+
+    const text = screen.getByTestId('thread').textContent
+    expect(text).toContain('Newer history')
+    expect(text).toContain('Live during reconnect')
+    expect(text).not.toContain('Older history')
   })
 })
