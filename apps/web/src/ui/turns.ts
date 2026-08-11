@@ -25,6 +25,7 @@ export type TurnActivityGroup = {
   items: Item[]
   /** Flat-list index where Thread anchors this disclosure. */
   firstIndex: number
+  lastIndex: number
 }
 
 export type TurnPresentation = {
@@ -181,9 +182,10 @@ export function presentTurns(
       return [
         turnId,
         {
-          activityGroups: draft.activityGroups.map(({ entries }) => ({
+          activityGroups: draft.activityGroups.map(({ entries, lastIndex }) => ({
             items: entries.map(({ item }) => item),
             firstIndex: entries[0]!.index,
+            lastIndex,
           })),
           responseText: finalAnswer?.item.text ?? '',
           firstResponseIndex: draft.firstResponseIndex,

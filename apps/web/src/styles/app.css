@@ -5863,6 +5863,16 @@
   flex: none;
 }
 
+.activity__detail {
+  max-height: 180px;
+  overflow: auto;
+  margin: 7px 0 0 25px;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  white-space: pre-wrap;
+}
+
 .reply > .activity {
   display: block;
   margin-bottom: 18px;

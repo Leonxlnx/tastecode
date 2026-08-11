@@ -313,10 +313,15 @@ export function Thread(props: {
               if (!item) return null
               const presentation = presentations.get(item.turnId)
               const live = props.running && props.activeTurn?.id === item.turnId
-              const compactedActivity =
-                !live && presentation?.complete === true && presentation.activity.includes(item)
-              const activityLead =
-                compactedActivity && presentation.firstActivityIndex === row.index
+              const activityGroup =
+                !live && presentation?.complete === true
+                  ? presentation.activityGroups.find(
+                      ({ firstIndex, lastIndex }) =>
+                        row.index >= firstIndex && row.index <= lastIndex,
+                    )
+                  : undefined
+              const compactedActivity = activityGroup !== undefined
+              const activityLead = compactedActivity && activityGroup.firstIndex === row.index
               const responseLead =
                 !live &&
                 presentation?.complete === true &&
@@ -328,6 +333,7 @@ export function Thread(props: {
                 // Harness notes; the provider's raw commands, tool calls, and
                 // thinking would drown that story in noise.
                 (presentation?.design === true &&
+                  !compactedActivity &&
                   isActivity(item) &&
                   !designPhaseLabel(toolText(item)))
               const liveActivity = live && isActivity(item)
@@ -344,15 +350,16 @@ export function Thread(props: {
                   <Row
                     item={item}
                     hidden={suppressed}
-                    activity={activityLead ? presentation.activity : undefined}
+                    activity={activityLead ? activityGroup.items : undefined}
                     elapsedMs={presentation?.elapsedMs}
                     live={live}
                     responseText={responseLead ? presentation.responseText : undefined}
+                    finalResponse={responseLead}
                     settling={settling}
                     showCompletionRail={
                       !live &&
                       presentation?.complete === true &&
-                      presentation.activity.length === 0 &&
+                      presentation.activityGroups.length === 0 &&
                       presentation.finalAnswerIndex === row.index
                     }
                     onEditMessage={props.onEditMessage}
@@ -557,10 +564,6 @@ function isActivity(item: Item): boolean {
   return item.type !== 'message' && item.type !== 'error'
 }
 
-function isAssistantMessage(item: Item): boolean {
-  return item.type === 'message' && item.role === 'assistant'
-}
-
 const Row = memo(function Row({
   item,
   hidden,
@@ -568,6 +571,7 @@ const Row = memo(function Row({
   elapsedMs,
   live,
   responseText,
+  finalResponse,
   settling,
   showCompletionRail,
   onEditMessage,
@@ -580,6 +584,7 @@ const Row = memo(function Row({
   elapsedMs: number | undefined
   live: boolean
   responseText: string | undefined
+  finalResponse: boolean
   settling: boolean
   showCompletionRail: boolean
   onEditMessage: ((text: string) => void) | undefined
@@ -642,7 +647,7 @@ const Row = memo(function Row({
           <CompletionRail activity={[]} elapsedMs={elapsedMs ?? 0} settling={settling} />
         ) : null}
         <Markdown text={text} streaming={live && item.status === 'started'} />
-        {!live && item.status === 'completed' && text ? (
+        {finalResponse && !live && item.status === 'completed' && text ? (
           <ResponseActions text={text} createdAt={item.createdAt} />
         ) : null}
       </div>
@@ -744,18 +749,21 @@ function CompletionRail({
       >
         <div className="activity__reveal-clip">
           <div className="activity__body">
-            {visibleActivity.map((item) =>
-              item.type === 'message' ? (
-                <div className="activity__message" key={item.id}>
-                  <Markdown text={item.text ?? ''} />
+            {visibleActivity.map((item) => {
+              const detail = activityDetail(item)
+              return (
+                <div className="activity__item" key={item.id}>
+                  <div className="activity__file-change">
+                    {glyph(item)}
+                    <span>{summarise(item)}</span>
+                    {item.exitCode !== undefined && item.exitCode !== 0 ? (
+                      <span className="aux__code">exit {item.exitCode}</span>
+                    ) : null}
+                  </div>
+                  {detail ? <pre className="activity__detail">{detail}</pre> : null}
                 </div>
-              ) : (
-                <div className="activity__file-change" key={item.id}>
-                  <FilePenLine size={15} strokeWidth={1.8} aria-hidden />
-                  <span>Edited files</span>
-                </div>
-              ),
-            )}
+              )
+            })}
           </div>
         </div>
       </div>
@@ -764,10 +772,14 @@ function CompletionRail({
 }
 
 function isVisibleWorkedItem(item: Item): boolean {
-  return (
-    item.type === 'file_change' ||
-    (isAssistantMessage(item) && item.status === 'completed' && Boolean(item.text?.trim()))
-  )
+  return isActivity(item)
+}
+
+function activityDetail(item: Item): string | undefined {
+  if (item.type === 'file_change') return item.path
+  if (item.type === 'tool_call' && designPhaseLabel(toolText(item))) return undefined
+  const summary = summarise(item)
+  return item.text && item.text !== summary ? item.text : undefined
 }
 
 function ResponseActions({ text, createdAt }: { text: string; createdAt: number }) {

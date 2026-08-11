@@ -240,7 +240,7 @@ describe('completed activity disclosure', () => {
       />,
     )
 
-    const disclosures = screen.getAllByRole('button', { name: 'Worked for 0s' })
+    const disclosures = screen.getAllByRole('button', { name: 'Worked for 1s' })
     expect(disclosures).toHaveLength(2)
     disclosures.forEach((disclosure) => fireEvent.click(disclosure))
 
@@ -322,7 +322,7 @@ describe('completed activity disclosure', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Worked for 0s' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
     expect(screen.getByText('Thinking')).toBeTruthy()
     expect(screen.getByText('pnpm test')).toBeTruthy()
     expect(screen.getByText('Building the website')).toBeTruthy()
