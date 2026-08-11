@@ -177,6 +177,19 @@ describe('thread reducer', () => {
     })
   })
 
+  it('does not restart the timer when the same turn-start event is replayed', () => {
+    const started = reduce(emptyThread, {
+      type: 'turn.started',
+      turn: { id: 'server-turn', threadId: 'thread-1', status: 'running', createdAt: 10 },
+    })
+    const replayed = reduce(started, {
+      type: 'turn.started',
+      turn: { id: 'server-turn', threadId: 'thread-1', status: 'running', createdAt: 40 },
+    })
+
+    expect(replayed.activeTurn?.startedAt).toBe(10)
+  })
+
   it('rebuilds a whole conversation from a stored event log', () => {
     // What reopening a session does: the server hands back everything that
     // happened, and replaying it has to produce the same thread the user left.
