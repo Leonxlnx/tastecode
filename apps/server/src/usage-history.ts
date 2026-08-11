@@ -19,7 +19,7 @@ import type {
 } from '@harness/contracts'
 import type { StoredUsageEvent } from './store.js'
 
-const CACHE_VERSION = 6
+const CACHE_VERSION = 7
 const PARSE_CONCURRENCY = 8
 const AUTO_REFRESH_INTERVAL_MS = 60_000
 const HARNESS_USAGE_CACHE_MS = 5_000

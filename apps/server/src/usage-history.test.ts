@@ -599,11 +599,58 @@ describe('local usage history', () => {
       )
 
       const cache = await readUsageCache(cacheFile)
-      expect(cache.version).toBe(6)
+      expect(cache.version).toBe(7)
       expect(cache.generatedAt).toBe(0)
       expect(cache.files).toEqual([])
     },
   )
+
+  it('invalidates v6 entries produced before copied subagent history was excluded', async () => {
+    const root = temporaryDirectory()
+    const cacheFile = path.join(root, 'usage.json')
+    writeFileSync(
+      cacheFile,
+      JSON.stringify({
+        version: 6,
+        generatedAt: 123,
+        files: [
+          {
+            path: path.join(root, 'session.jsonl'),
+            provider: 'codex',
+            mtimeMs: 1,
+            size: 400_000_000,
+            entries: [
+              {
+                date: '2026-08-09',
+                model: 'gpt-5.6-sol',
+                sessionId: 'captured-subagent-shape',
+                longContext: true,
+                tokens: {
+                  observedInputTokens: 1_987_113_817,
+                  uncachedInputTokens: 1_987_113_817,
+                  cachedInputTokens: 0,
+                  cacheWrite5mInputTokens: 0,
+                  cacheWrite1hInputTokens: 0,
+                  outputTokens: 3_608_371,
+                  reasoningTokens: 0,
+                  processedTokens: 1_990_722_188,
+                  providerReportedCostUsd: 0,
+                },
+              },
+            ],
+          },
+        ],
+        sources: [],
+        warnings: [],
+      }),
+    )
+
+    expect(await readUsageCache(cacheFile)).toMatchObject({
+      version: 7,
+      generatedAt: 0,
+      files: [],
+    })
+  })
 
   it('treats a structurally invalid cache as a cold start', async () => {
     const root = temporaryDirectory()
@@ -646,7 +693,7 @@ describe('local usage history', () => {
     )
 
     expect(await readUsageCache(cacheFile)).toMatchObject({
-      version: 6,
+      version: 7,
       generatedAt: 0,
       files: [],
     })
