@@ -864,12 +864,17 @@ function MobileAccessSettings(props: { transport: Transport }) {
   const [copiedPairingUri, setCopiedPairingUri] = useState<string>()
   const [copiedWebUrl, setCopiedWebUrl] = useState<string>()
   const [now, setNow] = useState(Date.now)
+  const statusRequestGeneration = useRef(0)
 
   const refresh = useCallback(async () => {
+    const generation = ++statusRequestGeneration.current
     try {
-      setStatus(await props.transport.request('connections.status', {}))
+      const nextStatus = await props.transport.request('connections.status', {})
+      if (generation !== statusRequestGeneration.current) return
+      setStatus(nextStatus)
       setError(undefined)
     } catch (cause) {
+      if (generation !== statusRequestGeneration.current) return
       setError(cause instanceof Error ? cause.message : String(cause))
     }
   }, [props.transport])
@@ -925,6 +930,7 @@ function MobileAccessSettings(props: { transport: Transport }) {
     setBusy('pair')
     try {
       const offer = await props.transport.request('connections.startPairing', {})
+      statusRequestGeneration.current += 1
       setStatus(offer)
       setPairing(offer)
       setNow(Date.now())
@@ -940,6 +946,7 @@ function MobileAccessSettings(props: { transport: Transport }) {
     setBusy('stop')
     try {
       await props.transport.request('connections.stop', {})
+      statusRequestGeneration.current += 1
       setPairing(undefined)
       await refresh()
     } catch (cause) {

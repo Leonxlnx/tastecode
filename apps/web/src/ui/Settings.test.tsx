@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { Account, ProviderId } from '@harness/contracts'
+import type { Account, ConnectionsStatus, ProviderId } from '@harness/contracts'
 import { customModelChoice, type ModelChoice } from '../model-catalog.js'
 import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker-layout.js'
 import { resetInstalls } from '../provider-install.js'
@@ -85,6 +85,68 @@ describe('model picker layout setting', () => {
     expect(toggle.getAttribute('aria-checked')).toBe('true')
   })
 })
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
+function connectionsStatus(enabled: boolean): ConnectionsStatus {
+  return {
+    enabled,
+    serverName: 'Studio Mac',
+    port: 4312,
+    addresses: [],
+    devices: [],
+    webUrls: [],
+  }
+}
+
+function renderMobileAccess(transport: Transport) {
+  render(
+    <Settings
+      provider="codex"
+      providerName="Codex"
+      transport={transport}
+      projectPath={undefined}
+      projectName={undefined}
+      account={undefined}
+      providerStatuses={[]}
+      acpAgents={[]}
+      modelConnections={[]}
+      models={[]}
+      hiddenModels={new Set()}
+      onModelVisibilityChange={() => {}}
+      providers={[{ id: 'codex', name: 'Codex' }]}
+      onCustomModelAdd={() => {}}
+      onCustomModelRemove={() => {}}
+      onConnectionsChanged={() => {}}
+      projectCount={0}
+      sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
+      onSidebarSettingsChange={() => {}}
+      themePreference="system"
+      onThemePreferenceChange={() => {}}
+      fontPreference="geist"
+      onFontPreferenceChange={() => {}}
+      accentPreference="neutral"
+      onAccentPreferenceChange={() => {}}
+      backdropPreference="default"
+      onBackdropPreferenceChange={() => {}}
+      sidebarGlass={0}
+      onSidebarGlassChange={() => {}}
+      showMacOSFontSmoothing={false}
+      macOSFontSmoothing={true}
+      onMacOSFontSmoothingChange={() => {}}
+      onAccountChange={() => {}}
+      initialSection="mobile"
+      onReset={() => {}}
+      onClose={() => {}}
+    />,
+  )
+}
 
 describe('paired device timestamps', () => {
   it.each([
@@ -363,6 +425,72 @@ describe('model settings', () => {
       modelId: 'qwen-max',
       displayName: 'Qwen Max',
     })
+  })
+})
+
+describe('mobile access settings', () => {
+  it('keeps a pairing offer newer than an in-flight status response', async () => {
+    const staleStatus = deferred<ConnectionsStatus>()
+    const offer = {
+      ...connectionsStatus(true),
+      pairingUri: 'harness://pair?payload=new-ticket',
+      expiresAt: Date.now() + 300_000,
+    }
+    const transport = {
+      request: vi.fn((method: string) => {
+        if (method === 'connections.status') return staleStatus.promise
+        if (method === 'connections.startPairing') return Promise.resolve(offer)
+        throw new Error(`unexpected ${method}`)
+      }),
+      on: vi.fn(() => () => {}),
+    } as unknown as Transport
+
+    renderMobileAccess(transport)
+    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('connections.status', {}))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate pairing code' }))
+    await waitFor(() => expect(screen.getByText('Available to paired devices')).toBeTruthy())
+
+    await act(async () => {
+      staleStatus.resolve(connectionsStatus(false))
+      await staleStatus.promise
+    })
+
+    expect(screen.getByText('Available to paired devices')).toBeTruthy()
+    expect(screen.queryByText('Not accepting mobile connections')).toBeNull()
+  })
+
+  it('keeps stopped state newer than an in-flight poll response', async () => {
+    const stalePoll = deferred<ConnectionsStatus>()
+    let statusRequests = 0
+    const transport = {
+      request: vi.fn((method: string) => {
+        if (method === 'connections.status') {
+          statusRequests += 1
+          if (statusRequests === 1) return Promise.resolve(connectionsStatus(true))
+          if (statusRequests === 2) return stalePoll.promise
+          return Promise.resolve(connectionsStatus(false))
+        }
+        if (method === 'connections.stop') return Promise.resolve({})
+        throw new Error(`unexpected ${method}`)
+      }),
+      on: vi.fn(() => () => {}),
+    } as unknown as Transport
+
+    renderMobileAccess(transport)
+    await waitFor(() => expect(screen.getByText('Available to paired devices')).toBeTruthy())
+    await waitFor(() => expect(statusRequests).toBe(2), { timeout: 2_500 })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop accepting connections' }))
+    await waitFor(() => expect(screen.getByText('Not accepting mobile connections')).toBeTruthy())
+
+    await act(async () => {
+      stalePoll.resolve(connectionsStatus(true))
+      await stalePoll.promise
+    })
+
+    expect(screen.getByText('Not accepting mobile connections')).toBeTruthy()
+    expect(screen.queryByText('Available to paired devices')).toBeNull()
   })
 })
 
