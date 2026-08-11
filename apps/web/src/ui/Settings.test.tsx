@@ -67,6 +67,7 @@ function renderAppearanceSettings() {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.restoreAllMocks()
   resetInstalls()
   writeModelPickerLayout('list')
@@ -429,6 +430,36 @@ describe('model settings', () => {
 })
 
 describe('mobile access settings', () => {
+  it('deduplicates interval ticks while a slow status read is pending', async () => {
+    vi.useFakeTimers()
+    const slowStatus = deferred<ConnectionsStatus>()
+    let statusRequests = 0
+    const transport = {
+      request: vi.fn((method: string) => {
+        if (method === 'connections.status') {
+          statusRequests += 1
+          return slowStatus.promise
+        }
+        throw new Error(`unexpected ${method}`)
+      }),
+      on: vi.fn(() => () => {}),
+    } as unknown as Transport
+
+    renderMobileAccess(transport)
+    expect(statusRequests).toBe(1)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6_000)
+    })
+    expect(statusRequests).toBe(1)
+
+    await act(async () => {
+      slowStatus.resolve(connectionsStatus(true))
+      await slowStatus.promise
+    })
+    expect(screen.getByText('Available to paired devices')).toBeTruthy()
+  })
+
   it('keeps a pairing offer newer than an in-flight status response', async () => {
     const staleStatus = deferred<ConnectionsStatus>()
     const offer = {
@@ -460,8 +491,10 @@ describe('mobile access settings', () => {
     expect(screen.queryByText('Not accepting mobile connections')).toBeNull()
   })
 
-  it('keeps stopped state newer than an in-flight poll response', async () => {
+  it('runs one authoritative refresh after stop while an older poll is pending', async () => {
+    vi.useFakeTimers()
     const stalePoll = deferred<ConnectionsStatus>()
+    const postStopStatus = deferred<ConnectionsStatus>()
     let statusRequests = 0
     const transport = {
       request: vi.fn((method: string) => {
@@ -469,7 +502,8 @@ describe('mobile access settings', () => {
           statusRequests += 1
           if (statusRequests === 1) return Promise.resolve(connectionsStatus(true))
           if (statusRequests === 2) return stalePoll.promise
-          return Promise.resolve(connectionsStatus(false))
+          if (statusRequests === 3) return postStopStatus.promise
+          return Promise.reject(new Error('later poll failed'))
         }
         if (method === 'connections.stop') return Promise.resolve({})
         throw new Error(`unexpected ${method}`)
@@ -478,19 +512,38 @@ describe('mobile access settings', () => {
     } as unknown as Transport
 
     renderMobileAccess(transport)
-    await waitFor(() => expect(screen.getByText('Available to paired devices')).toBeTruthy())
-    await waitFor(() => expect(statusRequests).toBe(2), { timeout: 2_500 })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Stop accepting connections' }))
-    await waitFor(() => expect(screen.getByText('Not accepting mobile connections')).toBeTruthy())
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.getByText('Available to paired devices')).toBeTruthy()
 
     await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000)
+    })
+    expect(statusRequests).toBe(2)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop accepting connections' }))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(statusRequests).toBe(3)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000)
+    })
+    expect(statusRequests).toBe(3)
+
+    await act(async () => {
+      postStopStatus.resolve(connectionsStatus(false))
+      await postStopStatus.promise
       stalePoll.resolve(connectionsStatus(true))
       await stalePoll.promise
     })
 
     expect(screen.getByText('Not accepting mobile connections')).toBeTruthy()
     expect(screen.queryByText('Available to paired devices')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 })
 

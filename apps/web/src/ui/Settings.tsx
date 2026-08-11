@@ -864,20 +864,35 @@ function MobileAccessSettings(props: { transport: Transport }) {
   const [copiedPairingUri, setCopiedPairingUri] = useState<string>()
   const [copiedWebUrl, setCopiedWebUrl] = useState<string>()
   const [now, setNow] = useState(Date.now)
-  const statusRequestGeneration = useRef(0)
+  const statusMutationEpoch = useRef(0)
+  const statusRequest = useRef<Promise<void> | undefined>(undefined)
 
-  const refresh = useCallback(async () => {
-    const generation = ++statusRequestGeneration.current
-    try {
-      const nextStatus = await props.transport.request('connections.status', {})
-      if (generation !== statusRequestGeneration.current) return
-      setStatus(nextStatus)
-      setError(undefined)
-    } catch (cause) {
-      if (generation !== statusRequestGeneration.current) return
-      setError(cause instanceof Error ? cause.message : String(cause))
-    }
+  const refresh = useCallback(() => {
+    if (statusRequest.current) return statusRequest.current
+
+    const mutationEpoch = statusMutationEpoch.current
+    const request = (async () => {
+      try {
+        const nextStatus = await props.transport.request('connections.status', {})
+        if (mutationEpoch !== statusMutationEpoch.current) return
+        setStatus(nextStatus)
+        setError(undefined)
+      } catch (cause) {
+        if (mutationEpoch !== statusMutationEpoch.current) return
+        setError(cause instanceof Error ? cause.message : String(cause))
+      }
+    })()
+    statusRequest.current = request
+    void request.then(() => {
+      if (statusRequest.current === request) statusRequest.current = undefined
+    })
+    return request
   }, [props.transport])
+
+  const invalidateStatusReads = () => {
+    statusMutationEpoch.current += 1
+    statusRequest.current = undefined
+  }
 
   useEffect(() => {
     void refresh()
@@ -930,7 +945,7 @@ function MobileAccessSettings(props: { transport: Transport }) {
     setBusy('pair')
     try {
       const offer = await props.transport.request('connections.startPairing', {})
-      statusRequestGeneration.current += 1
+      invalidateStatusReads()
       setStatus(offer)
       setPairing(offer)
       setNow(Date.now())
@@ -946,7 +961,7 @@ function MobileAccessSettings(props: { transport: Transport }) {
     setBusy('stop')
     try {
       await props.transport.request('connections.stop', {})
-      statusRequestGeneration.current += 1
+      invalidateStatusReads()
       setPairing(undefined)
       await refresh()
     } catch (cause) {
@@ -960,6 +975,7 @@ function MobileAccessSettings(props: { transport: Transport }) {
     setBusy(deviceId)
     try {
       await props.transport.request('connections.revoke', { deviceId })
+      invalidateStatusReads()
       await refresh()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
