@@ -1173,6 +1173,84 @@ describe('new chats', () => {
     })
   })
 
+  it('rolls back an optimistic sidebar setting when persistence fails', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let rejectUpdate: ((error: Error) => void) | undefined
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'sidebar.updateSettings') {
+        return new Promise((_, reject) => {
+          rejectUpdate = reject
+        })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Workflows' }))
+
+    const classic = screen.getByRole('radio', { name: 'V1 Classic' })
+    const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
+    await waitFor(() => {
+      expect(classic.getAttribute('aria-checked')).toBe('true')
+    })
+
+    fireEvent.click(inbox)
+    expect(inbox.getAttribute('aria-checked')).toBe('true')
+
+    await act(async () => {
+      rejectUpdate?.(new Error('Could not save sidebar settings'))
+      await Promise.resolve()
+    })
+
+    expect(classic.getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('alert').textContent).toContain('Could not save sidebar settings')
+  })
+
+  it('does not let an older sidebar settings response overwrite a newer save', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const saves: Array<{
+      params: unknown
+      resolve: (settings: typeof serverSidebarSettings) => void
+    }> = []
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'sidebar.updateSettings') {
+        return new Promise((resolve) => {
+          saves.push({ params, resolve })
+        })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Workflows' }))
+
+    const classic = screen.getByRole('radio', { name: 'V1 Classic' })
+    const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
+    await waitFor(() => {
+      expect(classic.getAttribute('aria-checked')).toBe('true')
+    })
+    fireEvent.click(inbox)
+    fireEvent.click(classic)
+
+    expect(saves.map((save) => save.params)).toEqual([{ mode: 'inbox' }, { mode: 'classic' }])
+    expect(classic.getAttribute('aria-checked')).toBe('true')
+
+    await act(async () => {
+      saves[1]!.resolve({ mode: 'classic', autoSettleDays: 3 })
+      await Promise.resolve()
+    })
+    await act(async () => {
+      saves[0]!.resolve({ mode: 'inbox', autoSettleDays: 3 })
+      await Promise.resolve()
+    })
+
+    expect(classic.getAttribute('aria-checked')).toBe('true')
+  })
+
   it('switches sidebar versions only from settings', async () => {
     serverSidebarSettings.mode = 'classic'
     render(<App />)

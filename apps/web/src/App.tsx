@@ -319,6 +319,11 @@ export function App() {
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('providers')
   const [sidebarSettings, setSidebarSettings] = useState(DEFAULT_SIDEBAR_SETTINGS)
+  const confirmedSidebarSettings = useRef(DEFAULT_SIDEBAR_SETTINGS)
+  const confirmedSidebarSettingsRevision = useRef(0)
+  const sidebarSettingsSourceRevision = useRef(0)
+  const sidebarSettingsUpdates = useRef(new Map<number, Partial<SidebarSettings>>())
+  const nextSidebarSettingsRevision = useRef(0)
   const [paletteScope, setPaletteScope] = useState<CommandScope | null>(null)
   const [preferredNewThreadProject, setPreferredNewThreadProject] = useState<string>()
   const sessionSearch = useRef<SessionSearchHandle>(null)
@@ -492,6 +497,22 @@ export function App() {
   const resync = useRef<() => void>(() => {})
   const sidebarSettingsRef = useRef(sidebarSettings)
   sidebarSettingsRef.current = sidebarSettings
+  const reconcileSidebarSettings = useCallback(() => {
+    let next = confirmedSidebarSettings.current
+    for (const updates of sidebarSettingsUpdates.current.values()) {
+      next = { ...next, ...updates }
+    }
+    sidebarSettingsRef.current = next
+    setSidebarSettings(next)
+  }, [])
+  const acceptSidebarSettings = useCallback(
+    (settings: SidebarSettings) => {
+      sidebarSettingsSourceRevision.current += 1
+      confirmedSidebarSettings.current = settings
+      reconcileSidebarSettings()
+    },
+    [reconcileSidebarSettings],
+  )
 
   useEffect(() => {
     // Deltas arrive far faster than frames are drawn. Fold and render one batch
@@ -587,7 +608,7 @@ export function App() {
         updateSession(current, threadId, (session) => ({ ...session, lifecycle })),
       )
     })
-    const offSidebarSettings = transport.on('sidebar.settings', setSidebarSettings)
+    const offSidebarSettings = transport.on('sidebar.settings', acceptSidebarSettings)
     const offSequenceGap = transport.onSequenceGap(() => resync.current())
     // Held back briefly: a clean reconnect takes ~500ms, and a banner that
     // appears and vanishes in that time is noise, not information.
@@ -625,20 +646,23 @@ export function App() {
       offState()
       transport.close()
     }
-  }, [transport])
+  }, [transport, acceptSidebarSettings])
 
   useEffect(() => {
     let cancelled = false
+    const sourceRevision = sidebarSettingsSourceRevision.current
     void transport
       .request('sidebar.settings', {})
       .then((settings) => {
-        if (!cancelled) setSidebarSettings(settings)
+        if (!cancelled && sidebarSettingsSourceRevision.current === sourceRevision) {
+          acceptSidebarSettings(settings)
+        }
       })
       .catch(() => undefined)
     return () => {
       cancelled = true
     }
-  }, [transport])
+  }, [transport, acceptSidebarSettings])
 
   // Build one catalog from every connected source. Model ids are not globally
   // unique, so each choice keeps the provider/connection that will pay for it.
@@ -1944,13 +1968,28 @@ export function App() {
 
   const updateSidebarSettings = useCallback(
     (updates: Partial<SidebarSettings>) => {
-      setSidebarSettings((current) => ({ ...current, ...updates }))
+      const revision = ++nextSidebarSettingsRevision.current
+      sidebarSettingsUpdates.current.set(revision, updates)
+      reconcileSidebarSettings()
       void transport
         .request('sidebar.updateSettings', updates)
-        .then(setSidebarSettings)
-        .catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
+        .then((settings) => {
+          if (revision < confirmedSidebarSettingsRevision.current) return
+          confirmedSidebarSettingsRevision.current = revision
+          confirmedSidebarSettings.current = settings
+          sidebarSettingsSourceRevision.current += 1
+          for (const pendingRevision of sidebarSettingsUpdates.current.keys()) {
+            if (pendingRevision <= revision) sidebarSettingsUpdates.current.delete(pendingRevision)
+          }
+          reconcileSidebarSettings()
+        })
+        .catch((error) => {
+          sidebarSettingsUpdates.current.delete(revision)
+          reconcileSidebarSettings()
+          setNotice(error instanceof Error ? error.message : String(error))
+        })
     },
-    [transport],
+    [transport, reconcileSidebarSettings],
   )
 
   const hideSessions = useCallback(
