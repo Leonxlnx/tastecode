@@ -119,7 +119,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
     this.#thread = structuredClone(state.thread)
     this.#messages = structuredClone(state.messages)
     this.#turnCounter = state.turnCounter
-    this.#instructionsPending = false
+    this.#instructionsPending = this.#messages.length === 0 && Boolean(this.#instructions)
     return this.#thread
   }
 

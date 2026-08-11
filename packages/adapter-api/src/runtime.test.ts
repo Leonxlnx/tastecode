@@ -72,6 +72,60 @@ describe('ApiAgentSession', () => {
     await resumed.waitForTurn(resumedTurn)
   })
 
+  it('keeps shared instructions pending when an empty session is resumed', async () => {
+    const original = new ApiAgentSession({
+      model: 'test-model',
+      instructions: 'Answer plainly.',
+      transport: transport({ type: 'finish', reason: 'stop' }),
+    })
+    original.startThread('C:\\repo', 'connection-1')
+
+    let firstPrompt = ''
+    const resumed = new ApiAgentSession({
+      model: 'test-model',
+      instructions: 'Answer plainly.',
+      transport: async function* ({ messages }) {
+        firstPrompt = messages[0]?.content ?? ''
+        yield { type: 'finish', reason: 'stop' }
+      },
+    })
+    const thread = resumed.resumeThread(original.snapshot())
+    const turn = await resumed.sendTurn(thread.id, 'First after restart')
+    await resumed.waitForTurn(turn)
+
+    expect(firstPrompt).toContain('Answer plainly.')
+    expect(firstPrompt).toContain('First after restart')
+  })
+
+  it('does not repeat shared instructions after a populated session is resumed', async () => {
+    const original = new ApiAgentSession({
+      model: 'test-model',
+      instructions: 'Answer plainly.',
+      transport: transport({ type: 'finish', reason: 'stop' }),
+    })
+    const thread = original.startThread('C:\\repo', 'connection-1')
+    const first = await original.sendTurn(thread.id, 'First')
+    await original.waitForTurn(first)
+
+    let prompts: string[] = []
+    const resumed = new ApiAgentSession({
+      model: 'test-model',
+      instructions: 'Answer plainly.',
+      transport: async function* ({ messages }) {
+        prompts = messages
+          .filter((message) => message.role === 'user')
+          .map((message) => message.content)
+        yield { type: 'finish', reason: 'stop' }
+      },
+    })
+    resumed.resumeThread(original.snapshot())
+    const second = await resumed.sendTurn(thread.id, 'Second after restart')
+    await resumed.waitForTurn(second)
+
+    expect(prompts[0]).toContain('Answer plainly.')
+    expect(prompts[1]).toBe('Second after restart')
+  })
+
   it('attributes usage to the configured model for persisted history', async () => {
     const session = new ApiAgentSession({
       model: 'gpt-5.6-luna',
