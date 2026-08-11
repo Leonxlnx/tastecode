@@ -29,6 +29,7 @@ const LOCAL_USAGE_PROVIDERS = [
   'grok',
   'opencode',
 ] as const satisfies readonly ProviderId[]
+const BACKGROUND_SCAN_FAILURE = 'Usage indexing failed in the background:'
 
 type TokenCounts = LocalUsageRecord['tokens']
 
@@ -145,7 +146,7 @@ export class UsageHistoryService {
   #resetting: Promise<void> | undefined
   #scanAbort: AbortController | undefined
   #disposed = false
-  #lastRefreshStartedAt = 0
+  #lastRefreshStartedAt: number | undefined
   #harnessUsageLoadedAt = 0
   #harnessUsageCache: StoredUsageEvent[] | undefined
   #sources: SourceState[] = emptySources()
@@ -190,12 +191,12 @@ export class UsageHistoryService {
   }
 
   async history(range: UsageHistoryRange, refresh = false): Promise<UsageHistoryResult> {
-    const cache = await this.#loadCache()
+    await this.#loadCache()
     const now = this.#now().getTime()
     if (refresh) this.#harnessUsageLoadedAt = 0
     if (
       refresh ||
-      cache.generatedAt === 0 ||
+      this.#lastRefreshStartedAt === undefined ||
       now - this.#lastRefreshStartedAt >= AUTO_REFRESH_INTERVAL_MS
     ) {
       this.#startRefresh()
@@ -239,7 +240,7 @@ export class UsageHistoryService {
     this.#sources = cache.sources
     this.#scanWarnings = []
     this.#scan = { status: 'idle', filesProcessed: 0, filesTotal: 0 }
-    this.#lastRefreshStartedAt = 0
+    this.#lastRefreshStartedAt = undefined
     this.#harnessUsageCache = undefined
     this.#harnessUsageLoadedAt = 0
     this.#startRefresh()
@@ -290,8 +291,8 @@ export class UsageHistoryService {
       .catch((error: unknown) => {
         if (this.#disposed) return
         this.#scanWarnings = [
-          ...this.#scanWarnings,
-          `Usage indexing failed in the background: ${messageOf(error)}`,
+          ...this.#scanWarnings.filter((warning) => !warning.startsWith(BACKGROUND_SCAN_FAILURE)),
+          `${BACKGROUND_SCAN_FAILURE} ${messageOf(error)}`,
         ]
       })
       .finally(() => {

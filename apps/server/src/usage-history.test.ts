@@ -539,6 +539,43 @@ describe('local usage history', () => {
     expect((await service.history('30d')).scan.status).toBe('idle')
   })
 
+  it('backs off after a cold background scan fails', async () => {
+    const root = temporaryDirectory()
+    let scans = 0
+    let now = new Date('2026-08-08T12:00:00.000Z').getTime()
+    const service = new UsageHistoryService({
+      cacheFile: path.join(root, 'cache', 'usage.json'),
+      codexSessionsRoot: path.join(root, 'missing-codex'),
+      claudeProjectsRoot: path.join(root, 'missing-claude'),
+      grokLogPath: path.join(root, 'missing-grok.jsonl'),
+      openCodeDataRoot: path.join(root, 'missing-opencode'),
+      scanRunner: async () => {
+        scans += 1
+        throw new Error('Synthetic worker failure')
+      },
+      now: () => new Date(now),
+    })
+
+    expect((await service.history('30d')).scan.status).toBe('scanning')
+    await service.waitForRefresh()
+    const failed = await service.history('30d')
+    await service.waitForRefresh()
+    expect(failed.scan.status).toBe('idle')
+    expect(scans).toBe(1)
+    expect(failed.warnings).toEqual([
+      'Usage indexing failed in the background: Synthetic worker failure',
+    ])
+
+    now += 60_000
+    expect((await service.history('30d')).scan.status).toBe('scanning')
+    await service.waitForRefresh()
+    const retried = await service.history('30d')
+    expect(scans).toBe(2)
+    expect(retried.warnings).toEqual([
+      'Usage indexing failed in the background: Synthetic worker failure',
+    ])
+  })
+
   it('reuses the existing blocking-scanner cache during the background-index upgrade', async () => {
     const root = temporaryDirectory()
     const cacheFile = path.join(root, 'usage.json')
