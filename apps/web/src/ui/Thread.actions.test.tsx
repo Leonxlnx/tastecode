@@ -252,6 +252,41 @@ describe('thread message actions', () => {
     await waitFor(() => expect(writeClipboardText).toHaveBeenCalledWith('Keep my exact prompt'))
   })
 
+  it('shows visible accessible feedback when copying fails', async () => {
+    writeClipboardText.mockRejectedValueOnce(new Error('Invalid clipboard text'))
+    render(
+      <Thread
+        items={[
+          {
+            id: 'prompt-1',
+            turnId: 'turn-1',
+            type: 'message',
+            role: 'user',
+            status: 'completed',
+            text: 'A prompt too large for the clipboard bridge',
+            createdAt: 1,
+          },
+        ]}
+        running={false}
+        activeTurn={undefined}
+        plan={[]}
+        diff={undefined}
+        approvals={[]}
+        userInputs={[]}
+        reviews={[]}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy prompt' }))
+
+    expect((await screen.findByRole('alert')).textContent).toBe('Copy failed')
+    expect(screen.getByRole('button', { name: 'Copy prompt' }).getAttribute('title')).toBe(
+      'Copy failed — click to retry',
+    )
+  })
+
   it('sends a previous prompt back to the composer for editing', () => {
     const onEditMessage = vi.fn()
     render(

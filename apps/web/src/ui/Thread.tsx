@@ -780,6 +780,7 @@ function ResponseActions({ text, createdAt }: { text: string; createdAt: number 
 
 function CopyAction({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false)
+  const [failed, setFailed] = useState(false)
   // Rows are virtualized, so this unmounts the moment it scrolls out of the
   // overscan window — the tick-reset timer must not outlive it.
   const resetTimer = useRef<number | undefined>(undefined)
@@ -788,18 +789,39 @@ function CopyAction({ text, label }: { text: string; label: string }) {
   const copy = async () => {
     try {
       await writeClipboardText(text)
+      setFailed(false)
       setCopied(true)
       window.clearTimeout(resetTimer.current)
       resetTimer.current = window.setTimeout(() => setCopied(false), 1600)
     } catch {
+      window.clearTimeout(resetTimer.current)
       setCopied(false)
+      setFailed(true)
     }
   }
 
   return (
-    <button type="button" onClick={() => void copy()} aria-label={label} title="Copy">
-      {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
-    </button>
+    <span className={`copy-action${failed ? ' is-failed' : ''}`}>
+      <button
+        type="button"
+        onClick={() => void copy()}
+        aria-label={label}
+        title={failed ? 'Copy failed — click to retry' : 'Copy'}
+      >
+        {failed ? (
+          <CircleAlert aria-hidden />
+        ) : copied ? (
+          <Check aria-hidden />
+        ) : (
+          <Copy aria-hidden />
+        )}
+      </button>
+      {failed ? (
+        <span className="copy-action__error" role="alert">
+          Copy failed
+        </span>
+      ) : null}
+    </span>
   )
 }
 

@@ -6342,6 +6342,21 @@
   stroke-width: 1.7;
 }
 
+.copy-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.response-actions .copy-action.is-failed button,
+.copy-action__error {
+  color: var(--error);
+}
+
+.copy-action__error {
+  white-space: nowrap;
+}
+
 /* ---------- plan ---------- */
 
 .plan {
