@@ -235,6 +235,10 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
   }
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 function unresolvedDesignInput(
   history: Array<{ event: DomainEvent }>,
 ): { id: string; turnId: string; questions: BriefingQuestion[] } | undefined {
@@ -1278,7 +1282,9 @@ export class Orchestrator {
   }
 
   closeTerminal(terminalId: string): void {
-    this.#terminals.close(terminalId)
+    void this.#terminals
+      .close(terminalId)
+      .catch((error) => this.#onLog(`[terminal] close failed: ${errorMessage(error)}`))
   }
 
   #repoPath(threadId: string): string {
@@ -1570,7 +1576,9 @@ export class Orchestrator {
   }
 
   close(threadId: string): void {
-    this.#terminals.closeThread(threadId)
+    void this.#terminals
+      .closeThread(threadId)
+      .catch((error) => this.#onLog(`[terminal] thread close failed: ${errorMessage(error)}`))
     this.#stopDesignPreview(threadId)
     this.#inboxProjections.delete(threadId)
     const entry = this.#threads.get(threadId)

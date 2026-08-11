@@ -176,7 +176,6 @@ export class TerminalManager {
         () => reject(new Error(`terminal shutdown timed out: ${terminalId}`)),
         this.#closeTimeoutMs,
       )
-      timeout.unref()
       void exited.then(() => {
         clearTimeout(timeout)
         resolve()
