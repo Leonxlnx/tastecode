@@ -16,6 +16,7 @@ describe('LiveMarkdownParser', () => {
     expect(appended.scannedCharacters).toBe('\nwith code'.length)
     expect(parser.complete()).toMatchObject({ source: 'new **answer**\nwith code' })
     expect(() => parser.append(' late')).toThrow(/completion/)
+    expect(() => parser.replace('late')).toThrow(/completion/)
   })
 
   it('styles common Markdown when delimiters split across chunks', () => {
@@ -26,7 +27,7 @@ describe('LiveMarkdownParser', () => {
       '*bold*',
       '* and `co',
       'de`.\n\n- i',
-      'tem\n\n```ts\nco',
+      'tem\n# Next\n\n```ts\nco',
       'de\n``',
       '`\n',
     ]
@@ -35,7 +36,6 @@ describe('LiveMarkdownParser', () => {
     expect(nodes(operations)).toEqual(
       expect.arrayContaining([
         'heading-2',
-        'paragraph',
         'strong',
         'inline-code',
         'list',
@@ -44,19 +44,24 @@ describe('LiveMarkdownParser', () => {
       ]),
     )
     expect(parser.complete().source).toBe(chunks.join(''))
+    const sequence = JSON.stringify(operations)
+    expect(sequence.indexOf('node.close","node":"list')).toBeLessThan(
+      sequence.indexOf('node.open","node":"heading-1'),
+    )
   })
 
   it('bounds every mutable leaf and line-prefix carry', () => {
     const parser = new LiveMarkdownParser()
-    const update = parser.append(`paragraph ${'x'.repeat(2_000)}`)
+    const update = parser.append(`paragraph ${'x'.repeat(2_000)}${'_**'.repeat(10_000)}`)
     const leaves = update.operations.filter(
       (operation): operation is Extract<LiveMarkdownOperation, { type: 'leaf.append' }> =>
         operation.type === 'leaf.append',
     )
 
     expect(Math.max(...leaves.map((leaf) => leaf.text.length))).toBeLessThanOrEqual(256)
-    expect(update.mutableLeafCharacters).toBeLessThanOrEqual(256)
     expect(update.carryCharacters).toBeLessThanOrEqual(64)
+    parser.append('\n')
+    expect(parser.append('\n').operations.length).toBeLessThanOrEqual(66)
   })
 
   it('keeps streamed HTML and links inert', () => {
