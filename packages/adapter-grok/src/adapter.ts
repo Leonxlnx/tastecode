@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { killTree, readNdjson } from '@harness/proc'
@@ -30,9 +30,9 @@ import { killTree, readNdjson } from '@harness/proc'
  * unparsable lines to the log callback, so it is tolerated by construction.
  *
  * `grok.exe` is a real executable, not a .cmd shim, so it is spawned
- * directly rather than through `spawnCli`'s cmd.exe route — cmd.exe
- * truncates argv at the first newline (#372), and a direct spawn carries
- * multi-line prompts intact.
+ * directly rather than through `spawnCli`'s cmd.exe route. Prompts still do
+ * not belong on argv: CreateProcess rejects long command lines even without
+ * cmd.exe. Grok's `--prompt-file` keeps the exact UTF-8 text off argv.
  *
  * This never reads a credential. `grok models` reports "You are not
  * authenticated." on its own, which is the entire auth probe.
@@ -89,16 +89,15 @@ function applyGrokTurnOptions(current: GrokStartOptions, next: GrokTurnOptions):
   return merged
 }
 
-/** The per-turn argv. The prompt may be multi-line because the binary is
- *  spawned directly (never through cmd.exe). */
+/** The per-turn argv. Only a prompt file path travels through CreateProcess. */
 export function grokTurnArgs(
-  prompt: string,
+  promptFile: string,
   options: GrokStartOptions,
   sessionId: string | undefined,
 ): string[] {
   return [
-    '-p',
-    prompt,
+    '--prompt-file',
+    promptFile,
     '--output-format',
     'streaming-json',
     ...(options.model ? ['--model', options.model] : []),
@@ -163,6 +162,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   #child: ChildProcessWithoutNullStreams | undefined
   /** Children we killed on purpose — their non-zero exits are not failures. */
   #intentionalKills = new WeakSet<ChildProcessWithoutNullStreams>()
+  #promptDirectories = new WeakMap<ChildProcessWithoutNullStreams, string>()
   #turnCounter = 0
   /** Session instructions ride in front of the first prompt: the CLI's
    *  --system-prompt-override would REPLACE the agent's own prompt, which is
@@ -208,15 +208,30 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${text}`
         : text
     this.#instructionsPending = false
-    const args = grokTurnArgs(prompt, this.#options, this.#sessionId)
+    const promptDirectory = mkdtempSync(path.join(tmpdir(), 'harness-grok-'))
+    const promptFile = path.join(promptDirectory, 'prompt.md')
+    try {
+      writeFileSync(promptFile, prompt, 'utf8')
+    } catch (error) {
+      rmSync(promptDirectory, { recursive: true, force: true })
+      throw error
+    }
+    const args = grokTurnArgs(promptFile, this.#options, this.#sessionId)
 
     // A turn already in flight would be orphaned by the reassignment below.
     if (this.#child) this.#stop(this.#child)
-    const child = this.#spawn(grokCommand(), args, {
-      cwd: this.#workspacePath,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
+    let child: ChildProcessWithoutNullStreams
+    try {
+      child = this.#spawn(grokCommand(), args, {
+        cwd: this.#workspacePath,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      })
+    } catch (error) {
+      rmSync(promptDirectory, { recursive: true, force: true })
+      throw error
+    }
+    this.#promptDirectories.set(child, promptDirectory)
     this.#child = child
 
     this.emit('event', {
@@ -346,6 +361,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))
 
     child.on('exit', (code) => {
+      this.#cleanupPrompt(child)
       if (this.#child === child) this.#child = undefined
       if (this.#intentionalKills.has(child)) return
       if (sawEnd) return
@@ -361,6 +377,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     // A spawn failure emits 'error' on the child; without a listener that
     // throws out of the event loop and takes the whole server down.
     child.on('error', (error) => {
+      this.#cleanupPrompt(child)
       if (this.#child === child) this.#child = undefined
       this.emit('event', { type: 'thread.error', threadId, message: String(error) })
       this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
@@ -387,6 +404,17 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   #stop(child: ChildProcessWithoutNullStreams): void {
     this.#intentionalKills.add(child)
     killTree(child)
+  }
+
+  #cleanupPrompt(child: ChildProcessWithoutNullStreams): void {
+    const directory = this.#promptDirectories.get(child)
+    if (!directory) return
+    this.#promptDirectories.delete(child)
+    try {
+      rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })
+    } catch (error) {
+      this.emit('log', `temporary prompt cleanup failed: ${String(error)}`)
+    }
   }
 
   #capture(args: string[], timeoutMs = 15000): Promise<string> {

@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { PassThrough } from 'node:stream'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { DomainEvent } from '@harness/contracts'
@@ -38,11 +38,13 @@ const MODELS_OUTPUT = [
 
 describe('Grok adapter', () => {
   it('maps the captured streaming-json wire format onto domain items', async () => {
-    const child = new FakeChild()
+    const children: FakeChild[] = []
     let args: string[] = []
     const adapter = new GrokAdapter({
       spawn: (_command, value) => {
         args = value
+        const child = new FakeChild()
+        children.push(child)
         return child as unknown as ChildProcessWithoutNullStreams
       },
     })
@@ -60,13 +62,18 @@ describe('Grok adapter', () => {
     })
 
     await adapter.sendTurn(thread.id, 'Create hello.txt')
+    const child = children[0]!
+    const promptFile = args[args.indexOf('--prompt-file') + 1]!
+    expect(readFileSync(promptFile, 'utf8')).toBe(
+      '<system-instructions>\nAnswer plainly.\n</system-instructions>\n\nCreate hello.txt',
+    )
     const fixture = readFileSync(new URL('./fixtures/stream.jsonl', import.meta.url), 'utf8')
     child.stdout.end(fixture)
     await completed
 
     expect(args).toEqual([
-      '-p',
-      '<system-instructions>\nAnswer plainly.\n</system-instructions>\n\nCreate hello.txt',
+      '--prompt-file',
+      promptFile,
       '--output-format',
       'streaming-json',
       '--model',
@@ -117,6 +124,29 @@ describe('Grok adapter', () => {
       args.slice(args.indexOf('--reasoning-effort'), args.indexOf('--reasoning-effort') + 2),
     ).toEqual(['--reasoning-effort', 'low'])
     adapter.dispose()
+  })
+
+  it('keeps long unicode and multiline prompts off Windows argv', async () => {
+    const child = new FakeChild()
+    let args: string[] = []
+    const adapter = new GrokAdapter({
+      spawn: (_command, value) => {
+        args = value
+        return child as unknown as ChildProcessWithoutNullStreams
+      },
+    })
+    const text = `Grüße 🧪\n${'x'.repeat(40_000)}`
+    const thread = await adapter.startThread('C:\\repo')
+
+    await adapter.sendTurn(thread.id, text)
+
+    const promptFile = args[args.indexOf('--prompt-file') + 1]!
+    expect(args).not.toContain(text)
+    expect(args.every((arg) => !/[\r\n]/.test(arg))).toBe(true)
+    expect(readFileSync(promptFile, 'utf8')).toBe(text)
+
+    child.emit('exit', 0)
+    expect(existsSync(promptFile)).toBe(false)
   })
 
   it('fails the turn when the process dies without an end frame', async () => {
