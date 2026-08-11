@@ -89,10 +89,12 @@ describe('model picker layout setting', () => {
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise
+    reject = rejectPromise
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 function connectionsStatus(enabled: boolean): ConnectionsStatus {
@@ -106,8 +108,8 @@ function connectionsStatus(enabled: boolean): ConnectionsStatus {
   }
 }
 
-function renderMobileAccess(transport: Transport) {
-  render(
+function mobileAccessSettings(transport: Transport) {
+  return (
     <Settings
       provider="codex"
       providerName="Codex"
@@ -145,8 +147,12 @@ function renderMobileAccess(transport: Transport) {
       initialSection="mobile"
       onReset={() => {}}
       onClose={() => {}}
-    />,
+    />
   )
+}
+
+function renderMobileAccess(transport: Transport) {
+  return render(mobileAccessSettings(transport))
 }
 
 describe('paired device timestamps', () => {
@@ -430,6 +436,41 @@ describe('model settings', () => {
 })
 
 describe('mobile access settings', () => {
+  it('starts a fresh status read when the transport changes', async () => {
+    const staleStatus = deferred<ConnectionsStatus>()
+    const previousTransport = {
+      request: vi.fn((method: string) => {
+        if (method === 'connections.status') return staleStatus.promise
+        throw new Error(`unexpected ${method}`)
+      }),
+      on: vi.fn(() => () => {}),
+    } as unknown as Transport
+    const currentTransport = {
+      request: vi.fn((method: string) => {
+        if (method === 'connections.status') return Promise.resolve(connectionsStatus(false))
+        throw new Error(`unexpected ${method}`)
+      }),
+      on: vi.fn(() => () => {}),
+    } as unknown as Transport
+
+    const view = renderMobileAccess(previousTransport)
+    expect(previousTransport.request).toHaveBeenCalledWith('connections.status', {})
+
+    view.rerender(mobileAccessSettings(currentTransport))
+    await waitFor(() =>
+      expect(currentTransport.request).toHaveBeenCalledWith('connections.status', {}),
+    )
+    expect(screen.getByText('Not accepting mobile connections')).toBeTruthy()
+
+    await act(async () => {
+      staleStatus.reject(new Error('previous transport closed'))
+      await staleStatus.promise.catch(() => {})
+    })
+
+    expect(screen.getByText('Not accepting mobile connections')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('deduplicates interval ticks while a slow status read is pending', async () => {
     vi.useFakeTimers()
     const slowStatus = deferred<ConnectionsStatus>()

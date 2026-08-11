@@ -900,7 +900,10 @@ function MobileAccessSettings(props: { transport: Transport }) {
       setNow(Date.now())
       void refresh()
     }, 2_000)
-    return () => window.clearInterval(timer)
+    return () => {
+      window.clearInterval(timer)
+      invalidateStatusReads()
+    }
   }, [refresh])
 
   useEffect(() => {
