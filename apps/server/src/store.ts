@@ -840,6 +840,17 @@ export class Store {
     }
   }
 
+  hasItem(threadId: string, itemId: string): boolean {
+    return (
+      this.#db
+        .prepare(
+          `SELECT 1 FROM events
+           WHERE thread_id = ? AND json_extract(payload, '$.item.id') = ? LIMIT 1`,
+        )
+        .get(threadId, itemId) !== undefined
+    )
+  }
+
   #appendEvent(threadId: string, event: DomainEvent, at: number): number {
     const result = this.#insertEvent.run(threadId, at, JSON.stringify(event))
     const seq = Number(result.lastInsertRowid)

@@ -901,20 +901,19 @@ export function startServer(
       }
 
       case 'thread.sendTurn': {
-        const p = params as {
-          threadId: string
-          text: string
-          attachments?: string[]
-          model?: string
-          effort?: string
-          serviceTier?: string
-        }
+        const p = params as ParamsOf<'thread.sendTurn'>
         return {
-          ...(await orchestrator.submitTurn(p.threadId, p.text, p.attachments, {
-            model: p.model,
-            effort: p.effort,
-            serviceTier: p.serviceTier,
-          })),
+          ...(await orchestrator.submitTurn(
+            p.threadId,
+            p.text,
+            p.attachments,
+            {
+              model: p.model,
+              effort: p.effort,
+              serviceTier: p.serviceTier,
+            },
+            p.clientSubmissionId,
+          )),
         }
       }
 

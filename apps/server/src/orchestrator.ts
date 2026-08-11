@@ -107,9 +107,11 @@ import { TerminalManager } from './terminal.js'
 import { installLocalSkill } from './skill-install.js'
 import { startDesignPreview, type RunningPreview } from './design-preview-runner.js'
 
-type QueuedTurnEntry = QueuedTurn & { options: TurnOptions }
+type UserSubmission = { id: string; text: string; createdAt: number }
+type QueuedTurnEntry = QueuedTurn & { options: TurnOptions; clientSubmissionId?: string }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
-type PendingTurnStart = { acceptedAt: number }
+type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
+const userTurnKey = (threadId: string, turnId: string) => JSON.stringify([threadId, turnId])
 type DesignFlowPhase =
   'brief' | 'brand' | 'page' | 'assets' | 'build' | 'preview' | 'review' | 'repair' | 'complete'
 type DesignFlow = {
@@ -321,9 +323,12 @@ export class Orchestrator {
   /** Approval mode each live thread was started with; not persisted. */
   #threadApprovals = new Map<string, ApprovalMode>()
   #activeTurns = new Set<string>()
+  #activeTurnIds = new Map<string, string>()
+  #serverOwnedUserTurns = new Set<string>()
+  #suppressedUserItems = new Map<string, Set<string>>()
   #startingTurns = new Set<string>()
   #pendingTurnStarts = new Map<string, PendingTurnStart>()
-  #acceptedTurnStarts = new Map<string, Map<string, number>>()
+  #acceptedTurnStarts = new Map<string, Map<string, PendingTurnStart>>()
   #restoringThreads = new Set<string>()
   #reviewingDiffs = new Set<string>()
   #queuedTurns = new Map<string, QueuedTurnEntry[]>()
@@ -888,6 +893,7 @@ export class Orchestrator {
     text: string,
     attachments: string[] = [],
     options: TurnOptions = {},
+    submission?: UserSubmission,
   ): Promise<string> {
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
     if (this.#reviewingDiffs.has(threadId)) {
@@ -898,7 +904,7 @@ export class Orchestrator {
     }
     this.#wakeForActivity(threadId)
     const panicGeneration = this.#panicGeneration
-    const pendingStart = this.#beginTurnStart(threadId)
+    const pendingStart = this.#beginTurnStart(threadId, submission)
     this.#startingTurns.add(threadId)
     try {
       // Before the agent writes, not after. A checkpoint taken afterwards would
@@ -971,8 +977,14 @@ export class Orchestrator {
     text: string,
     attachments: string[] = [],
     options: TurnOptions = {},
+    clientSubmissionId?: string,
   ): Promise<{ queued: false; turnId: string } | { queued: true; queuedTurn: QueuedTurn }> {
     await this.#ensureThread(threadId)
+    if (clientSubmissionId) this.#assertFreshSubmissionId(threadId, clientSubmissionId)
+    const submittedAt = Date.now()
+    const submission = clientSubmissionId
+      ? { id: clientSubmissionId, text, createdAt: submittedAt }
+      : undefined
     const queue = this.#queuedTurns.get(threadId) ?? []
     if (
       this.#activeTurns.has(threadId) ||
@@ -982,11 +994,12 @@ export class Orchestrator {
       queue.length > 0
     ) {
       const queuedTurn: QueuedTurnEntry = {
-        id: crypto.randomUUID(),
+        id: clientSubmissionId ?? crypto.randomUUID(),
         text,
         attachments,
-        createdAt: Date.now(),
+        createdAt: submittedAt,
         options,
+        ...(clientSubmissionId ? { clientSubmissionId } : {}),
       }
       queue.push(queuedTurn)
       this.#queuedTurns.set(threadId, queue)
@@ -1002,7 +1015,7 @@ export class Orchestrator {
       return { queued: true, queuedTurn: this.#publicQueuedTurn(queuedTurn) }
     }
 
-    const turnId = await this.sendTurn(threadId, text, attachments, options)
+    const turnId = await this.sendTurn(threadId, text, attachments, options, submission)
     this.#activeTurns.add(threadId)
     return { queued: false, turnId }
   }
@@ -1042,12 +1055,28 @@ export class Orchestrator {
     const queue = this.#queuedTurns.get(threadId) ?? []
     const index = queue.findIndex((item) => item.id === queuedTurnId)
     if (index < 0) throw new Error('queued prompt not found')
+    const queued = queue[index]!
+    const activeTurnId = this.#activeTurnIds.get(threadId)
+    if (queued.clientSubmissionId && !activeTurnId) {
+      throw new Error('running turn identity is not available yet')
+    }
     const [item] = queue.splice(index, 1)
     if (!item) return
     this.#notifyQueue(threadId)
+    const ownedTurnKey = activeTurnId ? userTurnKey(threadId, activeTurnId) : undefined
+    const alreadyOwned = ownedTurnKey ? this.#serverOwnedUserTurns.has(ownedTurnKey) : false
+    if (ownedTurnKey && item.clientSubmissionId) this.#serverOwnedUserTurns.add(ownedTurnKey)
     try {
       await session.steer(threadId, item.text, item.attachments)
+      if (activeTurnId && item.clientSubmissionId) {
+        this.#recordUserSubmission(threadId, activeTurnId, {
+          id: item.clientSubmissionId,
+          text: item.text,
+          createdAt: item.createdAt,
+        })
+      }
     } catch (error) {
+      if (ownedTurnKey && !alreadyOwned) this.#serverOwnedUserTurns.delete(ownedTurnKey)
       queue.splice(index, 0, item)
       this.#notifyQueue(threadId)
       throw error
@@ -1062,18 +1091,18 @@ export class Orchestrator {
    * write has to happen first even though it is the slower half.
    */
   #record(threadId: string, event: DomainEvent): void {
+    let matchedStart: PendingTurnStart | undefined
     if (event.type === 'turn.started') {
       const acceptedStarts = this.#acceptedTurnStarts.get(threadId)
-      let acceptedAt = acceptedStarts?.get(event.turn.id)
-      if (acceptedAt !== undefined) {
+      matchedStart = acceptedStarts?.get(event.turn.id)
+      if (matchedStart) {
         acceptedStarts?.delete(event.turn.id)
       } else {
-        const pending = this.#pendingTurnStarts.get(threadId)
-        acceptedAt = pending?.acceptedAt
-        if (pending) this.#pendingTurnStarts.delete(threadId)
+        matchedStart = this.#pendingTurnStarts.get(threadId)
+        if (matchedStart) this.#pendingTurnStarts.delete(threadId)
       }
-      if (acceptedAt !== undefined) {
-        event = { ...event, turn: { ...event.turn, createdAt: acceptedAt } }
+      if (matchedStart) {
+        event = { ...event, turn: { ...event.turn, createdAt: matchedStart.acceptedAt } }
       }
     }
     if (event.type === 'turn.completed') {
@@ -1084,9 +1113,16 @@ export class Orchestrator {
       this.#pendingTurnStarts.delete(threadId)
       this.#acceptedTurnStarts.delete(threadId)
     }
-    if (event.type === 'turn.started') this.#activeTurns.add(threadId)
+    if (event.type === 'turn.started') {
+      this.#activeTurns.add(threadId)
+      this.#activeTurnIds.set(threadId, event.turn.id)
+    }
     if (event.type === 'turn.completed' || event.type === 'thread.error') {
       this.#activeTurns.delete(threadId)
+      const activeTurnId =
+        event.type === 'turn.completed' ? event.turnId : this.#activeTurnIds.get(threadId)
+      this.#activeTurnIds.delete(threadId)
+      if (activeTurnId) this.#serverOwnedUserTurns.delete(userTurnKey(threadId, activeTurnId))
     }
     const seq = this.#store.append(threadId, event)
     if (
@@ -1100,6 +1136,9 @@ export class Orchestrator {
       this.#wakeForActivity(threadId, true)
     }
     this.#onEvent(threadId, event, seq)
+    if (event.type === 'turn.started' && matchedStart?.submission) {
+      this.#recordUserSubmission(threadId, event.turn.id, matchedStart.submission)
+    }
     if (
       event.type === 'turn.completed' &&
       !this.#designFlows.has(threadId) &&
@@ -1107,6 +1146,22 @@ export class Orchestrator {
     ) {
       void this.#drainQueue(threadId)
     }
+  }
+
+  #recordUserSubmission(threadId: string, turnId: string, submission: UserSubmission): void {
+    this.#serverOwnedUserTurns.add(userTurnKey(threadId, turnId))
+    this.#record(threadId, {
+      type: 'item.completed',
+      item: {
+        id: submission.id,
+        turnId,
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: submission.text,
+        createdAt: submission.createdAt,
+      },
+    })
   }
 
   /** A thread's history, for a client opening or reattaching to it. */
@@ -1383,7 +1438,15 @@ export class Orchestrator {
     this.#notifyQueue(threadId)
     const generation = this.#panicGeneration
     try {
-      await this.sendTurn(threadId, next.text, next.attachments, next.options)
+      await this.sendTurn(
+        threadId,
+        next.text,
+        next.attachments,
+        next.options,
+        next.clientSubmissionId
+          ? { id: next.clientSubmissionId, text: next.text, createdAt: next.createdAt }
+          : undefined,
+      )
       if (generation !== this.#panicGeneration) {
         // A panic landed while the adapter call was in flight: the user said
         // stop-everything, so this turn must neither run on nor re-queue.
@@ -1661,6 +1724,10 @@ export class Orchestrator {
     }
     this.#threadApprovals.delete(threadId)
     this.#activeTurns.delete(threadId)
+    const activeTurnId = this.#activeTurnIds.get(threadId)
+    this.#activeTurnIds.delete(threadId)
+    if (activeTurnId) this.#serverOwnedUserTurns.delete(userTurnKey(threadId, activeTurnId))
+    this.#suppressedUserItems.delete(threadId)
     this.#startingTurns.delete(threadId)
     this.#pendingTurnStarts.delete(threadId)
     this.#acceptedTurnStarts.delete(threadId)
@@ -1747,6 +1814,9 @@ export class Orchestrator {
     for (const [, entry] of this.#threads) entry.session.dispose()
     this.#threads.clear()
     this.#activeTurns.clear()
+    this.#activeTurnIds.clear()
+    this.#serverOwnedUserTurns.clear()
+    this.#suppressedUserItems.clear()
     this.#startingTurns.clear()
     this.#pendingTurnStarts.clear()
     this.#acceptedTurnStarts.clear()
@@ -1951,13 +2021,14 @@ export class Orchestrator {
   #acceptTurnStart(threadId: string, turnId: string, pendingStart: PendingTurnStart): void {
     if (this.#pendingTurnStarts.get(threadId) !== pendingStart) return
     this.#pendingTurnStarts.delete(threadId)
-    const starts = this.#acceptedTurnStarts.get(threadId) ?? new Map<string, number>()
-    starts.set(turnId, pendingStart.acceptedAt)
+    this.#activeTurnIds.set(threadId, turnId)
+    const starts = this.#acceptedTurnStarts.get(threadId) ?? new Map<string, PendingTurnStart>()
+    starts.set(turnId, pendingStart)
     this.#acceptedTurnStarts.set(threadId, starts)
   }
 
-  #beginTurnStart(threadId: string): PendingTurnStart {
-    const pending = { acceptedAt: Date.now() }
+  #beginTurnStart(threadId: string, submission?: UserSubmission): PendingTurnStart {
+    const pending = { acceptedAt: Date.now(), ...(submission ? { submission } : {}) }
     this.#pendingTurnStarts.set(threadId, pending)
     return pending
   }
@@ -1968,7 +2039,39 @@ export class Orchestrator {
     }
   }
 
+  #assertFreshSubmissionId(threadId: string, clientSubmissionId: string): void {
+    const pending = this.#pendingTurnStarts.get(threadId)?.submission?.id === clientSubmissionId
+    const accepted = [...(this.#acceptedTurnStarts.get(threadId)?.values() ?? [])].some(
+      (start) => start.submission?.id === clientSubmissionId,
+    )
+    const queued = (this.#queuedTurns.get(threadId) ?? []).some(
+      (turn) => turn.clientSubmissionId === clientSubmissionId,
+    )
+    if (pending || accepted || queued || this.#store.hasItem(threadId, clientSubmissionId)) {
+      throw new Error(`clientSubmissionId "${clientSubmissionId}" was already used for this thread`)
+    }
+  }
+
   #handleSessionEvent(threadId: string, event: DomainEvent): void {
+    const suppressedUserItems = this.#suppressedUserItems.get(threadId)
+    if (event.type === 'item.delta' && suppressedUserItems?.has(event.itemId)) return
+    if (
+      (event.type === 'item.started' || event.type === 'item.completed') &&
+      event.item.type === 'message' &&
+      event.item.role === 'user' &&
+      (this.#serverOwnedUserTurns.has(userTurnKey(threadId, event.item.turnId)) ||
+        this.#pendingTurnStarts.get(threadId)?.submission !== undefined ||
+        this.#acceptedTurnStarts.get(threadId)?.get(event.item.turnId)?.submission !== undefined)
+    ) {
+      if (event.type === 'item.started') {
+        const itemIds = suppressedUserItems ?? new Set<string>()
+        itemIds.add(event.item.id)
+        this.#suppressedUserItems.set(threadId, itemIds)
+      } else {
+        suppressedUserItems?.delete(event.item.id)
+      }
+      return
+    }
     if (event.type === 'thread.error' && this.#designFlows.has(threadId)) {
       this.#clearDesignFlow(threadId)
       this.#record(threadId, event)

@@ -73,6 +73,7 @@ class FakeSession implements AgentSession {
   turnIds: string[] = []
   sendError: Error | undefined
   eventDuringSend: DomainEvent | undefined
+  afterEventBarrier: Promise<void> | undefined
   /** Resolves the pending sendTurn, letting a test hold one open. */
   release: (() => void) | undefined
 
@@ -92,6 +93,7 @@ class FakeSession implements AgentSession {
     if (this.release) await new Promise<void>((resolve) => (this.release = resolve))
     if (this.sendError) throw this.sendError
     if (this.eventDuringSend) this.emit(this.eventDuringSend)
+    if (this.afterEventBarrier) await this.afterEventBarrier
     return this.turnIds.shift() ?? `${this.id}-turn`
   }
 
@@ -224,6 +226,24 @@ const message = (text: string, turnId = 't1'): DomainEvent => ({
     type: 'message',
     role: 'assistant',
     status: 'completed',
+    text,
+    createdAt: 0,
+  },
+})
+
+const userMessage = (
+  id: string,
+  text: string,
+  turnId: string,
+  status: 'started' | 'completed' = 'completed',
+): DomainEvent => ({
+  type: status === 'started' ? 'item.started' : 'item.completed',
+  item: {
+    id,
+    turnId,
+    type: 'message',
+    role: 'user',
+    status,
     text,
     createdAt: 0,
   },
@@ -500,6 +520,200 @@ describe('durable turn timing', () => {
       expect(starts.map(({ turn }) => turn.createdAt)).toEqual([2_000, 7_000, 9_000])
     } finally {
       now.mockRestore()
+      await orchestrator.disposeAll()
+    }
+  })
+})
+
+describe('durable user submissions', () => {
+  it.each([
+    ['codex', true],
+    ['claude-code', false],
+    ['grok', false],
+    ['api', false],
+  ] as const)('owns exact repeated user messages for %s', async (provider, emitsUserEcho) => {
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread(provider, '/repo')
+      const session = sessions[0]!
+      for (const [turnId, submissionId] of [
+        ['turn-a', 'submission-a'],
+        ['turn-b', 'submission-b'],
+      ] as const) {
+        session.turnIds.push(turnId)
+        await orchestrator.submitTurn(thread.id, 'Repeat this.', [], {}, submissionId)
+        session.emit({
+          type: 'turn.started',
+          turn: { id: turnId, threadId: thread.id, status: 'running', createdAt: Date.now() },
+        })
+        if (emitsUserEcho) {
+          session.emit(userMessage(`provider-${submissionId}`, 'Repeat this.', turnId, 'started'))
+          session.emit({
+            type: 'item.delta',
+            turnId,
+            itemId: `provider-${submissionId}`,
+            textDelta: 'Repeat this.',
+          })
+          session.emit(userMessage(`provider-${submissionId}`, 'Repeat this.', turnId))
+        }
+        session.emit({ type: 'turn.completed', turnId, status: 'completed' })
+      }
+      const users = store
+        .history(thread.id)
+        .map(({ event }) => event)
+        .filter(
+          (event): event is Extract<DomainEvent, { type: 'item.completed' }> =>
+            event.type === 'item.completed' &&
+            event.item.type === 'message' &&
+            event.item.role === 'user',
+        )
+      expect(users.map(({ item }) => [item.id, item.text])).toEqual([
+        ['submission-a', 'Repeat this.'],
+        ['submission-b', 'Repeat this.'],
+      ])
+      expect(store.history(thread.id).some(({ event }) => event.type === 'item.delta')).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('persists the exact user item before an accepted request returns', async () => {
+    const { orchestrator, sessions, store } = harness()
+    let release = () => {}
+    let submitting: Promise<unknown> | undefined
+    try {
+      const thread = await orchestrator.startThread('api', '/repo')
+      const session = sessions[0]!
+      session.turnIds.push('turn-in-flight')
+      session.eventDuringSend = {
+        type: 'turn.started',
+        turn: {
+          id: 'turn-in-flight',
+          threadId: thread.id,
+          status: 'running',
+          createdAt: Date.now(),
+        },
+      }
+      session.afterEventBarrier = new Promise<void>((resolve) => (release = resolve))
+      submitting = orchestrator.submitTurn(
+        thread.id,
+        'Accepted before disconnect.',
+        [],
+        {},
+        'submission-in-flight',
+      )
+      await vi.waitFor(() =>
+        expect(store.history(thread.id).some(({ event }) => event.type === 'turn.started')).toBe(
+          true,
+        ),
+      )
+      expect(store.history(thread.id).map(({ event }) => event)).toContainEqual({
+        type: 'item.completed',
+        item: expect.objectContaining({
+          id: 'submission-in-flight',
+          turnId: 'turn-in-flight',
+          role: 'user',
+          text: 'Accepted before disconnect.',
+        }),
+      })
+    } finally {
+      release()
+      await submitting?.catch(() => undefined)
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('preserves submission identity through queue drain and steer', async () => {
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds.push('turn-current', 'turn-queued')
+      await orchestrator.submitTurn(thread.id, 'Repeat this.', [], {}, 'submission-current')
+      session.emit({
+        type: 'turn.started',
+        turn: {
+          id: 'turn-current',
+          threadId: thread.id,
+          status: 'running',
+          createdAt: Date.now(),
+        },
+      })
+      const queued = await orchestrator.submitTurn(
+        thread.id,
+        'Repeat this.',
+        [],
+        {},
+        'submission-queued',
+      )
+      const steered = await orchestrator.submitTurn(
+        thread.id,
+        'Repeat this.',
+        [],
+        {},
+        'submission-steered',
+      )
+      if (!queued.queued || !steered.queued) throw new Error('expected queued submissions')
+      expect([queued.queuedTurn.id, steered.queuedTurn.id]).toEqual([
+        'submission-queued',
+        'submission-steered',
+      ])
+      await orchestrator.steerQueuedTurn(thread.id, steered.queuedTurn.id)
+      session.emit(userMessage('provider-steer', 'Repeat this.', 'turn-current'))
+      session.emit({ type: 'turn.completed', turnId: 'turn-current', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toEqual(['Repeat this.', 'Repeat this.']))
+      session.emit({
+        type: 'turn.started',
+        turn: {
+          id: 'turn-queued',
+          threadId: thread.id,
+          status: 'running',
+          createdAt: Date.now(),
+        },
+      })
+      const users = store
+        .history(thread.id)
+        .map(({ event }) => event)
+        .filter(
+          (event): event is Extract<DomainEvent, { type: 'item.completed' }> =>
+            event.type === 'item.completed' && event.item.role === 'user',
+        )
+      expect(users.map(({ item }) => [item.id, item.turnId])).toEqual([
+        ['submission-current', 'turn-current'],
+        ['submission-steered', 'turn-current'],
+        ['submission-queued', 'turn-queued'],
+      ])
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('releases rejected identities but rejects a durable reuse', async () => {
+    const { orchestrator, sessions } = harness()
+    try {
+      const thread = await orchestrator.startThread('api', '/repo')
+      const session = sessions[0]!
+      session.sendError = new Error('provider rejected')
+      await expect(
+        orchestrator.submitTurn(thread.id, 'Try this.', [], {}, 'submission-retry'),
+      ).rejects.toThrow('provider rejected')
+      session.sendError = undefined
+      session.turnIds.push('turn-retry')
+      await orchestrator.submitTurn(thread.id, 'Try this.', [], {}, 'submission-retry')
+      session.emit({
+        type: 'turn.started',
+        turn: {
+          id: 'turn-retry',
+          threadId: thread.id,
+          status: 'running',
+          createdAt: Date.now(),
+        },
+      })
+      session.emit({ type: 'turn.completed', turnId: 'turn-retry', status: 'completed' })
+      await expect(
+        orchestrator.submitTurn(thread.id, 'Try this.', [], {}, 'submission-retry'),
+      ).rejects.toThrow(/clientSubmissionId.*already used/)
+    } finally {
       await orchestrator.disposeAll()
     }
   })
