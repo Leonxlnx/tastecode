@@ -109,7 +109,6 @@ const STREAMING_TEXT_STYLE = {
   overflowWrap: 'anywhere',
   whiteSpace: 'pre-wrap',
 } satisfies CSSProperties
-const APPEND_GUARD_LENGTH = 64
 
 /**
  * Agent output, rendered.
@@ -142,29 +141,24 @@ const CompletedMarkdown = memo(function CompletedMarkdown({ text }: { text: stri
 const StreamingMarkdown = memo(function StreamingMarkdown({ text }: { text: string }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const textNodeRef = useRef<Text | null>(null)
-  const renderedLengthRef = useRef(0)
-  const appendGuardRef = useRef('')
+  const renderedTextRef = useRef('')
 
   useLayoutEffect(() => {
     const container = containerRef.current
     if (!container) return
 
-    const renderedLength = renderedLengthRef.current
-    const guardStart = Math.max(0, renderedLength - APPEND_GUARD_LENGTH)
-    const stillAppending =
-      text.length >= renderedLength &&
-      text.slice(guardStart, renderedLength) === appendGuardRef.current
+    const renderedText = renderedTextRef.current
+    const stillAppending = text.length >= renderedText.length && text.startsWith(renderedText)
 
     if (!textNodeRef.current || !stillAppending) {
       const textNode = document.createTextNode(text)
       container.replaceChildren(textNode)
       textNodeRef.current = textNode
-    } else if (text.length > renderedLength) {
-      textNodeRef.current.appendData(text.slice(renderedLength))
+    } else if (text.length > renderedText.length) {
+      textNodeRef.current.appendData(text.slice(renderedText.length))
     }
 
-    renderedLengthRef.current = text.length
-    appendGuardRef.current = text.slice(Math.max(0, text.length - APPEND_GUARD_LENGTH))
+    renderedTextRef.current = text
   }, [text])
 
   return (

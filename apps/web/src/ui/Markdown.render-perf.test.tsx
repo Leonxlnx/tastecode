@@ -30,6 +30,7 @@ import { Markdown } from './Markdown.js'
 
 afterEach(() => {
   cleanup()
+  vi.restoreAllMocks()
   streamdownRender.mockReset()
   shikiHighlight.mockReset()
   plainHighlight.mockReset()
@@ -40,10 +41,12 @@ describe('streamed Markdown renders', () => {
     'keeps a %i-byte live reply outside the full Markdown parser',
     (size) => {
       const text = `${'Readable prose with **unfinished Markdown**.\n'.repeat(Math.ceil(size / 44)).slice(0, size)}\n\`\`\`ts\nconst pending =`
+      const appendData = vi.spyOn(Text.prototype, 'appendData')
       const rendered = render(<Markdown text={text.slice(0, -8)} streaming />)
       const liveText = rendered.container.querySelector('[data-streaming-markdown]')
       const firstTextNode = liveText?.firstChild
 
+      appendData.mockClear()
       rendered.rerender(<Markdown text={text.slice(0, -4)} streaming />)
       expect(liveText?.firstChild).toBe(firstTextNode)
       rendered.rerender(<Markdown text={text} streaming />)
@@ -54,6 +57,7 @@ describe('streamed Markdown renders', () => {
       expect(streamdownRender).not.toHaveBeenCalled()
       expect(plainHighlight).not.toHaveBeenCalled()
       expect(shikiHighlight).not.toHaveBeenCalled()
+      expect(appendData.mock.calls).toEqual([[text.slice(-8, -4)], [text.slice(-4)]])
     },
   )
 
@@ -70,13 +74,15 @@ describe('streamed Markdown renders', () => {
   })
 
   it('replaces the live text node when reconciliation is not append-only', () => {
-    const rendered = render(<Markdown text="Original streaming reply" streaming />)
+    const original = 'A'.repeat(100)
+    const reconciled = `B${'A'.repeat(99)}`
+    const rendered = render(<Markdown text={original} streaming />)
     const liveText = rendered.container.querySelector('[data-streaming-markdown]')
     const originalTextNode = liveText?.firstChild
 
-    rendered.rerender(<Markdown text="Reconciled reply" streaming />)
+    rendered.rerender(<Markdown text={reconciled} streaming />)
 
-    expect(liveText?.textContent).toBe('Reconciled reply')
+    expect(liveText?.textContent).toBe(reconciled)
     expect(liveText?.firstChild).not.toBe(originalTextNode)
     expect(streamdownRender).not.toHaveBeenCalled()
   })
