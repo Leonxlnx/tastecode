@@ -5,9 +5,12 @@ import type { Item } from '@harness/contracts'
 
 const markdownRender = vi.hoisted(() => vi.fn())
 const orbRender = vi.hoisted(() => vi.fn())
+const virtualizerOptions = vi.hoisted(() => vi.fn())
 
 vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: ({ count }: { count: number }) => {
+  useVirtualizer: (options: { count: number; getItemKey: (index: number) => string | number }) => {
+    virtualizerOptions(options)
+    const { count } = options
     const rows = Array.from({ length: count }, (_, index) => ({
       index,
       key: index,
@@ -62,12 +65,18 @@ function message(overrides: Partial<Item>): Item {
   }
 }
 
-function view(items: Item[], running = true) {
+function view(
+  items: Item[],
+  running = true,
+  identity: { threadId?: string; revealRequest?: number } = {},
+) {
   return (
     <Thread
       items={items}
       running={running}
       activeTurn={running ? { id: 'turn-2', startedAt: 0 } : undefined}
+      threadId={identity.threadId}
+      revealRequest={identity.revealRequest}
       plan={[]}
       diff={undefined}
       approvals={[]}
@@ -87,9 +96,46 @@ afterEach(() => {
   vi.useRealTimers()
   markdownRender.mockReset()
   orbRender.mockReset()
+  virtualizerOptions.mockReset()
 })
 
 describe('streamed thread renders', () => {
+  it('preserves key identity for deltas and invalidates at history boundaries', () => {
+    const first = [
+      message({ id: 'user-a', role: 'user', text: 'Question' }),
+      message({ id: 'answer-a', status: 'started', text: 'Hel' }),
+    ]
+    const rendered = render(view(first, true, { threadId: 'thread-a', revealRequest: 1 }))
+    const initialGetter = virtualizerOptions.mock.lastCall?.[0].getItemKey
+
+    rendered.rerender(
+      view([...first.slice(0, -1), { ...first.at(-1)!, text: 'Hello' }], true, {
+        threadId: 'thread-a',
+        revealRequest: 1,
+      }),
+    )
+    const streamedGetter = virtualizerOptions.mock.lastCall?.[0].getItemKey
+    expect(streamedGetter).toBe(initialGetter)
+
+    const second = [
+      message({ id: 'user-b', role: 'user', text: 'Another question' }),
+      message({ id: 'answer-b', status: 'started', text: 'Another answer' }),
+    ]
+    rendered.rerender(view(second, true, { threadId: 'thread-b', revealRequest: 1 }))
+    const switchedGetter = virtualizerOptions.mock.lastCall?.[0].getItemKey
+    expect(switchedGetter).not.toBe(streamedGetter)
+    expect(switchedGetter?.(0)).toBe('user-b')
+
+    const reloaded = [
+      message({ id: 'history-user', role: 'user', text: 'Reloaded question' }),
+      message({ id: 'history-answer', text: 'Reloaded answer' }),
+    ]
+    rendered.rerender(view(reloaded, false, { threadId: 'thread-b', revealRequest: 2 }))
+    const reloadedGetter = virtualizerOptions.mock.lastCall?.[0].getItemKey
+    expect(reloadedGetter).not.toBe(switchedGetter)
+    expect(reloadedGetter?.(0)).toBe('history-user')
+  })
+
   it('rerenders only the live Markdown row when the answer text grows', () => {
     const items: Item[] = [
       message({ id: 'user-1', turnId: 'turn-1', role: 'user', text: 'Question' }),
