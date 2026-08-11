@@ -326,6 +326,7 @@ export class Orchestrator {
   #activeTurnIds = new Map<string, string>()
   #serverOwnedUserTurns = new Set<string>()
   #suppressedUserItems = new Map<string, Set<string>>()
+  #inFlightSubmissionIds = new Map<string, Set<string>>()
   #startingTurns = new Set<string>()
   #pendingTurnStarts = new Map<string, PendingTurnStart>()
   #acceptedTurnStarts = new Map<string, Map<string, PendingTurnStart>>()
@@ -1062,6 +1063,11 @@ export class Orchestrator {
     }
     const [item] = queue.splice(index, 1)
     if (!item) return
+    const claimedIds = this.#inFlightSubmissionIds.get(threadId) ?? new Set<string>()
+    if (item.clientSubmissionId) {
+      claimedIds.add(item.clientSubmissionId)
+      this.#inFlightSubmissionIds.set(threadId, claimedIds)
+    }
     this.#notifyQueue(threadId)
     const ownedTurnKey = activeTurnId ? userTurnKey(threadId, activeTurnId) : undefined
     const alreadyOwned = ownedTurnKey ? this.#serverOwnedUserTurns.has(ownedTurnKey) : false
@@ -1080,6 +1086,9 @@ export class Orchestrator {
       queue.splice(index, 0, item)
       this.#notifyQueue(threadId)
       throw error
+    } finally {
+      if (item.clientSubmissionId) claimedIds.delete(item.clientSubmissionId)
+      if (claimedIds.size === 0) this.#inFlightSubmissionIds.delete(threadId)
     }
   }
 
@@ -1137,7 +1146,11 @@ export class Orchestrator {
       this.#wakeForActivity(threadId, true)
     }
     this.#onEvent(threadId, event, seq)
-    if (event.type === 'turn.started' && matchedStart?.submission) {
+    if (
+      event.type === 'turn.started' &&
+      matchedStart?.submission &&
+      !this.#serverOwnedUserTurns.has(userTurnKey(threadId, event.turn.id))
+    ) {
       this.#recordUserSubmission(threadId, event.turn.id, matchedStart.submission)
     }
     if (
@@ -1729,6 +1742,7 @@ export class Orchestrator {
     this.#activeTurnIds.delete(threadId)
     if (activeTurnId) this.#serverOwnedUserTurns.delete(userTurnKey(threadId, activeTurnId))
     this.#suppressedUserItems.delete(threadId)
+    this.#inFlightSubmissionIds.delete(threadId)
     this.#startingTurns.delete(threadId)
     this.#pendingTurnStarts.delete(threadId)
     this.#acceptedTurnStarts.delete(threadId)
@@ -1818,6 +1832,7 @@ export class Orchestrator {
     this.#activeTurnIds.clear()
     this.#serverOwnedUserTurns.clear()
     this.#suppressedUserItems.clear()
+    this.#inFlightSubmissionIds.clear()
     this.#startingTurns.clear()
     this.#pendingTurnStarts.clear()
     this.#acceptedTurnStarts.clear()
@@ -2026,6 +2041,9 @@ export class Orchestrator {
     const starts = this.#acceptedTurnStarts.get(threadId) ?? new Map<string, PendingTurnStart>()
     starts.set(turnId, pendingStart)
     this.#acceptedTurnStarts.set(threadId, starts)
+    if (pendingStart.submission) {
+      this.#recordUserSubmission(threadId, turnId, pendingStart.submission)
+    }
   }
 
   #beginTurnStart(threadId: string, submission?: UserSubmission): PendingTurnStart {
@@ -2048,7 +2066,14 @@ export class Orchestrator {
     const queued = (this.#queuedTurns.get(threadId) ?? []).some(
       (turn) => turn.clientSubmissionId === clientSubmissionId,
     )
-    if (pending || accepted || queued || this.#store.hasItem(threadId, clientSubmissionId)) {
+    const inFlight = this.#inFlightSubmissionIds.get(threadId)?.has(clientSubmissionId)
+    if (
+      pending ||
+      accepted ||
+      queued ||
+      inFlight ||
+      this.#store.hasItem(threadId, clientSubmissionId)
+    ) {
       throw new Error(`clientSubmissionId "${clientSubmissionId}" was already used for this thread`)
     }
   }

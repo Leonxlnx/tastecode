@@ -74,6 +74,7 @@ class FakeSession implements AgentSession {
   sendError: Error | undefined
   eventDuringSend: DomainEvent | undefined
   afterEventBarrier: Promise<void> | undefined
+  steerBarrier: Promise<void> | undefined
   /** Resolves the pending sendTurn, letting a test hold one open. */
   release: (() => void) | undefined
 
@@ -99,6 +100,7 @@ class FakeSession implements AgentSession {
 
   async steer(_threadId: string, text: string): Promise<void> {
     this.steered.push(text)
+    if (this.steerBarrier) await this.steerBarrier
   }
 
   async interrupt(_threadId: string): Promise<void> {
@@ -248,12 +250,10 @@ const userMessage = (
     createdAt: 0,
   },
 })
-
 const turnStarted = (threadId: string, turnId: string): DomainEvent => ({
   type: 'turn.started',
   turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
 })
-
 describe('structured user input', () => {
   it('returns answers to the session that owns the waiting request', async () => {
     const { orchestrator, sessions } = harness()
@@ -547,6 +547,7 @@ describe('durable user submissions', () => {
       ] as const) {
         session.turnIds.push(turnId)
         await orchestrator.submitTurn(thread.id, 'Repeat this.', [], {}, submissionId)
+        expect(store.hasItem(thread.id, submissionId)).toBe(true)
         session.emit(turnStarted(thread.id, turnId))
         if (emitsUserEcho) {
           session.emit(userMessage(`provider-${submissionId}`, 'Repeat this.', turnId, 'started'))
@@ -578,7 +579,6 @@ describe('durable user submissions', () => {
       await orchestrator.disposeAll()
     }
   })
-
   it('persists the exact user item before an accepted request returns', async () => {
     const { orchestrator, sessions, store } = harness()
     let release = () => {}
@@ -616,9 +616,10 @@ describe('durable user submissions', () => {
       await orchestrator.disposeAll()
     }
   })
-
   it('preserves submission identity through queue drain and steer', async () => {
     const { orchestrator, sessions, store } = harness()
+    let releaseSteer = () => {}
+    let steering: Promise<void> | undefined
     try {
       const thread = await orchestrator.startThread('codex', '/repo')
       const session = sessions[0]!
@@ -644,7 +645,14 @@ describe('durable user submissions', () => {
         'submission-queued',
         'submission-steered',
       ])
-      await orchestrator.steerQueuedTurn(thread.id, steered.queuedTurn.id)
+      session.steerBarrier = new Promise<void>((resolve) => (releaseSteer = resolve))
+      steering = orchestrator.steerQueuedTurn(thread.id, steered.queuedTurn.id)
+      await vi.waitFor(() => expect(orchestrator.queue(thread.id).items).toHaveLength(1))
+      await expect(
+        orchestrator.submitTurn(thread.id, 'Repeat this.', [], {}, 'submission-steered'),
+      ).rejects.toThrow(/clientSubmissionId.*already used/)
+      releaseSteer()
+      await steering
       session.emit(userMessage('provider-steer', 'Repeat this.', 'turn-current'))
       session.emit({ type: 'turn.completed', turnId: 'turn-current', status: 'completed' })
       await vi.waitFor(() => expect(session.sent).toEqual(['Repeat this.', 'Repeat this.']))
@@ -662,10 +670,11 @@ describe('durable user submissions', () => {
         ['submission-queued', 'turn-queued'],
       ])
     } finally {
+      releaseSteer()
+      await steering?.catch(() => undefined)
       await orchestrator.disposeAll()
     }
   })
-
   it('releases rejected identities but rejects a durable reuse', async () => {
     const { orchestrator, sessions } = harness()
     try {
