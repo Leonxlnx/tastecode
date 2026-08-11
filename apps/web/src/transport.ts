@@ -19,6 +19,15 @@ export type ConnectionState = 'connecting' | 'open' | 'reconnecting' | 'closed'
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void }
 
+/** The server may have accepted a transmitted mutation before its reply was lost. */
+export class IndeterminateRequestError extends Error {
+  override name = 'IndeterminateRequestError'
+}
+
+export function isIndeterminateRequestError(error: unknown): error is IndeterminateRequestError {
+  return error instanceof IndeterminateRequestError
+}
+
 export class Transport {
   #url: string
   #socket: WebSocket | undefined
@@ -209,7 +218,7 @@ export class Transport {
       const call = this.#pending.get(id)
       if (call) {
         this.#pending.delete(id)
-        call.reject(new Error('Connection to the server was lost.'))
+        call.reject(new IndeterminateRequestError('Connection to the server was lost.'))
       }
     }
     this.#inFlight.clear()
