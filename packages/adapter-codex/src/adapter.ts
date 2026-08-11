@@ -18,6 +18,7 @@ import type {
 } from '@harness/contracts'
 import type { LoginAccountResponse } from './generated/v2/LoginAccountResponse'
 import type { GetAccountRateLimitsResponse } from './generated/v2/GetAccountRateLimitsResponse'
+import type { RateLimitSnapshot } from './generated/v2/RateLimitSnapshot'
 import type { ModelListResponse } from './generated/v2/ModelListResponse'
 import { mapThreadItem } from './map-item.js'
 import { spawnCli, StdioJsonRpc } from '@harness/proc'
@@ -990,9 +991,12 @@ const CREDIT_USD_RATE = 0.04
 export function mapCodexRateLimits(response: GetAccountRateLimitsResponse): ProviderLimit[] {
   const buckets = response.rateLimitsByLimitId
     ? Object.entries(response.rateLimitsByLimitId).filter(
-        (pair): pair is [string, NonNullable<(typeof pair)[1]>] => Boolean(pair[1]),
+        (pair): pair is [string, RateLimitSnapshot] => Boolean(pair[1]),
       )
-    : [['codex', response.rateLimits] as const]
+    : []
+  if (response.rateLimits && !buckets.some(([limitId]) => limitId === 'codex')) {
+    buckets.unshift(['codex', response.rateLimits])
+  }
   const rows: ProviderLimit[] = []
   for (const [limitId, snapshot] of buckets) {
     // Secondary buckets (e.g. Spark) carry their own name; the main
@@ -1001,46 +1005,61 @@ export function mapCodexRateLimits(response: GetAccountRateLimitsResponse): Prov
     rows.push(
       ...[snapshot.primary, snapshot.secondary].flatMap((window, index) => {
         if (!window) return []
-        const resetsAt =
-          window.resetsAt === null
-            ? undefined
-            : window.resetsAt < 1_000_000_000_000
-              ? window.resetsAt * 1000
-              : window.resetsAt
+        const usedPercent = finitePercent(window.usedPercent)
+        if (usedPercent === undefined) return []
+        const resetsAt = resetTimestamp(window.resetsAt)
         return [
           {
             label:
               prefix +
               rateLimitLabel(window.windowDurationMins, index === 0 ? 'Primary' : 'Secondary'),
-            usedPercent: Math.max(0, Math.min(100, window.usedPercent)),
+            usedPercent,
             ...(resetsAt === undefined ? {} : { resetsAt }),
           },
         ]
       }),
     )
   }
-  const credits = (response.rateLimitsByLimitId?.['codex'] ?? response.rateLimits).credits
-  if (credits?.hasCredits && credits.balance !== null) {
-    const balance = Math.max(0, Math.floor(Number(credits.balance)))
-    if (Number.isFinite(balance)) {
+  const credits = (response.rateLimitsByLimitId?.['codex'] ?? response.rateLimits)?.credits
+  if (credits?.hasCredits) {
+    if (credits.unlimited) {
       rows.push({
         label: 'Credits',
         usedPercent: 0,
-        valueLabel: credits.unlimited
-          ? 'Unlimited'
-          : `$${(balance * CREDIT_USD_RATE).toFixed(2)} · ${balance} credits`,
+        valueLabel: 'Unlimited',
       })
+    } else if (credits.balance !== null) {
+      const balance = Math.max(0, Math.floor(Number(credits.balance)))
+      if (Number.isFinite(balance)) {
+        rows.push({
+          label: 'Credits',
+          usedPercent: 0,
+          valueLabel: `$${(balance * CREDIT_USD_RATE).toFixed(2)} · ${balance} credits`,
+        })
+      }
     }
   }
   const resets = response.rateLimitResetCredits
-  if (resets && Number(resets.availableCount) > 0) {
+  const availableResets = Number(resets?.availableCount)
+  if (Number.isFinite(availableResets) && availableResets > 0) {
     rows.push({
       label: 'Rate limit resets',
       usedPercent: 0,
-      valueLabel: `${Number(resets.availableCount)} available`,
+      valueLabel: `${Math.floor(availableResets)} available`,
     })
   }
   return rows
+}
+
+function finitePercent(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.min(100, value))
+    : undefined
+}
+
+function resetTimestamp(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined
+  return value < 1_000_000_000_000 ? value * 1000 : value
 }
 
 function titleCaseLimitId(limitId: string): string {
@@ -1050,8 +1069,10 @@ function titleCaseLimitId(limitId: string): string {
     .join(' ')
 }
 
-function rateLimitLabel(minutes: number | null, fallback: string): string {
-  if (minutes === null) return `${fallback} limit`
+function rateLimitLabel(minutes: unknown, fallback: string): string {
+  if (typeof minutes !== 'number' || !Number.isFinite(minutes) || minutes <= 0) {
+    return `${fallback} limit`
+  }
   if (minutes % 1440 === 0) return `${minutes / 1440} day${minutes === 1440 ? '' : 's'}`
   if (minutes % 60 === 0) return `${minutes / 60} hour${minutes === 60 ? '' : 's'}`
   return `${minutes} minutes`
