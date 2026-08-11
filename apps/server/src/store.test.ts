@@ -3,7 +3,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DiffDecision, DomainEvent, ItemType } from '@harness/contracts'
+import {
+  ItemTypeSchema,
+  type DiffDecision,
+  type DomainEvent,
+  type ItemType,
+} from '@harness/contracts'
 import { Store } from './store.js'
 
 let store: Store
@@ -83,16 +88,7 @@ describe('recovering interrupted turns', () => {
     const seeded = new Store(file)
     seeded.addProject('/repo')
     seedThread(seeded, 'thread-1', 'turn-1')
-    const itemTypes: ItemType[] = [
-      'message',
-      'reasoning',
-      'command',
-      'file_change',
-      'tool_call',
-      'plan',
-      'error',
-      'unknown',
-    ]
+    const itemTypes = ItemTypeSchema.options
     for (const type of itemTypes) {
       seeded.append('thread-1', lifecycleItem(`active-${type}`, 'turn-1', type))
     }
@@ -100,12 +96,7 @@ describe('recovering interrupted turns', () => {
     seeded.append('thread-1', lifecycleItem('terminal-item', 'turn-1', 'tool_call'))
     seeded.append('thread-1', {
       type: 'approval.requested',
-      request: {
-        id: 'approval-1',
-        kind: 'command',
-        command: 'pnpm test',
-        createdAt: 3,
-      },
+      request: { id: 'approval-1', kind: 'command', createdAt: 3 },
     })
     seeded.append('thread-1', userInput('input-1', 'turn-1'))
     seeded.append('thread-1', {
@@ -119,12 +110,7 @@ describe('recovering interrupted turns', () => {
       },
     })
 
-    seeded.addThread({
-      id: 'resumable-design',
-      projectPath: '/repo',
-      provider: 'codex',
-      title: 'Design',
-    })
+    seedThread(seeded, 'resumable-design', 'design-turn')
     seeded.setDesignRun('resumable-design', { phase: 'brief' })
     seeded.append('resumable-design', userInput('design-input', 'design-turn'))
 
@@ -134,7 +120,7 @@ describe('recovering interrupted turns', () => {
 
     const restarted = new Store(file)
     try {
-      expect(restarted.recoverInterruptedThreads()).toEqual(['thread-1'])
+      expect(restarted.recoverInterruptedThreads()).toEqual(['thread-1', 'resumable-design'])
       const recovered = restarted.history('thread-1').map(({ event }) => event)
       expect(
         recovered
@@ -158,7 +144,14 @@ describe('recovering interrupted turns', () => {
         ),
       ).toHaveLength(1)
       expect(restarted.thread('thread-1')?.unread).toBe(true)
-      expect(restarted.history('resumable-design')).toHaveLength(1)
+      const designEvents = restarted.history('resumable-design').map(({ event }) => event)
+      expect(designEvents).toContainEqual({
+        type: 'turn.completed',
+        turnId: 'design-turn',
+        status: 'interrupted',
+      })
+      expect(designEvents.some((event) => event.type === 'user_input.resolved')).toBe(false)
+      expect(designEvents.some((event) => event.type === 'thread.error')).toBe(false)
       expect(restarted.history('closed-thread')).toHaveLength(1)
 
       const recoveredLength = restarted.history('thread-1').length
