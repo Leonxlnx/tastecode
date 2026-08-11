@@ -1749,42 +1749,58 @@ export class Orchestrator {
     const sessions = [...this.#threads.entries()]
     this.#panicStopping = true
     this.#panicGeneration += 1
-    for (const threadId of this.#store.clearAllQueuedTurns()) {
-      if (this.#queuedTurns.delete(threadId)) this.#notifyQueue(threadId)
-    }
-    for (const [threadId] of sessions) {
-      if (this.#queuedTurns.delete(threadId)) this.#notifyQueue(threadId)
-    }
 
     try {
-      return {
-        sessions: await Promise.all(
-          sessions.map(async ([threadId, entry]) => {
-            let timeout: NodeJS.Timeout | undefined
-            try {
-              await Promise.race([
-                entry.session.interrupt(threadId),
-                new Promise<never>((_, reject) => {
-                  timeout = setTimeout(
-                    () => reject(new Error('interrupt timed out; session was force-stopped')),
-                    PANIC_STOP_TIMEOUT_MS,
-                  )
-                }),
-              ])
-              return { threadId, status: 'interrupted' as const }
-            } catch (error) {
-              this.close(threadId)
-              return {
-                threadId,
-                status: 'failed' as const,
-                error: (error instanceof Error ? error.message : String(error)) || 'Unknown error',
-              }
-            } finally {
-              if (timeout) clearTimeout(timeout)
-            }
-          }),
-        ),
+      let queueClearFailed = false
+      const hideQueues = (threadIds: Iterable<string>) => {
+        for (const threadId of threadIds) {
+          const cached = this.#queuedTurns.get(threadId)
+          this.#queuedTurns.set(threadId, [])
+          if (!cached) continue
+          try {
+            this.#notifyQueue(threadId)
+          } catch {
+            queueClearFailed = true
+          }
+        }
       }
+      try {
+        hideQueues(this.#store.clearAllQueuedTurns())
+      } catch {
+        queueClearFailed = true
+        hideQueues(
+          new Set([...sessions.map(([threadId]) => threadId), ...this.#queuedTurns.keys()]),
+        )
+      }
+
+      const stoppedSessions = await Promise.all(
+        sessions.map(async ([threadId, entry]) => {
+          let timeout: NodeJS.Timeout | undefined
+          try {
+            await Promise.race([
+              entry.session.interrupt(threadId),
+              new Promise<never>((_, reject) => {
+                timeout = setTimeout(
+                  () => reject(new Error('interrupt timed out; session was force-stopped')),
+                  PANIC_STOP_TIMEOUT_MS,
+                )
+              }),
+            ])
+            return { threadId, status: 'interrupted' as const }
+          } catch (error) {
+            this.close(threadId)
+            return {
+              threadId,
+              status: 'failed' as const,
+              error: (error instanceof Error ? error.message : String(error)) || 'Unknown error',
+            }
+          } finally {
+            if (timeout) clearTimeout(timeout)
+          }
+        }),
+      )
+      if (queueClearFailed) throw new Error('could not clear every queued prompt during Stop all')
+      return { sessions: stoppedSessions }
     } finally {
       this.#panicStopping = false
     }

@@ -136,6 +136,8 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
   const received: Array<{ threadId: string; event: DomainEvent }> = []
   const lifecycles: Array<{ threadId: string; lifecycle: ThreadLifecycle }> = []
   const logs: string[] = []
+  const queueChanges: Array<{ threadId: string; itemIds: string[] }> = []
+  const queueNotificationError: { current?: Error } = {}
 
   /** Where each session was actually told to run. */
   const startedIn: string[] = []
@@ -195,6 +197,10 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
 
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event) => received.push({ threadId, event }),
+    onQueue: (threadId, state) => {
+      queueChanges.push({ threadId, itemIds: state.items.map(({ id }) => id) })
+      if (queueNotificationError.current) throw queueNotificationError.current
+    },
     onLifecycle: (threadId, lifecycle) => lifecycles.push({ threadId, lifecycle }),
     onLog: (line) => logs.push(line),
     onLogin: () => {},
@@ -213,6 +219,8 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     received,
     lifecycles,
     logs,
+    queueChanges,
+    queueNotificationError,
     orchestrator,
     startedIn,
     startedOptions,
@@ -1558,17 +1566,63 @@ describe('several sessions at once', () => {
   })
 
   it('drops queued prompts so interrupted sessions do not restart', async () => {
-    const { sessions, orchestrator, store } = harness()
+    const { sessions, orchestrator, store, queueChanges } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
     await orchestrator.submitTurn(thread.id, 'running')
     await orchestrator.submitTurn(thread.id, 'do not restart')
 
+    const beforePanic = queueChanges.length
     await orchestrator.panicStop()
     sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' })
 
     await vi.waitFor(() => expect(orchestrator.queue(thread.id).items).toEqual([]))
     expect(store.queuedTurns(thread.id)).toEqual([])
     expect(sessions[0]!.sent).toEqual(['running'])
+    expect(queueChanges.slice(beforePanic)).toEqual([{ threadId: thread.id, itemIds: [] }])
+  })
+
+  it('still interrupts every session and releases its latch when queue clearing fails', async () => {
+    const { sessions, orchestrator, store } = harness()
+    const first = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(first.id, 'Running.')
+    await orchestrator.submitTurn(first.id, 'Do not run after failed Stop all.')
+    vi.spyOn(store, 'clearAllQueuedTurns').mockImplementationOnce(() => {
+      throw new Error('C:\\private\\harness.db is full')
+    })
+
+    await expect(orchestrator.panicStop()).rejects.toThrow(
+      'could not clear every queued prompt during Stop all',
+    )
+    expect(sessions.map(({ interrupted }) => interrupted)).toEqual([true, true])
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'interrupted' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(sessions[0]!.sent).toEqual(['Running.'])
+    expect(orchestrator.queue(first.id).items).toEqual([])
+    expect(store.queuedTurns(first.id).map(({ text }) => text)).toEqual([
+      'Do not run after failed Stop all.',
+    ])
+    await expect(
+      orchestrator.submitTurn(first.id, 'Work after failed Stop all.'),
+    ).resolves.toMatchObject({ queued: false })
+  })
+
+  it('finishes queue cleanup and interrupts when a queue listener throws', async () => {
+    const { sessions, orchestrator, store, queueNotificationError } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'Running.')
+    await orchestrator.submitTurn(thread.id, 'Queued.')
+    queueNotificationError.current = new Error('listener failed')
+
+    await expect(orchestrator.panicStop()).rejects.toThrow(
+      'could not clear every queued prompt during Stop all',
+    )
+    expect(sessions[0]!.interrupted).toBe(true)
+    expect(store.queuedTurns(thread.id)).toEqual([])
+    queueNotificationError.current = undefined
+    await expect(
+      orchestrator.submitTurn(thread.id, 'Work after listener failure.'),
+    ).resolves.toMatchObject({ queued: true })
   })
 
   it('drops durable queues that were never loaded into this process', async () => {
