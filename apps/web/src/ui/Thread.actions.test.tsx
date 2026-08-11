@@ -208,7 +208,11 @@ describe('completed activity disclosure', () => {
         phase: 'commentary',
         text: 'The focused test passes.',
       }),
-      turnItem('files-1', 5, { type: 'file_change', path: 'src/chat.ts' }),
+      turnItem('files-1', 5, {
+        type: 'file_change',
+        path: 'src/chat.ts',
+        text: '2 lines added',
+      }),
       turnItem('answer-1', 6, {
         role: 'assistant',
         phase: 'final_answer',
@@ -227,6 +231,7 @@ describe('completed activity disclosure', () => {
     const file = screen.getByText('Edited files')
     const answer = screen.getByText('Fixed.')
     expect(screen.getByText('12 passed')).toBeTruthy()
+    expect(screen.getByText(/src\/chat\.ts\s+2 lines added/)).toBeTruthy()
     expect(
       firstNarration.compareDocumentPosition(command) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0)
