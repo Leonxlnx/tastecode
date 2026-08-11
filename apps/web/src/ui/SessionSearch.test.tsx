@@ -37,6 +37,13 @@ const PROJECTS = [
         provider: 'grok' as const,
         createdAt: 43,
       },
+      {
+        id: 'gemini-thread',
+        title: 'Gemini roadmap',
+        provider: 'acp' as const,
+        agent: 'gemini',
+        createdAt: 42,
+      },
     ],
   },
 ]
@@ -172,5 +179,21 @@ describe('cross-session search', () => {
       await Promise.resolve()
     })
     expect(screen.getByRole('option', { name: /Second result/ })).toBeTruthy()
+  })
+
+  it('shows an ACP title match with its source product name', () => {
+    const transport = { request: vi.fn(async () => ({ results: [], nextCursor: null })) }
+    render(
+      <SessionSearch
+        transport={transport as unknown as Transport}
+        projects={PROJECTS}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+
+    expect(screen.getByRole('option', { name: 'ACP' })).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Search every chat'), { target: { value: 'gemini' } })
+    expect(screen.getByRole('option', { name: /Gemini roadmap.*Gemini CLI/ })).toBeTruthy()
   })
 })

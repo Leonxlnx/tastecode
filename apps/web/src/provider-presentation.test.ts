@@ -2,6 +2,7 @@ import type { ProviderId } from '@harness/contracts'
 import { describe, expect, it } from 'vitest'
 import {
   agentMark,
+  agentPresentation,
   connectionMark,
   providerPresentation,
   sourcePresentation,
@@ -29,6 +30,15 @@ describe('provider presentation', () => {
         mark: agentMark('gemini'),
       }),
     ).toEqual({ label: 'Gemini CLI', mark: 'gemini' })
+  })
+
+  it.each([
+    ['gemini', 'Gemini CLI', 'gemini'],
+    ['kimi', 'Kimi CLI', 'kimi'],
+    ['qwen', 'Qwen Code', 'qwen'],
+    ['third-party-agent', 'third-party-agent', 'acp'],
+  ] as const)('presents the %s ACP source by product name', (agent, label, mark) => {
+    expect(agentPresentation(agent)).toEqual({ label, mark })
   })
 
   it('uses an API connection name and preset mark instead of the generic transport identity', () => {

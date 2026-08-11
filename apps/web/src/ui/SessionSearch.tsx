@@ -1,21 +1,26 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProviderId, SearchSnippetPart, SessionSearchResult } from '@harness/contracts'
 import { LoaderCircle, Search, X } from 'lucide-react'
+import {
+  agentPresentation,
+  providerDisplayName,
+  sourcePresentation,
+} from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
 
 const SEARCH_DEBOUNCE_MS = 80
 const MAX_TITLE_RESULTS = 6
 const SEARCH_TOKEN = /[\p{L}\p{N}][\p{L}\p{N}\p{M}_]*/gu
 
-const PROVIDERS: Array<{ id: ProviderId; label: string }> = [
-  { id: 'codex', label: 'Codex' },
-  { id: 'claude-code', label: 'Claude Code' },
-  { id: 'grok', label: 'Grok' },
-  { id: 'cursor', label: 'Cursor' },
-  { id: 'opencode', label: 'OpenCode' },
-  { id: 'antigravity', label: 'Antigravity' },
-  { id: 'acp', label: 'Gemini, Kimi & Qwen' },
-  { id: 'api', label: 'API connections' },
+const PROVIDERS: ProviderId[] = [
+  'codex',
+  'claude-code',
+  'grok',
+  'cursor',
+  'opencode',
+  'antigravity',
+  'acp',
+  'api',
 ]
 
 type SearchProject = {
@@ -25,6 +30,7 @@ type SearchProject = {
     id: string
     title: string
     provider: ProviderId
+    agent?: string | undefined
     createdAt: number
   }>
 }
@@ -36,6 +42,7 @@ type DisplaySearchResult = {
   threadId: string
   threadTitle: string
   provider: ProviderId
+  sourceName?: string | undefined
   createdAt: number
   turnId: string | undefined
   titleParts: SearchSnippetPart[]
@@ -70,7 +77,10 @@ function SessionSearchComponent(props: {
     const present = new Set(
       props.projects.flatMap((project) => project.sessions.map((session) => session.provider)),
     )
-    return PROVIDERS.filter((entry) => present.has(entry.id))
+    return PROVIDERS.filter((id) => present.has(id)).map((id) => ({
+      id,
+      label: providerDisplayName(id),
+    }))
   }, [props.projects])
 
   const titleResults = useMemo<DisplaySearchResult[]>(() => {
@@ -99,6 +109,9 @@ function SessionSearchComponent(props: {
           threadId: session.id,
           threadTitle: session.title,
           provider: session.provider,
+          ...(session.provider === 'acp' && session.agent
+            ? { sourceName: agentPresentation(session.agent).label }
+            : {}),
           createdAt: session.createdAt,
           turnId: undefined,
           titleParts: highlightText(session.title, terms),
@@ -346,7 +359,7 @@ function SessionSearchComponent(props: {
                       onFocus={() => setSelected(index)}
                       role="option"
                       aria-selected={index === selected}
-                      aria-label={`${result.threadTitle}, ${result.kind === 'title' ? 'title match, ' : ''}${result.projectName}, ${providerLabel(result.provider)}`}
+                      aria-label={`${result.threadTitle}, ${result.kind === 'title' ? 'title match, ' : ''}${result.projectName}, ${resultProviderLabel(result)}`}
                     >
                       <span className="session-search__title">
                         {renderHighlightedParts(result.titleParts)}
@@ -357,7 +370,7 @@ function SessionSearchComponent(props: {
                         ) : null}
                         <span>{result.projectName}</span>
                         <span aria-hidden>·</span>
-                        <span>{providerLabel(result.provider)}</span>
+                        <span>{resultProviderLabel(result)}</span>
                         <span aria-hidden>·</span>
                         <time
                           dateTime={new Date(result.createdAt).toISOString()}
@@ -417,8 +430,11 @@ function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path
 }
 
-function providerLabel(provider: ProviderId): string {
-  return PROVIDERS.find((entry) => entry.id === provider)?.label ?? provider
+function resultProviderLabel(result: DisplaySearchResult): string {
+  return sourcePresentation({
+    provider: result.provider,
+    sourceName: result.sourceName,
+  }).label
 }
 
 function searchTerms(query: string): string[] {

@@ -32,6 +32,12 @@ const PROVIDERS = {
   api: { label: 'API connection', mark: 'custom' },
 } as const satisfies Record<ProviderId, ProviderPresentation>
 
+const ACP_AGENTS: Record<string, ProviderPresentation> = {
+  gemini: { label: 'Gemini CLI', mark: 'gemini' },
+  kimi: { label: 'Kimi CLI', mark: 'kimi' },
+  qwen: { label: 'Qwen Code', mark: 'qwen' },
+}
+
 export function providerPresentation(provider: ProviderId): ProviderPresentation {
   return PROVIDERS[provider]
 }
@@ -65,4 +71,16 @@ export function connectionMark(preset: ModelConnectionPreset): ProviderMark {
 export function agentMark(agentId: string): ProviderMark {
   if (agentId === 'gemini' || agentId === 'kimi' || agentId === 'qwen') return agentId
   return 'acp'
+}
+
+export function agentPresentation(
+  agentId: string,
+  sourceName?: string | undefined,
+): ProviderPresentation {
+  const known = ACP_AGENTS[agentId]
+  return sourcePresentation({
+    provider: 'acp',
+    sourceName: sourceName?.trim() || known?.label || agentId,
+    mark: known?.mark ?? agentMark(agentId),
+  })
 }
