@@ -658,7 +658,7 @@ describe('local usage history', () => {
     writeFileSync(
       cacheFile,
       JSON.stringify({
-        version: 6,
+        version: 7,
         generatedAt: 123,
         files: [
           {
