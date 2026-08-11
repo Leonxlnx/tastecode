@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-11 985ba7a3</span>
+        <span class="meta">2026-08-11 f1fd4ed1</span>
       </div>
     </div>
 
@@ -577,7 +577,10 @@
             <label
               ><input type="checkbox" /><span
                 >Honest rows for what does not exist
-                <span class="d">Pi planned, Gemini CLI and Qwen retired</span></span
+                <span class="d"
+                  >canonical source names and marks across the picker, inbox, search, Profile, and
+                  Usage; Pi planned, Gemini CLI and Qwen retired</span
+                ></span
               ></label
             >
           </li>
@@ -632,7 +635,9 @@
               ><input type="checkbox" /><span
                 >Model, effort, and tier remembered per provider across sessions
                 <span class="d"
-                  >cross-provider overrides are never sent to a bound thread</span
+                  >catalog failures, hidden models, late discovery, and restart preserve the last
+                  valid same-source choice; cross-provider overrides never reach a bound
+                  thread</span
                 ></span
               ></label
             >
@@ -721,15 +726,17 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Virtualized list, folded deltas once per frame, no full-thread re-render while
-                streaming</span
+                >Virtualized list with folded deltas once per frame
+                <span class="d"
+                  >active-tail search stays bounded independently of transcript length</span
+                ></span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Single working orb that never restarts on duplicate same-turn events</span
+                >Working status with a live elapsed label during active turns</span
               ></label
             >
           </li>
@@ -757,7 +764,7 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Optimistic first message, no chat remount</span
+                >Immediate optimistic first message before the provider responds</span
               ></label
             >
           </li>
@@ -860,8 +867,9 @@
                 <span class="d"
                   >restart recovery removes stale approvals and settles unfinished work to a failed
                   terminal state with an actionable transcript error; resumed threads retain shared
-                  reply guidance; the event schema accepts an optional durable completion timestamp,
-                  while server stamping and elapsed replay remain follow-up work</span
+                  reply guidance; server-owned start and completion timestamps keep live and
+                  replayed elapsed time identical; accepted prompts persist with exact submission
+                  identity across queue, steer, reconnect, and restart</span
                 ></span
               ></label
             >
@@ -922,9 +930,9 @@
               ><input type="checkbox" /><span
                 >Persistent per-session and per-day usage accounting
                 <span class="d"
-                  >malformed generated caches trigger a cold rebuild; failed background scans idle
-                  and retry after 60 seconds without duplicate warnings; money only when the
-                  provider reports real cost</span
+                  >malformed or parser-stale generated caches trigger a cold rebuild; failed
+                  background scans back off, while Profile and Usage polling recovers from transient
+                  request failures; money only when the provider reports real cost</span
                 ></span
               ></label
             >
@@ -1405,8 +1413,8 @@
             <label
               ><input type="checkbox" /><span
                 >The desktop app is the management console: Settings → Mobile access shows the app
-                URL with copy actions and a scan QR, generates pairing codes, lists paired devices
-                and revokes them</span
+                URL with explicit copy states and its adjacent scan QR, generates pairing codes,
+                lists paired devices and revokes them</span
               ></label
             >
           </li>
