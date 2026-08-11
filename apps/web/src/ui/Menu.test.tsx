@@ -143,7 +143,6 @@ describe('Menu', () => {
     const onSelect = vi.fn()
     render(
       <>
-        <button>Outside</button>
         <Menu label="Actions" trigger={() => <span>Open</span>}>
           {(close) =>
             ['Alpha', 'Bravo', 'Charlie', 'Delta'].map((title) => (
@@ -159,6 +158,7 @@ describe('Menu', () => {
             ))
           }
         </Menu>
+        <button>Outside</button>
       </>,
     )
 
@@ -196,16 +196,16 @@ describe('Menu', () => {
     expect(document.activeElement).toBe(trigger)
 
     fireEvent.keyDown(trigger, { key: 'ArrowDown' })
-    fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Alpha' }), {
-      key: 'Tab',
-      shiftKey: true,
-    })
+    fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Alpha' }), { key: 'Tab' })
     expect(screen.queryByRole('menu')).toBeNull()
     expect(document.activeElement).toBe(outside)
 
     fireEvent.keyDown(trigger, { key: 'ArrowDown' })
-    fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Alpha' }), { key: 'Tab' })
-    expect(document.activeElement).not.toBe(outside)
+    fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Alpha' }), {
+      key: 'Tab',
+      shiftKey: true,
+    })
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('contains Tab only inside dialog-style panels', () => {

@@ -292,9 +292,11 @@ export function Menu(props: {
       const tabbable = focusableElements(document.body).filter(
         (item) => !currentPanel.contains(item),
       )
-      const anchorIndex = restoreTarget.current ? tabbable.indexOf(restoreTarget.current) : -1
+      const anchor = restoreTarget.current
+      const anchorIndex = anchor ? tabbable.indexOf(anchor) : -1
       const next = anchorIndex < 0 ? undefined : tabbable[anchorIndex + (event.shiftKey ? -1 : 1)]
       restoreTarget.current = undefined
+      if (!next) anchor?.focus()
       closeMenu()
       if (next) {
         event.preventDefault()
