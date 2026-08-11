@@ -1,20 +1,13 @@
-import type { Model, ModelConnectionPreset, ProviderId } from '@harness/contracts'
+import type { Model, ProviderId } from '@harness/contracts'
+import type { ProviderMark } from './provider-presentation.js'
 
-export type ProviderMark =
-  | 'openai'
-  | 'anthropic'
-  | 'grok'
-  | 'cursor'
-  | 'opencode'
-  | 'openrouter'
-  | 'kimi'
-  | 'gemini'
-  | 'qwen'
-  | 'zai'
-  | 'antigravity'
-  | 'pi'
-  | 'acp'
-  | 'custom'
+export {
+  agentMark,
+  connectionMark,
+  providerDisplayName,
+  providerMark,
+} from './provider-presentation.js'
+export type { ProviderMark } from './provider-presentation.js'
 
 export type ModelChoice = {
   key: string
@@ -150,26 +143,6 @@ export function automaticModel(): Model {
   }
 }
 
-export function providerMark(provider: ProviderId): ProviderMark {
-  if (provider === 'codex') return 'openai'
-  if (provider === 'claude-code') return 'anthropic'
-  if (provider === 'api') return 'custom'
-  return provider
-}
-
-const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
-  codex: 'Codex',
-  'claude-code': 'Claude Code',
-  grok: 'Grok',
-  cursor: 'Cursor',
-  opencode: 'OpenCode',
-  antigravity: 'Antigravity',
-}
-
-export function providerDisplayName(id: ProviderId): string {
-  return PROVIDER_DISPLAY_NAMES[id] ?? id
-}
-
 /**
  * Source bucket for custom models. It is deliberately distinct from the
  * provider's own source key: a custom id may already exist in the provider's
@@ -206,17 +179,6 @@ export function customModelChoice(
 
 export function isCustomModelChoice(choice: ModelChoice): boolean {
   return choice.key.startsWith('custom:')
-}
-
-export function connectionMark(preset: ModelConnectionPreset): ProviderMark {
-  if (preset === 'openai') return 'openai'
-  if (preset === 'anthropic') return 'anthropic'
-  return preset
-}
-
-export function agentMark(agentId: string): ProviderMark {
-  if (agentId === 'gemini' || agentId === 'kimi' || agentId === 'qwen') return agentId
-  return 'acp'
 }
 
 export function choicesFor(
