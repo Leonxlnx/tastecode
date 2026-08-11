@@ -114,6 +114,7 @@ export function presentTurns(
     string,
     {
       work: Array<{ item: Item; index: number }>
+      answers: Array<{ item: Item; index: number }>
       firstResponseIndex?: number
       earliest: number
       latest: number
@@ -127,6 +128,7 @@ export function presentTurns(
 
     const draft = drafts.get(item.turnId) ?? {
       work: [],
+      answers: [],
       earliest: item.createdAt,
       latest: item.createdAt,
       hasRunningActivity: false,
@@ -149,7 +151,7 @@ export function presentTurns(
       item.role === 'assistant' &&
       item.status === 'completed'
     ) {
-      draft.work.push({ item, index })
+      draft.answers.push({ item, index })
     }
 
     drafts.set(item.turnId, draft)
@@ -157,10 +159,8 @@ export function presentTurns(
 
   return new Map(
     [...drafts].map(([turnId, draft]) => {
-      const finalAnswer = draft.work.findLast(({ item }) => isAssistantMessage(item))
-      const activity = finalAnswer
-        ? draft.work.filter((entry) => entry !== finalAnswer)
-        : draft.work
+      const finalAnswer = draft.answers.at(-1)
+      const activity = draft.work
       const timing = turnTiming[turnId]
 
       return [
@@ -214,10 +214,6 @@ function isStartedAssistantTailTextUpdate(previous: Item[], next: Item[]): boole
 
 function isActivity(item: Item): boolean {
   return item.type !== 'message' && item.type !== 'error'
-}
-
-function isAssistantMessage(item: Item): boolean {
-  return item.type === 'message' && item.role === 'assistant'
 }
 
 /**
