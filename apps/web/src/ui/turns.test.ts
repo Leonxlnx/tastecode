@@ -66,9 +66,8 @@ describe('turn boundaries', () => {
     ]
 
     expect(presentTurns(items).get('t1')).toMatchObject({
-      activity: [items[1], items[2]],
+      activityGroups: [{ items: [items[1], items[2]], firstIndex: 1 }],
       responseText: 'Done.',
-      firstActivityIndex: 1,
       firstResponseIndex: 1,
       finalAnswerIndex: 3,
       elapsedMs: 6_500,
@@ -105,7 +104,7 @@ describe('turn boundaries', () => {
     expect(presentTurns(items).get('t1')?.complete).toBe(false)
   })
 
-  it('keeps assistant narration visible while compacting only tool activity', () => {
+  it('keeps chronological activity groups between assistant narration rows', () => {
     const items: Item[] = [
       { ...item('user', 't1'), role: 'user', text: 'Fix it.' },
       { ...item('update-1', 't1'), role: 'assistant', text: 'I found the cause.' },
@@ -116,11 +115,65 @@ describe('turn boundaries', () => {
     ]
 
     expect(presentTurns(items).get('t1')).toMatchObject({
-      activity: [items[2], items[4]],
+      activityGroups: [
+        { items: [items[2]], firstIndex: 2 },
+        { items: [items[4]], firstIndex: 4 },
+      ],
       responseText: 'Fixed.',
-      firstActivityIndex: 2,
       finalAnswerIndex: 5,
       complete: true,
+    })
+  })
+
+  it('prefers the explicit final-answer phase over a later commentary message', () => {
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', text: 'Fix it.' },
+      {
+        ...item('answer', 't1'),
+        role: 'assistant',
+        phase: 'final_answer',
+        text: 'Fixed.',
+      },
+      {
+        ...item('late-update', 't1'),
+        role: 'assistant',
+        phase: 'commentary',
+        text: 'The verification also finished.',
+      },
+    ]
+
+    expect(presentTurns(items).get('t1')).toMatchObject({
+      responseText: 'Fixed.',
+      finalAnswerIndex: 1,
+      complete: true,
+    })
+  })
+
+  it('uses the last unphased assistant message only as a legacy final-answer fallback', () => {
+    const legacy: Item[] = [
+      { ...item('user', 't1'), role: 'user', text: 'Fix it.' },
+      { ...item('update', 't1'), role: 'assistant', text: 'Checking.' },
+      { ...item('answer', 't1'), role: 'assistant', text: 'Fixed.' },
+    ]
+    const commentaryOnly: Item[] = [
+      { ...item('user', 't2'), role: 'user', text: 'Fix it.' },
+      {
+        ...item('update', 't2'),
+        role: 'assistant',
+        phase: 'commentary',
+        text: 'Still checking.',
+      },
+    ]
+
+    expect(presentTurns(legacy).get('t1')).toMatchObject({
+      responseText: 'Fixed.',
+      finalAnswerIndex: 2,
+      complete: true,
+    })
+    expect(presentTurns(commentaryOnly).get('t2')).toMatchObject({
+      responseText: '',
+      finalAnswerIndex: undefined,
+      complete: false,
     })
   })
 

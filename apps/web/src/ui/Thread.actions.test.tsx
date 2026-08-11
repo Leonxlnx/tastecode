@@ -165,6 +165,217 @@ describe('completed activity disclosure', () => {
     expect(reveal?.getAttribute('data-open')).toBe('true')
     expect(reveal?.getAttribute('aria-hidden')).toBe('false')
   })
+
+  it('preserves narration and activity in exact chronological groups', () => {
+    const items: Item[] = [
+      {
+        id: 'prompt-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: 'Fix it',
+        createdAt: 1,
+      },
+      {
+        id: 'update-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        phase: 'commentary',
+        status: 'completed',
+        text: 'I found the cause.',
+        createdAt: 2,
+      },
+      {
+        id: 'command-1',
+        turnId: 'turn-1',
+        type: 'command',
+        status: 'completed',
+        command: 'pnpm test',
+        text: '12 passed',
+        createdAt: 3,
+      },
+      {
+        id: 'update-2',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        phase: 'commentary',
+        status: 'completed',
+        text: 'The focused test passes.',
+        createdAt: 4,
+      },
+      {
+        id: 'files-1',
+        turnId: 'turn-1',
+        type: 'file_change',
+        status: 'completed',
+        path: 'src/chat.ts',
+        createdAt: 5,
+      },
+      {
+        id: 'answer-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        phase: 'final_answer',
+        status: 'completed',
+        text: 'Fixed.',
+        createdAt: 6,
+      },
+    ]
+    render(
+      <Thread
+        items={items}
+        running={false}
+        activeTurn={undefined}
+        plan={[]}
+        diff={undefined}
+        approvals={[]}
+        userInputs={[]}
+        reviews={[]}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+
+    const disclosures = screen.getAllByRole('button', { name: 'Worked for 0s' })
+    expect(disclosures).toHaveLength(2)
+    disclosures.forEach((disclosure) => fireEvent.click(disclosure))
+
+    const firstNarration = screen.getByText('I found the cause.')
+    const command = screen.getByText('pnpm test')
+    const secondNarration = screen.getByText('The focused test passes.')
+    const file = screen.getByText('Edited files')
+    const answer = screen.getByText('Fixed.')
+    expect(
+      firstNarration.compareDocumentPosition(command) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0)
+    expect(
+      command.compareDocumentPosition(secondNarration) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0)
+    expect(
+      secondNarration.compareDocumentPosition(file) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0)
+    expect(file.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+  })
+
+  it('keeps every completed activity kind accessible after replay', () => {
+    const items: Item[] = [
+      {
+        id: 'prompt-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: 'Build it',
+        createdAt: 1,
+      },
+      {
+        id: 'reasoning-1',
+        turnId: 'turn-1',
+        type: 'reasoning',
+        status: 'completed',
+        text: 'Inspecting state',
+        createdAt: 2,
+      },
+      {
+        id: 'command-1',
+        turnId: 'turn-1',
+        type: 'command',
+        status: 'completed',
+        command: 'pnpm test',
+        createdAt: 3,
+      },
+      {
+        id: 'design-1',
+        turnId: 'turn-1',
+        type: 'tool_call',
+        status: 'completed',
+        text: 'design:build',
+        createdAt: 4,
+      },
+      {
+        id: 'answer-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        phase: 'final_answer',
+        status: 'completed',
+        text: 'Built.',
+        createdAt: 5,
+      },
+    ]
+    render(
+      <Thread
+        items={items.map((entry) => ({ ...entry }))}
+        running={false}
+        activeTurn={undefined}
+        plan={[]}
+        diff={undefined}
+        approvals={[]}
+        userInputs={[]}
+        reviews={[]}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Worked for 0s' }))
+    expect(screen.getByText('Thinking')).toBeTruthy()
+    expect(screen.getByText('pnpm test')).toBeTruthy()
+    expect(screen.getByText('Building the website')).toBeTruthy()
+  })
+
+  it('shows response actions only on the explicit final answer', () => {
+    render(
+      <Thread
+        items={[
+          {
+            id: 'prompt-1',
+            turnId: 'turn-1',
+            type: 'message',
+            role: 'user',
+            status: 'completed',
+            text: 'Fix it',
+            createdAt: 1,
+          },
+          {
+            id: 'update-1',
+            turnId: 'turn-1',
+            type: 'message',
+            role: 'assistant',
+            phase: 'commentary',
+            status: 'completed',
+            text: 'Checking.',
+            createdAt: 2,
+          },
+          {
+            id: 'answer-1',
+            turnId: 'turn-1',
+            type: 'message',
+            role: 'assistant',
+            phase: 'final_answer',
+            status: 'completed',
+            text: 'Fixed.',
+            createdAt: 3,
+          },
+        ]}
+        running={false}
+        activeTurn={undefined}
+        plan={[]}
+        diff={undefined}
+        approvals={[]}
+        userInputs={[]}
+        reviews={[]}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+
+    expect(screen.getAllByRole('button', { name: 'Copy response' })).toHaveLength(1)
+  })
 })
 
 describe('collapsed row disclosure', () => {
