@@ -1514,9 +1514,7 @@ export class Orchestrator {
         queue.unshift(next)
         this.#notifyQueue(threadId)
       }
-      this.#onLog(
-        `could not start queued turn: ${error instanceof Error ? error.message : String(error)}`,
-      )
+      this.#onLog('could not start queued turn; it remains queued')
     } finally {
       this.#drainingQueues.delete(threadId)
     }

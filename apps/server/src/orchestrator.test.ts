@@ -1781,11 +1781,13 @@ describe('queued turns', () => {
       {},
       'submission-private',
     )
-    sessions[0]!.sendError = new Error('provider rejected')
+    sessions[0]!.sendError = new Error(
+      'provider rejected private prompt content at C:\\secret\\private.png',
+    )
 
     sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
 
-    await vi.waitFor(() => expect(logs).toContain('could not start queued turn: provider rejected'))
+    await vi.waitFor(() => expect(logs).toContain('could not start queued turn; it remains queued'))
     await vi.waitFor(() =>
       expect(orchestrator.queue(thread.id).items.map(({ id }) => id)).toEqual([
         'submission-private',
