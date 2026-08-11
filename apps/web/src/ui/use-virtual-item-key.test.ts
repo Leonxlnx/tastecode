@@ -100,6 +100,31 @@ describe('virtualizer item keys', () => {
     expect(hook.result.current).toBe(initialGetter)
   })
 
+  it('invalidates an optimistic tail key when its canonical item arrives', () => {
+    const first = [message('a-0'), message('a-1')]
+    const hook = renderHook(({ items }) => useVirtualItemKey(items, 'thread-a'), {
+      initialProps: { items: first },
+    })
+    const initialGetter = hook.result.current
+    const virtualizer = new Virtualizer(options(first.length, initialGetter))
+    virtualizer.getTotalSize()
+
+    const optimistic = [...first, { ...message('local:prompt'), role: 'user' as const }]
+    hook.rerender({ items: optimistic })
+    expect(hook.result.current).toBe(initialGetter)
+    virtualizer.setOptions(options(optimistic.length, hook.result.current))
+    virtualizer.getTotalSize()
+    expect(virtualizer.measurementsCache[2]?.key).toBe('local:prompt')
+
+    const canonical = [...first, { ...optimistic.at(-1)!, id: 'canonical-prompt' }]
+    hook.rerender({ items: canonical })
+
+    expect(hook.result.current).not.toBe(initialGetter)
+    virtualizer.setOptions(options(canonical.length, hook.result.current))
+    virtualizer.getTotalSize()
+    expect(virtualizer.measurementsCache[2]?.key).toBe('canonical-prompt')
+  })
+
   it('invalidates same-length keys when the thread changes', () => {
     const first = [message('a-0'), message('a-1')]
     const second = [message('b-0'), message('b-1')]
