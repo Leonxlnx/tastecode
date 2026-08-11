@@ -2633,7 +2633,10 @@ describe('live sessions', () => {
           name: 'project',
           pinned: false,
           createdAt: 0,
-          sessions: [{ id: 'thread-1', title: 'Old chat', running: false }],
+          sessions: [
+            { id: 'thread-1', title: 'Old chat', running: false },
+            { id: 'thread-2', title: 'Other chat', running: false },
+          ],
         },
       ]
       const request = transport.request.getMockImplementation()!
@@ -2641,7 +2644,11 @@ describe('live sessions', () => {
       let resolveResync!: (value: { events: unknown[]; running: boolean }) => void
       let rejectSend!: (error: Error) => void
       transport.request.mockImplementation((method: string, params: unknown) => {
-        if (method === 'thread.history' && historyCount++ > 0) {
+        if (
+          method === 'thread.history' &&
+          (params as { threadId: string }).threadId === 'thread-1' &&
+          historyCount++ > 0
+        ) {
           return new Promise((resolve) => (resolveResync = resolve))
         }
         if (method === 'thread.sendTurn') {
@@ -2668,6 +2675,7 @@ describe('live sessions', () => {
       expect(screen.getByText('Working')).toBeTruthy()
       expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
       expect((composer as HTMLTextAreaElement).value).toBe('')
+      fireEvent.click(screen.getByRole('button', { name: 'Other chat' }))
 
       act(() => {
         for (const listener of transport.stateListeners) listener('reconnecting')
@@ -2711,6 +2719,8 @@ describe('live sessions', () => {
           running: outcome === 'accepted',
         }),
       )
+      expect((composer as HTMLTextAreaElement).value).toBe('')
+      fireEvent.click(screen.getByRole('button', { name: 'Old chat' }))
 
       if (outcome === 'accepted') {
         expect(screen.getByText('Submit exactly once').getAttribute('data-item-id')).toBe(
@@ -2771,7 +2781,7 @@ describe('live sessions', () => {
     )
   })
 
-  it('keeps an indeterminate queued submission through reconnect resync', async () => {
+  it('restores a rejected indeterminate queue while another turn is running', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -2791,13 +2801,10 @@ describe('live sessions', () => {
         return Promise.reject(new IndeterminateRequestError('socket lost'))
       }
       if (method === 'thread.history' && reconnecting) {
-        return Promise.reject(new Error('history unavailable'))
+        return Promise.resolve({ events: [], running: true })
       }
       if (method === 'thread.queue' && reconnecting) {
-        return Promise.resolve({
-          items: [{ id: submissionId, text: 'Queue this next', attachments: [], createdAt: 1 }],
-          canSteer: true,
-        })
+        return Promise.resolve({ items: [], canSteer: true })
       }
       return request(method, params)
     })
@@ -2827,13 +2834,8 @@ describe('live sessions', () => {
       reconnecting = true
       for (const listener of transport.stateListeners) listener('open')
     })
-    await screen.findByRole('button', { name: 'Remove Queue this next from queue' })
-    expect((composer as HTMLTextAreaElement).value).toBe('')
-    fireEvent.click(screen.getByRole('button', { name: 'Remove Queue this next from queue' }))
-    expect(transport.request).toHaveBeenCalledWith('thread.deleteQueuedTurn', {
-      threadId: 'thread-1',
-      queuedTurnId: submissionId,
-    })
+    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe('Queue this next'))
+    expect(screen.queryByLabelText('Queued prompts')).toBeNull()
   })
 
   it('keeps rapid queued prompts ordered when acknowledgements arrive backwards', async () => {
@@ -2946,6 +2948,7 @@ describe('live sessions', () => {
     let reconnecting = false
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'thread.history') {
+        if (reconnecting) return Promise.reject(new Error('history unavailable'))
         return Promise.resolve({
           events: [
             {
