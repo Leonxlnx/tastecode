@@ -36,26 +36,32 @@ afterEach(() => {
 })
 
 describe('streamed Markdown renders', () => {
-  it('keeps Streamdown configuration stable while text grows', () => {
-    const rendered = render(<Markdown text="First frame" streaming />)
-    const first = streamdownRender.mock.calls.at(-1)?.[0]
+  it.each([4 * 1024, 64 * 1024])(
+    'keeps a %i-byte live reply outside the full Markdown parser',
+    (size) => {
+      const text = `${'Readable prose with **unfinished Markdown**.\n'.repeat(Math.ceil(size / 44)).slice(0, size)}\n\`\`\`ts\nconst pending =`
+      const rendered = render(<Markdown text={text.slice(0, -8)} streaming />)
+      rendered.rerender(<Markdown text={text.slice(0, -4)} streaming />)
+      rendered.rerender(<Markdown text={text} streaming />)
 
-    rendered.rerender(<Markdown text="First frame, next words" streaming />)
-    const second = streamdownRender.mock.calls.at(-1)?.[0]
+      const liveText = rendered.container.querySelector('[data-streaming-markdown]')
+      expect(liveText?.textContent).toBe(text)
+      expect(liveText?.childNodes).toHaveLength(1)
+      expect(streamdownRender).not.toHaveBeenCalled()
+      expect(plainHighlight).not.toHaveBeenCalled()
+      expect(shikiHighlight).not.toHaveBeenCalled()
+    },
+  )
 
-    expect(second.controls).toBe(first.controls)
-    expect(second.plugins).toBe(first.plugins)
-    expect(second.animated).toBe(first.animated)
-  })
+  it('parses and highlights the complete reply exactly once', () => {
+    const text = '```ts\nconst value = 1\n```'
+    const rendered = render(<Markdown text={text} streaming />)
 
-  it('defers syntax highlighting until streamed code completes', () => {
-    const rendered = render(<Markdown text={'```ts\nconst value ='} streaming />)
-    rendered.rerender(<Markdown text={'```ts\nconst value = 1\n```'} streaming />)
+    expect(streamdownRender).not.toHaveBeenCalled()
+    expect(plainHighlight).not.toHaveBeenCalled()
 
-    expect(plainHighlight).toHaveBeenCalledTimes(2)
-    expect(shikiHighlight).not.toHaveBeenCalled()
-
-    rendered.rerender(<Markdown text={'```ts\nconst value = 1\n```'} />)
+    rendered.rerender(<Markdown text={text} />)
+    expect(streamdownRender).toHaveBeenCalledTimes(1)
     expect(shikiHighlight).toHaveBeenCalledTimes(1)
   })
 })
