@@ -109,6 +109,7 @@ import { startDesignPreview, type RunningPreview } from './design-preview-runner
 
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
+type PendingTurnStart = { acceptedAt: number }
 type DesignFlowPhase =
   'brief' | 'brand' | 'page' | 'assets' | 'build' | 'preview' | 'review' | 'repair' | 'complete'
 type DesignFlow = {
@@ -321,6 +322,8 @@ export class Orchestrator {
   #threadApprovals = new Map<string, ApprovalMode>()
   #activeTurns = new Set<string>()
   #startingTurns = new Set<string>()
+  #pendingTurnStarts = new Map<string, PendingTurnStart>()
+  #acceptedTurnStarts = new Map<string, Map<string, number>>()
   #restoringThreads = new Set<string>()
   #reviewingDiffs = new Set<string>()
   #queuedTurns = new Map<string, QueuedTurnEntry[]>()
@@ -895,6 +898,7 @@ export class Orchestrator {
     }
     this.#wakeForActivity(threadId)
     const panicGeneration = this.#panicGeneration
+    const pendingStart = this.#beginTurnStart(threadId)
     this.#startingTurns.add(threadId)
     try {
       // Before the agent writes, not after. A checkpoint taken afterwards would
@@ -928,6 +932,7 @@ export class Orchestrator {
           designBriefingPrompt(text),
           attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT),
           this.#designTurnOptions(flow),
+          pendingStart,
         )
         // Ask-first cannot answer a permission prompt on an agent without
         // interactive approvals, so its Build writes get denied one by one.
@@ -944,7 +949,17 @@ export class Orchestrator {
         }
         return turnId
       }
-      return await this.#get(threadId).session.sendTurn(threadId, text, attachments, options)
+      const turnId = await this.#get(threadId).session.sendTurn(
+        threadId,
+        text,
+        attachments,
+        options,
+      )
+      this.#acceptTurnStart(threadId, turnId, pendingStart)
+      return turnId
+    } catch (error) {
+      this.#forgetPendingTurnStart(threadId, pendingStart)
+      throw error
     } finally {
       this.#startingTurns.delete(threadId)
     }
@@ -1047,6 +1062,24 @@ export class Orchestrator {
    * write has to happen first even though it is the slower half.
    */
   #record(threadId: string, event: DomainEvent): void {
+    if (event.type === 'turn.started') {
+      const acceptedStarts = this.#acceptedTurnStarts.get(threadId)
+      let acceptedAt = acceptedStarts?.get(event.turn.id)
+      if (acceptedAt !== undefined) {
+        acceptedStarts?.delete(event.turn.id)
+      } else {
+        const pending = this.#pendingTurnStarts.get(threadId)
+        acceptedAt = pending?.acceptedAt
+        if (pending) this.#pendingTurnStarts.delete(threadId)
+      }
+      if (acceptedAt !== undefined) {
+        event = { ...event, turn: { ...event.turn, createdAt: acceptedAt } }
+      }
+    }
+    if (event.type === 'turn.completed') {
+      this.#acceptedTurnStarts.get(threadId)?.delete(event.turnId)
+      event = { ...event, completedAt: Date.now() }
+    }
     if (event.type === 'turn.started') this.#activeTurns.add(threadId)
     if (event.type === 'turn.completed' || event.type === 'thread.error') {
       this.#activeTurns.delete(threadId)
@@ -1625,6 +1658,8 @@ export class Orchestrator {
     this.#threadApprovals.delete(threadId)
     this.#activeTurns.delete(threadId)
     this.#startingTurns.delete(threadId)
+    this.#pendingTurnStarts.delete(threadId)
+    this.#acceptedTurnStarts.delete(threadId)
     this.#designStartingThreads.delete(threadId)
     this.#reviewingDiffs.delete(threadId)
     this.#queuedTurns.delete(threadId)
@@ -1709,6 +1744,8 @@ export class Orchestrator {
     this.#threads.clear()
     this.#activeTurns.clear()
     this.#startingTurns.clear()
+    this.#pendingTurnStarts.clear()
+    this.#acceptedTurnStarts.clear()
     this.#reviewingDiffs.clear()
     this.#queuedTurns.clear()
     this.#drainingQueues.clear()
@@ -1869,6 +1906,7 @@ export class Orchestrator {
     prompt: string,
     attachments: string[],
     options: TurnOptions,
+    pendingStart = this.#beginTurnStart(threadId),
   ): Promise<string> {
     for (const [turnId, owner] of this.#designTurns) {
       if (owner === threadId) {
@@ -1884,6 +1922,7 @@ export class Orchestrator {
         attachments,
         options,
       )
+      this.#acceptTurnStart(threadId, turnId, pendingStart)
       this.#designTurns.set(turnId, threadId)
       const flow = this.#designFlows.get(threadId)
       if (flow) {
@@ -1900,7 +1939,28 @@ export class Orchestrator {
       }
       return turnId
     } finally {
+      this.#forgetPendingTurnStart(threadId, pendingStart)
       this.#designStartingThreads.delete(threadId)
+    }
+  }
+
+  #acceptTurnStart(threadId: string, turnId: string, pendingStart: PendingTurnStart): void {
+    if (this.#pendingTurnStarts.get(threadId) !== pendingStart) return
+    this.#pendingTurnStarts.delete(threadId)
+    const starts = this.#acceptedTurnStarts.get(threadId) ?? new Map<string, number>()
+    starts.set(turnId, pendingStart.acceptedAt)
+    this.#acceptedTurnStarts.set(threadId, starts)
+  }
+
+  #beginTurnStart(threadId: string): PendingTurnStart {
+    const pending = { acceptedAt: Date.now() }
+    this.#pendingTurnStarts.set(threadId, pending)
+    return pending
+  }
+
+  #forgetPendingTurnStart(threadId: string, pending: PendingTurnStart): void {
+    if (this.#pendingTurnStarts.get(threadId) === pending) {
+      this.#pendingTurnStarts.delete(threadId)
     }
   }
 

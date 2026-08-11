@@ -68,6 +68,8 @@ class FakeSession implements AgentSession {
   userInputs: Array<{ requestId: string; answers: Record<string, string[]> }> = []
   approvalModes: ApprovalMode[] = []
   mcpServers: McpServer[] = []
+  turnIds: string[] = []
+  sendError: Error | undefined
   /** Resolves the pending sendTurn, letting a test hold one open. */
   release: (() => void) | undefined
 
@@ -85,7 +87,8 @@ class FakeSession implements AgentSession {
     this.sentAttachments.push(attachments)
     this.sentOptions.push(options)
     if (this.release) await new Promise<void>((resolve) => (this.release = resolve))
-    return `${this.id}-turn`
+    if (this.sendError) throw this.sendError
+    return this.turnIds.shift() ?? `${this.id}-turn`
   }
 
   async steer(_threadId: string, text: string): Promise<void> {
@@ -283,6 +286,149 @@ describe('workspace paths', () => {
     expect(snapshot).toHaveBeenCalledWith(resolvedPath)
     expect(store.thread(thread.id)?.projectPath).toBe(projectPath)
     await orchestrator.disposeAll()
+  })
+})
+
+describe('durable turn timing', () => {
+  it.each(['codex', 'api'] as const)(
+    'records server-owned lifecycle boundaries for %s turns',
+    async (provider) => {
+      const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+      const { orchestrator, sessions, store, received } = harness()
+      try {
+        const thread = await orchestrator.startThread(provider, '/repo')
+        const session = sessions[0]!
+        session.turnIds.push('turn-1')
+        await orchestrator.sendTurn(thread.id, 'Do the work.')
+
+        now.mockReturnValue(5_000)
+        session.emit({
+          type: 'turn.started',
+          turn: { id: 'turn-1', threadId: thread.id, status: 'running', createdAt: 5_000 },
+        })
+        now.mockReturnValue(32_000)
+        session.emit({
+          type: 'turn.completed',
+          turnId: 'turn-1',
+          status: 'completed',
+          completedAt: 4_000,
+        })
+
+        const lifecycle = store
+          .history(thread.id)
+          .map(({ event }) => event)
+          .filter((event) => event.type === 'turn.started' || event.type === 'turn.completed')
+        expect(lifecycle).toEqual([
+          {
+            type: 'turn.started',
+            turn: { id: 'turn-1', threadId: thread.id, status: 'running', createdAt: 1_000 },
+          },
+          {
+            type: 'turn.completed',
+            turnId: 'turn-1',
+            status: 'completed',
+            completedAt: 32_000,
+          },
+        ])
+        expect(received.map(({ event }) => event).slice(-2)).toEqual(lifecycle)
+      } finally {
+        now.mockRestore()
+        await orchestrator.disposeAll()
+      }
+    },
+  )
+
+  it('anchors queued and design turns when their provider work actually starts', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds.push('first', 'queued', 'design')
+      await orchestrator.submitTurn(thread.id, 'First')
+      await orchestrator.submitTurn(thread.id, 'Queued')
+
+      now.mockReturnValue(5_000)
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 'first', threadId: thread.id, status: 'running', createdAt: 5_000 },
+      })
+      now.mockReturnValue(7_000)
+      session.emit({ type: 'turn.completed', turnId: 'first', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toEqual(['First', 'Queued']))
+      now.mockReturnValue(9_000)
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 'queued', threadId: thread.id, status: 'running', createdAt: 9_000 },
+      })
+      session.emit({ type: 'turn.completed', turnId: 'queued', status: 'completed' })
+
+      now.mockReturnValue(11_000)
+      await orchestrator.sendTurn(thread.id, 'Design', [DESIGN_BRIEF_ATTACHMENT])
+      now.mockReturnValue(13_000)
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 'design', threadId: thread.id, status: 'running', createdAt: 13_000 },
+      })
+
+      const starts = store
+        .history(thread.id)
+        .map(({ event }) => event)
+        .filter(
+          (event): event is Extract<DomainEvent, { type: 'turn.started' }> =>
+            event.type === 'turn.started',
+        )
+      expect(starts.map(({ turn }) => [turn.id, turn.createdAt])).toEqual([
+        ['first', 1_000],
+        ['queued', 7_000],
+        ['design', 11_000],
+      ])
+    } finally {
+      now.mockRestore()
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('does not reuse failed or disposed turn anchors', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    const session = sessions[0]!
+    try {
+      session.sendError = new Error('provider rejected the turn')
+      await expect(orchestrator.sendTurn(thread.id, 'Fails')).rejects.toThrow('provider rejected')
+
+      session.sendError = undefined
+      session.turnIds.push('after-failure', 'before-dispose')
+      now.mockReturnValue(2_000)
+      await orchestrator.sendTurn(thread.id, 'Retry')
+      now.mockReturnValue(5_000)
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 'after-failure', threadId: thread.id, status: 'running', createdAt: 5_000 },
+      })
+
+      now.mockReturnValue(6_000)
+      await orchestrator.sendTurn(thread.id, 'Dispose')
+      await orchestrator.disposeAll()
+      now.mockReturnValue(8_000)
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 'before-dispose', threadId: thread.id, status: 'running', createdAt: 8_000 },
+      })
+
+      const starts = store
+        .history(thread.id)
+        .map(({ event }) => event)
+        .filter(
+          (event): event is Extract<DomainEvent, { type: 'turn.started' }> =>
+            event.type === 'turn.started',
+        )
+      expect(starts.map(({ turn }) => turn.createdAt)).toEqual([2_000, 8_000])
+    } finally {
+      now.mockRestore()
+      await orchestrator.disposeAll()
+    }
   })
 })
 
