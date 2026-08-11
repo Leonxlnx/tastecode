@@ -98,6 +98,9 @@ describe('ServerSupervisor', () => {
     again.sup.start()
     again.sup.stop()
     expect(again.children[0]!.killed).toBe(true)
+    again.children[0]!.emit('exit', null, 'SIGTERM')
+    vi.advanceTimersByTime(60_000)
+    expect(again.children).toHaveLength(1)
   })
 
   it('treats error followed by exit as one failed run', () => {
