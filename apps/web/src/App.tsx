@@ -619,10 +619,16 @@ export function App() {
       for (const submission of rejected) {
         if (threadId === activeIdRef.current) {
           setComposerDraft((current) => ({
-            text: submission.text,
+            text: current?.text ? `${current.text}\n\n${submission.text}` : submission.text,
             request: (current?.request ?? 0) + 1,
           }))
-        } else rejectedDrafts.current.set(threadId, submission.text)
+        } else {
+          const draft = rejectedDrafts.current.get(threadId)
+          rejectedDrafts.current.set(
+            threadId,
+            draft ? `${draft}\n\n${submission.text}` : submission.text,
+          )
+        }
       }
     },
     [],
