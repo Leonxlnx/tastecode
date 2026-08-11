@@ -7,6 +7,7 @@ import {
   reduce,
   reduceDeltas,
   reduceEventLog,
+  replaceOptimisticMessage,
 } from './thread-store.js'
 import { presentTurns } from './ui/turns.js'
 
@@ -116,29 +117,27 @@ describe('thread reducer', () => {
     expect(state.items[0]?.text).toBe('streamed')
   })
 
-  it('replaces the optimistic user message with the agent’s canonical one', () => {
-    // Regression: the user's message rendered twice, once from the local echo
-    // and once from the item the agent reports back.
+  it('replaces the exact optimistic user message with the agent’s canonical one', () => {
     const echoed = appendUserMessage(emptyThread, 'do the thing')
-    const state = reduce(echoed, {
+    const canonical = item({ id: 'server-1', role: 'user', text: 'do the thing' })
+    const state = reduce(replaceOptimisticMessage(echoed, echoed.items[0]!.id, canonical), {
       type: 'item.started',
-      item: item({ id: 'server-1', role: 'user', text: 'do the thing' }),
+      item: canonical,
     })
     expect(state.items).toHaveLength(1)
     expect(state.items[0]?.id).toBe('server-1')
   })
 
-  it('keeps later optimistic prompts when the first canonical message arrives', () => {
-    const echoed = appendUserMessage(
-      appendUserMessage(emptyThread, 'first prompt'),
-      'second prompt',
-    )
-    const state = reduce(echoed, {
+  it('keeps the other optimistic prompt when identical text is reconciled by id', () => {
+    const echoed = appendUserMessage(appendUserMessage(emptyThread, 'repeat this'), 'repeat this')
+    const secondId = echoed.items[1]!.id
+    const canonical = item({ id: 'server-1', role: 'user', text: 'repeat this' })
+    const state = reduce(replaceOptimisticMessage(echoed, echoed.items[0]!.id, canonical), {
       type: 'item.started',
-      item: item({ id: 'server-1', role: 'user', text: 'first prompt' }),
+      item: canonical,
     })
 
-    expect(state.items.map((entry) => entry.text)).toEqual(['first prompt', 'second prompt'])
+    expect(state.items.map((entry) => entry.id)).toEqual(['server-1', secondId])
   })
 
   it('echoes a message when randomUUID is unavailable in an insecure mobile context', () => {

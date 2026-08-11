@@ -15,6 +15,7 @@ import type {
   ApprovalDecision,
   ApprovalMode,
   DomainEvent,
+  Item,
   ModelConnection,
   ProviderId,
   ProviderStatus,
@@ -31,11 +32,13 @@ import {
   activeTurnIsSearching,
   appendUserMessage,
   beginOptimisticTurn,
+  createOptimisticMessageId,
   emptyThread,
   reduce,
   reduceDeltas,
   reduceEventLog,
-  removeQueuedOptimisticMessage,
+  removeOptimisticMessage,
+  replaceOptimisticMessage,
   type ItemDeltaEvent,
   type ThreadState,
 } from './thread-store.js'
@@ -166,6 +169,19 @@ type CustomModel = {
   displayName: string
 }
 
+type PendingSubmission = {
+  itemId: string
+  text: string
+  createdAt: number
+  knownItemIds: ReadonlySet<string>
+  visible: boolean
+  expectsNewTurn: boolean
+  optimisticTurn?: { id: string; startedAt: number } | undefined
+  serverTurnId?: string | undefined
+}
+
+type PendingSubmissionMap = Map<string, Map<string, PendingSubmission>>
+
 function readCustomModels(): CustomModel[] {
   try {
     const raw = readSetting(CUSTOM_MODELS_KEY)
@@ -244,6 +260,8 @@ export function App() {
   // intentional: streamed deltas for a background session should not rerender
   // the active thread, while selecting it still gets the latest state at once.
   const threadStates = useRef(new Map<string, ThreadState>())
+  const pendingSubmissions = useRef<PendingSubmissionMap>(new Map())
+  const threadMutationGenerations = useRef(new Map<string, number>())
   /** Live events parked while a history fetch for the thread is in flight. */
   const historyBuffers = useRef(
     new Map<string, Set<Array<{ seq: number | undefined; event: DomainEvent }>>>(),
@@ -608,6 +626,7 @@ export function App() {
       if (id) setThread(threadStates.current.get(id) ?? emptyThread)
     }
     const offEvents = transport.on('thread.event', ({ threadId, event, seq }) => {
+      bumpThreadGeneration(threadMutationGenerations.current, threadId)
       // While a history load is in flight, the fetched state will replace the
       // cache — record the event so it can be replayed on top. Non-deltas
       // apply immediately below; deltas join the same frame batch as rendering.
@@ -622,7 +641,23 @@ export function App() {
         return
       }
 
-      const next = reduce(applyPendingDeltas(threadId), event)
+      let current = applyPendingDeltas(threadId)
+      if (event.type === 'turn.started') {
+        bindPendingTurn(pendingSubmissions.current, threadId, event.turn.id)
+      } else if (
+        (event.type === 'item.started' || event.type === 'item.completed') &&
+        event.item.role === 'user'
+      ) {
+        const submission = takePendingForCanonicalItem(
+          pendingSubmissions.current,
+          threadId,
+          event.item,
+        )
+        if (submission) {
+          current = replaceOptimisticMessage(current, submission.itemId, event.item)
+        }
+      }
+      const next = reduce(current, event)
       threadStates.current.set(threadId, next)
 
       if (threadId === activeIdRef.current) {
@@ -1013,6 +1048,7 @@ export function App() {
 
   const loadHistory = useCallback(
     async (threadId: string) => {
+      const generation = threadMutationGenerations.current.get(threadId) ?? 0
       // Live pushes landing during this round trip are buffered (see the
       // thread.event handler) and re-applied on top of the fetched history —
       // overwriting the cache blindly used to silently drop them.
@@ -1030,12 +1066,18 @@ export function App() {
         const restored = reduceEventLog(emptyThread, events)
         const lastSeq = events.at(-1)?.seq ?? 0
         const withLive = reduceEventLog(restored, buffer, lastSeq)
+        const next =
+          (threadMutationGenerations.current.get(threadId) ?? 0) !== generation ||
+          pendingSubmissions.current.has(threadId)
+            ? restorePendingSubmissions(withLive, pendingSubmissions.current, threadId)
+            : withLive
         // The buffered events above already include any deltas still waiting
         // for a frame, so do not apply that pending batch a second time.
         pendingThreadDeltas.current.delete(threadId)
-        threadStates.current.set(threadId, withLive)
+        bumpThreadGeneration(threadMutationGenerations.current, threadId)
+        threadStates.current.set(threadId, next)
         setProjects((current) => updateSession(current, threadId, markSessionRead))
-        if (activeIdRef.current === threadId) setThread(withLive)
+        if (activeIdRef.current === threadId) setThread(next)
       } finally {
         buffers.delete(buffer)
         if (buffers.size === 0) historyBuffers.current.delete(threadId)
@@ -1418,6 +1460,12 @@ export function App() {
         const provisional = threadStates.current.get(provisionalId) ?? emptyThread
         threadStates.current.delete(provisionalId)
         threadStates.current.set(threadId, provisional)
+        movePendingSubmissions(pendingSubmissions.current, provisionalId, threadId)
+        const provisionalGeneration = threadMutationGenerations.current.get(provisionalId)
+        threadMutationGenerations.current.delete(provisionalId)
+        if (provisionalGeneration !== undefined) {
+          threadMutationGenerations.current.set(threadId, provisionalGeneration)
+        }
         const pending =
           pendingSession.current?.id === provisionalId ? pendingSession.current : undefined
         if (pending) pending.threadId = threadId
@@ -1464,6 +1512,8 @@ export function App() {
         return threadId
       } catch (error) {
         threadStates.current.delete(provisionalId)
+        pendingSubmissions.current.delete(provisionalId)
+        threadMutationGenerations.current.delete(provisionalId)
         setProjects((current) =>
           current.map((project) => ({
             ...project,
@@ -1557,6 +1607,8 @@ export function App() {
       let threadId = activeId
       let optimisticAdded = false
       let optimisticTurnId: string | undefined
+      const optimisticItemId = createOptimisticMessageId()
+      const optimisticCreatedAt = Date.now()
       let titledOnCreate = false
       if (!threadId) {
         if (!activePath) {
@@ -1564,13 +1616,28 @@ export function App() {
           return
         }
         const provisionalId = `pending:${crypto.randomUUID()}`
-        const provisional = beginOptimisticTurn(emptyThread, text)
+        const provisional = beginOptimisticTurn(
+          emptyThread,
+          text,
+          optimisticItemId,
+          optimisticCreatedAt,
+        )
         const choice = selectedModelChoice
         if (!choice) {
           restoreDraft()
           return
         }
         optimisticTurnId = provisional.activeTurn?.id
+        addPendingSubmission(pendingSubmissions.current, provisionalId, {
+          itemId: optimisticItemId,
+          text,
+          createdAt: optimisticCreatedAt,
+          knownItemIds: new Set(),
+          visible: true,
+          expectsNewTurn: true,
+          optimisticTurn: provisional.activeTurn,
+        })
+        bumpThreadGeneration(threadMutationGenerations.current, provisionalId)
         threadStates.current.set(provisionalId, provisional)
         setProjects((current) =>
           current.map((project) =>
@@ -1618,10 +1685,22 @@ export function App() {
       } else if (pendingSession.current?.id === threadId) {
         const pending = pendingSession.current
         const targetId = pending.threadId ?? pending.id
+        const beforePending = threadStates.current.get(targetId) ?? emptyThread
         const provisional = appendUserMessage(
-          threadStates.current.get(targetId) ?? emptyThread,
+          beforePending,
           text,
+          optimisticItemId,
+          optimisticCreatedAt,
         )
+        addPendingSubmission(pendingSubmissions.current, targetId, {
+          itemId: optimisticItemId,
+          text,
+          createdAt: optimisticCreatedAt,
+          knownItemIds: new Set(beforePending.items.map((item) => item.id)),
+          visible: true,
+          expectsNewTurn: true,
+        })
+        bumpThreadGeneration(threadMutationGenerations.current, targetId)
         threadStates.current.set(targetId, provisional)
         if (activeIdRef.current === targetId) setThread(provisional)
         setThreadRevealRequest((request) => request + 1)
@@ -1639,17 +1718,32 @@ export function App() {
       const before = threadStates.current.get(threadId) ?? emptyThread
       const wasRunning = before.running && !optimisticAdded
       const steering = submission === 'steer'
-      const beforeItemIds = new Set(before.items.map((item) => item.id))
       const optimisticQueueId =
         wasRunning && !steering ? `pending:${crypto.randomUUID()}` : undefined
       if (!wasRunning && !optimisticAdded) {
-        const next = beginOptimisticTurn(before, text)
+        const next = beginOptimisticTurn(before, text, optimisticItemId, optimisticCreatedAt)
         optimisticTurnId = next.activeTurn?.id
         threadStates.current.set(threadId, next)
         if (threadId === activeIdRef.current) {
           setThread(next)
           setThreadRevealRequest((request) => request + 1)
         }
+      }
+      if (!optimisticAdded) {
+        const current = threadStates.current.get(threadId) ?? before
+        addPendingSubmission(pendingSubmissions.current, threadId, {
+          itemId: optimisticItemId,
+          text,
+          createdAt: optimisticCreatedAt,
+          knownItemIds: new Set(before.items.map((item) => item.id)),
+          visible: !wasRunning,
+          expectsNewTurn: !wasRunning,
+          optimisticTurn: !wasRunning ? current.activeTurn : undefined,
+          ...(steering && before.activeTurn && !before.activeTurn.id.startsWith('local-turn:')
+            ? { serverTurnId: before.activeTurn.id }
+            : {}),
+        })
+        bumpThreadGeneration(threadMutationGenerations.current, threadId)
       }
       if (optimisticQueueId) {
         updateQueue(threadId, (items) => [
@@ -1696,22 +1790,38 @@ export function App() {
           ...(turnChoice && selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
         })
         turnAccepted = true
-        const current = threadStates.current.get(threadId) ?? emptyThread
+        let current = threadStates.current.get(threadId) ?? emptyThread
+        const submission = getPendingSubmission(
+          pendingSubmissions.current,
+          threadId,
+          optimisticItemId,
+        )
+        if (!result.queued && submission) {
+          submission.serverTurnId = result.turnId
+          bumpThreadGeneration(threadMutationGenerations.current, threadId)
+        }
         if (result.queued) {
           if (steering) {
             await transport.request('thread.steerQueuedTurn', {
               threadId,
               queuedTurnId: result.queuedTurn.id,
             })
-            const afterSteer = threadStates.current.get(threadId) ?? emptyThread
-            const canonicalArrived = afterSteer.items.some(
-              (item) =>
-                !beforeItemIds.has(item.id) && item.role === 'user' && item.text?.trim() === text,
+            const pending = getPendingSubmission(
+              pendingSubmissions.current,
+              threadId,
+              optimisticItemId,
             )
-            if (!canonicalArrived) {
-              const next = appendUserMessage(afterSteer, text)
-              threadStates.current.set(threadId, next)
-              if (threadId === activeIdRef.current) setThread(next)
+            if (pending) {
+              pending.visible = true
+              current = threadStates.current.get(threadId) ?? emptyThread
+              if (canonicalSubmissionItem(current, pending)) {
+                takePendingSubmission(pendingSubmissions.current, threadId, optimisticItemId)
+              } else if (!current.items.some((item) => item.id === optimisticItemId)) {
+                current = appendUserMessage(current, text, optimisticItemId, optimisticCreatedAt)
+                threadStates.current.set(threadId, current)
+                if (threadId === activeIdRef.current) setThread(current)
+              }
+              bumpThreadGeneration(threadMutationGenerations.current, threadId)
             }
           } else {
             updateQueue(threadId, (items) => {
@@ -1729,24 +1839,49 @@ export function App() {
               else next.splice(optimisticIndex, 1)
               return next
             })
-            if (!wasRunning) {
-              const reconciled = removeQueuedOptimisticMessage(current, text)
+            const pending = takePendingSubmission(
+              pendingSubmissions.current,
+              threadId,
+              optimisticItemId,
+            )
+            if (pending?.visible) {
+              const reconciled = removeOptimisticMessage(current, pending.itemId)
               threadStates.current.set(threadId, reconciled)
               if (threadId === activeIdRef.current) setThread(reconciled)
             }
+            bumpThreadGeneration(threadMutationGenerations.current, threadId)
           }
-        } else if (!result.queued && wasRunning) {
-          if (optimisticQueueId) {
-            updateQueue(threadId, (items) => items.filter((item) => item.id !== optimisticQueueId))
-          }
-          const canonicalArrived = current.items.some(
-            (item) =>
-              !beforeItemIds.has(item.id) && item.role === 'user' && item.text?.trim() === text,
+        } else {
+          const pending = getPendingSubmission(
+            pendingSubmissions.current,
+            threadId,
+            optimisticItemId,
           )
-          if (!canonicalArrived) {
-            const next = appendUserMessage(current, text)
-            threadStates.current.set(threadId, next)
-            if (threadId === activeIdRef.current) setThread(next)
+          if (pending && canonicalSubmissionItem(current, pending)) {
+            takePendingSubmission(pendingSubmissions.current, threadId, optimisticItemId)
+            current = removeOptimisticMessage(current, pending.itemId)
+            threadStates.current.set(threadId, current)
+            if (threadId === activeIdRef.current) setThread(current)
+          }
+          if (wasRunning) {
+            if (optimisticQueueId) {
+              updateQueue(threadId, (items) =>
+                items.filter((item) => item.id !== optimisticQueueId),
+              )
+            }
+            const transitioned = getPendingSubmission(
+              pendingSubmissions.current,
+              threadId,
+              optimisticItemId,
+            )
+            if (transitioned) {
+              transitioned.visible = true
+              if (!current.items.some((item) => item.id === optimisticItemId)) {
+                current = appendUserMessage(current, text, optimisticItemId, optimisticCreatedAt)
+                threadStates.current.set(threadId, current)
+                if (threadId === activeIdRef.current) setThread(current)
+              }
+            }
           }
         }
       } catch (error) {
@@ -1754,20 +1889,20 @@ export function App() {
           updateQueue(threadId, (items) => items.filter((item) => item.id !== optimisticQueueId))
         }
         if (!turnAccepted) {
+          const rejected = takePendingSubmission(
+            pendingSubmissions.current,
+            threadId,
+            optimisticItemId,
+          )
           const current = threadStates.current.get(threadId)
           if (current !== undefined) {
             // The server did not accept this prompt. Remove only its local
             // echo; a canonical event has a server id and remains.
-            let next = removeQueuedOptimisticMessage(current, text)
-            // Any locally-invented turn must be rolled back on failure, not
-            // only the one whose id this call happens to remember — a
-            // stranded optimistic turn leaves the composer stuck on Stop.
-            if (
-              current.activeTurn?.id === optimisticTurnId ||
-              current.activeTurn?.id.startsWith('local-turn:') === true
-            ) {
+            let next = rejected ? removeOptimisticMessage(current, rejected.itemId) : current
+            if (current.activeTurn?.id === (rejected?.optimisticTurn?.id ?? optimisticTurnId)) {
               next = { ...next, running: false, activeTurn: undefined }
             }
+            bumpThreadGeneration(threadMutationGenerations.current, threadId)
             threadStates.current.set(threadId, next)
             if (threadId === activeIdRef.current) setThread(next)
           }
@@ -2936,6 +3071,116 @@ export function App() {
       ) : null}
     </div>
   )
+}
+
+function addPendingSubmission(
+  pending: PendingSubmissionMap,
+  threadId: string,
+  submission: PendingSubmission,
+): void {
+  const submissions = pending.get(threadId) ?? new Map()
+  submissions.set(submission.itemId, submission)
+  pending.set(threadId, submissions)
+}
+
+function getPendingSubmission(
+  pending: PendingSubmissionMap,
+  threadId: string,
+  itemId: string,
+): PendingSubmission | undefined {
+  return pending.get(threadId)?.get(itemId)
+}
+
+function takePendingSubmission(
+  pending: PendingSubmissionMap,
+  threadId: string,
+  itemId: string,
+): PendingSubmission | undefined {
+  const submissions = pending.get(threadId)
+  const submission = submissions?.get(itemId)
+  if (!submission || !submissions) return undefined
+  submissions.delete(itemId)
+  if (submissions.size === 0) pending.delete(threadId)
+  return submission
+}
+
+function movePendingSubmissions(pending: PendingSubmissionMap, from: string, to: string): void {
+  const submissions = pending.get(from)
+  if (!submissions) return
+  const target = pending.get(to) ?? new Map()
+  for (const [id, submission] of submissions) target.set(id, submission)
+  pending.delete(from)
+  pending.set(to, target)
+}
+
+function bindPendingTurn(pending: PendingSubmissionMap, threadId: string, turnId: string): void {
+  const submission = Array.from(pending.get(threadId)?.values() ?? []).find(
+    (candidate) => candidate.expectsNewTurn && candidate.serverTurnId === undefined,
+  )
+  if (submission) submission.serverTurnId = turnId
+}
+
+function takePendingForCanonicalItem(
+  pending: PendingSubmissionMap,
+  threadId: string,
+  item: Item,
+): PendingSubmission | undefined {
+  const submissions = pending.get(threadId)
+  if (!submissions) return undefined
+  const submission = Array.from(submissions.values()).find(
+    (candidate) =>
+      !candidate.knownItemIds.has(item.id) &&
+      (candidate.serverTurnId === item.turnId ||
+        (candidate.serverTurnId === undefined && candidate.expectsNewTurn)),
+  )
+  return submission ? takePendingSubmission(pending, threadId, submission.itemId) : undefined
+}
+
+function canonicalSubmissionItem(
+  state: ThreadState,
+  submission: PendingSubmission,
+  claimed: ReadonlySet<string> = new Set(),
+): Item | undefined {
+  if (!submission.serverTurnId) return undefined
+  return state.items.find(
+    (item) =>
+      item.role === 'user' &&
+      item.turnId === submission.serverTurnId &&
+      !submission.knownItemIds.has(item.id) &&
+      !claimed.has(item.id),
+  )
+}
+
+function restorePendingSubmissions(
+  state: ThreadState,
+  pending: PendingSubmissionMap,
+  threadId: string,
+): ThreadState {
+  const submissions = pending.get(threadId)
+  if (!submissions) return state
+  let next = state
+  const claimed = new Set<string>()
+  for (const submission of [...submissions.values()]) {
+    const canonical = canonicalSubmissionItem(next, submission, claimed)
+    if (canonical) {
+      claimed.add(canonical.id)
+      takePendingSubmission(pending, threadId, submission.itemId)
+      continue
+    }
+    if (submission.visible && !next.items.some((item) => item.id === submission.itemId)) {
+      next = appendUserMessage(next, submission.text, submission.itemId, submission.createdAt)
+    }
+  }
+  const optimistic = Array.from(pending.get(threadId)?.values() ?? []).find(
+    (submission) => submission.visible && submission.optimisticTurn !== undefined,
+  )
+  return !next.running && optimistic?.optimisticTurn
+    ? { ...next, running: true, activeTurn: optimistic.optimisticTurn }
+    : next
+}
+
+function bumpThreadGeneration(generations: Map<string, number>, threadId: string): void {
+  generations.set(threadId, (generations.get(threadId) ?? 0) + 1)
 }
 
 function readRailWidth(): number {

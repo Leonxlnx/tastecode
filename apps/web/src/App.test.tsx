@@ -2590,10 +2590,13 @@ describe('live sessions', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    const pendingSend = new Promise(() => {})
-    transport.request.mockImplementation((method: string, params: unknown) =>
-      method === 'thread.sendTurn' ? pendingSend : request(method, params),
-    )
+    let resolveHistory!: (value: { events: []; running: false }) => void
+    let resolveSend!: (value: { queued: false; turnId: string }) => void
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.history') return new Promise((resolve) => (resolveHistory = resolve))
+      if (method === 'thread.sendTurn') return new Promise((resolve) => (resolveSend = resolve))
+      return request(method, params)
+    })
 
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Old chat' }))
@@ -2604,6 +2607,29 @@ describe('live sessions', () => {
     expect(screen.getByTestId('thread').textContent).toContain('Continue immediately')
     expect(screen.getByText('Working')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
+
+    await act(async () => resolveHistory({ events: [], running: false }))
+    expect(screen.getByTestId('thread').textContent).toContain('Continue immediately')
+    expect(screen.getByText('Working')).toBeTruthy()
+
+    emitThreadEvent('thread-1', {
+      type: 'turn.started',
+      turn: { id: 'turn-new', threadId: 'thread-1', status: 'running', createdAt: 1 },
+    })
+    emitThreadEvent('thread-1', {
+      type: 'item.started',
+      item: {
+        id: 'canonical-user',
+        turnId: 'turn-new',
+        type: 'message',
+        role: 'user',
+        status: 'started',
+        text: 'Continue immediately',
+        createdAt: 1,
+      },
+    })
+    await act(async () => resolveSend({ queued: false, turnId: 'turn-new' }))
+    expect(screen.getByTestId('thread').textContent?.match(/Continue immediately/g)).toHaveLength(1)
   })
 
   it('restores the draft and removes its optimistic row when the server rejects a turn', async () => {
@@ -2618,13 +2644,15 @@ describe('live sessions', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
+    let resolveHistory!: (value: { events: []; running: false }) => void
     let rejectSend: ((reason: Error) => void) | undefined
     const pendingSend = new Promise((_, reject) => {
       rejectSend = reject
     })
-    transport.request.mockImplementation((method: string, params: unknown) =>
-      method === 'thread.sendTurn' ? pendingSend : request(method, params),
-    )
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.history') return new Promise((resolve) => (resolveHistory = resolve))
+      return method === 'thread.sendTurn' ? pendingSend : request(method, params)
+    })
 
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Old chat' }))
@@ -2635,6 +2663,10 @@ describe('live sessions', () => {
     expect(screen.getByTestId('thread').textContent).toContain('Keep this if restore wins')
     expect(screen.getByText('Working')).toBeTruthy()
     expect((composer as HTMLTextAreaElement).value).toBe('')
+
+    await act(async () => resolveHistory({ events: [], running: false }))
+    expect(screen.getByTestId('thread').textContent).toContain('Keep this if restore wins')
+    expect(screen.getByText('Working')).toBeTruthy()
 
     await act(async () => {
       rejectSend?.(new Error('cannot start a turn while restoring a checkpoint'))

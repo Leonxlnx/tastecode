@@ -67,6 +67,10 @@ function localId(prefix = ''): string {
   return `${prefix}${uuid ?? `${Date.now().toString(36)}-${localIdSequence++}`}`
 }
 
+export function createOptimisticMessageId(): string {
+  return localId(OPTIMISTIC_PREFIX)
+}
+
 export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
   switch (event.type) {
     case 'turn.started':
@@ -139,39 +143,22 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       return { ...state, reviews: { ...state.reviews, [event.review.id]: event.review } }
 
     case 'item.started': {
-      // The agent echoes the user's message back as a canonical item. Drop our
-      // optimistic copy when it arrives, so the message does not appear twice.
-      // Matched from the tail: sending the same text twice must reconcile the
-      // newest placeholder, not resurrect the oldest one.
-      const optimisticIndex =
-        event.item.role === 'user'
-          ? state.items.findLastIndex(
-              (item) =>
-                item.id.startsWith(OPTIMISTIC_PREFIX) &&
-                (event.item.text === undefined || item.text === event.item.text),
-            )
-          : -1
-      if (optimisticIndex < 0) {
-        // An early delta may already have created this item as a placeholder;
-        // fill it in rather than appending a duplicate row.
-        const existingIndex = state.items.findIndex((item) => item.id === event.item.id)
-        if (existingIndex >= 0) {
-          // Completion is terminal. A buffered or retried start may arrive
-          // after restored history and must never resurrect finished work.
-          if (state.items[existingIndex]?.status !== 'started') return state
-          const items = state.items.slice()
-          const streamed = items[existingIndex]?.text
-          items[existingIndex] = {
-            ...event.item,
-            ...(event.item.text || !streamed ? {} : { text: streamed }),
-          }
-          return { ...state, items }
+      // An early delta may already have created this item as a placeholder;
+      // fill it in rather than appending a duplicate row.
+      const existingIndex = state.items.findIndex((item) => item.id === event.item.id)
+      if (existingIndex >= 0) {
+        // Completion is terminal. A buffered or retried start may arrive
+        // after restored history and must never resurrect finished work.
+        if (state.items[existingIndex]?.status !== 'started') return state
+        const items = state.items.slice()
+        const streamed = items[existingIndex]?.text
+        items[existingIndex] = {
+          ...event.item,
+          ...(event.item.text || !streamed ? {} : { text: streamed }),
         }
-        return { ...state, items: [...state.items, event.item] }
+        return { ...state, items }
       }
-      const items = state.items.slice()
-      items[optimisticIndex] = event.item
-      return { ...state, items }
+      return { ...state, items: [...state.items, event.item] }
     }
 
     case 'item.delta': {
@@ -358,28 +345,38 @@ export function activeTurnIsSearching(items: Item[], turnId: string | undefined)
 }
 
 /** Local echo, so the user's own message appears the instant they hit send. */
-export function appendUserMessage(state: ThreadState, text: string): ThreadState {
+export function appendUserMessage(
+  state: ThreadState,
+  text: string,
+  id = createOptimisticMessageId(),
+  createdAt = Date.now(),
+): ThreadState {
   return {
     ...state,
     items: [
       ...state.items,
       {
-        id: localId(OPTIMISTIC_PREFIX),
+        id,
         turnId: '',
         type: 'message',
         role: 'user',
         status: 'completed',
         text,
-        createdAt: Date.now(),
+        createdAt,
       },
     ],
   }
 }
 
 /** Immediate local turn state while the server resumes or starts the real turn. */
-export function beginOptimisticTurn(state: ThreadState, text: string): ThreadState {
+export function beginOptimisticTurn(
+  state: ThreadState,
+  text: string,
+  itemId = createOptimisticMessageId(),
+  createdAt = Date.now(),
+): ThreadState {
   return {
-    ...appendUserMessage(state, text),
+    ...appendUserMessage(state, text, itemId, createdAt),
     running: true,
     activeTurn: { id: localId('local-turn:'), startedAt: Date.now() },
     plan: [],
@@ -388,15 +385,22 @@ export function beginOptimisticTurn(state: ThreadState, text: string): ThreadSta
 }
 
 /** A prompt that the server queued belongs on the shelf, not in the transcript yet. */
-export function removeQueuedOptimisticMessage(state: ThreadState, text: string): ThreadState {
-  let index = -1
-  for (let itemIndex = state.items.length - 1; itemIndex >= 0; itemIndex -= 1) {
-    const item = state.items[itemIndex]
-    if (item?.id.startsWith(OPTIMISTIC_PREFIX) && item.role === 'user' && item.text === text) {
-      index = itemIndex
-      break
-    }
-  }
+export function removeOptimisticMessage(state: ThreadState, itemId: string): ThreadState {
+  const index = state.items.findIndex((item) => item.id === itemId)
   if (index < 0) return state
-  return { ...state, items: state.items.filter((_, itemIndex) => itemIndex !== index) }
+  const items = state.items.slice()
+  items.splice(index, 1)
+  return { ...state, items }
+}
+
+export function replaceOptimisticMessage(
+  state: ThreadState,
+  itemId: string,
+  canonical: Item,
+): ThreadState {
+  const index = state.items.findIndex((item) => item.id === itemId)
+  if (index < 0) return state
+  const items = state.items.slice()
+  items[index] = canonical
+  return { ...state, items }
 }
