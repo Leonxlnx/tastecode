@@ -2770,7 +2770,7 @@ describe('live sessions', () => {
     )
   })
 
-  it('restores a rejected indeterminate queue while another turn is running', async () => {
+  it('restores rejected indeterminate queues while another turn is running', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -2809,6 +2809,8 @@ describe('live sessions', () => {
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
     fireEvent.change(composer, { target: { value: 'Queue this next' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.change(composer, { target: { value: 'Then queue this' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
 
     expect(screen.getByLabelText('Queued prompts').textContent).toContain('Queue this next')
     expect(screen.getByTestId('thread').textContent).not.toContain('Queue this next')
@@ -2823,7 +2825,9 @@ describe('live sessions', () => {
       reconnecting = true
       for (const listener of transport.stateListeners) listener('open')
     })
-    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe('Queue this next'))
+    await waitFor(() =>
+      expect((composer as HTMLTextAreaElement).value).toBe('Queue this next\n\nThen queue this'),
+    )
     expect(screen.queryByLabelText('Queued prompts')).toBeNull()
   })
 
