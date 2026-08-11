@@ -1,7 +1,6 @@
 import type { ProviderId } from '@harness/contracts'
 import { describe, expect, it } from 'vitest'
 import {
-  agentMark,
   agentPresentation,
   connectionMark,
   providerPresentation,
@@ -23,13 +22,10 @@ describe('provider presentation', () => {
   })
 
   it('uses an ACP source name and mark instead of the generic transport identity', () => {
-    expect(
-      sourcePresentation({
-        provider: 'acp',
-        sourceName: 'Gemini CLI',
-        mark: agentMark('gemini'),
-      }),
-    ).toEqual({ label: 'Gemini CLI', mark: 'gemini' })
+    expect(sourcePresentation({ provider: 'acp', sourceName: 'My Agent', mark: 'acp' })).toEqual({
+      label: 'My Agent',
+      mark: 'acp',
+    })
   })
 
   it.each([

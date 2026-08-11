@@ -83,6 +83,18 @@ function SessionSearchComponent(props: {
     }))
   }, [props.projects])
 
+  const sourceNames = useMemo(() => {
+    const names = new Map<string, string>()
+    for (const project of props.projects) {
+      for (const session of project.sessions) {
+        if (session.provider === 'acp' && session.agent) {
+          names.set(`${project.path}\0${session.id}`, agentPresentation(session.agent).label)
+        }
+      }
+    }
+    return names
+  }, [props.projects])
+
   const titleResults = useMemo<DisplaySearchResult[]>(() => {
     if (!searchable) return []
     const normalizedQuery = terms.join(' ')
@@ -109,9 +121,7 @@ function SessionSearchComponent(props: {
           threadId: session.id,
           threadTitle: session.title,
           provider: session.provider,
-          ...(session.provider === 'acp' && session.agent
-            ? { sourceName: agentPresentation(session.agent).label }
-            : {}),
+          sourceName: sourceNames.get(`${project.path}\0${session.id}`),
           createdAt: session.createdAt,
           turnId: undefined,
           titleParts: highlightText(session.title, terms),
@@ -125,7 +135,7 @@ function SessionSearchComponent(props: {
       .sort((left, right) => left.rank - right.rank || right.createdAt - left.createdAt)
       .slice(0, MAX_TITLE_RESULTS)
       .map(({ rank: _rank, ...result }) => result)
-  }, [projectPath, props.projects, provider, searchable, terms])
+  }, [projectPath, props.projects, provider, searchable, sourceNames, terms])
 
   const displayResults = useMemo<DisplaySearchResult[]>(
     () => [
@@ -137,13 +147,14 @@ function SessionSearchComponent(props: {
         threadId: result.threadId,
         threadTitle: result.threadTitle,
         provider: result.provider,
+        sourceName: sourceNames.get(`${result.projectPath}\0${result.threadId}`),
         createdAt: result.createdAt,
         turnId: result.turnId,
         titleParts: [{ text: result.threadTitle, highlighted: false }],
         snippet: result.snippet,
       })),
     ],
-    [results, titleResults],
+    [results, sourceNames, titleResults],
   )
 
   useEffect(() => input.current?.focus(), [])

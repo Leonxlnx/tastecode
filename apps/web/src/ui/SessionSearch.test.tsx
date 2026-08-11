@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { SessionSearchResult } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Transport } from '../transport.js'
@@ -181,8 +181,15 @@ describe('cross-session search', () => {
     expect(screen.getByRole('option', { name: /Second result/ })).toBeTruthy()
   })
 
-  it('shows an ACP title match with its source product name', () => {
-    const transport = { request: vi.fn(async () => ({ results: [], nextCursor: null })) }
+  it('shows ACP title and content matches with their source product name', async () => {
+    const transport = {
+      request: vi.fn(async () => ({
+        results: [
+          { ...RESULT, threadId: 'gemini-thread', threadTitle: 'Gemini roadmap', provider: 'acp' },
+        ],
+        nextCursor: null,
+      })),
+    }
     render(
       <SessionSearch
         transport={transport as unknown as Transport}
@@ -192,8 +199,9 @@ describe('cross-session search', () => {
       />,
     )
 
-    expect(screen.getByRole('option', { name: 'ACP' })).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Search every chat'), { target: { value: 'gemini' } })
-    expect(screen.getByRole('option', { name: /Gemini roadmap.*Gemini CLI/ })).toBeTruthy()
+    await waitFor(() => {
+      expect(screen.getAllByRole('option', { name: /Gemini roadmap.*Gemini CLI/ })).toHaveLength(2)
+    })
   })
 })
