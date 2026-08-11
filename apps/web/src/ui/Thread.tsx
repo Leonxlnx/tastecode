@@ -57,6 +57,7 @@ import type { Checkpoint } from './RollbackDialog.js'
  */
 export function Thread(props: {
   items: Item[]
+  projectPath?: string | undefined
   running: boolean
   searching?: boolean
   activeTurn: { id: string; startedAt: number } | undefined
@@ -349,6 +350,7 @@ export function Thread(props: {
                 >
                   <Row
                     item={item}
+                    projectPath={props.projectPath}
                     hidden={suppressed}
                     activity={activityLead ? activityGroup.items : undefined}
                     elapsedMs={presentation?.elapsedMs}
@@ -566,6 +568,7 @@ function isActivity(item: Item): boolean {
 
 const Row = memo(function Row({
   item,
+  projectPath,
   hidden,
   activity,
   elapsedMs,
@@ -579,6 +582,7 @@ const Row = memo(function Row({
   onRevertCheckpoint,
 }: {
   item: Item
+  projectPath: string | undefined
   hidden: boolean
   activity: Item[] | undefined
   elapsedMs: number | undefined
@@ -601,7 +605,14 @@ const Row = memo(function Row({
   }
 
   if (activity) {
-    return <CompletionRail activity={activity} elapsedMs={elapsedMs ?? 0} settling={settling} />
+    return (
+      <CompletionRail
+        activity={activity}
+        elapsedMs={elapsedMs ?? 0}
+        projectPath={projectPath}
+        settling={settling}
+      />
+    )
   }
 
   // The user's own words get a surface so the eye can find where each exchange
@@ -644,9 +655,18 @@ const Row = memo(function Row({
     return (
       <div className={`reply${live ? ' is-streaming' : ''}`}>
         {showCompletionRail ? (
-          <CompletionRail activity={[]} elapsedMs={elapsedMs ?? 0} settling={settling} />
+          <CompletionRail
+            activity={[]}
+            elapsedMs={elapsedMs ?? 0}
+            projectPath={projectPath}
+            settling={settling}
+          />
         ) : null}
-        <Markdown text={text} streaming={live && item.status === 'started'} />
+        <Markdown
+          text={text}
+          projectPath={projectPath}
+          streaming={live && item.status === 'started'}
+        />
         {finalResponse && !live && item.status === 'completed' && text ? (
           <ResponseActions text={text} createdAt={item.createdAt} />
         ) : null}
@@ -712,10 +732,12 @@ function checkpointFor(item: Item, checkpoints: Checkpoint[]): Checkpoint | unde
 function CompletionRail({
   activity,
   elapsedMs,
+  projectPath,
   settling,
 }: {
   activity: Item[]
   elapsedMs: number
+  projectPath: string | undefined
   settling: boolean
 }) {
   const label = `Worked for ${workedFor(elapsedMs)}`
@@ -750,6 +772,13 @@ function CompletionRail({
         <div className="activity__reveal-clip">
           <div className="activity__body">
             {visibleActivity.map((item) => {
+              if (item.type === 'message') {
+                return (
+                  <div className="activity__message" key={item.id}>
+                    <Markdown text={item.text ?? ''} projectPath={projectPath} />
+                  </div>
+                )
+              }
               const detail = activityDetail(item)
               return (
                 <div className="activity__item" key={item.id}>

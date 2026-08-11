@@ -1,4 +1,12 @@
-import { memo, useEffect, useState, type ComponentPropsWithoutRef } from 'react'
+import {
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentPropsWithoutRef,
+} from 'react'
 import {
   Check,
   Copy,
@@ -12,6 +20,8 @@ import {
   ZoomOut,
 } from 'lucide-react'
 import { Streamdown, type Components, type IconMap } from 'streamdown'
+import { revealProjectFile } from '../bridge.js'
+import { preserveProjectFileLinks, projectFileReference } from '../project-file-link.js'
 import { FileTypeIcon, isFileReference } from './FileTypeIcon.js'
 import { onHighlighterChange, plainCodePlugin, shikiPlugin } from './highlighter.js'
 
@@ -45,9 +55,37 @@ function InlineCode({ children, node: _node, ...props }: InlineCodeProps) {
 
 type MarkdownLinkProps = ComponentPropsWithoutRef<'a'> & { node?: unknown }
 
+const ProjectPathContext = createContext<string | undefined>(undefined)
+
 function MarkdownLink({ children, href, node: _node, ...props }: MarkdownLinkProps) {
+  const projectPath = useContext(ProjectPathContext)
   const filePath = href ? localFileReferencePath(href) : undefined
   if (filePath) {
+    if (projectPath) {
+      const reference = projectFileReference(filePath, projectPath)
+      if (reference?.kind === 'safe') {
+        return (
+          <button
+            className="md-file-link md-file-link--action"
+            type="button"
+            title={`Show ${reference.path} in its folder`}
+            onClick={() => void revealProjectFile(reference.path, projectPath)}
+          >
+            <FileTypeIcon path={reference.path} />
+            {children}
+          </button>
+        )
+      }
+      if (reference?.kind === 'blocked') {
+        return (
+          <span className="md-file-link md-file-link--blocked" title={reference.reason}>
+            <FileTypeIcon path={reference.path} />
+            {children}
+            <span className="md-file-link__reason">{reference.reason}</span>
+          </span>
+        )
+      }
+    }
     return (
       <span className="md-file-link" title={href}>
         <FileTypeIcon path={filePath} />
@@ -78,6 +116,7 @@ function localFileReferencePath(href: string): string | undefined {
   }
 
   const localPath =
+    decoded.startsWith('/__harness/project-file/') ||
     decoded.startsWith('/') ||
     decoded.startsWith('\\\\') ||
     /^file:\/\//i.test(decoded) ||
@@ -128,31 +167,36 @@ const STREAM_ANIMATION = {
 export const Markdown = memo(function Markdown({
   text,
   streaming = false,
+  projectPath,
 }: {
   text: string
   streaming?: boolean
+  projectPath?: string | undefined
 }) {
   // Shiki loads grammars in the background. This is the one re-render that
   // swaps plain code for coloured code once they arrive — the layout box is
   // identical either way, so nothing moves.
   const [, bump] = useState(0)
   useEffect(() => onHighlighterChange(() => bump((n) => n + 1)), [])
+  const renderedText = useMemo(() => preserveProjectFileLinks(text), [text])
 
   return (
-    <Streamdown
-      className="md"
-      // A zero-stagger fade softens irregular provider chunks without putting
-      // the text behind a second, slower reveal timeline.
-      mode="streaming"
-      isAnimating={streaming}
-      animated={STREAM_ANIMATION}
-      parseIncompleteMarkdown
-      plugins={streaming ? STREAMDOWN_STREAMING_PLUGINS : STREAMDOWN_PLUGINS}
-      controls={STREAMDOWN_CONTROLS}
-      icons={STREAMDOWN_ICONS}
-      components={STREAMDOWN_COMPONENTS}
-    >
-      {text}
-    </Streamdown>
+    <ProjectPathContext.Provider value={projectPath}>
+      <Streamdown
+        className="md"
+        // A zero-stagger fade softens irregular provider chunks without putting
+        // the text behind a second, slower reveal timeline.
+        mode="streaming"
+        isAnimating={streaming}
+        animated={STREAM_ANIMATION}
+        parseIncompleteMarkdown
+        plugins={streaming ? STREAMDOWN_STREAMING_PLUGINS : STREAMDOWN_PLUGINS}
+        controls={STREAMDOWN_CONTROLS}
+        icons={STREAMDOWN_ICONS}
+        components={STREAMDOWN_COMPONENTS}
+      >
+        {renderedText}
+      </Streamdown>
+    </ProjectPathContext.Provider>
   )
 })

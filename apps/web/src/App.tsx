@@ -2886,6 +2886,7 @@ export function App() {
                 {activeId ? (
                   <Thread
                     items={thread.items}
+                    projectPath={activePath}
                     running={thread.running}
                     searching={searching}
                     activeTurn={thread.activeTurn}

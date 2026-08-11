@@ -55,6 +55,7 @@ describe('Markdown inline references', () => {
         text={
           'Updated [Sidebar.tsx](/Users/blueemi/Developer/harness/apps/web/src/ui/Sidebar.tsx:119).'
         }
+        projectPath="/Users/blueemi/Developer/harness"
       />,
     )
 
@@ -65,6 +66,45 @@ describe('Markdown inline references', () => {
     expect(reference.closest('a')).toBeNull()
     expect(reference.closest('.md-file-link')?.querySelector('.lucide-atom')).toBeTruthy()
     expect(screen.queryByText('Open external link?')).toBeNull()
+  })
+
+  it('preserves a cross-drive Windows file URL for project-aware rendering', () => {
+    const { container } = render(
+      <Markdown
+        text={'Updated [index.html](file:///E:/randomtesting/A_personalharness/site/index.html).'}
+        projectPath="E:\randomtesting\A_personalharness\site"
+      />,
+    )
+
+    expect(container.textContent).not.toContain('[blocked]')
+    const action = screen.getByRole('button', { name: 'index.html' })
+    expect(action.getAttribute('title')).toContain(
+      'E:\\randomtesting\\A_personalharness\\site\\index.html',
+    )
+  })
+
+  it('explains why a local file link outside the project is unavailable', () => {
+    const { container } = render(
+      <Markdown
+        text={'See [secret.txt](file:///E:/randomtesting/A_personalharness/secret.txt).'}
+        projectPath="E:\randomtesting\A_personalharness\site"
+      />,
+    )
+
+    expect(container.textContent).not.toContain('[blocked]')
+    expect(screen.getByText('This file is outside the selected project')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'secret.txt' })).toBeNull()
+  })
+
+  it('explains why network file links are unavailable', () => {
+    render(
+      <Markdown
+        text={'See [secret.txt](file://server/share/secret.txt).'}
+        projectPath="E:\randomtesting\A_personalharness\site"
+      />,
+    )
+
+    expect(screen.getByText('Network file links are not allowed')).toBeTruthy()
   })
 })
 

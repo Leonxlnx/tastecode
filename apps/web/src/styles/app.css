@@ -6029,6 +6029,33 @@
   white-space: nowrap;
 }
 
+.md button.md-file-link--action {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--file-reference);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-decoration-offset: 0.14em;
+}
+
+.md button.md-file-link--action:hover {
+  text-decoration-color: currentColor;
+}
+
+.md .md-file-link--blocked {
+  color: var(--text-3);
+  white-space: normal;
+}
+
+.md .md-file-link__reason {
+  margin-left: 0.35em;
+  color: var(--text-3);
+  font-size: 0.82em;
+}
+
 /* A backticked label already carries its own file icon. Linked file references
    own the icon so plain labels and code labels render identically. */
 .md .md-file-link .md-file-ref .md-file-ref__icon {
