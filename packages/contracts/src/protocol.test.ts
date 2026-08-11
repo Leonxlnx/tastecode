@@ -14,6 +14,7 @@ import {
   PushSchema,
   RequestSchema,
   ResponseSchema,
+  SessionSearchResultSchema,
   SidebarSettingsSchema,
   SkillCapabilitiesSchema,
   SkillSchema,
@@ -688,10 +689,49 @@ describe('protocol envelopes', () => {
       (result) => `${result.threadId}:${result.turnId}:${result.createdAt}`,
     )
     expect(new Set(legacyKeys).size).toBe(1)
-    expect(parsed.results.map((result) => Reflect.get(result, 'resultId'))).toEqual([
-      'event:41',
-      'event:42',
-    ])
+    expect(parsed.results.map((result) => result.resultId)).toEqual(['event:41', 'event:42'])
+  })
+
+  it('keeps search result identity compatible across staged clients', () => {
+    const result = {
+      projectPath: 'D:\\project',
+      projectName: 'project',
+      threadId: 'thread-1',
+      threadTitle: 'Find the regression',
+      turnId: 'turn-2',
+      provider: 'codex' as const,
+      createdAt: 42,
+      snippet: [{ text: 'regression', highlighted: true }],
+    }
+
+    expect(SessionSearchResultSchema.parse(result)).toEqual(result)
+    expect(
+      SessionSearchResultSchema.omit({ resultId: true }).parse({
+        ...result,
+        resultId: 'event:41',
+      }),
+    ).toEqual(result)
+  })
+
+  it('bounds opaque search result identities', () => {
+    const result = {
+      projectPath: 'D:\\project',
+      projectName: 'project',
+      threadId: 'thread-1',
+      threadTitle: 'Find the regression',
+      turnId: 'turn-2',
+      provider: 'codex' as const,
+      createdAt: 42,
+      snippet: [{ text: 'regression', highlighted: true }],
+    }
+
+    expect(SessionSearchResultSchema.parse({ ...result, resultId: 'x'.repeat(256) }).resultId).toBe(
+      'x'.repeat(256),
+    )
+    expect(() => SessionSearchResultSchema.parse({ ...result, resultId: '' })).toThrow()
+    expect(() =>
+      SessionSearchResultSchema.parse({ ...result, resultId: 'x'.repeat(257) }),
+    ).toThrow()
   })
 
   it('validates the persisted inbox lifecycle without conflating archive state', () => {
