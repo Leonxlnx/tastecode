@@ -564,6 +564,32 @@ describe('local usage history', () => {
     expect(cache.generatedAt).toBe(123)
     expect(cache.sources).toContainEqual({ provider: 'codex', label: 'Codex', available: true })
   })
+
+  it('treats a structurally invalid cache as a cold start', async () => {
+    const root = temporaryDirectory()
+    const cacheFile = path.join(root, 'usage.json')
+    writeFileSync(
+      cacheFile,
+      JSON.stringify({
+        version: 5,
+        generatedAt: 123,
+        files: [
+          {
+            path: path.join(root, 'session.jsonl'),
+            provider: 'codex',
+            mtimeMs: 1,
+            size: 1,
+          },
+        ],
+        sources: [],
+        warnings: [],
+      }),
+    )
+
+    const cache = await readUsageCache(cacheFile)
+    expect(cache.generatedAt).toBe(0)
+    expect(cache.files).toEqual([])
+  })
 })
 
 function usageService(

@@ -23,6 +23,12 @@ const CACHE_VERSION = 5
 const PARSE_CONCURRENCY = 8
 const AUTO_REFRESH_INTERVAL_MS = 60_000
 const HARNESS_USAGE_CACHE_MS = 5_000
+const LOCAL_USAGE_PROVIDERS = [
+  'codex',
+  'claude-code',
+  'grok',
+  'opencode',
+] as const satisfies readonly ProviderId[]
 
 type TokenCounts = LocalUsageRecord['tokens']
 
@@ -550,7 +556,7 @@ export async function readUsageCache(filePath: string): Promise<UsageCache> {
     const value = JSON.parse(await readFile(filePath, 'utf8')) as Partial<UsageCache>
     if (
       (value.version === CACHE_VERSION || value.version === 3 || value.version === 2) &&
-      Array.isArray(value.files)
+      isCachedUsageFiles(value.files)
     ) {
       const cachedProviders = new Set(value.files.map((file) => file.provider))
       return {
@@ -563,13 +569,70 @@ export async function readUsageCache(filePath: string): Promise<UsageCache> {
               ...source,
               available: cachedProviders.has(source.provider),
             })),
-        warnings: Array.isArray(value.warnings) ? value.warnings : [],
+        warnings: Array.isArray(value.warnings)
+          ? value.warnings.filter((warning): warning is string => typeof warning === 'string')
+          : [],
       }
     }
   } catch {
     // A missing or interrupted cache write is equivalent to a cold start.
   }
   return emptyUsageCache()
+}
+
+function isCachedUsageFiles(value: unknown): value is CachedUsageFile[] {
+  return Array.isArray(value) && value.every(isCachedUsageFile)
+}
+
+function isCachedUsageFile(value: unknown): value is CachedUsageFile {
+  const file = objectValue(value)
+  return Boolean(
+    file &&
+    typeof file['path'] === 'string' &&
+    LOCAL_USAGE_PROVIDERS.some((provider) => provider === file['provider']) &&
+    nonNegativeNumber(file['mtimeMs']) &&
+    nonNegativeNumber(file['size']) &&
+    Array.isArray(file['entries']) &&
+    file['entries'].every(isLocalUsageRecord),
+  )
+}
+
+function isLocalUsageRecord(value: unknown): value is LocalUsageRecord {
+  const entry = objectValue(value)
+  const tokens = objectValue(entry?.['tokens'])
+  if (
+    !entry ||
+    !tokens ||
+    typeof entry['date'] !== 'string' ||
+    typeof entry['model'] !== 'string' ||
+    typeof entry['sessionId'] !== 'string' ||
+    typeof entry['longContext'] !== 'boolean'
+  ) {
+    return false
+  }
+  const requiredCounts = [
+    'uncachedInputTokens',
+    'cachedInputTokens',
+    'cacheWrite5mInputTokens',
+    'cacheWrite1hInputTokens',
+    'outputTokens',
+    'reasoningTokens',
+    'providerReportedCostUsd',
+  ] as const
+  if (!requiredCounts.every((field) => nonNegativeNumber(tokens[field]))) return false
+  return ['observedInputTokens', 'processedTokens'].every(
+    (field) => tokens[field] === undefined || nonNegativeNumber(tokens[field]),
+  )
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+function nonNegativeNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
 }
 
 function emptyUsageCache(): UsageCache {
