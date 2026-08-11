@@ -288,4 +288,111 @@ describe('cross-session search', () => {
     expect(document.activeElement).toBe(contentHit)
     expect(contentHit.getAttribute('aria-selected')).toBe('true')
   })
+
+  it('appends indistinguishable content hits without duplicate React keys', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        results: [{ ...RESULT, resultId: 'message:item-1' }],
+        nextCursor: 'page-2',
+      })
+      .mockResolvedValueOnce({
+        results: [{ ...RESULT, resultId: 'message:item-2' }],
+        nextCursor: null,
+      })
+    render(
+      <SessionSearch
+        transport={{ request } as unknown as Transport}
+        projects={[]}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText('Search every chat'), {
+      target: { value: 'regression' },
+    })
+    expect(await screen.findAllByRole('option', { name: /Fix regression/ })).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load more results' }))
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('option', { name: /Fix regression/ })).toHaveLength(2)
+    })
+    expect(consoleError.mock.calls.flat().join(' ')).not.toContain('same key')
+  })
+
+  it('retains title and content row instances across equivalent rerenders', async () => {
+    const transport = {
+      request: vi.fn(async () => ({
+        results: [{ ...RESULT, resultId: 'message:item-1' }],
+        nextCursor: null,
+      })),
+    }
+    const view = render(
+      <SessionSearch
+        transport={transport as unknown as Transport}
+        projects={PROJECTS}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText('Search every chat'), {
+      target: { value: 'regression' },
+    })
+    const titleHit = screen.getByRole('option', { name: /Regression planning/ })
+    const contentHit = await screen.findByRole('option', { name: /Fix regression/ })
+
+    view.rerender(
+      <SessionSearch
+        transport={transport as unknown as Transport}
+        projects={PROJECTS.map((project) => ({
+          ...project,
+          sessions: project.sessions.map((session) => ({ ...session })),
+        }))}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+
+    expect(screen.getByRole('option', { name: /Regression planning/ })).toBe(titleHit)
+    expect(screen.getByRole('option', { name: /Fix regression/ })).toBe(contentHit)
+  })
+
+  it('keeps duplicate legacy results usable when resultId is omitted', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const onSelect = vi.fn()
+    const transport = {
+      request: vi.fn(async () => ({ results: [RESULT, { ...RESULT }], nextCursor: null })),
+    }
+    const view = render(
+      <SessionSearch
+        transport={transport as unknown as Transport}
+        projects={[]}
+        onSelect={onSelect}
+        onClose={() => undefined}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText('Search every chat'), {
+      target: { value: 'regression' },
+    })
+    const legacyHits = await screen.findAllByRole('option', { name: /Fix regression/ })
+
+    fireEvent.click(legacyHits[0]!)
+    fireEvent.click(legacyHits[1]!)
+    expect(onSelect).toHaveBeenCalledTimes(2)
+    expect(consoleError.mock.calls.flat().join(' ')).not.toContain('same key')
+
+    view.rerender(
+      <SessionSearch
+        transport={transport as unknown as Transport}
+        projects={[{ path: 'D:\\other', name: 'Other', sessions: [] }]}
+        onSelect={onSelect}
+        onClose={() => undefined}
+      />,
+    )
+    const rerenderedHits = screen.getAllByRole('option', { name: /Fix regression/ })
+    expect(rerenderedHits[0]).toBe(legacyHits[0])
+    expect(rerenderedHits[1]).toBe(legacyHits[1])
+  })
 })

@@ -115,7 +115,7 @@ function SessionSearchComponent(props: {
               ? 1
               : 2
         matches.push({
-          key: `title:${session.id}`,
+          key: `title:${JSON.stringify([project.path, session.id])}`,
           kind: 'title',
           projectName,
           threadId: session.id,
