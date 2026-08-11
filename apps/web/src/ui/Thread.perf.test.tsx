@@ -246,4 +246,29 @@ describe('thread at scale', () => {
     // put the old history on the per-frame path. A forward scan reads 1,003.
     expect(itemReads).toBeLessThan(10)
   })
+
+  it('stops before history while the active turn has no canonical items', () => {
+    const history = makeFixtureThread(1_000)
+    const turnlessSteer: Item = {
+      id: 'local:steer',
+      turnId: '',
+      type: 'message',
+      role: 'user',
+      status: 'completed',
+      text: 'Keep going',
+      createdAt: Date.now(),
+    }
+    let itemReads = 0
+    const items = new Proxy([...history, turnlessSteer], {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && /^\d+$/.test(property)) itemReads += 1
+        return Reflect.get(target, property, receiver)
+      },
+    })
+
+    expect(activeTurnIsSearching(items, 'active-turn')).toBe(false)
+    // During the optimistic/canonical startup gap there is no active item to
+    // find. The previous turn must still bound this per-render lookup.
+    expect(itemReads).toBeLessThan(10)
+  })
 })

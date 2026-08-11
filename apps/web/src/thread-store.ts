@@ -333,7 +333,6 @@ export function reduceEventLog(
 export function activeTurnIsSearching(items: Item[], turnId: string | undefined): boolean {
   if (!turnId) return false
 
-  let enteredActiveTurn = false
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index]
     if (!item) continue
@@ -341,11 +340,11 @@ export function activeTurnIsSearching(items: Item[], turnId: string | undefined)
       // A locally echoed steer has no canonical turn id yet and may sit
       // between two live items from the same provider turn.
       if (item.turnId === '') continue
-      if (enteredActiveTurn) break
-      continue
+      // The active turn is the transcript tail. If its first canonical item
+      // has not arrived yet, the previous turn is already the stopping point.
+      break
     }
 
-    enteredActiveTurn = true
     if (
       item.type === 'tool_call' &&
       item.status === 'started' &&
