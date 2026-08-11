@@ -4,9 +4,11 @@ import type { ItemGuardianApprovalReviewCompletedNotification } from './generate
 import type { ItemGuardianApprovalReviewStartedNotification } from './generated/v2/ItemGuardianApprovalReviewStartedNotification'
 import type { RemoteControlStatusChangedNotification } from './generated/v2/RemoteControlStatusChangedNotification'
 import type { ThreadStatusChangedNotification } from './generated/v2/ThreadStatusChangedNotification'
+import type { WarningNotification } from './generated/v2/WarningNotification'
 import {
   CODEX_APPROVAL,
   CODEX_CAPABILITIES,
+  formatCodexWarning,
   isIgnorableCodexNotification,
   mapAutoApprovalReview,
   mapUserInputRequest,
@@ -57,6 +59,12 @@ const capturedThreadStatus = {
   status: { type: 'idle' },
 } satisfies ThreadStatusChangedNotification
 
+const capturedWarning = {
+  threadId: 'captured-thread',
+  message:
+    'Under-development features enabled: default_mode_request_user_input. Under-development features are incomplete and may behave unpredictably.',
+} satisfies WarningNotification
+
 describe('Codex notifications', () => {
   it('silences the captured startup-only remote-control status', () => {
     expect(capturedRemoteControlStatus.status).toBe('disabled')
@@ -67,6 +75,10 @@ describe('Codex notifications', () => {
   it('silences the captured provider thread status', () => {
     expect(capturedThreadStatus.status).toEqual({ type: 'idle' })
     expect(isIgnorableCodexNotification('thread/status/changed')).toBe(true)
+  })
+
+  it('preserves the captured Codex warning text', () => {
+    expect(formatCodexWarning(capturedWarning)).toBe(`Codex warning: ${capturedWarning.message}`)
   })
 })
 

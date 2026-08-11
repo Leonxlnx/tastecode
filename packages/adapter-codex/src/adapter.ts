@@ -27,6 +27,7 @@ import type { ItemCompletedNotification } from './generated/v2/ItemCompletedNoti
 import type { ItemStartedNotification } from './generated/v2/ItemStartedNotification'
 import type { ThreadStartedNotification } from './generated/v2/ThreadStartedNotification'
 import type { ThreadTokenUsageUpdatedNotification } from './generated/v2/ThreadTokenUsageUpdatedNotification'
+import type { WarningNotification } from './generated/v2/WarningNotification'
 import type { TurnPlanUpdatedNotification } from './generated/v2/TurnPlanUpdatedNotification'
 import type { ThreadStartResponse } from './generated/v2/ThreadStartResponse'
 import type { ThreadResumeResponse } from './generated/v2/ThreadResumeResponse'
@@ -71,9 +72,13 @@ import {
 
 const CLIENT_NAME = 'personal-harness'
 
-/** Codex reports this after every handshake even when remote control is disabled. */
+/** Provider state Harness either does not expose or already derives from shared events. */
 export function isIgnorableCodexNotification(method: string): boolean {
   return method === 'remoteControl/status/changed' || method === 'thread/status/changed'
+}
+
+export function formatCodexWarning(notification: WarningNotification): string {
+  return `Codex warning: ${notification.message}`
 }
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'])
@@ -937,6 +942,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         this.emit('login', p)
         return
       }
+
+      case 'warning':
+        this.emit('log', formatCodexWarning(params as WarningNotification))
+        return
 
       case 'mcpServer/startupStatus/updated': {
         const p = params as McpServerStatusUpdatedNotification
