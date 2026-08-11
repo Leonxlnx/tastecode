@@ -990,6 +990,7 @@ export class Orchestrator {
     if (
       this.#activeTurns.has(threadId) ||
       this.#startingTurns.has(threadId) ||
+      this.#drainingQueues.has(threadId) ||
       this.#designFlows.has(threadId) ||
       this.#designInputByThread.has(threadId) ||
       queue.length > 0
@@ -1052,6 +1053,8 @@ export class Orchestrator {
     if (!session.capabilities.steer || !session.steer) {
       throw new Error('this agent does not support steering a running turn')
     }
+    if (this.#drainingQueues.has(threadId))
+      throw new Error('a queued prompt is already being steered')
 
     const queue = this.#queuedTurns.get(threadId) ?? []
     const index = queue.findIndex((item) => item.id === queuedTurnId)
@@ -1072,9 +1075,13 @@ export class Orchestrator {
     const ownedTurnKey = activeTurnId ? userTurnKey(threadId, activeTurnId) : undefined
     const alreadyOwned = ownedTurnKey ? this.#serverOwnedUserTurns.has(ownedTurnKey) : false
     if (ownedTurnKey && item.clientSubmissionId) this.#serverOwnedUserTurns.add(ownedTurnKey)
+    this.#drainingQueues.add(threadId)
     try {
       await session.steer(threadId, item.text, item.attachments)
-      if (activeTurnId && item.clientSubmissionId) {
+      if (!this.#activeTurns.has(threadId) || this.#activeTurnIds.get(threadId) !== activeTurnId) {
+        queue.splice(index, 0, item)
+        this.#notifyQueue(threadId)
+      } else if (activeTurnId && item.clientSubmissionId) {
         this.#recordUserSubmission(threadId, activeTurnId, {
           id: item.clientSubmissionId,
           text: item.text,
@@ -1087,8 +1094,13 @@ export class Orchestrator {
       this.#notifyQueue(threadId)
       throw error
     } finally {
-      if (item.clientSubmissionId) claimedIds.delete(item.clientSubmissionId)
-      if (claimedIds.size === 0) this.#inFlightSubmissionIds.delete(threadId)
+      if (item.clientSubmissionId) {
+        claimedIds.delete(item.clientSubmissionId)
+        if (claimedIds.size === 0 && this.#inFlightSubmissionIds.get(threadId) === claimedIds)
+          this.#inFlightSubmissionIds.delete(threadId)
+      }
+      this.#drainingQueues.delete(threadId)
+      void this.#drainQueue(threadId)
     }
   }
 

@@ -609,7 +609,7 @@ describe('durable user submissions', () => {
     try {
       const thread = await orchestrator.startThread('codex', '/repo')
       const session = sessions[0]!
-      session.turnIds.push('turn-current', 'turn-queued')
+      session.turnIds.push('turn-current', 'turn-queued', 'turn-steered')
       await orchestrator.submitTurn(thread.id, 'Repeat this.', [], {}, 'submission-current')
       session.emit(turnStarted(thread.id, 'turn-current'))
       const queued = await orchestrator.submitTurn(
@@ -627,26 +627,24 @@ describe('durable user submissions', () => {
         'submission-steered',
       )
       if (!queued.queued || !steered.queued) throw new Error('expected queued submissions')
-      expect([queued.queuedTurn.id, steered.queuedTurn.id]).toEqual([
-        'submission-queued',
-        'submission-steered',
-      ])
       session.steerBarriers.push(new Promise<void>((resolve) => (releaseSteer = resolve)))
       steering = orchestrator.steerQueuedTurn(thread.id, steered.queuedTurn.id)
       await vi.waitFor(() => expect(orchestrator.queue(thread.id).items).toHaveLength(1))
       await expect(
         orchestrator.submitTurn(thread.id, 'Repeat this.', [], {}, 'submission-steered'),
       ).rejects.toThrow(/clientSubmissionId.*already used/)
-      await expect(
-        orchestrator.steerQueuedTurn(thread.id, queued.queuedTurn.id),
-      ).rejects.toThrow(/already being steered/)
+      await expect(orchestrator.steerQueuedTurn(thread.id, queued.queuedTurn.id)).rejects.toThrow(
+        /already being steered/,
+      )
       session.emit({ type: 'turn.completed', turnId: 'turn-current', status: 'completed' })
       expect(session.sent).toEqual(['Repeat this.'])
       releaseSteer()
       await steering
-      session.emit(userMessage('provider-steer', 'Repeat this.', 'turn-current'))
       await vi.waitFor(() => expect(session.sent).toEqual(['Repeat this.', 'Repeat this.']))
       session.emit(turnStarted(thread.id, 'turn-queued'))
+      session.emit({ type: 'turn.completed', turnId: 'turn-queued', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toHaveLength(3))
+      session.emit(turnStarted(thread.id, 'turn-steered'))
       const users = store
         .history(thread.id)
         .map(({ event }) => event)
@@ -656,8 +654,8 @@ describe('durable user submissions', () => {
         )
       expect(users.map(({ item }) => [item.id, item.turnId])).toEqual([
         ['submission-current', 'turn-current'],
-        ['submission-steered', 'turn-current'],
         ['submission-queued', 'turn-queued'],
+        ['submission-steered', 'turn-steered'],
       ])
     } finally {
       releaseSteer()
