@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Transport } from '../transport.js'
 import { SkillsSettings } from './SkillsSettings.js'
 
@@ -14,8 +14,10 @@ afterEach(() => {
 
 function client(request: (method: string, params: unknown) => Promise<unknown>): Transport {
   return {
+    state: 'open',
     request: vi.fn(request),
     on: vi.fn(() => () => {}),
+    onState: vi.fn(() => () => {}),
   } as unknown as Transport
 }
 
@@ -120,5 +122,41 @@ describe('Agent Skills settings', () => {
     expect(screen.queryByText('Discovering skills…')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
+  })
+
+  it('recovers inventory after the connection reopens', async () => {
+    let onState: ((state: 'open' | 'reconnecting') => void) | undefined
+    const transport = {
+      state: 'open',
+      request: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Connection to the server was lost.'))
+        .mockResolvedValueOnce({
+          capabilities: { inventory: true, configure: false, install: false },
+          skills: [],
+          errors: [],
+        }),
+      on: vi.fn(() => () => {}),
+      onState: vi.fn((listener: typeof onState) => {
+        onState = listener
+        return () => undefined
+      }),
+    } as unknown as Transport
+    render(
+      <SkillsSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    act(() => onState?.('reconnecting'))
+    act(() => onState?.('open'))
+
+    expect(await screen.findByText('No skills were discovered for this project.')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 })

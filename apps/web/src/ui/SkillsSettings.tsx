@@ -54,9 +54,18 @@ export function SkillsSettings(props: {
     const off = props.transport.on('skills.changed', ({ provider, projectPath }) => {
       if (provider === props.provider && projectPath === props.projectPath) void load()
     })
+    let reconnecting = props.transport.state === 'reconnecting'
+    const offState = props.transport.onState((state) => {
+      if (state === 'reconnecting') reconnecting = true
+      else if (state === 'open' && reconnecting) {
+        reconnecting = false
+        void load()
+      }
+    })
     return () => {
       active = false
       off()
+      offState()
     }
   }, [props.transport, props.provider, props.projectPath, reload])
 

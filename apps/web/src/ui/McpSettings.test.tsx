@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Transport } from '../transport.js'
 import { McpSettings } from './McpSettings.js'
 
@@ -10,7 +10,12 @@ afterEach(() => {
 })
 
 function client(request: (method: string) => Promise<unknown>): Transport {
-  return { request: vi.fn(request), on: vi.fn(() => () => {}) } as unknown as Transport
+  return {
+    state: 'open',
+    request: vi.fn(request),
+    on: vi.fn(() => () => {}),
+    onState: vi.fn(() => () => {}),
+  } as unknown as Transport
 }
 
 describe('MCP settings', () => {
@@ -131,9 +136,53 @@ describe('MCP settings', () => {
     await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
   })
 
+  it('recovers inventory after the connection reopens', async () => {
+    let onState: ((state: 'open' | 'reconnecting') => void) | undefined
+    const transport = {
+      state: 'open',
+      request: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Connection to the server was lost.'))
+        .mockResolvedValueOnce({
+          capabilities: {
+            inventory: true,
+            add: false,
+            update: false,
+            remove: false,
+            reload: false,
+            startOAuth: false,
+            cancelOAuth: false,
+          },
+          servers: [],
+        }),
+      on: vi.fn(() => () => {}),
+      onState: vi.fn((listener: typeof onState) => {
+        onState = listener
+        return () => undefined
+      }),
+    } as unknown as Transport
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    act(() => onState?.('reconnecting'))
+    act(() => onState?.('open'))
+
+    expect(await screen.findByText('No MCP servers are configured for this project.')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('refreshes when background MCP discovery finishes', async () => {
     const listeners = new Map<string, (value: never) => void>()
     const transport = {
+      state: 'open',
       request: vi.fn(async () => ({
         capabilities: {
           inventory: true,
@@ -150,6 +199,7 @@ describe('MCP settings', () => {
         listeners.set(channel, listener)
         return () => listeners.delete(channel)
       }),
+      onState: vi.fn(() => () => {}),
     } as unknown as Transport
     render(
       <McpSettings

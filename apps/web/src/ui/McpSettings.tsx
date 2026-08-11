@@ -80,9 +80,18 @@ export function McpSettings(props: {
     const offChanged = props.transport.on('mcp.changed', ({ provider, projectPath }) => {
       if (provider === props.provider && projectPath === props.projectPath) void refresh()
     })
+    let reconnecting = props.transport.state === 'reconnecting'
+    const offState = props.transport.onState((state) => {
+      if (state === 'reconnecting') reconnecting = true
+      else if (state === 'open' && reconnecting) {
+        reconnecting = false
+        void refresh()
+      }
+    })
     return () => {
       offOAuth()
       offChanged()
+      offState()
     }
   }, [props.transport, props.provider, props.projectPath, refresh])
 
