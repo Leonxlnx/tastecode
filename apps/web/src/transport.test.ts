@@ -87,6 +87,36 @@ describe('Transport', () => {
     expect(userFrames(second)).toHaveLength(0)
   })
 
+  it('answers a request queued during reconnect without replaying it on another socket', async () => {
+    const transport = new Transport('ws://test')
+    transport.connect()
+    const first = FakeSocket.instances[0]!
+    first.open()
+    first.close()
+
+    const queued = transport.request('system.info', {})
+    expect(userFrames(first)).toHaveLength(0)
+    vi.advanceTimersByTime(0)
+    const second = FakeSocket.instances[1]!
+    second.open()
+    expect(userFrames(second)).toHaveLength(1)
+
+    const frame = JSON.parse(userFrames(second)[0]!) as { id: string }
+    second.onmessage?.({
+      data: JSON.stringify({
+        id: frame.id,
+        result: { serverVersion: 'test', protocolVersion: 1, platform: 'test' },
+      }),
+    })
+    await expect(queued).resolves.toMatchObject({ serverVersion: 'test' })
+
+    second.close()
+    vi.advanceTimersByTime(0)
+    const third = FakeSocket.instances[2]!
+    third.open()
+    expect(userFrames(third)).toHaveLength(0)
+  })
+
   it('replaces a half-dead open socket when a wake-up health check times out', async () => {
     const transport = new Transport('ws://test')
     transport.connect()
@@ -207,5 +237,59 @@ describe('Transport', () => {
 
     expect(gap).toHaveBeenCalledOnce()
     expect(gap).toHaveBeenCalledWith(2, 3)
+  })
+
+  it('ignores pushes from a socket replaced by a failed health check', async () => {
+    const transport = new Transport('ws://test')
+    const listener = vi.fn()
+    transport.on('thread.event', listener)
+    transport.connect()
+    const first = FakeSocket.instances[0]!
+    first.open()
+    first.onmessage?.({
+      data: JSON.stringify({ channel: 'thread.event', sequence: 1, data: { source: 'first' } }),
+    })
+
+    const checking = transport.ensureHealthy(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await checking
+    await vi.runOnlyPendingTimersAsync()
+    const second = FakeSocket.instances[1]!
+    second.open()
+
+    first.onmessage?.({
+      data: JSON.stringify({ channel: 'thread.event', sequence: 2, data: { source: 'stale' } }),
+    })
+    second.onmessage?.({
+      data: JSON.stringify({ channel: 'thread.event', sequence: 1, data: { source: 'second' } }),
+    })
+
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(listener).not.toHaveBeenCalledWith({ source: 'stale' })
+  })
+
+  it('starts push sequence tracking fresh on each connection', () => {
+    const transport = new Transport('ws://test')
+    const gap = vi.fn()
+    transport.onSequenceGap(gap)
+    transport.connect()
+    const first = FakeSocket.instances[0]!
+    first.open()
+    first.onmessage?.({
+      data: JSON.stringify({ channel: 'server.welcome', sequence: 1, data: {} }),
+    })
+    first.onmessage?.({
+      data: JSON.stringify({ channel: 'thread.event', sequence: 2, data: {} }),
+    })
+    first.close()
+    vi.advanceTimersByTime(0)
+
+    const second = FakeSocket.instances[1]!
+    second.open()
+    second.onmessage?.({
+      data: JSON.stringify({ channel: 'server.welcome', sequence: 1, data: {} }),
+    })
+
+    expect(gap).not.toHaveBeenCalled()
   })
 })
