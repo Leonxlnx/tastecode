@@ -113,6 +113,18 @@ describe('project file links', () => {
     expect(preserved.endsWith('ordinary text ')).toBe(true)
   })
 
+  it('bounds work across many incomplete file-link candidates', () => {
+    const candidates = Array.from(
+      { length: 2_000 },
+      (_, index) => `[file ${index}](file:///E:/project/${index}.ts`,
+    ).join('\n')
+    const markdown = `\`\`\`md\n${candidates}\n\`\`\``
+    const started = performance.now()
+
+    expect(preserveProjectFileLinks(markdown)).toBe(markdown)
+    expect(performance.now() - started).toBeLessThan(100)
+  })
+
   it('accepts Windows files on another drive when they stay inside the project', () => {
     expect(
       projectFileReference(

@@ -10,12 +10,15 @@ export type ProjectFileReference =
 export function preserveProjectFileLinks(markdown: string): string {
   const candidatePattern = /\]\(\s*<?(?:file:\/\/|[a-z]:[\\/])/gi
   let parseEnd = 0
+  let remainingScan = markdown.length
   for (const candidate of markdown.matchAll(candidatePattern)) {
-    const newline = markdown.indexOf('\n', candidate.index)
-    parseEnd = Math.max(
-      parseEnd,
-      resourceEndAt(markdown, candidate.index + 1) ?? (newline < 0 ? markdown.length : newline + 1),
-    )
+    const resource = resourceEndAt(markdown, candidate.index + 1, remainingScan)
+    remainingScan -= resource.scanned
+    if (resource.end === undefined) {
+      parseEnd = markdown.length
+      break
+    }
+    parseEnd = Math.max(parseEnd, resource.end)
   }
   if (parseEnd === 0) return markdown
 
@@ -61,11 +64,16 @@ export function preserveProjectFileLinks(markdown: string): string {
   return result + markdown.slice(cursor)
 }
 
-function resourceEndAt(markdown: string, openingParenthesis: number): number | undefined {
+function resourceEndAt(
+  markdown: string,
+  openingParenthesis: number,
+  maximumScan: number,
+): { end?: number; scanned: number } {
   let depth = 0
   let quote: string | undefined
   let angle = false
-  for (let index = openingParenthesis; index < markdown.length; index += 1) {
+  const scanEnd = Math.min(markdown.length, openingParenthesis + maximumScan)
+  for (let index = openingParenthesis; index < scanEnd; index += 1) {
     const character = markdown[index]
     if (character === '\\') {
       index += 1
@@ -82,9 +90,11 @@ function resourceEndAt(markdown: string, openingParenthesis: number): number | u
     if (character === '<') angle = true
     else if (character === '"' || character === "'") quote = character
     else if (character === '(') depth += 1
-    else if (character === ')' && --depth === 0) return index + 1
+    else if (character === ')' && --depth === 0) {
+      return { end: index + 1, scanned: index + 1 - openingParenthesis }
+    }
   }
-  return undefined
+  return { scanned: scanEnd - openingParenthesis }
 }
 
 function encodeFileHref(href: string): string {
