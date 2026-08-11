@@ -672,6 +672,90 @@ describe('cross-session search', () => {
     expect(store.searchSessions({ query: 'private-thought-marker' }).results).toEqual([])
   })
 
+  it('identifies otherwise indistinguishable content results without exposing their source', () => {
+    const duplicate = message('opaque collision marker')
+    store.append('t1', duplicate)
+    store.append('t1', duplicate)
+
+    const results = store.searchSessions({ query: 'opaque collision' }).results
+    const resultIds = results.map((result) => result.resultId)
+
+    expect(results).toHaveLength(2)
+    expect(new Set(resultIds).size).toBe(2)
+    for (const resultId of resultIds) {
+      expect(resultId).toMatch(/^sr1_[A-Za-z0-9_-]{22}$/)
+      expect(resultId!.length).toBeLessThanOrEqual(256)
+      expect(resultId).not.toContain('/repo')
+      expect(resultId).not.toContain('t1')
+      expect(resultId).not.toContain('opaque')
+    }
+  })
+
+  it('keeps result identity stable across queries, pagination, and title changes', () => {
+    for (let index = 0; index < 3; index += 1) {
+      store.append('t1', message(`stableidentity shared result-${index}`))
+    }
+
+    const first = store.searchSessions({ query: 'stableidentity', limit: 2 })
+    const second = store.searchSessions({
+      query: 'stableidentity',
+      cursor: first.nextCursor!,
+      limit: 2,
+    })
+    const original = [...first.results, ...second.results]
+    store.renameThread('t1', 'Renamed after the first search')
+    const repeated = store.searchSessions({ query: 'stableidentity shared' }).results
+    const identityBySnippet = new Map(
+      original.map((result) => [result.snippet.map((part) => part.text).join(''), result.resultId]),
+    )
+
+    expect(original.map((result) => result.resultId)).not.toContain(undefined)
+    expect(new Set(original.map((result) => result.resultId)).size).toBe(3)
+    expect(
+      repeated.map((result) => [
+        result.snippet.map((part) => part.text).join(''),
+        result.resultId,
+      ]),
+    ).toEqual(
+      expect.arrayContaining(
+        [...identityBySnippet].map(([snippet, resultId]) => [snippet, resultId]),
+      ),
+    )
+    expect(repeated.every((result) => result.threadTitle === 'Renamed after the first search')).toBe(
+      true,
+    )
+  })
+
+  it('preserves result identity across process restarts and index rebuilds', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-search-identity-'))
+    const file = path.join(dir, 'identity.db')
+    const seeded = new Store(file)
+    seeded.addProject('/private/repository', 'Private')
+    seeded.addThread({
+      id: 'private-thread',
+      projectPath: '/private/repository',
+      provider: 'codex',
+      title: 'Private title',
+    })
+    seeded.append('private-thread', message('persistent opaque identity'))
+    const before = seeded.searchSessions({ query: 'persistent' }).results[0]?.resultId
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('session_search_v1')
+    raw.close()
+
+    const rebuilt = new Store(file)
+    try {
+      const after = rebuilt.searchSessions({ query: 'identity' }).results[0]?.resultId
+      expect(before).toBeDefined()
+      expect(after).toBe(before)
+    } finally {
+      rebuilt.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('ranks exact words ahead of prefixes and ignores punctuation-only queries', () => {
     store.append('t1', message('testing the performance budget'))
     store.append('t1', message('test the performance budget'))
