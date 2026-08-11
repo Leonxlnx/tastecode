@@ -293,11 +293,12 @@ export function Menu(props: {
         (item) => !currentPanel.contains(item),
       )
       const anchorIndex = restoreTarget.current ? tabbable.indexOf(restoreTarget.current) : -1
-      event.preventDefault()
+      const next = anchorIndex < 0 ? undefined : tabbable[anchorIndex + (event.shiftKey ? -1 : 1)]
+      restoreTarget.current = undefined
       closeMenu()
-      if (anchorIndex >= 0) {
-        const offset = event.shiftKey ? -1 : 1
-        tabbable[(anchorIndex + offset + tabbable.length) % tabbable.length]?.focus()
+      if (next) {
+        event.preventDefault()
+        next.focus()
       }
       return
     }
