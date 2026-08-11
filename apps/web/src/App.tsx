@@ -26,7 +26,7 @@ import type {
 import { isDesktop, isMacOS, pickFolder, setDesktopTheme } from './bridge.js'
 import { isEditableTarget, matchesShortcut, SHORTCUTS } from './shortcuts.js'
 import { warmHighlighter } from './ui/highlighter.js'
-import { Transport } from './transport.js'
+import { isIndeterminateRequestError, Transport } from './transport.js'
 import {
   activeTurnIsSearching,
   appendUserMessage,
@@ -167,6 +167,15 @@ type CustomModel = {
   displayName: string
 }
 
+type PendingSubmission = {
+  id: string
+  text: string
+  createdAt: number
+  kind: 'turn' | 'queue' | 'steer'
+  indeterminate: boolean
+  optimisticTurn?: NonNullable<ThreadState['activeTurn']>
+}
+
 function readCustomModels(): CustomModel[] {
   try {
     const raw = readSetting(CUSTOM_MODELS_KEY)
@@ -245,6 +254,7 @@ export function App() {
   // intentional: streamed deltas for a background session should not rerender
   // the active thread, while selecting it still gets the latest state at once.
   const threadStates = useRef(new Map<string, ThreadState>())
+  const pendingSubmissions = useRef(new Map<string, Map<string, PendingSubmission>>())
   /** Live events parked while a history fetch for the thread is in flight. */
   const historyBuffers = useRef(
     new Map<string, Set<Array<{ seq: number | undefined; event: DomainEvent }>>>(),
@@ -577,6 +587,38 @@ export function App() {
     sidebarSettingsRef.current = next
     setSidebarSettings(next)
   }, [])
+  const settleQueuedSubmissions = useCallback(
+    (threadId: string, items: QueuedTurn[], running?: boolean) => {
+      const pending = pendingSubmissions.current.get(threadId)
+      if (!pending) return
+      const queuedIds = new Set(items.map((item) => item.id))
+      let next = threadStates.current.get(threadId) ?? emptyThread
+      const rejected: PendingSubmission[] = []
+      for (const submission of pending.values()) {
+        const durable = next.items.some((item) => item.id === submission.id && item.turnId !== '')
+        if (durable || queuedIds.has(submission.id)) {
+          pending.delete(submission.id)
+          if (queuedIds.has(submission.id) && submission.kind !== 'queue') {
+            next = removePendingSubmission(next, submission)
+          }
+        } else if (running === false && submission.indeterminate) {
+          pending.delete(submission.id)
+          next = removePendingSubmission(next, submission)
+          rejected.push(submission)
+        }
+      }
+      if (pending.size === 0) pendingSubmissions.current.delete(threadId)
+      threadStates.current.set(threadId, next)
+      if (threadId === activeIdRef.current) setThread(next)
+      for (const submission of rejected) {
+        setComposerDraft((current) => ({
+          text: submission.text,
+          request: (current?.request ?? 0) + 1,
+        }))
+      }
+    },
+    [],
+  )
   const acceptSidebarSettings = useCallback(
     (settings: SidebarSettings) => {
       sidebarSettingsSourceRevision.current += 1
@@ -625,6 +667,12 @@ export function App() {
 
       const next = reduce(applyPendingDeltas(threadId), event)
       threadStates.current.set(threadId, next)
+      if (
+        (event.type === 'item.started' || event.type === 'item.completed') &&
+        event.item.role === 'user'
+      ) {
+        deletePendingSubmission(pendingSubmissions.current, threadId, event.item.id)
+      }
 
       if (threadId === activeIdRef.current) {
         if (liveFlush !== undefined && pendingThreadDeltas.current.size === 0) {
@@ -671,6 +719,7 @@ export function App() {
     const offQueue = transport.on('thread.queue', ({ threadId, items, canSteer }) => {
       queueRevisions.current.set(threadId, (queueRevisions.current.get(threadId) ?? 0) + 1)
       queueStates.current.set(threadId, { items, canSteer })
+      settleQueuedSubmissions(threadId, items)
       if (threadId !== activeIdRef.current) return
       setQueuedTurns(items)
       setCanSteerQueue(canSteer)
@@ -718,7 +767,7 @@ export function App() {
       offState()
       transport.close()
     }
-  }, [transport, acceptSidebarSettings])
+  }, [transport, acceptSidebarSettings, settleQueuedSubmissions])
 
   useEffect(() => {
     let cancelled = false
@@ -1023,20 +1072,25 @@ export function App() {
       historyBuffers.current.set(threadId, buffers)
       historyOwners.current.set(threadId, buffer)
       try {
-        const { events } = await transport.request('thread.history', { threadId })
+        const { events, running } = await transport.request('thread.history', { threadId })
         // A reconnect may have started a fresher request. The older response
         // still owns its live-event buffer, but it must not replace newer
         // durable history after resolving last.
         if (historyOwners.current.get(threadId) !== buffer) return
         const restored = reduceEventLog(emptyThread, events)
         const lastSeq = events.at(-1)?.seq ?? 0
-        const withLive = reduceEventLog(restored, buffer, lastSeq)
+        const withLive = preservePendingSubmissions(
+          reduceEventLog(restored, buffer, lastSeq),
+          pendingSubmissions.current,
+          threadId,
+        )
         // The buffered events above already include any deltas still waiting
         // for a frame, so do not apply that pending batch a second time.
         pendingThreadDeltas.current.delete(threadId)
         threadStates.current.set(threadId, withLive)
         setProjects((current) => updateSession(current, threadId, markSessionRead))
         if (activeIdRef.current === threadId) setThread(withLive)
+        return { running }
       } finally {
         buffers.delete(buffer)
         if (buffers.size === 0) historyBuffers.current.delete(threadId)
@@ -1051,11 +1105,10 @@ export function App() {
   resync.current = () => {
     const id = activeIdRef.current
     if (id && !id.startsWith('pending:')) {
-      void loadHistory(id).catch(() => undefined)
-      void transport
-        .request('thread.queue', { threadId: id })
-        .then((state) => {
+      void Promise.all([loadHistory(id), transport.request('thread.queue', { threadId: id })])
+        .then(([history, state]) => {
           queueStates.current.set(id, state)
+          if (history) settleQueuedSubmissions(id, state.items, history.running)
           if (activeIdRef.current === id) {
             setQueuedTurns(state.items)
             setCanSteerQueue(state.canSteer)
@@ -1098,6 +1151,7 @@ export function App() {
       .then((state) => {
         if (cancelled || (queueRevisions.current.get(activeId) ?? 0) !== revision) return
         queueStates.current.set(activeId, state)
+        settleQueuedSubmissions(activeId, state.items)
         if (activeIdRef.current !== activeId) return
         setQueuedTurns(state.items)
         setCanSteerQueue(state.canSteer)
@@ -1106,7 +1160,7 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [transport, activeId])
+  }, [transport, activeId, settleQueuedSubmissions])
 
   useEffect(() => {
     if (!activeId || thread.running) {
@@ -1669,6 +1723,19 @@ export function App() {
           { id: optimisticQueueId, text, attachments, createdAt: Date.now() },
         ])
       }
+      const optimisticState = threadStates.current.get(threadId) ?? emptyThread
+      const pendingOptimisticTurn = optimisticState.activeTurn
+      const pendingSubmission: PendingSubmission = {
+        id: optimisticItemId,
+        text,
+        createdAt: optimisticCreatedAt,
+        kind: wasRunning ? (steering ? 'steer' : 'queue') : 'turn',
+        indeterminate: false,
+      }
+      if (pendingOptimisticTurn && pendingOptimisticTurn.id === optimisticTurnId) {
+        pendingSubmission.optimisticTurn = pendingOptimisticTurn
+      }
+      putPendingSubmission(pendingSubmissions.current, threadId, pendingSubmission)
 
       // A session named after what was asked of it is findable a week later;
       // "New session" is not. Named from the first message only.
@@ -1711,6 +1778,12 @@ export function App() {
         turnAccepted = true
         const current = threadStates.current.get(threadId) ?? emptyThread
         if (result.queued) {
+          const pending = getPendingSubmission(
+            pendingSubmissions.current,
+            threadId,
+            optimisticItemId,
+          )
+          if (pending) pending.kind = steering ? 'steer' : 'queue'
           if (steering) {
             await transport.request('thread.steerQueuedTurn', {
               threadId,
@@ -1734,17 +1807,34 @@ export function App() {
               return next
             })
             if (!wasRunning) {
-              const reconciled = removeOptimisticMessage(current, optimisticItemId)
+              const reconciled = pending ? removePendingSubmission(current, pending) : current
               threadStates.current.set(threadId, reconciled)
               if (threadId === activeIdRef.current) setThread(reconciled)
             }
+            deletePendingSubmission(pendingSubmissions.current, threadId, optimisticItemId)
           }
         } else if (!result.queued && wasRunning) {
+          const pending = getPendingSubmission(
+            pendingSubmissions.current,
+            threadId,
+            optimisticItemId,
+          )
+          if (pending) pending.kind = 'turn'
           if (optimisticQueueId) {
             updateQueue(threadId, (items) => items.filter((item) => item.id !== optimisticQueueId))
           }
         }
       } catch (error) {
+        if (isIndeterminateRequestError(error)) {
+          const pending = getPendingSubmission(
+            pendingSubmissions.current,
+            threadId,
+            optimisticItemId,
+          )
+          if (pending) pending.indeterminate = true
+          return
+        }
+        deletePendingSubmission(pendingSubmissions.current, threadId, optimisticItemId)
         if (optimisticQueueId) {
           updateQueue(threadId, (items) => items.filter((item) => item.id !== optimisticQueueId))
         }
@@ -3041,6 +3131,65 @@ function affectsSessionStatus(event: DomainEvent): boolean {
     event.type === 'approval.resolved' ||
     event.type === 'thread.error'
   )
+}
+
+function putPendingSubmission(
+  pending: Map<string, Map<string, PendingSubmission>>,
+  threadId: string,
+  submission: PendingSubmission,
+): void {
+  const thread = pending.get(threadId) ?? new Map()
+  thread.set(submission.id, submission)
+  pending.set(threadId, thread)
+}
+
+function getPendingSubmission(
+  pending: Map<string, Map<string, PendingSubmission>>,
+  threadId: string,
+  submissionId: string,
+): PendingSubmission | undefined {
+  return pending.get(threadId)?.get(submissionId)
+}
+
+function deletePendingSubmission(
+  pending: Map<string, Map<string, PendingSubmission>>,
+  threadId: string,
+  submissionId: string,
+): void {
+  const thread = pending.get(threadId)
+  if (!thread) return
+  thread.delete(submissionId)
+  if (thread.size === 0) pending.delete(threadId)
+}
+
+function preservePendingSubmissions(
+  state: ThreadState,
+  pending: Map<string, Map<string, PendingSubmission>>,
+  threadId: string,
+): ThreadState {
+  const thread = pending.get(threadId)
+  if (!thread) return state
+  let next = state
+  for (const submission of thread.values()) {
+    if (next.items.some((item) => item.id === submission.id && item.turnId !== '')) {
+      thread.delete(submission.id)
+      continue
+    }
+    if (submission.kind === 'queue') continue
+    next = appendUserMessage(next, submission.text, submission.id, submission.createdAt)
+    if (!next.running && submission.optimisticTurn) {
+      next = { ...next, running: true, activeTurn: submission.optimisticTurn }
+    }
+  }
+  if (thread.size === 0) pending.delete(threadId)
+  return next
+}
+
+function removePendingSubmission(state: ThreadState, submission: PendingSubmission): ThreadState {
+  const next = removeOptimisticMessage(state, submission.id)
+  return submission.optimisticTurn && next.activeTurn?.id === submission.optimisticTurn.id
+    ? { ...next, running: false, activeTurn: undefined }
+    : next
 }
 
 function statusFor(

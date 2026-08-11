@@ -36,8 +36,11 @@ const utilityRenders = vi.hoisted(() => ({
 const appRenders = vi.hoisted(() => vi.fn())
 
 vi.mock('./transport.js', () => ({
-  IndeterminateRequestError: class IndeterminateRequestError extends Error {},
-  isIndeterminateRequestError: (error: unknown) => error instanceof Error && error.name === 'IndeterminateRequestError',
+  IndeterminateRequestError: class IndeterminateRequestError extends Error {
+    override name = 'IndeterminateRequestError'
+  },
+  isIndeterminateRequestError: (error: unknown) =>
+    error instanceof Error && error.name === 'IndeterminateRequestError',
   Transport: class {
     constructor(url: string) {
       transport.urls.push(url)
@@ -2716,7 +2719,7 @@ describe('live sessions', () => {
         expect(screen.getByTestId('thread').getAttribute('data-started-at')).toBe('7')
         expect((composer as HTMLTextAreaElement).value).toBe('')
       } else {
-        expect(screen.queryByText('Submit exactly once')).toBeNull()
+        expect(within(screen.getByTestId('thread')).queryByText('Submit exactly once')).toBeNull()
         expect(screen.queryByText('Working')).toBeNull()
         expect((composer as HTMLTextAreaElement).value).toBe('Submit exactly once')
         expect(localStartedAt).not.toBeNull()
@@ -2768,7 +2771,7 @@ describe('live sessions', () => {
     )
   })
 
-  it('queues Enter submissions while the active session is running', async () => {
+  it('keeps an indeterminate queued submission through reconnect resync', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -2780,13 +2783,21 @@ describe('live sessions', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    let resolveSend: ((result: unknown) => void) | undefined
-    const sendResult = new Promise((resolve) => {
-      resolveSend = resolve
-    })
+    let reconnecting = false
+    let submissionId = ''
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'thread.sendTurn') {
-        return sendResult
+        submissionId = (params as { clientSubmissionId: string }).clientSubmissionId
+        return Promise.reject(new IndeterminateRequestError('socket lost'))
+      }
+      if (method === 'thread.history' && reconnecting) {
+        return Promise.resolve({ events: [], running: true })
+      }
+      if (method === 'thread.queue' && reconnecting) {
+        return Promise.resolve({
+          items: [{ id: submissionId, text: 'Queue this next', attachments: [], createdAt: 1 }],
+          canSteer: true,
+        })
       }
       return request(method, params)
     })
@@ -2806,23 +2817,18 @@ describe('live sessions', () => {
     expect(screen.getByLabelText('Queued prompts').textContent).toContain('Queue this next')
     expect(screen.getByTestId('thread').textContent).not.toContain('Queue this next')
 
-    let submissionId = ''
     await waitFor(() => {
       const call = transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')
       submissionId = (call?.[1] as { clientSubmissionId?: string }).clientSubmissionId ?? ''
       expect(submissionId).toMatch(/^local:/)
     })
-    await act(async () =>
-      resolveSend?.({
-        queued: true,
-        queuedTurn: {
-          id: submissionId,
-          text: 'Queue this next',
-          attachments: [],
-          createdAt: 1,
-        },
-      }),
-    )
+    act(() => {
+      for (const listener of transport.stateListeners) listener('reconnecting')
+      reconnecting = true
+      for (const listener of transport.stateListeners) listener('open')
+    })
+    await screen.findByRole('button', { name: 'Remove Queue this next from queue' })
+    expect((composer as HTMLTextAreaElement).value).toBe('')
     fireEvent.click(screen.getByRole('button', { name: 'Remove Queue this next from queue' }))
     expect(transport.request).toHaveBeenCalledWith('thread.deleteQueuedTurn', {
       threadId: 'thread-1',
@@ -2937,6 +2943,7 @@ describe('live sessions', () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     let submissionId = ''
+    let reconnecting = false
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'thread.history') {
         return Promise.resolve({
@@ -2967,6 +2974,22 @@ describe('live sessions', () => {
             attachments: [],
             createdAt: 1,
           },
+        })
+      }
+      if (method === 'thread.steerQueuedTurn') {
+        return Promise.reject(new IndeterminateRequestError('socket lost'))
+      }
+      if (method === 'thread.queue' && reconnecting) {
+        return Promise.resolve({
+          items: [
+            {
+              id: submissionId,
+              text: 'Use this direction now',
+              attachments: [],
+              createdAt: 1,
+            },
+          ],
+          canSteer: true,
         })
       }
       return request(method, params)
@@ -3004,22 +3027,17 @@ describe('live sessions', () => {
         queuedTurnId: submissionId,
       })
     })
-    emitThreadEvent('thread-1', {
-      type: 'item.completed',
-      item: {
-        id: submissionId,
-        turnId: 'turn-1',
-        type: 'message',
-        role: 'user',
-        status: 'completed',
-        text: 'Use this direction now',
-        createdAt: 1,
-      },
-    })
     expect(screen.getByText('Use this direction now').getAttribute('data-item-id')).toBe(
       submissionId,
     )
-    expect(screen.queryByLabelText('Queued prompts')).toBeNull()
+    act(() => {
+      for (const listener of transport.stateListeners) listener('reconnecting')
+      reconnecting = true
+      for (const listener of transport.stateListeners) listener('open')
+    })
+    await screen.findByRole('button', { name: 'Remove Use this direction now from queue' })
+    expect(within(screen.getByTestId('thread')).queryByText('Use this direction now')).toBeNull()
+    expect((composer as HTMLTextAreaElement).value).toBe('')
   })
 
   it('shows the most recently active session first', async () => {

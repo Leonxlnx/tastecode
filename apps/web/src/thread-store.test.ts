@@ -198,7 +198,8 @@ describe('thread reducer', () => {
 
   it('projects the same elapsed time live and after replay', () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
-    const optimistic = beginOptimisticTurn(emptyThread, 'resume this chat')
+    const submissionId = 'local:submission-1'
+    const optimistic = beginOptimisticTurn(emptyThread, 'resume this chat', submissionId)
     now.mockRestore()
     const events: DomainEvent[] = [
       {
@@ -207,7 +208,7 @@ describe('thread reducer', () => {
       },
       {
         type: 'item.started',
-        item: item({ id: 'user', role: 'user', text: 'resume this chat', createdAt: 5_000 }),
+        item: item({ id: submissionId, role: 'user', text: 'resume this chat', createdAt: 5_000 }),
       },
       {
         type: 'item.completed',
@@ -223,6 +224,7 @@ describe('thread reducer', () => {
     )
 
     expect(live.turnTiming).toEqual(replayed.turnTiming)
+    expect(live).toEqual(replayed)
     expect(presentTurns(live.items, live.turnTiming).get('t1')?.elapsedMs).toBe(3_000)
     expect(presentTurns(replayed.items, replayed.turnTiming).get('t1')?.elapsedMs).toBe(3_000)
   })
