@@ -77,6 +77,29 @@ describe('profile settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
     await waitFor(() => expect(request).toHaveBeenCalledTimes(2))
   })
+
+  it('continues polling after a transient profile scan failure', async () => {
+    let call = 0
+    const request = vi.fn(async () => {
+      call += 1
+      if (call === 1) {
+        const result = historyResult()
+        result.scan = { status: 'scanning', filesProcessed: 3, filesTotal: 7 }
+        return result
+      }
+      if (call === 2) throw new Error('Temporary history failure')
+      return historyResult()
+    })
+    const transport = { request } as unknown as Transport
+
+    render(<ProfileSettings transport={transport} account={undefined} providerName="Codex" />)
+
+    expect(await screen.findByText(/Indexing local activity/)).toBeTruthy()
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(3), { timeout: 1_600 })
+    await waitFor(() => {
+      expect(screen.queryByText(/Indexing local activity/)).toBeNull()
+    })
+  })
 })
 
 function historyResult(): ResultOf<'usage.history'> {

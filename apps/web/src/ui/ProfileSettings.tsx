@@ -39,6 +39,11 @@ export function ProfileSettings(props: {
   useEffect(() => {
     let active = true
     let pollTimer: ReturnType<typeof setTimeout> | undefined
+    const schedulePoll = () => {
+      pollTimer = setTimeout(() => {
+        if (active) setRequestVersion((version) => version + 1)
+      }, 500)
+    }
     const refresh = forceRefresh.current
     forceRefresh.current = false
     setLoading(true)
@@ -49,14 +54,13 @@ export function ProfileSettings(props: {
         if (!active) return
         setData(result)
         if (result.scan.status === 'scanning') {
-          pollTimer = setTimeout(() => {
-            if (active) setRequestVersion((version) => version + 1)
-          }, 500)
+          schedulePoll()
         }
       })
       .catch((requestError: unknown) => {
         if (!active) return
         setError(requestError instanceof Error ? requestError.message : String(requestError))
+        if (data?.scan.status === 'scanning') schedulePoll()
       })
       .finally(() => {
         if (active) setLoading(false)
