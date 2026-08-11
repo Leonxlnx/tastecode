@@ -112,6 +112,13 @@ export type StartOptions = {
 
 export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>
 
+export type ProviderLimit = {
+  label: string
+  usedPercent: number
+  resetsAt?: number | undefined
+  valueLabel?: string | undefined
+}
+
 /**
  * Our three user-facing modes onto Codex's approval policy and sandbox.
  *
@@ -358,75 +365,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   }
 
   /** Subscription headroom as reported by Codex itself. */
-  async rateLimits(): Promise<
-    Array<{
-      label: string
-      usedPercent: number
-      resetsAt?: number | undefined
-      valueLabel?: string | undefined
-    }>
-  > {
+  async rateLimits(): Promise<ProviderLimit[]> {
     try {
       const response = await this.#call<GetAccountRateLimitsResponse>('account/rateLimits/read', {})
-      const buckets = response.rateLimitsByLimitId
-        ? Object.entries(response.rateLimitsByLimitId).filter(
-            (pair): pair is [string, NonNullable<(typeof pair)[1]>] => Boolean(pair[1]),
-          )
-        : [['codex', response.rateLimits] as const]
-      const rows: Array<{
-        label: string
-        usedPercent: number
-        resetsAt?: number | undefined
-        valueLabel?: string | undefined
-      }> = []
-      for (const [limitId, snapshot] of buckets) {
-        // Secondary buckets (e.g. Spark) carry their own name; the main
-        // bucket keeps the plain window labels users already know.
-        const prefix =
-          limitId === 'codex' ? '' : `${snapshot.limitName ?? titleCaseLimitId(limitId)} `
-        rows.push(
-          ...[snapshot.primary, snapshot.secondary].flatMap((window, index) => {
-            if (!window) return []
-            const resetsAt =
-              window.resetsAt === null
-                ? undefined
-                : window.resetsAt < 1_000_000_000_000
-                  ? window.resetsAt * 1000
-                  : window.resetsAt
-            return [
-              {
-                label:
-                  prefix +
-                  rateLimitLabel(window.windowDurationMins, index === 0 ? 'Primary' : 'Secondary'),
-                usedPercent: Math.max(0, Math.min(100, window.usedPercent)),
-                ...(resetsAt === undefined ? {} : { resetsAt }),
-              },
-            ]
-          }),
-        )
-      }
-      const credits = (response.rateLimitsByLimitId?.['codex'] ?? response.rateLimits).credits
-      if (credits?.hasCredits && credits.balance !== null) {
-        const balance = Math.max(0, Math.floor(Number(credits.balance)))
-        if (Number.isFinite(balance)) {
-          rows.push({
-            label: 'Credits',
-            usedPercent: 0,
-            valueLabel: credits.unlimited
-              ? 'Unlimited'
-              : `$${(balance * CREDIT_USD_RATE).toFixed(2)} · ${balance} credits`,
-          })
-        }
-      }
-      const resets = response.rateLimitResetCredits
-      if (resets && Number(resets.availableCount) > 0) {
-        rows.push({
-          label: 'Rate limit resets',
-          usedPercent: 0,
-          valueLabel: `${Number(resets.availableCount)} available`,
-        })
-      }
-      return rows
+      return mapCodexRateLimits(response)
     } catch {
       return []
     }
@@ -1043,6 +985,63 @@ function mcpLoginKey(threadId: string, server: string): string {
 
 /** Same USD-per-credit rate OpenAI's own surfaces use. */
 const CREDIT_USD_RATE = 0.04
+
+/** Pure mapping kept separate from the app-server transport for fixture tests. */
+export function mapCodexRateLimits(response: GetAccountRateLimitsResponse): ProviderLimit[] {
+  const buckets = response.rateLimitsByLimitId
+    ? Object.entries(response.rateLimitsByLimitId).filter(
+        (pair): pair is [string, NonNullable<(typeof pair)[1]>] => Boolean(pair[1]),
+      )
+    : [['codex', response.rateLimits] as const]
+  const rows: ProviderLimit[] = []
+  for (const [limitId, snapshot] of buckets) {
+    // Secondary buckets (e.g. Spark) carry their own name; the main
+    // bucket keeps the plain window labels users already know.
+    const prefix = limitId === 'codex' ? '' : `${snapshot.limitName ?? titleCaseLimitId(limitId)} `
+    rows.push(
+      ...[snapshot.primary, snapshot.secondary].flatMap((window, index) => {
+        if (!window) return []
+        const resetsAt =
+          window.resetsAt === null
+            ? undefined
+            : window.resetsAt < 1_000_000_000_000
+              ? window.resetsAt * 1000
+              : window.resetsAt
+        return [
+          {
+            label:
+              prefix +
+              rateLimitLabel(window.windowDurationMins, index === 0 ? 'Primary' : 'Secondary'),
+            usedPercent: Math.max(0, Math.min(100, window.usedPercent)),
+            ...(resetsAt === undefined ? {} : { resetsAt }),
+          },
+        ]
+      }),
+    )
+  }
+  const credits = (response.rateLimitsByLimitId?.['codex'] ?? response.rateLimits).credits
+  if (credits?.hasCredits && credits.balance !== null) {
+    const balance = Math.max(0, Math.floor(Number(credits.balance)))
+    if (Number.isFinite(balance)) {
+      rows.push({
+        label: 'Credits',
+        usedPercent: 0,
+        valueLabel: credits.unlimited
+          ? 'Unlimited'
+          : `$${(balance * CREDIT_USD_RATE).toFixed(2)} · ${balance} credits`,
+      })
+    }
+  }
+  const resets = response.rateLimitResetCredits
+  if (resets && Number(resets.availableCount) > 0) {
+    rows.push({
+      label: 'Rate limit resets',
+      usedPercent: 0,
+      valueLabel: `${Number(resets.availableCount)} available`,
+    })
+  }
+  return rows
+}
 
 function titleCaseLimitId(limitId: string): string {
   return limitId
