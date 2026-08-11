@@ -1126,11 +1126,17 @@ export class Orchestrator {
 
   /** Whether the agent is inside a turn, rather than merely attached to the session. */
   isTurnRunning(threadId: string): boolean {
-    return this.#activeTurns.has(threadId) || this.#startingTurns.has(threadId)
+    return (
+      this.#activeTurns.has(threadId) ||
+      this.#startingTurns.has(threadId) ||
+      this.#designStartingThreads.has(threadId)
+    )
   }
 
   inboxStatus(threadId: string): ThreadInboxStatus {
-    if (this.#startingTurns.has(threadId)) return 'starting'
+    if (this.#startingTurns.has(threadId) || this.#designStartingThreads.has(threadId)) {
+      return 'starting'
+    }
     if (this.#activeTurns.has(threadId)) return 'working'
     if ((this.#queuedTurns.get(threadId)?.length ?? 0) > 0) return 'queued'
 
@@ -1327,8 +1333,7 @@ export class Orchestrator {
       // must not start the turn it grabbed before the panic landed.
       this.#panicStopping ||
       this.#drainingQueues.has(threadId) ||
-      this.#activeTurns.has(threadId) ||
-      this.#startingTurns.has(threadId) ||
+      this.isTurnRunning(threadId) ||
       this.#designInputByThread.has(threadId)
     ) {
       return
@@ -1409,7 +1414,7 @@ export class Orchestrator {
    * action someone can regret. Nothing reachable this way is unrecoverable.
    */
   async restoreCheckpoint(threadId: string, checkpointId: number): Promise<{ undo: string }> {
-    if (this.#activeTurns.has(threadId) || this.#startingTurns.has(threadId)) {
+    if (this.isTurnRunning(threadId)) {
       throw new Error('cannot restore during a running turn')
     }
     if (this.#restoringThreads.has(threadId)) {
@@ -1445,7 +1450,7 @@ export class Orchestrator {
 
   /** Reverse the latest restore, including both files and conversation. */
   async undoRestore(threadId: string, token: string): Promise<void> {
-    if (this.#activeTurns.has(threadId) || this.#startingTurns.has(threadId)) {
+    if (this.isTurnRunning(threadId)) {
       throw new Error('cannot restore during a running turn')
     }
     if (this.#restoringThreads.has(threadId)) {
@@ -1620,6 +1625,7 @@ export class Orchestrator {
     this.#threadApprovals.delete(threadId)
     this.#activeTurns.delete(threadId)
     this.#startingTurns.delete(threadId)
+    this.#designStartingThreads.delete(threadId)
     this.#reviewingDiffs.delete(threadId)
     this.#queuedTurns.delete(threadId)
     this.#drainingQueues.delete(threadId)

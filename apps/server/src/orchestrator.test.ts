@@ -1668,6 +1668,39 @@ describe('rolling a session back', () => {
     }
   })
 
+  it('refuses restore and undo while an automatic design turn is still starting', async () => {
+    const { orchestrator, sessions } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'first task')
+    writeFileSync(path.join(repo, 'file.txt'), 'work to restore later\n')
+    const first = orchestrator.checkpoints(thread.id)[0]!
+    const { undo } = await orchestrator.restoreCheckpoint(thread.id, first.id)
+
+    await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+    const designCheckpoint = orchestrator.checkpoints(thread.id).at(-1)!
+    const session = sessions[0]!
+    session.release = () => {}
+    session.emit(message('not json', 's1-turn'))
+    session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    await vi.waitFor(() => expect(session.sent.at(-1)).toContain('failed validation'))
+
+    try {
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(true)
+      await expect(orchestrator.restoreCheckpoint(thread.id, designCheckpoint.id)).rejects.toThrow(
+        'cannot restore during a running turn',
+      )
+      await expect(orchestrator.undoRestore(thread.id, undo)).rejects.toThrow(
+        'cannot restore during a running turn',
+      )
+
+      orchestrator.close(thread.id)
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+    } finally {
+      session.release?.()
+      await orchestrator.disposeAll()
+    }
+  })
+
   it('refuses a second restore while the first restore is still in progress', async () => {
     const { orchestrator } = harness()
     const thread = await orchestrator.startThread('codex', repo)
