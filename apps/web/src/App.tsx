@@ -60,6 +60,7 @@ import {
   connectionMark,
   customModelChoice,
   customModelKey,
+  isCustomModelChoice,
   modelChoiceKey,
   providerDisplayName,
   providerMark,
@@ -259,17 +260,24 @@ export function App() {
   const [customModels, setCustomModels] = useState<CustomModel[]>(readCustomModels)
   const customModelsRef = useRef(customModels)
   customModelsRef.current = customModels
-  const [{ models: catalogModels, loaded: modelsLoaded }, setModelCatalog] = useState<{
-    models: ModelChoice[]
-    loaded: boolean
-  }>(() => {
-    const cached = parseModelCatalogCache(readSetting(MODEL_CATALOG_KEY))
-    const restored = cached === undefined ? readStoredModelChoice(customModels) : undefined
-    return {
-      models: cached ?? (restored ? [restored] : []),
-      loaded: cached !== undefined || restored !== undefined,
-    }
-  })
+  const [{ models: catalogModels, loaded: modelsLoaded, unvalidatedModelKeys }, setModelCatalog] =
+    useState<{
+      models: ModelChoice[]
+      loaded: boolean
+      unvalidatedModelKeys: Set<string>
+    }>(() => {
+      const cached = parseModelCatalogCache(readSetting(MODEL_CATALOG_KEY))
+      const restored = cached === undefined ? readStoredModelChoice(customModels) : undefined
+      return {
+        models: cached ?? (restored ? [restored] : []),
+        loaded: cached !== undefined || restored !== undefined,
+        // The upgrade fallback only knows the previously stored effort. Until
+        // discovery provides real metadata it cannot validate a service tier.
+        unvalidatedModelKeys: new Set(
+          restored && !isCustomModelChoice(restored) ? [restored.key] : [],
+        ),
+      }
+    })
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([])
   const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
   const [modelConnections, setModelConnections] = useState<ModelConnection[]>([])
@@ -371,6 +379,10 @@ export function App() {
     () => mergeCustomModels(catalogModels, customModels),
     [catalogModels, customModels],
   )
+  const catalogModelsRef = useRef(catalogModels)
+  catalogModelsRef.current = catalogModels
+  const modelsRef = useRef(models)
+  modelsRef.current = models
   /** The fixed direct roster with human names, for the custom-model form. */
   const customModelProviders = useMemo(
     () => DIRECT_PROVIDER_IDS.map((id) => ({ id, name: providerDisplayName(id) })),
@@ -401,11 +413,33 @@ export function App() {
         : undefined,
     [provider, acpAgent, acpAgentName],
   )
+  const activeModelSession = activeId ? findSession(projects, activeId)?.session : undefined
+  const matchesActiveSource = (choice: ModelChoice) =>
+    !activeModelSession ||
+    sourceKey({
+      provider: choice.provider,
+      connectionId: choice.connectionId,
+      agentId: choice.agent?.id,
+    }) ===
+      sourceKey({
+        provider: activeModelSession.provider,
+        agentId: activeModelSession.agent,
+      })
+  const selectableModels = activeModelSession
+    ? visibleModels.filter(matchesActiveSource)
+    : visibleModels
   const storedModelChoice = models.find((choice) => choice.key === modelId)
+  const sourceHasCatalogModels = activeModelSession && models.some(matchesActiveSource)
+  const selectableImplicitChoice =
+    implicitChoice &&
+    matchesActiveSource(implicitChoice) &&
+    (models.length === 0 || (activeModelSession && !sourceHasCatalogModels))
+      ? implicitChoice
+      : undefined
   const selectedModelChoice =
-    visibleModels.find((choice) => choice.key === modelId) ??
-    visibleModels[0] ??
-    (models.length === 0 ? implicitChoice : undefined)
+    selectableModels.find((choice) => choice.key === modelId) ??
+    selectableModels[0] ??
+    selectableImplicitChoice
   // One effective setup drives both the picker and requests. State can briefly
   // contain values from storage or the model that was just hidden; resolving
   // in render prevents that transition from leaking into an immediate send.
@@ -417,11 +451,13 @@ export function App() {
       })
     : undefined
   const selectedServiceTier = selectedModelChoice
-    ? getNextServiceTierForModel({
-        currentServiceTier: serviceTier,
-        currentModel: storedModelChoice?.model,
-        nextModel: selectedModelChoice.model,
-      })
+    ? unvalidatedModelKeys.has(selectedModelChoice.key)
+      ? serviceTier
+      : getNextServiceTierForModel({
+          currentServiceTier: serviceTier,
+          currentModel: storedModelChoice?.model,
+          nextModel: selectedModelChoice.model,
+        })
     : undefined
 
   // Syntax grammars load in the background from the first frame, so the first
@@ -694,22 +730,37 @@ export function App() {
       ])
       const providers = providersResult?.providers ?? []
       const connections = connectionsResult?.connections ?? []
+      const unknownKeys = new Set<string>()
       const direct = await Promise.all(
         providers
           .filter((entry) => entry.installed && entry.id !== 'acp' && entry.id !== 'api')
           .map(async (entry) => {
-            const result = await transport
-              .request('models.list', { provider: entry.id })
-              .catch(() => ({ models: [] }))
-            return choicesFor(
-              {
-                provider: entry.id,
-                sourceName: entry.displayName,
-                mark: providerMark(entry.id),
-              },
-              result.models,
-              false,
-            )
+            try {
+              const result = await transport.request('models.list', { provider: entry.id })
+              return choicesFor(
+                {
+                  provider: entry.id,
+                  sourceName: entry.displayName,
+                  mark: providerMark(entry.id),
+                },
+                result.models,
+                false,
+              )
+            } catch {
+              const source = sourceKey({ provider: entry.id })
+              const preserved = catalogModelsRef.current.filter(
+                (choice) =>
+                  sourceKey({
+                    provider: choice.provider,
+                    connectionId: choice.connectionId,
+                    agentId: choice.agent?.id,
+                  }) === source,
+              )
+              for (const choice of preserved) {
+                if (unvalidatedModelKeys.has(choice.key)) unknownKeys.add(choice.key)
+              }
+              return preserved
+            }
           }),
       )
       // Public beta scope: the picker holds only the three direct plans the
@@ -720,7 +771,7 @@ export function App() {
       setProviderStatuses(providers)
       setAcpAgents(agentsResult?.agents ?? [])
       setModelConnections(connections)
-      setModelCatalog({ models: catalog, loaded: true })
+      setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
       writeSetting(MODEL_CATALOG_KEY, serializeModelCatalogCache(catalog))
       const stored = readSetting(MODEL_KEY)
       // A hidden model cannot remain the internal selection. Otherwise the
@@ -742,6 +793,15 @@ export function App() {
         setServiceTier(undefined)
         return
       }
+      const previous = modelsRef.current.find((choice) => choice.key === stored)
+      const remembered =
+        readSourceSelections()[
+          sourceKey({
+            provider: selected.provider,
+            connectionId: selected.connectionId,
+            agentId: selected.agent?.id,
+          })
+        ]
       setModelId(selected.key)
       setProvider(selected.provider)
       setAcpAgent(selected.agent?.id)
@@ -761,12 +821,26 @@ export function App() {
         removeSetting(AGENT_NAME_KEY)
       }
       setEffort((current) =>
-        resolveReasoningEffort({ currentEffort: current, nextModel: selected.model }),
+        remembered?.modelKey === selected.key &&
+        remembered.effort &&
+        selected.model.reasoningEfforts.includes(remembered.effort)
+          ? remembered.effort
+          : resolveReasoningEffort({
+              currentEffort: current,
+              currentModel: previous?.model,
+              nextModel: selected.model,
+            }),
       )
       setServiceTier((current) =>
-        current && selected.model.serviceTiers.some((tier) => tier.id === current)
-          ? current
-          : (selected.model.defaultServiceTier ?? undefined),
+        remembered?.modelKey === selected.key &&
+        remembered.serviceTier &&
+        selected.model.serviceTiers.some((tier) => tier.id === remembered.serviceTier)
+          ? remembered.serviceTier
+          : getNextServiceTierForModel({
+              currentServiceTier: current,
+              currentModel: previous?.model,
+              nextModel: selected.model,
+            }),
       )
     })().catch(() => {
       if (!cancelled) setModelCatalog((current) => ({ ...current, loaded: true }))
@@ -1149,14 +1223,16 @@ export function App() {
       // (Codex 'priority', Cursor 'fast'), and fast intent must survive the
       // switch even though the id cannot.
       setServiceTier((current) =>
-        getNextServiceTierForModel({
-          nextModel: selected.model,
-          currentModel: storedModelChoice?.model ?? selectedModelChoice?.model,
-          currentServiceTier: current,
-        }),
+        unvalidatedModelKeys.has(selected.key)
+          ? current
+          : getNextServiceTierForModel({
+              nextModel: selected.model,
+              currentModel: storedModelChoice?.model ?? selectedModelChoice?.model,
+              currentServiceTier: current,
+            }),
       )
     },
-    [selectedModelChoice, storedModelChoice],
+    [selectedModelChoice, storedModelChoice, unvalidatedModelKeys],
   )
 
   // Keep persisted selection state coherent after a visibility or cache
@@ -1803,8 +1879,10 @@ export function App() {
           (selectedModelChoice && matchesSource(selectedModelChoice)
             ? selectedModelChoice
             : undefined) ??
-          models.find((choice) => choice.key === rememberedModelKey && matchesSource(choice)) ??
-          models.find(matchesSource)
+          visibleModels.find(
+            (choice) => choice.key === rememberedModelKey && matchesSource(choice),
+          ) ??
+          visibleModels.find(matchesSource)
         if (matchingChoice) {
           commitModelChoice(matchingChoice)
         } else {
@@ -1838,7 +1916,7 @@ export function App() {
         setNotice(error instanceof Error ? error.message : String(error))
       }
     },
-    [projects, models, selectedModelChoice, commitModelChoice, loadHistory, transport],
+    [projects, visibleModels, selectedModelChoice, commitModelChoice, loadHistory, transport],
   )
 
   const inspectCheckpoint = useCallback(
@@ -2631,7 +2709,7 @@ export function App() {
                   projectName={activeProject ? displayName(activeProject) : undefined}
                   branch={active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]}
                   branches={branches}
-                  models={visibleModels}
+                  models={selectableModels}
                   modelsLoaded={modelsLoaded}
                   modelId={selectedModelChoice?.key}
                   effort={selectedEffort}

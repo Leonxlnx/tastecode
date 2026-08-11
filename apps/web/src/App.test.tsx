@@ -6,6 +6,7 @@ import type { ComponentProps } from 'react'
 import { App } from './App.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
+import type { ModelChoice } from './model-catalog.js'
 
 const transport = vi.hoisted(() => ({
   request: vi.fn(),
@@ -408,6 +409,23 @@ function openSettings() {
   fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
 }
 
+function cachedCodexChoice(): ModelChoice {
+  return {
+    key: 'codex:gpt-5.6-sol',
+    provider: 'codex',
+    sourceName: 'Codex',
+    mark: 'openai',
+    model: {
+      id: 'gpt-5.6-sol',
+      displayName: 'GPT-5.6 Sol',
+      isDefault: true,
+      reasoningEfforts: ['low', 'high'],
+      defaultReasoningEffort: 'low',
+      serviceTiers: [],
+    },
+  }
+}
+
 function profileHistoryResult() {
   const totals = {
     uncachedInputTokens: 20,
@@ -571,6 +589,7 @@ describe('web client', () => {
     // Older builds persisted a bare model id rather than the source-qualified key.
     localStorage.setItem('harness.model', 'gpt-5.6-sol')
     localStorage.setItem('harness.effort', 'high')
+    localStorage.setItem('harness.serviceTier', 'priority')
 
     render(<App />)
 
@@ -580,6 +599,7 @@ describe('web client', () => {
     expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
       'Effort: High',
     )
+    expect(localStorage.getItem('harness.serviceTier')).toBe('priority')
   })
 
   it('shows a validated model snapshot while discovery refreshes in the background', () => {
@@ -591,21 +611,7 @@ describe('web client', () => {
     })
     localStorage.setItem(
       'harness.modelCatalog.v1',
-      serializeModelCatalogCache([
-        {
-          key: 'codex:gpt-5.6-sol',
-          provider: 'codex',
-          sourceName: 'Codex',
-          mark: 'openai',
-          model: {
-            id: 'gpt-5.6-sol',
-            displayName: 'GPT-5.6 Sol',
-            isDefault: true,
-            reasoningEfforts: ['low', 'high'],
-            serviceTiers: [],
-          },
-        },
-      ]),
+      serializeModelCatalogCache([cachedCodexChoice()]),
     )
 
     render(<App />)
@@ -613,6 +619,40 @@ describe('web client', () => {
     expect(screen.queryByText('Loading models…')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
     expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
+  })
+
+  it('keeps the cached source when its discovery request fails', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let rejectModels!: (reason?: unknown) => void
+    const failedDiscovery = new Promise<never>((_resolve, reject) => {
+      rejectModels = reject
+    })
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') return failedDiscovery
+      return request(method, params)
+    })
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice()]),
+    )
+    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' })
+    })
+    await act(async () => {
+      rejectModels(new Error('provider unavailable'))
+      await failedDiscovery.catch(() => undefined)
+    })
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('gpt-5.6-sol')
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Sol',
+      )
+    })
   })
 
   it('sends the normalized cached model setup before discovery finishes', async () => {
@@ -624,22 +664,7 @@ describe('web client', () => {
     })
     localStorage.setItem(
       'harness.modelCatalog.v1',
-      serializeModelCatalogCache([
-        {
-          key: 'codex:gpt-5.6-sol',
-          provider: 'codex',
-          sourceName: 'Codex',
-          mark: 'openai',
-          model: {
-            id: 'gpt-5.6-sol',
-            displayName: 'GPT-5.6 Sol',
-            isDefault: true,
-            reasoningEfforts: ['low', 'high'],
-            defaultReasoningEffort: 'low',
-            serviceTiers: [],
-          },
-        },
-      ]),
+      serializeModelCatalogCache([cachedCodexChoice()]),
     )
     localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
     localStorage.setItem('harness.effort', 'ultra')
@@ -1896,6 +1921,49 @@ describe('new chats', () => {
     localStorage.removeItem('harness.modelPickerLayout')
   })
 
+  it('restores source memory when discovery replaces a missing selected model', async () => {
+    serverProviders = [
+      {
+        ...(serverProviders[0] as Record<string, unknown>),
+        id: 'claude-code',
+        displayName: 'Claude Code',
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models: [
+            {
+              id: 'opus',
+              displayName: 'Opus 5',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.model', 'codex:retired-model')
+    localStorage.setItem('harness.effort', 'high')
+    localStorage.setItem(
+      'harness.modelBySource',
+      JSON.stringify({ 'claude-code': { modelKey: 'claude-code:opus', effort: 'low' } }),
+    )
+
+    render(<App />)
+
+    await waitFor(() => {
+      const modelButton = screen.getByRole('button', { name: 'Model and reasoning' })
+      expect(modelButton.textContent).toContain('Opus 5')
+      expect(modelButton.textContent).toContain('Low')
+    })
+  })
+
   it('moves the complete setup to the visible fallback when hiding the selected source', async () => {
     serverProviders = [
       ...serverProviders,
@@ -3097,7 +3165,7 @@ describe('reopening a session', () => {
     expect(await screen.findByText('75% left')).toBeTruthy()
   })
 
-  it('keeps the selected model when reopening a session from the same provider', async () => {
+  it('uses a visible same-source model when the remembered one is hidden', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
@@ -3123,16 +3191,32 @@ describe('reopening a session', () => {
       }
       return request(method, params)
     })
-    localStorage.setItem('harness.model', 'codex:gpt-5.6-mini')
+    localStorage.setItem('harness.provider', 'claude-code')
+    localStorage.setItem('harness.model', 'custom:claude-code:opus')
+    localStorage.setItem(
+      'harness.customModels.v1',
+      JSON.stringify([{ provider: 'claude-code', modelId: 'opus', displayName: 'Opus 5' }]),
+    )
+    localStorage.setItem('harness.hiddenModels', JSON.stringify(['codex:gpt-5.6-mini']))
+    localStorage.setItem(
+      'harness.modelBySource',
+      JSON.stringify({ codex: { modelKey: 'codex:gpt-5.6-mini' } }),
+    )
 
     render(<App />)
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
-        '5.6 Mini',
+        'Opus 5',
       )
     })
     fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Sol',
+      )
+    })
 
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Keep this model' } })
@@ -3142,7 +3226,7 @@ describe('reopening a session', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'untouched-thread',
         text: 'Keep this model',
-        model: 'gpt-5.6-mini',
+        model: 'gpt-5.6-sol',
         effort: 'low',
       })
     })
@@ -3203,6 +3287,61 @@ describe('reopening a session', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'claude-thread',
         text: 'Use the session provider',
+      })
+    })
+  })
+
+  it('does not display a fallback from another provider after hiding the session source', async () => {
+    serverProviders = [
+      ...serverProviders,
+      {
+        ...(serverProviders[0] as Record<string, unknown>),
+        id: 'claude-code',
+        displayName: 'Claude Code',
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        const claude = (params as { provider: string }).provider === 'claude-code'
+        return Promise.resolve({
+          models: [
+            {
+              id: claude ? 'opus' : 'gpt-5.6-sol',
+              displayName: claude ? 'Opus 5' : 'GPT-5.6 Sol',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Models' }))
+    fireEvent.click(await screen.findByRole('switch', { name: 'Show any models from Codex' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Back to app' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Model and reasoning' })).toBeNull()
+      expect(localStorage.getItem('harness.provider')).toBe('codex')
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Stay with the session provider' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
+        threadId: 'untouched-thread',
+        text: 'Stay with the session provider',
       })
     })
   })
