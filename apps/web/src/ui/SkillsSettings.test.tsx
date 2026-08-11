@@ -249,7 +249,10 @@ describe('Agent Skills settings', () => {
 
     fireEvent.click(await screen.findByRole('switch', { name: 'Disable Design Taste' }))
     act(() =>
-      listeners.get('skills.changed')?.({ provider: 'codex', projectPath: '/work/project' } as never),
+      listeners.get('skills.changed')?.({
+        provider: 'codex',
+        projectPath: '/work/project',
+      } as never),
     )
     expect(await screen.findByRole('switch', { name: 'Enable Design Taste' })).toBeTruthy()
 
