@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-09 823023ee</span>
+        <span class="meta">2026-08-11 72998d9c</span>
       </div>
     </div>
 
@@ -593,7 +593,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Auto-growing prompt field with queued sends while a turn runs</span
+                >Auto-growing prompt field with ordered optimistic queued sends while a turn
+                runs</span
               ></label
             >
           </li>
@@ -629,7 +630,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Model, effort, and tier remembered per provider across sessions</span
+                >Model, effort, and tier remembered per provider across sessions
+                <span class="d">cross-provider overrides are never sent to a bound thread</span></span
               ></label
             >
           </li>
@@ -698,7 +700,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Streaming markdown with syntax highlighting</span
+                >Streaming markdown with syntax highlighting
+                <span class="d">plain tokenizer while live, Shiki once on completion</span></span
               ></label
             >
           </li>
@@ -707,7 +710,8 @@
               ><input type="checkbox" /><span
                 >Every item type first class
                 <span class="d"
-                  >message, reasoning, plan, command, file change, tool call, error</span
+                  >message, reasoning, plan, command, file change, tool call, subagent activity,
+                  error</span
                 ></span
               ></label
             >
@@ -723,7 +727,7 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Single working orb that never restarts mid-turn</span
+                >Single working orb that never restarts on duplicate same-turn events</span
               ></label
             >
           </li>
@@ -812,7 +816,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Checkpoint every turn, reversible rollback with changed-file inspection</span
+                >Checkpoint every turn, reversible rollback with changed-file inspection
+                <span class="d">missing and cross-thread checkpoints fail closed</span></span
               ></label
             >
           </li>
@@ -1033,14 +1038,16 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >MCP servers: add, enable and disable, inspect, per-project scope</span
+                >MCP servers: add, enable and disable, inspect, per-project scope
+                <span class="d">project and transport scoped across reconnects</span></span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >MCP OAuth sign-in handled by the server, credentials in the OS store</span
+                >MCP OAuth sign-in handled by the server, credentials in the OS store
+                <span class="d">pending until the matching completion event</span></span
               ></label
             >
           </li>
@@ -1054,7 +1061,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Agent Skills: browse, enable per project, progressive loading</span
+                >Agent Skills: browse, enable per project, progressive loading
+                <span class="d">stale refreshes cannot replace confirmed project state</span></span
               ></label
             >
           </li>
@@ -1212,8 +1220,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Hardened Electron shell, renderer never spawns processes or reads the
-                filesystem</span
+                >Hardened Electron shell, renderer never spawns processes or reads the filesystem
+                <span class="d">server replacement and watchdog recovery are generation-safe</span></span
               ></label
             >
           </li>
