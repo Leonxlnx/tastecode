@@ -41,6 +41,7 @@ export function UsageSettings(props: { transport: Transport }) {
   const [error, setError] = useState<string>()
   const [requestVersion, setRequestVersion] = useState(0)
   const forceRefresh = useRef(false)
+  const scanInProgress = useRef(false)
 
   useEffect(() => {
     let active = true
@@ -54,18 +55,21 @@ export function UsageSettings(props: { transport: Transport }) {
       .then((result) => {
         if (!active) return
         setData(result)
-        if (result.scan.status === 'scanning') {
-          pollTimer = setTimeout(() => {
-            if (active) setRequestVersion((version) => version + 1)
-          }, 500)
-        }
+        scanInProgress.current = result.scan.status === 'scanning'
       })
       .catch((requestError: unknown) => {
         if (!active) return
         setError(requestError instanceof Error ? requestError.message : String(requestError))
       })
       .finally(() => {
-        if (active) setLoading(false)
+        if (active) {
+          setLoading(false)
+          if (scanInProgress.current) {
+            pollTimer = setTimeout(() => {
+              if (active) setRequestVersion((version) => version + 1)
+            }, 500)
+          }
+        }
       })
     return () => {
       active = false
