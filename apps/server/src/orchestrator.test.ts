@@ -1844,6 +1844,24 @@ describe('queued turns', () => {
     ).toHaveLength(1)
   })
 
+  it('does not revive a closed thread after a legacy queued send resolves', async () => {
+    const { sessions, orchestrator, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'Active.')
+    await orchestrator.submitTurn(thread.id, 'Legacy queued work.')
+    sessions[0]!.release = () => {}
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    await vi.waitFor(() => expect(sessions[0]!.sent).toHaveLength(2))
+
+    orchestrator.close(thread.id)
+    sessions[0]!.release?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+    expect(orchestrator.queue(thread.id).items).toEqual([])
+    expect(store.thread(thread.id)?.closedAt).toBeDefined()
+  })
+
   it('runs queued prompts in order after the active turn completes', async () => {
     const { sessions, orchestrator } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')

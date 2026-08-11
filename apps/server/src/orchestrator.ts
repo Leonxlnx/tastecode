@@ -1504,7 +1504,9 @@ export class Orchestrator {
         await this.#threads.get(threadId)?.session.interrupt(threadId)
         return
       }
-      if (!next.clientSubmissionId) this.#store.completeQueuedTurn(threadId, next.id)
+      if (!next.clientSubmissionId && !this.#store.completeQueuedTurn(threadId, next.id)) return
+      if (!this.#threads.has(threadId) || this.#store.thread(threadId)?.closedAt !== undefined)
+        return
       this.#activeTurns.add(threadId)
     } catch {
       // After a panic the queue was emptied on purpose; putting the grabbed
