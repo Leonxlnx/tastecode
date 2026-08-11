@@ -2581,4 +2581,55 @@ describe('reopening a session', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     expect(await screen.findByText('75% left')).toBeTruthy()
   })
+
+  it('keeps the selected model when reopening a session from the same provider', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models: [
+            {
+              id: 'gpt-5.6-sol',
+              displayName: 'GPT-5.6 Sol',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              serviceTiers: [],
+            },
+            {
+              id: 'gpt-5.6-mini',
+              displayName: 'GPT-5.6 Mini',
+              isDefault: false,
+              reasoningEfforts: ['low', 'high'],
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.model', 'codex:gpt-5.6-mini')
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Mini',
+      )
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Keep this model' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
+        threadId: 'untouched-thread',
+        text: 'Keep this model',
+        model: 'gpt-5.6-mini',
+        effort: 'low',
+      })
+    })
+  })
 })

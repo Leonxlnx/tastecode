@@ -1630,30 +1630,28 @@ export function App() {
       setSurface('chat')
       const found = findSession(projects, id)
       if (found?.session.provider) {
-        setProvider(found.session.provider)
-        setAcpAgent(found.session.agent)
         const source = sourceKey({
           provider: found.session.provider,
           agentId: found.session.agent,
         })
-        const matchingChoice = models.find((choice) => choice.key.startsWith(`${source}:`))
+        const matchesSource = (choice: ModelChoice) =>
+          sourceKey({
+            provider: choice.provider,
+            connectionId: choice.connectionId,
+            agentId: choice.agent?.id,
+          }) === source
+        const rememberedModelKey = readSourceSelections()[source]?.modelKey
+        const matchingChoice =
+          (selectedModelChoice && matchesSource(selectedModelChoice)
+            ? selectedModelChoice
+            : undefined) ??
+          models.find((choice) => choice.key === rememberedModelKey && matchesSource(choice)) ??
+          models.find(matchesSource)
         if (matchingChoice) {
-          setModelId(matchingChoice.key)
-          // Same reconciliation as selectModel: carrying the previous model's
-          // effort/tier into one that does not offer them sends a parameter
-          // the server rejects.
-          setEffort((current) =>
-            resolveReasoningEffort({
-              currentEffort: current,
-              currentModel: selectedModelChoice?.model,
-              nextModel: matchingChoice.model,
-            }),
-          )
-          setServiceTier((current) =>
-            current && matchingChoice.model.serviceTiers.some((tier) => tier.id === current)
-              ? current
-              : (matchingChoice.model.defaultServiceTier ?? undefined),
-          )
+          commitModelChoice(matchingChoice)
+        } else {
+          setProvider(found.session.provider)
+          setAcpAgent(found.session.agent)
         }
       }
       setNotice(undefined)
@@ -1682,7 +1680,7 @@ export function App() {
         setNotice(error instanceof Error ? error.message : String(error))
       }
     },
-    [projects, models, selectedModelChoice, loadHistory, transport],
+    [projects, models, selectedModelChoice, commitModelChoice, loadHistory, transport],
   )
 
   const inspectCheckpoint = useCallback(
