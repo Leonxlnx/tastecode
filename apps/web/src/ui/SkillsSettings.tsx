@@ -121,10 +121,10 @@ export function SkillsSettings(props: {
   async function install(): Promise<void> {
     if (!props.projectPath) return
     setError(undefined)
+    setBusy('install')
     try {
       const folderPath = await pickSkillFolder()
       if (!folderPath || !isCurrentContext()) return
-      setBusy('install')
       const { skill } = await props.transport.request('skills.installFromFolder', {
         provider: props.provider,
         projectPath: props.projectPath,

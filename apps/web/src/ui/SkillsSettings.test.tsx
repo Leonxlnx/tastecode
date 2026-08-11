@@ -125,6 +125,7 @@ describe('Agent Skills settings', () => {
   })
 
   it('reports a rejected folder picker without starting an install', async () => {
+    let rejectPicker!: (cause: Error) => void
     const transport = client(async (method) => {
       if (method === 'skills.list') {
         return {
@@ -135,7 +136,11 @@ describe('Agent Skills settings', () => {
       }
       throw new Error(`unexpected ${method}`)
     })
-    pickSkillFolder.mockRejectedValueOnce(new Error('Folder picker unavailable'))
+    pickSkillFolder.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectPicker = reject
+      }),
+    )
     render(
       <SkillsSettings
         transport={transport}
@@ -146,7 +151,13 @@ describe('Agent Skills settings', () => {
       />,
     )
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Install from folder' }))
+    const install = await screen.findByRole('button', { name: 'Install from folder' })
+    fireEvent.click(install)
+
+    expect(
+      (await screen.findByRole('button', { name: 'Installing…' })).hasAttribute('disabled'),
+    ).toBe(true)
+    rejectPicker(new Error('Folder picker unavailable'))
 
     expect((await screen.findByRole('alert')).textContent).toContain('Folder picker unavailable')
     expect(
