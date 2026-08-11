@@ -1,14 +1,11 @@
 export const LIVE_MARKDOWN_LEAF_LIMIT = 256
 export const LIVE_MARKDOWN_CARRY_LIMIT = 64
 
+type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6
+
 export type LiveMarkdownNode =
   | 'paragraph'
-  | 'heading-1'
-  | 'heading-2'
-  | 'heading-3'
-  | 'heading-4'
-  | 'heading-5'
-  | 'heading-6'
+  | `heading-${HeadingLevel}`
   | 'blockquote'
   | 'list'
   | 'list-item'
@@ -43,7 +40,6 @@ export type LiveMarkdownCompletion = {
 /**
  * Produces text-safe operations for a deliberately small live Markdown subset.
  * The canonical source is handed to the full renderer on completion; this
- * projection only keeps common prose, lists and code styled while streaming.
  */
 export class LiveMarkdownParser {
   private source = ''
