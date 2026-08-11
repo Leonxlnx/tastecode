@@ -45,8 +45,8 @@ describe('LiveMarkdownParser', () => {
     )
     expect(parser.complete().source).toBe(chunks.join(''))
     const sequence = JSON.stringify(operations)
-    expect(sequence.indexOf('node.close","node":"list')).toBeLessThan(
-      sequence.indexOf('node.open","node":"heading-1'),
+    expect(sequence).toMatch(
+      /"type":"node.close","node":"list"}.*"type":"node.open","node":"heading-1"/,
     )
   })
 
