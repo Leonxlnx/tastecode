@@ -15,6 +15,8 @@ type CodexUsage = {
 export async function readCodexUsageHistory(filePath: string): Promise<LocalUsageRecord[]> {
   const entries = new Map<string, LocalUsageRecord>()
   let sessionId = filePath
+  let sawSessionMeta = false
+  let replayingParentHistory = false
   let currentModel = 'Unknown model'
   let previous: CodexUsage | undefined
   const lines = readline.createInterface({
@@ -36,11 +38,16 @@ export async function readCodexUsageHistory(filePath: string): Promise<LocalUsag
     if (!record) continue
     const payload = asRecord(record['payload'])
     if (record['type'] === 'session_meta') {
-      const id = stringValue(payload?.['id']) ?? stringValue(record['session_id'])
-      if (id) sessionId = id
+      if (!sawSessionMeta) {
+        sawSessionMeta = true
+        const id = stringValue(payload?.['id']) ?? stringValue(record['session_id'])
+        if (id) sessionId = id
+        replayingParentHistory = isSubagentSession(payload)
+      }
     }
     const model = extractModel(payload)
     if (model) currentModel = model
+    if (record['type'] === 'turn_context' && model) replayingParentHistory = false
     if (record['type'] !== 'event_msg' || payload?.['type'] !== 'token_count') continue
 
     const timestamp = dateValue(record['timestamp'])
@@ -56,7 +63,10 @@ export async function readCodexUsageHistory(filePath: string): Promise<LocalUsag
       previous = addUsage(previous, last)
     }
 
-    if (!timestamp || !delta || delta.totalTokens <= 0) continue
+    // A spawned subagent rollout starts with a copy of its parent's cumulative
+    // token snapshots. Keep the last snapshot as the child's baseline, but do
+    // not count the copied history again or attribute it to an invented model.
+    if (replayingParentHistory || !timestamp || !delta || delta.totalTokens <= 0) continue
 
     mergeUsageRecord(entries, {
       date: localDateKey(timestamp),
@@ -80,6 +90,11 @@ export async function readCodexUsageHistory(filePath: string): Promise<LocalUsag
     })
   }
   return [...entries.values()]
+}
+
+function isSubagentSession(payload: Record<string, unknown> | undefined): boolean {
+  const source = asRecord(payload?.['source'])
+  return asRecord(source?.['subagent']) !== undefined
 }
 
 function normalizeUsage(value: Record<string, unknown> | undefined): CodexUsage | undefined {
