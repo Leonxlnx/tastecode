@@ -1123,6 +1123,7 @@ export class Orchestrator {
         event.type === 'turn.completed' ? event.turnId : this.#activeTurnIds.get(threadId)
       this.#activeTurnIds.delete(threadId)
       if (activeTurnId) this.#serverOwnedUserTurns.delete(userTurnKey(threadId, activeTurnId))
+      this.#suppressedUserItems.delete(threadId)
     }
     const seq = this.#store.append(threadId, event)
     if (
