@@ -61,9 +61,9 @@ describe('mapGrokBilling', () => {
     expect(mapGrokBilling({ config: { creditUsagePercent: ' ', currentPeriod: period } })).toEqual(
       [],
     )
-    expect(mapGrokBilling({ config: { creditUsagePercent: Number.NaN, currentPeriod: period } })).toEqual(
-      [],
-    )
+    expect(
+      mapGrokBilling({ config: { creditUsagePercent: Number.NaN, currentPeriod: period } }),
+    ).toEqual([])
   })
 
   it('emits nothing for non-weekly periods or junk', () => {

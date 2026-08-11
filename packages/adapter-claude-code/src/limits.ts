@@ -90,7 +90,9 @@ export function mapClaudeUsage(body: unknown): ProviderLimit[] {
   return rows
 }
 
-async function readOauth(): Promise<{ oauth: ClaudeOauth; raw: Record<string, unknown> } | undefined> {
+async function readOauth(): Promise<
+  { oauth: ClaudeOauth; raw: Record<string, unknown> } | undefined
+> {
   let text: string
   try {
     text = await readFile(credentialsPath(), 'utf8')
@@ -100,7 +102,8 @@ async function readOauth(): Promise<{ oauth: ClaudeOauth; raw: Record<string, un
   try {
     const raw = JSON.parse(text) as Record<string, unknown>
     const oauth = raw['claudeAiOauth'] as ClaudeOauth | undefined
-    if (!oauth || typeof oauth.accessToken !== 'string' || !oauth.accessToken.trim()) return undefined
+    if (!oauth || typeof oauth.accessToken !== 'string' || !oauth.accessToken.trim())
+      return undefined
     return { oauth, raw }
   } catch {
     return undefined

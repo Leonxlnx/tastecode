@@ -68,7 +68,8 @@ export function mapGrokBilling(body: unknown): ProviderLimit[] {
   const period = record['currentPeriod'] as Record<string, unknown> | undefined
   if (period?.['type'] !== 'USAGE_PERIOD_TYPE_WEEKLY') return []
   const rawPercent = record['creditUsagePercent'] ?? 0
-  const numeric = typeof rawPercent === 'string' && rawPercent.trim() ? Number(rawPercent) : rawPercent
+  const numeric =
+    typeof rawPercent === 'string' && rawPercent.trim() ? Number(rawPercent) : rawPercent
   if (typeof numeric !== 'number' || !Number.isFinite(numeric)) return []
   const end = typeof period['end'] === 'string' ? Date.parse(period['end']) : Number.NaN
   return [
