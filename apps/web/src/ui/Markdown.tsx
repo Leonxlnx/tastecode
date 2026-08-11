@@ -59,6 +59,7 @@ const ProjectPathContext = createContext<string | undefined>(undefined)
 
 function MarkdownLink({ children, href, node: _node, ...props }: MarkdownLinkProps) {
   const projectPath = useContext(ProjectPathContext)
+  const [revealFailed, setRevealFailed] = useState(false)
   const filePath = href ? localFileReferencePath(href) : undefined
   if (filePath) {
     if (projectPath) {
@@ -68,11 +69,23 @@ function MarkdownLink({ children, href, node: _node, ...props }: MarkdownLinkPro
           <button
             className="md-file-link md-file-link--action"
             type="button"
-            title={`Show ${reference.path} in its folder`}
-            onClick={() => void revealProjectFile(reference.path, projectPath)}
+            title={
+              revealFailed
+                ? `Try showing ${reference.path} again`
+                : `Show ${reference.path} in its folder`
+            }
+            onClick={() => {
+              setRevealFailed(false)
+              void revealProjectFile(reference.path, projectPath).catch(() => setRevealFailed(true))
+            }}
           >
             <FileTypeIcon path={reference.path} />
             {children}
+            {revealFailed ? (
+              <span className="md-file-link__reason" role="alert">
+                Could not show file
+              </span>
+            ) : null}
           </button>
         )
       }

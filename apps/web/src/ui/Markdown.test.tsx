@@ -116,6 +116,22 @@ describe('Markdown inline references', () => {
     )
   })
 
+  it('shows a retryable error when the native reveal request fails', async () => {
+    vi.mocked(revealProjectFile).mockRejectedValueOnce(new Error('reveal failed'))
+    render(
+      <Markdown
+        text={'Saved [artifact.bin](file:///E:/randomtesting/A_personalharness/site/artifact.bin).'}
+        projectPath="E:\randomtesting\A_personalharness\site"
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'artifact.bin' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('Could not show file')
+    expect(screen.getByRole('button', { name: /artifact.bin/i }).getAttribute('title')).toContain(
+      'Try showing',
+    )
+  })
+
   it('explains why a local file link outside the project is unavailable', () => {
     const { container } = render(
       <Markdown
