@@ -15,6 +15,8 @@ const api = {
   pickSkillFolder: (): Promise<string | undefined> => ipcRenderer.invoke('harness:pickSkillFolder'),
   pickFiles: (): Promise<string[]> => ipcRenderer.invoke('harness:pickFiles'),
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('harness:revealPath', path),
+  revealProjectFile: (path: string, projectPath: string): Promise<void> =>
+    ipcRenderer.invoke('harness:revealProjectFile', path, projectPath),
   savePastedImage: (image: { type: string; bytes: ArrayBuffer }): Promise<string> =>
     ipcRenderer.invoke('harness:savePastedImage', image),
   writeClipboardText: (text: string): Promise<void> =>

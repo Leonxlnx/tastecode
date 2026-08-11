@@ -10,6 +10,7 @@ type Bridge = {
   pickSkillFolder: () => Promise<string | undefined>
   pickFiles: () => Promise<string[]>
   revealPath: (path: string) => Promise<void>
+  revealProjectFile?: (path: string, projectPath: string) => Promise<void>
   savePastedImage: (image: { type: string; bytes: ArrayBuffer }) => Promise<string>
   writeClipboardText?: (text: string) => Promise<void>
   setZoom: (action: ZoomAction) => Promise<void>
@@ -50,6 +51,10 @@ export async function pickFiles(): Promise<string[]> {
 
 export function revealPath(path: string): Promise<void> {
   return bridge?.revealPath(path) ?? Promise.resolve()
+}
+
+export function revealProjectFile(path: string, projectPath: string): Promise<void> {
+  return bridge?.revealProjectFile?.(path, projectPath) ?? Promise.resolve()
 }
 
 export async function savePastedImage(file: File): Promise<string | undefined> {

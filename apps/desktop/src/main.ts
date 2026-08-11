@@ -27,6 +27,7 @@ import { clipboardText } from './clipboard-text.js'
 import { allowsMicrophoneRequest } from './media-permissions.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
 import { revealablePath } from './reveal-path.js'
+import { projectFilePath } from './project-file-path.js'
 import { ServerSupervisor } from './server-supervisor.js'
 import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
@@ -468,6 +469,11 @@ ipcMain.handle('harness:pickFiles', async (event) => {
 ipcMain.handle('harness:revealPath', (event, value: unknown) => {
   requireOwnRenderer(event.sender)
   shell.showItemInFolder(revealablePath(value))
+})
+
+ipcMain.handle('harness:revealProjectFile', (event, value: unknown, projectRootValue: unknown) => {
+  requireOwnRenderer(event.sender)
+  shell.showItemInFolder(projectFilePath(value, projectRootValue))
 })
 
 ipcMain.handle('harness:savePastedImage', async (event, payload: unknown) => {

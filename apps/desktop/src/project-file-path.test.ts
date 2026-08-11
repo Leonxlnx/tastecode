@@ -1,0 +1,25 @@
+import { describe, expect, it } from 'vitest'
+import { projectFilePath } from './project-file-path.js'
+
+describe('projectFilePath', () => {
+  it('accepts Windows and macOS files inside their selected project', () => {
+    expect(projectFilePath('E:\\work\\site\\src\\index.ts', 'E:\\work\\site')).toBe(
+      'E:\\work\\site\\src\\index.ts',
+    )
+    expect(projectFilePath('/Users/blue/work/site/src/index.ts', '/Users/blue/work/site')).toBe(
+      '/Users/blue/work/site/src/index.ts',
+    )
+  })
+
+  it('rejects traversal, sibling, drive, relative, and network paths', () => {
+    const attempts = [
+      () => projectFilePath('E:\\work\\site\\..\\secret.txt', 'E:\\work\\site'),
+      () => projectFilePath('E:\\work\\sibling\\secret.txt', 'E:\\work\\site'),
+      () => projectFilePath('C:\\work\\site\\secret.txt', 'E:\\work\\site'),
+      () => projectFilePath('src\\index.ts', 'E:\\work\\site'),
+      () => projectFilePath('\\\\server\\share\\index.ts', 'E:\\work\\site'),
+    ]
+
+    for (const attempt of attempts) expect(attempt).toThrow()
+  })
+})
