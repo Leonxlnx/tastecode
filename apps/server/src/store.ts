@@ -97,9 +97,11 @@ export type SessionSearchPage = {
 type SearchCursor = { score: number; createdAt: number; rowid: number }
 
 type InterruptedThreadState = {
-  openTurns: Map<string, number>
+  openTurns: Set<string>
   activeItems: Map<string, Extract<DomainEvent, { type: 'item.started' }>['item']>
   approvals: Set<string>
+  userInputs: Set<string>
+  reviews: Map<string, Extract<DomainEvent, { type: 'approval.review.started' }>['review']>
 }
 
 const RESTART_INTERRUPTION_MESSAGE =
@@ -676,73 +678,147 @@ export class Store {
    * gets a clear next action instead of a button that does nothing.
    */
   recoverInterruptedThreads(): string[] {
-    const states = new Map<string, InterruptedThreadState>()
-    const rows = this.#db
-      .prepare(
-        `SELECT events.thread_id, events.payload
-         FROM events
-         INNER JOIN threads ON threads.id = events.thread_id
-         WHERE threads.closed_at IS NULL
-           AND json_extract(events.payload, '$.type') IN (
-             'turn.started', 'turn.completed', 'thread.error',
-             'item.started', 'item.completed',
-             'approval.requested', 'approval.resolved'
+    this.#db.exec('BEGIN IMMEDIATE')
+    try {
+      // SQLite returns only unfinished lifecycle starts. Months of completed
+      // turns and streamed deltas never cross into JavaScript at startup.
+      const rows = this.#db
+        .prepare(
+          `WITH typed_events AS (
+             SELECT events.seq, events.thread_id, events.payload,
+                    json_extract(events.payload, '$.type') AS event_type
+             FROM events
+             INNER JOIN threads ON threads.id = events.thread_id
+             WHERE threads.closed_at IS NULL
+           ),
+           lifecycle_events AS (
+             SELECT seq, thread_id, payload, event_type,
+                    CASE event_type
+                      WHEN 'turn.started' THEN 'turn:' || json_extract(payload, '$.turn.id')
+                      WHEN 'turn.completed' THEN 'turn:' || json_extract(payload, '$.turnId')
+                      WHEN 'item.started' THEN 'item:' || json_extract(payload, '$.item.id')
+                      WHEN 'item.completed' THEN 'item:' || json_extract(payload, '$.item.id')
+                      WHEN 'approval.requested' THEN 'approval:' || json_extract(payload, '$.request.id')
+                      WHEN 'approval.resolved' THEN 'approval:' || json_extract(payload, '$.id')
+                      WHEN 'user_input.requested' THEN 'input:' || json_extract(payload, '$.request.id')
+                      WHEN 'user_input.resolved' THEN 'input:' || json_extract(payload, '$.id')
+                      WHEN 'approval.review.started' THEN 'review:' || json_extract(payload, '$.review.id')
+                      WHEN 'approval.review.completed' THEN 'review:' || json_extract(payload, '$.review.id')
+                    END AS lifecycle_key
+             FROM typed_events
+             WHERE event_type IN (
+               'turn.started', 'turn.completed', 'thread.error',
+               'item.started', 'item.completed',
+               'approval.requested', 'approval.resolved',
+               'user_input.requested', 'user_input.resolved',
+               'approval.review.started', 'approval.review.completed'
+             )
            )
-         ORDER BY events.seq`,
-      )
-      .all() as Array<{ thread_id: string; payload: string }>
+           SELECT started.thread_id, started.payload
+           FROM lifecycle_events AS started
+           WHERE started.event_type IN (
+             'turn.started', 'item.started', 'approval.requested',
+             'user_input.requested', 'approval.review.started'
+           )
+             AND NOT EXISTS (
+               SELECT 1 FROM lifecycle_events AS terminal
+               WHERE terminal.thread_id = started.thread_id
+                 AND terminal.lifecycle_key = started.lifecycle_key
+                 AND terminal.event_type IN (
+                   'turn.completed', 'item.completed', 'approval.resolved',
+                   'user_input.resolved', 'approval.review.completed'
+                 )
+             )
+             AND (
+               started.event_type <> 'turn.started'
+               OR NOT EXISTS (
+                 SELECT 1 FROM lifecycle_events AS failed
+                 WHERE failed.thread_id = started.thread_id
+                   AND failed.event_type = 'thread.error'
+                   AND failed.seq > started.seq
+               )
+             )
+             AND NOT (
+               started.event_type = 'user_input.requested'
+               AND EXISTS (
+                 SELECT 1 FROM design_runs
+                 WHERE design_runs.thread_id = started.thread_id
+                   AND json_extract(design_runs.payload, '$.phase') = 'brief'
+               )
+             )
+           ORDER BY started.seq`,
+        )
+        .all() as Array<{ thread_id: string; payload: string }>
 
-    for (const row of rows) {
-      const event = JSON.parse(row.payload) as DomainEvent
-      const state = states.get(row.thread_id) ?? {
-        openTurns: new Map<string, number>(),
-        activeItems: new Map(),
-        approvals: new Set<string>(),
-      }
-      states.set(row.thread_id, state)
+      const states = new Map<string, InterruptedThreadState>()
+      for (const row of rows) {
+        const event = JSON.parse(row.payload) as DomainEvent
+        const state = states.get(row.thread_id) ?? {
+          openTurns: new Set<string>(),
+          activeItems: new Map(),
+          approvals: new Set<string>(),
+          userInputs: new Set<string>(),
+          reviews: new Map(),
+        }
+        states.set(row.thread_id, state)
 
-      if (event.type === 'turn.started') state.openTurns.set(event.turn.id, event.turn.createdAt)
-      if (event.type === 'turn.completed') state.openTurns.delete(event.turnId)
-      if (event.type === 'thread.error') state.openTurns.clear()
-      if (event.type === 'item.started') state.activeItems.set(event.item.id, event.item)
-      if (event.type === 'item.completed') state.activeItems.delete(event.item.id)
-      if (event.type === 'approval.requested') state.approvals.add(event.request.id)
-      if (event.type === 'approval.resolved') state.approvals.delete(event.id)
-    }
-
-    const recovered: string[] = []
-    for (const [threadId, state] of states) {
-      const openTurnIds = new Set(state.openTurns.keys())
-      if (openTurnIds.size > 0) {
-        for (const item of state.activeItems.values()) {
-          if (!openTurnIds.has(item.turnId)) continue
-          // Omitting text preserves every persisted delta when the renderer
-          // folds this terminal item over the streamed version.
-          const { text: _streamedText, ...started } = item
-          this.append(threadId, {
-            type: 'item.completed',
-            item: { ...started, status: 'failed' },
-          })
+        if (event.type === 'turn.started') state.openTurns.add(event.turn.id)
+        if (event.type === 'item.started') state.activeItems.set(event.item.id, event.item)
+        if (event.type === 'approval.requested') state.approvals.add(event.request.id)
+        if (event.type === 'user_input.requested') state.userInputs.add(event.request.id)
+        if (event.type === 'approval.review.started') {
+          state.reviews.set(event.review.id, event.review)
         }
       }
 
-      for (const approvalId of state.approvals) {
-        this.append(threadId, { type: 'approval.resolved', id: approvalId })
+      const recovered: string[] = []
+      const at = Date.now()
+      for (const [threadId, state] of states) {
+        for (const item of state.activeItems.values()) {
+          // Omitting text preserves every persisted delta when the renderer
+          // folds this terminal item over the streamed version.
+          const { text: _streamedText, ...started } = item
+          this.#appendEvent(
+            threadId,
+            { type: 'item.completed', item: { ...started, status: 'failed' } },
+            at,
+          )
+        }
+        for (const id of state.approvals) {
+          this.#appendEvent(threadId, { type: 'approval.resolved', id }, at)
+        }
+        for (const id of state.userInputs) {
+          this.#appendEvent(threadId, { type: 'user_input.resolved', id }, at)
+        }
+        for (const review of state.reviews.values()) {
+          if (review.status !== 'in_progress') continue
+          this.#appendEvent(
+            threadId,
+            {
+              type: 'approval.review.completed',
+              review: { ...review, status: 'aborted', completedAt: at },
+            },
+            at,
+          )
+        }
+        if (state.openTurns.size === 0) continue
+        for (const turnId of state.openTurns) {
+          this.#appendEvent(threadId, { type: 'turn.completed', turnId, status: 'interrupted' }, at)
+        }
+        this.#appendEvent(
+          threadId,
+          { type: 'thread.error', threadId, message: RESTART_INTERRUPTION_MESSAGE },
+          at,
+        )
+        this.touchThread(threadId, true, at)
+        recovered.push(threadId)
       }
-
-      if (openTurnIds.size === 0) continue
-      for (const turnId of openTurnIds) {
-        this.append(threadId, { type: 'turn.completed', turnId, status: 'interrupted' })
-      }
-      this.append(threadId, {
-        type: 'thread.error',
-        threadId,
-        message: RESTART_INTERRUPTION_MESSAGE,
-      })
-      this.touchThread(threadId, true)
-      recovered.push(threadId)
+      this.#db.exec('COMMIT')
+      return recovered
+    } catch (error) {
+      this.#db.exec('ROLLBACK')
+      throw error
     }
-    return recovered
   }
 
   /** Returns the sequence number, which is what a client resumes from. */
@@ -750,15 +826,20 @@ export class Store {
     const at = Date.now()
     this.#db.exec('BEGIN IMMEDIATE')
     try {
-      const result = this.#insertEvent.run(threadId, at, JSON.stringify(event))
-      const seq = Number(result.lastInsertRowid)
-      this.#indexEvent(seq, threadId, at, event)
+      const seq = this.#appendEvent(threadId, event, at)
       this.#db.exec('COMMIT')
       return seq
     } catch (error) {
       this.#db.exec('ROLLBACK')
       throw error
     }
+  }
+
+  #appendEvent(threadId: string, event: DomainEvent, at: number): number {
+    const result = this.#insertEvent.run(threadId, at, JSON.stringify(event))
+    const seq = Number(result.lastInsertRowid)
+    this.#indexEvent(seq, threadId, at, event)
+    return seq
   }
 
   /**
