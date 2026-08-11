@@ -637,10 +637,14 @@ describe('durable user submissions', () => {
       await expect(
         orchestrator.submitTurn(thread.id, 'Repeat this.', [], {}, 'submission-steered'),
       ).rejects.toThrow(/clientSubmissionId.*already used/)
+      await expect(
+        orchestrator.steerQueuedTurn(thread.id, queued.queuedTurn.id),
+      ).rejects.toThrow(/already being steered/)
+      session.emit({ type: 'turn.completed', turnId: 'turn-current', status: 'completed' })
+      expect(session.sent).toEqual(['Repeat this.'])
       releaseSteer()
       await steering
       session.emit(userMessage('provider-steer', 'Repeat this.', 'turn-current'))
-      session.emit({ type: 'turn.completed', turnId: 'turn-current', status: 'completed' })
       await vi.waitFor(() => expect(session.sent).toEqual(['Repeat this.', 'Repeat this.']))
       session.emit(turnStarted(thread.id, 'turn-queued'))
       const users = store
