@@ -267,6 +267,21 @@ describe('completed activity disclosure', () => {
     expect(screen.getByText('Building the website')).toBeTruthy()
   })
 
+  it('does not repeat identical file path and output details', () => {
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
+      turnItem('files-1', 2, {
+        type: 'file_change',
+        path: 'src/chat.ts',
+        text: 'src/chat.ts',
+      }),
+      turnItem('answer-1', 3, { role: 'assistant', text: 'Fixed.' }),
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
+    expect(screen.getAllByText('src/chat.ts')).toHaveLength(1)
+  })
+
   it('shows response actions only on the explicit final answer', () => {
     renderCompleted([
       turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),

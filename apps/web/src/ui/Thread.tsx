@@ -776,10 +776,13 @@ function isVisibleWorkedItem(item: Item): boolean {
 }
 
 function activityDetail(item: Item): string | undefined {
-  if (item.type === 'file_change') return item.path
   if (item.type === 'tool_call' && designPhaseLabel(toolText(item))) return undefined
   const summary = summarise(item)
-  return item.text && item.text !== summary ? item.text : undefined
+  const details = item.type === 'file_change' ? [item.path, item.text] : [item.text]
+  const unique = details.filter(
+    (detail, index) => detail && detail !== summary && details.indexOf(detail) === index,
+  )
+  return unique.length > 0 ? unique.join('\n') : undefined
 }
 
 function ResponseActions({ text, createdAt }: { text: string; createdAt: number }) {
