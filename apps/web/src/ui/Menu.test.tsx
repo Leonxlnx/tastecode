@@ -61,7 +61,7 @@ describe('Menu', () => {
       </div>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Options' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Options' }), { detail: 1 })
 
     const menu = screen.getByRole('menu')
     expect(screen.getByTestId('clip').contains(menu)).toBe(false)
@@ -70,6 +70,9 @@ describe('Menu', () => {
     expect(menu.style.left).toBe('8px')
     expect(menu.style.top).toBe('')
     expect(menu.style.bottom).toBe('36px')
+    expect(menu.dataset.inputModality).toBe('pointer')
+    expect(menu.dataset.originX).toBe('right')
+    expect(menu.dataset.originY).toBe('bottom')
 
     fireEvent.mouseDown(menu)
     expect(screen.getByRole('menu')).toBeTruthy()
@@ -113,8 +116,116 @@ describe('Menu', () => {
     const menu = screen.getByRole('menu')
     expect(menu.style.left).toBe('120px')
     expect(menu.style.top).toBe('80px')
+    expect(menu.dataset.inputModality).toBe('pointer')
+    expect(menu.dataset.originX).toBe('left')
+    expect(menu.dataset.originY).toBe('top')
     expect(
       screen.getByRole('button', { name: 'Project options' }).getAttribute('aria-expanded'),
     ).toBe('true')
+  })
+
+  it('enters a menu, roves past disabled items, typeaheads, and selects', () => {
+    const onSelect = vi.fn()
+    render(
+      <Menu label="Actions" trigger={() => <span>Open</span>}>
+        {(close) => (
+          <>
+            <MenuItem title="Alpha" onClick={() => onSelect('Alpha')} />
+            <MenuItem title="Bravo" disabled onClick={() => onSelect('Bravo')} />
+            <MenuItem title="Charlie" onClick={() => onSelect('Charlie')} />
+            <MenuItem
+              title="Delta"
+              onClick={() => {
+                onSelect('Delta')
+                close()
+              }}
+            />
+          </>
+        )}
+      </Menu>,
+    )
+
+    const trigger = screen.getByRole('button', { name: 'Actions' })
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+
+    const alpha = screen.getByRole('menuitem', { name: 'Alpha' })
+    const bravo = screen.getByRole('menuitem', { name: 'Bravo' })
+    const charlie = screen.getByRole('menuitem', { name: 'Charlie' })
+    const delta = screen.getByRole('menuitem', { name: 'Delta' })
+    expect(document.activeElement).toBe(alpha)
+    expect(alpha.tabIndex).toBe(0)
+    expect((bravo as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole('menu').dataset.inputModality).toBe('keyboard')
+
+    fireEvent.keyDown(alpha, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(charlie)
+    expect(alpha.tabIndex).toBe(-1)
+    expect(charlie.tabIndex).toBe(0)
+
+    fireEvent.keyDown(charlie, { key: 'd' })
+    expect(document.activeElement).toBe(delta)
+    fireEvent.keyDown(delta, { key: 'Enter' })
+
+    expect(onSelect).toHaveBeenCalledWith('Delta')
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('opens upward from the keyboard and restores focus after dismissals', () => {
+    render(
+      <>
+        <button>Outside</button>
+        <Menu label="Actions" trigger={() => <span>Open</span>}>
+          {(close) => (
+            <>
+              <MenuItem title="First" onClick={close} />
+              <MenuItem title="Last" onClick={close} />
+            </>
+          )}
+        </Menu>
+      </>,
+    )
+
+    const trigger = screen.getByRole('button', { name: 'Actions' })
+    fireEvent.keyDown(trigger, { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Last' }))
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' })
+    expect(document.activeElement).toBe(trigger)
+
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    fireEvent.mouseDown(screen.getByRole('button', { name: 'Outside' }))
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('contains Tab only inside dialog-style panels', () => {
+    render(
+      <Menu
+        drop="down"
+        label="Choose model"
+        panelLabel="Models"
+        panelRole="dialog"
+        trigger={() => <span>Open</span>}
+      >
+        {() => (
+          <>
+            <input aria-label="Filter models" />
+            <button type="button">Apply</button>
+          </>
+        )}
+      </Menu>,
+    )
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Choose model' }), {
+      key: 'ArrowDown',
+    })
+    const filter = screen.getByRole('textbox', { name: 'Filter models' })
+    const apply = screen.getByRole('button', { name: 'Apply' })
+    expect(document.activeElement).toBe(filter)
+
+    fireEvent.keyDown(filter, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(apply)
+    fireEvent.keyDown(apply, { key: 'Tab' })
+    expect(document.activeElement).toBe(filter)
   })
 })
