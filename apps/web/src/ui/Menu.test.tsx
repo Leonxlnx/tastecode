@@ -163,6 +163,7 @@ describe('Menu', () => {
     )
 
     const trigger = screen.getByRole('button', { name: 'Actions' })
+    const outside = screen.getByRole('button', { name: 'Outside' })
     fireEvent.keyDown(trigger, { key: 'ArrowDown' })
 
     const alpha = screen.getByRole('menuitem', { name: 'Alpha' })
@@ -190,7 +191,7 @@ describe('Menu', () => {
     expect(document.activeElement).toBe(trigger)
 
     fireEvent.keyDown(trigger, { key: 'ArrowDown' })
-    fireEvent.mouseDown(screen.getByRole('button', { name: 'Outside' }))
+    fireEvent.mouseDown(outside)
     expect(screen.queryByRole('menu')).toBeNull()
     expect(document.activeElement).toBe(trigger)
 
@@ -200,7 +201,11 @@ describe('Menu', () => {
       shiftKey: true,
     })
     expect(screen.queryByRole('menu')).toBeNull()
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Outside' }))
+    expect(document.activeElement).toBe(outside)
+
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Alpha' }), { key: 'Tab' })
+    expect(document.activeElement).not.toBe(outside)
   })
 
   it('contains Tab only inside dialog-style panels', () => {
