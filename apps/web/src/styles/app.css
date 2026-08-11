@@ -9736,13 +9736,45 @@
 }
 
 /* Web console rows in Mobile access settings: the bookmarkable, restart-stable
-   URL with a copy action. The URL is long, so the code truncates and the
-   button stays pinned to the right. */
+   URL with a copy action. The QR sits beside the rows (mirroring the pairing
+   card), the URL truncates, and the copy chip stays pinned to the right. */
+.settings__web-access {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  gap: 20px;
+  align-items: center;
+}
+
+/* Must follow the base rule above so it wins at narrow widths. */
+@media (max-width: 520px) {
+  .settings__web-access {
+    /* minmax(0, 1fr), not 1fr: the plain form keeps an auto minimum that
+       expands to the URL row's min-content and pushes the copy chip off
+       the right edge at narrow widths. */
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+}
+
+.settings__web-access-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings__qr-caption {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  text-align: center;
+}
+
 .settings__console-urls {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-top: 12px;
 }
 
 .settings__console-url {
@@ -9750,6 +9782,11 @@
   align-items: center;
   gap: 8px;
   width: 100%;
+  min-width: 0;
+  padding: 7px 8px 7px 12px;
+  background: var(--chrome-recessed);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
 }
 
 .settings__console-url-code {
@@ -9761,4 +9798,52 @@
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   color: var(--text-2);
+}
+
+.settings__console-primary {
+  flex: none;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: var(--t-xs);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.settings__console-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  padding: 5px 9px;
+  background: var(--chrome-raised);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  box-shadow: var(--chrome-shadow);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+}
+
+.settings__console-copy:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.settings__console-copy:active {
+  box-shadow: var(--chrome-inset-shadow);
+  transform: translateY(1px);
+}
+
+.settings__console-copy.is-copied {
+  border-color: color-mix(in oklab, var(--attention) 35%, var(--chrome-border));
+  color: var(--attention);
 }

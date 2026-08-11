@@ -30,7 +30,9 @@ import {
   CircleUserRound,
   CircleAlert,
   Blocks,
+  Check,
   ChevronDown,
+  Copy,
   Database,
   Eye,
   EyeOff,
@@ -1002,29 +1004,41 @@ function MobileAccessSettings(props: { transport: Transport }) {
 
       {(status?.webUrls?.length ?? 0) > 0 ? (
         <div className="settings__mobile-block">
-          <p className="settings__row-title">App on your phone — bookmark this</p>
-          <p className="settings__row-note">
-            The URL stays the same across restarts. Open it on your phone to use the whole harness —
-            the same UI as this desktop. Scan the QR to open it now.
-          </p>
-          <div className="settings__console-urls">
-            {status?.webUrls.map((url) => (
-              <UrlRow
-                url={url}
-                key={url}
-                copied={copiedWebUrl === url}
-                onCopy={() => void copyWebUrl(url)}
-              />
-            ))}
+          <div className="settings__web-access">
+            <div className="settings__web-access-qr">
+              {webQrSvg ? (
+                <div
+                  className="settings__qr"
+                  role="img"
+                  aria-label="App QR code"
+                  dangerouslySetInnerHTML={{ __html: webQrSvg }}
+                />
+              ) : (
+                <div className="settings__qr" aria-hidden>
+                  Generating QR…
+                </div>
+              )}
+              <p className="settings__qr-caption">Scan to open it on your phone</p>
+            </div>
+            <div className="settings__web-access-main">
+              <p className="settings__row-title">App on your phone — bookmark this</p>
+              <p className="settings__row-note">
+                The URL stays the same across restarts. Open it on your phone to use the whole
+                harness — the same UI as this desktop.
+              </p>
+              <div className="settings__console-urls">
+                {status?.webUrls.map((url, index) => (
+                  <UrlRow
+                    url={url}
+                    key={url}
+                    primary={index === 0}
+                    copied={copiedWebUrl === url}
+                    onCopy={() => void copyWebUrl(url)}
+                  />
+                ))}
+              </div>
+            </div>
           </div>
-          {webQrSvg ? (
-            <div
-              className="settings__qr"
-              role="img"
-              aria-label="App QR code"
-              dangerouslySetInnerHTML={{ __html: webQrSvg }}
-            />
-          ) : null}
         </div>
       ) : null}
 
@@ -1123,13 +1137,23 @@ function MobileAccessSettings(props: { transport: Transport }) {
   )
 }
 
-function UrlRow(props: { url: string; copied: boolean; onCopy: () => void }) {
+function UrlRow(props: { url: string; primary: boolean; copied: boolean; onCopy: () => void }) {
   return (
     <div className="settings__console-url">
       <code className="settings__console-url-code" title={props.url}>
         {props.url}
       </code>
-      <button className="settings__action" type="button" onClick={props.onCopy}>
+      {props.primary ? (
+        <span className="settings__console-primary" title="The QR above encodes this URL">
+          QR
+        </span>
+      ) : null}
+      <button
+        className={`settings__console-copy${props.copied ? ' is-copied' : ''}`}
+        type="button"
+        onClick={props.onCopy}
+      >
+        {props.copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />}
         {props.copied ? 'Copied' : 'Copy'}
       </button>
     </div>
