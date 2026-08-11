@@ -324,6 +324,37 @@ export function reduceEventLog(
   return next
 }
 
+/**
+ * Reads only the active tail during streaming. A forward `some` walk makes
+ * every rendered delta pay for the entire transcript before it reaches the
+ * current turn, so a long chat gets progressively slower even though only its
+ * last few items can affect this indicator.
+ */
+export function activeTurnIsSearching(items: Item[], turnId: string | undefined): boolean {
+  if (!turnId) return false
+
+  let enteredActiveTurn = false
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]
+    if (!item) continue
+    if (item.turnId !== turnId) {
+      if (enteredActiveTurn) break
+      continue
+    }
+
+    enteredActiveTurn = true
+    if (
+      item.type === 'tool_call' &&
+      item.status === 'started' &&
+      `${item.text ?? ''} ${item.command ?? ''}`.toLowerCase().includes('search')
+    ) {
+      return true
+    }
+  }
+
+  return false
+}
+
 /** Local echo, so the user's own message appears the instant they hit send. */
 export function appendUserMessage(state: ThreadState, text: string): ThreadState {
   return {

@@ -28,6 +28,7 @@ import { isEditableTarget, matchesShortcut, SHORTCUTS } from './shortcuts.js'
 import { warmHighlighter } from './ui/highlighter.js'
 import { Transport } from './transport.js'
 import {
+  activeTurnIsSearching,
   appendUserMessage,
   beginOptimisticTurn,
   emptyThread,
@@ -2370,13 +2371,7 @@ export function App() {
     () => projects.find((project) => project.path === activePath),
     [projects, activePath],
   )
-  const searching = thread.items.some(
-    (item) =>
-      item.turnId === thread.activeTurn?.id &&
-      item.type === 'tool_call' &&
-      item.status === 'started' &&
-      `${item.text ?? ''} ${item.command ?? ''}`.toLowerCase().includes('search'),
-  )
+  const searching = activeTurnIsSearching(thread.items, thread.activeTurn?.id)
   const commands = useMemo<PaletteCommand[]>(() => {
     if (!paletteScope) return EMPTY_PALETTE_COMMANDS
     return [
