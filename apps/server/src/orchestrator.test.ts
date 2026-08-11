@@ -1620,6 +1620,54 @@ describe('rolling a session back', () => {
     )
   })
 
+  it('refuses to restore while a turn is still taking its checkpoint', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'first task')
+    const first = orchestrator.checkpoints(thread.id)[0]!
+
+    let release = (_value: checkpoint.Snapshot) => {}
+    vi.spyOn(checkpoint, 'takeSnapshot').mockReturnValueOnce(
+      new Promise<checkpoint.Snapshot>((resolve) => (release = resolve)),
+    )
+    const sending = orchestrator.sendTurn(thread.id, 'second task')
+    await vi.waitFor(() => expect(orchestrator.isTurnRunning(thread.id)).toBe(true))
+
+    try {
+      await expect(orchestrator.restoreCheckpoint(thread.id, first.id)).rejects.toThrow(
+        'cannot restore during a running turn',
+      )
+    } finally {
+      release({ commit: 'checkpoint', clean: true })
+      await sending
+    }
+  })
+
+  it('refuses to undo a restore while a turn is still taking its checkpoint', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'first task')
+    writeFileSync(path.join(repo, 'file.txt'), 'work to restore later\n')
+    const first = orchestrator.checkpoints(thread.id)[0]!
+    const { undo } = await orchestrator.restoreCheckpoint(thread.id, first.id)
+
+    let release = (_value: checkpoint.Snapshot) => {}
+    vi.spyOn(checkpoint, 'takeSnapshot').mockReturnValueOnce(
+      new Promise<checkpoint.Snapshot>((resolve) => (release = resolve)),
+    )
+    const sending = orchestrator.sendTurn(thread.id, 'second task')
+    await vi.waitFor(() => expect(orchestrator.isTurnRunning(thread.id)).toBe(true))
+
+    try {
+      await expect(orchestrator.undoRestore(thread.id, undo)).rejects.toThrow(
+        'cannot restore during a running turn',
+      )
+    } finally {
+      release({ commit: 'checkpoint', clean: true })
+      await sending
+    }
+  })
+
   it('does not fail a turn just because the folder is not a repository', async () => {
     const { orchestrator } = harness()
     const plain = mkdtempSync(path.join(os.tmpdir(), 'harness-plain-'))

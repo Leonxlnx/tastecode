@@ -1404,7 +1404,9 @@ export class Orchestrator {
    * action someone can regret. Nothing reachable this way is unrecoverable.
    */
   async restoreCheckpoint(threadId: string, checkpointId: number): Promise<{ undo: string }> {
-    if (this.#activeTurns.has(threadId)) throw new Error('cannot restore during a running turn')
+    if (this.#activeTurns.has(threadId) || this.#startingTurns.has(threadId)) {
+      throw new Error('cannot restore during a running turn')
+    }
     const stored = this.#store.thread(threadId)
     const checkpoint = this.#store.checkpoint(checkpointId)
     if (!stored || !checkpoint || checkpoint.threadId !== threadId) {
@@ -1427,7 +1429,9 @@ export class Orchestrator {
 
   /** Reverse the latest restore, including both files and conversation. */
   async undoRestore(threadId: string, token: string): Promise<void> {
-    if (this.#activeTurns.has(threadId)) throw new Error('cannot restore during a running turn')
+    if (this.#activeTurns.has(threadId) || this.#startingTurns.has(threadId)) {
+      throw new Error('cannot restore during a running turn')
+    }
     const stored = this.#store.thread(threadId)
     const undo = this.#store.restoreUndo(threadId, token)
     if (!stored || !undo) throw new Error('restore can no longer be undone')
