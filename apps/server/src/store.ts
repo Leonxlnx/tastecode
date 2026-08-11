@@ -94,7 +94,18 @@ export type SessionSearchPage = {
   nextCursor: string | null
 }
 
-type SearchCursor = { score: number; createdAt: number; rowid: number }
+type SearchCursor = {
+  snapshotId: string
+  score: number
+  createdAt: number
+  rowid: number
+}
+
+type SearchSnapshot = {
+  ftsQuery: string
+  projectPath: string | null
+  provider: ProviderId | null
+}
 
 type InterruptedThreadState = {
   openTurns: Set<string>
@@ -111,7 +122,30 @@ const RESTART_INTERRUPTION_MESSAGE =
 const SNIPPET_START = '\u0001'
 const SNIPPET_END = '\u0002'
 const SEARCH_INDEX_VERSION = 'session_search_v1'
+const SEARCH_SNAPSHOT_TTL_MS = 5 * 60 * 1_000
+const MAX_SEARCH_SNAPSHOTS = 32
 const SEARCH_TOKEN = /[\p{L}\p{N}][\p{L}\p{N}\p{M}_]*/gu
+
+const SEARCH_SNAPSHOT_SCHEMA = `
+CREATE TEMP TABLE session_search_snapshots (
+  id           TEXT PRIMARY KEY,
+  fts_query    TEXT NOT NULL,
+  project_path TEXT,
+  provider     TEXT,
+  expires_at   INTEGER NOT NULL
+);
+
+CREATE TEMP TABLE session_search_snapshot_rows (
+  snapshot_id  TEXT NOT NULL,
+  search_rowid INTEGER NOT NULL,
+  score        REAL NOT NULL,
+  created_at   INTEGER NOT NULL,
+  PRIMARY KEY (snapshot_id, search_rowid)
+);
+
+CREATE INDEX session_search_snapshot_rank
+  ON session_search_snapshot_rows (snapshot_id, score, created_at DESC, search_rowid DESC);
+`
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -268,6 +302,7 @@ export class Store {
     this.#db.exec('PRAGMA synchronous = NORMAL')
     this.#db.exec('PRAGMA foreign_keys = ON')
     this.#db.exec(SCHEMA)
+    this.#db.exec(SEARCH_SNAPSHOT_SCHEMA)
     // These statements run for every persisted event. Preparing them once
     // keeps SQLite compilation off the streamed-delta path.
     this.#insertEvent = this.#db.prepare(
@@ -894,33 +929,101 @@ export class Store {
       parameters.push(options.provider)
     }
 
+    const now = Date.now()
+    this.#pruneSearchSnapshots(now, !cursor)
+    const snapshotId = cursor?.snapshotId ?? randomUUID()
+    if (cursor) {
+      const snapshot = this.#db
+        .prepare(
+          `SELECT fts_query, project_path, provider
+           FROM session_search_snapshots
+           WHERE id = ? AND expires_at > ?`,
+        )
+        .get(snapshotId, now) as
+        { fts_query: string; project_path: string | null; provider: ProviderId | null } | undefined
+      if (!snapshot) throw new Error('Search results expired. Search again.')
+      const expected: SearchSnapshot = {
+        ftsQuery,
+        projectPath: options.projectPath ?? null,
+        provider: options.provider ?? null,
+      }
+      if (
+        snapshot.fts_query !== expected.ftsQuery ||
+        snapshot.project_path !== expected.projectPath ||
+        snapshot.provider !== expected.provider
+      ) {
+        throw new Error('Search cursor does not match this query.')
+      }
+      this.#db
+        .prepare(`UPDATE session_search_snapshots SET expires_at = ? WHERE id = ?`)
+        .run(now + SEARCH_SNAPSHOT_TTL_MS, snapshotId)
+    } else {
+      this.#db.exec('SAVEPOINT create_search_snapshot')
+      try {
+        this.#db
+          .prepare(
+            `INSERT INTO session_search_snapshots
+               (id, fts_query, project_path, provider, expires_at)
+             VALUES (?, ?, ?, ?, ?)`,
+          )
+          .run(
+            snapshotId,
+            ftsQuery,
+            options.projectPath ?? null,
+            options.provider ?? null,
+            now + SEARCH_SNAPSHOT_TTL_MS,
+          )
+        this.#db
+          .prepare(
+            `INSERT INTO session_search_snapshot_rows
+               (snapshot_id, search_rowid, score, created_at)
+             SELECT ?, session_search.rowid, bm25(session_search), session_search.created_at
+             FROM session_search
+             JOIN threads ON threads.id = session_search.thread_id
+             JOIN projects ON projects.path = threads.project_path
+             WHERE ${clauses.join(' AND ')}`,
+          )
+          .run(snapshotId, ...parameters)
+        this.#db.exec('RELEASE create_search_snapshot')
+      } catch (error) {
+        this.#db.exec('ROLLBACK TO create_search_snapshot')
+        this.#db.exec('RELEASE create_search_snapshot')
+        throw error
+      }
+    }
+
     const cursorClause = cursor
-      ? `WHERE score > ?
-            OR (score = ? AND created_at < ?)
-            OR (score = ? AND created_at = ? AND search_rowid < ?)`
+      ? `AND (snapshot.score > ?
+            OR (snapshot.score = ? AND snapshot.created_at < ?)
+            OR (snapshot.score = ? AND snapshot.created_at = ? AND snapshot.search_rowid < ?))`
       : ''
     const cursorParameters = cursor
       ? [cursor.score, cursor.score, cursor.createdAt, cursor.score, cursor.createdAt, cursor.rowid]
       : []
     const rows = this.#db
       .prepare(
-        `WITH matches AS (
-           SELECT projects.path AS project_path, projects.name AS project_name,
-                  threads.id AS thread_id, threads.title AS thread_title,
-                  threads.provider, session_search.turn_id, session_search.created_at,
-                  session_search.rowid AS search_rowid, bm25(session_search) AS score,
-                  snippet(session_search, 4, ?, ?, ' … ', 24) AS snippet
-           FROM session_search
-           JOIN threads ON threads.id = session_search.thread_id
-           JOIN projects ON projects.path = threads.project_path
-           WHERE ${clauses.join(' AND ')}
-         )
-         SELECT * FROM matches
+        `SELECT projects.path AS project_path, projects.name AS project_name,
+                threads.id AS thread_id, threads.title AS thread_title,
+                threads.provider, session_search.turn_id, snapshot.created_at,
+                snapshot.search_rowid, snapshot.score,
+                snippet(session_search, 4, ?, ?, ' … ', 24) AS snippet
+         FROM session_search_snapshot_rows AS snapshot
+         JOIN session_search ON session_search.rowid = snapshot.search_rowid
+         JOIN threads ON threads.id = session_search.thread_id
+         JOIN projects ON projects.path = threads.project_path
+         WHERE snapshot.snapshot_id = ? AND session_search MATCH ?
          ${cursorClause}
-         ORDER BY score, created_at DESC, search_rowid DESC
+         ORDER BY snapshot.score, snapshot.created_at DESC, snapshot.search_rowid DESC
          LIMIT ?`,
       )
-      .all(SNIPPET_START, SNIPPET_END, ...parameters, ...cursorParameters, limit + 1) as Array<{
+      .all(
+        SNIPPET_START,
+        SNIPPET_END,
+        snapshotId,
+        ftsQuery,
+        ...cursorParameters,
+        limit + 1,
+      ) as Array<{
       project_path: string
       project_name: string
       thread_id: string
@@ -949,11 +1052,31 @@ export class Store {
       nextCursor:
         rows.length > limit && last
           ? encodeCursor({
+              snapshotId,
               score: Number(last.score),
               createdAt: Number(last.created_at),
               rowid: Number(last.search_rowid),
             })
           : null,
+    }
+  }
+
+  #pruneSearchSnapshots(now: number, reserveSlot: boolean): void {
+    const expired = this.#db
+      .prepare(`SELECT id FROM session_search_snapshots WHERE expires_at <= ?`)
+      .all(now)
+      .map((row) => String((row as { id: unknown }).id))
+    const active = this.#db
+      .prepare(`SELECT id FROM session_search_snapshots ORDER BY expires_at DESC`)
+      .all()
+      .map((row) => String((row as { id: unknown }).id))
+    const retainedCount = MAX_SEARCH_SNAPSHOTS - (reserveSlot ? 1 : 0)
+    const overflow = active.slice(retainedCount)
+    for (const snapshotId of new Set([...expired, ...overflow])) {
+      this.#db
+        .prepare(`DELETE FROM session_search_snapshot_rows WHERE snapshot_id = ?`)
+        .run(snapshotId)
+      this.#db.prepare(`DELETE FROM session_search_snapshots WHERE id = ?`).run(snapshotId)
     }
   }
 
@@ -1331,6 +1454,8 @@ function decodeCursor(cursor: string | undefined): SearchCursor | undefined {
   try {
     const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as SearchCursor
     if (
+      typeof value.snapshotId !== 'string' ||
+      value.snapshotId.length < 1 ||
       !Number.isFinite(value.score) ||
       !Number.isSafeInteger(value.createdAt) ||
       value.createdAt < 0 ||
