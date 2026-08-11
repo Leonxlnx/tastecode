@@ -59,6 +59,7 @@ export function Thread(props: {
   running: boolean
   searching?: boolean
   activeTurn: { id: string; startedAt: number } | undefined
+  turnStartedAt?: Readonly<Record<string, number>> | undefined
   plan: PlanStep[]
   diff: string | undefined
   threadId?: string | undefined
@@ -219,7 +220,7 @@ export function Thread(props: {
   )
 
   const projectThread = useMemo(createThreadProjector, [props.threadId])
-  const { turns, presentations } = projectThread(props.items)
+  const { turns, presentations } = projectThread(props.items, props.turnStartedAt)
   const activePresentation = props.activeTurn ? presentations.get(props.activeTurn.id) : undefined
   const rawWorkLabel = useMemo(
     () => workLabel(props.items, props.activeTurn?.id, props.searching),

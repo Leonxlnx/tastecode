@@ -20,6 +20,8 @@ export type ThreadState = {
   running: boolean
   /** The live turn whose elapsed time and activity the UI is presenting. */
   activeTurn: { id: string; startedAt: number } | undefined
+  /** Stable wall-clock anchor for completed-turn elapsed labels and history replay. */
+  turnStartedAt: Readonly<Record<string, number>>
   /** The agent's plan for the current turn. Replaced wholesale when it changes. */
   plan: PlanStep[]
   usage?: Usage
@@ -37,6 +39,7 @@ export const emptyThread: ThreadState = {
   items: [],
   running: false,
   activeTurn: undefined,
+  turnStartedAt: {},
   plan: [],
   approvals: [],
   userInputs: [],
@@ -69,16 +72,21 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
     case 'turn.started':
       // A new turn gets a fresh plan and diff; the previous ones described work
       // already finished, and leaving them up reads as stale instructions.
+      const startedAt =
+        state.activeTurn &&
+        (state.activeTurn.id.startsWith('local-turn:') || state.activeTurn.id === event.turn.id)
+          ? state.activeTurn.startedAt
+          : event.turn.createdAt
       return {
         ...state,
         running: true,
         activeTurn: {
           id: event.turn.id,
-          startedAt:
-            state.activeTurn &&
-            (state.activeTurn.id.startsWith('local-turn:') || state.activeTurn.id === event.turn.id)
-              ? state.activeTurn.startedAt
-              : event.turn.createdAt,
+          startedAt,
+        },
+        turnStartedAt: {
+          ...state.turnStartedAt,
+          [event.turn.id]: Math.min(state.turnStartedAt[event.turn.id] ?? startedAt, startedAt),
         },
         plan: [],
         diff: undefined,

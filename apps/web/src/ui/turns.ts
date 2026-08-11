@@ -1,5 +1,7 @@
 import type { Item } from '@harness/contracts'
 
+const EMPTY_TURN_STARTED_AT: Readonly<Record<string, number>> = {}
+
 /**
  * Turn boundaries within the flat item list.
  *
@@ -42,16 +44,23 @@ export type ThreadProjection = {
  * streamed-tail path without walking the transcript. A history replacement or
  * an out-of-order update misses that proof and takes the full, safe rebuild.
  */
-export function createThreadProjector(): (items: Item[]) => ThreadProjection {
+export function createThreadProjector(): (
+  items: Item[],
+  turnStartedAt?: Readonly<Record<string, number>>,
+) => ThreadProjection {
   let previousItems: Item[] | undefined
+  let previousTurnStartedAt: Readonly<Record<string, number>> | undefined
   let previousProjection: ThreadProjection | undefined
 
-  return (items) => {
-    if (items === previousItems && previousProjection) return previousProjection
+  return (items, turnStartedAt = EMPTY_TURN_STARTED_AT) => {
+    if (items === previousItems && turnStartedAt === previousTurnStartedAt && previousProjection) {
+      return previousProjection
+    }
 
     if (
       previousItems &&
       previousProjection &&
+      turnStartedAt === previousTurnStartedAt &&
       isStartedAssistantTailTextUpdate(previousItems, items)
     ) {
       previousItems = items
@@ -59,9 +68,10 @@ export function createThreadProjector(): (items: Item[]) => ThreadProjection {
     }
 
     previousItems = items
+    previousTurnStartedAt = turnStartedAt
     previousProjection = {
       turns: findTurns(items),
-      presentations: presentTurns(items),
+      presentations: presentTurns(items, turnStartedAt),
     }
     return previousProjection
   }
@@ -94,7 +104,10 @@ export function findTurns(items: Item[]): TurnMark[] {
  * indices let Thread keep one flat virtualised list while rendering each group
  * only once.
  */
-export function presentTurns(items: Item[]): ReadonlyMap<string, TurnPresentation> {
+export function presentTurns(
+  items: Item[],
+  turnStartedAt: Readonly<Record<string, number>> = EMPTY_TURN_STARTED_AT,
+): ReadonlyMap<string, TurnPresentation> {
   const drafts = new Map<
     string,
     {
@@ -112,7 +125,7 @@ export function presentTurns(items: Item[]): ReadonlyMap<string, TurnPresentatio
 
     const draft = drafts.get(item.turnId) ?? {
       work: [],
-      earliest: item.createdAt,
+      earliest: Math.min(item.createdAt, turnStartedAt[item.turnId] ?? item.createdAt),
       latest: item.createdAt,
       hasRunningActivity: false,
       design: false,

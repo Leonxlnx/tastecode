@@ -175,6 +175,7 @@ describe('thread reducer', () => {
       id: 'server-turn',
       startedAt: optimistic.activeTurn?.startedAt,
     })
+    expect(confirmed.turnStartedAt['server-turn']).toBe(optimistic.activeTurn?.startedAt)
   })
 
   it('does not restart the timer when the same turn-start event is replayed', () => {
@@ -188,6 +189,7 @@ describe('thread reducer', () => {
     })
 
     expect(replayed.activeTurn?.startedAt).toBe(10)
+    expect(replayed.turnStartedAt['server-turn']).toBe(10)
   })
 
   it('rebuilds a whole conversation from a stored event log', () => {
@@ -212,6 +214,7 @@ describe('thread reducer', () => {
     expect(state.items.map((i) => i.text)).toEqual(['run the tests', 'All green.'])
     // A replayed turn is finished history, not something still in flight.
     expect(state.running).toBe(false)
+    expect(state.turnStartedAt.t1).toBe(0)
   })
 
   it('renders restart recovery without a live-looking command or approval', () => {

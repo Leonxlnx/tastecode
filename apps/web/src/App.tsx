@@ -2546,6 +2546,7 @@ export function App() {
                     running={thread.running}
                     searching={searching}
                     activeTurn={thread.activeTurn}
+                    turnStartedAt={thread.turnStartedAt}
                     plan={thread.plan}
                     diff={thread.diff}
                     threadId={activeId}

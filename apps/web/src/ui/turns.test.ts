@@ -76,6 +76,15 @@ describe('turn boundaries', () => {
     })
   })
 
+  it('includes the wait before the provider emits its first item', () => {
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', createdAt: 35_000 },
+      { ...item('answer', 't1'), role: 'assistant', text: 'Done.', createdAt: 38_000 },
+    ]
+
+    expect(presentTurns(items, { t1: 1_000 }).get('t1')?.elapsedMs).toBe(37_000)
+  })
+
   it('does not compact activity while the turn is still streaming', () => {
     const items: Item[] = [
       { ...item('user', 't1'), role: 'user' },
