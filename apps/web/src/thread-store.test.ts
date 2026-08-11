@@ -220,28 +220,18 @@ describe('thread reducer', () => {
         type: 'turn.started',
         turn: { id: 't1', threadId: 'th1', status: 'running', createdAt: 0 },
       },
-      {
-        type: 'item.started',
-        item: item({ id: 'command-1', type: 'command', role: undefined, command: 'pnpm test' }),
-      },
+      { type: 'item.started', item: item({ id: 'command-1', type: 'command' }) },
       {
         type: 'approval.requested',
         request: {
           id: 'approval-1',
           kind: 'command',
-          command: 'pnpm test',
           createdAt: 1,
         },
       },
       {
         type: 'item.completed',
-        item: item({
-          id: 'command-1',
-          type: 'command',
-          role: undefined,
-          status: 'failed',
-          command: 'pnpm test',
-        }),
+        item: item({ id: 'command-1', type: 'command', status: 'failed' }),
       },
       { type: 'approval.resolved', id: 'approval-1' },
       { type: 'turn.completed', turnId: 't1', status: 'interrupted' },

@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DiffDecision, DomainEvent } from '@harness/contracts'
+import type { DiffDecision, DomainEvent, ItemType } from '@harness/contracts'
 import { Store } from './store.js'
 
 let store: Store
@@ -38,33 +38,66 @@ const usage = (totalTokens: number, costUsd?: number, cumulative = false): Domai
   },
 })
 
+const lifecycleItem = (
+  id: string,
+  turnId: string,
+  type: ItemType,
+  status: 'started' | 'completed' = 'started',
+): DomainEvent => ({
+  type: status === 'started' ? 'item.started' : 'item.completed',
+  item: { id, turnId, type, status, text: `${status} ${type}`, createdAt: 2 },
+})
+
+const userInput = (id: string, turnId: string): DomainEvent => ({
+  type: 'user_input.requested',
+  request: {
+    id,
+    turnId,
+    questions: [
+      {
+        id: 'choice',
+        header: 'Choice',
+        question: 'Continue?',
+        allowOther: false,
+        secret: false,
+        options: [{ label: 'Yes', description: 'Continue the work.' }],
+      },
+    ],
+    autoResolutionMs: null,
+    createdAt: 3,
+  },
+})
+
 describe('recovering interrupted turns', () => {
-  it('settles a pending approval and active command exactly once after restart', () => {
+  function seedThread(target: Store, id: string, turnId = `${id}-turn`): void {
+    target.addThread({ id, projectPath: '/repo', provider: 'codex', title: 'Pending' })
+    target.append(id, {
+      type: 'turn.started',
+      turn: { id: turnId, threadId: id, status: 'running', createdAt: 1 },
+    })
+  }
+
+  it('settles every process-owned lifecycle while preserving terminal and resumable state', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-interrupted-turn-'))
     const file = path.join(dir, 'harness.db')
     const seeded = new Store(file)
     seeded.addProject('/repo')
-    seeded.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'Pending' })
-    seeded.append('thread-1', {
-      type: 'turn.started',
-      turn: {
-        id: 'turn-1',
-        threadId: 'thread-1',
-        status: 'running',
-        createdAt: 1,
-      },
-    })
-    seeded.append('thread-1', {
-      type: 'item.started',
-      item: {
-        id: 'command-1',
-        turnId: 'turn-1',
-        type: 'command',
-        status: 'started',
-        command: 'pnpm test',
-        createdAt: 2,
-      },
-    })
+    seedThread(seeded, 'thread-1', 'turn-1')
+    const itemTypes: ItemType[] = [
+      'message',
+      'reasoning',
+      'command',
+      'file_change',
+      'tool_call',
+      'plan',
+      'error',
+      'unknown',
+    ]
+    for (const type of itemTypes) {
+      seeded.append('thread-1', lifecycleItem(`active-${type}`, 'turn-1', type))
+    }
+    seeded.append('thread-1', lifecycleItem('terminal-item', 'turn-1', 'tool_call', 'completed'))
+    seeded.append('thread-1', lifecycleItem('terminal-item', 'turn-1', 'tool_call'))
     seeded.append('thread-1', {
       type: 'approval.requested',
       request: {
@@ -74,38 +107,59 @@ describe('recovering interrupted turns', () => {
         createdAt: 3,
       },
     })
+    seeded.append('thread-1', userInput('input-1', 'turn-1'))
+    seeded.append('thread-1', {
+      type: 'approval.review.started',
+      review: {
+        id: 'review-1',
+        turnId: 'turn-1',
+        status: 'in_progress',
+        description: 'Run tests',
+        startedAt: 13,
+      },
+    })
+
+    seeded.addThread({
+      id: 'resumable-design',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Design',
+    })
+    seeded.setDesignRun('resumable-design', { phase: 'brief' })
+    seeded.append('resumable-design', userInput('design-input', 'design-turn'))
+
+    seedThread(seeded, 'closed-thread')
+    seeded.closeThread('closed-thread')
     seeded.close()
 
     const restarted = new Store(file)
     try {
       expect(restarted.recoverInterruptedThreads()).toEqual(['thread-1'])
+      const recovered = restarted.history('thread-1').map(({ event }) => event)
       expect(
-        restarted
-          .history('thread-1')
-          .slice(3)
-          .map(({ event }) => event),
-      ).toEqual([
-        {
-          type: 'item.completed',
-          item: {
-            id: 'command-1',
-            turnId: 'turn-1',
-            type: 'command',
-            status: 'failed',
-            command: 'pnpm test',
-            createdAt: 2,
-          },
-        },
-        { type: 'approval.resolved', id: 'approval-1' },
-        { type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' },
-        {
-          type: 'thread.error',
-          threadId: 'thread-1',
-          message:
-            'This turn stopped when Personal Harness restarted. Review any partial changes, then send a new message to continue.',
-        },
-      ])
+        recovered
+          .filter((event) => event.type === 'item.completed' && event.item.status === 'failed')
+          .map((event) => (event.type === 'item.completed' ? event.item.id : '')),
+      ).toEqual(itemTypes.map((type) => `active-${type}`))
+      expect(recovered).toContainEqual({ type: 'approval.resolved', id: 'approval-1' })
+      expect(recovered).toContainEqual({ type: 'user_input.resolved', id: 'input-1' })
+      expect(recovered).toContainEqual({
+        type: 'approval.review.completed',
+        review: expect.objectContaining({ id: 'review-1', status: 'aborted' }),
+      })
+      expect(recovered).toContainEqual({
+        type: 'turn.completed',
+        turnId: 'turn-1',
+        status: 'interrupted',
+      })
+      expect(
+        recovered.filter(
+          (event) => event.type === 'item.completed' && event.item.id === 'terminal-item',
+        ),
+      ).toHaveLength(1)
       expect(restarted.thread('thread-1')?.unread).toBe(true)
+      expect(restarted.history('resumable-design')).toHaveLength(1)
+      expect(restarted.history('closed-thread')).toHaveLength(1)
 
       const recoveredLength = restarted.history('thread-1').length
       expect(restarted.recoverInterruptedThreads()).toEqual([])
@@ -114,6 +168,57 @@ describe('recovering interrupted turns', () => {
       restarted.close()
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('rolls back the whole recovery when one terminal event cannot be written', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-recovery-atomic-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seedThread(seeded, 'thread-1')
+    seeded.append('thread-1', {
+      type: 'approval.requested',
+      request: { id: 'approval-1', kind: 'command', createdAt: 2 },
+    })
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw.exec(`CREATE TRIGGER fail_recovery BEFORE INSERT ON events
+      WHEN json_extract(NEW.payload, '$.type') = 'turn.completed'
+      BEGIN SELECT RAISE(ABORT, 'injected recovery failure'); END`)
+    raw.close()
+
+    const restarted = new Store(file)
+    try {
+      expect(() => restarted.recoverInterruptedThreads()).toThrow('injected recovery failure')
+      expect(restarted.history('thread-1')).toHaveLength(2)
+      expect(restarted.thread('thread-1')?.unread).toBe(false)
+    } finally {
+      restarted.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('parses only unresolved lifecycle candidates instead of replaying old turns in JavaScript', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'Scale' })
+    for (let index = 0; index < 50; index += 1) {
+      const turnId = `completed-${index}`
+      store.append('thread-1', {
+        type: 'turn.started',
+        turn: { id: turnId, threadId: 'thread-1', status: 'running', createdAt: index },
+      })
+      store.append('thread-1', { type: 'turn.completed', turnId, status: 'completed' })
+    }
+    store.append('thread-1', {
+      type: 'turn.started',
+      turn: { id: 'open-turn', threadId: 'thread-1', status: 'running', createdAt: 100 },
+    })
+    const parse = vi.spyOn(JSON, 'parse')
+
+    expect(store.recoverInterruptedThreads()).toEqual(['thread-1'])
+    expect(parse).toHaveBeenCalledTimes(1)
+    parse.mockRestore()
   })
 })
 
