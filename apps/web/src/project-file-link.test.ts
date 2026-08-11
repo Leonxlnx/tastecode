@@ -15,6 +15,33 @@ describe('project file links', () => {
     ).toBe(
       'Updated [index.html](/__harness/project-file/file%3A%2F%2F%2FE%3A%2Frandomtesting%2Fpath%2520with%2520spaces%2Findex.html).',
     )
+    expect(
+      preserveProjectFileLinks(
+        'Updated [panel](<file:///E:/randomtesting/path with spaces/panel(test).tsx>).',
+      ),
+    ).toBe(
+      'Updated [panel](/__harness/project-file/file%3A%2F%2F%2FE%3A%2Frandomtesting%2Fpath%20with%20spaces%2Fpanel%28test%29.tsx).',
+    )
+    expect(preserveProjectFileLinks('Updated [panel](E:/randomtesting/panel(test).tsx).')).toBe(
+      'Updated [panel](/__harness/project-file/E%3A%2Frandomtesting%2Fpanel%28test%29.tsx).',
+    )
+  })
+
+  it('does not rewrite link examples inside inline or fenced code', () => {
+    const markdown = [
+      '`[inline](file:///E:/project/inline.ts)`',
+      '```md',
+      '[fenced](file:///E:/project/fenced.ts)',
+      '```',
+      '[real](file:///E:/project/real.ts)',
+    ].join('\n')
+
+    const preserved = preserveProjectFileLinks(markdown)
+    expect(preserved).toContain('`[inline](file:///E:/project/inline.ts)`')
+    expect(preserved).toContain('[fenced](file:///E:/project/fenced.ts)')
+    expect(preserved).toContain(
+      '[real](/__harness/project-file/file%3A%2F%2F%2FE%3A%2Fproject%2Freal.ts)',
+    )
   })
 
   it('accepts Windows files on another drive when they stay inside the project', () => {
