@@ -8181,18 +8181,26 @@
   padding-top: 16px;
 }
 
-.menu.is-positioned {
+.menu.is-positioned[data-input-modality='pointer'] {
   /* Grows from the trigger it belongs to. Nothing in the physical world
      appears from nothing, so nothing here starts at scale(0) either. */
   animation: menu-in var(--dur-fast) var(--ease-out);
 }
 
-.menu--up {
-  transform-origin: bottom;
+.menu[data-origin-x='left'][data-origin-y='top'] {
+  transform-origin: left top;
 }
 
-.menu--down {
-  transform-origin: top;
+.menu[data-origin-x='right'][data-origin-y='top'] {
+  transform-origin: right top;
+}
+
+.menu[data-origin-x='left'][data-origin-y='bottom'] {
+  transform-origin: left bottom;
+}
+
+.menu[data-origin-x='right'][data-origin-y='bottom'] {
+  transform-origin: right bottom;
 }
 
 @keyframes menu-in {
@@ -8233,14 +8241,25 @@
     color var(--dur-fast) var(--ease-out);
 }
 
-.menu__item:is(:hover, :focus-visible) {
+.menu__item:not(:disabled):is(:hover, :focus-visible) {
   background: var(--menu-hover);
   border-color: var(--chrome-border);
   box-shadow: var(--chrome-shadow);
   outline: 0;
 }
 
-.menu .menu__item--danger:is(:hover, :focus-visible) {
+.menu__item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu.is-positioned[data-input-modality='pointer'] {
+    animation: none;
+  }
+}
+
+.menu .menu__item--danger:not(:disabled):is(:hover, :focus-visible) {
   background: color-mix(in oklab, var(--error) 12%, transparent);
   border-color: color-mix(in oklab, var(--error) 32%, var(--chrome-border));
 }
