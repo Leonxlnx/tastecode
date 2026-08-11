@@ -624,19 +624,40 @@ describe('cross-session search', () => {
     expect(second.nextCursor).toBeNull()
   })
 
-  it('keeps pagination stable when a new matching event arrives', () => {
-    store.append('t1', message('first stable result'))
-    store.append('t1', message('second stable result'))
-    const first = store.searchSessions({ query: 'stable', limit: 1 })
+  it('keeps the original ranked snapshot when matching rows arrive between pages', () => {
+    for (let index = 0; index < 20; index += 1) {
+      store.append('t1', message(`pagefreeze old-${index}`))
+    }
+    const first = store.searchSessions({ query: 'pagefreeze', limit: 5 })
 
-    store.append('t1', message('new stable result'))
+    for (let index = 0; index < 100; index += 1) {
+      store.append(
+        't1',
+        message(`pagefreeze newly inserted result with different document length ${index}`),
+      )
+    }
     const second = store.searchSessions({
-      query: 'stable',
-      limit: 1,
+      query: 'pagefreeze',
+      limit: 5,
       cursor: first.nextCursor!,
     })
+    const snippetText = (result: SessionSearchResult): string =>
+      result.snippet.map((part) => part.text).join('')
 
-    expect(second.results[0]?.snippet.map((part) => part.text).join('')).toContain('first')
+    expect(first.results.map(snippetText)).toEqual([
+      'pagefreeze old-19',
+      'pagefreeze old-18',
+      'pagefreeze old-17',
+      'pagefreeze old-16',
+      'pagefreeze old-15',
+    ])
+    expect(second.results.map(snippetText)).toEqual([
+      'pagefreeze old-14',
+      'pagefreeze old-13',
+      'pagefreeze old-12',
+      'pagefreeze old-11',
+      'pagefreeze old-10',
+    ])
   })
 
   it('clamps internal page sizes and treats malformed cursors as a fresh search', () => {
