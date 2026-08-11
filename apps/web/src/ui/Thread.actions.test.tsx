@@ -4,6 +4,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import type { Item } from '@harness/contracts'
 import { Thread, isRepeatedDesignRow, workLabel } from './Thread.js'
 
+const { writeClipboardText } = vi.hoisted(() => ({
+  writeClipboardText: vi.fn(async () => undefined),
+}))
+
+vi.mock('../bridge.js', () => ({ writeClipboardText }))
+
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
     getVirtualItems: () =>
@@ -216,10 +222,7 @@ describe('collapsed row disclosure', () => {
 })
 
 describe('thread message actions', () => {
-  it('copies the user prompt', async () => {
-    const writeText = vi.fn(async () => undefined)
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
-
+  it('copies the user prompt through the platform bridge', async () => {
     render(
       <Thread
         items={[
@@ -246,7 +249,7 @@ describe('thread message actions', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy prompt' }))
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith('Keep my exact prompt'))
+    await waitFor(() => expect(writeClipboardText).toHaveBeenCalledWith('Keep my exact prompt'))
   })
 
   it('sends a previous prompt back to the composer for editing', () => {

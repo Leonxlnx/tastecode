@@ -29,6 +29,7 @@ import {
   SquareTerminal,
   Wrench,
 } from 'lucide-react'
+import { writeClipboardText } from '../bridge.js'
 import { isEditableTarget } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
 import { Approval, AutomaticApprovalReview } from './Approval.js'
@@ -785,7 +786,7 @@ function CopyAction({ text, label }: { text: string; label: string }) {
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(text)
+      await writeClipboardText(text)
       setCopied(true)
       window.clearTimeout(resetTimer.current)
       resetTimer.current = window.setTimeout(() => setCopied(false), 1600)
