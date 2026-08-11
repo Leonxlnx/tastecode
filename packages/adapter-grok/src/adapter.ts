@@ -130,6 +130,8 @@ type GrokFrame = {
   title?: string
   status?: string | null
   rawInput?: { file_path?: string; command?: string }
+  content?: unknown
+  rawOutput?: unknown
   stopReason?: string
   sessionId?: string
   total_cost_usd?: number
@@ -240,8 +242,10 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     })
 
     let sawEnd = false
-    const message = new StreamedItem(`${turnId}-message`)
+    let messageCounter = 1
+    let message = new StreamedItem(`${turnId}-message-${messageCounter}`)
     const reasoning = new StreamedItem(`${turnId}-reasoning`)
+    let toolCounter = 0
     /** toolCallId -> the open item it maps to. */
     const tools = new Map<
       string,
@@ -249,6 +253,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         itemId: string
         itemType: 'command' | 'file_change' | 'tool_call'
         label: string
+        command?: string
         path?: string
       }
     >()
@@ -266,6 +271,8 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
           return
         }
         if (frame.type === 'tool_call' && frame.toolCallId) {
+          message.complete(turnId, 'message', this)
+          message = new StreamedItem(`${turnId}-message-${++messageCounter}`)
           const name = frame.toolName ?? frame.title ?? 'tool'
           const itemType =
             name === 'write' || name === 'search_replace'
@@ -273,11 +280,12 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
               : name === 'run_terminal_command'
                 ? 'command'
                 : 'tool_call'
-          const itemId = `${turnId}-tool-${tools.size + 1}`
+          const itemId = `${turnId}-tool-${++toolCounter}`
           const entry = {
             itemId,
             itemType,
             label: frame.title ?? name,
+            ...(frame.rawInput?.command ? { command: frame.rawInput.command } : {}),
             ...(frame.rawInput?.file_path ? { path: frame.rawInput.file_path } : {}),
           } as const
           tools.set(frame.toolCallId, entry)
@@ -301,6 +309,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         if (frame.type === 'tool_call_update' && frame.toolCallId && frame.status) {
           const entry = tools.get(frame.toolCallId)
           if (!entry) return
+          const output = grokToolOutput(frame)
           this.emit('event', {
             type: 'item.completed',
             item: {
@@ -308,9 +317,14 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
               turnId,
               type: entry.itemType,
               status: frame.status === 'failed' ? 'failed' : 'completed',
-              ...(entry.itemType === 'command' ? { command: entry.label } : {}),
+              ...(entry.itemType === 'command'
+                ? { command: entry.command ?? entry.label, ...(output ? { text: output } : {}) }
+                : {}),
               ...(entry.itemType === 'file_change' && entry.path ? { path: entry.path } : {}),
-              ...(entry.itemType === 'tool_call' ? { text: entry.label } : {}),
+              ...(entry.itemType === 'file_change' && output ? { text: output } : {}),
+              ...(entry.itemType === 'tool_call'
+                ? { text: output ? `${entry.label}\n${output}` : entry.label }
+                : {}),
               createdAt: Date.now(),
             },
           })
@@ -449,6 +463,12 @@ function captureGrok(spawnFn: SpawnFn, args: string[], timeoutMs = 15000): Promi
     child.stdin.on('error', () => undefined)
     child.stdin.end()
   })
+}
+
+function grokToolOutput(frame: GrokFrame): string | undefined {
+  const value = frame.content ?? frame.rawOutput
+  if (value === null || value === undefined) return undefined
+  return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
 }
 
 /** Auth as the CLI reports it on `grok models` — nothing else is read. */
