@@ -712,18 +712,15 @@ describe('cross-session search', () => {
     expect(original.map((result) => result.resultId)).not.toContain(undefined)
     expect(new Set(original.map((result) => result.resultId)).size).toBe(3)
     expect(
-      repeated.map((result) => [
-        result.snippet.map((part) => part.text).join(''),
-        result.resultId,
-      ]),
+      repeated.map((result) => [result.snippet.map((part) => part.text).join(''), result.resultId]),
     ).toEqual(
       expect.arrayContaining(
         [...identityBySnippet].map(([snippet, resultId]) => [snippet, resultId]),
       ),
     )
-    expect(repeated.every((result) => result.threadTitle === 'Renamed after the first search')).toBe(
-      true,
-    )
+    expect(
+      repeated.every((result) => result.threadTitle === 'Renamed after the first search'),
+    ).toBe(true)
   })
 
   it('preserves result identity across process restarts and index rebuilds', () => {
