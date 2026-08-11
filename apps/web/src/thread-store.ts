@@ -76,8 +76,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
           id: event.turn.id,
           startedAt:
             state.activeTurn &&
-            (state.activeTurn.id.startsWith('local-turn:') ||
-              state.activeTurn.id === event.turn.id)
+            (state.activeTurn.id.startsWith('local-turn:') || state.activeTurn.id === event.turn.id)
               ? state.activeTurn.startedAt
               : event.turn.createdAt,
         },
