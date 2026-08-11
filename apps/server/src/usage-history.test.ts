@@ -608,7 +608,7 @@ describe('local usage history', () => {
     writeFileSync(
       cacheFile,
       JSON.stringify({
-        version: 5,
+        version: 6,
         generatedAt: 123,
         files: [
           {
@@ -626,6 +626,27 @@ describe('local usage history', () => {
     const cache = await readUsageCache(cacheFile)
     expect(cache.generatedAt).toBe(0)
     expect(cache.files).toEqual([])
+  })
+
+  it('invalidates caches from before the copied subagent boundary fix', async () => {
+    const root = temporaryDirectory()
+    const cacheFile = path.join(root, 'usage.json')
+    writeFileSync(
+      cacheFile,
+      JSON.stringify({
+        version: 5,
+        generatedAt: 123,
+        files: [],
+        sources: [],
+        warnings: [],
+      }),
+    )
+
+    expect(await readUsageCache(cacheFile)).toMatchObject({
+      version: 6,
+      generatedAt: 0,
+      files: [],
+    })
   })
 })
 
