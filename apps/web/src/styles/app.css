@@ -8187,22 +8187,6 @@
   animation: menu-in var(--dur-fast) var(--ease-out);
 }
 
-.menu[data-origin-x='left'][data-origin-y='top'] {
-  transform-origin: left top;
-}
-
-.menu[data-origin-x='right'][data-origin-y='top'] {
-  transform-origin: right top;
-}
-
-.menu[data-origin-x='left'][data-origin-y='bottom'] {
-  transform-origin: left bottom;
-}
-
-.menu[data-origin-x='right'][data-origin-y='bottom'] {
-  transform-origin: right bottom;
-}
-
 @keyframes menu-in {
   from {
     opacity: 0;

@@ -81,7 +81,6 @@ export function Menu(props: {
   const trigger = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)
   const initialFocus = useRef<'first' | 'last'>('first')
-  const lastTriggerModality = useRef<'keyboard' | 'pointer'>('keyboard')
   const restoreTarget = useRef<HTMLElement | undefined>(undefined)
   const typeahead = useRef('')
   const typeaheadTimer = useRef<number | undefined>(undefined)
@@ -113,14 +112,30 @@ export function Menu(props: {
   useEffect(() => {
     const target = props.contextMenuTargetRef?.current
     if (!target) return
+    let contextModality: 'keyboard' | 'pointer' = 'pointer'
+    const contextEvents = new AbortController()
 
     const onContextMenu = (event: MouseEvent) => {
       event.preventDefault()
-      setContextPoint({ x: event.clientX, y: event.clientY })
-      showMenu('pointer', 'first', target)
+      const bounds = target.getBoundingClientRect()
+      setContextPoint(
+        contextModality === 'keyboard'
+          ? { x: bounds.left, y: bounds.bottom }
+          : { x: event.clientX, y: event.clientY },
+      )
+      showMenu(contextModality, 'first', target)
+      contextModality = 'pointer'
     }
-    target.addEventListener('contextmenu', onContextMenu)
-    return () => target.removeEventListener('contextmenu', onContextMenu)
+    const onPointerDown = () => (contextModality = 'pointer')
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
+        contextModality = 'keyboard'
+      }
+    }
+    target.addEventListener('contextmenu', onContextMenu, { signal: contextEvents.signal })
+    target.addEventListener('pointerdown', onPointerDown, { signal: contextEvents.signal })
+    target.addEventListener('keydown', onKeyDown, { signal: contextEvents.signal })
+    return () => contextEvents.abort()
   }, [props.contextMenuTargetRef, showMenu])
 
   useEffect(() => {
@@ -154,13 +169,13 @@ export function Menu(props: {
     }
 
     const currentPanel = panel.current
-    if (!currentPanel) return
+    if (!currentPanel || !position || currentPanel.contains(document.activeElement)) return
     if (panelRole === 'menu') {
       focusMenuItem(currentPanel, initialFocus.current === 'last' ? -1 : 0)
-    } else if (!currentPanel.contains(document.activeElement)) {
+    } else {
       ;(focusableElements(currentPanel)[0] ?? currentPanel).focus()
     }
-  }, [open, panelRole])
+  }, [open, panelRole, position])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -262,20 +277,30 @@ export function Menu(props: {
     if (panelRole === 'dialog') {
       if (event.key !== 'Tab') return
       const focusable = focusableElements(currentPanel)
-      if (focusable.length === 0) {
-        event.preventDefault()
-        currentPanel.focus()
-        return
-      }
       const currentIndex = focusable.findIndex((item) => item === document.activeElement)
-      const atBoundary = event.shiftKey ? currentIndex <= 0 : currentIndex === focusable.length - 1
-      if (atBoundary || currentIndex === -1) {
+      const atBoundary =
+        currentIndex < 0 ||
+        (event.shiftKey ? currentIndex === 0 : currentIndex === focusable.length - 1)
+      if (atBoundary) {
         event.preventDefault()
-        focusable[event.shiftKey ? focusable.length - 1 : 0]?.focus()
+        ;(focusable[event.shiftKey ? focusable.length - 1 : 0] ?? currentPanel).focus()
       }
       return
     }
 
+    if (event.key === 'Tab') {
+      const tabbable = focusableElements(document.body).filter(
+        (item) => !currentPanel.contains(item),
+      )
+      const anchorIndex = restoreTarget.current ? tabbable.indexOf(restoreTarget.current) : -1
+      event.preventDefault()
+      closeMenu()
+      if (anchorIndex >= 0) {
+        const offset = event.shiftKey ? -1 : 1
+        tabbable[(anchorIndex + offset + tabbable.length) % tabbable.length]?.focus()
+      }
+      return
+    }
     const items = menuItems(currentPanel)
     if (items.length === 0) return
     const currentIndex = items.findIndex((item) => item === document.activeElement)
@@ -296,22 +321,15 @@ export function Menu(props: {
       return
     }
 
-    if (
-      event.key.length !== 1 ||
-      event.key.trim() === '' ||
-      event.ctrlKey ||
-      event.metaKey ||
-      event.altKey
-    ) {
+    const modified = event.ctrlKey || event.metaKey || event.altKey
+    if (event.key.length !== 1 || event.key.trim() === '' || modified) {
       return
     }
     event.preventDefault()
     const key = event.key.toLocaleLowerCase()
     typeahead.current += key
     if (typeaheadTimer.current !== undefined) window.clearTimeout(typeaheadTimer.current)
-    typeaheadTimer.current = window.setTimeout(() => {
-      typeahead.current = ''
-    }, 500)
+    typeaheadTimer.current = window.setTimeout(() => (typeahead.current = ''), 500)
     const ordered = [...items.slice(currentIndex + 1), ...items.slice(0, currentIndex + 1)]
     const match = ordered.find((item) =>
       (item.getAttribute('aria-label') ?? item.textContent ?? '')
@@ -328,11 +346,7 @@ export function Menu(props: {
         ref={trigger}
         id={triggerId}
         className={`menutrigger${props.triggerClassName ? ` ${props.triggerClassName}` : ''}`}
-        onPointerDown={() => {
-          lastTriggerModality.current = 'pointer'
-        }}
         onKeyDown={(event) => {
-          lastTriggerModality.current = 'keyboard'
           if (!open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
             event.preventDefault()
             setContextPoint(undefined)
@@ -343,11 +357,7 @@ export function Menu(props: {
           setContextPoint(undefined)
           if (open) closeMenu()
           else {
-            showMenu(
-              event.detail > 0 ? 'pointer' : lastTriggerModality.current,
-              'first',
-              trigger.current,
-            )
+            showMenu(event.detail > 0 ? 'pointer' : 'keyboard', 'first', trigger.current)
           }
         }}
         disabled={props.disabled}
@@ -369,11 +379,8 @@ export function Menu(props: {
               role={panelRole}
               {...(props.panelLabel ? { 'aria-label': props.panelLabel } : {})}
               {...(!props.panelLabel ? { 'aria-labelledby': triggerId } : {})}
+              aria-modal={panelRole === 'dialog' ? true : undefined}
               data-input-modality={inputModality}
-              data-origin-x={position?.originX ?? (props.align === 'right' ? 'right' : 'left')}
-              data-origin-y={
-                position?.originY ?? ((props.drop ?? 'up') === 'up' ? 'bottom' : 'top')
-              }
               tabIndex={-1}
               onKeyDown={onPanelKeyDown}
               onFocus={(event) => {
@@ -388,6 +395,7 @@ export function Menu(props: {
                 position
                   ? {
                       left: position.left,
+                      transformOrigin: `${position.originX} ${position.originY}`,
                       ...(position.drop === 'up'
                         ? { bottom: position.bottom }
                         : { top: position.top }),
