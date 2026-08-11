@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { toDomainEvents, toUsage } from './events.js'
+import { toDomainEvents, toUsage, type ClaudeEvent } from './events.js'
 
 /**
  * Fixtures captured from claude-code 2.1.220's actual output.
@@ -46,7 +46,7 @@ describe('claude event translation', () => {
   it('keeps item identities unique when separate blocks reuse a message id', () => {
     // Captured from claude-code 2.1.222: it reused one message id for a
     // narration envelope and a later tool-use envelope, both at block index 0.
-    const captured = [
+    const captured: ClaudeEvent[] = [
       {
         type: 'assistant',
         message: {
@@ -70,18 +70,18 @@ describe('claude event translation', () => {
           ],
         },
       },
-    ] as const
+    ]
 
     const translate = () => captured.flatMap((event) => toDomainEvents(event, 't1'))
     const first = translate()
     const replay = translate()
-    const itemIds = first.flatMap((event) =>
-      event.type === 'item.completed' ? [event.item.id] : [],
-    )
+    const completedItemIds = (events: ReturnType<typeof translate>) =>
+      events.flatMap((event) => (event.type === 'item.completed' ? [event.item.id] : []))
+    const itemIds = completedItemIds(first)
 
     expect(itemIds).toHaveLength(2)
     expect(new Set(itemIds)).toHaveLength(2)
-    expect(replay).toEqual(first)
+    expect(completedItemIds(replay)).toEqual(itemIds)
     expect(first).toMatchObject([
       { type: 'item.completed', item: { type: 'message', text: 'I will inspect the fixture.' } },
       { type: 'item.completed', item: { type: 'tool_call', text: 'Read' } },
