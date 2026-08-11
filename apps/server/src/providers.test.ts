@@ -74,6 +74,18 @@ describe('detectProviders', () => {
     expect(claude.setup?.login).toBe('app')
   })
 
+  it('links every missing provider to its current product setup guide', async () => {
+    const providers = await detectProviders(system())
+
+    expect(find(providers, 'codex').setup?.installUrl).toBe(
+      'https://developers.openai.com/codex/cli',
+    )
+    expect(find(providers, 'claude-code').setup?.installUrl).toBe(
+      'https://code.claude.com/docs/en/getting-started',
+    )
+    expect(find(providers, 'grok').setup?.installUrl).toBe('https://x.ai/cli')
+  })
+
   it('omits the version when the binary would not say', async () => {
     const providers = await detectProviders(
       system({ isInstalled: async () => true, version: async () => undefined }),
