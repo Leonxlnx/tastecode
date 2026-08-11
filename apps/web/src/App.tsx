@@ -574,6 +574,14 @@ export function App() {
 
   const activeIdRef = useRef(activeId)
   activeIdRef.current = activeId
+  const restoreRejectedDraft = useCallback((threadId: string, text: string) => {
+    const current = rejectedDrafts.current.get(threadId)
+    const draft = current ? `${current}\n\n${text}` : text
+    rejectedDrafts.current.set(threadId, draft)
+    if (threadId === activeIdRef.current) {
+      setComposerDraft((request) => ({ text: draft, request: (request?.request ?? 0) + 1 }))
+    }
+  }, [])
   const projectsRef = useRef(projects)
   projectsRef.current = projects
   /** Refetch after an outage. Held in a ref because the transport effect is
@@ -616,22 +624,9 @@ export function App() {
       if (pending.size === 0) pendingSubmissions.current.delete(threadId)
       threadStates.current.set(threadId, next)
       if (threadId === activeIdRef.current) setThread(next)
-      for (const submission of rejected) {
-        if (threadId === activeIdRef.current) {
-          setComposerDraft((current) => ({
-            text: current?.text ? `${current.text}\n\n${submission.text}` : submission.text,
-            request: (current?.request ?? 0) + 1,
-          }))
-        } else {
-          const draft = rejectedDrafts.current.get(threadId)
-          rejectedDrafts.current.set(
-            threadId,
-            draft ? `${draft}\n\n${submission.text}` : submission.text,
-          )
-        }
-      }
+      for (const submission of rejected) restoreRejectedDraft(threadId, submission.text)
     },
-    [],
+    [restoreRejectedDraft],
   )
   const acceptSidebarSettings = useCallback(
     (settings: SidebarSettings) => {
@@ -1093,11 +1088,12 @@ export function App() {
         if (historyOwners.current.get(threadId) !== buffer) return
         const restored = reduceEventLog(emptyThread, events)
         const lastSeq = events.at(-1)?.seq ?? 0
-        const withLive = preservePendingSubmissions(
+        const pending = preservePendingSubmissions(
           reduceEventLog(restored, buffer, lastSeq),
           pendingSubmissions.current,
           threadId,
         )
+        const withLive = running && !pending.running ? { ...pending, running: true } : pending
         // The buffered events above already include any deltas still waiting
         // for a frame, so do not apply that pending batch a second time.
         pendingThreadDeltas.current.delete(threadId)
@@ -1748,6 +1744,7 @@ export function App() {
         ])
       }
       const optimisticState = threadStates.current.get(threadId) ?? emptyThread
+      rejectedDrafts.current.delete(threadId)
       const pendingOptimisticTurn = optimisticState.activeTurn
       const pendingSubmission: PendingSubmission = {
         id: optimisticItemId,
@@ -1802,7 +1799,7 @@ export function App() {
         })
         turnAccepted = true
         const current = threadStates.current.get(threadId) ?? emptyThread
-        const pending = getPendingSubmission(pendingSubmissions.current, threadId, optimisticItemId)
+        const pending = pendingSubmissions.current.get(threadId)?.get(optimisticItemId)
         if (pending) pending.accepted = true
         if (result.queued) {
           if (pending) pending.kind = steering ? 'steer' : 'queue'
@@ -1843,11 +1840,7 @@ export function App() {
         }
       } catch (error) {
         if (isIndeterminateRequestError(error)) {
-          const pending = getPendingSubmission(
-            pendingSubmissions.current,
-            threadId,
-            optimisticItemId,
-          )
+          const pending = pendingSubmissions.current.get(threadId)?.get(optimisticItemId)
           if (pending) pending.indeterminate = true
           return
         }
@@ -1867,7 +1860,7 @@ export function App() {
             threadStates.current.set(threadId, next)
             if (threadId === activeIdRef.current) setThread(next)
           }
-          restoreDraft()
+          restoreRejectedDraft(threadId, text)
         } else if (steering) {
           const current = threadStates.current.get(threadId)
           if (current) {
@@ -1890,6 +1883,7 @@ export function App() {
       selectedServiceTier,
       updateQueue,
       designMode,
+      restoreRejectedDraft,
     ],
   )
 
@@ -2021,6 +2015,9 @@ export function App() {
   const selectSession = useCallback(
     async (id: string) => {
       setSurface('chat')
+      const leavingRejectedDraft = activeIdRef.current
+        ? rejectedDrafts.current.has(activeIdRef.current)
+        : false
       const found = findSession(projects, id)
       if (found?.session.provider) {
         const source = sourceKey({
@@ -2066,10 +2063,9 @@ export function App() {
       setThreadRevealRequest((request) => request + 1)
       setActivePath(found?.project.path)
       const rejectedDraft = rejectedDrafts.current.get(id)
-      if (rejectedDraft !== undefined) {
-        rejectedDrafts.current.delete(id)
+      if (rejectedDraft !== undefined || leavingRejectedDraft) {
         setComposerDraft((current) => ({
-          text: rejectedDraft,
+          text: rejectedDraft ?? '',
           request: (current?.request ?? 0) + 1,
         }))
       }
@@ -3172,14 +3168,6 @@ function putPendingSubmission(
   const thread = pending.get(threadId) ?? new Map()
   thread.set(submission.id, submission)
   pending.set(threadId, thread)
-}
-
-function getPendingSubmission(
-  pending: Map<string, Map<string, PendingSubmission>>,
-  threadId: string,
-  submissionId: string,
-): PendingSubmission | undefined {
-  return pending.get(threadId)?.get(submissionId)
 }
 
 function deletePendingSubmission(

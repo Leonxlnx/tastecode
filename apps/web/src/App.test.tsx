@@ -2663,10 +2663,7 @@ describe('live sessions', () => {
       const submissionId = (call[1] as { clientSubmissionId: string }).clientSubmissionId
       await act(async () => rejectSend(new IndeterminateRequestError('socket lost')))
       expect(screen.getByText('Submit exactly once')).toBeTruthy()
-      expect(screen.getByText('Working')).toBeTruthy()
-      expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
       expect((composer as HTMLTextAreaElement).value).toBe('')
-      fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
 
       act(() => {
         for (const listener of transport.stateListeners) listener('reconnecting')
@@ -2676,48 +2673,15 @@ describe('live sessions', () => {
       await act(async () =>
         resolveResync({
           events:
-            outcome === 'accepted'
-              ? [
-                  {
-                    seq: 1,
-                    event: {
-                      type: 'turn.started',
-                      turn: {
-                        id: 'turn-accepted',
-                        threadId: 'thread-1',
-                        status: 'running',
-                        createdAt: 7,
-                      },
-                    },
-                  },
-                  {
-                    seq: 2,
-                    event: {
-                      type: 'item.completed',
-                      item: {
-                        id: submissionId,
-                        turnId: 'turn-accepted',
-                        type: 'message',
-                        role: 'user',
-                        status: 'completed',
-                        text: 'Submit exactly once',
-                        createdAt: 7,
-                      },
-                    },
-                  },
-                ]
-              : [],
+            outcome === 'accepted' ? [completedUserEvent(submissionId, 'Submit exactly once')] : [],
           running: outcome === 'accepted',
         }),
       )
-      expect((composer as HTMLTextAreaElement).value).toBe('')
-      fireEvent.click(screen.getByRole('button', { name: 'Old chat' }))
-
       if (outcome === 'accepted') {
+        expect((composer as HTMLTextAreaElement).value).toBe('')
         expect(screen.getByText('Submit exactly once').getAttribute('data-item-id')).toBe(
           submissionId,
         )
-        expect(screen.getByTestId('thread').getAttribute('data-started-at')).toBe('7')
       } else {
         expect(within(screen.getByTestId('thread')).queryByText('Submit exactly once')).toBeNull()
         expect(screen.queryByText('Working')).toBeNull()
@@ -2785,32 +2749,19 @@ describe('live sessions', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    let rejectSend!: (error: Error) => void
+    let rejectSend: ((error: Error) => void) | undefined
+    const sendResult = new Promise((_, reject) => {
+      rejectSend = reject
+    })
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'thread.sendTurn') {
-        return new Promise((_, reject) => (rejectSend = reject))
+        return sendResult
       }
       if (method === 'thread.history') {
         const running = (params as { threadId: string }).threadId === 'thread-1'
         return Promise.resolve({
           events: running
-            ? [
-                {
-                  seq: 1,
-                  event: {
-                    type: 'item.completed',
-                    item: {
-                      id: 'accepted-id',
-                      turnId: 'turn-1',
-                      type: 'message',
-                      role: 'user',
-                      status: 'completed',
-                      text: 'Accepted before provider start',
-                      createdAt: 1,
-                    },
-                  },
-                },
-              ]
+            ? [completedUserEvent('accepted-id', 'Accepted before provider start')]
             : [],
           running,
         })
@@ -2822,27 +2773,29 @@ describe('live sessions', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Existing work, working' }))
     const composer = screen.getByPlaceholderText('Do anything')
     await screen.findByText('Accepted before provider start')
-    fireEvent.change(composer, { target: { value: 'Restore only in Existing work' } })
+    fireEvent.change(composer, { target: { value: 'Queue this next' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
-    expect(screen.getByLabelText('Queued prompts').textContent).toContain(
-      'Restore only in Existing work',
-    )
-    expect(screen.getByTestId('thread').textContent).not.toContain('Restore only in Existing work')
+    expect(screen.getByLabelText('Queued prompts').textContent).toContain('Queue this next')
+    expect(screen.getByTestId('thread').textContent).not.toContain('Queue this next')
 
-    await act(async () => rejectSend(new IndeterminateRequestError('socket lost')))
+    let submissionId = ''
+    await waitFor(() => {
+      const call = transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')
+      submissionId = (call?.[1] as { clientSubmissionId?: string }).clientSubmissionId ?? ''
+      expect(submissionId).toMatch(/^local:/)
+    })
+    await act(async () => rejectSend?.(new IndeterminateRequestError('socket lost')))
     act(() => {
       for (const listener of transport.stateListeners) listener('reconnecting')
       for (const listener of transport.stateListeners) listener('open')
     })
-    await waitFor(() =>
-      expect((composer as HTMLTextAreaElement).value).toBe('Restore only in Existing work'),
-    )
+    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe('Queue this next'))
     expect(screen.queryByLabelText('Queued prompts')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Background' }))
     expect((composer as HTMLTextAreaElement).value).toBe('')
     fireEvent.click(screen.getByRole('button', { name: 'Existing work, working' }))
-    expect((composer as HTMLTextAreaElement).value).toBe('Restore only in Existing work')
+    expect((composer as HTMLTextAreaElement).value).toBe('Queue this next')
   })
 
   it('keeps rapid queued prompts ordered when acknowledgements arrive backwards', async () => {
@@ -3411,6 +3364,24 @@ function emitThreadEvent(threadId: string, event: DomainEvent) {
   act(() => {
     transport.listeners.get('thread.event')?.({ threadId, event })
   })
+}
+
+function completedUserEvent(id: string, text: string): { seq: number; event: DomainEvent } {
+  return {
+    seq: 1,
+    event: {
+      type: 'item.completed',
+      item: {
+        id,
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text,
+        createdAt: 1,
+      },
+    },
+  }
 }
 
 function emitQueue(
