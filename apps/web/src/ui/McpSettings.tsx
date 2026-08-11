@@ -25,6 +25,9 @@ export function McpSettings(props: {
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
+  const pendingOAuth = useRef<{ serverId: string; loginId: string | undefined } | undefined>(
+    undefined,
+  )
   const activeContext = useRef({
     transport: props.transport,
     provider: props.provider,
@@ -76,6 +79,7 @@ export function McpSettings(props: {
     // "Server added." must not survive into an unrelated project's panel.
     setNotice(undefined)
     setEditor(undefined)
+    pendingOAuth.current = undefined
     setBusy(undefined)
     if (!props.projectPath) {
       setLoading(false)
@@ -84,12 +88,19 @@ export function McpSettings(props: {
     void refresh()
     const offOAuth = props.transport.on('mcp.oauth', (result) => {
       if (result.provider !== props.provider || result.projectPath !== props.projectPath) return
-      setBusy(undefined)
+      const pending = pendingOAuth.current
+      if (pending && (pending.serverId !== result.serverId || pending.loginId !== result.loginId)) {
+        if (result.success) void refresh()
+        return
+      }
+      pendingOAuth.current = undefined
+      setBusy((current) => (current === result.serverId ? undefined : current))
       if (result.success) {
         setNotice('MCP sign-in completed.')
         setError(undefined)
         void refresh()
       } else {
+        setNotice(undefined)
         setError(result.error ?? 'MCP sign-in failed.')
       }
     })
@@ -204,7 +215,8 @@ export function McpSettings(props: {
   }
 
   async function signIn(server: McpServer): Promise<void> {
-    if (!props.projectPath) return
+    if (!props.projectPath || pendingOAuth.current) return
+    pendingOAuth.current = { serverId: server.id, loginId: undefined }
     setBusy(server.id)
     setError(undefined)
     try {
@@ -214,22 +226,26 @@ export function McpSettings(props: {
         serverId: server.id,
       })
       if (!isCurrentContext()) return
+      pendingOAuth.current = { serverId: server.id, loginId: result.loginId }
       const opened = window.open(result.authUrl, '_blank', 'noopener,noreferrer')
       if (!opened) {
         setNotice(`Your browser blocked the sign-in window. Open it yourself: ${result.authUrl}`)
+      } else {
+        setNotice('Finish signing in in your browser.')
       }
-      setNotice('Finish signing in in your browser.')
     } catch (cause) {
-      if (isCurrentContext()) setError(message(cause))
-    } finally {
-      if (isCurrentContext()) setBusy(undefined)
+      if (isCurrentContext()) {
+        pendingOAuth.current = undefined
+        setBusy((current) => (current === server.id ? undefined : current))
+        setError(message(cause))
+      }
     }
   }
 
   const project = props.projectName ?? props.projectPath
   const status = !props.projectPath
     ? 'Select a project in the sidebar first.'
-    : loading
+    : loading && !inventory
       ? 'Loading MCP servers…'
       : !inventory
         ? undefined
