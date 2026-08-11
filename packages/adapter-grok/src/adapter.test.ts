@@ -95,7 +95,7 @@ describe('Grok adapter', () => {
           item: expect.objectContaining({
             type: 'file_change',
             status: 'completed',
-            text: expect.stringContaining('hello.txt'),
+            text: expect.stringMatching(/hello\.txt[\s\S]*SearchReplace/),
           }),
         }),
         expect.objectContaining({

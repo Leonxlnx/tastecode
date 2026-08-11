@@ -466,9 +466,15 @@ function captureGrok(spawnFn: SpawnFn, args: string[], timeoutMs = 15000): Promi
 }
 
 function grokToolOutput(frame: GrokFrame): string | undefined {
-  const value = frame.content ?? frame.rawOutput
-  if (value === null || value === undefined) return undefined
-  return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+  const parts = [frame.content, frame.rawOutput]
+    .map((value) => {
+      if (value === null || value === undefined || value === '') return undefined
+      if (Array.isArray(value) && value.length === 0) return undefined
+      return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+    })
+    .filter((value): value is string => value !== undefined)
+  const unique = [...new Set(parts)]
+  return unique.length ? unique.join('\n') : undefined
 }
 
 /** Auth as the CLI reports it on `grok models` — nothing else is read. */
