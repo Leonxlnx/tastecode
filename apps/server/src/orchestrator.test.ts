@@ -18,6 +18,8 @@ import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
 import * as checkpoint from './checkpoint.js'
+import { beginOptimisticTurn, emptyThread, reduceEventLog } from '../../web/src/thread-store.js'
+import { presentTurns } from '../../web/src/ui/turns.js'
 
 /** Counts stops, so tests can prove the dev server does not outlive its flow. */
 const previewStops = vi.hoisted(() => ({ count: 0 }))
@@ -292,6 +294,42 @@ describe('workspace paths', () => {
 })
 
 describe('durable turn timing', () => {
+  it('replays the accepted start after a provider reports a later timestamp', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const optimistic = beginOptimisticTurn(emptyThread, 'Do the work.')
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('api', '/repo')
+      const session = sessions[0]!
+      session.turnIds.push('turn-replay')
+      await orchestrator.sendTurn(thread.id, 'Do the work.')
+
+      now.mockReturnValue(5_000)
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 'turn-replay', threadId: thread.id, status: 'running', createdAt: 5_000 },
+      })
+      now.mockReturnValue(8_000)
+      const answer = message('Done.', 'turn-replay')
+      if (answer.type !== 'item.completed') throw new Error('expected completed message')
+      session.emit({ ...answer, item: { ...answer.item, createdAt: 8_000 } })
+      session.emit({ type: 'turn.completed', turnId: 'turn-replay', status: 'completed' })
+
+      const history = store.history(thread.id)
+      const replayed = reduceEventLog(emptyThread, history)
+      const live = reduceEventLog(optimistic, history)
+      expect(replayed.turnTiming['turn-replay']).toEqual({ startedAt: 1_000, completedAt: 8_000 })
+      expect(
+        [live, replayed].map(
+          (state) => presentTurns(state.items, state.turnTiming).get('turn-replay')?.elapsedMs,
+        ),
+      ).toEqual([7_000, 7_000])
+    } finally {
+      now.mockRestore()
+      await orchestrator.disposeAll()
+    }
+  })
+
   it('normalizes a start emitted before the provider returns its turn id', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
     const { orchestrator, sessions, store } = harness()
