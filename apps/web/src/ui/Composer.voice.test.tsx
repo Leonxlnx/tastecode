@@ -32,7 +32,8 @@ describe('Composer voice dictation', () => {
   it('records, transcribes, and inserts at the cursor without sending', async () => {
     const onSend = vi.fn()
     const onTranscribeVoice = vi.fn(async () => 'spoken words')
-    renderVoiceComposer({ onSend, onTranscribeVoice })
+    const onDraftChange = vi.fn()
+    renderVoiceComposer({ onSend, onTranscribeVoice, onDraftChange })
     const textarea = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
     fireEvent.change(textarea, { target: { value: 'hello world' } })
     textarea.setSelectionRange(5, 5)
@@ -42,6 +43,7 @@ describe('Composer voice dictation', () => {
 
     await waitFor(() => expect(textarea.value).toBe('hello spoken words world'))
     expect(onTranscribeVoice).toHaveBeenCalledTimes(1)
+    expect(onDraftChange).toHaveBeenLastCalledWith('hello spoken words world')
     expect(onSend).not.toHaveBeenCalled()
   })
 

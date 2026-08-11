@@ -2638,11 +2638,11 @@ describe('live sessions', () => {
       ])
       const request = transport.request.getMockImplementation()!
       let historyCount = 0
-      let resolveResync!: (value: { events: unknown[]; running: boolean }) => void
+      const resyncs: Array<(value: { events: unknown[]; running: boolean }) => void> = []
       let rejectSend!: (error: Error) => void
       transport.request.mockImplementation((method: string, params: unknown) => {
         if (method === 'thread.history' && historyCount++ > 0) {
-          return new Promise((resolve) => (resolveResync = resolve))
+          return new Promise((resolve) => resyncs.push(resolve))
         }
         if (method === 'thread.sendTurn') {
           return new Promise((_, reject) => (rejectSend = reject))
@@ -2654,8 +2654,16 @@ describe('live sessions', () => {
       fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
       if (kind === 'queue') emitThreadEvent('thread-1', staleTurnStartedEvent().event)
       const composer = screen.getByPlaceholderText('Do anything')
+      if (kind === 'queue') {
+        reconnectTransport()
+        await waitFor(() => expect(resyncs).toHaveLength(1))
+      }
       const submissionId = await submitPrompt(composer, 'Submit exactly once')
       const queued = () => screen.queryByLabelText('Queued prompts')
+      if (kind === 'queue') {
+        await act(async () => resyncs[0]?.({ events: [staleTurnStartedEvent()], running: true }))
+        expect(queued()?.textContent).toContain('Submit exactly once')
+      }
       await act(async () => rejectSend(new IndeterminateRequestError('socket lost')))
       expect(
         kind === 'queue' ? queued()?.textContent : screen.getByTestId('thread').textContent,
@@ -2663,20 +2671,19 @@ describe('live sessions', () => {
       expect((composer as HTMLTextAreaElement).value).toBe('')
 
       reconnectTransport()
-      await waitFor(() => expect(resolveResync).toBeTypeOf('function'))
+      await waitFor(() => expect(resyncs).toHaveLength(kind === 'queue' ? 2 : 1))
       if (kind === 'queue') expect(queued()?.textContent).toContain('Submit exactly once')
+      if (kind === 'turn' && outcome === 'accepted') {
+        emitThreadEvent('thread-1', staleTurnStartedEvent().event)
+      }
       await act(async () =>
-        resolveResync({
-          events: [
-            ...(kind === 'queue' || outcome === 'rejected' ? [staleTurnStartedEvent()] : []),
-            ...(outcome === 'accepted'
-              ? [completedUserEvent(submissionId, 'Submit exactly once')]
-              : []),
-          ],
-          running: kind === 'queue' || outcome === 'accepted',
+        resyncs.at(-1)?.({
+          events: outcome === 'rejected' ? [staleTurnStartedEvent()] : [],
+          running: kind === 'queue',
         }),
       )
       if (outcome === 'accepted') {
+        emitThreadEvent('thread-1', completedUserEvent(submissionId, 'Submit exactly once').event)
         expect((composer as HTMLTextAreaElement).value).toBe('')
         expect(screen.getByText('Submit exactly once').getAttribute('data-item-id')).toBe(
           submissionId,
@@ -2690,11 +2697,12 @@ describe('live sessions', () => {
 
       expect(queued()).toBeNull()
       if (outcome === 'accepted') return
-      fireEvent.change(composer, { target: { value: 'Edited queue' } })
+      emitQueue('thread-1', [{ id: 'edit', text: 'Edited queue', attachments: [], createdAt: 2 }])
+      fireEvent.click(screen.getByRole('button', { name: 'Edit Edited queue' }))
       fireEvent.click(screen.getByRole('button', { name: 'Background' }))
       expect((composer as HTMLTextAreaElement).value).toBe('')
       fireEvent.click(screen.getByRole('button', { name: /^Existing work/ }))
-      expect((composer as HTMLTextAreaElement).value).toBe('Edited queue')
+      expect((composer as HTMLTextAreaElement).value).toBe('Edited queue\n\nSubmit exactly once')
       fireEvent.change(composer, { target: { value: '' } })
       fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
       fireEvent.click(screen.getByRole('button', { name: /^Existing work/ }))
