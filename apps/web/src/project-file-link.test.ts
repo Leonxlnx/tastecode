@@ -30,7 +30,10 @@ describe('project file links', () => {
   it('does not rewrite link examples inside inline or fenced code', () => {
     const markdown = [
       '`[inline](file:///E:/project/inline.ts)`',
+      '',
       '    [indented](file:///E:/project/indented.ts)',
+      '',
+      '-     [list-indented](file:///E:/project/list-indented.ts)',
       '```md',
       '```not-a-close',
       '[fenced](file:///E:/project/fenced.ts)',
@@ -41,15 +44,22 @@ describe('project file links', () => {
       '- ~~~md',
       '  [listed](file:///E:/project/listed.ts)',
       '  ~~~',
+      '\\](file:///E:/project/escaped.ts)',
+      '[outer](https://example.com "title ](file:///E:/project/title.ts)")',
+      '<pre>[html](file:///E:/project/html.ts)</pre>',
       '[real](file:///E:/project/real.ts)',
     ].join('\n')
 
     const preserved = preserveProjectFileLinks(markdown)
     expect(preserved).toContain('`[inline](file:///E:/project/inline.ts)`')
     expect(preserved).toContain('[indented](file:///E:/project/indented.ts)')
+    expect(preserved).toContain('[list-indented](file:///E:/project/list-indented.ts)')
     expect(preserved).toContain('[fenced](file:///E:/project/fenced.ts)')
     expect(preserved).toContain('[quoted](file:///E:/project/quoted.ts)')
     expect(preserved).toContain('[listed](file:///E:/project/listed.ts)')
+    expect(preserved).toContain('\\](file:///E:/project/escaped.ts)')
+    expect(preserved).toContain('title ](file:///E:/project/title.ts)')
+    expect(preserved).toContain('<pre>[html](file:///E:/project/html.ts)</pre>')
     expect(preserved).toContain(
       '[real](/__harness/project-file/file%3A%2F%2F%2FE%3A%2Fproject%2Freal.ts)',
     )

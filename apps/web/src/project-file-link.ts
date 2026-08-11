@@ -1,198 +1,55 @@
+import { parse, postprocess, preprocess } from 'micromark'
+
 const INTERNAL_FILE_PREFIX = '/__harness/project-file/'
 
 export type ProjectFileReference =
   { kind: 'safe'; path: string } | { kind: 'blocked'; path: string; reason: string }
 
-/**
- * Markdown parsers deliberately replace file: links with `[blocked]` before
- * custom link components run. Encode only Markdown link destinations into a
- * same-origin placeholder; the renderer still validates the decoded path
- * against the selected project before making it interactive.
- */
+/** Preserve real Markdown file-link destinations before the renderer blocks file: URLs. */
 export function preserveProjectFileLinks(markdown: string): string {
   if (!/(?:file:\/\/|[a-z]:[\\/])/i.test(markdown)) return markdown
 
-  let cursor = 0
-  let index = 0
-  let lineStart = 0
-  let inlineTicks = 0
-  let fence: { marker: string; length: number } | undefined
-  let result = ''
+  const events = postprocess(
+    parse()
+      .document()
+      .write(preprocess()(markdown, 'utf8', true)),
+  )
+  const destinations: Array<{ start: number; end: number; href: string }> = []
+  let linkDepth = 0
 
-  while (index < markdown.length) {
-    if (index === lineStart) {
-      const line = markdownLineAt(markdown, index)
-      if (fence) {
-        if (
-          line.fence?.closing &&
-          line.fence.marker === fence.marker &&
-          line.fence.length >= fence.length
-        ) {
-          fence = undefined
-        }
-        const newline = markdown.indexOf('\n', index)
-        if (newline < 0) break
-        index = newline + 1
-        lineStart = index
-        continue
-      }
-      if (line.indented || line.fence) {
-        fence = line.fence
-        const newline = markdown.indexOf('\n', index)
-        if (newline < 0) break
-        index = newline + 1
-        lineStart = index
-        continue
-      }
-    }
-
-    if (markdown[index] === '\n') {
-      index += 1
-      lineStart = index
+  for (const [kind, token] of events) {
+    if (token.type === 'link') {
+      linkDepth += kind === 'enter' ? 1 : -1
       continue
     }
-
-    if (markdown[index] === '`') {
-      const ticks = runLength(markdown, index, '`')
-      if (inlineTicks === 0) inlineTicks = ticks
-      else if (inlineTicks === ticks) inlineTicks = 0
-      index += ticks
+    if (kind !== 'enter' || linkDepth === 0 || token.type !== 'resourceDestinationString') {
       continue
     }
-
-    if (inlineTicks === 0 && markdown[index] === ']' && markdown[index + 1] === '(') {
-      const destination = linkDestinationAt(markdown, index + 2)
-      if (destination && /^(?:file:\/\/|[a-z]:[\\/])/i.test(destination.href)) {
-        result += markdown.slice(cursor, destination.start)
-        result += `${INTERNAL_FILE_PREFIX}${encodeFileHref(destination.href)}`
-        cursor = destination.end
-        index = destination.end
-        continue
-      }
+    const start = token.start.offset
+    const end = token.end.offset
+    const href = markdown.slice(start, end)
+    if (/^(?:file:\/\/|[a-z]:[\\/])/i.test(href)) {
+      const literal = markdown[start - 1] === '<' && markdown[end] === '>'
+      destinations.push({ start: literal ? start - 1 : start, end: literal ? end + 1 : end, href })
     }
-
-    index += 1
   }
 
-  return cursor === 0 ? markdown : result + markdown.slice(cursor)
+  if (destinations.length === 0) return markdown
+
+  let result = ''
+  let cursor = 0
+  for (const destination of destinations) {
+    result += markdown.slice(cursor, destination.start)
+    result += `${INTERNAL_FILE_PREFIX}${encodeFileHref(destination.href)}`
+    cursor = destination.end
+  }
+  return result + markdown.slice(cursor)
 }
 
 function encodeFileHref(href: string): string {
   return encodeURIComponent(href).replace(/[()]/g, (character) =>
     character === '(' ? '%28' : '%29',
   )
-}
-
-function markdownLineAt(
-  markdown: string,
-  lineStart: number,
-): {
-  indented: boolean
-  fence?: { marker: string; length: number; closing: boolean }
-} {
-  let index = lineStart
-  while (true) {
-    const indentStart = index
-    while (markdown[index] === ' ') index += 1
-    if (index - indentStart >= 4 || markdown[index] === '\t') return { indented: true }
-    if (markdown[index] === '>') {
-      index += markdown[index + 1] === ' ' ? 2 : 1
-      continue
-    }
-    const listEnd = listMarkerEnd(markdown, index)
-    if (listEnd !== undefined) {
-      index = listEnd
-      continue
-    }
-    break
-  }
-
-  const marker = markdown[index]
-  if (marker !== '`' && marker !== '~') return { indented: false }
-  const length = runLength(markdown, index, marker)
-  if (length < 3) return { indented: false }
-  const newline = markdown.indexOf('\n', index)
-  const rest = markdown.slice(index + length, newline < 0 ? markdown.length : newline)
-  return { indented: false, fence: { marker, length, closing: /^\s*$/.test(rest) } }
-}
-
-function listMarkerEnd(markdown: string, start: number): number | undefined {
-  let index = start
-  if (markdown[index] === '-' || markdown[index] === '+' || markdown[index] === '*') index += 1
-  else {
-    while (index - start < 9 && /\d/.test(markdown[index] ?? '')) index += 1
-    if (index === start || (markdown[index] !== '.' && markdown[index] !== ')')) return undefined
-    index += 1
-  }
-  if (markdown[index] !== ' ' && markdown[index] !== '\t') return undefined
-  while (markdown[index] === ' ' || markdown[index] === '\t') index += 1
-  return index
-}
-
-function runLength(value: string, start: number, character: string): number {
-  let end = start
-  while (value[end] === character) end += 1
-  return end - start
-}
-
-function linkDestinationAt(
-  markdown: string,
-  afterOpeningParenthesis: number,
-): { href: string; start: number; end: number } | undefined {
-  let start = afterOpeningParenthesis
-  while (markdown[start] === ' ' || markdown[start] === '\t') start += 1
-
-  if (markdown[start] === '<') {
-    const hrefStart = start + 1
-    let end = hrefStart
-    while (end < markdown.length && (markdown[end] !== '>' || escapedAt(markdown, end))) end += 1
-    if (markdown[end] !== '>' || !validLinkTail(markdown, end + 1)) return undefined
-    return { href: markdown.slice(hrefStart, end), start, end: end + 1 }
-  }
-
-  let depth = 0
-  let end = start
-  while (end < markdown.length) {
-    const character = markdown[end]
-    if (character === '\n') return undefined
-    if (!escapedAt(markdown, end)) {
-      if (character === '(') depth += 1
-      else if (character === ')') {
-        if (depth === 0) return { href: markdown.slice(start, end), start, end }
-        depth -= 1
-      } else if ((character === ' ' || character === '\t') && depth === 0) {
-        return validLinkTail(markdown, end)
-          ? { href: markdown.slice(start, end), start, end }
-          : undefined
-      }
-    }
-    end += 1
-  }
-  return undefined
-}
-
-function validLinkTail(markdown: string, afterDestination: number): boolean {
-  let index = afterDestination
-  while (markdown[index] === ' ' || markdown[index] === '\t') index += 1
-  if (markdown[index] === ')') return true
-
-  const quote = markdown[index]
-  if (quote !== '"' && quote !== "'") return false
-  index += 1
-  while (index < markdown.length && (markdown[index] !== quote || escapedAt(markdown, index))) {
-    if (markdown[index] === '\n') return false
-    index += 1
-  }
-  if (markdown[index] !== quote) return false
-  index += 1
-  while (markdown[index] === ' ' || markdown[index] === '\t') index += 1
-  return markdown[index] === ')'
-}
-
-function escapedAt(value: string, index: number): boolean {
-  let backslashes = 0
-  while (index > 0 && value[--index] === '\\') backslashes += 1
-  return backslashes % 2 === 1
 }
 
 export function projectFileReference(

@@ -145,6 +145,9 @@ importers:
       lucide-react:
         specifier: ^1.27.0
         version: 1.27.0(react@19.2.8)
+      micromark:
+        specifier: 4.0.2
+        version: 4.0.2
       qrcode:
         specifier: 1.5.4
         version: 1.5.4
