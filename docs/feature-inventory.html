@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-11 8c1ddd3a</span>
+        <span class="meta">2026-08-11 1b43f42c</span>
       </div>
     </div>
 
@@ -712,7 +712,10 @@
             <label
               ><input type="checkbox" /><span
                 >Streaming markdown with syntax highlighting
-                <span class="d">plain tokenizer while live, Shiki once on completion</span></span
+                <span class="d"
+                  >the visible live tail keeps its current renderer; a bounded incremental parser
+                  foundation scans only appended text and preserves exact completion source</span
+                ></span
               ></label
             >
           </li>
@@ -1037,7 +1040,8 @@
               ><input type="checkbox" /><span
                 >Cross-session title and full-text search with project and agent filters
                 <span class="d"
-                  >prefix ranking, highlighted snippets, pagination, and keyboard navigation</span
+                  >prefix ranking, highlighted snippets, keyboard navigation, and stable pagination
+                  over an immutable ranked server snapshot with indexed range seeks</span
                 ></span
               ></label
             >
