@@ -70,6 +70,7 @@ class FakeSession implements AgentSession {
   mcpServers: McpServer[] = []
   turnIds: string[] = []
   sendError: Error | undefined
+  eventDuringSend: DomainEvent | undefined
   /** Resolves the pending sendTurn, letting a test hold one open. */
   release: (() => void) | undefined
 
@@ -88,6 +89,7 @@ class FakeSession implements AgentSession {
     this.sentOptions.push(options)
     if (this.release) await new Promise<void>((resolve) => (this.release = resolve))
     if (this.sendError) throw this.sendError
+    if (this.eventDuringSend) this.emit(this.eventDuringSend)
     return this.turnIds.shift() ?? `${this.id}-turn`
   }
 
@@ -290,6 +292,30 @@ describe('workspace paths', () => {
 })
 
 describe('durable turn timing', () => {
+  it('normalizes a start emitted before the provider returns its turn id', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('api', '/repo')
+      const session = sessions[0]!
+      session.turnIds.push('turn-sync')
+      session.eventDuringSend = {
+        type: 'turn.started',
+        turn: { id: 'turn-sync', threadId: thread.id, status: 'running', createdAt: 5_000 },
+      }
+
+      await orchestrator.sendTurn(thread.id, 'Do the work.')
+
+      expect(store.history(thread.id).at(-1)?.event).toMatchObject({
+        type: 'turn.started',
+        turn: { id: 'turn-sync', createdAt: 1_000 },
+      })
+    } finally {
+      now.mockRestore()
+      await orchestrator.disposeAll()
+    }
+  })
+
   it.each(['codex', 'api'] as const)(
     'records server-owned lifecycle boundaries for %s turns',
     async (provider) => {
