@@ -131,6 +131,65 @@ describe('Codex usage history', () => {
       }),
     ])
   })
+
+  it('waits for the subagent communication boundary after copied turn context', async () => {
+    const filePath = await usageFile([
+      {
+        timestamp: '2026-06-02T10:00:00.000Z',
+        type: 'session_meta',
+        payload: {
+          id: 'child-session',
+          source: {
+            subagent: {
+              thread_spawn: { parent_thread_id: 'parent-session', depth: 1 },
+            },
+          },
+        },
+      },
+      {
+        timestamp: '2026-06-02T10:00:00.100Z',
+        type: 'session_meta',
+        payload: { id: 'parent-session' },
+      },
+      {
+        timestamp: '2026-06-02T10:00:00.200Z',
+        type: 'turn_context',
+        payload: { model: 'gpt-5.6-sol' },
+      },
+      tokenCount('2026-06-02T10:00:01.000Z', {
+        input_tokens: 1_000,
+        output_tokens: 100,
+        total_tokens: 1_100,
+      }),
+      {
+        timestamp: '2026-06-02T10:00:02.000Z',
+        type: 'turn_context',
+        payload: { model: 'gpt-5.6-sol' },
+      },
+      {
+        timestamp: '2026-06-02T10:00:02.100Z',
+        type: 'inter_agent_communication_metadata',
+        payload: {},
+      },
+      tokenCount('2026-06-02T10:01:00.000Z', {
+        input_tokens: 1_150,
+        output_tokens: 125,
+        total_tokens: 1_275,
+      }),
+    ])
+
+    expect(await readCodexUsageHistory(filePath)).toEqual([
+      expect.objectContaining({
+        model: 'gpt-5.6-sol',
+        sessionId: 'child-session',
+        tokens: expect.objectContaining({
+          observedInputTokens: 150,
+          outputTokens: 25,
+          processedTokens: 175,
+        }),
+      }),
+    ])
+  })
 })
 
 async function usageFile(records: unknown[]): Promise<string> {

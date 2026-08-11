@@ -597,7 +597,7 @@ describe('local usage history', () => {
     )
 
     const cache = await readUsageCache(cacheFile)
-    expect(cache.version).toBe(5)
+    expect(cache.version).toBe(6)
     expect(cache.generatedAt).toBe(123)
     expect(cache.sources).toContainEqual({ provider: 'codex', label: 'Codex', available: true })
   })

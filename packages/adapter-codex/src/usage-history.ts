@@ -14,9 +14,11 @@ type CodexUsage = {
 /** Reads Codex JSONL without exposing its cumulative wire format to the core. */
 export async function readCodexUsageHistory(filePath: string): Promise<LocalUsageRecord[]> {
   const entries = new Map<string, LocalUsageRecord>()
+  const legacySubagentEntries = new Map<string, LocalUsageRecord>()
   let sessionId = filePath
   let sawSessionMeta = false
   let replayingParentHistory = false
+  let sawLegacySubagentBoundary = false
   let currentModel = 'Unknown model'
   let previous: CodexUsage | undefined
   const lines = readline.createInterface({
@@ -30,6 +32,7 @@ export async function readCodexUsageHistory(filePath: string): Promise<LocalUsag
       !tokenLine &&
       line.length < 2 * 1024 * 1024 &&
       (line.includes('"turn_context"') ||
+        line.includes('"inter_agent_communication_metadata"') ||
         line.includes('"session_meta"') ||
         line.includes('"model"'))
     if (!tokenLine && !contextLine) continue
@@ -47,7 +50,13 @@ export async function readCodexUsageHistory(filePath: string): Promise<LocalUsag
     }
     const model = extractModel(payload)
     if (model) currentModel = model
-    if (record['type'] === 'turn_context' && model) replayingParentHistory = false
+    if (replayingParentHistory && record['type'] === 'turn_context' && model) {
+      sawLegacySubagentBoundary = true
+    }
+    if (replayingParentHistory && record['type'] === 'inter_agent_communication_metadata') {
+      replayingParentHistory = false
+      legacySubagentEntries.clear()
+    }
     if (record['type'] !== 'event_msg' || payload?.['type'] !== 'token_count') continue
 
     const timestamp = dateValue(record['timestamp'])
@@ -63,12 +72,9 @@ export async function readCodexUsageHistory(filePath: string): Promise<LocalUsag
       previous = addUsage(previous, last)
     }
 
-    // A spawned subagent rollout starts with a copy of its parent's cumulative
-    // token snapshots. Keep the last snapshot as the child's baseline, but do
-    // not count the copied history again or attribute it to an invented model.
-    if (replayingParentHistory || !timestamp || !delta || delta.totalTokens <= 0) continue
+    if (!timestamp || !delta || delta.totalTokens <= 0) continue
 
-    mergeUsageRecord(entries, {
+    const entry = {
       date: localDateKey(timestamp),
       model: model ?? currentModel,
       sessionId,
@@ -87,7 +93,19 @@ export async function readCodexUsageHistory(filePath: string): Promise<LocalUsag
         processedTokens: delta.totalTokens,
         providerReportedCostUsd: 0,
       },
-    })
+    }
+
+    // A spawned subagent rollout starts with a copy of its parent's cumulative
+    // snapshots. The communication metadata marks the first real child turn.
+    // Retain the old turn-context heuristic only for rollouts without that marker.
+    if (replayingParentHistory) {
+      if (sawLegacySubagentBoundary) mergeUsageRecord(legacySubagentEntries, entry)
+      continue
+    }
+    mergeUsageRecord(entries, entry)
+  }
+  if (replayingParentHistory && sawLegacySubagentBoundary) {
+    for (const entry of legacySubagentEntries.values()) mergeUsageRecord(entries, entry)
   }
   return [...entries.values()]
 }
