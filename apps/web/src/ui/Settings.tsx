@@ -864,6 +864,7 @@ function MobileAccessSettings(props: { transport: Transport }) {
   const [copiedPairingUri, setCopiedPairingUri] = useState<string>()
   const [copiedWebUrl, setCopiedWebUrl] = useState<string>()
   const [now, setNow] = useState(Date.now)
+  const transportEpoch = useRef(0)
   const statusMutationEpoch = useRef(0)
   const statusRequest = useRef<Promise<void> | undefined>(undefined)
 
@@ -895,6 +896,7 @@ function MobileAccessSettings(props: { transport: Transport }) {
   }
 
   useEffect(() => {
+    setBusy(undefined)
     void refresh()
     const timer = window.setInterval(() => {
       setNow(Date.now())
@@ -902,6 +904,7 @@ function MobileAccessSettings(props: { transport: Transport }) {
     }, 2_000)
     return () => {
       window.clearInterval(timer)
+      transportEpoch.current += 1
       invalidateStatusReads()
     }
   }, [refresh])
@@ -945,45 +948,54 @@ function MobileAccessSettings(props: { transport: Transport }) {
   }, [primaryWebUrl])
 
   const startPairing = async () => {
+    const requestTransportEpoch = transportEpoch.current
     setBusy('pair')
     try {
       const offer = await props.transport.request('connections.startPairing', {})
+      if (requestTransportEpoch !== transportEpoch.current) return
       invalidateStatusReads()
       setStatus(offer)
       setPairing(offer)
       setNow(Date.now())
       setError(undefined)
     } catch (cause) {
+      if (requestTransportEpoch !== transportEpoch.current) return
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setBusy(undefined)
+      if (requestTransportEpoch === transportEpoch.current) setBusy(undefined)
     }
   }
 
   const stop = async () => {
+    const requestTransportEpoch = transportEpoch.current
     setBusy('stop')
     try {
       await props.transport.request('connections.stop', {})
+      if (requestTransportEpoch !== transportEpoch.current) return
       invalidateStatusReads()
       setPairing(undefined)
       await refresh()
     } catch (cause) {
+      if (requestTransportEpoch !== transportEpoch.current) return
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setBusy(undefined)
+      if (requestTransportEpoch === transportEpoch.current) setBusy(undefined)
     }
   }
 
   const disconnectDevice = async (deviceId: string) => {
+    const requestTransportEpoch = transportEpoch.current
     setBusy(deviceId)
     try {
       await props.transport.request('connections.revoke', { deviceId })
+      if (requestTransportEpoch !== transportEpoch.current) return
       invalidateStatusReads()
       await refresh()
     } catch (cause) {
+      if (requestTransportEpoch !== transportEpoch.current) return
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setBusy(undefined)
+      if (requestTransportEpoch === transportEpoch.current) setBusy(undefined)
     }
   }
 

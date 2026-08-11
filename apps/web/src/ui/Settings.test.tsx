@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { Account, ConnectionsStatus, ProviderId } from '@harness/contracts'
+import type { Account, ConnectionsStatus, ProviderId, ResultOf } from '@harness/contracts'
 import { customModelChoice, type ModelChoice } from '../model-catalog.js'
 import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker-layout.js'
 import { resetInstalls } from '../provider-install.js'
@@ -106,6 +106,20 @@ function connectionsStatus(enabled: boolean): ConnectionsStatus {
     devices: [],
     webUrls: [],
   }
+}
+
+function mobileTransport(
+  status: ConnectionsStatus,
+  request?: (method: string) => unknown,
+): Transport {
+  return {
+    request: vi.fn((method: string) => {
+      if (method === 'connections.status') return Promise.resolve(status)
+      if (request) return request(method)
+      throw new Error(`unexpected ${method}`)
+    }),
+    on: vi.fn(() => () => {}),
+  } as unknown as Transport
 }
 
 function mobileAccessSettings(transport: Transport) {
@@ -469,6 +483,109 @@ describe('mobile access settings', () => {
 
     expect(screen.getByText('Not accepting mobile connections')).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('ignores a pairing completion from a replaced transport', async () => {
+    const stalePairing = deferred<ResultOf<'connections.startPairing'>>()
+    const previousTransport = mobileTransport(connectionsStatus(false), (method) => {
+      if (method === 'connections.startPairing') return stalePairing.promise
+      throw new Error(`unexpected ${method}`)
+    })
+    const currentTransport = mobileTransport(connectionsStatus(false))
+
+    const view = renderMobileAccess(previousTransport)
+    await waitFor(() => expect(screen.getByText('Not accepting mobile connections')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: 'Generate pairing code' }))
+    await waitFor(() =>
+      expect(previousTransport.request).toHaveBeenCalledWith('connections.startPairing', {}),
+    )
+
+    view.rerender(mobileAccessSettings(currentTransport))
+    await waitFor(() =>
+      expect(currentTransport.request).toHaveBeenCalledWith('connections.status', {}),
+    )
+    expect(
+      screen.getByRole('button', { name: 'Generate pairing code' }).getAttribute('disabled'),
+    ).toBeNull()
+
+    await act(async () => {
+      stalePairing.resolve({
+        ...connectionsStatus(true),
+        pairingUri: 'harness://pair?payload=stale-ticket',
+        expiresAt: Date.now() + 300_000,
+      })
+      await stalePairing.promise
+    })
+
+    expect(screen.getByText('Not accepting mobile connections')).toBeTruthy()
+    expect(screen.queryByText('Available to paired devices')).toBeNull()
+  })
+
+  it('ignores a mutation error from a replaced transport', async () => {
+    const staleStop = deferred<Record<string, never>>()
+    const previousTransport = mobileTransport(connectionsStatus(true), (method) => {
+      if (method === 'connections.stop') return staleStop.promise
+      throw new Error(`unexpected ${method}`)
+    })
+    const currentTransport = mobileTransport(connectionsStatus(false))
+
+    const view = renderMobileAccess(previousTransport)
+    await waitFor(() => expect(screen.getByText('Available to paired devices')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: 'Stop accepting connections' }))
+    await waitFor(() =>
+      expect(previousTransport.request).toHaveBeenCalledWith('connections.stop', {}),
+    )
+
+    view.rerender(mobileAccessSettings(currentTransport))
+    await waitFor(() => expect(screen.getByText('Not accepting mobile connections')).toBeTruthy())
+
+    await act(async () => {
+      staleStop.reject(new Error('previous transport closed'))
+      await staleStop.promise.catch(() => {})
+    })
+
+    expect(screen.getByText('Not accepting mobile connections')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('does not refresh through a replaced transport after disconnecting a device', async () => {
+    const staleRevoke = deferred<Record<string, never>>()
+    const previousStatus = {
+      ...connectionsStatus(true),
+      devices: [
+        {
+          id: 'device-1',
+          name: 'Studio iPhone',
+          createdAt: Date.now() - 60_000,
+          lastSeenAt: Date.now(),
+        },
+      ],
+    }
+    const previousTransport = mobileTransport(previousStatus, (method) => {
+      if (method === 'connections.revoke') return staleRevoke.promise
+      throw new Error(`unexpected ${method}`)
+    })
+    const currentTransport = mobileTransport(connectionsStatus(false))
+
+    const view = renderMobileAccess(previousTransport)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Disconnect' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
+    await waitFor(() =>
+      expect(previousTransport.request).toHaveBeenCalledWith('connections.revoke', {
+        deviceId: 'device-1',
+      }),
+    )
+
+    view.rerender(mobileAccessSettings(currentTransport))
+    await waitFor(() => expect(screen.getByText('Not accepting mobile connections')).toBeTruthy())
+
+    await act(async () => {
+      staleRevoke.resolve({})
+      await staleRevoke.promise
+    })
+
+    expect(previousTransport.request).toHaveBeenCalledTimes(2)
+    expect(screen.getByText('Not accepting mobile connections')).toBeTruthy()
   })
 
   it('deduplicates interval ticks while a slow status read is pending', async () => {
