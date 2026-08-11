@@ -55,8 +55,7 @@ const SessionSearchHostComponent = forwardRef<SessionSearchHandle, SessionSearch
       restoreTarget.current = undefined
       if (!focusIsUnclaimed) return
 
-      const fallback = document.querySelector<HTMLElement>('[aria-label="Search chats"]')
-      const target = canReceiveRestoredFocus(opener) ? opener : fallback
+      const target = canReceiveRestoredFocus(opener) ? opener : restoredFocusFallback()
       if (canReceiveRestoredFocus(target)) target.focus()
     }, [request])
 
@@ -78,6 +77,21 @@ const SessionSearchHostComponent = forwardRef<SessionSearchHandle, SessionSearch
 )
 
 export const SessionSearchHost = memo(SessionSearchHostComponent)
+
+const RESTORED_FOCUS_FALLBACKS = [
+  '[aria-label="Search chats"]',
+  '[aria-label="Search threads"]',
+  'textarea[placeholder="Do anything"]',
+  '.titlebar__toggle',
+] as const
+
+function restoredFocusFallback(): HTMLElement | undefined {
+  for (const selector of RESTORED_FOCUS_FALLBACKS) {
+    const target = document.querySelector<HTMLElement>(selector)
+    if (canReceiveRestoredFocus(target)) return target
+  }
+  return undefined
+}
 
 function canReceiveRestoredFocus(target: HTMLElement | null | undefined): target is HTMLElement {
   return Boolean(

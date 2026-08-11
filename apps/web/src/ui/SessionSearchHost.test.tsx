@@ -79,11 +79,11 @@ describe('SessionSearchHost focus restoration', () => {
     expect(document.activeElement).toBe(opener)
   })
 
-  it('uses the sidebar search control when a programmatic opener is unavailable', async () => {
+  it('uses the inbox search control when a programmatic opener is unavailable', async () => {
     const search = createRef<SessionSearchHandle>()
     render(
       <>
-        <button type="button" aria-label="Search chats" />
+        <input aria-label="Search threads" />
         <SessionSearchHost
           ref={search}
           transport={transport}
@@ -98,7 +98,32 @@ describe('SessionSearchHost focus restoration', () => {
     fireEvent.keyDown(input, { key: 'Escape' })
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Search chats' }))
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Search threads' }))
+  })
+
+  it('skips an inert sidebar fallback when the rail is collapsed', async () => {
+    const search = createRef<SessionSearchHandle>()
+    render(
+      <>
+        <nav inert>
+          <input aria-label="Search threads" />
+        </nav>
+        <textarea placeholder="Do anything" />
+        <SessionSearchHost
+          ref={search}
+          transport={transport}
+          projects={PROJECTS}
+          onSelect={() => undefined}
+        />
+      </>,
+    )
+    act(() => search.current?.open())
+    const input = await screen.findByRole('combobox', { name: 'Search every chat' })
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(document.activeElement).toBe(screen.getByPlaceholderText('Do anything'))
   })
 
   it('falls back when the invoking control unmounts after selection', async () => {
@@ -112,7 +137,7 @@ describe('SessionSearchHost focus restoration', () => {
               Temporary opener
             </button>
           ) : null}
-          <button type="button" aria-label="Search chats" />
+          <input aria-label="Search threads" />
           <SessionSearchHost
             ref={search}
             transport={transport}
@@ -135,7 +160,7 @@ describe('SessionSearchHost focus restoration', () => {
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: 'Temporary opener' })).toBeNull(),
     )
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Search chats' }))
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Search threads' }))
   })
 
   it('does not steal focus selected by result navigation', async () => {

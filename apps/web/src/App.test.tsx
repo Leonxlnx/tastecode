@@ -3216,6 +3216,24 @@ describe('live sessions', () => {
     expect(document.activeElement).toBe(composer)
   })
 
+  it('returns focus to inbox search after the command palette opener unmounts', async () => {
+    serverSidebarSettings.mode = 'inbox'
+    render(<App />)
+    const inboxSearch = await screen.findByRole('textbox', { name: 'Search threads' })
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    const commandSearch = screen.getByRole('textbox', { name: 'Search commands' })
+    fireEvent.change(commandSearch, { target: { value: 'search all chats' } })
+    fireEvent.keyDown(commandSearch, { key: 'Enter' })
+    const sessionSearch = await screen.findByRole('combobox', { name: 'Search every chat' })
+
+    fireEvent.keyDown(sessionSearch, { key: 'Escape' })
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Search all chats' })).toBeNull(),
+    )
+    expect(document.activeElement).toBe(inboxSearch)
+  })
+
   it('flushes pending deltas before a completion event', async () => {
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
