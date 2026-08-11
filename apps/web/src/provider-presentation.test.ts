@@ -52,9 +52,9 @@ describe('provider presentation', () => {
   })
 
   it('does not let a transport override a direct provider product identity', () => {
-    expect(
-      sourcePresentation({ provider: 'codex', sourceName: 'OpenAI', mark: 'custom' }),
-    ).toEqual({ label: 'Codex', mark: 'openai' })
+    expect(sourcePresentation({ provider: 'codex', sourceName: 'OpenAI', mark: 'custom' })).toEqual(
+      { label: 'Codex', mark: 'openai' },
+    )
   })
 
   it('ignores an empty source override and keeps the honest generic fallback', () => {

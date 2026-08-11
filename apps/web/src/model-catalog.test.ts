@@ -86,10 +86,9 @@ describe('model catalog', () => {
   })
 
   it('canonicalizes direct model sources while preserving named API sources', () => {
-    const direct = choicesFor(
-      { provider: 'claude-code', sourceName: 'Claude', mark: 'custom' },
-      [model],
-    )[0]
+    const direct = choicesFor({ provider: 'claude-code', sourceName: 'Claude', mark: 'custom' }, [
+      model,
+    ])[0]
     const api = choicesFor(
       {
         provider: 'api',
