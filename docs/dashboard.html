@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-11 main 985ba7a3</span>
+        <span class="meta">2026-08-11 main f1fd4ed1</span>
       </div>
     </div>
 
@@ -314,9 +314,9 @@
             <small>thread, review, sessions, git, settings</small>
           </div>
           <div class="kpi">
-            <b>3</b>
+            <b>7</b>
             <span>workstreams running</span>
-            <small>design agent, visual polish, turn timing</small>
+            <small>design, provider UX, prompt flow, narration, performance, files, search</small>
           </div>
           <div class="kpi">
             <b>8</b>
@@ -334,7 +334,7 @@
         </p>
         <div class="lanes">
           <div class="lane l-done">
-            <header>Ready <span class="count">12</span></header>
+            <header>Ready <span class="count">15</span></header>
             <ul>
               <li>
                 <i class="tick">✓</i>
@@ -390,8 +390,8 @@
                 <span
                   >Lifecycle hardening
                   <span class="d"
-                    >resumed threads retain reply guidance, malformed usage caches rebuild, failed
-                    scans back off, Windows PTY cleanup waits for exit</span
+                    >reply guidance survives resume, stale usage indexes rebuild, failed scans
+                    recover without retry storms, Windows PTY cleanup waits for exit</span
                   >
                 </span>
               </li>
@@ -402,6 +402,36 @@
                   <span class="d"
                     >unfinished work settles to a failed terminal state, stale approvals disappear,
                     and the transcript explains how to continue</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Model and source coherence
+                  <span class="d"
+                    >catalog recovery keeps the selected provider, model, effort, and tier; source
+                    names and marks stay consistent across the app</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Durable completed-turn timing
+                  <span class="d"
+                    >the server persists canonical start and completion boundaries, so live and
+                    replayed elapsed time agree</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Server-owned submission identity
+                  <span class="d"
+                    >accepted prompts persist once across queue, steer, reconnect, and restart,
+                    including providers without user echoes</span
                   >
                 </span>
               </li>
@@ -441,7 +471,7 @@
           </div>
 
           <div class="lane l-active">
-            <header>In progress <span class="count">3</span></header>
+            <header>In progress <span class="count">7</span></header>
             <ul>
               <li>
                 <i class="tick">●</i>
@@ -453,17 +483,60 @@
               <li>
                 <i class="tick">●</i>
                 <span
-                  >Visual polish toward M5
-                  <span class="d">screen-by-screen pass, empty and error states (#15)</span>
+                  >Provider, composer, and visual polish
+                  <span class="d"
+                    >setup and status UX (#591–#596, #603), empty states (#15), attachment gating
+                    (#623)</span
+                  >
                 </span>
               </li>
               <li>
                 <i class="tick">●</i>
                 <span
-                  >Durable completed-turn timing
+                  >Prompt delivery and reconnect convergence
                   <span class="d"
-                    >completion timestamp contract shipped; server stamping and replayed timer are
-                    still follow-up work</span
+                    >the server foundation is on main; optimistic history and indeterminate
+                    reconnects remain in #615 and #630</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">●</i>
+                <span
+                  >Narration and tool lifecycles
+                  <span class="d"
+                    >keep commentary, commands, output, files, and final answers in chronological
+                    replay order (#612, #620, #633)</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">●</i>
+                <span
+                  >Long-thread and first-progress performance
+                  <span class="d"
+                    >stable virtualizer identity plus bounded status and Markdown work (#598, #604,
+                    #614)</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">●</i>
+                <span
+                  >Safe project-file actions
+                  <span class="d"
+                    >bounded Markdown parsing is on main; Desktop validation and visible actions
+                    remain in #619 and #616</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">●</i>
+                <span
+                  >Search and keyboard hardening
+                  <span class="d"
+                    >shared menu behavior (#613), modal focus (#632), and stable search result
+                    identity (#634)</span
                   >
                 </span>
               </li>
@@ -533,6 +606,7 @@
           <span>Antigravity adapter</span>
           <span>Kimi CLI over ACP</span>
           <span>API connections, 6 presets</span>
+          <span>API runtime hardening (#622, #624–#627)</span>
           <span>GLM and Z.ai coding plans</span>
           <span>Qwen route (#380)</span>
           <span>Pi agent (#147, no CLI exists)</span>
