@@ -1105,18 +1105,18 @@ export function App() {
   resync.current = () => {
     const id = activeIdRef.current
     if (id && !id.startsWith('pending:')) {
-      const queue = transport.request('thread.queue', { threadId: id }).then((state) => {
-        queueStates.current.set(id, state)
-        settleQueuedSubmissions(id, state.items)
-        if (activeIdRef.current === id) {
-          setQueuedTurns(state.items)
-          setCanSteerQueue(state.canSteer)
-        }
-        return state
-      })
-      void Promise.all([loadHistory(id), queue])
-        .then(([history, state]) => {
-          if (history) settleQueuedSubmissions(id, state.items, history.running)
+      const history = loadHistory(id).catch(() => undefined)
+      void transport
+        .request('thread.queue', { threadId: id })
+        .then(async (state) => {
+          queueStates.current.set(id, state)
+          settleQueuedSubmissions(id, state.items)
+          if (activeIdRef.current === id) {
+            setQueuedTurns(state.items)
+            setCanSteerQueue(state.canSteer)
+          }
+          const loaded = await history
+          if (loaded) settleQueuedSubmissions(id, state.items, loaded.running)
         })
         .catch(() => undefined)
       void transport

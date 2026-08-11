@@ -2791,7 +2791,7 @@ describe('live sessions', () => {
         return Promise.reject(new IndeterminateRequestError('socket lost'))
       }
       if (method === 'thread.history' && reconnecting) {
-        return Promise.resolve({ events: [], running: true })
+        return Promise.reject(new Error('history unavailable'))
       }
       if (method === 'thread.queue' && reconnecting) {
         return Promise.resolve({
