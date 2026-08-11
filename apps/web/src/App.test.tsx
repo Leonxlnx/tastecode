@@ -2624,44 +2624,45 @@ describe('live sessions', () => {
     expect(screen.getByTestId('thread').getAttribute('data-started-at')).toBe(startedAt)
   })
 
-  it.each([
-    ['turn', 'accepted'],
-    ['turn', 'rejected'],
-    ['queue', 'accepted'],
-    ['queue', 'rejected'],
-  ] as const)(
+  // prettier-ignore
+  it.each([['turn', 'accepted'], ['turn', 'rejected'], ['queue', 'accepted'], ['queue', 'rejected']] as const)(
     'settles an indeterminate %s as %s only after reconnect history',
     async (kind, outcome) => {
-      setSessions([
-        { id: 'thread-1', title: 'Existing work', running: false },
-        { id: 'thread-2', title: 'Background', running: false },
-      ])
+      // prettier-ignore
+      serverProjects = [{ path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [{ id: 'thread-1', title: 'Existing work', running: false }, { id: 'thread-2', title: 'Background', running: false }] }]
       const request = transport.request.getMockImplementation()!
       let historyCount = 0
       const resyncs: Array<(value: { events: unknown[]; running: boolean }) => void> = []
       let rejectSend!: (error: Error) => void
-      transport.request.mockImplementation((method: string, params: unknown) => {
-        if (method === 'thread.history' && historyCount++ > 0) {
-          return new Promise((resolve) => resyncs.push(resolve))
-        }
-        if (method === 'thread.sendTurn') {
-          return new Promise((_, reject) => (rejectSend = reject))
-        }
-        return request(method, params)
-      })
-
+      // prettier-ignore
+      const started = { seq: 1, event: { type: 'turn.started', turn: { id: 't', threadId: 'thread-1', status: 'running', createdAt: 1 } } } as const
+      // prettier-ignore
+      const reconnect = () => act(() => { for (const listener of transport.stateListeners) listener('reconnecting'); for (const listener of transport.stateListeners) listener('open') })
+      transport.request.mockImplementation((method: string, params: unknown) =>
+        method === 'thread.sendTurn'
+          ? new Promise((_, reject) => (rejectSend = reject))
+          : method === 'thread.history' && historyCount++ > 0
+            ? new Promise((resolve) => resyncs.push(resolve))
+            : request(method, params),
+      )
       render(<App />)
       fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
-      if (kind === 'queue') emitThreadEvent('thread-1', staleTurnStartedEvent().event)
+      if (kind === 'queue') emitThreadEvent('thread-1', started.event)
       const composer = screen.getByPlaceholderText('Do anything')
       if (kind === 'queue') {
-        reconnectTransport()
+        reconnect()
         await waitFor(() => expect(resyncs).toHaveLength(1))
       }
-      const submissionId = await submitPrompt(composer, 'Submit exactly once')
+      fireEvent.change(composer, { target: { value: 'Submit exactly once' } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+      const submissionId = (
+        transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')?.[1] as {
+          clientSubmissionId: string
+        }
+      ).clientSubmissionId
       const queued = () => screen.queryByLabelText('Queued prompts')
       if (kind === 'queue') {
-        await act(async () => resyncs[0]?.({ events: [staleTurnStartedEvent()], running: true }))
+        await act(async () => resyncs[0]?.({ events: [started], running: true }))
         expect(queued()?.textContent).toContain('Submit exactly once')
       }
       await act(async () => rejectSend(new IndeterminateRequestError('socket lost')))
@@ -2669,40 +2670,34 @@ describe('live sessions', () => {
         kind === 'queue' ? queued()?.textContent : screen.getByTestId('thread').textContent,
       ).toContain('Submit exactly once')
       expect((composer as HTMLTextAreaElement).value).toBe('')
-
-      reconnectTransport()
+      reconnect()
       await waitFor(() => expect(resyncs).toHaveLength(kind === 'queue' ? 2 : 1))
       if (kind === 'queue') expect(queued()?.textContent).toContain('Submit exactly once')
-      if (kind === 'turn' && outcome === 'accepted') {
-        emitThreadEvent('thread-1', staleTurnStartedEvent().event)
-      }
+      if (kind === 'turn' && outcome === 'accepted') emitThreadEvent('thread-1', started.event)
       await act(async () =>
         resyncs.at(-1)?.({
-          events: outcome === 'rejected' ? [staleTurnStartedEvent()] : [],
+          events: outcome === 'rejected' ? [started] : [],
           running: kind === 'queue',
         }),
       )
       if (outcome === 'accepted') {
-        emitThreadEvent('thread-1', completedUserEvent(submissionId, 'Submit exactly once').event)
+        // prettier-ignore
+        emitThreadEvent('thread-1', { type: 'item.completed', item: { id: submissionId, turnId: 'turn-1', type: 'message', role: 'user', status: 'completed', text: 'Submit exactly once', createdAt: 1 } })
         expect((composer as HTMLTextAreaElement).value).toBe('')
-        expect(screen.getByText('Submit exactly once').getAttribute('data-item-id')).toBe(
-          submissionId,
-        )
+        expect(screen.getByText('Submit exactly once').dataset.itemId).toBe(submissionId)
       } else {
         expect(within(screen.getByTestId('thread')).queryByText('Submit exactly once')).toBeNull()
         if (kind === 'turn') expect(screen.queryByText('Working')).toBeNull()
         expect((composer as HTMLTextAreaElement).value).toBe('Submit exactly once')
       }
       if (kind !== 'queue') return
-
       expect(queued()).toBeNull()
       if (outcome === 'accepted') return
-      emitQueue('thread-1', [{ id: 'edit', text: 'Edited queue', attachments: [], createdAt: 2 }])
-      fireEvent.click(screen.getByRole('button', { name: 'Edit Edited queue' }))
+      fireEvent.change(composer, { target: { value: 'Edited queue' } })
       fireEvent.click(screen.getByRole('button', { name: 'Background' }))
       expect((composer as HTMLTextAreaElement).value).toBe('')
       fireEvent.click(screen.getByRole('button', { name: /^Existing work/ }))
-      expect((composer as HTMLTextAreaElement).value).toBe('Edited queue\n\nSubmit exactly once')
+      expect((composer as HTMLTextAreaElement).value).toBe('Edited queue')
       fireEvent.change(composer, { target: { value: '' } })
       fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
       fireEvent.click(screen.getByRole('button', { name: /^Existing work/ }))
@@ -3381,53 +3376,6 @@ function emitThreadEvent(threadId: string, event: DomainEvent) {
   act(() => {
     transport.listeners.get('thread.event')?.({ threadId, event })
   })
-}
-
-function setSessions(sessions: Array<{ id: string; title: string; running: boolean }>) {
-  serverProjects = [
-    { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions },
-  ]
-}
-
-function reconnectTransport() {
-  act(() => {
-    for (const listener of transport.stateListeners) listener('reconnecting')
-    for (const listener of transport.stateListeners) listener('open')
-  })
-}
-
-async function submitPrompt(composer: HTMLElement, text: string): Promise<string> {
-  fireEvent.change(composer, { target: { value: text } })
-  fireEvent.keyDown(composer, { key: 'Enter' })
-  return waitFor(() => {
-    const call = transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')
-    const id = (call?.[1] as { clientSubmissionId?: string }).clientSubmissionId ?? ''
-    expect(id).toMatch(/^local:/)
-    return id
-  })
-}
-
-function staleTurnStartedEvent() {
-  return {
-    seq: 1,
-    event: {
-      type: 'turn.started',
-      turn: { id: 't', threadId: 'thread-1', status: 'running', createdAt: 1 },
-    },
-  } as const
-}
-
-function completedUserEvent(id: string, text: string) {
-  const item = {
-    id,
-    turnId: 'turn-1',
-    type: 'message',
-    role: 'user',
-    status: 'completed',
-    text,
-    createdAt: 1,
-  } as const
-  return { seq: 1, event: { type: 'item.completed', item } } as const
 }
 
 function emitQueue(

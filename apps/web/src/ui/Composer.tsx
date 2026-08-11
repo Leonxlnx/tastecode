@@ -263,8 +263,13 @@ function ComposerComponent(props: {
     })
   }
 
-  const setValue = (value: string) => {
+  const updateText = (value: string) => {
     setText(value)
+    props.onDraftChange?.(value)
+  }
+
+  const setValue = (value: string) => {
+    updateText(value)
     requestAnimationFrame(() => {
       area.current?.focus()
       grow()
@@ -362,7 +367,7 @@ function ComposerComponent(props: {
     if (submission === 'steer') props.onSteer(trimmed, paths)
     else props.onSend(trimmed, paths)
     textRef.current = ''
-    setText('')
+    updateText('')
     clearAttachments()
     if (el) {
       if (resizeFrame.current !== undefined) window.cancelAnimationFrame(resizeFrame.current)
@@ -397,7 +402,7 @@ function ComposerComponent(props: {
     const inserted = insertTranscriptAtCursor(textRef.current, transcript, cursor)
     if (!inserted) return
     textRef.current = inserted.text
-    setText(inserted.text)
+    updateText(inserted.text)
     requestAnimationFrame(() => {
       area.current?.focus()
       area.current?.setSelectionRange(inserted.cursor, inserted.cursor)
@@ -734,8 +739,7 @@ function ComposerComponent(props: {
                   disabled={props.disabled}
                   aria-keyshortcuts={shortcutAria(SHORTCUTS.focusComposer)}
                   onChange={(e) => {
-                    setText(e.target.value)
-                    props.onDraftChange?.(e.target.value)
+                    updateText(e.target.value)
                     grow()
                   }}
                   onKeyDown={(e) => {

@@ -175,6 +175,7 @@ type PendingSubmission = {
   accepted: boolean
   indeterminate: boolean
   optimisticTurn?: NonNullable<ThreadState['activeTurn']>
+  precedingTurnId?: string
 }
 
 function readCustomModels(): CustomModel[] {
@@ -267,7 +268,8 @@ export function App() {
   )
   const pendingThreadDeltas = useRef(new Map<string, ItemDeltaEvent[]>())
   const queueStates = useRef(new Map<string, { items: QueuedTurn[]; canSteer: boolean }>())
-  const queueRevisions = useRef(new Map<string, number>())
+  const localQueueRevisions = useRef(new Map<string, number>())
+  const serverQueueRevisions = useRef(new Map<string, number>())
   const pendingSession = useRef<
     | {
         id: string
@@ -610,7 +612,7 @@ export function App() {
     setSidebarSettings(next)
   }, [])
   const settleQueuedSubmissions = useCallback(
-    (threadId: string, items: QueuedTurn[], running?: boolean) => {
+    (threadId: string, items: QueuedTurn[], snapshot?: ThreadState) => {
       const pending = pendingSubmissions.current.get(threadId)
       if (!pending) return
       const queuedIds = new Set(items.map((item) => item.id))
@@ -626,8 +628,11 @@ export function App() {
         } else if (
           submission.indeterminate &&
           !submission.accepted &&
-          running !== undefined &&
-          (submission.kind !== 'turn' || running === false)
+          snapshot !== undefined &&
+          (!snapshot.running ||
+            (submission.kind !== 'turn' &&
+              snapshot.activeTurn?.id !== undefined &&
+              snapshot.activeTurn.id === submission.precedingTurnId))
         ) {
           pending.delete(submission.id)
           next = removePendingSubmission(next, submission)
@@ -739,7 +744,10 @@ export function App() {
       }
     })
     const offQueue = transport.on('thread.queue', ({ threadId, items, canSteer }) => {
-      queueRevisions.current.set(threadId, (queueRevisions.current.get(threadId) ?? 0) + 1)
+      serverQueueRevisions.current.set(
+        threadId,
+        (serverQueueRevisions.current.get(threadId) ?? 0) + 1,
+      )
       queueStates.current.set(threadId, { items, canSteer })
       settleQueuedSubmissions(threadId, items)
       if (threadId !== activeIdRef.current) return
@@ -1106,11 +1114,8 @@ export function App() {
           running,
           activeTurn: running ? restored.activeTurn : undefined,
         }
-        const withLive = preservePendingSubmissions(
-          reduceEventLog(authoritative, buffer, lastSeq),
-          pendingSubmissions.current,
-          threadId,
-        )
+        const live = reduceEventLog(authoritative, buffer, lastSeq)
+        const withLive = preservePendingSubmissions(live, pendingSubmissions.current, threadId)
         // The buffered events above already include any deltas still waiting
         // for a frame, so do not apply that pending batch a second time.
         pendingThreadDeltas.current.delete(threadId)
@@ -1119,7 +1124,7 @@ export function App() {
           setProjects((current) => updateSession(current, threadId, markSessionRead))
           setThread(withLive)
         }
-        return { running }
+        return live
       } finally {
         buffers.delete(buffer)
         if (buffers.size === 0) historyBuffers.current.delete(threadId)
@@ -1137,19 +1142,21 @@ export function App() {
     if (activeId && !activeId.startsWith('pending:')) threadIds.add(activeId)
     for (const id of threadIds) {
       const history = loadHistory(id).catch(() => undefined)
-      const queueRevision = queueRevisions.current.get(id) ?? 0
+      const localQueueRevision = localQueueRevisions.current.get(id) ?? 0
+      const serverQueueRevision = serverQueueRevisions.current.get(id) ?? 0
       void transport
         .request('thread.queue', { threadId: id })
         .then(async (state) => {
           const loaded = await history
           if (!loaded) return
-          if ((queueRevisions.current.get(id) ?? 0) !== queueRevision) {
-            const current = queueStates.current.get(id)
-            if (current) settleQueuedSubmissions(id, current.items, loaded.running)
+          if (
+            (localQueueRevisions.current.get(id) ?? 0) !== localQueueRevision ||
+            (serverQueueRevisions.current.get(id) ?? 0) !== serverQueueRevision
+          ) {
             return
           }
           queueStates.current.set(id, state)
-          settleQueuedSubmissions(id, state.items, loaded.running)
+          settleQueuedSubmissions(id, state.items, loaded)
           if (activeIdRef.current === id) {
             setQueuedTurns(state.items)
             setCanSteerQueue(state.canSteer)
@@ -1188,11 +1195,17 @@ export function App() {
     setQueuedTurns(cached?.items ?? [])
     setCanSteerQueue(cached?.canSteer ?? false)
     let cancelled = false
-    const revision = queueRevisions.current.get(activeId) ?? 0
+    const localRevision = localQueueRevisions.current.get(activeId) ?? 0
+    const serverRevision = serverQueueRevisions.current.get(activeId) ?? 0
     void transport
       .request('thread.queue', { threadId: activeId })
       .then((state) => {
-        if (cancelled || (queueRevisions.current.get(activeId) ?? 0) !== revision) return
+        if (
+          cancelled ||
+          (localQueueRevisions.current.get(activeId) ?? 0) !== localRevision ||
+          (serverQueueRevisions.current.get(activeId) ?? 0) !== serverRevision
+        )
+          return
         queueStates.current.set(activeId, state)
         settleQueuedSubmissions(activeId, state.items)
         if (activeIdRef.current !== activeId) return
@@ -1629,7 +1642,10 @@ export function App() {
     (threadId: string, update: (items: QueuedTurn[]) => QueuedTurn[]) => {
       const current = queueStates.current.get(threadId) ?? { items: [], canSteer: false }
       const next = { ...current, items: update(current.items) }
-      queueRevisions.current.set(threadId, (queueRevisions.current.get(threadId) ?? 0) + 1)
+      localQueueRevisions.current.set(
+        threadId,
+        (localQueueRevisions.current.get(threadId) ?? 0) + 1,
+      )
       queueStates.current.set(threadId, next)
       if (activeIdRef.current === threadId) setQueuedTurns(next.items)
     },
@@ -1777,6 +1793,7 @@ export function App() {
         kind: wasRunning ? (steering ? 'steer' : 'queue') : 'turn',
         accepted: false,
         indeterminate: false,
+        ...(wasRunning && before.activeTurn ? { precedingTurnId: before.activeTurn.id } : {}),
       }
       if (pendingOptimisticTurn && pendingOptimisticTurn.id === optimisticTurnId) {
         pendingSubmission.optimisticTurn = pendingOptimisticTurn
