@@ -219,7 +219,6 @@ export function McpSettings(props: {
         setNotice(`Your browser blocked the sign-in window. Open it yourself: ${result.authUrl}`)
       }
       setNotice('Finish signing in in your browser.')
-      setBusy(undefined)
     } catch (cause) {
       if (isCurrentContext()) setError(message(cause))
     } finally {
