@@ -403,7 +403,9 @@ export function Menu(props: {
                         ? { bottom: position.bottom }
                         : { top: position.top }),
                     }
-                  : { left: 0, top: 0, visibility: 'hidden' }
+                  : panelRole === 'dialog'
+                    ? { left: 0, top: 0, opacity: 0, pointerEvents: 'none' }
+                    : { left: 0, top: 0, visibility: 'hidden' }
               }
             >
               {props.children(closeMenu)}

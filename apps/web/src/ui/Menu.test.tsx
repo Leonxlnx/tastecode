@@ -219,8 +219,8 @@ describe('Menu', () => {
       >
         {() => (
           <>
-            <input aria-label="Filter models" />
             <button type="button">Apply</button>
+            <input autoFocus aria-label="Filter models" />
           </>
         )}
       </Menu>,
@@ -234,9 +234,9 @@ describe('Menu', () => {
     expect(screen.getByRole('dialog').getAttribute('aria-modal')).toBe('true')
     expect(document.activeElement).toBe(filter)
 
-    fireEvent.keyDown(filter, { key: 'Tab', shiftKey: true })
+    fireEvent.keyDown(filter, { key: 'Tab' })
     expect(document.activeElement).toBe(apply)
-    fireEvent.keyDown(apply, { key: 'Tab' })
+    fireEvent.keyDown(apply, { key: 'Tab', shiftKey: true })
     expect(document.activeElement).toBe(filter)
   })
 })
