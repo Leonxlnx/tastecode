@@ -43,10 +43,29 @@ describe('mapCodexRateLimits', () => {
       ),
     ).toEqual([
       { label: '5 hours', usedPercent: 0, resetsAt: 1_800_000_000_000 },
-      { label: 'Spark 7 days', usedPercent: 100 },
+      { label: 'Weekly Spark', usedPercent: 100 },
       { label: 'Credits', usedPercent: 0, valueLabel: '$1.00 · 25 credits' },
       { label: 'Rate limit resets', usedPercent: 0, valueLabel: '2 available' },
     ])
+  })
+
+  it('labels the two weekly buckets with their friendly names', () => {
+    expect(
+      mapCodexRateLimits(
+        response({
+          rateLimits: snapshot({
+            primary: { usedPercent: 14, windowDurationMins: 10_080, resetsAt: 1_800_000_000 },
+          }),
+          rateLimitsByLimitId: {
+            spark: snapshot({
+              limitId: 'spark',
+              limitName: 'GPT-5.3-Codex-Spark',
+              primary: { usedPercent: 0, windowDurationMins: 10_080, resetsAt: null },
+            }),
+          },
+        }),
+      ).map((limit) => limit.label),
+    ).toEqual(['Weekly', 'Weekly Spark'])
   })
 
   it('skips non-finite windows and stale reset metadata without losing valid rows', () => {

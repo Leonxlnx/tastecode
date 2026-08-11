@@ -1013,10 +1013,12 @@ export function mapCodexRateLimits(response: GetAccountRateLimitsResponse): Prov
   if (response.rateLimits && !buckets.some(([limitId]) => limitId === 'codex')) {
     buckets.unshift(['codex', response.rateLimits])
   }
+  // Ensure the main codex bucket always appears first.
+  buckets.sort(([a], [b]) => (a === 'codex' ? -1 : b === 'codex' ? 1 : 0))
   const rows: ProviderLimit[] = []
   for (const [limitId, snapshot] of buckets) {
     // Secondary buckets (e.g. Spark) carry their own name; the main
-    // bucket keeps the plain window labels users already know.
+    // bucket falls back to the plain window label.
     const prefix = limitId === 'codex' ? '' : `${snapshot.limitName ?? titleCaseLimitId(limitId)} `
     rows.push(
       ...[snapshot.primary, snapshot.secondary].flatMap((window, index) => {
@@ -1027,8 +1029,9 @@ export function mapCodexRateLimits(response: GetAccountRateLimitsResponse): Prov
         return [
           {
             label:
+              friendlyLimitLabel(limitId, snapshot.limitName, window.windowDurationMins) ??
               prefix +
-              rateLimitLabel(window.windowDurationMins, index === 0 ? 'Primary' : 'Secondary'),
+                rateLimitLabel(window.windowDurationMins, index === 0 ? 'Primary' : 'Secondary'),
             usedPercent,
             ...(resetsAt === undefined ? {} : { resetsAt }),
           },
@@ -1083,6 +1086,22 @@ function titleCaseLimitId(limitId: string): string {
     .split(/[_-]+/)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ')
+}
+
+/**
+ * Friendly names for the two weekly windows this account actually shows: the
+ * main codex quota reads "Weekly", the Spark quota "Weekly Spark".
+ * Every other bucket or window keeps the raw duration label.
+ */
+function friendlyLimitLabel(
+  limitId: string,
+  limitName: string | null,
+  windowDurationMins: unknown,
+): string | undefined {
+  if (windowDurationMins !== 7 * 24 * 60) return undefined
+  if (limitId === 'codex') return 'Weekly'
+  if (limitId === 'spark' || limitName?.toLowerCase().includes('spark')) return 'Weekly Spark'
+  return undefined
 }
 
 function rateLimitLabel(minutes: unknown, fallback: string): string {
