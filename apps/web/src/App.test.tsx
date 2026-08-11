@@ -1964,9 +1964,7 @@ describe('new chats', () => {
     })
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
-    fireEvent.click(
-      await screen.findByRole('switch', { name: 'Show any models from Codex' }),
-    )
+    fireEvent.click(await screen.findByRole('switch', { name: 'Show any models from Codex' }))
     fireEvent.click(screen.getByRole('button', { name: 'Back to app' }))
 
     await waitFor(() => {
@@ -2009,9 +2007,7 @@ describe('new chats', () => {
               isDefault: true,
               reasoningEfforts: ['low', 'high'],
               defaultReasoningEffort: 'low',
-              serviceTiers: [
-                { id: 'priority', name: 'Fast', description: 'Faster responses' },
-              ],
+              serviceTiers: [{ id: 'priority', name: 'Fast', description: 'Faster responses' }],
             },
           ],
         })
@@ -2031,9 +2027,7 @@ describe('new chats', () => {
     })
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
-    fireEvent.click(
-      await screen.findByRole('switch', { name: 'Show any models from Codex' }),
-    )
+    fireEvent.click(await screen.findByRole('switch', { name: 'Show any models from Codex' }))
     fireEvent.click(screen.getByRole('button', { name: 'Back to app' }))
 
     await waitFor(() => {
