@@ -129,6 +129,45 @@ describe('usage settings', () => {
     })
   })
 
+  it('keeps polling a background scan after a transient refresh failure', async () => {
+    let call = 0
+    const request = vi.fn(async () => {
+      const result = historyResult('30d')
+      if (call === 0) {
+        result.scan = { status: 'scanning', filesProcessed: 10, filesTotal: 100 }
+      } else if (call === 1) {
+        call += 1
+        throw new Error('Temporary connection failure')
+      }
+      call += 1
+      return result
+    })
+    const transport = { request } as unknown as Transport
+    render(<UsageSettings transport={transport} />)
+
+    expect(await screen.findByText(/Indexing local usage in the background/)).toBeTruthy()
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2), { timeout: 1_500 })
+    expect(await screen.findByText(/Temporary connection failure/)).toBeTruthy()
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(3), { timeout: 1_500 })
+    await waitFor(() => {
+      expect(screen.queryByText(/Indexing local usage in the background/)).toBeNull()
+    })
+  })
+
+  it('cancels a pending scan poll when the page unmounts', async () => {
+    const result = historyResult('30d')
+    result.scan = { status: 'scanning', filesProcessed: 10, filesTotal: 100 }
+    const request = vi.fn(async () => result)
+    const transport = { request } as unknown as Transport
+    const view = render(<UsageSettings transport={transport} />)
+
+    expect(await screen.findByText(/Indexing local usage in the background/)).toBeTruthy()
+    view.unmount()
+    await new Promise((resolve) => setTimeout(resolve, 600))
+
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+
   it('uses the product names for every provider', async () => {
     const providers: Array<{ id: ProviderId; label: string }> = [
       { id: 'codex', label: 'Codex' },
