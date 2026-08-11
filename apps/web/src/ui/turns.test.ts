@@ -177,6 +177,21 @@ describe('turn boundaries', () => {
     })
   })
 
+  it('projects completed items identically after durable history replay', () => {
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user' },
+      { ...item('command', 't1'), type: 'command', command: 'pnpm test' },
+      {
+        ...item('answer', 't1'),
+        role: 'assistant',
+        phase: 'final_answer',
+        text: 'Done.',
+      },
+    ]
+
+    expect(presentTurns(items.map((entry) => ({ ...entry })))).toEqual(presentTurns(items))
+  })
+
   it('reuses transcript layout while only the live answer text changes', () => {
     const project = createThreadProjector()
     const items: Item[] = [

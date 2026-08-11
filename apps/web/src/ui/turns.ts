@@ -20,11 +20,17 @@ export type TurnMark = {
   count: number
 }
 
+export type TurnActivityGroup = {
+  /** Consecutive operational items between two transcript messages. */
+  items: Item[]
+  /** Flat-list index where Thread anchors this disclosure. */
+  firstIndex: number
+}
+
 export type TurnPresentation = {
-  /** Ordered items shown inside the completed Worked disclosure. */
-  activity: Item[]
+  /** Chronological Worked disclosures, split wherever narration resumes. */
+  activityGroups: TurnActivityGroup[]
   responseText: string
-  firstActivityIndex: number | undefined
   firstResponseIndex: number | undefined
   finalAnswerIndex: number | undefined
   elapsedMs: number
@@ -101,10 +107,9 @@ export function findTurns(items: Item[]): TurnMark[] {
  * The compact, completed-turn view used by first-party agent apps.
  *
  * The provider may emit commentary messages before its final answer. Those
- * messages belong beside the useful work milestones inside the disclosure,
- * while the last completed assistant message remains the answer below it. The
- * indices let Thread keep one flat virtualised list while rendering each group
- * only once.
+ * messages stay in the transcript, so operational items are compacted only in
+ * contiguous groups between them. An explicit final-answer phase wins; older
+ * unphased histories safely fall back to their last completed assistant message.
  */
 export function presentTurns(
   items: Item[],
@@ -113,7 +118,10 @@ export function presentTurns(
   const drafts = new Map<
     string,
     {
-      work: Array<{ item: Item; index: number }>
+      activityGroups: Array<{
+        entries: Array<{ item: Item; index: number }>
+        lastIndex: number
+      }>
       answers: Array<{ item: Item; index: number }>
       firstResponseIndex?: number
       earliest: number
@@ -127,7 +135,7 @@ export function presentTurns(
     if (!item.turnId) return
 
     const draft = drafts.get(item.turnId) ?? {
-      work: [],
+      activityGroups: [],
       answers: [],
       earliest: item.createdAt,
       latest: item.createdAt,
@@ -144,7 +152,13 @@ export function presentTurns(
     }
 
     if (isActivity(item)) {
-      draft.work.push({ item, index })
+      const lastGroup = draft.activityGroups.at(-1)
+      if (lastGroup?.lastIndex === index - 1) {
+        lastGroup.entries.push({ item, index })
+        lastGroup.lastIndex = index
+      } else {
+        draft.activityGroups.push({ entries: [{ item, index }], lastIndex: index })
+      }
       draft.hasRunningActivity ||= item.status === 'started'
     } else if (
       item.type === 'message' &&
@@ -159,16 +173,19 @@ export function presentTurns(
 
   return new Map(
     [...drafts].map(([turnId, draft]) => {
-      const finalAnswer = draft.answers.at(-1)
-      const activity = draft.work
+      const finalAnswer =
+        draft.answers.findLast(({ item }) => item.phase === 'final_answer') ??
+        draft.answers.findLast(({ item }) => item.phase === undefined)
       const timing = turnTiming[turnId]
 
       return [
         turnId,
         {
-          activity: activity.map(({ item }) => item),
+          activityGroups: draft.activityGroups.map(({ entries }) => ({
+            items: entries.map(({ item }) => item),
+            firstIndex: entries[0]!.index,
+          })),
           responseText: finalAnswer?.item.text ?? '',
-          firstActivityIndex: activity[0]?.index,
           firstResponseIndex: draft.firstResponseIndex,
           finalAnswerIndex: finalAnswer?.index,
           elapsedMs:
@@ -198,6 +215,7 @@ function isStartedAssistantTailTextUpdate(previous: Item[], next: Item[]): boole
     before.status === 'started' &&
     after?.type === before.type &&
     after.role === before.role &&
+    after.phase === before.phase &&
     after.status === before.status &&
     after.id === before.id &&
     after.turnId === before.turnId &&
