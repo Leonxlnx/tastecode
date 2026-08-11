@@ -1317,10 +1317,14 @@ export class Store {
     }>
 
     const page = rows.slice(0, limit)
+    const resultIds = encodeSearchResultIds(
+      this.#searchResultKey,
+      page.map((row) => Number(row.event_seq)),
+    )
     const last = page.at(-1)
     return {
-      results: page.map((row) => ({
-        resultId: encodeSearchResultId(this.#searchResultKey, Number(row.event_seq)),
+      results: page.map((row, index) => ({
+        resultId: resultIds[index]!,
         projectPath: row.project_path,
         projectName: row.project_name,
         threadId: row.thread_id,
@@ -1717,13 +1721,18 @@ function searchableEntry(
   return { turnId: item.turnId, createdAt: item.createdAt, text }
 }
 
-function encodeSearchResultId(key: Buffer, eventSeq: number): string {
-  const source = Buffer.alloc(16)
-  source[0] = 1
-  source.writeBigUInt64BE(BigInt(eventSeq), 8)
+function encodeSearchResultIds(key: Buffer, eventSeqs: number[]): string[] {
+  const source = Buffer.alloc(eventSeqs.length * 16)
+  for (const [index, eventSeq] of eventSeqs.entries()) {
+    source[index * 16] = 1
+    source.writeBigUInt64BE(BigInt(eventSeq), index * 16 + 8)
+  }
   const cipher = createCipheriv('aes-256-ecb', key, null)
   cipher.setAutoPadding(false)
-  return `sr1_${Buffer.concat([cipher.update(source), cipher.final()]).toString('base64url')}`
+  const encoded = Buffer.concat([cipher.update(source), cipher.final()])
+  return eventSeqs.map(
+    (_, index) => `sr1_${encoded.subarray(index * 16, (index + 1) * 16).toString('base64url')}`,
+  )
 }
 
 function toFtsQuery(query: string): string | undefined {
