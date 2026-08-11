@@ -48,29 +48,33 @@ export function startVisibilityWatchdog(
   intervalMs = WATCHDOG_INTERVAL_MS,
 ): () => void {
   let stopped = false
+  let checking = false
   const timer = setInterval(() => {
+    if (stopped || checking) return
+    checking = true
     void (async () => {
-      if (stopped || window.isDestroyed()) return
-      let pageVisibility: string
       try {
-        pageVisibility = (await window.webContents.executeJavaScript(
+        if (window.isDestroyed()) return
+        const pageVisibility = (await window.webContents.executeJavaScript(
           'document.visibilityState',
         )) as string
+        if (stopped || window.isDestroyed()) return
+        const nudge = needsCompositorNudge({
+          destroyed: false,
+          visible: window.isVisible(),
+          minimized: window.isMinimized(),
+          focused: window.isFocused(),
+          pageVisibility,
+        })
+        if (!nudge) return
+        onLog('window visible but page hidden; re-attaching the compositor')
+        window.hide()
+        window.show()
       } catch {
-        return
+        // A destroyed or unresponsive renderer is handled by Electron's lifecycle.
+      } finally {
+        checking = false
       }
-      if (stopped || window.isDestroyed()) return
-      const nudge = needsCompositorNudge({
-        destroyed: false,
-        visible: window.isVisible(),
-        minimized: window.isMinimized(),
-        focused: window.isFocused(),
-        pageVisibility,
-      })
-      if (!nudge) return
-      onLog('window visible but page hidden; re-attaching the compositor')
-      window.hide()
-      window.show()
     })()
   }, intervalMs)
   return () => {

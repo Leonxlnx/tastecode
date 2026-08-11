@@ -93,6 +93,18 @@ describe('startVisibilityWatchdog', () => {
     expect(window.hidden).toBe(0)
   })
 
+  it('does not pile up checks while the renderer is unresponsive', () => {
+    const visibility = new Promise<string>(() => {})
+    const window = fakeWindow(() => visibility)
+    const executeJavaScript = vi.spyOn(window.webContents, 'executeJavaScript')
+    const stop = startVisibilityWatchdog(window, () => {}, 1_000)
+
+    vi.advanceTimersByTime(10_000)
+
+    expect(executeJavaScript).toHaveBeenCalledOnce()
+    stop()
+  })
+
   it('only nudges the focused window when two are watched', async () => {
     const focused = fakeWindow(() => 'hidden')
     const background = fakeWindow(() => 'hidden')
