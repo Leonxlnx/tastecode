@@ -714,6 +714,23 @@ export class Store {
                'user_input.requested', 'user_input.resolved',
                'approval.review.started', 'approval.review.completed'
              )
+           ),
+           lifecycle_state AS (
+             SELECT thread_id, lifecycle_key,
+                    MAX(CASE WHEN event_type IN (
+                      'turn.started', 'item.started', 'approval.requested',
+                      'user_input.requested', 'approval.review.started') THEN seq END) AS started_seq,
+                    MAX(CASE WHEN event_type IN (
+                      'turn.completed', 'item.completed', 'approval.resolved',
+                      'user_input.resolved', 'approval.review.completed') THEN seq END) AS terminal_seq
+             FROM lifecycle_events
+             WHERE lifecycle_key IS NOT NULL
+             GROUP BY thread_id, lifecycle_key
+           ),
+           last_errors AS (
+             SELECT thread_id, MAX(seq) AS seq FROM lifecycle_events
+             WHERE event_type = 'thread.error'
+             GROUP BY thread_id
            )
            SELECT started.thread_id, started.payload,
                   CASE WHEN started.event_type = 'user_input.requested'
@@ -722,29 +739,12 @@ export class Store {
                       WHERE design_runs.thread_id = started.thread_id
                         AND json_extract(design_runs.payload, '$.phase') = 'brief'
                     ) THEN 1 ELSE 0 END AS resumable
-           FROM lifecycle_events AS started
-           WHERE started.event_type IN (
-             'turn.started', 'item.started', 'approval.requested',
-             'user_input.requested', 'approval.review.started'
-           )
-             AND NOT EXISTS (
-               SELECT 1 FROM lifecycle_events AS terminal
-               WHERE terminal.thread_id = started.thread_id
-                 AND terminal.lifecycle_key = started.lifecycle_key
-                 AND terminal.event_type IN (
-                   'turn.completed', 'item.completed', 'approval.resolved',
-                   'user_input.resolved', 'approval.review.completed'
-                 )
-             )
-             AND (
-               started.event_type <> 'turn.started'
-               OR NOT EXISTS (
-                 SELECT 1 FROM lifecycle_events AS failed
-                 WHERE failed.thread_id = started.thread_id
-                   AND failed.event_type = 'thread.error'
-                   AND failed.seq > started.seq
-               )
-             )
+           FROM lifecycle_state
+           INNER JOIN lifecycle_events AS started ON started.seq = lifecycle_state.started_seq
+           LEFT JOIN last_errors ON last_errors.thread_id = started.thread_id
+           WHERE lifecycle_state.terminal_seq IS NULL
+             AND (started.event_type <> 'turn.started' OR last_errors.seq IS NULL
+                  OR last_errors.seq < started.seq)
            ORDER BY started.seq`,
         )
         .all() as Array<{ thread_id: string; payload: string; resumable: number }>
