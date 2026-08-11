@@ -68,4 +68,16 @@ describe('streamed Markdown renders', () => {
     expect(streamdownRender).toHaveBeenCalledTimes(1)
     expect(shikiHighlight).toHaveBeenCalledTimes(1)
   })
+
+  it('replaces the live text node when reconciliation is not append-only', () => {
+    const rendered = render(<Markdown text="Original streaming reply" streaming />)
+    const liveText = rendered.container.querySelector('[data-streaming-markdown]')
+    const originalTextNode = liveText?.firstChild
+
+    rendered.rerender(<Markdown text="Reconciled reply" streaming />)
+
+    expect(liveText?.textContent).toBe('Reconciled reply')
+    expect(liveText?.firstChild).not.toBe(originalTextNode)
+    expect(streamdownRender).not.toHaveBeenCalled()
+  })
 })

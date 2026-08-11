@@ -76,4 +76,15 @@ describe('Markdown streaming motion', () => {
     expect(liveText?.textContent).toBe('A smoother streamed reply')
     expect(liveText?.getAttribute('aria-busy')).toBe('true')
   })
+
+  it('replaces the live source with full Markdown at completion', () => {
+    const rendered = render(<Markdown text="**Finished reply**" streaming />)
+
+    expect(rendered.container.querySelector('strong')).toBeNull()
+    expect(rendered.container.textContent).toBe('**Finished reply**')
+
+    rendered.rerender(<Markdown text="**Finished reply**" />)
+    expect(screen.getByText('Finished reply').closest('[data-streamdown="strong"]')).toBeTruthy()
+    expect(rendered.container.querySelector('[data-streaming-markdown]')).toBeNull()
+  })
 })
