@@ -1506,15 +1506,22 @@ export class Orchestrator {
       }
       if (!next.clientSubmissionId) this.#store.completeQueuedTurn(threadId, next.id)
       this.#activeTurns.add(threadId)
-    } catch (error) {
+    } catch {
       // After a panic the queue was emptied on purpose; putting the grabbed
       // prompt back would resurrect it.
+      let restored = false
       if (generation === this.#panicGeneration) {
-        this.#store.restoreQueuedTurn(threadId, next.id)
-        queue.unshift(next)
-        this.#notifyQueue(threadId)
+        restored = this.#store.restoreQueuedTurn(threadId, next.id)
+        if (restored) {
+          queue.unshift(next)
+          this.#notifyQueue(threadId)
+        }
       }
-      this.#onLog('could not start queued turn; it remains queued')
+      this.#onLog(
+        restored
+          ? 'could not start queued turn; it remains queued'
+          : 'queued turn ended after acceptance or cancellation',
+      )
     } finally {
       this.#drainingQueues.delete(threadId)
     }

@@ -1797,6 +1797,30 @@ describe('queued turns', () => {
     expect(logs.join('\n')).not.toMatch(/private prompt content|secret\\private/)
   })
 
+  it('does not resurrect work accepted before the provider request rejects', async () => {
+    const { sessions, orchestrator, store, logs } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'Active.')
+    await orchestrator.submitTurn(thread.id, 'Accepted once.', [], {}, 'submission-accepted')
+    sessions[0]!.eventDuringSend = turnStarted(thread.id, 'accepted-turn')
+    sessions[0]!.afterEventBarrier = Promise.reject(new Error('request disconnected'))
+
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+
+    await vi.waitFor(() =>
+      expect(logs).toContain('queued turn ended after acceptance or cancellation'),
+    )
+    expect(orchestrator.queue(thread.id).items).toEqual([])
+    expect(store.queuedTurns(thread.id)).toEqual([])
+    expect(
+      store
+        .history(thread.id)
+        .filter(
+          ({ event }) => event.type === 'item.completed' && event.item.id === 'submission-accepted',
+        ),
+    ).toHaveLength(1)
+  })
+
   it('runs queued prompts in order after the active turn completes', async () => {
     const { sessions, orchestrator } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
