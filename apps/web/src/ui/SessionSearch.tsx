@@ -11,6 +11,8 @@ import type { Transport } from '../transport.js'
 const SEARCH_DEBOUNCE_MS = 80
 const MAX_TITLE_RESULTS = 6
 const SEARCH_TOKEN = /[\p{L}\p{N}][\p{L}\p{N}\p{M}_]*/gu
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]):not([tabindex="-1"]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 const PROVIDERS: ProviderId[] = [
   'codex',
@@ -256,13 +258,29 @@ function SessionSearchComponent(props: {
       aria-modal="true"
       aria-label="Search all chats"
       onKeyDown={(event) => {
-        if (event.key === 'Escape') props.onClose()
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          event.stopPropagation()
+          props.onClose()
+          return
+        }
+        if (event.key !== 'Tab') return
+
+        const focusable = focusableElements(event.currentTarget)
+        const currentIndex = focusable.findIndex((element) => element === document.activeElement)
+        const atBoundary =
+          currentIndex < 0 ||
+          (event.shiftKey ? currentIndex === 0 : currentIndex === focusable.length - 1)
+        if (!atBoundary) return
+        event.preventDefault()
+        ;(focusable[event.shiftKey ? focusable.length - 1 : 0] ?? event.currentTarget).focus()
       }}
     >
       <button
         className="command-palette__scrim"
         onClick={props.onClose}
         aria-label="Close search"
+        tabIndex={-1}
       />
       <div className="command-palette__panel session-search__panel">
         <div className="command-palette__search">
@@ -439,6 +457,12 @@ function SessionSearchComponent(props: {
         ) : null}
       </div>
     </div>
+  )
+}
+
+function focusableElements(dialog: HTMLElement): HTMLElement[] {
+  return Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (element) => !element.closest('[hidden], [inert], [aria-hidden="true"]'),
   )
 }
 

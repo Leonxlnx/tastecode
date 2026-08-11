@@ -55,6 +55,26 @@ describe('cross-session search', () => {
     vi.restoreAllMocks()
   })
 
+  it('contains forward and reverse Tab navigation inside the modal', () => {
+    render(
+      <SessionSearch
+        transport={{ request: vi.fn() } as unknown as Transport}
+        projects={PROJECTS}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+    const search = screen.getByRole('combobox', { name: 'Search every chat' })
+    const agent = screen.getByRole('combobox', { name: 'Agent' })
+    expect(document.activeElement).toBe(search)
+
+    fireEvent.keyDown(search, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(agent)
+
+    fireEvent.keyDown(agent, { key: 'Tab' })
+    expect(document.activeElement).toBe(search)
+  })
+
   it('finds titles immediately, searches quickly, and supports keyboard navigation', async () => {
     vi.useFakeTimers()
     const request = vi

@@ -3188,10 +3188,32 @@ describe('live sessions', () => {
     await waitFor(() => expect((branchPicker as HTMLButtonElement).disabled).toBe(false))
     appRenders.mockClear()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Search chats' }))
+    const opener = screen.getByRole('button', { name: 'Search chats' })
+    opener.focus()
+    fireEvent.click(opener)
 
-    await screen.findByRole('dialog', { name: 'Search all chats' })
+    const search = await screen.findByRole('combobox', { name: 'Search every chat' })
     expect(appRenders).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(search, { key: 'Escape' })
+    expect(document.activeElement).toBe(opener)
+  })
+
+  it('returns focus to the keyboard shortcut opener after closing chat search', async () => {
+    render(<App />)
+    const composer = await screen.findByPlaceholderText('Do anything')
+    composer.focus()
+
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    const search = await screen.findByRole('combobox', { name: 'Search every chat' })
+    expect(document.activeElement).toBe(search)
+
+    fireEvent.keyDown(search, { key: 'Escape' })
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Search all chats' })).toBeNull(),
+    )
+    expect(document.activeElement).toBe(composer)
   })
 
   it('flushes pending deltas before a completion event', async () => {
