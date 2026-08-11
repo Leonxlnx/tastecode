@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, type ComponentPropsWithoutRef } from 'react'
+import { memo, useEffect, useState, type ComponentPropsWithoutRef, type CSSProperties } from 'react'
 import {
   Check,
   Copy,
@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { Streamdown, type Components, type IconMap } from 'streamdown'
 import { FileTypeIcon, isFileReference } from './FileTypeIcon.js'
-import { onHighlighterChange, plainCodePlugin, shikiPlugin } from './highlighter.js'
+import { onHighlighterChange, shikiPlugin } from './highlighter.js'
 
 const STREAMDOWN_ICONS = {
   CheckIcon: Check,
@@ -96,42 +96,25 @@ const STREAMDOWN_COMPONENTS = {
 // Streamdown uses these identities to preserve its context values. Recreating
 // them per token invalidates completed Markdown blocks above the live tail.
 const STREAMDOWN_PLUGINS = { code: shikiPlugin }
-const STREAMDOWN_STREAMING_PLUGINS = { code: plainCodePlugin }
 const STREAMDOWN_CONTROLS = { code: true, table: true, mermaid: false }
-
-/**
- * Nothing upstream paces the output: a provider emits a chunk, the server
- * forwards it, and the client coalesces a frame's worth. With no stagger every
- * word of a burst starts its fade at the same instant, so a 300ms stall
- * followed by forty words reads as a freeze and then a flash. A small stagger
- * spreads that burst across the gap — enough to flow, not enough to lag
- * visibly behind the model.
- */
-const STREAM_ANIMATION = {
-  animation: 'fadeIn',
-  duration: 160,
-  easing: 'cubic-bezier(0.23, 1, 0.32, 1)',
-  sep: 'word',
-  stagger: 14,
-} as const
+const STREAMING_TEXT_STYLE = {
+  overflowWrap: 'anywhere',
+  whiteSpace: 'pre-wrap',
+} satisfies CSSProperties
+const STREAMING_ANIMATION_STYLE = {
+  '--sd-animation': 'sd-fadeIn',
+  '--sd-duration': '160ms',
+  '--sd-easing': 'cubic-bezier(0.23, 1, 0.32, 1)',
+} as CSSProperties
 
 /**
  * Agent output, rendered.
  *
- * Streamdown rather than react-markdown because a turn arrives token by token:
- * mid-stream there is an unterminated fence, a half-written bold, a dangling
- * link. A standard renderer flickers between raw and rendered on every one.
- *
- * Memoised on the text, so a completed message renders once and stays put while
- * the message after it is still streaming.
+ * Live output stays a readable text node because reparsing an accumulated
+ * incomplete document makes every frame cost more than the one before it.
+ * Completion swaps that temporary view for full Streamdown Markdown once.
  */
-export const Markdown = memo(function Markdown({
-  text,
-  streaming = false,
-}: {
-  text: string
-  streaming?: boolean
-}) {
+const CompletedMarkdown = memo(function CompletedMarkdown({ text }: { text: string }) {
   // Shiki loads grammars in the background. This is the one re-render that
   // swaps plain code for coloured code once they arrive — the layout box is
   // identical either way, so nothing moves.
@@ -141,13 +124,8 @@ export const Markdown = memo(function Markdown({
   return (
     <Streamdown
       className="md"
-      // A zero-stagger fade softens irregular provider chunks without putting
-      // the text behind a second, slower reveal timeline.
-      mode="streaming"
-      isAnimating={streaming}
-      animated={STREAM_ANIMATION}
-      parseIncompleteMarkdown
-      plugins={streaming ? STREAMDOWN_STREAMING_PLUGINS : STREAMDOWN_PLUGINS}
+      mode="static"
+      plugins={STREAMDOWN_PLUGINS}
       controls={STREAMDOWN_CONTROLS}
       icons={STREAMDOWN_ICONS}
       components={STREAMDOWN_COMPONENTS}
@@ -155,4 +133,24 @@ export const Markdown = memo(function Markdown({
       {text}
     </Streamdown>
   )
+})
+
+const StreamingMarkdown = memo(function StreamingMarkdown({ text }: { text: string }) {
+  return (
+    <div className="md" data-streaming-markdown style={STREAMING_TEXT_STYLE}>
+      <span data-sd-animate style={STREAMING_ANIMATION_STYLE}>
+        {text}
+      </span>
+    </div>
+  )
+})
+
+export const Markdown = memo(function Markdown({
+  text,
+  streaming = false,
+}: {
+  text: string
+  streaming?: boolean
+}) {
+  return streaming ? <StreamingMarkdown text={text} /> : <CompletedMarkdown text={text} />
 })
