@@ -695,8 +695,9 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
 
 function checkpointFor(item: Item, checkpoints: Checkpoint[]): Checkpoint | undefined {
   if (item.type !== 'message' || item.role !== 'user' || !item.text) return undefined
+  const label = item.text.trim().slice(0, 60) || 'Turn'
   return checkpoints.findLast(
-    (checkpoint) => checkpoint.label === item.text && checkpoint.createdAt <= item.createdAt,
+    (checkpoint) => checkpoint.label === label && checkpoint.createdAt <= item.createdAt,
   )
 }
 

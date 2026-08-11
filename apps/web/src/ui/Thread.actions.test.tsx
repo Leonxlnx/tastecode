@@ -322,4 +322,44 @@ describe('thread message actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Revert to before prompt' }))
     expect(onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
   })
+
+  it('opens the truncated checkpoint attached to a long prompt', () => {
+    const onRevertCheckpoint = vi.fn()
+    const prompt = `  ${'Restore this long prompt exactly. '.repeat(3)}  `
+    const checkpoint = {
+      id: 8,
+      seq: 2,
+      label: prompt.trim().slice(0, 60),
+      createdAt: 50,
+    }
+    render(
+      <Thread
+        items={[
+          {
+            id: 'prompt-2',
+            turnId: 'turn-2',
+            type: 'message',
+            role: 'user',
+            status: 'completed',
+            text: prompt,
+            createdAt: 100,
+          },
+        ]}
+        running={false}
+        activeTurn={undefined}
+        plan={[]}
+        diff={undefined}
+        approvals={[]}
+        userInputs={[]}
+        reviews={[]}
+        checkpoints={[checkpoint]}
+        onRevertCheckpoint={onRevertCheckpoint}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Revert to before prompt' }))
+    expect(onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
+  })
 })
