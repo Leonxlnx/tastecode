@@ -41,11 +41,15 @@ describe('streamed Markdown renders', () => {
     (size) => {
       const text = `${'Readable prose with **unfinished Markdown**.\n'.repeat(Math.ceil(size / 44)).slice(0, size)}\n\`\`\`ts\nconst pending =`
       const rendered = render(<Markdown text={text.slice(0, -8)} streaming />)
+      const liveText = rendered.container.querySelector('[data-streaming-markdown]')
+      const firstTextNode = liveText?.firstChild
+
       rendered.rerender(<Markdown text={text.slice(0, -4)} streaming />)
+      expect(liveText?.firstChild).toBe(firstTextNode)
       rendered.rerender(<Markdown text={text} streaming />)
 
-      const liveText = rendered.container.querySelector('[data-streaming-markdown]')
       expect(liveText?.textContent).toBe(text)
+      expect(liveText?.firstChild).toBe(firstTextNode)
       expect(liveText?.childNodes).toHaveLength(1)
       expect(streamdownRender).not.toHaveBeenCalled()
       expect(plainHighlight).not.toHaveBeenCalled()

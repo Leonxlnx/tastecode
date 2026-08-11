@@ -1,4 +1,12 @@
-import { memo, useEffect, useState, type ComponentPropsWithoutRef, type CSSProperties } from 'react'
+import {
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+  type CSSProperties,
+} from 'react'
 import {
   Check,
   Copy,
@@ -101,11 +109,7 @@ const STREAMING_TEXT_STYLE = {
   overflowWrap: 'anywhere',
   whiteSpace: 'pre-wrap',
 } satisfies CSSProperties
-const STREAMING_ANIMATION_STYLE = {
-  '--sd-animation': 'sd-fadeIn',
-  '--sd-duration': '160ms',
-  '--sd-easing': 'cubic-bezier(0.23, 1, 0.32, 1)',
-} as CSSProperties
+const APPEND_GUARD_LENGTH = 64
 
 /**
  * Agent output, rendered.
@@ -136,12 +140,41 @@ const CompletedMarkdown = memo(function CompletedMarkdown({ text }: { text: stri
 })
 
 const StreamingMarkdown = memo(function StreamingMarkdown({ text }: { text: string }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const textNodeRef = useRef<Text | null>(null)
+  const renderedLengthRef = useRef(0)
+  const appendGuardRef = useRef('')
+
+  useLayoutEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    const renderedLength = renderedLengthRef.current
+    const guardStart = Math.max(0, renderedLength - APPEND_GUARD_LENGTH)
+    const stillAppending =
+      text.length >= renderedLength &&
+      text.slice(guardStart, renderedLength) === appendGuardRef.current
+
+    if (!textNodeRef.current || !stillAppending) {
+      const textNode = document.createTextNode(text)
+      container.replaceChildren(textNode)
+      textNodeRef.current = textNode
+    } else if (text.length > renderedLength) {
+      textNodeRef.current.appendData(text.slice(renderedLength))
+    }
+
+    renderedLengthRef.current = text.length
+    appendGuardRef.current = text.slice(Math.max(0, text.length - APPEND_GUARD_LENGTH))
+  }, [text])
+
   return (
-    <div className="md" data-streaming-markdown style={STREAMING_TEXT_STYLE}>
-      <span data-sd-animate style={STREAMING_ANIMATION_STYLE}>
-        {text}
-      </span>
-    </div>
+    <div
+      aria-busy="true"
+      className="md"
+      data-streaming-markdown
+      ref={containerRef}
+      style={STREAMING_TEXT_STYLE}
+    />
   )
 })
 

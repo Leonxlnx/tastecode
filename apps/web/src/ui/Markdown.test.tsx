@@ -69,9 +69,11 @@ describe('Markdown inline references', () => {
 })
 
 describe('Markdown streaming motion', () => {
-  it('marks newly streamed words for a zero-stagger reveal', () => {
+  it('keeps live text on the lightweight streaming surface', () => {
     const { container } = render(<Markdown text="A smoother streamed reply" streaming />)
 
-    expect(container.querySelectorAll('[data-sd-animate]').length).toBeGreaterThan(0)
+    const liveText = container.querySelector('[data-streaming-markdown]')
+    expect(liveText?.textContent).toBe('A smoother streamed reply')
+    expect(liveText?.getAttribute('aria-busy')).toBe('true')
   })
 })
