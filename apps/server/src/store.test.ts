@@ -192,10 +192,10 @@ describe('recovering interrupted turns', () => {
     }
   })
 
-  it('parses only unresolved lifecycle candidates instead of replaying old turns in JavaScript', () => {
+  it('filters old lifecycle history within the cold-start budget', () => {
     store.addProject('/repo')
     store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'Scale' })
-    for (let index = 0; index < 50; index += 1) {
+    for (let index = 0; index < 5_000; index += 1) {
       const turnId = `completed-${index}`
       store.append('thread-1', {
         type: 'turn.started',
@@ -208,8 +208,10 @@ describe('recovering interrupted turns', () => {
       turn: { id: 'open-turn', threadId: 'thread-1', status: 'running', createdAt: 100 },
     })
     const parse = vi.spyOn(JSON, 'parse')
+    const startedAt = performance.now()
 
     expect(store.recoverInterruptedThreads()).toEqual(['thread-1'])
+    expect(performance.now() - startedAt).toBeLessThan(1_500)
     expect(parse).toHaveBeenCalledTimes(1)
     parse.mockRestore()
   })
