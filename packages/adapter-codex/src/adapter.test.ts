@@ -3,6 +3,7 @@ import type { GuardianApprovalReviewAction } from './generated/v2/GuardianApprov
 import type { ItemGuardianApprovalReviewCompletedNotification } from './generated/v2/ItemGuardianApprovalReviewCompletedNotification'
 import type { ItemGuardianApprovalReviewStartedNotification } from './generated/v2/ItemGuardianApprovalReviewStartedNotification'
 import type { RemoteControlStatusChangedNotification } from './generated/v2/RemoteControlStatusChangedNotification'
+import type { ThreadStatusChangedNotification } from './generated/v2/ThreadStatusChangedNotification'
 import {
   CODEX_APPROVAL,
   CODEX_CAPABILITIES,
@@ -51,11 +52,21 @@ const capturedRemoteControlStatus = {
   environmentId: null,
 } satisfies RemoteControlStatusChangedNotification
 
+const capturedThreadStatus = {
+  threadId: 'captured-thread',
+  status: { type: 'idle' },
+} satisfies ThreadStatusChangedNotification
+
 describe('Codex notifications', () => {
   it('silences the captured startup-only remote-control status', () => {
     expect(capturedRemoteControlStatus.status).toBe('disabled')
     expect(isIgnorableCodexNotification('remoteControl/status/changed')).toBe(true)
     expect(isIgnorableCodexNotification('new/provider/event')).toBe(false)
+  })
+
+  it('silences the captured provider thread status', () => {
+    expect(capturedThreadStatus.status).toEqual({ type: 'idle' })
+    expect(isIgnorableCodexNotification('thread/status/changed')).toBe(true)
   })
 })
 

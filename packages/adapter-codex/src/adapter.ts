@@ -73,7 +73,7 @@ const CLIENT_NAME = 'personal-harness'
 
 /** Codex reports this after every handshake even when remote control is disabled. */
 export function isIgnorableCodexNotification(method: string): boolean {
-  return method === 'remoteControl/status/changed'
+  return method === 'remoteControl/status/changed' || method === 'thread/status/changed'
 }
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'])
