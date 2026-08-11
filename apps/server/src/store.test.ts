@@ -130,7 +130,9 @@ describe('durable queued turns', () => {
       id: 'submission-1',
       intent: 'normal',
     })
-    store.restoreQueuedTurn('thread-1', 'submission-1')
+    expect(store.deleteQueuedTurn('thread-1', 'submission-1')).toBe(false)
+    expect(store.restoreQueuedTurn('thread-1', 'submission-1')).toBe(true)
+    expect(store.completeQueuedTurn('thread-1', 'submission-1')).toBe(false)
     expect(store.queuedTurns('thread-1').map(({ id }) => id)).toEqual(['submission-1'])
 
     store.claimQueuedTurn('thread-1', 'submission-1', 'normal')

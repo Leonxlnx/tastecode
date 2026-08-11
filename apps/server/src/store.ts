@@ -798,7 +798,7 @@ export class Store {
   }
 
   deleteQueuedTurn(threadId: string, queueId: string): boolean {
-    return this.#mutateQueuedTurn(threadId, queueId, 'delete', () => {
+    return this.#mutateQueuedTurn(threadId, queueId, 'queued', 'delete', () => {
       this.#db
         .prepare(`DELETE FROM queued_turns WHERE thread_id = ? AND queue_id = ?`)
         .run(threadId, queueId)
@@ -868,7 +868,7 @@ export class Store {
   }
 
   restoreQueuedTurn(threadId: string, queueId: string): boolean {
-    return this.#mutateQueuedTurn(threadId, queueId, 'restore', () => {
+    return this.#mutateQueuedTurn(threadId, queueId, 'dispatching', 'restore', () => {
       this.#db
         .prepare(
           `UPDATE queued_turns SET state = 'queued', intent = 'normal'
@@ -879,7 +879,7 @@ export class Store {
   }
 
   completeQueuedTurn(threadId: string, queueId: string): boolean {
-    return this.#mutateQueuedTurn(threadId, queueId, 'complete', () => {
+    return this.#mutateQueuedTurn(threadId, queueId, 'dispatching', 'complete', () => {
       this.#db
         .prepare(`DELETE FROM queued_turns WHERE thread_id = ? AND queue_id = ?`)
         .run(threadId, queueId)
@@ -893,13 +893,14 @@ export class Store {
   #mutateQueuedTurn(
     threadId: string,
     queueId: string,
+    state: 'queued' | 'dispatching',
     mutation: string,
     project: () => void,
   ): boolean {
     return this.#transaction(() => {
       const exists = this.#db
-        .prepare(`SELECT 1 FROM queued_turns WHERE thread_id = ? AND queue_id = ?`)
-        .get(threadId, queueId)
+        .prepare(`SELECT 1 FROM queued_turns WHERE thread_id = ? AND queue_id = ? AND state = ?`)
+        .get(threadId, queueId, state)
       if (!exists) return false
       this.#appendQueuedTurnEvent(threadId, queueId, mutation, {})
       project()
