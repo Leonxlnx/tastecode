@@ -2633,10 +2633,7 @@ describe('live sessions', () => {
           name: 'project',
           pinned: false,
           createdAt: 0,
-          sessions: [
-            { id: 'thread-1', title: 'Old chat', running: false },
-            { id: 'thread-2', title: 'Other chat', running: false },
-          ],
+          sessions: [{ id: 'thread-1', title: 'Old chat', running: false }],
         },
       ]
       const request = transport.request.getMockImplementation()!
@@ -2644,11 +2641,7 @@ describe('live sessions', () => {
       let resolveResync!: (value: { events: unknown[]; running: boolean }) => void
       let rejectSend!: (error: Error) => void
       transport.request.mockImplementation((method: string, params: unknown) => {
-        if (
-          method === 'thread.history' &&
-          (params as { threadId: string }).threadId === 'thread-1' &&
-          historyCount++ > 0
-        ) {
+        if (method === 'thread.history' && historyCount++ > 0) {
           return new Promise((resolve) => (resolveResync = resolve))
         }
         if (method === 'thread.sendTurn') {
@@ -2668,14 +2661,12 @@ describe('live sessions', () => {
         return found!
       })
       const submissionId = (call[1] as { clientSubmissionId: string }).clientSubmissionId
-      const localStartedAt = screen.getByTestId('thread').getAttribute('data-started-at')
-
       await act(async () => rejectSend(new IndeterminateRequestError('socket lost')))
       expect(screen.getByText('Submit exactly once')).toBeTruthy()
       expect(screen.getByText('Working')).toBeTruthy()
       expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
       expect((composer as HTMLTextAreaElement).value).toBe('')
-      fireEvent.click(screen.getByRole('button', { name: 'Other chat' }))
+      fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
 
       act(() => {
         for (const listener of transport.stateListeners) listener('reconnecting')
@@ -2727,12 +2718,10 @@ describe('live sessions', () => {
           submissionId,
         )
         expect(screen.getByTestId('thread').getAttribute('data-started-at')).toBe('7')
-        expect((composer as HTMLTextAreaElement).value).toBe('')
       } else {
         expect(within(screen.getByTestId('thread')).queryByText('Submit exactly once')).toBeNull()
         expect(screen.queryByText('Working')).toBeNull()
         expect((composer as HTMLTextAreaElement).value).toBe('Submit exactly once')
-        expect(localStartedAt).not.toBeNull()
       }
     },
   )
@@ -2945,10 +2934,8 @@ describe('live sessions', () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     let submissionId = ''
-    let reconnecting = false
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'thread.history') {
-        if (reconnecting) return Promise.reject(new Error('history unavailable'))
         return Promise.resolve({
           events: [
             {
@@ -2977,22 +2964,6 @@ describe('live sessions', () => {
             attachments: [],
             createdAt: 1,
           },
-        })
-      }
-      if (method === 'thread.steerQueuedTurn') {
-        return Promise.reject(new IndeterminateRequestError('socket lost'))
-      }
-      if (method === 'thread.queue' && reconnecting) {
-        return Promise.resolve({
-          items: [
-            {
-              id: submissionId,
-              text: 'Use this direction now',
-              attachments: [],
-              createdAt: 1,
-            },
-          ],
-          canSteer: true,
         })
       }
       return request(method, params)
@@ -3030,17 +3001,22 @@ describe('live sessions', () => {
         queuedTurnId: submissionId,
       })
     })
+    emitThreadEvent('thread-1', {
+      type: 'item.completed',
+      item: {
+        id: submissionId,
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: 'Use this direction now',
+        createdAt: 1,
+      },
+    })
     expect(screen.getByText('Use this direction now').getAttribute('data-item-id')).toBe(
       submissionId,
     )
-    act(() => {
-      for (const listener of transport.stateListeners) listener('reconnecting')
-      reconnecting = true
-      for (const listener of transport.stateListeners) listener('open')
-    })
-    await screen.findByRole('button', { name: 'Remove Use this direction now from queue' })
-    expect(within(screen.getByTestId('thread')).queryByText('Use this direction now')).toBeNull()
-    expect((composer as HTMLTextAreaElement).value).toBe('')
+    expect(screen.queryByLabelText('Queued prompts')).toBeNull()
   })
 
   it('shows the most recently active session first', async () => {

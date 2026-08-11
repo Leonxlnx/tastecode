@@ -172,6 +172,7 @@ type PendingSubmission = {
   text: string
   createdAt: number
   kind: 'turn' | 'queue' | 'steer'
+  accepted: boolean
   indeterminate: boolean
   optimisticTurn?: NonNullable<ThreadState['activeTurn']>
 }
@@ -255,6 +256,7 @@ export function App() {
   // the active thread, while selecting it still gets the latest state at once.
   const threadStates = useRef(new Map<string, ThreadState>())
   const pendingSubmissions = useRef(new Map<string, Map<string, PendingSubmission>>())
+  const rejectedDrafts = useRef(new Map<string, string>())
   /** Live events parked while a history fetch for the thread is in flight. */
   const historyBuffers = useRef(
     new Map<string, Set<Array<{ seq: number | undefined; event: DomainEvent }>>>(),
@@ -601,7 +603,11 @@ export function App() {
           if (queuedIds.has(submission.id) && submission.kind !== 'queue') {
             next = removePendingSubmission(next, submission)
           }
-        } else if (running === false && submission.indeterminate) {
+        } else if (
+          submission.indeterminate &&
+          !submission.accepted &&
+          (submission.kind !== 'turn' || running === false)
+        ) {
           pending.delete(submission.id)
           next = removePendingSubmission(next, submission)
           rejected.push(submission)
@@ -611,10 +617,12 @@ export function App() {
       threadStates.current.set(threadId, next)
       if (threadId === activeIdRef.current) setThread(next)
       for (const submission of rejected) {
-        setComposerDraft((current) => ({
-          text: submission.text,
-          request: (current?.request ?? 0) + 1,
-        }))
+        if (threadId === activeIdRef.current) {
+          setComposerDraft((current) => ({
+            text: submission.text,
+            request: (current?.request ?? 0) + 1,
+          }))
+        } else rejectedDrafts.current.set(threadId, submission.text)
       }
     },
     [],
@@ -1088,8 +1096,10 @@ export function App() {
         // for a frame, so do not apply that pending batch a second time.
         pendingThreadDeltas.current.delete(threadId)
         threadStates.current.set(threadId, withLive)
-        setProjects((current) => updateSession(current, threadId, markSessionRead))
-        if (activeIdRef.current === threadId) setThread(withLive)
+        if (activeIdRef.current === threadId) {
+          setProjects((current) => updateSession(current, threadId, markSessionRead))
+          setThread(withLive)
+        }
         return { running }
       } finally {
         buffers.delete(buffer)
@@ -1103,8 +1113,10 @@ export function App() {
   )
 
   resync.current = () => {
-    const id = activeIdRef.current
-    if (id && !id.startsWith('pending:')) {
+    const activeId = activeIdRef.current
+    const threadIds = new Set(pendingSubmissions.current.keys())
+    if (activeId && !activeId.startsWith('pending:')) threadIds.add(activeId)
+    for (const id of threadIds) {
       const history = loadHistory(id).catch(() => undefined)
       void transport
         .request('thread.queue', { threadId: id })
@@ -1119,10 +1131,12 @@ export function App() {
           if (loaded) settleQueuedSubmissions(id, state.items, loaded.running)
         })
         .catch(() => undefined)
+    }
+    if (activeId && !activeId.startsWith('pending:')) {
       void transport
-        .request('usage.summary', { threadId: id })
+        .request('usage.summary', { threadId: activeId })
         .then((summary) => {
-          if (activeIdRef.current === id) setUsageSummary(summary)
+          if (activeIdRef.current === activeId) setUsageSummary(summary)
         })
         .catch(() => undefined)
     }
@@ -1734,6 +1748,7 @@ export function App() {
         text,
         createdAt: optimisticCreatedAt,
         kind: wasRunning ? (steering ? 'steer' : 'queue') : 'turn',
+        accepted: false,
         indeterminate: false,
       }
       if (pendingOptimisticTurn && pendingOptimisticTurn.id === optimisticTurnId) {
@@ -1781,12 +1796,9 @@ export function App() {
         })
         turnAccepted = true
         const current = threadStates.current.get(threadId) ?? emptyThread
+        const pending = getPendingSubmission(pendingSubmissions.current, threadId, optimisticItemId)
+        if (pending) pending.accepted = true
         if (result.queued) {
-          const pending = getPendingSubmission(
-            pendingSubmissions.current,
-            threadId,
-            optimisticItemId,
-          )
           if (pending) pending.kind = steering ? 'steer' : 'queue'
           if (steering) {
             await transport.request('thread.steerQueuedTurn', {
@@ -1818,11 +1830,6 @@ export function App() {
             deletePendingSubmission(pendingSubmissions.current, threadId, optimisticItemId)
           }
         } else if (!result.queued && wasRunning) {
-          const pending = getPendingSubmission(
-            pendingSubmissions.current,
-            threadId,
-            optimisticItemId,
-          )
           if (pending) pending.kind = 'turn'
           if (optimisticQueueId) {
             updateQueue(threadId, (items) => items.filter((item) => item.id !== optimisticQueueId))
@@ -2052,10 +2059,22 @@ export function App() {
       setActiveId(id)
       setThreadRevealRequest((request) => request + 1)
       setActivePath(found?.project.path)
+      const rejectedDraft = rejectedDrafts.current.get(id)
+      if (rejectedDraft !== undefined) {
+        rejectedDrafts.current.delete(id)
+        setComposerDraft((current) => ({
+          text: rejectedDraft,
+          request: (current?.request ?? 0) + 1,
+        }))
+      }
       const cached = threadStates.current.get(id)
       if (cached) {
         setThread(cached)
         setProjects((current) => updateSession(current, id, markSessionRead))
+        if (pendingSubmissions.current.has(id)) {
+          resync.current()
+          return
+        }
         // Mark-as-read only; the cache is kept current by the live event
         // stream, so don't ask the server to replay the whole log.
         void transport
@@ -2181,6 +2200,8 @@ export function App() {
     async (id: string) => {
       await transport.request('thread.delete', { threadId: id })
       threadStates.current.delete(id)
+      pendingSubmissions.current.delete(id)
+      rejectedDrafts.current.delete(id)
       setProjects((current) =>
         current.map((project) => ({
           ...project,
