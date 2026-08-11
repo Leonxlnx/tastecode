@@ -986,7 +986,7 @@ export class Orchestrator {
     const submission = clientSubmissionId
       ? { id: clientSubmissionId, text, createdAt: submittedAt }
       : undefined
-    const queue = this.#queuedTurns.get(threadId) ?? []
+    const queue = this.#queueEntries(threadId)
     if (
       this.#activeTurns.has(threadId) ||
       this.#startingTurns.has(threadId) ||
@@ -1003,6 +1003,7 @@ export class Orchestrator {
         options,
         ...(clientSubmissionId ? { clientSubmissionId } : {}),
       }
+      this.#store.enqueueQueuedTurn({ ...queuedTurn, threadId })
       queue.push(queuedTurn)
       this.#queuedTurns.set(threadId, queue)
       this.#notifyQueue(threadId)
@@ -1025,24 +1026,26 @@ export class Orchestrator {
   queue(threadId: string): QueueState {
     const session = this.#threads.get(threadId)?.session
     return {
-      items: (this.#queuedTurns.get(threadId) ?? []).map((item) => this.#publicQueuedTurn(item)),
+      items: this.#queueEntries(threadId).map((item) => this.#publicQueuedTurn(item)),
       canSteer: session?.capabilities.steer === true && session.steer !== undefined,
     }
   }
 
   deleteQueuedTurn(threadId: string, queuedTurnId: string): void {
-    const queue = this.#queuedTurns.get(threadId) ?? []
+    const queue = this.#queueEntries(threadId)
     const index = queue.findIndex((item) => item.id === queuedTurnId)
     if (index < 0) return
+    if (!this.#store.deleteQueuedTurn(threadId, queuedTurnId)) return
     queue.splice(index, 1)
     this.#notifyQueue(threadId)
   }
 
   moveQueuedTurn(threadId: string, queuedTurnId: string, direction: 'up' | 'down'): void {
-    const queue = this.#queuedTurns.get(threadId) ?? []
+    const queue = this.#queueEntries(threadId)
     const from = queue.findIndex((item) => item.id === queuedTurnId)
     const to = from + (direction === 'up' ? -1 : 1)
     if (from < 0 || to < 0 || to >= queue.length) return
+    if (!this.#store.moveQueuedTurn(threadId, queuedTurnId, direction)) return
     ;[queue[from], queue[to]] = [queue[to]!, queue[from]!]
     this.#notifyQueue(threadId)
   }
@@ -1056,7 +1059,7 @@ export class Orchestrator {
     if (this.#drainingQueues.has(threadId))
       throw new Error('a queued prompt is already being steered')
 
-    const queue = this.#queuedTurns.get(threadId) ?? []
+    const queue = this.#queueEntries(threadId)
     const index = queue.findIndex((item) => item.id === queuedTurnId)
     if (index < 0) throw new Error('queued prompt not found')
     const queued = queue[index]!
@@ -1064,6 +1067,8 @@ export class Orchestrator {
     if (queued.clientSubmissionId && !activeTurnId) {
       throw new Error('running turn identity is not available yet')
     }
+    const claimed = this.#store.claimQueuedTurn(threadId, queuedTurnId, 'steer')
+    if (!claimed) throw new Error('queued prompt is no longer available')
     const [item] = queue.splice(index, 1)
     if (!item) return
     const claimedIds = this.#inFlightSubmissionIds.get(threadId) ?? new Set<string>()
@@ -1079,6 +1084,7 @@ export class Orchestrator {
     try {
       await session.steer(threadId, item.text, item.attachments)
       if (!this.#activeTurns.has(threadId) || this.#activeTurnIds.get(threadId) !== activeTurnId) {
+        this.#store.restoreQueuedTurn(threadId, item.id)
         queue.splice(index, 0, item)
         this.#notifyQueue(threadId)
       } else if (activeTurnId && item.clientSubmissionId) {
@@ -1087,9 +1093,13 @@ export class Orchestrator {
           text: item.text,
           createdAt: item.createdAt,
         })
+        this.#store.completeQueuedTurn(threadId, item.id)
+      } else {
+        this.#store.completeQueuedTurn(threadId, item.id)
       }
     } catch (error) {
       if (ownedTurnKey && !alreadyOwned) this.#serverOwnedUserTurns.delete(ownedTurnKey)
+      this.#store.restoreQueuedTurn(threadId, item.id)
       queue.splice(index, 0, item)
       this.#notifyQueue(threadId)
       throw error
@@ -1256,7 +1266,7 @@ export class Orchestrator {
       return 'starting'
     }
     if (this.#activeTurns.has(threadId)) return 'working'
-    if ((this.#queuedTurns.get(threadId)?.length ?? 0) > 0) return 'queued'
+    if (this.#queueEntries(threadId).length > 0) return 'queued'
 
     // Incremental projection over the durable log. The fold is append-only,
     // so each call replays only events after the last consumed seq — the
@@ -1456,9 +1466,13 @@ export class Orchestrator {
     ) {
       return
     }
-    const queue = this.#queuedTurns.get(threadId)
-    const next = queue?.shift()
+    const queue = this.#queueEntries(threadId)
+    const next = queue[0]
     if (!queue || !next) return
+
+    const claimed = this.#store.claimQueuedTurn(threadId, next.id, 'normal')
+    if (!claimed) return
+    queue.shift()
 
     this.#drainingQueues.add(threadId)
     this.#notifyQueue(threadId)
@@ -1479,11 +1493,13 @@ export class Orchestrator {
         await this.#threads.get(threadId)?.session.interrupt(threadId)
         return
       }
+      this.#store.completeQueuedTurn(threadId, next.id)
       this.#activeTurns.add(threadId)
     } catch (error) {
       // After a panic the queue was emptied on purpose; putting the grabbed
       // prompt back would resurrect it.
       if (generation === this.#panicGeneration) {
+        this.#store.restoreQueuedTurn(threadId, next.id)
         queue.unshift(next)
         this.#notifyQueue(threadId)
       }
@@ -1507,6 +1523,17 @@ export class Orchestrator {
       attachments: item.attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT),
       createdAt: item.createdAt,
     }
+  }
+
+  #queueEntries(threadId: string): QueuedTurnEntry[] {
+    const cached = this.#queuedTurns.get(threadId)
+    if (cached) return cached
+    const restored = this.#store.queuedTurns(threadId).map((turn) => {
+      const { threadId: _threadId, intent: _intent, clientSubmissionId, ...entry } = turn
+      return { ...entry, ...(clientSubmissionId ? { clientSubmissionId } : {}) }
+    })
+    this.#queuedTurns.set(threadId, restored)
+    return restored
   }
 
   /** Where the working tree stood before a turn. Silent when there is no repo. */
@@ -1700,6 +1727,7 @@ export class Orchestrator {
     this.#panicStopping = true
     this.#panicGeneration += 1
     for (const [threadId] of sessions) {
+      this.#store.clearQueuedTurns(threadId)
       if (this.#queuedTurns.delete(threadId)) this.#notifyQueue(threadId)
     }
 
@@ -2075,7 +2103,7 @@ export class Orchestrator {
     const accepted = [...(this.#acceptedTurnStarts.get(threadId)?.values() ?? [])].some(
       (start) => start.submission?.id === clientSubmissionId,
     )
-    const queued = (this.#queuedTurns.get(threadId) ?? []).some(
+    const queued = this.#queueEntries(threadId).some(
       (turn) => turn.clientSubmissionId === clientSubmissionId,
     )
     const inFlight = this.#inFlightSubmissionIds.get(threadId)?.has(clientSubmissionId)
@@ -2084,6 +2112,7 @@ export class Orchestrator {
       accepted ||
       queued ||
       inFlight ||
+      this.#store.hasQueuedSubmission(threadId, clientSubmissionId) ||
       this.#store.hasItem(threadId, clientSubmissionId)
     ) {
       throw new Error(`clientSubmissionId "${clientSubmissionId}" was already used for this thread`)
