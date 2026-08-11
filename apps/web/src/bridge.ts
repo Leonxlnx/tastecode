@@ -28,6 +28,7 @@ const bridge = (globalThis as { harness?: Bridge }).harness
 
 export const isDesktop = bridge?.isDesktop === true
 export const canCapturePreview = bridge?.capturePreview !== undefined
+export const canRevealProjectFile = bridge?.revealProjectFile !== undefined
 
 export function isMacOS(): boolean {
   return navigator.platform.startsWith('Mac')
