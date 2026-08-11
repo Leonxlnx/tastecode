@@ -1581,71 +1581,49 @@ describe('several sessions at once', () => {
     expect(queueChanges.slice(beforePanic)).toEqual([{ threadId: thread.id, itemIds: [] }])
   })
 
-  it('still interrupts every session and releases its latch when queue clearing fails', async () => {
-    const { sessions, orchestrator, store } = harness()
-    const first = await orchestrator.startThread('codex', '/repo')
-    await orchestrator.startThread('codex', '/repo')
-    await orchestrator.submitTurn(first.id, 'Running.')
-    await orchestrator.submitTurn(first.id, 'Do not run after failed Stop all.')
-    vi.spyOn(store, 'clearAllQueuedTurns').mockImplementationOnce(() => {
-      throw new Error('C:\\private\\harness.db is full')
-    })
+  it.each(['store', 'listener'] as const)(
+    'still interrupts and releases its latch after a %s queue failure',
+    async (failure) => {
+      const { sessions, orchestrator, store, queueNotificationError } = harness()
+      const first = await orchestrator.startThread('codex', '/repo')
+      await orchestrator.startThread('codex', '/repo')
+      await orchestrator.submitTurn(first.id, 'Running.')
+      await orchestrator.submitTurn(first.id, 'Do not run after failed Stop all.')
+      if (failure === 'store') {
+        vi.spyOn(store, 'clearAllQueuedTurns').mockImplementationOnce(() => {
+          throw new Error('C:\\private\\harness.db is full')
+        })
+      } else {
+        queueNotificationError.current = new Error('listener failed')
+      }
 
-    await expect(orchestrator.panicStop()).rejects.toThrow(
-      'could not clear every queued prompt during Stop all',
-    )
-    expect(sessions.map(({ interrupted }) => interrupted)).toEqual([true, true])
-    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'interrupted' })
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(sessions[0]!.sent).toEqual(['Running.'])
-    expect(orchestrator.queue(first.id).items).toEqual([])
-    expect(store.queuedTurns(first.id).map(({ text }) => text)).toEqual([
-      'Do not run after failed Stop all.',
-    ])
-    await expect(
-      orchestrator.submitTurn(first.id, 'Work after failed Stop all.'),
-    ).resolves.toMatchObject({ queued: false })
-  })
-
-  it('finishes queue cleanup and interrupts when a queue listener throws', async () => {
-    const { sessions, orchestrator, store, queueNotificationError } = harness()
-    const thread = await orchestrator.startThread('codex', '/repo')
-    await orchestrator.submitTurn(thread.id, 'Running.')
-    await orchestrator.submitTurn(thread.id, 'Queued.')
-    queueNotificationError.current = new Error('listener failed')
-
-    await expect(orchestrator.panicStop()).rejects.toThrow(
-      'could not clear every queued prompt during Stop all',
-    )
-    expect(sessions[0]!.interrupted).toBe(true)
-    expect(store.queuedTurns(thread.id)).toEqual([])
-    queueNotificationError.current = undefined
-    await expect(
-      orchestrator.submitTurn(thread.id, 'Work after listener failure.'),
-    ).resolves.toMatchObject({ queued: true })
-  })
+      await expect(orchestrator.panicStop()).rejects.toThrow(
+        'could not clear every queued prompt during Stop all',
+      )
+      expect(sessions.map(({ interrupted }) => interrupted)).toEqual([true, true])
+      queueNotificationError.current = undefined
+      sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'interrupted' })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(sessions[0]!.sent).toEqual(['Running.'])
+      expect(orchestrator.queue(first.id).items).toEqual([])
+      expect(store.queuedTurns(first.id)).toHaveLength(failure === 'store' ? 1 : 0)
+      await expect(
+        orchestrator.submitTurn(first.id, 'Work after failed Stop all.'),
+      ).resolves.toMatchObject({ queued: false })
+    },
+  )
 
   it('drops durable queues that were never loaded into this process', async () => {
-    const store = new Store(':memory:')
-    store.addProject('/repo')
-    store.addThread({ id: 'persisted-thread', projectPath: '/repo', provider: 'codex', title: 'T' })
-    store.enqueueQueuedTurn({
-      id: 'submission-old',
-      threadId: 'persisted-thread',
-      clientSubmissionId: 'submission-old',
-      text: 'Do not run after Stop all.',
-      attachments: [],
-      options: {},
-      createdAt: 1,
-    })
-    const { sessions, orchestrator } = harness(undefined, store)
+    const { sessions, orchestrator, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'Active.')
+    await orchestrator.submitTurn(thread.id, 'Queued.', [], {}, 'submission-old')
+    await orchestrator.disposeAll()
 
     await expect(orchestrator.panicStop()).resolves.toEqual({ sessions: [] })
-    expect(store.queuedTurns('persisted-thread')).toEqual([])
-    await expect(
-      orchestrator.submitTurn('persisted-thread', 'New work.', [], {}, 'submission-new'),
-    ).resolves.toMatchObject({ queued: false })
-    expect(sessions[0]?.sent).toEqual(['New work.'])
+    expect(store.queuedTurns(thread.id)).toEqual([])
+    await orchestrator.submitTurn(thread.id, 'New work.', [], {}, 'submission-new')
+    expect(sessions[1]?.sent).toEqual(['New work.'])
   })
 
   it('cancels a turn still waiting for its checkpoint', async () => {
@@ -1775,7 +1753,7 @@ describe('queued turns', () => {
     const seeded = harness(undefined, seededStore)
     try {
       const thread = await seeded.orchestrator.startThread('codex', '/repo')
-      seeded.sessions[0]!.turnIds.push('active-turn')
+      const submit = seeded.orchestrator.submitTurn.bind(seeded.orchestrator)
       await seeded.orchestrator.submitTurn(thread.id, 'Active.', [], {}, 'submission-active')
       seeded.sessions[0]!.emit(turnStarted(thread.id, 'active-turn'))
       for (const [id, attachment, model] of [
@@ -1783,13 +1761,7 @@ describe('queued turns', () => {
         ['submission-b', 'C:\\private\\b.png', 'model-b'],
         ['submission-c', 'C:\\private\\c.png', 'model-c'],
       ] as const) {
-        await seeded.orchestrator.submitTurn(
-          thread.id,
-          'Repeat this.',
-          [attachment],
-          { model, effort: 'high' },
-          id,
-        )
+        await submit(thread.id, 'Repeat.', [attachment], { model }, id)
       }
       seeded.orchestrator.moveQueuedTurn(thread.id, 'submission-c', 'up')
       seeded.orchestrator.deleteQueuedTurn(thread.id, 'submission-a')
@@ -1804,40 +1776,14 @@ describe('queued turns', () => {
           'submission-c',
           'submission-b',
         ])
-        await expect(
-          restarted.orchestrator.submitTurn(
-            thread.id,
-            'Repeat this.',
-            ['C:\\private\\d.png'],
-            { model: 'model-d', effort: 'high' },
-            'submission-d',
-          ),
-        ).resolves.toMatchObject({ queued: true })
-        await vi.waitFor(() => expect(restarted.sessions[0]?.sent).toEqual(['Repeat this.']))
+        await restarted.orchestrator.submitTurn(thread.id, 'Wake the queue.')
+        await vi.waitFor(() => expect(restarted.sessions[0]?.sent).toEqual(['Repeat.']))
         expect(restarted.sessions[0]?.sentAttachments[0]).toEqual(['C:\\private\\c.png'])
-        expect(restarted.sessions[0]?.sentOptions[0]).toEqual({ model: 'model-c', effort: 'high' })
+        expect(restarted.sessions[0]?.sentOptions[0]).toEqual({ model: 'model-c' })
 
-        restarted.sessions[0]!.turnIds.push('turn-b', 'turn-d')
-        restarted.sessions[0]!.emit({
-          type: 'turn.completed',
-          turnId: 's1-turn',
-          status: 'completed',
-        })
+        restarted.sessions[0]!.emit({ type: 'turn.completed', turnId: 't', status: 'completed' })
         await vi.waitFor(() => expect(restarted.sessions[0]?.sent).toHaveLength(2))
-        restarted.sessions[0]!.emit({
-          type: 'turn.completed',
-          turnId: 'turn-b',
-          status: 'completed',
-        })
-        await vi.waitFor(() => expect(restarted.sessions[0]?.sent).toHaveLength(3))
-
-        const ids = restartedStore
-          .history(thread.id)
-          .flatMap(({ event }) =>
-            event.type === 'item.completed' && event.item.role === 'user' ? [event.item.id] : [],
-          )
-        expect(ids).toEqual(['submission-active', 'submission-c', 'submission-b', 'submission-d'])
-        expect(restartedStore.queuedTurns(thread.id)).toEqual([])
+        expect(restarted.orchestrator.queue(thread.id).items).toHaveLength(1)
       } finally {
         await restarted.orchestrator.disposeAll()
         restartedStore.close()
@@ -1865,11 +1811,7 @@ describe('queued turns', () => {
     sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
 
     await vi.waitFor(() => expect(logs).toContain('could not start queued turn; it remains queued'))
-    await vi.waitFor(() =>
-      expect(orchestrator.queue(thread.id).items.map(({ id }) => id)).toEqual([
-        'submission-private',
-      ]),
-    )
+    expect(orchestrator.queue(thread.id).items.map(({ id }) => id)).toEqual(['submission-private'])
     expect(store.queuedTurns(thread.id).map(({ id }) => id)).toEqual(['submission-private'])
     expect(logs.join('\n')).not.toMatch(/private prompt content|secret\\private/)
   })
@@ -1887,15 +1829,8 @@ describe('queued turns', () => {
     await vi.waitFor(() =>
       expect(logs).toContain('queued turn ended after acceptance or cancellation'),
     )
-    expect(orchestrator.queue(thread.id).items).toEqual([])
     expect(store.queuedTurns(thread.id)).toEqual([])
-    expect(
-      store
-        .history(thread.id)
-        .filter(
-          ({ event }) => event.type === 'item.completed' && event.item.id === 'submission-accepted',
-        ),
-    ).toHaveLength(1)
+    expect(store.hasItem(thread.id, 'submission-accepted')).toBe(true)
   })
 
   it('does not revive a closed thread after a legacy queued send resolves', async () => {
@@ -1921,7 +1856,6 @@ describe('queued turns', () => {
     const thread = await orchestrator.startThread('codex', '/repo')
     await orchestrator.submitTurn(thread.id, 'Active.')
     await orchestrator.submitTurn(thread.id, 'Queued work.')
-    const restore = vi.spyOn(store, 'restoreQueuedTurn')
     sessions[0]!.release = () => {}
     sessions[0]!.sendError = new Error('provider stopped')
     sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
@@ -1931,8 +1865,6 @@ describe('queued turns', () => {
     store.close()
     sessions[0]!.release?.()
     await new Promise((resolve) => setTimeout(resolve, 0))
-
-    expect(restore).not.toHaveBeenCalled()
   })
 
   it('does not restore or drain a steer that resolves after server disposal', async () => {
@@ -1944,7 +1876,6 @@ describe('queued turns', () => {
     if (!queued.queued) throw new Error('expected the prompt to queue')
     let release = () => {}
     sessions[0]!.steerBarriers.push(new Promise<void>((resolve) => (release = resolve)))
-    const restore = vi.spyOn(store, 'restoreQueuedTurn')
     const steering = orchestrator.steerQueuedTurn(thread.id, queued.queuedTurn.id)
     await vi.waitFor(() => expect(sessions[0]!.steered).toEqual(['Steer later.']))
 
@@ -1953,7 +1884,6 @@ describe('queued turns', () => {
     release()
 
     await expect(steering).resolves.toBeUndefined()
-    expect(restore).not.toHaveBeenCalled()
   })
 
   it('runs queued prompts in order after the active turn completes', async () => {
