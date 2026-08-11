@@ -1621,7 +1621,7 @@ export class Orchestrator {
     const stored = this.#store.thread(threadId)
     if (!stored?.worktreePath || !stored.worktreeBranch) return
 
-    this.#terminals.closeThread(threadId)
+    await this.#terminals.closeThread(threadId)
 
     await removeWorktree(
       {

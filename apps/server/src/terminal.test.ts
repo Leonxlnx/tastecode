@@ -42,8 +42,8 @@ describe('TerminalManager', () => {
       await expect(within(exited)).resolves.toEqual({ terminalId, exitCode: 0 })
       expect(() => manager.write(terminalId, 'after exit')).toThrow(/no such terminal/i)
     } finally {
-      manager.closeAll()
-      rmSync(cwd, { recursive: true, force: true })
+      await manager.closeAll()
+      removeTemporaryDirectory(cwd)
     }
   }, 15_000)
 
@@ -74,8 +74,8 @@ describe('TerminalManager', () => {
       expect(output).toContain('harness-run-done')
       expect(output).not.toContain('something-else')
     } finally {
-      manager.closeAll()
-      rmSync(cwd, { recursive: true, force: true })
+      await manager.closeAll()
+      removeTemporaryDirectory(cwd)
     }
   }, 15_000)
 
@@ -93,8 +93,8 @@ describe('TerminalManager', () => {
       expect(() => manager.resize(terminalId, 100, 30)).toThrow(/no such terminal/i)
       await within(exited)
     } finally {
-      manager.closeAll()
-      rmSync(cwd, { recursive: true, force: true })
+      await manager.closeAll()
+      removeTemporaryDirectory(cwd)
     }
   })
 })
@@ -115,7 +115,11 @@ async function within<T>(promise: Promise<T>): Promise<T> {
 
 it('closing a stale terminal id does not unmap a newer pty under the same key', async () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-stale-'))
-  const manager = new TerminalManager({ onOutput: () => {}, onExit: () => {} })
+  const exited = new Set<string>()
+  const manager = new TerminalManager({
+    onOutput: () => {},
+    onExit: (terminalId) => exited.add(terminalId),
+  })
 
   try {
     const first = manager.open('thread-1', cwd, 80, 24)
@@ -130,7 +134,12 @@ it('closing a stale terminal id does not unmap a newer pty under the same key', 
     // reattaches instead of spawning a third.
     expect(manager.open('thread-1', cwd, 80, 24)).toBe(second)
   } finally {
-    manager.closeAll()
-    rmSync(cwd, { recursive: true, force: true })
+    await manager.closeAll()
+    expect(exited.size).toBe(2)
+    removeTemporaryDirectory(cwd)
   }
 }, 15_000)
+
+function removeTemporaryDirectory(directory: string): void {
+  rmSync(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 })
+}

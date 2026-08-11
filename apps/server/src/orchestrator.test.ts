@@ -1421,6 +1421,17 @@ describe('isolated sessions', () => {
     expect(existsSync(store.thread(thread.id)!.worktreePath!)).toBe(true)
   })
 
+  it('waits for the checkout terminal to exit before discarding its worktree', async () => {
+    const { store, orchestrator } = harness(trees)
+    const thread = await orchestrator.startThread('codex', repo, { isolate: true })
+    const worktreePath = store.thread(thread.id)!.worktreePath!
+
+    orchestrator.openTerminal(thread.id, 80, 24)
+    await orchestrator.discardWorktree(thread.id)
+
+    expect(existsSync(worktreePath)).toBe(false)
+  }, 20_000)
+
   it('closing a session leaves its checkout alone', async () => {
     const { store, orchestrator } = harness(trees)
 

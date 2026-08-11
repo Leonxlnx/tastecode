@@ -5,11 +5,13 @@ type TerminalEntry = {
   threadId: string
   process: IPty
   output: { dispose(): void }
+  exited: Promise<void>
 }
 
 export class TerminalManager {
   #byId = new Map<string, TerminalEntry>()
   #byThread = new Map<string, string>()
+  #closing = new Set<Promise<void>>()
   #onOutput: (terminalId: string, data: string) => void
   #onExit: (terminalId: string, exitCode: number | null) => void
 
@@ -54,7 +56,11 @@ export class TerminalManager {
       env: globalThis.process.env,
     })
     const output = process.onData((data) => this.#onOutput(terminalId, data))
-    const entry = { threadId: key, process, output }
+    let resolveExited: () => void = () => {}
+    const exited = new Promise<void>((resolve) => {
+      resolveExited = resolve
+    })
+    const entry = { threadId: key, process, output, exited }
     this.#byId.set(terminalId, entry)
     this.#byThread.set(key, terminalId)
 
@@ -63,6 +69,7 @@ export class TerminalManager {
         this.#byId.delete(terminalId)
         this.#byThread.delete(key)
       }
+      resolveExited()
       this.#onExit(terminalId, Number.isInteger(exitCode) ? exitCode : null)
     })
 
@@ -77,9 +84,9 @@ export class TerminalManager {
     this.#get(terminalId).process.resize(columns, rows)
   }
 
-  close(terminalId: string): void {
+  close(terminalId: string): Promise<void> {
     const entry = this.#byId.get(terminalId)
-    if (!entry) return
+    if (!entry) return Promise.resolve()
     this.#byId.delete(terminalId)
     // Only unmap the key if it still points at this terminal — closing a
     // stale id must not orphan a newer pty spawned under the same key.
@@ -89,16 +96,25 @@ export class TerminalManager {
     // node-pty flushes buffered output after kill(); the client tore this
     // pane down, so those late chunks must not be broadcast for its id.
     entry.output.dispose()
-    entry.process.kill()
+    this.#closing.add(entry.exited)
+    void entry.exited.then(() => this.#closing.delete(entry.exited))
+    try {
+      entry.process.kill()
+    } catch (error) {
+      this.#closing.delete(entry.exited)
+      throw error
+    }
+    return entry.exited
   }
 
-  closeThread(threadId: string): void {
+  closeThread(threadId: string): Promise<void> {
     const terminalId = this.#byThread.get(threadId)
-    if (terminalId) this.close(terminalId)
+    return terminalId ? this.close(terminalId) : Promise.resolve()
   }
 
-  closeAll(): void {
-    for (const terminalId of [...this.#byId.keys()]) this.close(terminalId)
+  async closeAll(): Promise<void> {
+    for (const terminalId of [...this.#byId.keys()]) void this.close(terminalId)
+    await Promise.all([...this.#closing])
   }
 
   #get(terminalId: string): TerminalEntry {
