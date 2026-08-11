@@ -226,6 +226,7 @@ describe('completed activity disclosure', () => {
     const secondNarration = screen.getByText('The focused test passes.')
     const file = screen.getByText('Edited files')
     const answer = screen.getByText('Fixed.')
+    expect(screen.getByText('12 passed')).toBeTruthy()
     expect(
       firstNarration.compareDocumentPosition(command) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0)
@@ -243,8 +244,9 @@ describe('completed activity disclosure', () => {
       turnItem('prompt-1', 1, { role: 'user', text: 'Build it' }),
       turnItem('reasoning-1', 2, { type: 'reasoning', text: 'Inspecting state' }),
       turnItem('command-1', 3, { type: 'command', command: 'pnpm test' }),
-      turnItem('design-1', 4, { type: 'tool_call', text: 'design:build' }),
-      turnItem('answer-1', 5, {
+      turnItem('tool-1', 4, { type: 'tool_call', text: 'Searched 4 files' }),
+      turnItem('design-1', 5, { type: 'tool_call', text: 'design:build' }),
+      turnItem('answer-1', 6, {
         role: 'assistant',
         phase: 'final_answer',
         text: 'Built.',
@@ -254,7 +256,9 @@ describe('completed activity disclosure', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
     expect(screen.getByText('Thinking')).toBeTruthy()
+    expect(screen.getByText('Inspecting state')).toBeTruthy()
     expect(screen.getByText('pnpm test')).toBeTruthy()
+    expect(screen.getByText('Searched 4 files')).toBeTruthy()
     expect(screen.getByText('Building the website')).toBeTruthy()
   })
 
