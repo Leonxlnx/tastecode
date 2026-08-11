@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Transport } from '../transport.js'
 import { SkillsSettings } from './SkillsSettings.js'
 
@@ -120,5 +120,58 @@ describe('Agent Skills settings', () => {
     expect(screen.queryByText('Discovering skills…')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
+  })
+
+  it('does not apply a completed toggle to the next project', async () => {
+    let finishToggle: ((value: { enabled: boolean }) => void) | undefined
+    const toggle = new Promise<{ enabled: boolean }>((resolve) => {
+      finishToggle = resolve
+    })
+    const transport = client(async (method, params) => {
+      if (method === 'skills.list') {
+        const projectPath = (params as { projectPath: string }).projectPath
+        return {
+          capabilities: { inventory: true, configure: true, install: false },
+          skills: [
+            {
+              ...skill,
+              displayName: projectPath === '/work/one' ? 'Project One Skill' : 'Project Two Skill',
+            },
+          ],
+          errors: [],
+        }
+      }
+      if (method === 'skills.setEnabled') return toggle
+      throw new Error(`unexpected ${method}`)
+    })
+    const view = render(
+      <SkillsSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/one"
+        projectName="One"
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('switch', { name: 'Disable Project One Skill' }))
+    view.rerender(
+      <SkillsSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/two"
+        projectName="Two"
+      />,
+    )
+    const projectTwoToggle = await screen.findByRole('switch', {
+      name: 'Disable Project Two Skill',
+    })
+
+    await act(async () => {
+      finishToggle?.({ enabled: false })
+      await toggle
+    })
+    expect(projectTwoToggle.getAttribute('aria-checked')).toBe('true')
   })
 })

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ProviderId, ResultOf, Skill } from '@harness/contracts'
 import { AlertTriangle, FolderPlus } from 'lucide-react'
 import { pickSkillFolder } from '../bridge.js'
@@ -18,11 +18,16 @@ export function SkillsSettings(props: {
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState<string>()
   const [reload, setReload] = useState(0)
+  const context = `${props.provider}\0${props.projectPath ?? ''}`
+  const contextRef = useRef(context)
+  contextRef.current = context
 
   useEffect(() => {
     if (!props.projectPath) {
       setInventory(undefined)
       setLoading(false)
+      setError(undefined)
+      setBusy(undefined)
       return
     }
 
@@ -50,6 +55,7 @@ export function SkillsSettings(props: {
     }
     setInventory(undefined)
     setError(undefined)
+    setBusy(undefined)
     void load()
     const off = props.transport.on('skills.changed', ({ provider, projectPath }) => {
       if (provider === props.provider && projectPath === props.projectPath) void load()
@@ -62,6 +68,7 @@ export function SkillsSettings(props: {
 
   async function toggle(skill: Skill): Promise<void> {
     if (!props.projectPath) return
+    const operationContext = context
     setBusy(skill.id)
     setError(undefined)
     try {
@@ -71,6 +78,7 @@ export function SkillsSettings(props: {
         skillId: skill.id,
         enabled: !skill.enabled,
       })
+      if (contextRef.current !== operationContext) return
       setInventory((current) =>
         current
           ? {
@@ -82,16 +90,17 @@ export function SkillsSettings(props: {
           : current,
       )
     } catch (cause) {
-      setError(message(cause))
+      if (contextRef.current === operationContext) setError(message(cause))
     } finally {
-      setBusy(undefined)
+      if (contextRef.current === operationContext) setBusy(undefined)
     }
   }
 
   async function install(): Promise<void> {
     if (!props.projectPath) return
+    const operationContext = context
     const folderPath = await pickSkillFolder()
-    if (!folderPath) return
+    if (!folderPath || contextRef.current !== operationContext) return
     setBusy('install')
     setError(undefined)
     try {
@@ -100,6 +109,7 @@ export function SkillsSettings(props: {
         projectPath: props.projectPath,
         folderPath,
       })
+      if (contextRef.current !== operationContext) return
       setInventory((current) =>
         current
           ? {
@@ -109,9 +119,9 @@ export function SkillsSettings(props: {
           : current,
       )
     } catch (cause) {
-      setError(message(cause))
+      if (contextRef.current === operationContext) setError(message(cause))
     } finally {
-      setBusy(undefined)
+      if (contextRef.current === operationContext) setBusy(undefined)
     }
   }
 

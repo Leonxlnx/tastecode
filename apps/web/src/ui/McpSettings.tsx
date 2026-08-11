@@ -25,6 +25,9 @@ export function McpSettings(props: {
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
+  const context = `${props.provider}\0${props.projectPath ?? ''}`
+  const contextRef = useRef(context)
+  contextRef.current = context
 
   // Generation counter: a slow reply from a previous project must not land
   // on top of the current one's list (or arrive after unmount).
@@ -37,7 +40,7 @@ export function McpSettings(props: {
   )
 
   const refresh = useCallback(async () => {
-    if (!props.projectPath) return
+    if (!props.projectPath || contextRef.current !== context) return
     const generation = ++refreshGeneration.current
     setLoading(true)
     try {
@@ -45,20 +48,24 @@ export function McpSettings(props: {
         provider: props.provider,
         projectPath: props.projectPath,
       })
-      if (refreshGeneration.current !== generation) return
+      if (refreshGeneration.current !== generation || contextRef.current !== context) return
       setInventory(inventory)
       setError(undefined)
     } catch (cause) {
-      if (refreshGeneration.current !== generation) return
+      if (refreshGeneration.current !== generation || contextRef.current !== context) return
       setError(message(cause))
     } finally {
-      if (refreshGeneration.current === generation) setLoading(false)
+      if (refreshGeneration.current === generation && contextRef.current === context) {
+        setLoading(false)
+      }
     }
-  }, [props.transport, props.provider, props.projectPath])
+  }, [props.transport, props.provider, props.projectPath, context])
 
   useEffect(() => {
     setInventory(undefined)
     setError(undefined)
+    setEditor(undefined)
+    setBusy(undefined)
     // "Server added." must not survive into an unrelated project's panel.
     setNotice(undefined)
     if (!props.projectPath) {
@@ -91,6 +98,7 @@ export function McpSettings(props: {
     setNotice(undefined)
     try {
       await action()
+      if (contextRef.current !== context) return false
       setNotice(success)
       if (inventory?.capabilities.reload && props.projectPath) {
         try {
@@ -106,10 +114,10 @@ export function McpSettings(props: {
       await refresh()
       return true
     } catch (cause) {
-      setError(message(cause))
+      if (contextRef.current === context) setError(message(cause))
       return false
     } finally {
-      setBusy(undefined)
+      if (contextRef.current === context) setBusy(undefined)
     }
   }
 
@@ -185,15 +193,16 @@ export function McpSettings(props: {
         projectPath: props.projectPath,
         serverId: server.id,
       })
+      if (contextRef.current !== context) return
       const opened = window.open(result.authUrl, '_blank', 'noopener,noreferrer')
       if (!opened) {
         setNotice(`Your browser blocked the sign-in window. Open it yourself: ${result.authUrl}`)
       }
       setNotice('Finish signing in in your browser.')
-      setBusy(undefined)
     } catch (cause) {
-      setError(message(cause))
-      setBusy(undefined)
+      if (contextRef.current === context) setError(message(cause))
+    } finally {
+      if (contextRef.current === context) setBusy(undefined)
     }
   }
 

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Transport } from '../transport.js'
 import { McpSettings } from './McpSettings.js'
 
@@ -164,6 +164,75 @@ describe('MCP settings', () => {
     await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(1))
     listeners.get('mcp.changed')?.({ provider: 'codex', projectPath: '/work/project' } as never)
     await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
+  })
+
+  it('does not let a completed change restore the previous project inventory', async () => {
+    let finishChange: (() => void) | undefined
+    const change = new Promise<void>((resolve) => {
+      finishChange = resolve
+    })
+    const inventory = (name: string) => ({
+      capabilities: {
+        inventory: true,
+        add: true,
+        update: true,
+        remove: true,
+        reload: false,
+        startOAuth: false,
+        cancelOAuth: false,
+      },
+      servers: [
+        {
+          id: name,
+          scope: 'global' as const,
+          enabled: true,
+          auth: { status: 'not_required' as const },
+          startup: { state: 'ready' as const },
+          tools: [],
+          resources: [],
+          resourceTemplates: [],
+        },
+      ],
+    })
+    const transport = {
+      request: vi.fn(async (method: string, params: { projectPath?: string }) => {
+        if (method === 'mcp.list') {
+          return inventory(params.projectPath === '/work/one' ? 'one-server' : 'two-server')
+        }
+        if (method === 'mcp.add') return change
+        throw new Error(`unexpected ${method}`)
+      }),
+      on: vi.fn(() => () => {}),
+    } as unknown as Transport
+    const view = render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/one"
+        projectName="One"
+      />,
+    )
+
+    expect(await screen.findByText('one-server')).toBeTruthy()
+    fireEvent.click(screen.getByRole('switch', { name: 'Disable one-server for this project' }))
+    view.rerender(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/two"
+        projectName="Two"
+      />,
+    )
+    expect(await screen.findByText('two-server')).toBeTruthy()
+
+    await act(async () => {
+      finishChange?.()
+      await change
+    })
+    expect(screen.getByText('two-server')).toBeTruthy()
+    expect(screen.queryByText('one-server')).toBeNull()
   })
 
   it('adds a project server and disables an inherited server', async () => {
