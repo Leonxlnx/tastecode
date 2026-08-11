@@ -105,7 +105,7 @@ describe('turn boundaries', () => {
     expect(presentTurns(items).get('t1')?.complete).toBe(false)
   })
 
-  it('keeps commentary in the worked disclosure and the last message as the response', () => {
+  it('keeps assistant narration visible while compacting only tool activity', () => {
     const items: Item[] = [
       { ...item('user', 't1'), role: 'user', text: 'Fix it.' },
       { ...item('update-1', 't1'), role: 'assistant', text: 'I found the cause.' },
@@ -116,9 +116,9 @@ describe('turn boundaries', () => {
     ]
 
     expect(presentTurns(items).get('t1')).toMatchObject({
-      activity: [items[1], items[2], items[3], items[4]],
+      activity: [items[2], items[4]],
       responseText: 'Fixed.',
-      firstActivityIndex: 1,
+      firstActivityIndex: 2,
       finalAnswerIndex: 5,
       complete: true,
     })
