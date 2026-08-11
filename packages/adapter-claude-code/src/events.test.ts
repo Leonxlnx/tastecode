@@ -79,8 +79,10 @@ describe('claude event translation', () => {
       events.flatMap((event) => (event.type === 'item.completed' ? [event.item.id] : []))
     const itemIds = completedItemIds(first)
 
-    expect(itemIds).toHaveLength(2)
-    expect(new Set(itemIds)).toHaveLength(2)
+    expect(itemIds).toEqual([
+      'msg_011CdwAM63bijViHvHrHysNR-text-0',
+      'toolu_018pJWfDcup4YmC285NtuAb5-call',
+    ])
     expect(completedItemIds(replay)).toEqual(itemIds)
     expect(first).toMatchObject([
       { type: 'item.completed', item: { type: 'message', text: 'I will inspect the fixture.' } },
