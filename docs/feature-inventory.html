@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-11 1b43f42c</span>
+        <span class="meta">2026-08-12 10abc144</span>
       </div>
     </div>
 
@@ -725,7 +725,8 @@
                 >Every item type first class
                 <span class="d"
                   >message, reasoning, plan, command, file change, tool call, subagent activity,
-                  error</span
+                  error; completed narration and tool output remain chronological and accessible on
+                  replay</span
                 ></span
               ></label
             >
@@ -735,7 +736,8 @@
               ><input type="checkbox" /><span
                 >Virtualized list with folded deltas once per frame
                 <span class="d"
-                  >active-tail search stays bounded independently of transcript length</span
+                  >active-tail search stays bounded independently of transcript length; stable row
+                  identities survive optimistic-to-canonical reconciliation</span
                 ></span
               ></label
             >
@@ -1041,7 +1043,9 @@
                 >Cross-session title and full-text search with project and agent filters
                 <span class="d"
                   >prefix ranking, highlighted snippets, keyboard navigation, and stable pagination
-                  over an immutable ranked server snapshot with indexed range seeks</span
+                  over an immutable ranked server snapshot with indexed range seeks; opaque result
+                  identities retain selection and DOM focus across inserts, and closing search
+                  restores an available opener or composer</span
                 ></span
               ></label
             >

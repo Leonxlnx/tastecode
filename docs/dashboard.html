@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-11 main 1b43f42c</span>
+        <span class="meta">2026-08-12 main 10abc144</span>
       </div>
     </div>
 
@@ -314,12 +314,9 @@
             <small>thread, review, sessions, git, settings</small>
           </div>
           <div class="kpi">
-            <b>8</b>
+            <b>4</b>
             <span>workstreams running</span>
-            <small
-              >design, provider UX, prompt flow, narration, performance, files, search,
-              Nightly</small
-            >
+            <small>design, provider UX, performance, files</small>
           </div>
           <div class="kpi">
             <b>8</b>
@@ -337,7 +334,7 @@
         </p>
         <div class="lanes">
           <div class="lane l-done">
-            <header>Ready <span class="count">18</span></header>
+            <header>Ready <span class="count">21</span></header>
             <ul>
               <li>
                 <i class="tick">✓</i>
@@ -441,6 +438,36 @@
               <li>
                 <i class="tick">✓</i>
                 <span
+                  >Durable prompt delivery and reconnect convergence
+                  <span class="d"
+                    >queued prompts survive restart; accepted, rejected, and indeterminate sends
+                    converge once without duplicate rows or cross-thread draft leaks</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Narration and tool lifecycles
+                  <span class="d"
+                    >adapter activity stays unique and chronological; completed narration, tool
+                    output, and file details remain visible on replay</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Search, menus, and focus
+                  <span class="d"
+                    >stable result identity, keyboard-complete menus, trapped search focus, and
+                    deterministic focus restoration across task changes</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
                   >Claude Code item identity
                   <span class="d"
                     >reused message IDs keep narration and tool blocks unique, chronological, and
@@ -504,7 +531,7 @@
           </div>
 
           <div class="lane l-active">
-            <header>In progress <span class="count">8</span></header>
+            <header>In progress <span class="count">4</span></header>
             <ul>
               <li>
                 <i class="tick">●</i>
@@ -526,40 +553,10 @@
               <li>
                 <i class="tick">●</i>
                 <span
-                  >Prompt delivery and reconnect convergence
-                  <span class="d"
-                    >the server foundation is on main; optimistic history and indeterminate
-                    reconnects remain in #615 and #630</span
-                  >
-                </span>
-              </li>
-              <li>
-                <i class="tick">●</i>
-                <span
-                  >Narration and tool lifecycles
-                  <span class="d"
-                    >cross-provider adapter and UI normalization remains in #612 and #620; Grok live
-                    authentication evidence is still pending</span
-                  >
-                </span>
-              </li>
-              <li>
-                <i class="tick">●</i>
-                <span
                   >Long-thread and first-progress performance
                   <span class="d"
-                    >the bounded parser foundation is on main; visible live-tail integration and
-                    status work remain in #598, with virtualizer identity in #614</span
-                  >
-                </span>
-              </li>
-              <li>
-                <i class="tick">●</i>
-                <span
-                  >Nightly provider-roster integration
-                  <span class="d"
-                    >restore the full roster through a reviewed stack after the branch-history
-                    decision (#637; Nightly, no milestone)</span
+                    >bounded parsing and stable virtual-row identity are on main; visible live-tail
+                    integration and status work remain in #598 and #604</span
                   >
                 </span>
               </li>
@@ -570,16 +567,6 @@
                   <span class="d"
                     >bounded Markdown parsing is on main; Desktop validation and visible actions
                     remain in #619 and #616</span
-                  >
-                </span>
-              </li>
-              <li>
-                <i class="tick">●</i>
-                <span
-                  >Search and keyboard hardening
-                  <span class="d"
-                    >shared menu behavior (#613), modal focus (#632), and the immutable result-ID,
-                    contracts, and UI-key layer (#634)</span
                   >
                 </span>
               </li>
@@ -653,6 +640,8 @@
           <span>GLM and Z.ai coding plans</span>
           <span>Qwen route (#380)</span>
           <span>Pi agent (#147, no CLI exists)</span>
+          <span>Nightly provider-roster integration (#637)</span>
+          <span>All parked provider work is labeled target:nightly</span>
           <span>Native mobile app (M8, source on main; release QA pending)</span>
         </div>
       </section>
