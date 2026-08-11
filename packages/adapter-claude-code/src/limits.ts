@@ -79,7 +79,8 @@ export function mapClaudeUsage(body: unknown): ProviderLimit[] {
       if (usedPercent === undefined) continue
       const scope = limit['scope'] as Record<string, unknown> | undefined
       const model = scope?.['model'] as Record<string, unknown> | undefined
-      const name = typeof model?.['display_name'] === 'string' ? model['display_name'] : 'Model'
+      const displayName = model?.['display_name']
+      const name = typeof displayName === 'string' && displayName.trim() ? displayName : 'Model'
       const label = `${name.charAt(0).toUpperCase()}${name.slice(1)} weekly`
       const resetsAt = parseResetsAt(limit['resets_at'])
       if (!rows.some((row) => row.label === label)) {

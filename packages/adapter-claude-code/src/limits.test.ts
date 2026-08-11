@@ -54,11 +54,13 @@ describe('mapClaudeUsage', () => {
         },
         { kind: 'session', percent: 99 },
         { kind: 'weekly_scoped', percent: 12, scope: { model: { display_name: 'fable' } } },
+        { kind: 'weekly_scoped', percent: 3, scope: { model: { display_name: ' ' } } },
       ],
     })
     expect(rows).toEqual([
       { label: 'Weekly', usedPercent: 10 },
       { label: 'Fable weekly', usedPercent: 55, resetsAt: Date.parse('2026-08-14T00:00:00Z') },
+      { label: 'Model weekly', usedPercent: 3 },
     ])
   })
 
