@@ -1,5 +1,25 @@
-import { describe, expect, it } from 'vitest'
-import { mapClaudeUsage } from './limits.js'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { claudeLimits, mapClaudeUsage } from './limits.js'
+
+let configDir: string | undefined
+
+afterEach(async () => {
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
+  if (configDir) await rm(configDir, { recursive: true, force: true })
+  configDir = undefined
+})
+
+async function credentials(body: unknown): Promise<string> {
+  configDir = await mkdtemp(join(tmpdir(), 'harness-claude-limits-'))
+  vi.stubEnv('CLAUDE_CONFIG_DIR', configDir)
+  const path = join(configDir, '.credentials.json')
+  await writeFile(path, typeof body === 'string' ? body : JSON.stringify(body), 'utf8')
+  return path
+}
 
 describe('mapClaudeUsage', () => {
   it('maps the session and weekly windows with reset times', () => {
@@ -17,7 +37,7 @@ describe('mapClaudeUsage', () => {
     const rows = mapClaudeUsage({
       five_hour: { utilization: 130 },
       seven_day: { utilization: 'soon' },
-      seven_day_sonnet: null,
+      seven_day_sonnet: { utilization: '   ' },
     })
     expect(rows).toEqual([{ label: 'Session', usedPercent: 100 }])
   })
@@ -46,5 +66,50 @@ describe('mapClaudeUsage', () => {
     expect(mapClaudeUsage(undefined)).toEqual([])
     expect(mapClaudeUsage('nope')).toEqual([])
     expect(mapClaudeUsage({})).toEqual([])
+  })
+
+  it('ignores malformed credentials without making a request', async () => {
+    await credentials('{not-json')
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(claudeLimits()).resolves.toEqual([])
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('merge-saves a rotated refresh token and clears stale expiry metadata', async () => {
+    const path = await credentials({
+      theme: 'dark',
+      claudeAiOauth: {
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
+        expiresAt: 0,
+        accountUuid: 'account-1',
+      },
+    })
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: 'new-access',
+            refresh_token: 'rotated-refresh',
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ five_hour: { utilization: 25 } }), { status: 200 }),
+      )
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(claudeLimits()).resolves.toEqual([{ label: 'Session', usedPercent: 25 }])
+    const saved = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
+    expect(saved['theme']).toBe('dark')
+    expect(saved['claudeAiOauth']).toEqual({
+      accessToken: 'new-access',
+      refreshToken: 'rotated-refresh',
+      accountUuid: 'account-1',
+    })
   })
 })

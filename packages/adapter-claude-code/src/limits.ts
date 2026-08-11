@@ -40,7 +40,7 @@ function credentialsPath(): string {
 }
 
 function clampPercent(value: unknown): number | undefined {
-  const numeric = typeof value === 'string' ? Number(value) : value
+  const numeric = typeof value === 'string' && value.trim() ? Number(value) : value
   if (typeof numeric !== 'number' || !Number.isFinite(numeric)) return undefined
   return Math.max(0, Math.min(100, numeric))
 }
@@ -100,7 +100,7 @@ async function readOauth(): Promise<{ oauth: ClaudeOauth; raw: Record<string, un
   try {
     const raw = JSON.parse(text) as Record<string, unknown>
     const oauth = raw['claudeAiOauth'] as ClaudeOauth | undefined
-    if (!oauth || typeof oauth.accessToken !== 'string') return undefined
+    if (!oauth || typeof oauth.accessToken !== 'string' || !oauth.accessToken.trim()) return undefined
     return { oauth, raw }
   } catch {
     return undefined
@@ -111,7 +111,7 @@ async function refreshAccessToken(
   oauth: ClaudeOauth,
   raw: Record<string, unknown>,
 ): Promise<string | undefined> {
-  if (!oauth.refreshToken) return undefined
+  if (!oauth.refreshToken?.trim()) return undefined
   const response = await fetch(REFRESH_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -130,14 +130,15 @@ async function refreshAccessToken(
     refresh_token?: string
     expires_in?: number
   }
-  if (typeof body.access_token !== 'string') return undefined
+  if (typeof body.access_token !== 'string' || !body.access_token.trim()) return undefined
   const next: ClaudeOauth = {
     ...oauth,
     accessToken: body.access_token,
-    ...(body.refresh_token ? { refreshToken: body.refresh_token } : {}),
-    ...(typeof body.expires_in === 'number'
-      ? { expiresAt: Date.now() + body.expires_in * 1000 }
-      : {}),
+    ...(body.refresh_token?.trim() ? { refreshToken: body.refresh_token } : {}),
+  }
+  delete next.expiresAt
+  if (Number.isFinite(body.expires_in) && (body.expires_in ?? 0) > 0) {
+    next.expiresAt = Date.now() + (body.expires_in as number) * 1000
   }
   // The refresh token rotates: losing the new one signs the CLI out, so the
   // write must land (atomically) before the new access token is used.
