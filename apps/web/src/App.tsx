@@ -931,9 +931,14 @@ export function App() {
         .catch(() => undefined)
     }
     void refreshProjects().catch(() => undefined)
+    const sourceRevision = sidebarSettingsSourceRevision.current
     void transport
       .request('sidebar.settings', {})
-      .then(setSidebarSettings)
+      .then((settings) => {
+        if (sidebarSettingsSourceRevision.current === sourceRevision) {
+          acceptSidebarSettings(settings)
+        }
+      })
       .catch(() => undefined)
   }
 

@@ -1251,6 +1251,80 @@ describe('new chats', () => {
     expect(classic.getAttribute('aria-checked')).toBe('true')
   })
 
+  it('keeps resynced sidebar settings authoritative across a later failed save', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let updateCount = 0
+    let rejectSecondUpdate: ((error: Error) => void) | undefined
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'sidebar.updateSettings') return request(method, params)
+      updateCount += 1
+      if (updateCount === 1) {
+        serverSidebarSettings = {
+          ...serverSidebarSettings,
+          ...(params as Partial<typeof serverSidebarSettings>),
+        }
+        return Promise.reject(new Error('Sidebar response was lost'))
+      }
+      return new Promise((_, reject) => {
+        rejectSecondUpdate = reject
+      })
+    })
+
+    render(<App />)
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Workflows' }))
+
+    const classic = screen.getByRole('radio', { name: 'V1 Classic' })
+    const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
+    await waitFor(() => {
+      expect(classic.getAttribute('aria-checked')).toBe('true')
+    })
+
+    // The server persisted Inbox, but the lost response makes the client roll
+    // its optimistic choice back until a reconnect resyncs authoritative state.
+    fireEvent.click(inbox)
+    await waitFor(() => {
+      expect(classic.getAttribute('aria-checked')).toBe('true')
+    })
+    act(() => {
+      for (const listener of transport.sequenceGapListeners) listener(4, 6)
+    })
+    await waitFor(() => {
+      expect(inbox.getAttribute('aria-checked')).toBe('true')
+    })
+
+    const days = screen.getByRole('spinbutton', { name: 'Auto-settle days' })
+    fireEvent.change(days, { target: { value: '7' } })
+    expect((days as HTMLInputElement).value).toBe('7')
+
+    // A second gap read must update the confirmed base without erasing the
+    // still-pending local patch layered over it.
+    const readsBefore = transport.request.mock.calls.filter(
+      ([method]) => method === 'sidebar.settings',
+    ).length
+    act(() => {
+      for (const listener of transport.sequenceGapListeners) listener(7, 9)
+    })
+    await waitFor(() => {
+      expect(
+        transport.request.mock.calls.filter(([method]) => method === 'sidebar.settings'),
+      ).toHaveLength(readsBefore + 1)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect((days as HTMLInputElement).value).toBe('7')
+
+    await act(async () => {
+      rejectSecondUpdate?.(new Error('Could not save inactivity setting'))
+      await Promise.resolve()
+    })
+
+    expect(inbox.getAttribute('aria-checked')).toBe('true')
+    expect((days as HTMLInputElement).value).toBe('3')
+  })
+
   it('switches sidebar versions only from settings', async () => {
     serverSidebarSettings.mode = 'classic'
     render(<App />)
