@@ -1441,8 +1441,10 @@ export class Orchestrator {
   async changedSinceCheckpoint(threadId: string, checkpointId: number): Promise<string[]> {
     const stored = this.#store.thread(threadId)
     const checkpoint = this.#store.checkpoint(checkpointId)
-    if (!stored || !checkpoint || checkpoint.threadId !== threadId) return []
-    return changedSince(this.#repoPath(threadId), checkpoint.commit).catch(() => [])
+    if (!stored || !checkpoint || checkpoint.threadId !== threadId) {
+      throw new Error('no such checkpoint')
+    }
+    return changedSince(this.#repoPath(threadId), checkpoint.commit)
   }
 
   respondToApproval(threadId: string, approvalId: string, decision: ApprovalDecision): void {

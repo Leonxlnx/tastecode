@@ -1564,6 +1564,15 @@ describe('rolling a session back', () => {
     expect(files.sort()).toEqual(['file.txt', 'new.txt'])
   })
 
+  it('rejects inspection of a missing checkpoint', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+
+    await expect(orchestrator.changedSinceCheckpoint(thread.id, 404)).rejects.toThrow(
+      'no such checkpoint',
+    )
+  })
+
   it('refuses to restore while the agent is still writing', async () => {
     const { orchestrator, sessions } = harness()
 
