@@ -1013,13 +1013,18 @@ export function startServer(
     close: async () => {
       clearInterval(lifecycleTimer)
       usageHistory.dispose()
-      orchestrator.disposeAll()
+      const orchestratorClosed = orchestrator.disposeAll()
       for (const socket of wss.clients) socket.terminate()
-      await Promise.all([
+      const results = await Promise.allSettled([
+        orchestratorClosed,
         mobileAccess.stop(),
         new Promise<void>((resolve) => wss.close(() => resolve())),
       ])
       store.close()
+      const errors = results
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+        .map((result) => result.reason)
+      if (errors.length > 0) throw new AggregateError(errors, 'server shutdown failed')
     },
   }
 }

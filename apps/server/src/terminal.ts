@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { spawn, type IPty } from 'node-pty'
 
+const DEFAULT_CLOSE_TIMEOUT_MS = 10_000
+type SpawnPty = typeof spawn
+
 type TerminalEntry = {
   threadId: string
   process: IPty
@@ -11,16 +14,26 @@ type TerminalEntry = {
 export class TerminalManager {
   #byId = new Map<string, TerminalEntry>()
   #byThread = new Map<string, string>()
-  #closing = new Set<Promise<void>>()
+  #closingById = new Map<string, Promise<void>>()
+  #closingByThread = new Map<string, Set<Promise<void>>>()
+  #closingThreads = new Map<string, Promise<void>>()
+  #closingAll: Promise<void> | undefined
   #onOutput: (terminalId: string, data: string) => void
   #onExit: (terminalId: string, exitCode: number | null) => void
+  #spawnPty: SpawnPty
+  #closeTimeoutMs: number
 
-  constructor(handlers: {
-    onOutput: (terminalId: string, data: string) => void
-    onExit: (terminalId: string, exitCode: number | null) => void
-  }) {
+  constructor(
+    handlers: {
+      onOutput: (terminalId: string, data: string) => void
+      onExit: (terminalId: string, exitCode: number | null) => void
+    },
+    options: { spawnPty?: SpawnPty; closeTimeoutMs?: number } = {},
+  ) {
     this.#onOutput = handlers.onOutput
     this.#onExit = handlers.onExit
+    this.#spawnPty = options.spawnPty ?? spawn
+    this.#closeTimeoutMs = options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS
   }
 
   open(threadId: string, cwd: string, columns: number, rows: number): string {
@@ -41,6 +54,9 @@ export class TerminalManager {
   }
 
   #spawn(key: string, args: string[], cwd: string, columns: number, rows: number): string {
+    if (this.#closingAll) throw new Error('terminal manager is closing')
+    if (this.#closingThreads.has(key)) throw new Error(`terminal is closing: ${key}`)
+
     const currentId = this.#byThread.get(key)
     if (currentId) {
       this.resize(currentId, columns, rows)
@@ -48,7 +64,7 @@ export class TerminalManager {
     }
 
     const terminalId = randomUUID()
-    const process = spawn(platformShell(), args, {
+    const process = this.#spawnPty(platformShell(), args, {
       name: 'xterm-256color',
       cols: columns,
       rows,
@@ -85,8 +101,14 @@ export class TerminalManager {
   }
 
   close(terminalId: string): Promise<void> {
+    const alreadyClosing = this.#closingById.get(terminalId)
+    if (alreadyClosing) return alreadyClosing
+
     const entry = this.#byId.get(terminalId)
     if (!entry) return Promise.resolve()
+    // Kill first. If node-pty rejects the request synchronously, the terminal
+    // remains attached and a later close can retry instead of losing it.
+    entry.process.kill()
     this.#byId.delete(terminalId)
     // Only unmap the key if it still points at this terminal — closing a
     // stale id must not orphan a newer pty spawned under the same key.
@@ -96,25 +118,77 @@ export class TerminalManager {
     // node-pty flushes buffered output after kill(); the client tore this
     // pane down, so those late chunks must not be broadcast for its id.
     entry.output.dispose()
-    this.#closing.add(entry.exited)
-    void entry.exited.then(() => this.#closing.delete(entry.exited))
-    try {
-      entry.process.kill()
-    } catch (error) {
-      this.#closing.delete(entry.exited)
-      throw error
-    }
-    return entry.exited
+    const closing = this.#boundedExit(terminalId, entry.exited)
+    this.#closingById.set(terminalId, closing)
+    const threadClosings = this.#closingByThread.get(entry.threadId) ?? new Set<Promise<void>>()
+    threadClosings.add(closing)
+    this.#closingByThread.set(entry.threadId, threadClosings)
+    // A timeout is a failed close, not evidence that the native process is
+    // gone. Keep that generation tracked until its real exit arrives so a
+    // retry cannot delete the cwd underneath it.
+    void closing.catch(() => undefined)
+    void entry.exited.then(() => this.#forgetClosing(terminalId, entry.threadId, closing))
+    return closing
   }
 
   closeThread(threadId: string): Promise<void> {
-    const terminalId = this.#byThread.get(threadId)
-    return terminalId ? this.close(terminalId) : Promise.resolve()
+    const alreadyClosing = this.#closingThreads.get(threadId)
+    if (alreadyClosing) return alreadyClosing
+
+    const closing = this.#drainThread(threadId)
+    this.#closingThreads.set(threadId, closing)
+    void closing.then(
+      () => this.#closingThreads.delete(threadId),
+      () => this.#closingThreads.delete(threadId),
+    )
+    return closing
   }
 
-  async closeAll(): Promise<void> {
-    for (const terminalId of [...this.#byId.keys()]) void this.close(terminalId)
-    await Promise.all([...this.#closing])
+  closeAll(): Promise<void> {
+    if (this.#closingAll) return this.#closingAll
+    this.#closingAll = this.#drainAll()
+    return this.#closingAll
+  }
+
+  async #drainThread(threadId: string): Promise<void> {
+    const waits = new Set(this.#closingByThread.get(threadId) ?? [])
+    const terminalId = this.#byThread.get(threadId)
+    if (terminalId) waits.add(this.close(terminalId))
+    await settleAll(waits, `terminal shutdown failed for ${threadId}`)
+  }
+
+  async #drainAll(): Promise<void> {
+    const waits = new Set<Promise<void>>(this.#closingById.values())
+    for (const closingThread of this.#closingThreads.values()) waits.add(closingThread)
+    for (const terminalId of [...this.#byId.keys()]) {
+      try {
+        waits.add(this.close(terminalId))
+      } catch (error) {
+        waits.add(Promise.reject(error))
+      }
+    }
+    await settleAll(waits, 'terminal shutdown failed')
+  }
+
+  #boundedExit(terminalId: string, exited: Promise<void>): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error(`terminal shutdown timed out: ${terminalId}`)),
+        this.#closeTimeoutMs,
+      )
+      timeout.unref()
+      void exited.then(() => {
+        clearTimeout(timeout)
+        resolve()
+      })
+    })
+  }
+
+  #forgetClosing(terminalId: string, threadId: string, closing: Promise<void>): void {
+    if (this.#closingById.get(terminalId) === closing) this.#closingById.delete(terminalId)
+    const threadClosings = this.#closingByThread.get(threadId)
+    threadClosings?.delete(closing)
+    if (threadClosings?.size === 0) this.#closingByThread.delete(threadId)
   }
 
   #get(terminalId: string): TerminalEntry {
@@ -122,6 +196,14 @@ export class TerminalManager {
     if (!entry) throw new Error(`no such terminal: ${terminalId}`)
     return entry
   }
+}
+
+async function settleAll(waiters: Iterable<Promise<void>>, message: string): Promise<void> {
+  const results = await Promise.allSettled(waiters)
+  const errors = results
+    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    .map((result) => result.reason)
+  if (errors.length > 0) throw new AggregateError(errors, message)
 }
 
 export function platformShell(

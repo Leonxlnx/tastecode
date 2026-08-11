@@ -279,7 +279,7 @@ describe('workspace paths', () => {
     expect(startedIn).toEqual([resolvedPath])
     expect(snapshot).toHaveBeenCalledWith(resolvedPath)
     expect(store.thread(thread.id)?.projectPath).toBe(projectPath)
-    orchestrator.disposeAll()
+    await orchestrator.disposeAll()
   })
 })
 
@@ -655,7 +655,7 @@ describe('provider-neutral design briefing', () => {
       )
       expect(sessions[0]?.sent.at(-1)).toBe('Continue normally.')
     } finally {
-      orchestrator.disposeAll()
+      await orchestrator.disposeAll()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
@@ -696,7 +696,7 @@ describe('provider-neutral design briefing', () => {
       )
       expect(store.designRun(thread.id)).toMatchObject({ phase: 'brief', correcting: false })
     } finally {
-      orchestrator.disposeAll()
+      await orchestrator.disposeAll()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
@@ -733,7 +733,7 @@ describe('provider-neutral design briefing', () => {
       expect(store.designRun(thread.id)).toMatchObject({ phase: 'brief', correcting: false })
       expect(sessions[0]?.sent).toHaveLength(1)
     } finally {
-      orchestrator.disposeAll()
+      await orchestrator.disposeAll()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
@@ -758,7 +758,7 @@ describe('provider-neutral design briefing', () => {
         ),
       ).toBe(true)
     } finally {
-      orchestrator.disposeAll()
+      await orchestrator.disposeAll()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
@@ -782,7 +782,7 @@ describe('provider-neutral design briefing', () => {
         ),
       ).toBe(true)
     } finally {
-      orchestrator.disposeAll()
+      await orchestrator.disposeAll()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
@@ -837,7 +837,7 @@ describe('persisted threads', () => {
       await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
       expect(sessions[0]?.sent[0]).toContain('Independent founders')
     } finally {
-      orchestrator.disposeAll()
+      await orchestrator.disposeAll()
       store.close()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
@@ -891,7 +891,7 @@ describe('persisted threads', () => {
       expect(sessions[0]?.sentOptions[0]).toEqual({ model: 'shared-model', effort: 'high' })
       expect(orchestrator.queue('persisted-design').items[0]?.text).toBe('Do this after design.')
     } finally {
-      orchestrator.disposeAll()
+      await orchestrator.disposeAll()
       store.close()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }

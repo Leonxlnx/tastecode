@@ -47,6 +47,6 @@ describe('control adapter startup', () => {
     expect(control.constructed).toBe(1)
     control.releases[0]?.()
     await expect(Promise.all([first, second])).resolves.toEqual([[], []])
-    orchestrator.disposeAll()
+    await orchestrator.disposeAll()
   })
 })

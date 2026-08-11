@@ -1656,10 +1656,10 @@ export class Orchestrator {
     }
   }
 
-  disposeAll(): void {
+  async disposeAll(): Promise<void> {
+    const terminalsClosed = this.#terminals.closeAll()
     for (const controller of this.#voiceRequests.values()) controller.abort()
     this.#voiceRequests.clear()
-    this.#terminals.closeAll()
     for (const [, entry] of this.#threads) entry.session.dispose()
     this.#threads.clear()
     this.#activeTurns.clear()
@@ -1686,6 +1686,7 @@ export class Orchestrator {
     this.#controlStarting = undefined
     this.#control?.dispose()
     this.#control = undefined
+    await terminalsClosed
   }
 
   #get(threadId: string) {
