@@ -87,4 +87,11 @@ describe('Markdown streaming motion', () => {
     expect(screen.getByText('Finished reply').closest('[data-streamdown="strong"]')).toBeTruthy()
     expect(rendered.container.querySelector('[data-streaming-markdown]')).toBeNull()
   })
+
+  it('repairs malformed Markdown from a truncated completed reply', () => {
+    const { container } = render(<Markdown text="A **truncated answer" />)
+
+    expect(screen.getByText('truncated answer').closest('[data-streamdown="strong"]')).toBeTruthy()
+    expect(container.textContent).toBe('A truncated answer')
+  })
 })

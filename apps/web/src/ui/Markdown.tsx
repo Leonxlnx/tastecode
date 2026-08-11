@@ -109,6 +109,13 @@ const STREAMING_TEXT_STYLE = {
   overflowWrap: 'anywhere',
   whiteSpace: 'pre-wrap',
 } satisfies CSSProperties
+const COMPLETED_MARKDOWN_ANIMATION = {
+  animation: 'fadeIn',
+  duration: 160,
+  easing: 'cubic-bezier(0.23, 1, 0.32, 1)',
+  sep: 'word',
+  stagger: 14,
+} as const
 
 /**
  * Agent output, rendered.
@@ -127,7 +134,10 @@ const CompletedMarkdown = memo(function CompletedMarkdown({ text }: { text: stri
   return (
     <Streamdown
       className="md"
-      mode="static"
+      mode="streaming"
+      isAnimating={false}
+      animated={COMPLETED_MARKDOWN_ANIMATION}
+      parseIncompleteMarkdown
       plugins={STREAMDOWN_PLUGINS}
       controls={STREAMDOWN_CONTROLS}
       icons={STREAMDOWN_ICONS}
