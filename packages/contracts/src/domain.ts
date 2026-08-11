@@ -40,6 +40,9 @@ export type ItemType = z.infer<typeof ItemTypeSchema>
 export const ItemStatusSchema = z.enum(['started', 'completed', 'failed'])
 export type ItemStatus = z.infer<typeof ItemStatusSchema>
 
+export const AssistantPhaseSchema = z.enum(['commentary', 'final_answer'])
+export type AssistantPhase = z.infer<typeof AssistantPhaseSchema>
+
 export const ItemSchema = z.object({
   id: z.string(),
   turnId: z.string(),
@@ -47,6 +50,8 @@ export const ItemSchema = z.object({
   status: ItemStatusSchema,
   /** Present on `message`. */
   role: z.enum(['user', 'assistant']).optional(),
+  /** Present when a provider reliably classifies an assistant message; absent means unknown. */
+  phase: AssistantPhaseSchema.optional(),
   /** Accumulated text. Deltas append here. */
   text: z.string().optional(),
   /** Present on `command`: the command line and its exit code once finished. */

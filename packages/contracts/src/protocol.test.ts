@@ -64,6 +64,23 @@ describe('domain events', () => {
     expect(item.type).toBe('unknown')
   })
 
+  it('preserves assistant phases without rejecting legacy items', () => {
+    const legacy = {
+      id: 'i1',
+      turnId: 't1',
+      type: 'message',
+      status: 'completed',
+      role: 'assistant',
+      text: 'Done.',
+      createdAt: 1,
+    }
+
+    expect(ItemSchema.parse(legacy)).toEqual(legacy)
+    expect(ItemSchema.parse({ ...legacy, phase: 'commentary' }).phase).toBe('commentary')
+    expect(ItemSchema.parse({ ...legacy, phase: 'final_answer' }).phase).toBe('final_answer')
+    expect(() => ItemSchema.parse({ ...legacy, phase: 'analysis' })).toThrow()
+  })
+
   it('accepts automatic approval review progress and results', () => {
     const review = {
       id: 'review-1',
