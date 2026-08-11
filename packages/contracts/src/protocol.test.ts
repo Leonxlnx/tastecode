@@ -665,6 +665,35 @@ describe('protocol envelopes', () => {
     ).toThrow()
   })
 
+  it('preserves distinct identities for same-millisecond search results', () => {
+    const shared = {
+      projectPath: 'D:\\project',
+      projectName: 'project',
+      threadId: 'thread-1',
+      threadTitle: 'Find the collision',
+      turnId: 'turn-2',
+      provider: 'codex',
+      createdAt: 42,
+      snippet: [{ text: 'same timestamp', highlighted: true }],
+    }
+    const parsed = methods['search.sessions'].result.parse({
+      results: [
+        { ...shared, resultId: 'event:41' },
+        { ...shared, resultId: 'event:42' },
+      ],
+      nextCursor: null,
+    })
+
+    const legacyKeys = parsed.results.map(
+      (result) => `${result.threadId}:${result.turnId}:${result.createdAt}`,
+    )
+    expect(new Set(legacyKeys).size).toBe(1)
+    expect(parsed.results.map((result) => Reflect.get(result, 'resultId'))).toEqual([
+      'event:41',
+      'event:42',
+    ])
+  })
+
   it('validates the persisted inbox lifecycle without conflating archive state', () => {
     const settled = methods['thread.settle'].result.parse({
       lifecycle: { state: 'settled', settledAt: 20, reason: 'manual' },
