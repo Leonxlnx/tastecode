@@ -38,6 +38,85 @@ const usage = (totalTokens: number, costUsd?: number, cumulative = false): Domai
   },
 })
 
+describe('recovering interrupted turns', () => {
+  it('settles a pending approval and active command exactly once after restart', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-interrupted-turn-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'Pending' })
+    seeded.append('thread-1', {
+      type: 'turn.started',
+      turn: {
+        id: 'turn-1',
+        threadId: 'thread-1',
+        status: 'running',
+        createdAt: 1,
+      },
+    })
+    seeded.append('thread-1', {
+      type: 'item.started',
+      item: {
+        id: 'command-1',
+        turnId: 'turn-1',
+        type: 'command',
+        status: 'started',
+        command: 'pnpm test',
+        createdAt: 2,
+      },
+    })
+    seeded.append('thread-1', {
+      type: 'approval.requested',
+      request: {
+        id: 'approval-1',
+        kind: 'command',
+        command: 'pnpm test',
+        createdAt: 3,
+      },
+    })
+    seeded.close()
+
+    const restarted = new Store(file)
+    try {
+      expect(restarted.recoverInterruptedThreads()).toEqual(['thread-1'])
+      expect(
+        restarted
+          .history('thread-1')
+          .slice(3)
+          .map(({ event }) => event),
+      ).toEqual([
+        {
+          type: 'item.completed',
+          item: {
+            id: 'command-1',
+            turnId: 'turn-1',
+            type: 'command',
+            status: 'failed',
+            command: 'pnpm test',
+            createdAt: 2,
+          },
+        },
+        { type: 'approval.resolved', id: 'approval-1' },
+        { type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' },
+        {
+          type: 'thread.error',
+          threadId: 'thread-1',
+          message:
+            'This turn stopped when Personal Harness restarted. Review any partial changes, then send a new message to continue.',
+        },
+      ])
+      expect(restarted.thread('thread-1')?.unread).toBe(true)
+
+      const recoveredLength = restarted.history('thread-1').length
+      expect(restarted.recoverInterruptedThreads()).toEqual([])
+      expect(restarted.history('thread-1')).toHaveLength(recoveredLength)
+    } finally {
+      restarted.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('opening a database written by an older build', () => {
   /**
    * The break this guards against only ever hits people who used the app

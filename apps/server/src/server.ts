@@ -126,6 +126,7 @@ export function startServer(
 
   const databasePath = storeLocation()
   const store = new Store(databasePath)
+  store.recoverInterruptedThreads()
   const usageHistory = new UsageHistoryService({
     cacheFile: path.join(path.dirname(databasePath), 'usage-history.json'),
     harnessUsage: () => store.usageEvents(),

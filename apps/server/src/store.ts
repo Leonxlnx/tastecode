@@ -96,6 +96,15 @@ export type SessionSearchPage = {
 
 type SearchCursor = { score: number; createdAt: number; rowid: number }
 
+type InterruptedThreadState = {
+  openTurns: Map<string, number>
+  activeItems: Map<string, Extract<DomainEvent, { type: 'item.started' }>['item']>
+  approvals: Set<string>
+}
+
+const RESTART_INTERRUPTION_MESSAGE =
+  'This turn stopped when Personal Harness restarted. Review any partial changes, then send a new message to continue.'
+
 const SNIPPET_START = '\u0001'
 const SNIPPET_END = '\u0002'
 const SEARCH_INDEX_VERSION = 'session_search_v1'
@@ -656,6 +665,85 @@ export class Store {
   }
 
   // ---- events ------------------------------------------------------------
+
+  /**
+   * Close event lifecycles that cannot still be live in this server process.
+   *
+   * Agent sessions and their approval callbacks are process-owned. Replaying a
+   * request after restart can draw the old approval card, but accepting it can
+   * never reach the callback that died with the previous process. Settle that
+   * durable state before clients connect so history stays honest and the user
+   * gets a clear next action instead of a button that does nothing.
+   */
+  recoverInterruptedThreads(): string[] {
+    const states = new Map<string, InterruptedThreadState>()
+    const rows = this.#db
+      .prepare(
+        `SELECT events.thread_id, events.payload
+         FROM events
+         INNER JOIN threads ON threads.id = events.thread_id
+         WHERE threads.closed_at IS NULL
+           AND json_extract(events.payload, '$.type') IN (
+             'turn.started', 'turn.completed', 'thread.error',
+             'item.started', 'item.completed',
+             'approval.requested', 'approval.resolved'
+           )
+         ORDER BY events.seq`,
+      )
+      .all() as Array<{ thread_id: string; payload: string }>
+
+    for (const row of rows) {
+      const event = JSON.parse(row.payload) as DomainEvent
+      const state = states.get(row.thread_id) ?? {
+        openTurns: new Map<string, number>(),
+        activeItems: new Map(),
+        approvals: new Set<string>(),
+      }
+      states.set(row.thread_id, state)
+
+      if (event.type === 'turn.started') state.openTurns.set(event.turn.id, event.turn.createdAt)
+      if (event.type === 'turn.completed') state.openTurns.delete(event.turnId)
+      if (event.type === 'thread.error') state.openTurns.clear()
+      if (event.type === 'item.started') state.activeItems.set(event.item.id, event.item)
+      if (event.type === 'item.completed') state.activeItems.delete(event.item.id)
+      if (event.type === 'approval.requested') state.approvals.add(event.request.id)
+      if (event.type === 'approval.resolved') state.approvals.delete(event.id)
+    }
+
+    const recovered: string[] = []
+    for (const [threadId, state] of states) {
+      const openTurnIds = new Set(state.openTurns.keys())
+      if (openTurnIds.size > 0) {
+        for (const item of state.activeItems.values()) {
+          if (!openTurnIds.has(item.turnId)) continue
+          // Omitting text preserves every persisted delta when the renderer
+          // folds this terminal item over the streamed version.
+          const { text: _streamedText, ...started } = item
+          this.append(threadId, {
+            type: 'item.completed',
+            item: { ...started, status: 'failed' },
+          })
+        }
+      }
+
+      for (const approvalId of state.approvals) {
+        this.append(threadId, { type: 'approval.resolved', id: approvalId })
+      }
+
+      if (openTurnIds.size === 0) continue
+      for (const turnId of openTurnIds) {
+        this.append(threadId, { type: 'turn.completed', turnId, status: 'interrupted' })
+      }
+      this.append(threadId, {
+        type: 'thread.error',
+        threadId,
+        message: RESTART_INTERRUPTION_MESSAGE,
+      })
+      this.touchThread(threadId, true)
+      recovered.push(threadId)
+    }
+    return recovered
+  }
 
   /** Returns the sequence number, which is what a client resumes from. */
   append(threadId: string, event: DomainEvent): number {
