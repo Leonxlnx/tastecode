@@ -2770,65 +2770,79 @@ describe('live sessions', () => {
     )
   })
 
-  it('restores rejected indeterminate queues while another turn is running', async () => {
+  it('restores a rejected reconnect queue only in its originating thread', async () => {
     serverProjects = [
       {
         path: '/work/project',
         name: 'project',
         pinned: false,
         createdAt: 0,
-        sessions: [{ id: 'thread-1', title: 'Existing work', running: false }],
+        sessions: [
+          { id: 'thread-1', title: 'Existing work', running: true },
+          { id: 'thread-2', title: 'Background', running: false },
+        ],
       },
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    let reconnecting = false
-    let submissionId = ''
+    let rejectSend!: (error: Error) => void
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'thread.sendTurn') {
-        submissionId = (params as { clientSubmissionId: string }).clientSubmissionId
-        return Promise.reject(new IndeterminateRequestError('socket lost'))
+        return new Promise((_, reject) => (rejectSend = reject))
       }
-      if (method === 'thread.history' && reconnecting) {
-        return Promise.resolve({ events: [], running: true })
-      }
-      if (method === 'thread.queue' && reconnecting) {
-        return Promise.resolve({ items: [], canSteer: true })
+      if (method === 'thread.history') {
+        const running = (params as { threadId: string }).threadId === 'thread-1'
+        return Promise.resolve({
+          events: running
+            ? [
+                {
+                  seq: 1,
+                  event: {
+                    type: 'item.completed',
+                    item: {
+                      id: 'accepted-id',
+                      turnId: 'turn-1',
+                      type: 'message',
+                      role: 'user',
+                      status: 'completed',
+                      text: 'Accepted before provider start',
+                      createdAt: 1,
+                    },
+                  },
+                },
+              ]
+            : [],
+          running,
+        })
       }
       return request(method, params)
     })
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
-    emitThreadEvent('thread-1', {
-      type: 'turn.started',
-      turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
-    })
-
+    fireEvent.click(await screen.findByRole('button', { name: 'Existing work, working' }))
     const composer = screen.getByPlaceholderText('Do anything')
-    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
-    fireEvent.change(composer, { target: { value: 'Queue this next' } })
+    await screen.findByText('Accepted before provider start')
+    fireEvent.change(composer, { target: { value: 'Restore only in Existing work' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
-    fireEvent.change(composer, { target: { value: 'Then queue this' } })
-    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(screen.getByLabelText('Queued prompts').textContent).toContain(
+      'Restore only in Existing work',
+    )
+    expect(screen.getByTestId('thread').textContent).not.toContain('Restore only in Existing work')
 
-    expect(screen.getByLabelText('Queued prompts').textContent).toContain('Queue this next')
-    expect(screen.getByTestId('thread').textContent).not.toContain('Queue this next')
-
-    await waitFor(() => {
-      const call = transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')
-      submissionId = (call?.[1] as { clientSubmissionId?: string }).clientSubmissionId ?? ''
-      expect(submissionId).toMatch(/^local:/)
-    })
+    await act(async () => rejectSend(new IndeterminateRequestError('socket lost')))
     act(() => {
       for (const listener of transport.stateListeners) listener('reconnecting')
-      reconnecting = true
       for (const listener of transport.stateListeners) listener('open')
     })
     await waitFor(() =>
-      expect((composer as HTMLTextAreaElement).value).toBe('Queue this next\n\nThen queue this'),
+      expect((composer as HTMLTextAreaElement).value).toBe('Restore only in Existing work'),
     )
     expect(screen.queryByLabelText('Queued prompts')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Background' }))
+    expect((composer as HTMLTextAreaElement).value).toBe('')
+    fireEvent.click(screen.getByRole('button', { name: 'Existing work, working' }))
+    expect((composer as HTMLTextAreaElement).value).toBe('Restore only in Existing work')
   })
 
   it('keeps rapid queued prompts ordered when acknowledgements arrive backwards', async () => {
