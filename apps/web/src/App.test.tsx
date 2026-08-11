@@ -576,6 +576,7 @@ describe('web client', () => {
       if (method === 'pullRequests.detail') {
         return Promise.resolve(detail)
       }
+      if (method === 'thread.sendTurn') return Promise.reject(new Error('rejected'))
       return request(method, params)
     })
 
@@ -585,6 +586,11 @@ describe('web client', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('projects.list', {})
     })
+    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+    const rejected = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(rejected, { target: { value: 'Rejected draft' } })
+    fireEvent.keyDown(rejected, { key: 'Enter' })
+    await waitFor(() => expect((rejected as HTMLTextAreaElement).value).toBe('Rejected draft'))
     fireEvent.click(await screen.findByRole('button', { name: 'Pull requests' }))
 
     fireEvent.click(await screen.findByRole('button', { name: 'Chat' }))
@@ -2662,16 +2668,19 @@ describe('live sessions', () => {
       ).clientSubmissionId
       const queued = () => screen.queryByLabelText('Queued prompts')
       if (kind === 'queue') {
+        await act(async () => rejectSend(new IndeterminateRequestError('socket lost')))
         await act(async () => resyncs[0]?.({ events: [started], running: true }))
+        await waitFor(() => expect(resyncs).toHaveLength(2))
         expect(queued()?.textContent).toContain('Submit exactly once')
+      } else {
+        await act(async () => rejectSend(new IndeterminateRequestError('socket lost')))
+        reconnect()
+        await waitFor(() => expect(resyncs).toHaveLength(1))
       }
-      await act(async () => rejectSend(new IndeterminateRequestError('socket lost')))
       expect(
         kind === 'queue' ? queued()?.textContent : screen.getByTestId('thread').textContent,
       ).toContain('Submit exactly once')
       expect((composer as HTMLTextAreaElement).value).toBe('')
-      reconnect()
-      await waitFor(() => expect(resyncs).toHaveLength(kind === 'queue' ? 2 : 1))
       if (kind === 'queue') expect(queued()?.textContent).toContain('Submit exactly once')
       if (kind === 'turn' && outcome === 'accepted') emitThreadEvent('thread-1', started.event)
       await act(async () =>
