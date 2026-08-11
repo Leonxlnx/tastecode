@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import type { GuardianApprovalReviewAction } from './generated/v2/GuardianApprovalReviewAction'
 import type { ItemGuardianApprovalReviewCompletedNotification } from './generated/v2/ItemGuardianApprovalReviewCompletedNotification'
 import type { ItemGuardianApprovalReviewStartedNotification } from './generated/v2/ItemGuardianApprovalReviewStartedNotification'
+import type { RemoteControlStatusChangedNotification } from './generated/v2/RemoteControlStatusChangedNotification'
 import {
   CODEX_APPROVAL,
   CODEX_CAPABILITIES,
+  isIgnorableCodexNotification,
   mapAutoApprovalReview,
   mapUserInputRequest,
 } from './adapter.js'
@@ -41,6 +43,21 @@ const capturedCompleted = {
     rationale: 'The user explicitly authorized this read-only git status check.',
   },
 } satisfies ItemGuardianApprovalReviewCompletedNotification
+
+const capturedRemoteControlStatus = {
+  status: 'disabled',
+  serverName: 'captured-server',
+  installationId: 'captured-installation',
+  environmentId: null,
+} satisfies RemoteControlStatusChangedNotification
+
+describe('Codex notifications', () => {
+  it('silences the captured startup-only remote-control status', () => {
+    expect(capturedRemoteControlStatus.status).toBe('disabled')
+    expect(isIgnorableCodexNotification('remoteControl/status/changed')).toBe(true)
+    expect(isIgnorableCodexNotification('new/provider/event')).toBe(false)
+  })
+})
 
 describe('Codex auto-review', () => {
   it('advertises the capability and maps captured lifecycle frames', () => {

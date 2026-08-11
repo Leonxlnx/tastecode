@@ -70,6 +70,11 @@ import {
 
 const CLIENT_NAME = 'personal-harness'
 
+/** Codex reports this after every handshake even when remote control is disabled. */
+export function isIgnorableCodexNotification(method: string): boolean {
+  return method === 'remoteControl/status/changed'
+}
+
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'])
 
 function isImage(path: string): boolean {
@@ -807,6 +812,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   }
 
   #onNotification(method: string, params: unknown): void {
+    if (isIgnorableCodexNotification(method)) return
+
     const emit = (event: DomainEvent) => this.emit('event', event)
 
     switch (method) {
@@ -1026,7 +1033,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       default:
         // Codex emits far more than we consume (realtime audio, MCP progress,
-        // remote control). Ignoring the rest is correct; logging it is how we
+        // etc.). Ignoring the rest is correct; logging it is how we
         // notice when something worth mapping appears.
         this.emit('log', `unmapped notification: ${method}`)
     }
