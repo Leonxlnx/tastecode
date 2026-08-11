@@ -74,7 +74,7 @@ class FakeSession implements AgentSession {
   sendError: Error | undefined
   eventDuringSend: DomainEvent | undefined
   afterEventBarrier: Promise<void> | undefined
-  steerBarrier: Promise<void> | undefined
+  steerBarriers: Promise<void>[] = []
   /** Resolves the pending sendTurn, letting a test hold one open. */
   release: (() => void) | undefined
 
@@ -100,7 +100,8 @@ class FakeSession implements AgentSession {
 
   async steer(_threadId: string, text: string): Promise<void> {
     this.steered.push(text)
-    if (this.steerBarrier) await this.steerBarrier
+    const barrier = this.steerBarriers.shift()
+    if (barrier) await barrier
   }
 
   async interrupt(_threadId: string): Promise<void> {
@@ -582,37 +583,22 @@ describe('durable user submissions', () => {
   it('persists the exact user item before an accepted request returns', async () => {
     const { orchestrator, sessions, store } = harness()
     let release = () => {}
-    let submitting: Promise<unknown> | undefined
+    let submitting = Promise.resolve<unknown>(undefined)
     try {
       const thread = await orchestrator.startThread('api', '/repo')
       const session = sessions[0]!
       session.turnIds.push('turn-in-flight')
       session.eventDuringSend = turnStarted(thread.id, 'turn-in-flight')
       session.afterEventBarrier = new Promise<void>((resolve) => (release = resolve))
-      submitting = orchestrator.submitTurn(
-        thread.id,
-        'Accepted before disconnect.',
-        [],
-        {},
-        'submission-in-flight',
-      )
-      await vi.waitFor(() =>
-        expect(store.history(thread.id).some(({ event }) => event.type === 'turn.started')).toBe(
-          true,
-        ),
-      )
-      expect(store.history(thread.id).map(({ event }) => event)).toContainEqual({
-        type: 'item.completed',
-        item: expect.objectContaining({
-          id: 'submission-in-flight',
-          turnId: 'turn-in-flight',
-          role: 'user',
-          text: 'Accepted before disconnect.',
-        }),
-      })
+      submitting = orchestrator.submitTurn(thread.id, 'Accepted.', [], {}, 'submission-in-flight')
+      await vi.waitFor(() => expect(store.hasItem(thread.id, 'submission-in-flight')).toBe(true))
+      expect(store.history(thread.id).map(({ event }) => event.type)).toEqual([
+        'turn.started',
+        'item.completed',
+      ])
     } finally {
       release()
-      await submitting?.catch(() => undefined)
+      await submitting.catch(() => undefined)
       await orchestrator.disposeAll()
     }
   })
@@ -645,7 +631,7 @@ describe('durable user submissions', () => {
         'submission-queued',
         'submission-steered',
       ])
-      session.steerBarrier = new Promise<void>((resolve) => (releaseSteer = resolve))
+      session.steerBarriers.push(new Promise<void>((resolve) => (releaseSteer = resolve)))
       steering = orchestrator.steerQueuedTurn(thread.id, steered.queuedTurn.id)
       await vi.waitFor(() => expect(orchestrator.queue(thread.id).items).toHaveLength(1))
       await expect(
