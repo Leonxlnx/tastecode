@@ -249,6 +249,11 @@ const userMessage = (
   },
 })
 
+const turnStarted = (threadId: string, turnId: string): DomainEvent => ({
+  type: 'turn.started',
+  turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
+})
+
 describe('structured user input', () => {
   it('returns answers to the session that owns the waiting request', async () => {
     const { orchestrator, sessions } = harness()
@@ -542,10 +547,7 @@ describe('durable user submissions', () => {
       ] as const) {
         session.turnIds.push(turnId)
         await orchestrator.submitTurn(thread.id, 'Repeat this.', [], {}, submissionId)
-        session.emit({
-          type: 'turn.started',
-          turn: { id: turnId, threadId: thread.id, status: 'running', createdAt: Date.now() },
-        })
+        session.emit(turnStarted(thread.id, turnId))
         if (emitsUserEcho) {
           session.emit(userMessage(`provider-${submissionId}`, 'Repeat this.', turnId, 'started'))
           session.emit({
@@ -585,15 +587,7 @@ describe('durable user submissions', () => {
       const thread = await orchestrator.startThread('api', '/repo')
       const session = sessions[0]!
       session.turnIds.push('turn-in-flight')
-      session.eventDuringSend = {
-        type: 'turn.started',
-        turn: {
-          id: 'turn-in-flight',
-          threadId: thread.id,
-          status: 'running',
-          createdAt: Date.now(),
-        },
-      }
+      session.eventDuringSend = turnStarted(thread.id, 'turn-in-flight')
       session.afterEventBarrier = new Promise<void>((resolve) => (release = resolve))
       submitting = orchestrator.submitTurn(
         thread.id,
@@ -630,15 +624,7 @@ describe('durable user submissions', () => {
       const session = sessions[0]!
       session.turnIds.push('turn-current', 'turn-queued')
       await orchestrator.submitTurn(thread.id, 'Repeat this.', [], {}, 'submission-current')
-      session.emit({
-        type: 'turn.started',
-        turn: {
-          id: 'turn-current',
-          threadId: thread.id,
-          status: 'running',
-          createdAt: Date.now(),
-        },
-      })
+      session.emit(turnStarted(thread.id, 'turn-current'))
       const queued = await orchestrator.submitTurn(
         thread.id,
         'Repeat this.',
@@ -662,15 +648,7 @@ describe('durable user submissions', () => {
       session.emit(userMessage('provider-steer', 'Repeat this.', 'turn-current'))
       session.emit({ type: 'turn.completed', turnId: 'turn-current', status: 'completed' })
       await vi.waitFor(() => expect(session.sent).toEqual(['Repeat this.', 'Repeat this.']))
-      session.emit({
-        type: 'turn.started',
-        turn: {
-          id: 'turn-queued',
-          threadId: thread.id,
-          status: 'running',
-          createdAt: Date.now(),
-        },
-      })
+      session.emit(turnStarted(thread.id, 'turn-queued'))
       const users = store
         .history(thread.id)
         .map(({ event }) => event)
@@ -700,15 +678,7 @@ describe('durable user submissions', () => {
       session.sendError = undefined
       session.turnIds.push('turn-retry')
       await orchestrator.submitTurn(thread.id, 'Try this.', [], {}, 'submission-retry')
-      session.emit({
-        type: 'turn.started',
-        turn: {
-          id: 'turn-retry',
-          threadId: thread.id,
-          status: 'running',
-          createdAt: Date.now(),
-        },
-      })
+      session.emit(turnStarted(thread.id, 'turn-retry'))
       session.emit({ type: 'turn.completed', turnId: 'turn-retry', status: 'completed' })
       await expect(
         orchestrator.submitTurn(thread.id, 'Try this.', [], {}, 'submission-retry'),
