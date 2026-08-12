@@ -2175,7 +2175,7 @@ export class Orchestrator {
             }
           },
           (error: unknown) => {
-            if (this.#designFlows.get(threadId) === flow) this.#failDesignFlow(threadId, error)
+            this.#onLog(`provider rejected after Design already started: ${errorMessage(error)}`)
           },
         )
       }
@@ -2300,7 +2300,7 @@ export class Orchestrator {
           : event.type === 'item.started' || event.type === 'item.completed'
             ? event.item.turnId
             : undefined
-    if (turnId && this.#designStartingThreads.has(threadId)) {
+    if (turnId && this.#designStartingThreads.has(threadId) && event.type !== 'turn.completed') {
       this.#designTurns.set(turnId, threadId)
       this.#designStartWaiters.get(threadId)?.(turnId)
       if (event.type !== 'turn.started') this.#startDesignActivity(threadId, turnId)

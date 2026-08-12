@@ -92,6 +92,7 @@ class FakeSession implements AgentSession {
   turnIds: string[] = []
   sendError: Error | undefined
   eventDuringSend: DomainEvent | undefined
+  lateSendError: Error | undefined
   emitUsageChanged: () => void = () => {}
   afterEventBarrier: Promise<void> | undefined
   steerBarriers: Promise<void>[] = []
@@ -115,6 +116,7 @@ class FakeSession implements AgentSession {
     if (this.sendError) throw this.sendError
     if (this.eventDuringSend) this.emit(this.eventDuringSend)
     if (this.afterEventBarrier) await this.afterEventBarrier
+    if (this.lateSendError) throw this.lateSendError
     return this.turnIds.shift() ?? `${this.id}-turn`
   }
 
@@ -855,6 +857,77 @@ describe('provider-neutral design briefing', () => {
         ),
       ).toBe(true)
       await vi.waitFor(() => expect(session.sent.at(-1)).toBe('Continue normally.'))
+    } finally {
+      vi.useRealTimers()
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('keeps an accepted Design flow after its provider start rejects late', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-late-reject-'))
+    const { orchestrator, sessions, received, store, logs } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      const session = sessions[0]!
+      session.release = () => {}
+      session.lateSendError = new Error('late start rejection')
+      const sending = orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      await vi.waitFor(() => expect(session.sent).toHaveLength(1))
+      session.emit(turnStarted(thread.id, 'design-turn'))
+      await expect(sending).resolves.toBe('design-turn')
+      session.release?.()
+      session.emit(
+        message(
+          JSON.stringify({
+            status: 'questions',
+            message: 'Preparing questions.',
+            questions: [
+              {
+                id: 'audience',
+                header: 'Audience',
+                question: 'Who is this for?',
+                allowOther: true,
+                options: [{ label: 'Decide for me', description: 'Let the agent decide.' }],
+              },
+            ],
+            brief: null,
+          }),
+          'design-turn',
+        ),
+      )
+      session.emit({ type: 'turn.completed', turnId: 'design-turn', status: 'completed' })
+
+      await vi.waitFor(() =>
+        expect(logs.some((line) => line.includes('late start rejection'))).toBe(true),
+      )
+      expect(store.designRun(thread.id)).toMatchObject({ phase: 'brief' })
+      expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(true)
+      expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('does not accept completion as proof that a Design turn started', async () => {
+    vi.useFakeTimers()
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-complete-only-'))
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      const session = sessions[0]!
+      session.release = () => {}
+      const sending = orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      const failure = expect(sending).rejects.toThrow('did not start the Design phase')
+      await vi.waitFor(() => expect(session.sent).toHaveLength(1))
+
+      session.emit({ type: 'turn.completed', turnId: 'completed-only', status: 'completed' })
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      await failure
+      expect(store.designRun(thread.id)).toBeUndefined()
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
     } finally {
       vi.useRealTimers()
       await orchestrator.disposeAll()
