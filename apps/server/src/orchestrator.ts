@@ -56,6 +56,7 @@ import {
 import {
   providerRuntime,
   apiRuntime,
+  verifyCustomHarness as verifyCustomHarnessCompatibility,
   type AgentSession,
   type ProviderRuntime,
   type StartOptions,
@@ -110,10 +111,12 @@ import {
 import { McpConfigStore } from './mcp-config.js'
 import { readCredential } from './credentials.js'
 import { ModelConnectionStore } from './model-connections.js'
+import { CustomHarnessStore } from './custom-harnesses.js'
 import { TerminalManager } from './terminal.js'
 import { installLocalSkill } from './skill-install.js'
 import { startDesignPreview, type RunningPreview } from './design-preview-runner.js'
 import { assertPublicWorkspaceFile, existingWorkspacePath } from './api-workspace-paths.js'
+import { sideChatInstructions } from './side-chat.js'
 
 type UserSubmission = { id: string; text: string; createdAt: number; queueId?: string }
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions; clientSubmissionId?: string }
@@ -121,6 +124,10 @@ type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
 type AdapterLimitSource = { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
 const userTurnKey = (threadId: string, turnId: string) => JSON.stringify([threadId, turnId])
+const composeInstructions = (instructions?: string): string =>
+  instructions?.trim()
+    ? `${REPLY_STYLE_INSTRUCTIONS}\n\n${instructions.trim()}`
+    : REPLY_STYLE_INSTRUCTIONS
 type DesignFlowPhase =
   'brief' | 'brand' | 'page' | 'assets' | 'build' | 'preview' | 'review' | 'repair' | 'complete'
 type DesignFlow = {
@@ -143,13 +150,15 @@ type DesignFlow = {
   buildFileBaseline?: string[] | undefined
 }
 
-function resolveWorkspacePath(workspacePath: string): string {
+export function resolveWorkspacePath(workspacePath: string): string {
   if (workspacePath === '~') return os.homedir()
   if (workspacePath.startsWith('~/') || workspacePath.startsWith('~\\')) {
     return path.join(os.homedir(), workspacePath.slice(2))
   }
   return workspacePath
 }
+
+const projectTerminalKey = (projectPath: string): string => `project:${projectPath}`
 
 function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlow | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
@@ -351,12 +360,17 @@ export class Orchestrator {
   #threads = new Map<string, { thread: Thread; session: AgentSession; worktree?: Worktree }>()
   /** Approval mode each live thread was started with; not persisted. */
   #threadApprovals = new Map<string, ApprovalMode>()
+  #sideThreads = new Map<string, string>()
+  #sideParents = new Map<string, string>()
+  #startingSideThreads = new Map<string, Promise<Thread>>()
+  #discardedSideThreads = new Set<string>()
   #activeTurns = new Set<string>()
   #activeTurnIds = new Map<string, string>()
   #serverOwnedUserTurns = new Set<string>()
   #suppressedUserItems = new Map<string, Set<string>>()
   #inFlightSubmissionIds = new Map<string, Set<string>>()
   #startingTurns = new Set<string>()
+  #turnStartBarriers = new Map<string, { done: Promise<void>; release: () => void }>()
   #pendingTurnStarts = new Map<string, PendingTurnStart>()
   #acceptedTurnStarts = new Map<string, Map<string, PendingTurnStart>>()
   #restoringThreads = new Map<string, Promise<void>>()
@@ -382,6 +396,7 @@ export class Orchestrator {
   #store: Store
   #worktreeRoot: string
   #onEvent: (threadId: string, event: DomainEvent, seq: number) => void
+  #onSideEvent: (threadId: string, event: DomainEvent, seq: number) => void
   #onQueue: (threadId: string, state: QueueState) => void
   #onLog: (line: string) => void
   #onLogin: (
@@ -411,6 +426,7 @@ export class Orchestrator {
   >()
   #mcpConfig: McpConfigStore
   #modelConnections: ModelConnectionStore
+  #customHarnesses: CustomHarnessStore
   #readCredential: (reference: string) => string
   #terminals: TerminalManager
 
@@ -427,6 +443,7 @@ export class Orchestrator {
     store: Store,
     handlers: {
       onEvent: (threadId: string, event: DomainEvent, seq: number) => void
+      onSideEvent?: (threadId: string, event: DomainEvent, seq: number) => void
       onQueue?: (threadId: string, state: QueueState) => void
       onLog: (line: string) => void
       onLogin: (
@@ -448,6 +465,7 @@ export class Orchestrator {
       ) => Promise<ReviewScreenshot[] | undefined>
       mcpConfig?: McpConfigStore
       modelConnections?: ModelConnectionStore
+      customHarnesses?: CustomHarnessStore
       readCredential?: (reference: string) => string
       onTerminalOutput?: (terminalId: string, data: string) => void
       onTerminalExit?: (terminalId: string, exitCode: number | null) => void
@@ -459,6 +477,7 @@ export class Orchestrator {
     this.#store = store
     this.#worktreeRoot = handlers.worktreeRoot ?? path.join(os.tmpdir(), 'personal-harness-trees')
     this.#onEvent = handlers.onEvent
+    this.#onSideEvent = handlers.onSideEvent ?? handlers.onEvent
     this.#onQueue = handlers.onQueue ?? (() => {})
     this.#onLog = handlers.onLog
     this.#onLogin = handlers.onLogin
@@ -470,12 +489,16 @@ export class Orchestrator {
     this.#capturePreview = handlers.capturePreview
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
     this.#modelConnections = handlers.modelConnections ?? new ModelConnectionStore()
+    this.#customHarnesses = handlers.customHarnesses ?? new CustomHarnessStore()
     this.#readCredential = handlers.readCredential ?? readCredential
     this.#terminals = new TerminalManager({
       onOutput: handlers.onTerminalOutput ?? (() => {}),
       onExit: handlers.onTerminalExit ?? (() => {}),
     })
-    this.#runtimeFor = handlers.runtimeFor ?? providerRuntime
+    this.#runtimeFor =
+      handlers.runtimeFor ??
+      ((provider, onLog) =>
+        providerRuntime(provider, onLog, (id) => this.#customHarnesses.find(id)))
     this.#runtimeForInjected = handlers.runtimeFor !== undefined
   }
 
@@ -529,7 +552,7 @@ export class Orchestrator {
   async listModels(provider: ProviderId, agent?: string): Promise<Model[]> {
     // Codex has a control adapter already running; everything else asks its
     // own runtime, which is free to answer with nothing.
-    if (provider === 'codex') return (await this.#controlAdapter()).listModels()
+    if (provider === 'codex' && !agent) return (await this.#controlAdapter()).listModels()
     // The injected seam, not the module function — otherwise tests spawn the
     // real vendor CLIs just to draw a model list.
     return this.#runtimeFor(provider, this.#onLog).listModels(agent)
@@ -537,6 +560,25 @@ export class Orchestrator {
 
   listModelConnections() {
     return this.#modelConnections.list()
+  }
+
+  listCustomHarnesses() {
+    return this.#customHarnesses.list()
+  }
+
+  upsertCustomHarness(harness: Parameters<CustomHarnessStore['upsert']>[0]) {
+    return this.#customHarnesses.upsert(harness)
+  }
+
+  verifyCustomHarness(
+    harness: Parameters<CustomHarnessStore['upsert']>[0],
+    workspacePath?: string,
+  ) {
+    return verifyCustomHarnessCompatibility(harness, workspacePath, this.#onLog)
+  }
+
+  removeCustomHarness(harnessId: string): void {
+    this.#customHarnesses.remove(harnessId)
   }
 
   upsertModelConnection(connection: Parameters<ModelConnectionStore['upsert']>[0]) {
@@ -895,7 +937,7 @@ export class Orchestrator {
         : this.#runtimeFor(provider, this.#onLog)
     const runtimeOptions = {
       ...options,
-      instructions: REPLY_STYLE_INSTRUCTIONS,
+      instructions: composeInstructions(options.instructions),
       ...this.#mcpRuntimeOptions(provider, workspacePath),
     }
     let started
@@ -926,6 +968,100 @@ export class Orchestrator {
     return thread
   }
 
+  /**
+   * Starts one temporary conversation at the current parent boundary.
+   *
+   * This deliberately uses the same adapter start path for every provider.
+   * Native fork APIs are uneven and would make Side chat silently weaker on
+   * exactly the providers the shared UI promises to support.
+   */
+  async startSideThread(
+    parentThreadId: string,
+    options: Pick<StartOptions, 'model' | 'serviceTier' | 'effort' | 'approval'> = {},
+  ): Promise<Thread> {
+    const existingId = this.#sideThreads.get(parentThreadId)
+    const existing = existingId ? this.#threads.get(existingId) : undefined
+    if (existing) return existing.thread
+    if (existingId) {
+      this.#sideThreads.delete(parentThreadId)
+      this.#sideParents.delete(existingId)
+    }
+
+    const starting = this.#startingSideThreads.get(parentThreadId)
+    if (starting) return starting
+    const pending = this.#createSideThread(parentThreadId, options).finally(() => {
+      if (this.#startingSideThreads.get(parentThreadId) === pending) {
+        this.#startingSideThreads.delete(parentThreadId)
+      }
+    })
+    this.#startingSideThreads.set(parentThreadId, pending)
+    return pending
+  }
+
+  async #createSideThread(
+    parentThreadId: string,
+    options: Pick<StartOptions, 'model' | 'serviceTier' | 'effort' | 'approval'>,
+  ): Promise<Thread> {
+    await this.#ensureThread(parentThreadId)
+    const storedParent = this.#store.thread(parentThreadId)
+    if (!storedParent) throw new Error(`no such thread: ${parentThreadId}`)
+    if (storedParent.ephemeral) throw new Error('Side chat cannot be opened inside Side chat.')
+
+    const parent = this.#get(parentThreadId).thread
+    const provider = parent.provider
+    const workspacePath =
+      storedParent.worktreePath ?? resolveWorkspacePath(storedParent.projectPath)
+    const approval = options.approval ?? this.#threadApprovals.get(parentThreadId) ?? 'ask'
+    const runtime =
+      provider === 'api' && !this.#runtimeForInjected
+        ? this.#apiRuntime(parent.connectionId)
+        : this.#runtimeFor(provider, this.#onLog)
+    const runtimeOptions: StartOptions = {
+      ...options,
+      approval,
+      ...(storedParent.agent ? { agent: storedParent.agent } : {}),
+      ...(parent.connectionId ? { connectionId: parent.connectionId } : {}),
+      instructions: composeInstructions(sideChatInstructions(this.#store.history(parentThreadId))),
+      ...this.#mcpRuntimeOptions(provider, storedParent.projectPath),
+    }
+
+    let started: Awaited<ReturnType<ProviderRuntime['start']>> | undefined
+    try {
+      started = await runtime.start(workspacePath, runtimeOptions)
+      const { thread, session } = started
+      const currentParent = this.#store.thread(parentThreadId)
+      if (!currentParent || currentParent.closedAt !== undefined) {
+        throw new Error('The main chat closed while Side chat was starting.')
+      }
+      this.#store.addThread({
+        id: thread.id,
+        projectPath: storedParent.projectPath,
+        provider,
+        ...(storedParent.agent ? { agent: storedParent.agent } : {}),
+        title: 'Side chat',
+        createdAt: thread.createdAt,
+        ephemeral: true,
+        parentThreadId,
+      })
+      this.#sideThreads.set(parentThreadId, thread.id)
+      this.#sideParents.set(thread.id, parentThreadId)
+      this.#attachThread(thread, session, storedParent.projectPath)
+      this.#threadApprovals.set(thread.id, approval)
+      return thread
+    } catch (error) {
+      started?.session.dispose()
+      const sideThreadId = started?.thread.id
+      if (sideThreadId) {
+        this.#sideParents.delete(sideThreadId)
+        if (this.#store.thread(sideThreadId)?.ephemeral) this.#store.deleteThread(sideThreadId)
+      }
+      if (this.#sideThreads.get(parentThreadId) === sideThreadId) {
+        this.#sideThreads.delete(parentThreadId)
+      }
+      throw error
+    }
+  }
+
   #apiRuntime(connectionId: string | undefined): ProviderRuntime {
     if (!connectionId) throw new Error('connectionId is required for direct API sessions')
     const connection = this.#modelConnections.get(connectionId)
@@ -948,10 +1084,18 @@ export class Orchestrator {
     if (this.#restoringThreads.has(threadId)) {
       throw new Error('cannot start a turn while restoring a checkpoint')
     }
-    this.#wakeForActivity(threadId)
+    if (!this.#sideParents.has(threadId)) this.#wakeForActivity(threadId)
     const panicGeneration = this.#panicGeneration
     const pendingStart = this.#beginTurnStart(threadId, submission)
     this.#startingTurns.add(threadId)
+    let releaseTurnStart: () => void = () => undefined
+    const turnStartBarrier = {
+      done: new Promise<void>((resolve) => {
+        releaseTurnStart = resolve
+      }),
+      release: () => releaseTurnStart(),
+    }
+    this.#turnStartBarriers.set(threadId, turnStartBarrier)
     try {
       // Before the agent writes, not after. A checkpoint taken afterwards would
       // record the damage rather than the state worth returning to.
@@ -1015,6 +1159,9 @@ export class Orchestrator {
         attachments,
         options,
       )
+      if (this.#discardedSideThreads.has(threadId)) {
+        throw new Error('Side chat was closed while its turn was starting.')
+      }
       this.#acceptTurnStart(threadId, turnId, pendingStart)
       return turnId
     } catch (error) {
@@ -1022,6 +1169,10 @@ export class Orchestrator {
       throw error
     } finally {
       this.#startingTurns.delete(threadId)
+      if (this.#turnStartBarriers.get(threadId) === turnStartBarrier) {
+        this.#turnStartBarriers.delete(threadId)
+      }
+      turnStartBarrier.release()
     }
   }
 
@@ -1177,6 +1328,7 @@ export class Orchestrator {
    * write has to happen first even though it is the slower half.
    */
   #record(threadId: string, event: DomainEvent): void {
+    if (this.#discardedSideThreads.has(threadId)) return
     if (
       event.type === 'turn.completed' &&
       this.#activeTurnIds.has(threadId) &&
@@ -1219,17 +1371,20 @@ export class Orchestrator {
       this.#suppressedUserItems.delete(threadId)
     }
     const seq = this.#store.append(threadId, event)
+    const sideChat = this.#sideParents.has(threadId)
     if (
-      event.type === 'turn.started' ||
-      event.type === 'approval.requested' ||
-      event.type === 'user_input.requested'
+      !sideChat &&
+      (event.type === 'turn.started' ||
+        event.type === 'approval.requested' ||
+        event.type === 'user_input.requested')
     ) {
       this.#wakeForActivity(threadId)
     }
-    if (event.type === 'turn.completed' || event.type === 'thread.error') {
+    if (!sideChat && (event.type === 'turn.completed' || event.type === 'thread.error')) {
       this.#wakeForActivity(threadId, true)
     }
-    this.#onEvent(threadId, event, seq)
+    if (sideChat) this.#onSideEvent(threadId, event, seq)
+    else this.#onEvent(threadId, event, seq)
     if (
       event.type === 'turn.started' &&
       matchedStart?.submission &&
@@ -1461,6 +1616,17 @@ export class Orchestrator {
 
   openTerminal(threadId: string, columns: number, rows: number): string {
     return this.#terminals.open(threadId, this.#repoPath(threadId), columns, rows)
+  }
+
+  openProjectTerminal(projectPath: string, columns: number, rows: number): string {
+    const project = this.#store.project(projectPath)
+    if (!project) throw new Error('project is not registered')
+    return this.#terminals.open(
+      projectTerminalKey(project.path),
+      resolveWorkspacePath(project.path),
+      columns,
+      rows,
+    )
   }
 
   /**
@@ -1808,6 +1974,12 @@ export class Orchestrator {
   async interrupt(threadId: string): Promise<void> {
     // "Stop" on a thread that is not live must be a no-op, not an error the
     // user cannot act on.
+    if (!this.#threads.has(threadId)) return
+    // The checkpoint runs before the provider starts. An interrupt sent in
+    // that window used to hit an idle adapter and disappear, after which the
+    // turn started anyway. Wait until the adapter has accepted or rejected
+    // the start, then deliver the interrupt against its real active turn.
+    await this.#turnStartBarriers.get(threadId)?.done
     const entry = this.#threads.get(threadId)
     if (!entry) return
     await entry.session.interrupt(threadId)
@@ -1875,6 +2047,41 @@ export class Orchestrator {
   }
 
   async close(threadId: string): Promise<void> {
+    if (this.#store.thread(threadId)?.ephemeral) {
+      this.closeSideThread(threadId)
+      return
+    }
+    const sideThreadId = this.#sideThreads.get(threadId)
+    if (sideThreadId) this.closeSideThread(sideThreadId)
+    const runtimeDisposed = this.#disposeThreadRuntime(threadId)
+    // Always mark closed, live entry or not: closing is the user's statement
+    // about the thread. Early-returning when no session was attached left a
+    // thread mid-resume unmarked, so the resume guard never saw the close
+    // and attached a zombie anyway.
+    //
+    // Marked closed, not deleted. Ending the process is not the same as
+    // wanting the transcript gone.
+    //
+    // The worktree deliberately survives: it may hold work the agent did not
+    // commit, and closing a session is not a statement about that work.
+    this.#store.closeThread(threadId)
+    await runtimeDisposed
+  }
+
+  closeSideThread(threadId: string): void {
+    const stored = this.#store.thread(threadId)
+    if (!stored) return
+    if (!stored.ephemeral) throw new Error('thread is not a Side chat')
+    this.#discardedSideThreads.add(threadId)
+    void this.#disposeThreadRuntime(threadId)
+    if (stored.parentThreadId && this.#sideThreads.get(stored.parentThreadId) === threadId) {
+      this.#sideThreads.delete(stored.parentThreadId)
+    }
+    this.#sideParents.delete(threadId)
+    this.#store.deleteThread(threadId)
+  }
+
+  #disposeThreadRuntime(threadId: string): Promise<void> {
     const terminalsClosed = this.#terminals
       .closeThread(threadId)
       .catch((error) => this.#onLog(`[terminal] thread close failed: ${errorMessage(error)}`))
@@ -1893,6 +2100,8 @@ export class Orchestrator {
     this.#suppressedUserItems.delete(threadId)
     this.#inFlightSubmissionIds.delete(threadId)
     this.#startingTurns.delete(threadId)
+    this.#turnStartBarriers.get(threadId)?.release()
+    this.#turnStartBarriers.delete(threadId)
     this.#pendingTurnStarts.delete(threadId)
     this.#acceptedTurnStarts.delete(threadId)
     this.#designStartingThreads.delete(threadId)
@@ -1901,18 +2110,7 @@ export class Orchestrator {
     this.#queuedTurns.delete(threadId)
     this.#drainingQueues.delete(threadId)
     this.#clearDesignFlow(threadId)
-    // Always mark closed, live entry or not: closing is the user's statement
-    // about the thread. Early-returning when no session was attached left a
-    // thread mid-resume unmarked, so the resume guard never saw the close
-    // and attached a zombie anyway.
-    //
-    // Marked closed, not deleted. Ending the process is not the same as
-    // wanting the transcript gone.
-    //
-    // The worktree deliberately survives: it may hold work the agent did not
-    // commit, and closing a session is not a statement about that work.
-    this.#store.closeThread(threadId)
-    await Promise.all([terminalsClosed, previewStopped])
+    return Promise.all([terminalsClosed, previewStopped]).then(() => undefined)
   }
 
   /**
@@ -1982,12 +2180,18 @@ export class Orchestrator {
     this.#voiceRequests.clear()
     for (const [, entry] of this.#threads) entry.session.dispose()
     this.#threads.clear()
+    this.#sideThreads.clear()
+    this.#sideParents.clear()
+    this.#startingSideThreads.clear()
+    this.#discardedSideThreads.clear()
     this.#activeTurns.clear()
     this.#activeTurnIds.clear()
     this.#serverOwnedUserTurns.clear()
     this.#suppressedUserItems.clear()
     this.#inFlightSubmissionIds.clear()
     this.#startingTurns.clear()
+    for (const barrier of this.#turnStartBarriers.values()) barrier.release()
+    this.#turnStartBarriers.clear()
     this.#pendingTurnStarts.clear()
     this.#acceptedTurnStarts.clear()
     this.#reviewingDiffs.clear()
@@ -2876,6 +3080,9 @@ export class Orchestrator {
 
   /** Drop per-project watch state when a project leaves the sidebar. */
   forgetProject(projectPath: string): void {
+    void this.#terminals
+      .closeThread(projectTerminalKey(projectPath))
+      .catch((error) => this.#onLog(`[terminal] project close failed: ${errorMessage(error)}`))
     this.#watchedSkillProjects.delete(projectPath)
     this.#watchedMcpProjects.delete(projectPath)
   }

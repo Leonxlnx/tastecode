@@ -73,6 +73,54 @@ const userInput = (id: string, turnId: string): DomainEvent => ({
   },
 })
 
+describe('ephemeral Side chats', () => {
+  it('keeps Side chats addressable without listing or indexing them', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'main', projectPath: '/repo', provider: 'codex', title: 'Main' })
+    store.addThread({
+      id: 'side',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Side chat',
+      ephemeral: true,
+      parentThreadId: 'main',
+    })
+    store.append('side', message('private side answer'))
+
+    expect(store.thread('side')).toMatchObject({ ephemeral: true, parentThreadId: 'main' })
+    expect(store.threads('/repo').map((thread) => thread.id)).toEqual(['main'])
+    expect(store.searchSessions({ query: 'private side answer' }).results).toEqual([])
+  })
+
+  it('purges a crashed Side chat when the store reopens', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-side-chat-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'main', projectPath: '/repo', provider: 'codex', title: 'Main' })
+    seeded.addThread({
+      id: 'side',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Side chat',
+      ephemeral: true,
+      parentThreadId: 'main',
+    })
+    seeded.append('side', message('temporary'))
+    seeded.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.thread('main')).toBeDefined()
+      expect(reopened.thread('side')).toBeUndefined()
+      expect(reopened.history('side')).toEqual([])
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('durable queued turns', () => {
   const queued = (id: string, text = 'Repeat this.') => ({
     id,

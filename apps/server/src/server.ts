@@ -18,9 +18,9 @@ import {
   type ProviderId,
   type SidebarSettings,
 } from '@harness/contracts'
-import { StaleDiffSnapshotError } from './diff-review.js'
+import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { MobileAccess, type MobileConnectionAccess } from './mobile-access.js'
-import { Orchestrator } from './orchestrator.js'
+import { Orchestrator, resolveWorkspacePath } from './orchestrator.js'
 import { detectProviders, installCommandFor, launchCommandFor } from './providers.js'
 import { checkForUpdates } from './update-check.js'
 import { PushBus } from './push-bus.js'
@@ -34,6 +34,7 @@ import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import { UsageHistoryService } from './usage-history.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
 import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
+import { listWorkspaceDirectory, readWorkspaceTextFile } from './workspace-files.js'
 
 export const SERVER_VERSION = '0.0.0'
 export { DEFAULT_PORT } from './server-config.js'
@@ -136,6 +137,8 @@ export function startServer(
   void usageHistory.startBackgroundRefresh()
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event, seq) => push.broadcast('thread.event', { threadId, event, seq }),
+    onSideEvent: (threadId, event, seq) =>
+      push.broadcast('sideChat.event', { threadId, event, seq }),
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
     onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
@@ -381,6 +384,27 @@ export function startServer(
       case 'providers.list':
         return { providers: await detectProviders() }
 
+      case 'harnesses.list':
+        return { harnesses: orchestrator.listCustomHarnesses() }
+
+      case 'harnesses.upsert':
+        return {
+          harness: orchestrator.upsertCustomHarness(params as ParamsOf<'harnesses.upsert'>),
+        }
+
+      case 'harnesses.verify': {
+        const p = params as ParamsOf<'harnesses.verify'>
+        return {
+          verification: await orchestrator.verifyCustomHarness(p.harness, p.workspacePath),
+        }
+      }
+
+      case 'harnesses.remove': {
+        const p = params as ParamsOf<'harnesses.remove'>
+        orchestrator.removeCustomHarness(p.harnessId)
+        return {}
+      }
+
       case 'providers.install': {
         const p = params as ParamsOf<'providers.install'>
         const command = installCommandFor(p.provider, p.agent)
@@ -560,12 +584,12 @@ export function startServer(
 
       case 'workspace.info': {
         const p = params as { path: string }
-        return readWorkspace(p.path)
+        return readWorkspace(resolveWorkspacePath(p.path))
       }
 
       case 'workspace.branches': {
         const p = params as { path: string }
-        return { branches: await listWorkspaceBranches(p.path) }
+        return { branches: await listWorkspaceBranches(resolveWorkspacePath(p.path)) }
       }
 
       case 'workspace.switchBranch': {
@@ -576,7 +600,22 @@ export function startServer(
         if (localSessionRunning) {
           throw new Error('stop local sessions in this project before switching branches')
         }
-        return switchWorkspaceBranch(p.path, p.branch)
+        return switchWorkspaceBranch(resolveWorkspacePath(p.path), p.branch)
+      }
+
+      case 'workspace.diff': {
+        const p = params as ParamsOf<'workspace.diff'>
+        return readWorkspaceDiff(workspaceForRequest(store, p))
+      }
+
+      case 'workspace.listDirectory': {
+        const p = params as ParamsOf<'workspace.listDirectory'>
+        return listWorkspaceDirectory(workspaceForRequest(store, p), p.directory)
+      }
+
+      case 'workspace.readFile': {
+        const p = params as ParamsOf<'workspace.readFile'>
+        return readWorkspaceTextFile(workspaceForRequest(store, p), p.path)
       }
 
       case 'models.list': {
@@ -682,8 +721,13 @@ export function startServer(
       }
 
       case 'terminal.open': {
-        const p = params as { threadId: string; columns: number; rows: number }
-        return { terminalId: orchestrator.openTerminal(p.threadId, p.columns, p.rows) }
+        const p = params as ParamsOf<'terminal.open'>
+        return {
+          terminalId:
+            'threadId' in p
+              ? orchestrator.openTerminal(p.threadId, p.columns, p.rows)
+              : orchestrator.openProjectTerminal(p.projectPath, p.columns, p.rows),
+        }
       }
 
       case 'terminal.input': {
@@ -835,6 +879,23 @@ export function startServer(
       case 'usage.resetHistory':
         await usageHistory.resetAndRefresh()
         return { started: true as const }
+
+      case 'sideChat.start': {
+        const p = params as ParamsOf<'sideChat.start'>
+        const thread = await orchestrator.startSideThread(p.parentThreadId, {
+          model: p.model,
+          serviceTier: p.serviceTier,
+          effort: p.effort,
+          approval: p.approval,
+        })
+        return { threadId: thread.id }
+      }
+
+      case 'sideChat.close': {
+        const p = params as ParamsOf<'sideChat.close'>
+        orchestrator.closeSideThread(p.threadId)
+        return {}
+      }
 
       case 'thread.start': {
         const p = params as {
@@ -1081,6 +1142,7 @@ type ConnectionAccess = { kind: 'admin' } | MobileConnectionAccess
 const DEVICE_METHODS = new Set<MethodName>([
   'system.info',
   'providers.list',
+  'harnesses.list',
   'connections.list',
   'connections.models',
   'connections.deviceStatus',
@@ -1093,6 +1155,8 @@ const DEVICE_METHODS = new Set<MethodName>([
   'projects.browse',
   'projects.add',
   'attachments.saveFile',
+  'sideChat.start',
+  'sideChat.close',
   'thread.history',
   'thread.queue',
   'thread.start',
@@ -1116,6 +1180,20 @@ function methodAllowed(access: ConnectionAccess, method: MethodName): boolean {
   if (access.kind === 'admin') return method !== 'connections.claim'
   if (access.kind === 'pairing') return method === 'connections.claim'
   return DEVICE_METHODS.has(method)
+}
+
+function workspaceForRequest(
+  store: Store,
+  request: { projectPath: string; threadId?: string | undefined },
+): string {
+  const project = store.projects().find((entry) => entry.path === request.projectPath)
+  if (!project) throw new Error('project is not registered')
+  if (!request.threadId) return resolveWorkspacePath(project.path)
+
+  const thread = store.thread(request.threadId)
+  if (!thread || thread.projectPath !== project.path)
+    throw new Error('thread is not in this project')
+  return resolveWorkspacePath(thread.worktreePath ?? project.path)
 }
 
 function messageOf(error: unknown): string {

@@ -161,6 +161,7 @@ class FakeSession implements AgentSession {
 function harness(worktreeRoot?: string, store = new Store(':memory:')) {
   const sessions: FakeSession[] = []
   const received: Array<{ threadId: string; event: DomainEvent }> = []
+  const sideReceived: Array<{ threadId: string; event: DomainEvent }> = []
   const lifecycles: Array<{ threadId: string; lifecycle: ThreadLifecycle }> = []
   const logs: string[] = []
   const queueChanges: Array<{ threadId: string; itemIds: string[] }> = []
@@ -229,6 +230,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
       queueChanges.push({ threadId, itemIds: state.items.map(({ id }) => id) })
       if (queueNotificationError.current) throw queueNotificationError.current
     },
+    onSideEvent: (threadId, event) => sideReceived.push({ threadId, event }),
     onLifecycle: (threadId, lifecycle) => lifecycles.push({ threadId, lifecycle }),
     onLog: (line) => logs.push(line),
     onLogin: () => {},
@@ -246,6 +248,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     store,
     sessions,
     received,
+    sideReceived,
     lifecycles,
     logs,
     queueChanges,
@@ -358,6 +361,53 @@ describe('reply style', () => {
 
       expect(startedOptions[0]?.instructions).toContain('clear, capable teammate')
       expect(startedOptions[0]?.instructions).toContain('Do not use em dashes')
+    },
+  )
+})
+
+describe('provider-neutral Side chat', () => {
+  it.each(ProviderIdSchema.options)(
+    'forks an ephemeral %s session from the parent boundary',
+    async (provider) => {
+      const { orchestrator, store, sessions, startedOptions, received, sideReceived } = harness()
+      const parent = await orchestrator.startThread(provider, process.cwd(), { approval: 'auto' })
+      store.append(
+        parent.id,
+        userMessage(`user-${provider}`, 'Explain this failure.', 'parent-turn'),
+      )
+
+      const side = await orchestrator.startSideThread(parent.id, {
+        model: 'selected-model',
+        effort: 'high',
+      })
+
+      expect(side.provider).toBe(provider)
+      expect(store.thread(side.id)).toMatchObject({
+        ephemeral: true,
+        parentThreadId: parent.id,
+      })
+      expect(store.threads().map((thread) => thread.id)).toEqual([parent.id])
+      expect(startedOptions[1]).toMatchObject({
+        model: 'selected-model',
+        effort: 'high',
+        approval: 'auto',
+      })
+      expect(startedOptions[1]?.instructions).toContain('temporary Side chat')
+      expect(startedOptions[1]?.instructions).toContain('Explain this failure.')
+
+      sessions[1]?.emit(message('side answer', 'side-turn'))
+      expect(sideReceived).toContainEqual({
+        threadId: side.id,
+        event: message('side answer', 'side-turn'),
+      })
+      expect(received.some((entry) => entry.threadId === side.id)).toBe(false)
+
+      expect(await orchestrator.startSideThread(parent.id)).toBe(side)
+      await expect(orchestrator.startSideThread(side.id)).rejects.toThrow('cannot be opened')
+      orchestrator.closeSideThread(side.id)
+      expect(sessions[1]?.disposed).toBe(true)
+      expect(sessions[0]?.disposed).toBe(false)
+      expect(store.thread(side.id)).toBeUndefined()
     },
   )
 })
@@ -2510,6 +2560,27 @@ describe('several sessions at once', () => {
 
     // The second must still get through. A shared lock would hang here.
     await expect(orchestrator.sendTurn(second.id, 'quick one')).resolves.toBe('s2-turn')
+  })
+
+  it('delivers Stop after a turn waiting for its checkpoint becomes interruptible', async () => {
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    let releaseCheckpoint: (value: checkpoint.Snapshot) => void = () => undefined
+    vi.spyOn(checkpoint, 'takeSnapshot').mockReturnValueOnce(
+      new Promise<checkpoint.Snapshot>((resolve) => {
+        releaseCheckpoint = resolve
+      }),
+    )
+
+    const sending = orchestrator.submitTurn(thread.id, 'stop before the reply')
+    await vi.waitFor(() => expect(orchestrator.isTurnRunning(thread.id)).toBe(true))
+    const stopping = orchestrator.interrupt(thread.id)
+
+    expect(sessions[0]!.interrupted).toBe(false)
+    releaseCheckpoint({ commit: 'checkpoint', clean: true })
+    await expect(sending).resolves.toMatchObject({ queued: false })
+    await expect(stopping).resolves.toBeUndefined()
+    expect(sessions[0]!.interrupted).toBe(true)
   })
 
   it('routes each session events to its own thread', async () => {

@@ -62,6 +62,10 @@ export type StoredThread = {
   lifecycle: ThreadLifecycle
   unread: boolean
   lastActiveAt: number
+  /** Temporary fork owned by Side chat; never shown in project history. */
+  ephemeral: boolean
+  /** Main conversation captured when an ephemeral Side chat was created. */
+  parentThreadId?: string | undefined
 }
 
 export type StoredCheckpoint = {
@@ -127,7 +131,7 @@ type InterruptedThreadState = {
 }
 
 const RESTART_INTERRUPTION_MESSAGE =
-  'This turn stopped when Personal Harness restarted. Review any partial changes, then send a new message to continue.'
+  'Turn interrupted: Personal Harness restarted. Send a new message to continue.'
 
 const SNIPPET_START = '\u0001'
 const SNIPPET_END = '\u0002'
@@ -185,7 +189,9 @@ CREATE TABLE IF NOT EXISTS threads (
   keep_active      INTEGER NOT NULL DEFAULT 0,
   woke_at          INTEGER,
   unread           INTEGER NOT NULL DEFAULT 0,
-  last_active_at   INTEGER NOT NULL
+  last_active_at   INTEGER NOT NULL,
+  ephemeral        INTEGER NOT NULL DEFAULT 0,
+  parent_thread_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sidebar_settings (
@@ -321,6 +327,8 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'woke_at', definition: 'INTEGER' },
   { table: 'threads', column: 'unread', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'last_active_at', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'threads', column: 'ephemeral', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'threads', column: 'parent_thread_id', definition: 'TEXT' },
 ]
 
 export class Store {
@@ -328,6 +336,8 @@ export class Store {
   #insertEvent: StatementSync
   #insertSearchEntry: StatementSync
   #searchResultKey: Buffer
+  /** Keeps the streamed-event path from querying SQLite just to skip search indexing. */
+  #ephemeralThreads = new Set<string>()
 
   /** `:memory:` in tests; a file under the user's data directory in the app. */
   constructor(location: string) {
@@ -354,6 +364,7 @@ export class Store {
        VALUES (?, ?, ?, ?, ?, ?)`,
     )
     this.#migrate()
+    this.#purgeEphemeralThreads()
     this.#recoverQueuedTurnClaims()
     const searchIndexReady = this.#db
       .prepare(`SELECT 1 FROM schema_migrations WHERE name = ?`)
@@ -372,6 +383,15 @@ export class Store {
       this.#db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
     }
     this.#db.exec(`UPDATE threads SET last_active_at = created_at WHERE last_active_at = 0`)
+  }
+
+  /** Side chats intentionally do not survive an app restart or a crashed renderer. */
+  #purgeEphemeralThreads(): void {
+    const ids = this.#db
+      .prepare(`SELECT id FROM threads WHERE ephemeral = 1`)
+      .all()
+      .map((row) => String((row as { id: unknown }).id))
+    for (const id of ids) this.deleteThread(id)
   }
 
   close(): void {
@@ -497,18 +517,23 @@ export class Store {
   // ---- threads -----------------------------------------------------------
 
   addThread(
-    thread: Omit<StoredThread, 'createdAt' | 'pinned' | 'lifecycle' | 'unread' | 'lastActiveAt'> & {
+    thread: Omit<
+      StoredThread,
+      'createdAt' | 'pinned' | 'lifecycle' | 'unread' | 'lastActiveAt' | 'ephemeral'
+    > & {
       createdAt?: number
+      ephemeral?: boolean
     },
   ): StoredThread {
     const stored = { ...thread, createdAt: thread.createdAt ?? Date.now() }
+    const ephemeral = thread.ephemeral ?? false
     const lifecycle = { state: 'active', keepActive: false } as const
     this.#db
       .prepare(
         `INSERT INTO threads
-           (id, project_path, provider, agent, title, created_at, worktree_path, worktree_branch,
-            lifecycle_state, keep_active, unread, last_active_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?)`,
+          (id, project_path, provider, agent, title, created_at, worktree_path, worktree_branch,
+            lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
       )
       .run(
         stored.id,
@@ -520,8 +545,18 @@ export class Store {
         stored.worktreePath ?? null,
         stored.worktreeBranch ?? null,
         stored.createdAt,
+        ephemeral ? 1 : 0,
+        stored.parentThreadId ?? null,
       )
-    return { ...stored, pinned: false, lifecycle, unread: false, lastActiveAt: stored.createdAt }
+    if (ephemeral) this.#ephemeralThreads.add(stored.id)
+    return {
+      ...stored,
+      pinned: false,
+      lifecycle,
+      unread: false,
+      lastActiveAt: stored.createdAt,
+      ephemeral,
+    }
   }
 
   /**
@@ -534,7 +569,7 @@ export class Store {
     return this.#db
       .prepare(
         `SELECT id, project_path, worktree_path, worktree_branch FROM threads
-                WHERE worktree_path IS NOT NULL`,
+                WHERE worktree_path IS NOT NULL AND ephemeral = 0`,
       )
       .all()
       .map((row) => {
@@ -568,9 +603,11 @@ export class Store {
   threads(projectPath?: string): StoredThread[] {
     const rows = projectPath
       ? this.#db
-          .prepare(`SELECT * FROM threads WHERE project_path = ? ORDER BY created_at DESC`)
+          .prepare(
+            `SELECT * FROM threads WHERE project_path = ? AND ephemeral = 0 ORDER BY created_at DESC`,
+          )
           .all(projectPath)
-      : this.#db.prepare(`SELECT * FROM threads ORDER BY created_at DESC`).all()
+      : this.#db.prepare(`SELECT * FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`).all()
     return rows.map(toThread)
   }
 
@@ -650,7 +687,7 @@ export class Store {
     return this.#db
       .prepare(
         `SELECT * FROM threads WHERE closed_at IS NULL AND lifecycle_state = 'snoozed'
-         AND wake_at <= ? ORDER BY wake_at`,
+         AND ephemeral = 0 AND wake_at <= ? ORDER BY wake_at`,
       )
       .all(now)
       .map(toThread)
@@ -660,7 +697,7 @@ export class Store {
     return this.#db
       .prepare(
         `SELECT * FROM threads WHERE closed_at IS NULL AND lifecycle_state = 'active'
-         AND keep_active = 0 AND last_active_at <= ? ORDER BY last_active_at`,
+         AND ephemeral = 0 AND keep_active = 0 AND last_active_at <= ? ORDER BY last_active_at`,
       )
       .all(cutoff)
       .map(toThread)
@@ -717,6 +754,7 @@ export class Store {
       this.#db.prepare(`DELETE FROM design_runs WHERE thread_id = ?`).run(id)
       this.#db.prepare(`DELETE FROM threads WHERE id = ?`).run(id)
       this.#db.exec('COMMIT')
+      this.#ephemeralThreads.delete(id)
     } catch (error) {
       this.#db.exec('ROLLBACK')
       throw error
@@ -1212,7 +1250,7 @@ export class Store {
   #appendEvent(threadId: string, event: DomainEvent, at: number): number {
     const result = this.#insertEvent.run(threadId, at, JSON.stringify(event))
     const seq = Number(result.lastInsertRowid)
-    this.#indexEvent(seq, threadId, at, event)
+    if (!this.#ephemeralThreads.has(threadId)) this.#indexEvent(seq, threadId, at, event)
     return seq
   }
 
@@ -1934,6 +1972,8 @@ function toThread(row: unknown): StoredThread {
     woke_at: number | null
     unread: number
     last_active_at: number
+    ephemeral: number
+    parent_thread_id: string | null
   }
   // Null timestamps (rows migrated before these columns existed) must not
   // become NaN — a snoozed thread with NaN wakeAt can never be woken.
@@ -1969,6 +2009,8 @@ function toThread(row: unknown): StoredThread {
     lifecycle,
     unread: r.unread === 1,
     lastActiveAt: Number(r.last_active_at),
+    ephemeral: r.ephemeral === 1,
+    ...(r.parent_thread_id === null ? {} : { parentThreadId: r.parent_thread_id }),
   }
 }
 
