@@ -532,11 +532,30 @@ describe('protocol envelopes', () => {
         costUsd: 0.04,
       },
       limits: [{ label: '5 hours', usedPercent: 25, resetsAt: 1_800_000 }],
+      limitSources: [
+        {
+          provider: 'codex',
+          status: 'ready',
+          limits: [{ label: '5 hours', usedPercent: 25, resetsAt: 1_800_000 }],
+        },
+        { provider: 'api', status: 'unavailable' },
+      ],
     })
 
     expect(result.session.costUsd).toBeUndefined()
     expect(result.today.costUsd).toBe(0.04)
     expect(result.limits[0]?.usedPercent).toBe(25)
+    expect(result.limitSources).toEqual([
+      {
+        provider: 'codex',
+        status: 'ready',
+        limits: [{ label: '5 hours', usedPercent: 25, resetsAt: 1_800_000 }],
+      },
+      { provider: 'api', status: 'unavailable' },
+    ])
+    expect(channels['usage.changed'].parse({ provider: 'codex' })).toEqual({
+      provider: 'codex',
+    })
   })
 
   it('validates versioned diff review and stale snapshot errors', () => {
