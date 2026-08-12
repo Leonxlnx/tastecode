@@ -51,7 +51,7 @@ async function settle(): Promise<void> {
 }
 
 describe('mapGrokBilling', () => {
-  it('maps the weekly credit pool with its reset time', () => {
+  it('maps the captured weekly, prepaid, and on-demand credit fields', () => {
     const rows = mapGrokBilling({
       config: {
         creditUsagePercent: 99.2,
@@ -61,44 +61,147 @@ describe('mapGrokBilling', () => {
           end: '2026-08-11T00:00:00+00:00',
         },
         onDemandCap: { val: 2500 },
+        onDemandUsed: { val: 300 },
+        prepaidBalance: { val: -1250 },
       },
+      on_demand_enabled: true,
+      subscription_tier: 'SuperGrok',
     })
     expect(rows).toEqual([
       {
-        label: 'Weekly limit',
+        label: 'Weekly',
         usedPercent: 99.2,
         resetsAt: Date.parse('2026-08-11T00:00:00+00:00'),
+      },
+      { label: 'Credits', usedPercent: 0, valueLabel: '$12.50 remaining' },
+      {
+        label: 'Pay-as-you-go',
+        usedPercent: 12,
+        valueLabel: '$3.00 used of $25.00 limit',
       },
     ])
   })
 
-  it('treats a missing percent as zero used (proto3 omits zero fields)', () => {
+  it('does not present an absent percentage as zero usage', () => {
     const rows = mapGrokBilling({
-      config: { currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' } },
+      config: {
+        currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' },
+        prepaidBalance: {},
+      },
     })
-    expect(rows).toEqual([{ label: 'Weekly limit', usedPercent: 0 }])
+    expect(rows).toEqual([{ label: 'Weekly', usedPercent: 0, valueLabel: 'Usage not reported' }])
   })
 
-  it('clamps finite percentages and rejects empty or non-finite values', () => {
+  it('falls back to the provider documented legacy monthly amounts', () => {
+    expect(
+      mapGrokBilling({
+        config: {
+          monthlyLimit: { val: 2000 },
+          used: { val: 1234 },
+          billingPeriodEnd: '2026-09-01T00:00:00Z',
+        },
+      }),
+    ).toEqual([
+      {
+        label: 'Monthly',
+        usedPercent: 61.7,
+        resetsAt: Date.parse('2026-09-01T00:00:00Z'),
+        valueLabel: '$12.34 of $20.00 used',
+      },
+    ])
+  })
+
+  it('splits legacy overflow into pay-as-you-go without overstating included usage', () => {
+    expect(
+      mapGrokBilling({
+        config: {
+          monthlyLimit: { val: 2000 },
+          used: { val: 2500 },
+          onDemandCap: { val: 5000 },
+        },
+      }),
+    ).toEqual([
+      {
+        label: 'Monthly',
+        usedPercent: 100,
+        valueLabel: '$20.00 of $20.00 used',
+      },
+      {
+        label: 'Pay-as-you-go',
+        usedPercent: 10,
+        valueLabel: '$5.00 used of $50.00 limit',
+      },
+    ])
+  })
+
+  it('floors legacy pay-as-you-go usage at zero', () => {
+    expect(
+      mapGrokBilling({
+        config: {
+          monthlyLimit: { val: 2000 },
+          used: { val: 1234 },
+          onDemandCap: { val: 5000 },
+        },
+      }),
+    ).toEqual([
+      {
+        label: 'Monthly',
+        usedPercent: 61.7,
+        valueLabel: '$12.34 of $20.00 used',
+      },
+      {
+        label: 'Pay-as-you-go',
+        usedPercent: 0,
+        valueLabel: '$0.00 used of $50.00 limit',
+      },
+    ])
+  })
+
+  it('uses a neutral label when the provider omits or changes the period type', () => {
     const period = { type: 'USAGE_PERIOD_TYPE_WEEKLY' }
     expect(mapGrokBilling({ config: { creditUsagePercent: 140, currentPeriod: period } })).toEqual([
-      { label: 'Weekly limit', usedPercent: 100 },
+      { label: 'Weekly', usedPercent: 100 },
     ])
     expect(mapGrokBilling({ config: { creditUsagePercent: -4, currentPeriod: period } })).toEqual([
-      { label: 'Weekly limit', usedPercent: 0 },
+      { label: 'Weekly', usedPercent: 0 },
     ])
-    expect(mapGrokBilling({ config: { creditUsagePercent: ' ', currentPeriod: period } })).toEqual(
-      [],
-    )
+    expect(mapGrokBilling({ config: { creditUsagePercent: 42 } })).toEqual([
+      { label: 'Included credits', usedPercent: 42 },
+    ])
+  })
+
+  it('hides disabled or inactive pay-as-you-go rows and rejects malformed money', () => {
     expect(
-      mapGrokBilling({ config: { creditUsagePercent: Number.NaN, currentPeriod: period } }),
+      mapGrokBilling({
+        config: {
+          prepaidBalance: { val: 'not-money' },
+          onDemandCap: { val: 2500 },
+          onDemandUsed: { val: 300 },
+        },
+        on_demand_enabled: false,
+      }),
+    ).toEqual([])
+    expect(
+      mapGrokBilling({
+        config: {
+          monthlyLimit: {},
+          used: {},
+          onDemandCap: {},
+          onDemandUsed: {},
+          prepaidBalance: [],
+        },
+      }),
     ).toEqual([])
   })
 
-  it('emits nothing for non-weekly periods or junk', () => {
+  it('rejects empty or non-finite percentages and junk', () => {
+    const period = { type: 'USAGE_PERIOD_TYPE_WEEKLY' }
+    expect(mapGrokBilling({ config: { creditUsagePercent: ' ', currentPeriod: period } })).toEqual([
+      { label: 'Weekly', usedPercent: 0, valueLabel: 'Usage not reported' },
+    ])
     expect(
-      mapGrokBilling({ config: { currentPeriod: { type: 'USAGE_PERIOD_TYPE_DAILY' } } }),
-    ).toEqual([])
+      mapGrokBilling({ config: { creditUsagePercent: Number.NaN, currentPeriod: period } }),
+    ).toEqual([{ label: 'Weekly', usedPercent: 0, valueLabel: 'Usage not reported' }])
     expect(mapGrokBilling({})).toEqual([])
     expect(mapGrokBilling(undefined)).toEqual([])
   })
@@ -111,7 +214,7 @@ describe('mapGrokBilling', () => {
       },
     }
 
-    await expect(grokLimits()).resolves.toEqual([{ label: 'Weekly limit', usedPercent: 12 }])
+    await expect(grokLimits()).resolves.toEqual([{ label: 'Weekly', usedPercent: 12 }])
     expect(fake.calls.map((call) => call.method)).toEqual(['initialize', '_x.ai/billing'])
     expect(fake.spawns).toEqual([
       {
@@ -158,8 +261,8 @@ describe('mapGrokBilling', () => {
       },
     })
     await expect(Promise.all([first, second])).resolves.toEqual([
-      [{ label: 'Weekly limit', usedPercent: 12 }],
-      [{ label: 'Weekly limit', usedPercent: 12 }],
+      [{ label: 'Weekly', usedPercent: 12 }],
+      [{ label: 'Weekly', usedPercent: 12 }],
     ])
 
     fake.error = new Error('billing unavailable')
@@ -171,7 +274,7 @@ describe('mapGrokBilling', () => {
         currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' },
       },
     }
-    await expect(grokLimits()).resolves.toEqual([{ label: 'Weekly limit', usedPercent: 34 }])
+    await expect(grokLimits()).resolves.toEqual([{ label: 'Weekly', usedPercent: 34 }])
     expect(fake.spawns).toHaveLength(3)
     expect(fake.disposed).toBe(3)
   })
