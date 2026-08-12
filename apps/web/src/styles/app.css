@@ -6609,7 +6609,13 @@
   top: 100%;
   left: 0;
   z-index: 1;
-  margin-top: 3px;
+  padding-top: 3px;
+  margin: 0;
+}
+
+.thread__row:has(> .reply:hover),
+.thread__row:has(> .reply:focus-within) {
+  padding-bottom: 31px;
 }
 
 .response-actions {
