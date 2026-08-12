@@ -585,7 +585,11 @@ export function parseGrokModels(output: string): Model[] {
       reading = true
       continue
     }
-    if (!reading || !line) continue
+    if (!reading) continue
+    if (!line) {
+      if (foundModel) break
+      continue
+    }
     const match = line.match(/^[*-]\s*(\S+)(\s+\(default\))?/)
     if (!match) {
       if (foundModel) break

@@ -351,7 +351,7 @@ describe('Grok adapter', () => {
 
   it('stops parsing after the available-model rows', () => {
     const models = parseGrokModels(
-      'Available models:\n  * grok-4.6 (default)\n  - grok-4.5\n\nUpgrade notes:\n  - install',
+      'Available models:\n  * grok-4.6 (default)\n  - grok-4.5\n\n  - install',
     )
     expect(models.map((model) => model.id)).toEqual(['grok-4.6', 'grok-4.5'])
   })
