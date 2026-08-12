@@ -36,7 +36,8 @@ export class UsageLimitsController {
   select(targets: Target[]): void {
     if (this.#disposed) return
     const unique = targets.filter(
-      (target, index) => targets.findIndex((candidate) => candidate.provider === target.provider) === index,
+      (target, index) =>
+        targets.findIndex((candidate) => candidate.provider === target.provider) === index,
     )
     const providers = new Set(unique.map((target) => target.provider))
     for (const [provider, entry] of this.#entries) {
