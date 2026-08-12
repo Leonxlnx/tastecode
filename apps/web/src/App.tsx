@@ -75,6 +75,11 @@ import {
 } from './model-catalog.js'
 import { parseModelCatalogCache, serializeModelCatalogCache } from './model-catalog-cache.js'
 import {
+  readProfileIdentityPreferences,
+  writeProfileIdentityPreferences,
+  type ProfileIdentityPreferences,
+} from './profile-preferences.js'
+import {
   ACCENT_KEY,
   applyAccentPreference,
   applyBackdropPreference,
@@ -422,6 +427,11 @@ export function App() {
   const [branches, setBranches] = useState<string[]>([])
   const [workspaceRefreshRevision, setWorkspaceRefreshRevision] = useState(0)
   const [account, setAccount] = useState<Account | undefined>()
+  const [profileIdentity, setProfileIdentity] = useState(readProfileIdentityPreferences)
+  const updateProfileIdentity = useCallback((next: ProfileIdentityPreferences) => {
+    setProfileIdentity(next)
+    writeProfileIdentityPreferences(next)
+  }, [])
   const [accountCheck, setAccountCheck] = useState<AccountCheck>({ provider, state: 'loading' })
   const accountRequestRevision = useRef(0)
   const [voiceAvailable, setVoiceAvailable] = useState(false)
@@ -3339,6 +3349,7 @@ export function App() {
           collapsed={collapsed}
           width={railWidth}
           account={account}
+          profileIdentity={profileIdentity}
           onClose={closeSidebar}
           onWidthChange={resizeSidebar}
           onAddProject={addSidebarProject}
@@ -3491,6 +3502,8 @@ export function App() {
           projectPath={activePath}
           projectName={activeProject ? displayName(activeProject) : undefined}
           account={account}
+          profileIdentity={profileIdentity}
+          onProfileIdentityChange={updateProfileIdentity}
           providerStatuses={providerStatuses}
           acpAgents={acpAgents}
           modelConnections={modelConnections}

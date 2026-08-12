@@ -30,6 +30,7 @@ import {
 } from 'lucide-react'
 import { isDesktop, revealPath } from '../bridge.js'
 import { sessionSourcePresentation } from '../provider-presentation.js'
+import { profileInitials, type ProfileIdentityPreferences } from '../profile-preferences.js'
 import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
 import { AccountLimits, type AccountLimitsState } from './AccountLimits.js'
@@ -103,6 +104,7 @@ function SidebarComponent(props: {
   activeProjectPath: string | undefined
   activeSessionId: string | undefined
   account: Account | undefined
+  profileIdentity?: ProfileIdentityPreferences | undefined
   providerName: string
   usageStates?: AccountLimitsState[] | undefined
   onRetryUsage?: ((provider: ProviderId) => void) | undefined
@@ -527,9 +529,19 @@ function SidebarComponent(props: {
             trigger={() => (
               <span className="account">
                 <span className="account__avatar">
-                  {initial(props.account, props.providerName)}
+                  {props.profileIdentity?.avatarDataUrl ? (
+                    <img src={props.profileIdentity.avatarDataUrl} alt="" />
+                  ) : (
+                    profileInitials(
+                      props.profileIdentity?.displayName ||
+                        props.account?.email ||
+                        props.providerName,
+                    )
+                  )}
                 </span>
-                <span className="account__name">{props.providerName}</span>
+                <span className="account__name">
+                  {props.profileIdentity?.displayName || props.providerName}
+                </span>
               </span>
             )}
           >
@@ -1265,11 +1277,6 @@ function DialogAction(props: { icon: ReactNode; title: string }) {
 }
 
 function noop() {}
-
-function initial(account: Account | undefined, fallback: string): string {
-  const source = account?.email ?? fallback
-  return source.slice(0, 1).toUpperCase()
-}
 
 /**
  * Memoised: the app root re-renders on every streamed frame, and this subtree

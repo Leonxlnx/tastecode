@@ -90,6 +90,7 @@ import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { ProviderRow, type ProviderAction } from './ProviderRow.js'
 import { ProfileSettings } from './ProfileSettings.js'
+import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { renderQrSvg } from './qr-code.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import { CountBadge, SettingsMeta, StateLabel } from './SettingsStatus.js'
@@ -170,6 +171,8 @@ function SettingsComponent(props: {
   projectPath: string | undefined
   projectName: string | undefined
   account: Account | undefined
+  profileIdentity?: ProfileIdentityPreferences | undefined
+  onProfileIdentityChange?: ((identity: ProfileIdentityPreferences) => void) | undefined
   providerStatuses: ProviderStatus[]
   acpAgents: ResultOf<'acp.agents'>['agents']
   modelConnections: ModelConnection[]
@@ -346,6 +349,8 @@ function SettingsComponent(props: {
               transport={props.transport}
               account={props.account}
               providerName={props.providerName}
+              identity={props.profileIdentity}
+              onIdentityChange={props.onProfileIdentityChange}
             />
           ) : null}
           {section === 'providers' ? <ProviderSettings {...props} /> : null}
