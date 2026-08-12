@@ -44,6 +44,8 @@ export async function startDesignPreview(
     throw new Error('preview command argument is unsafe')
   }
   assertRunsWorkspaceCode(workspace, cwd, plan)
+  const commandArgs =
+    plan.command === 'node' || plan.args[0] === 'run' ? plan.args : ['run', ...plan.args]
   const releaseStart = claimPreviewStart(plan.url)
   let child: ChildProcessWithoutNullStreams | undefined
   let output = ''
@@ -52,8 +54,8 @@ export async function startDesignPreview(
     const environment = safeCommandEnvironment(workspace)
     child =
       process.platform === 'win32'
-        ? spawnCli(plan.command, plan.args, { cwd, replaceEnv: true, env: environment })
-        : spawn(plan.command, plan.args, {
+        ? spawnCli(plan.command, commandArgs, { cwd, replaceEnv: true, env: environment })
+        : spawn(plan.command, commandArgs, {
             cwd,
             env: environment,
             stdio: ['pipe', 'pipe', 'pipe'],
