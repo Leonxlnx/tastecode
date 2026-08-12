@@ -23,17 +23,22 @@ import { presentTurns } from '../../web/src/ui/turns.js'
 
 /** Counts stops, so tests can prove the dev server does not outlive its flow. */
 const previewStops = vi.hoisted(() => ({ count: 0 }))
+const previewStarts = vi.hoisted(() => ({ count: 0, barriers: [] as Promise<void>[] }))
 
 vi.mock('./design-preview-runner.js', () => ({
   startDesignPreview: vi.fn(
-    async (_workspace: string, plan: { url: string; viewports: unknown[] }) => ({
-      url: plan.url,
-      viewports: plan.viewports,
-      output: () => 'ready',
-      stop: async () => {
-        previewStops.count += 1
-      },
-    }),
+    async (_workspace: string, plan: { url: string; viewports: unknown[] }) => {
+      previewStarts.count += 1
+      await previewStarts.barriers.shift()
+      return {
+        url: plan.url,
+        viewports: plan.viewports,
+        output: () => 'ready',
+        stop: async () => {
+          previewStops.count += 1
+        },
+      }
+    },
   ),
 }))
 
@@ -1229,6 +1234,92 @@ describe('provider-neutral design briefing', () => {
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
+
+  it.each(['preview start', 'screenshot capture'] as const)(
+    'does not revive an interrupted flow after a late %s',
+    async (delay) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-late-preview-'))
+      const store = new Store(':memory:')
+      store.addProject(workspace)
+      store.addThread({
+        id: 'late-preview',
+        projectPath: workspace,
+        provider: 'codex',
+        title: 'Late preview',
+      })
+      store.setDesignRun('late-preview', {
+        originalRequest: 'Build a site.',
+        options: {},
+        phase: 'preview',
+        pendingPrompt: 'Preview Setup phase',
+        askedQuestions: false,
+        finalAsked: false,
+        explicitAnswers: [],
+      })
+      expect(store.designRun('late-preview')).toMatchObject({ phase: 'preview' })
+      const { orchestrator, sessions, received, capturePreview } = harness(undefined, store)
+      const startCount = previewStarts.count
+      const stopCount = previewStops.count
+      let releaseAwait = () => {}
+      const barrier = new Promise<void>((resolve) => (releaseAwait = resolve))
+      if (delay === 'preview start') {
+        previewStarts.barriers.push(barrier)
+      } else {
+        capturePreview.mockImplementationOnce(async (_url, viewports) => {
+          await barrier
+          return viewports.map((viewport) => ({
+            path: path.join(os.tmpdir(), `${viewport.width}x${viewport.height}.png`),
+            ...viewport,
+          }))
+        })
+      }
+      try {
+        const queued = await orchestrator.submitTurn('late-preview', 'Continue afterward.')
+        expect(queued).toMatchObject({ queued: true })
+        if (queued.queued) orchestrator.deleteQueuedTurn('late-preview', queued.queuedTurn.id)
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
+        sessions[0]?.emit(
+          message(
+            JSON.stringify({
+              version: 1,
+              command: 'pnpm',
+              args: ['dev', '--host', '127.0.0.1'],
+              cwd: '.',
+              url: 'http://127.0.0.1:5173',
+              viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+            }),
+            's1-turn',
+          ),
+        )
+        if (delay === 'preview start') {
+          await vi.waitFor(() => expect(previewStarts.count).toBe(startCount + 1))
+        } else {
+          await vi.waitFor(() => expect(capturePreview).toHaveBeenCalledTimes(1))
+        }
+
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'interrupted' })
+        expect(store.designRun('late-preview')).toBeUndefined()
+        releaseAwait()
+
+        await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
+        expect(capturePreview).toHaveBeenCalledTimes(delay === 'preview start' ? 0 : 1)
+        expect(sessions[0]?.sent.some((prompt) => prompt.includes('visual Review phase'))).toBe(
+          false,
+        )
+        expect(
+          received.some(
+            ({ event }) =>
+              event.type === 'item.completed' && event.item.text?.startsWith('Website built.'),
+          ),
+        ).toBe(false)
+      } finally {
+        releaseAwait()
+        await orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+      }
+    },
+  )
 })
 
 describe('persisted threads', () => {

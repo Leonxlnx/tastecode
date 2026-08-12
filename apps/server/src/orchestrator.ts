@@ -2543,6 +2543,10 @@ export class Orchestrator {
     plan: ReturnType<typeof parsePreviewPhaseOutput>,
   ): Promise<void> {
     const preview = await startDesignPreview(flow.workspacePath, plan)
+    if (this.#designFlows.get(threadId) !== flow) {
+      await preview.stop()
+      return
+    }
     this.#designPreviews.set(threadId, preview)
     flow.previewPlan = plan
     flow.previewUrl = preview.url
@@ -2566,6 +2570,10 @@ export class Orchestrator {
     }
     if (!this.#designPreviews.has(threadId)) {
       const preview = await startDesignPreview(flow.workspacePath, flow.previewPlan)
+      if (this.#designFlows.get(threadId) !== flow) {
+        await preview.stop()
+        return
+      }
       this.#designPreviews.set(threadId, preview)
       flow.previewUrl = preview.url
     }
@@ -2573,6 +2581,7 @@ export class Orchestrator {
       flow.previewUrl,
       flow.previewPlan.viewports.map(({ width, height }) => ({ width, height })),
     )
+    if (this.#designFlows.get(threadId) !== flow) return
     if (!screenshots) {
       this.#finishWithoutVisualReview(threadId, turnId, flow, 'desktop capture is unavailable')
       return
