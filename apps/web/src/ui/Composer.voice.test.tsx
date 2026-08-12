@@ -59,6 +59,25 @@ describe('Composer voice dictation', () => {
     expect(onTranscribeVoice).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps a send-after transcript as a draft when the provider is not ready', async () => {
+    const onSend = vi.fn()
+    renderVoiceComposer({
+      onSend,
+      onTranscribeVoice: vi.fn(async () => 'spoken words'),
+      sendAvailability: 'setup-required',
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Transcribe and send voice note' }))
+
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+        'spoken words',
+      ),
+    )
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
   it('cancels an in-flight transcription by request id', async () => {
     const onCancelVoice = vi.fn()
     const onTranscribeVoice = vi.fn(() => new Promise<string>(() => {}))

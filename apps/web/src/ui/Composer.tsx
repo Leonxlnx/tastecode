@@ -178,6 +178,7 @@ function ComposerComponent(props: {
   const voiceRequest = useRef<string | undefined>(undefined)
   const voiceOperation = useRef(0)
   const cancelVoiceRequest = useRef(props.onCancelVoice)
+  const sendAvailabilityRef = useRef(props.sendAvailability)
   const textRef = useRef(text)
   const previewUrls = useRef(new Set<string>())
   const resizeFrame = useRef<number | undefined>(undefined)
@@ -191,6 +192,7 @@ function ComposerComponent(props: {
 
   textRef.current = text
   cancelVoiceRequest.current = props.onCancelVoice
+  sendAvailabilityRef.current = props.sendAvailability
 
   useEffect(() => {
     mounted.current = true
@@ -358,12 +360,12 @@ function ComposerComponent(props: {
       trimmed === '' ||
       paths.length !== attachments.length ||
       props.disabled ||
-      props.sendAvailability !== 'ready'
+      sendAvailabilityRef.current !== 'ready'
     )
-      return
+      return false
     if (!props.projectPath) {
       props.onProjectRequired()
-      return
+      return false
     }
     const el = area.current
     const currentHeight = el?.offsetHeight ?? COMPOSER_MIN_HEIGHT
@@ -389,6 +391,7 @@ function ComposerComponent(props: {
       })
       el.focus()
     }
+    return true
   }
 
   const submit = (submission: RunningSubmission = 'queue') => {
@@ -460,8 +463,7 @@ function ComposerComponent(props: {
       ) {
         const inserted = insertTranscriptAtCursor(textRef.current, transcript, cursor)
         if (inserted) {
-          if (sendAfter) sendContent(inserted.text)
-          else insertTranscript(transcript, cursor)
+          if (!sendAfter || !sendContent(inserted.text)) insertTranscript(transcript, cursor)
         }
       }
     } catch (error) {

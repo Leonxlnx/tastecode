@@ -188,11 +188,15 @@ type AccountCheck = {
 
 function resolveSendAvailability(input: {
   catalog: CatalogAvailability
+  serverBoundSession: boolean
   activeProvider?: ProviderId | undefined
   selectedChoice?: ModelChoice | undefined
   providerStatuses: ProviderStatus[]
   accountCheck: AccountCheck
 }): SendAvailability {
+  // A loaded source without a synthesizable choice is already bound to its
+  // server-owned runtime and does not depend on the public-beta catalog.
+  if (input.serverBoundSession) return 'ready'
   if (input.catalog === 'loading') return 'loading'
   if (input.catalog === 'failed') return 'unavailable'
 
@@ -206,9 +210,7 @@ function resolveSendAvailability(input: {
   }
 
   const status = input.providerStatuses.find((entry) => entry.id === provider)
-  // A persisted server session remains runnable even when its source is parked
-  // from this release's new-session roster (for example a direct API thread).
-  if (!status) return input.activeProvider ? 'ready' : 'unavailable'
+  if (!status) return 'unavailable'
   if (!status.installed || status.auth === 'unauthenticated') return 'setup-required'
   if (status.problem || !status.capabilities) return 'unavailable'
   if (status.auth === 'authenticated') return 'ready'
@@ -511,14 +513,15 @@ export function App() {
   const sourceHasCatalogModels = useMemo(
     () =>
       activeModelSource
-        ? models.some((choice) => modelSource(choice) === activeModelSource)
+        ? rosterModels.some((choice) => modelSource(choice) === activeModelSource)
         : false,
-    [activeModelSource, models],
+    [activeModelSource, rosterModels],
   )
   const selectableImplicitChoice =
     implicitChoice &&
+    PUBLIC_BETA_PROVIDER_IDS.has(implicitChoice.provider) &&
     (!activeModelSource || modelSource(implicitChoice) === activeModelSource) &&
-    (models.length === 0 || (activeModelSource && !sourceHasCatalogModels))
+    (rosterModels.length === 0 || (activeModelSource && !sourceHasCatalogModels))
       ? implicitChoice
       : undefined
   const selectedModelChoice =
@@ -529,6 +532,9 @@ export function App() {
     () =>
       resolveSendAvailability({
         catalog: catalogAvailability,
+        serverBoundSession: Boolean(
+          activeSession && activeSession.provider === provider && !implicitChoice,
+        ),
         activeProvider: activeSession?.provider,
         selectedChoice: selectedModelChoice,
         providerStatuses,
@@ -536,7 +542,8 @@ export function App() {
       }),
     [
       catalogAvailability,
-      activeSession?.provider,
+      activeSession,
+      implicitChoice,
       selectedModelChoice,
       providerStatuses,
       accountCheck,
@@ -896,13 +903,15 @@ export function App() {
     let cancelled = false
     setCatalogAvailability('loading')
     void (async () => {
-      const [providersResult, connectionsResult, agentsResult] = await Promise.all([
-        transport.request('providers.list', {}),
+      const auxiliaryCatalog = Promise.all([
         transport.request('connections.list', {}).catch(() => ({ connections: [] })),
         transport.request('acp.agents', {}).catch(() => ({ agents: [] })),
       ])
+      const providersResult = await transport.request('providers.list', {})
       const providers = providersResult?.providers ?? []
-      const connections = connectionsResult?.connections ?? []
+      if (cancelled) return
+      setProviderStatuses(providers)
+      setCatalogAvailability('ready')
       const unknownKeys = new Set<string>()
       const direct = await Promise.all(
         providers
@@ -931,16 +940,16 @@ export function App() {
             }
           }),
       )
+      const [connectionsResult, agentsResult] = await auxiliaryCatalog
+      const connections = connectionsResult?.connections ?? []
       // Public beta scope: the picker holds only the three direct plans the
       // server lists. ACP-agent and API-connection catalogs are parked, not
       // deleted — they return with their rosters after the beta.
       if (cancelled) return
       const catalog = direct.flat()
-      setProviderStatuses(providers)
       setAcpAgents(agentsResult?.agents ?? [])
       setModelConnections(connections)
       setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
-      setCatalogAvailability('ready')
       // A synthetic cache-miss entry has no tier metadata. Do not persist it
       // as an authoritative snapshot after a transient discovery failure.
       if (unknownKeys.size === 0) {
