@@ -208,6 +208,22 @@ let serverSidebarSettings: {
   autoSettleDays: number | null
 } = { mode: 'classic', autoSettleDays: 3 }
 
+function contractValidServerProjects(): unknown[] {
+  return serverProjects.map((project) => {
+    if (typeof project !== 'object' || project === null) return project
+    const record = project as Record<string, unknown>
+    if (!Array.isArray(record.sessions)) return project
+    return {
+      ...record,
+      sessions: record.sessions.map((session) =>
+        typeof session === 'object' && session !== null
+          ? { provider: 'codex', createdAt: 0, ...session }
+          : session,
+      ),
+    }
+  })
+}
+
 beforeEach(() => {
   appRenders.mockClear()
   shellRenders.composer.mockClear()
@@ -284,7 +300,7 @@ beforeEach(() => {
       case 'auth.status':
         return Promise.resolve({ signedIn: true })
       case 'projects.list':
-        return Promise.resolve({ projects: serverProjects })
+        return Promise.resolve({ projects: contractValidServerProjects() })
       case 'sidebar.settings':
         return Promise.resolve(serverSidebarSettings)
       case 'sidebar.updateSettings':
@@ -587,7 +603,7 @@ describe('web client', () => {
       expect(transport.request).toHaveBeenCalledWith('projects.list', {})
     })
     // prettier-ignore
-    const rejected = (fireEvent.click(screen.getByRole('button', { name: 'New session' })), await screen.findByPlaceholderText('Do anything'))
+    const rejected = (fireEvent.click(screen.getByRole('button', { name: /^New session,/ })), await screen.findByPlaceholderText('Do anything'))
     // prettier-ignore
     fireEvent.keyDown((fireEvent.change(rejected, { target: { value: 'Rejected draft' } }), rejected), { key: 'Enter' })
     await waitFor(() => expect((rejected as HTMLTextAreaElement).value).toBe('Rejected draft'))
@@ -944,7 +960,7 @@ describe('new chats', () => {
     fireEvent.keyDown(composer, { key: 'Enter' })
 
     expect(screen.getByTestId('thread').textContent).toContain('Start immediately')
-    expect(screen.getByRole('button', { name: 'Start immediately, working' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Start immediately, Codex, working' })).toBeTruthy()
     expect(screen.getByText('Working')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
     expect(document.querySelector('.stage__body.is-new-session')).toBeNull()
@@ -1227,7 +1243,7 @@ describe('new chats', () => {
     ]
     render(<App />)
 
-    fireEvent.contextMenu(await screen.findByRole('button', { name: 'Keep nearby' }))
+    fireEvent.contextMenu(await screen.findByRole('button', { name: /^Keep nearby,/ }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Pin chat' }))
 
     await waitFor(() => {
@@ -1259,7 +1275,7 @@ describe('new chats', () => {
     ]
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Parser work' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Parser work,/ }))
     fireEvent.click(await screen.findByRole('button', { name: '1 checkpoint' }))
     fireEvent.click(screen.getByRole('button', { name: /Before “Fix the parser”/ }))
 
@@ -1737,7 +1753,7 @@ describe('new chats', () => {
         workspacePath: '/work/project',
         approval: 'ask',
       })
-      expect(screen.getByRole('button', { name: 'Fix the sidebar' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: /^Fix the sidebar,/ })).toBeTruthy()
       expect(screen.getByTestId('thread').textContent).toContain('Fix the sidebar')
     })
   })
@@ -2286,8 +2302,8 @@ describe('sidebar chat ordering', () => {
 
     render(<App />)
 
-    const source = (await screen.findByRole('button', { name: 'First chat' })).closest('li')!
-    const target = screen.getByRole('button', { name: 'Third chat' }).closest('li')!
+    const source = (await screen.findByRole('button', { name: /^First chat,/ })).closest('li')!
+    const target = screen.getByRole('button', { name: /^Third chat,/ }).closest('li')!
     vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
       bottom: 88,
       height: 28,
@@ -2440,9 +2456,9 @@ describe('inbox lifecycle', () => {
     ]
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Ready chat, project, Done' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Ready chat, project, Codex, Done' }))
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: 'Ready chat, project, Done' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Ready chat, project, Codex, Done' })).toBeNull()
       expect(screen.getByRole('button', { name: /^Ready chat, project,/ })).toBeTruthy()
       expect(screen.queryByText('Woke')).toBeNull()
     })
@@ -2469,7 +2485,7 @@ describe('global shortcuts', () => {
     ]
 
     render(<App />)
-    await screen.findByRole('button', { name: 'Polish the sidebar' })
+    await screen.findByRole('button', { name: /^Polish the sidebar,/ })
     fireEvent.keyDown(window, { key: 'k', metaKey: true })
 
     expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeTruthy()
@@ -2486,7 +2502,7 @@ describe('global shortcuts', () => {
     fireEvent.keyDown(search, { key: 'Enter' })
 
     expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Polish the sidebar' }).classList).toContain(
+    expect(screen.getByRole('button', { name: /^Polish the sidebar,/ }).classList).toContain(
       'is-active',
     )
   })
@@ -2511,7 +2527,7 @@ describe('global shortcuts', () => {
     ]
     render(<App />)
 
-    await screen.findByRole('button', { name: 'New session' })
+    await screen.findByRole('button', { name: /^New session,/ })
     const actions = document.querySelector<HTMLElement>('.rail__actions')
     expect(actions).not.toBeNull()
     expect(within(actions!).queryByText('⌘N')).toBeNull()
@@ -2528,7 +2544,7 @@ describe('global shortcuts', () => {
   it('runs common shortcuts and never intercepts them from the composer', async () => {
     render(<App />)
 
-    await screen.findByRole('button', { name: 'New session' })
+    await screen.findByRole('button', { name: /^New session,/ })
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Keep this draft intact' } })
     fireEvent.keyDown(composer, { key: 'n', metaKey: true })
@@ -2613,7 +2629,7 @@ describe('live sessions', () => {
     transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.history' ? new Promise((resolve) => (resolveHistory = resolve)) : method === 'thread.sendTurn' ? new Promise(() => {}) : request(method, params))
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Old chat' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Old chat,/ }))
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Continue immediately' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
@@ -2645,7 +2661,7 @@ describe('live sessions', () => {
       // prettier-ignore
       transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? new Promise((_, reject) => (rejectSend = reject)) : method === 'thread.history' && historyCount++ > 0 ? new Promise((resolve) => resyncs.push(resolve)) : request(method, params))
       render(<App />)
-      fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
+      fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
       if (kind === 'queue') emitThreadEvent('thread-1', started.event)
       const composer = screen.getByPlaceholderText('Do anything')
       const draft = () => (composer as HTMLTextAreaElement).value
@@ -2676,11 +2692,11 @@ describe('live sessions', () => {
       expect(screen.queryByLabelText('Queued prompts')).toBeNull()
       if (outcome === 'accepted') return
       fireEvent.change(composer, { target: { value: 'Edited queue' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Background' }))
+      fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
       fireEvent.click(screen.getByRole('button', { name: /^Existing work/ }))
       expect(draft()).toBe('Edited queue')
       fireEvent.change(composer, { target: { value: '' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Background' }))
+      fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
       fireEvent.click(screen.getByRole('button', { name: /^Existing work/ }))
       expect(draft()).toBe('')
     },
@@ -2707,7 +2723,7 @@ describe('live sessions', () => {
     )
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Old chat' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Old chat,/ }))
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Keep this if restore wins' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
@@ -2754,7 +2770,7 @@ describe('live sessions', () => {
     })
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
     emitThreadEvent('thread-1', {
       type: 'turn.started',
       turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
@@ -2816,7 +2832,7 @@ describe('live sessions', () => {
     )
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
     emitThreadEvent('thread-1', {
       type: 'turn.started',
       turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
@@ -2864,7 +2880,7 @@ describe('live sessions', () => {
     ]
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
     emitThreadEvent('thread-1', {
       type: 'turn.started',
       turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
@@ -2935,7 +2951,7 @@ describe('live sessions', () => {
     })
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.queue', { threadId: 'thread-1' }),
     )
@@ -3001,7 +3017,7 @@ describe('live sessions', () => {
 
     render(<App />)
 
-    await screen.findByRole('button', { name: 'Newer session' })
+    await screen.findByRole('button', { name: /^Newer session,/ })
     expect(sessionTitles()).toEqual(['Newer session', 'Older session'])
 
     emitThreadEvent('thread-1', {
@@ -3014,7 +3030,7 @@ describe('live sessions', () => {
 
   it('folds streamed deltas once per animation frame', async () => {
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     await screen.findByTestId('thread')
     emitThreadEvent('untouched-thread', {
       type: 'turn.started',
@@ -3060,7 +3076,7 @@ describe('live sessions', () => {
 
   it('keeps static shell regions out of streamed-frame renders', async () => {
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     await screen.findByTestId('thread')
     emitThreadEvent('untouched-thread', {
       type: 'turn.started',
@@ -3103,7 +3119,7 @@ describe('live sessions', () => {
 
   it('keeps open utility surfaces out of streamed-frame renders', async () => {
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     await screen.findByTestId('thread')
     emitThreadEvent('untouched-thread', {
       type: 'turn.started',
@@ -3183,7 +3199,7 @@ describe('live sessions', () => {
 
   it('opens chat search without rerendering the app shell', async () => {
     render(<App />)
-    await screen.findByRole('button', { name: 'New session' })
+    await screen.findByRole('button', { name: /^New session,/ })
     const branchPicker = await screen.findByRole('button', { name: 'Choose branch' })
     await waitFor(() => expect((branchPicker as HTMLButtonElement).disabled).toBe(false))
     appRenders.mockClear()
@@ -3236,7 +3252,7 @@ describe('live sessions', () => {
 
   it('flushes pending deltas before a completion event', async () => {
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     await screen.findByTestId('thread')
     emitThreadEvent('untouched-thread', {
       type: 'turn.started',
@@ -3287,7 +3303,7 @@ describe('live sessions', () => {
       method === 'thread.history' ? history : defaultRequest(method, params),
     )
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     await screen.findByTestId('thread')
 
     const frames: FrameRequestCallback[] = []
@@ -3340,7 +3356,7 @@ describe('live sessions', () => {
 
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'First session' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^First session,/ }))
     emitThreadEvent('thread-1', {
       type: 'turn.started',
       turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
@@ -3358,10 +3374,10 @@ describe('live sessions', () => {
       },
     })
 
-    const working = screen.getByRole('button', { name: 'First session, working' })
+    const working = screen.getByRole('button', { name: 'First session, Codex, working' })
     expect(working.querySelector('.sess__spinner')?.textContent).toBe('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Second session' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Second session,/ }))
     emitThreadEvent('thread-2', {
       type: 'turn.started',
       turn: { id: 'turn-2', threadId: 'thread-2', status: 'running', createdAt: 0 },
@@ -3377,11 +3393,11 @@ describe('live sessions', () => {
     })
 
     const attention = screen.getByRole('button', {
-      name: 'Second session, waiting for approval',
+      name: 'Second session, Codex, waiting for approval',
     })
     expect(attention.querySelector('.sess__status-dot.is-attention')).not.toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'First session, working' }))
+    fireEvent.click(screen.getByRole('button', { name: 'First session, Codex, working' }))
     await waitFor(() => expect(screen.getByText('First result')).toBeTruthy())
 
     emitThreadEvent('thread-1', {
@@ -3389,7 +3405,7 @@ describe('live sessions', () => {
       turnId: 'turn-1',
       status: 'completed',
     })
-    expect(screen.getByRole('button', { name: 'First session' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'First session, Codex' })).toBeTruthy()
   })
 })
 
@@ -3424,7 +3440,7 @@ describe('reopening a session', () => {
     render(<App />)
     await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
 
-    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
 
     // The conversation used to exist only in the events this client had
     // personally seen, so switching or reloading showed nothing.
@@ -3483,7 +3499,7 @@ describe('reopening a session', () => {
         'Opus 5',
       )
     })
-    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
@@ -3550,7 +3566,7 @@ describe('reopening a session', () => {
 
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'API thread' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'API thread, API connection' }))
     await act(async () => {
       releaseModels()
       await modelsGate
@@ -3601,7 +3617,7 @@ describe('reopening a session', () => {
 
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'ACP thread' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'ACP thread, Kimi CLI' }))
     await waitFor(() => {
       expect(localStorage.getItem('harness.model')).toBe('acp:kimi:automatic')
     })
@@ -3643,7 +3659,7 @@ describe('reopening a session', () => {
 
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
     fireEvent.click(await screen.findByRole('switch', { name: 'Show any models from Codex' }))
@@ -3669,7 +3685,7 @@ describe('reopening a session', () => {
   it('resyncs the active thread when the transport detects a push gap', async () => {
     render(<App />)
     await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
-    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
@@ -3699,7 +3715,7 @@ describe('reopening a session', () => {
   it('resyncs active server-owned state after reconnecting mid-stream', async () => {
     render(<App />)
     await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
-    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
@@ -3742,7 +3758,7 @@ describe('reopening a session', () => {
 
     render(<App />)
     await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
-    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
     await waitFor(() => expect(historyResolvers).toHaveLength(1))
     act(() => {
       for (const listener of transport.stateListeners) listener('reconnecting')
