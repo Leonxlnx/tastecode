@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { DomainEvent, QueuedTurn, ResultOf } from '@harness/contracts'
-import type { ComponentProps } from 'react'
+import { StrictMode, type ComponentProps } from 'react'
 import { App } from './App.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
@@ -1258,6 +1258,63 @@ describe('web client', () => {
   })
 })
 describe('new chats', () => {
+  it('prefetches plan limits under StrictMode and reuses them when Account opens', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let firstUsage = true
+    let firstSocketClosed = false
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'usage.summary' && firstUsage) {
+        firstUsage = false
+        if (firstSocketClosed) return Promise.reject(new Error('Connection to server was closed'))
+      }
+      return request(method, params)
+    })
+    transport.close.mockImplementationOnce(() => {
+      firstSocketClosed = true
+    })
+    transport.connect
+      .mockImplementationOnce(() => {})
+      .mockImplementationOnce(() =>
+        window.setTimeout(() => {
+          for (const listener of transport.stateListeners) listener('open')
+        }, 0),
+      )
+
+    render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    )
+
+    expect(transport.close).toHaveBeenCalledTimes(1)
+    await waitFor(() => {
+      expect(
+        transport.request.mock.calls.filter(([method]) => method === 'usage.summary'),
+      ).toHaveLength(2)
+    })
+    transport.request.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    expect(await screen.findByRole('region', { name: 'Codex' })).toBeTruthy()
+    expect(screen.getByText('75% left')).toBeTruthy()
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+  })
+
+  it('cancels trailing plan-limit refreshes after a real unmount', async () => {
+    const view = render(<App />)
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+    )
+    transport.request.mockClear()
+
+    act(() => transport.listeners.get('usage.changed')?.({ provider: 'codex' }))
+    view.unmount()
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 120)))
+
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+  })
+
   it('keeps installed provider limit sources separate in the account overview', async () => {
     serverProviders = [
       ...serverProviders,

@@ -283,10 +283,12 @@ function latestSequence(
 export function App() {
   const [connectionUrl, setConnectionUrl] = useState(() => serverUrl(SERVER_BASE_URL))
   const transport = useMemo(() => new Transport(connectionUrl), [connectionUrl])
+  // StrictMode replays effect cleanup against this same memoized instance.
   const usageController = useMemo(
     () => new UsageLimitsController((params) => transport.request('usage.summary', params)),
     [transport],
   )
+  const usageDisposals = useRef(new Map<UsageLimitsController, number>())
   const subscribeUsage = useCallback(
     (listener: () => void) => usageController.subscribe(listener),
     [usageController],
@@ -297,6 +299,22 @@ export function App() {
     (requestedProvider?: ProviderId) => usageController.refresh(requestedProvider),
     [usageController],
   )
+
+  useEffect(() => {
+    // Let StrictMode's immediate replay cancel disposal, while a real unmount
+    // or controller replacement still tears down trailing refresh timers.
+    window.clearTimeout(usageDisposals.current.get(usageController))
+    usageDisposals.current.delete(usageController)
+    return () => {
+      usageDisposals.current.set(
+        usageController,
+        window.setTimeout(() => {
+          usageDisposals.current.delete(usageController)
+          usageController.dispose()
+        }, 0),
+      )
+    }
+  }, [usageController])
   const [provider, setProvider] = useState<ProviderId>(() => {
     const stored = readSetting(SETUP_KEY)
     return PROVIDER_IDS.find((id) => id === stored) ?? 'codex'
@@ -993,6 +1011,12 @@ export function App() {
         announce = window.setTimeout(() => setOffline(true), 1200)
       } else {
         setOffline(false)
+        if (
+          state === 'open' &&
+          usageController.snapshot().some((entry) => entry.status === 'error')
+        ) {
+          refreshUsage()
+        }
         // Pushes sent while the socket was down are in the durable log but
         // were never delivered, and sequence numbers restart per connection
         // so the gap detector cannot see it. Without this the thread stays
@@ -1043,8 +1067,6 @@ export function App() {
     refreshUsage,
     usageController,
   ])
-
-  useEffect(() => () => usageController.dispose(), [usageController])
 
   useEffect(() => {
     let cancelled = false
