@@ -1,10 +1,10 @@
-import type { ParamsOf, ResultOf } from '@harness/contracts'
+import type { ParamsOf, ProviderId, ResultOf } from '@harness/contracts'
 import { describe, expect, it, vi } from 'vitest'
 import { UsageLimitsController } from './usage-limits-state.js'
 
 type Summary = ResultOf<'usage.summary'>
 
-const summary = (provider: 'codex' | 'claude-code' | 'grok' | 'api'): Summary => ({
+const summary = (provider: ProviderId): Summary => ({
   session: emptyUsage(),
   today: emptyUsage(),
   limits: [],
@@ -72,8 +72,14 @@ describe('UsageLimitsController', () => {
       message: 'Temporary failure',
       summary: summary('claude-code'),
     })
-    expect(load.mock.calls.filter(([params]) => params.provider === 'codex')).toHaveLength(1)
-    expect(load.mock.calls.filter(([params]) => params.provider === 'claude-code')).toHaveLength(2)
+    expect(
+      load.mock.calls.filter(([params]) => 'provider' in params && params.provider === 'codex'),
+    ).toHaveLength(1)
+    expect(
+      load.mock.calls.filter(
+        ([params]) => 'provider' in params && params.provider === 'claude-code',
+      ),
+    ).toHaveLength(2)
   })
 
   it('drops removed sources and ignores their late responses', async () => {
