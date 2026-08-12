@@ -17,7 +17,8 @@ describe('debug settings', () => {
     await waitFor(() => {
       expect(request).toHaveBeenCalledWith('usage.resetHistory', {})
     })
-    expect((await screen.findByRole('status')).textContent).toBe('Scan started')
+    const status = await screen.findByRole('status', { name: 'Checking · Scan started' })
+    expect(status.className).toContain('is-checking')
     expect(screen.getByText(/Sessions and Harness data are not deleted/)).toBeTruthy()
   })
 })

@@ -3416,15 +3416,74 @@
   color: var(--text-3);
 }
 
-/* One-line rows: state that used to be a note sits inline, muted, before
-   the row's control. Warning states keep their color so they stay findable. */
-.settings__status {
+.state-label,
+.state-label__detail {
+  display: inline-flex;
+  align-items: center;
+}
+
+.state-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: 5px;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+}
+
+.state-label::before {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  background: var(--text-3);
+  border-radius: 50%;
+  content: '';
+}
+
+.state-label.is-checking::before {
+  background: var(--running);
+}
+
+.state-label.is-ready::before {
+  background: var(--success);
+}
+
+.state-label.is-setup-needed::before {
+  background: var(--attention);
+}
+
+.state-label.is-failed::before {
+  background: var(--error);
+}
+
+.state-label__detail {
+  min-width: 0;
+  gap: 5px;
+  overflow: hidden;
+  color: var(--text-3);
+  text-overflow: ellipsis;
+}
+
+.count-badge {
+  flex: none;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.settings-meta {
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-3);
   font-size: var(--t-sm);
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-variant-numeric: tabular-nums;
 }
 
 /* The text forms stack in one grid cell so the full address reserves its
@@ -3474,10 +3533,6 @@
 
 .settings__email.is-revealed .settings__email-masked {
   visibility: hidden;
-}
-
-.settings__status.is-warning {
-  color: var(--error);
 }
 
 .settings__row-control {
@@ -3570,20 +3625,6 @@
 .settings__action:active {
   box-shadow: var(--chrome-inset-shadow);
   transform: translateY(1px);
-}
-
-.settings__status {
-  flex: none;
-  padding: 3px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-pill);
-  color: var(--text-3);
-  font-size: var(--t-xs);
-}
-
-.settings__status.is-on {
-  border-color: color-mix(in oklab, var(--attention) 28%, var(--line));
-  color: var(--text);
 }
 
 .settings__mobile-block,

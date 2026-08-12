@@ -96,6 +96,7 @@ import { ProviderRow, type ProviderAction } from './ProviderRow.js'
 import { ProfileSettings } from './ProfileSettings.js'
 import { renderQrSvg } from './qr-code.js'
 import { SourceIdentity } from './SourceIdentity.js'
+import { CountBadge, SettingsMeta, StateLabel } from './SettingsStatus.js'
 import { UsageSettings } from './UsageSettings.js'
 
 const InstallTerminal = lazy(() =>
@@ -886,7 +887,10 @@ function CustomModelsSection(props: {
     <section className="model-settings__custom" aria-label="Custom models">
       <header className="model-settings__custom-head">
         <h3>Custom models</h3>
-        <span className="settings__status">{props.models.length}</span>
+        <CountBadge
+          value={props.models.length}
+          label={`${props.models.length} custom ${props.models.length === 1 ? 'model' : 'models'}`}
+        />
       </header>
       {props.models.length > 0 ? (
         <ul className="model-settings__custom-list">
@@ -951,9 +955,10 @@ function ModelVisibilityGroup(props: {
               <SourceIdentity presentation={{ label: props.source, mark: props.choices[0].mark }} />
             </h3>
           ) : null}
-          <span className="settings__status">
-            {visibleCount}/{props.choices.length}
-          </span>
+          <CountBadge
+            value={`${visibleCount}/${props.choices.length}`}
+            label={`${visibleCount} of ${props.choices.length} models visible`}
+          />
         </div>
         <ModelSearchField
           className="model-visibility__search"
@@ -1217,9 +1222,7 @@ function MobileAccessSettings(props: { transport: Transport }) {
             : 'Generate a one-time code to accept the native app again. The web app stays available.'
         }
       >
-        <span className={`settings__status${status?.enabled ? ' is-on' : ''}`}>
-          {status?.enabled ? 'On' : 'Off'}
-        </span>
+        <StateLabel state={status?.enabled ? 'ready' : 'unavailable'} />
       </SettingsRow>
 
       {(status?.webUrls?.length ?? 0) > 0 ? (
@@ -1755,11 +1758,7 @@ export function DebugSettings(props: { transport: Transport }) {
         title="Usage history index"
         note="Clears the generated cache and reparses every local provider history. Sessions and Harness data are not deleted."
       >
-        {state === 'started' ? (
-          <span className="settings__status is-on" role="status">
-            Scan started
-          </span>
-        ) : null}
+        {state === 'started' ? <StateLabel state="checking" detail="Scan started" live /> : null}
         {state === 'error' && error ? (
           <RowIssue message={error} tip="Restart the app, then try the reset again." />
         ) : null}
@@ -1799,23 +1798,30 @@ function AboutSettings(props: { transport: Transport }) {
     : result.error
       ? undefined
       : result.upToDate
-        ? `Up to date · ${short(result.remote?.sha ?? '')}`
+        ? {
+            state: 'ready' as const,
+            detail: result.remote ? `Up to date · ${short(result.remote.sha)}` : 'Up to date',
+          }
         : result.remote
-          ? `Newer: ${short(result.remote.sha)} — pull and restart`
-          : 'No verdict'
+          ? {
+              state: 'setup-needed' as const,
+              detail: `Newer: ${short(result.remote.sha)} — pull and restart`,
+            }
+          : { state: 'unavailable' as const, detail: 'No verdict' }
 
   return (
     <SettingsPanel title="About">
       <SettingsRow title="Personal Harness">
-        <span className="settings__status">
+        <SettingsMeta>
           {`${isDesktop ? 'Desktop' : 'Browser'} · pre-release${result?.localCommit ? ` · ${short(result.localCommit)}` : ''}`}
-        </span>
+        </SettingsMeta>
       </SettingsRow>
       <SettingsRow title="Updates">
         {result?.error ? (
           <RowIssue message={result.error} tip="Check your network or GitHub access, then retry." />
         ) : null}
-        {updateStatus ? <span className="settings__status">{updateStatus}</span> : null}
+        {checking ? <StateLabel state="checking" live /> : null}
+        {!checking && updateStatus ? <StateLabel {...updateStatus} live /> : null}
         <button
           className="settings__action"
           type="button"

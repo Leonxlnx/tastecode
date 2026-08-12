@@ -21,15 +21,18 @@ vi.mock('./InstallTerminal.js', () => ({
 
 function renderSettings(
   options: {
-    initialSection?: 'appearance' | 'data'
+    initialSection?: 'appearance' | 'data' | 'debug' | 'about'
     onClose?: () => void
     onReset?: () => void
+    transport?: Transport
   } = {},
 ) {
-  const transport = {
-    request: vi.fn(),
-    on: vi.fn(() => () => {}),
-  } as unknown as Transport
+  const transport =
+    options.transport ??
+    ({
+      request: vi.fn(),
+      on: vi.fn(() => () => {}),
+    } as unknown as Transport)
 
   return render(
     <Settings
@@ -100,6 +103,50 @@ describe('settings viewport layout', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Data & privacy' }))
     expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy()
+  })
+})
+
+describe('about status grammar', () => {
+  it.each([
+    [
+      'ready',
+      {
+        localCommit: '1234567890',
+        remote: { sha: '1234567890', message: 'Current', date: '2026-08-12' },
+        upToDate: true,
+      },
+      'Ready · Up to date · 1234567',
+    ],
+    [
+      'setup-needed',
+      {
+        localCommit: '1234567890',
+        remote: { sha: 'abcdef0123', message: 'Newer', date: '2026-08-12' },
+        upToDate: false,
+      },
+      'Setup needed · Newer: abcdef0 — pull and restart',
+    ],
+    ['unavailable', { localCommit: '1234567890' }, 'Unavailable · No verdict'],
+  ] as const)('separates %s update state from build metadata', async (state, result, label) => {
+    const update = deferred<ResultOf<'system.updateCheck'>>()
+    const request = vi.fn((method: string) => {
+      if (method === 'system.updateCheck') return update.promise
+      throw new Error(`unexpected ${method}`)
+    })
+    const { container } = renderSettings({
+      initialSection: 'about',
+      transport: { request, on: vi.fn(() => () => {}) } as unknown as Transport,
+    })
+
+    expect(screen.getByText('Browser · pre-release').className).toBe('settings-meta')
+    fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
+    expect(screen.getByRole('status', { name: 'Checking' }).className).toContain('is-checking')
+
+    await act(async () => update.resolve(result))
+
+    expect((await screen.findByRole('status', { name: label })).className).toContain(`is-${state}`)
+    expect(request).toHaveBeenCalledWith('system.updateCheck', {})
+    expect(container.querySelector('.settings__status')).toBeNull()
   })
 })
 
@@ -562,6 +609,7 @@ describe('model settings', () => {
     const sourceHeading = search.closest('.model-visibility')?.querySelector('.source-identity')
     expect(sourceHeading?.getAttribute('title')).toBe('OpenCode')
     expect(sourceHeading?.querySelector('svg')?.getAttribute('width')).toBe('15')
+    expect(screen.getByLabelText('1 of 2 models visible').className).toBe('count-badge')
     fireEvent.change(search, { target: { value: 'qwen 3.8' } })
 
     expect(screen.queryByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeNull()
@@ -636,6 +684,7 @@ describe('model settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
 
     const section = screen.getByRole('region', { name: 'Custom models' })
+    expect(within(section).getByLabelText('1 custom model').className).toBe('count-badge')
     expect(within(section).getByText('Qwen Max')).toBeTruthy()
     expect(within(section).getByText('qwen-max')).toBeTruthy()
     const row = within(section).getByText('Qwen Max').closest('li')
@@ -775,6 +824,7 @@ describe('mobile access settings', () => {
       expect(currentTransport.request).toHaveBeenCalledWith('connections.status', {}),
     )
     expect(screen.getByText('Not accepting mobile connections')).toBeTruthy()
+    expect(screen.getByLabelText('Unavailable').className).toContain('is-unavailable')
 
     await act(async () => {
       staleStatus.reject(new Error('previous transport closed'))
@@ -916,6 +966,7 @@ describe('mobile access settings', () => {
       await slowStatus.promise
     })
     expect(screen.getByText('Available to paired devices')).toBeTruthy()
+    expect(screen.getByLabelText('Ready').className).toContain('is-ready')
   })
 
   it('keeps a pairing offer newer than an in-flight status response', async () => {
