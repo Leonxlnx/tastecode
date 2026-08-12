@@ -62,6 +62,8 @@ describe('Agent Skills settings', () => {
     )
 
     expect(await screen.findByText('Design Taste')).toBeTruthy()
+    expect(screen.getByText('Codex · Agent Skills supported')).toBeTruthy()
+    expect(screen.queryByText('Available in Project')).toBeNull()
     expect(screen.getByText('Project')).toBeTruthy()
     expect(screen.getByText(/screenshots/)).toBeTruthy()
     fireEvent.click(screen.getByRole('switch', { name: 'Disable Design Taste' }))
@@ -100,6 +102,7 @@ describe('Agent Skills settings', () => {
     )
 
     expect(await screen.findByText(/does not expose Agent Skills/)).toBeTruthy()
+    expect(screen.getByText('Claude Code · Agent Skills unavailable')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Install from folder' })).toBeNull()
     expect(screen.queryByRole('switch')).toBeNull()
   })

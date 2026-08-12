@@ -70,6 +70,8 @@ describe('MCP settings', () => {
     )
 
     expect(await screen.findByText('Developer Docs')).toBeTruthy()
+    expect(screen.getByText('Codex · MCP supported')).toBeTruthy()
+    expect(screen.queryByText('Available in Project')).toBeNull()
     expect(screen.getByText('OAuth token expired')).toBeTruthy()
     fireEvent.click(screen.getByText(/1 tools/))
     expect(screen.getByText('search_docs')).toBeTruthy()
@@ -113,6 +115,7 @@ describe('MCP settings', () => {
     )
 
     expect(await screen.findByText(/does not expose MCP servers/)).toBeTruthy()
+    expect(screen.getByText('Claude Code · MCP unavailable')).toBeTruthy()
     expect(screen.queryAllByRole('button')).toHaveLength(0)
   })
 

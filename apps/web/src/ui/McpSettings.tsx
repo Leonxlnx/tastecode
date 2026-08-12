@@ -275,7 +275,11 @@ export function McpSettings(props: {
     }
   }
 
-  const project = props.projectName ?? props.projectPath
+  const providerStatus = !props.projectPath
+    ? 'Select a project to check MCP support.'
+    : !inventory
+      ? `Checking ${props.providerName} MCP support…`
+      : `${props.providerName} · MCP ${inventory.capabilities.inventory ? 'supported' : 'unavailable'}`
   const status = !props.projectPath
     ? 'Select a project in the sidebar first.'
     : loading && !inventory
@@ -295,7 +299,7 @@ export function McpSettings(props: {
           <h1 className="settings__title" id="settings-mcp">
             MCP servers
           </h1>
-          <p>{project ? `Available in ${project}` : 'Choose a project to inspect its servers.'}</p>
+          <p>{providerStatus}</p>
         </div>
         {props.projectPath && inventory?.capabilities.add ? (
           <button

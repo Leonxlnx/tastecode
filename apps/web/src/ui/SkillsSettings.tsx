@@ -148,7 +148,11 @@ export function SkillsSettings(props: {
     }
   }
 
-  const project = props.projectName ?? props.projectPath
+  const providerStatus = !props.projectPath
+    ? 'Select a project to check Agent Skills support.'
+    : !inventory
+      ? `Checking ${props.providerName} Agent Skills support…`
+      : `${props.providerName} · Agent Skills ${inventory.capabilities.inventory ? 'supported' : 'unavailable'}`
   const status = !props.projectPath
     ? 'Select a project in the sidebar first.'
     : // A background refresh keeps the current list on screen; blanking it
@@ -170,7 +174,7 @@ export function SkillsSettings(props: {
           <h1 className="settings__title" id="settings-skills">
             Agent Skills
           </h1>
-          <p>{project ? `Available in ${project}` : 'Choose a project to manage its skills.'}</p>
+          <p>{providerStatus}</p>
         </div>
         {props.projectPath && inventory?.capabilities.install ? (
           <button
