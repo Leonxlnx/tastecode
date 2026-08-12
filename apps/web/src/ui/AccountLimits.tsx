@@ -10,7 +10,7 @@ export type AccountLimitSource =
   | { provider: ProviderId; status: 'ready'; limits: Limit[] }
   | { provider: ProviderId; status: 'unavailable' }
 
-type Summary = ResultOf<'usage.summary'> & { limitSources?: AccountLimitSource[] }
+type Summary = ResultOf<'usage.summary'> & { limitSource?: AccountLimitSource }
 
 export type AccountLimitsState =
   | { status: 'loading'; provider: ProviderId; summary?: Summary }
@@ -20,8 +20,8 @@ export type AccountLimitsState =
 export function AccountLimits(props: { state: AccountLimitsState; onRetry: () => void }) {
   const headingId = useId()
   const heading = useRef<HTMLHeadingElement>(null)
-  const sources = limitSources(props.state)
-  const hasSources = sources.length > 0
+  const source = limitSource(props.state)
+  const hasSource = source !== undefined
 
   useLayoutEffect(() => heading.current?.focus(), [])
 
@@ -36,14 +36,12 @@ export function AccountLimits(props: { state: AccountLimitsState; onRetry: () =>
         <span>Plan limits</span>
       </h2>
 
-      {hasSources
-        ? sources.map((source) => <LimitSource key={source.provider} source={source} />)
-        : null}
+      {source ? <LimitSource source={source} /> : null}
 
       {props.state.status === 'loading' ? (
         <p className="account-menu__usage-note" role="status">
           <RefreshCw size={13} aria-hidden />
-          {hasSources ? 'Refreshing plan limits…' : 'Checking plan limits…'}
+          {hasSource ? 'Refreshing plan limits…' : 'Checking plan limits…'}
         </p>
       ) : null}
 
@@ -51,7 +49,7 @@ export function AccountLimits(props: { state: AccountLimitsState; onRetry: () =>
         <div className="account-menu__usage-error" role="alert">
           <CircleAlert size={13} aria-hidden />
           <span>
-            {hasSources
+            {hasSource
               ? 'Couldn’t refresh plan limits. Last known values are still shown.'
               : 'Plan limits couldn’t be loaded.'}
             <small>{props.state.message}</small>
@@ -110,11 +108,11 @@ function LimitSource(props: { source: AccountLimitSource }) {
   )
 }
 
-function limitSources(state: AccountLimitsState): AccountLimitSource[] {
+function limitSource(state: AccountLimitsState): AccountLimitSource | undefined {
   const summary = state.summary
-  if (!summary) return []
+  if (!summary) return undefined
   return (
-    summary.limitSources ?? [{ provider: state.provider, status: 'ready', limits: summary.limits }]
+    summary.limitSource ?? { provider: state.provider, status: 'ready', limits: summary.limits }
   )
 }
 
