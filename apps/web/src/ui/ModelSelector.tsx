@@ -12,6 +12,7 @@ import { Check, ChevronDown, Zap } from 'lucide-react'
 import {
   filterModelChoicesByQuery,
   resolveReasoningEffort,
+  sourceKey,
   type ModelChoice,
 } from '../model-catalog.js'
 import { DitherSlider } from './dither-kit/DitherSlider.js'
@@ -102,7 +103,11 @@ type ModelGroup = {
 }
 
 function modelSourceKey(entry: ModelChoice): string {
-  return `${entry.provider}:${entry.connectionId ?? ''}:${entry.sourceName}`
+  return sourceKey({
+    provider: entry.provider,
+    connectionId: entry.connectionId,
+    agentId: entry.agent?.id,
+  })
 }
 
 /** One section per source, in catalog order, so a provider's name renders once. */
@@ -245,13 +250,26 @@ function FlatModelList(props: {
   selectedChoice: ModelChoice | undefined
   onModelSelect: (choice: ModelChoice) => void
 }) {
+  const [query, setQuery] = useState('')
+  const deferredQuery = useDeferredValue(query)
+  const groups = groupModelsBySource(filterModelChoicesByQuery(props.models, deferredQuery))
+
   return (
     <div
       className="model-selector__models model-selector__models--flat"
       role="group"
       aria-label="Models"
     >
-      {groupModelsBySource(props.models).map((group) => (
+      <div className="model-selector__flat-head">
+        <ModelSearchField
+          className="model-selector__search"
+          value={query}
+          label="Search models"
+          autoFocus
+          onChange={setQuery}
+        />
+      </div>
+      {groups.map((group) => (
         <section className="model-selector__group" key={group.key}>
           <p className="model-selector__group-title">
             <ProviderIcon mark={group.mark} size={13} />
@@ -275,6 +293,11 @@ function FlatModelList(props: {
           })}
         </section>
       ))}
+      {groups.length === 0 ? (
+        <p className="model-selector__empty" role="status">
+          No matching models.
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -543,44 +566,50 @@ export function ModelSelector(props: ModelSelectorProps) {
             />
           )}
 
-          <div className="model-selector__controls">
-            <div className="model-selector__controls-head">
-              <span className="model-selector__effort-title">
-                Effort: <span>{displayedEffortLabel}</span>
-              </span>
-              {fastTier ? (
-                <div className="model-selector__fast-row">
-                  <button
-                    type="button"
-                    className={`model-selector__fast${fastEnabled ? ' is-on' : ''}`}
-                    aria-label={fastEnabled ? 'Disable fast mode' : 'Enable fast mode'}
-                    aria-pressed={fastEnabled}
-                    onClick={() =>
-                      props.onServiceTierChange(
-                        fastEnabled ? getFastModeOffValue(model) : fastTier.id,
-                      )
-                    }
-                  >
-                    <span className="model-selector__fast-icon" aria-hidden>
-                      <Zap size={15} />
-                    </span>
-                  </button>
-                </div>
+          {effortOptions.length > 0 || fastTier ? (
+            <div
+              className={`model-selector__controls${effortOptions.length === 0 ? ' is-fast-only' : ''}`}
+            >
+              <div className="model-selector__controls-head">
+                {effortOptions.length > 0 ? (
+                  <span className="model-selector__effort-title">
+                    Effort: <span>{displayedEffortLabel}</span>
+                  </span>
+                ) : null}
+                {fastTier ? (
+                  <div className="model-selector__fast-row">
+                    <button
+                      type="button"
+                      className={`model-selector__fast${fastEnabled ? ' is-on' : ''}`}
+                      aria-label={fastEnabled ? 'Disable fast mode' : 'Enable fast mode'}
+                      aria-pressed={fastEnabled}
+                      onClick={() =>
+                        props.onServiceTierChange(
+                          fastEnabled ? getFastModeOffValue(model) : fastTier.id,
+                        )
+                      }
+                    >
+                      <span className="model-selector__fast-icon" aria-hidden>
+                        <Zap size={15} />
+                      </span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+
+              {effortOptions.length > 0 ? (
+                <DitherChoiceRow
+                  label="Effort"
+                  ariaLabel="Reasoning effort"
+                  optionLabels={effortLabels}
+                  selectedIndex={selectedEffortIndex}
+                  disabled={props.disabled || effortOptions.length <= 1}
+                  onPreviewIndex={setPreviewEffortIndex}
+                  onCommitIndex={commitEffortIndex}
+                />
               ) : null}
             </div>
-
-            {effortOptions.length > 0 ? (
-              <DitherChoiceRow
-                label="Effort"
-                ariaLabel="Reasoning effort"
-                optionLabels={effortLabels}
-                selectedIndex={selectedEffortIndex}
-                disabled={props.disabled || effortOptions.length <= 1}
-                onPreviewIndex={setPreviewEffortIndex}
-                onCommitIndex={commitEffortIndex}
-              />
-            ) : null}
-          </div>
+          ) : null}
         </div>
       )}
     </Menu>

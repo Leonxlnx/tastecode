@@ -285,7 +285,63 @@ describe('ModelSelector', () => {
 
     expect(screen.queryByRole('group', { name: 'Providers' })).toBeNull()
     expect(document.querySelector('.model-selector__models--flat')).toBeTruthy()
+    expect(screen.getByRole('searchbox', { name: 'Search models' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
+  })
+
+  it('searches every flat-list source without changing the selected model', () => {
+    const claudeModel: ModelChoice = {
+      ...MODELS[0]!,
+      key: 'claude-code:sonnet',
+      provider: 'claude-code',
+      sourceName: 'Claude Code',
+      mark: 'anthropic',
+      model: {
+        ...MODELS[0]!.model,
+        id: 'sonnet',
+        displayName: 'Sonnet 5',
+        isDefault: false,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    }
+    const { onModelChange } = renderSelector({ models: [...MODELS, claudeModel] })
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+
+    const search = screen.getByRole('searchbox', { name: 'Search models' })
+    fireEvent.change(search, { target: { value: 'claude sonnet' } })
+
+    expect(screen.queryByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Use Sonnet 5 through Claude Code' })).toBeTruthy()
+    expect(onModelChange).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(search, { key: 'Escape' })
+    expect((search as HTMLInputElement).value).toBe('')
+    expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
+  })
+
+  it('omits the control footer when the selected model declares no controls', () => {
+    const plainModel: ModelChoice = {
+      ...MODELS[0]!,
+      key: 'grok:plain',
+      provider: 'grok',
+      sourceName: 'Grok',
+      mark: 'grok',
+      model: {
+        ...MODELS[0]!.model,
+        id: 'plain',
+        displayName: 'Plain model',
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    }
+    renderSelector({ models: [plainModel], modelId: plainModel.key, effort: undefined })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+
+    expect(document.querySelector('.model-selector__controls')).toBeNull()
+    expect(screen.queryByRole('slider', { name: 'Reasoning effort' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Enable fast mode' })).toBeNull()
   })
 
   it('filters the model list through a provider logo rail', () => {
@@ -335,6 +391,29 @@ describe('ModelSelector', () => {
     expect(screen.queryByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Use Sonnet 5 through Claude Code' })).toBeTruthy()
     expect(onModelChange).not.toHaveBeenCalled()
+  })
+
+  it('keeps ACP sources distinct by stable agent identity', () => {
+    const acpModels: ModelChoice[] = ['gemini', 'qwen'].map((agentId) => ({
+      ...MODELS[0]!,
+      key: `acp:${agentId}:default`,
+      provider: 'acp',
+      sourceName: 'Workspace agent',
+      mark: 'acp',
+      agent: { id: agentId, name: 'Workspace agent' },
+      model: {
+        ...MODELS[0]!.model,
+        id: 'default',
+        displayName: `${agentId} default`,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    }))
+
+    expect(groupModelsBySource(acpModels).map((group) => group.key)).toEqual([
+      'acp:gemini',
+      'acp:qwen',
+    ])
   })
 
   it('searches the active provider without changing the selected model', () => {

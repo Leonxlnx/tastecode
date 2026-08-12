@@ -8513,6 +8513,14 @@
   border-top: 1px solid var(--menu-line);
 }
 
+.model-selector__controls.is-fast-only {
+  height: auto;
+}
+
+.model-selector__controls.is-fast-only .model-selector__fast-row {
+  margin-left: auto;
+}
+
 .model-selector__controls-head {
   display: flex;
   align-items: center;
@@ -8717,6 +8725,14 @@
   height: auto;
   max-height: min(246px, 42vh);
   max-height: min(246px, 42dvh);
+}
+
+.model-selector__flat-head {
+  position: sticky;
+  z-index: 2;
+  top: -6px;
+  padding: 6px 4px 4px;
+  background: var(--model-picker-bg);
 }
 
 .model-selector__models--flat .model-selector__group + .model-selector__group {
