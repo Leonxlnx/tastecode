@@ -530,6 +530,80 @@ const workspaceTest = { projectsSnapshot: (running: boolean) => ({ projects: ser
 // prettier-ignore
 const { projectsSnapshot, renderWithDeferredProjectProbes, rpcCount, completeTurn, startTurn, submitTurn, waitForWorkspace, waitForInitialWorkspace, openNewSession, setConnectionState, serverProject } = workspaceTest
 describe('web client', () => {
+  it('persists curated model defaults only after the first catalog arrives', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseModels!: (value: unknown) => void
+    const models = new Promise((resolve) => {
+      releaseModels = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list' ? models : request(method, params),
+    )
+
+    render(<App />)
+    expect(localStorage.getItem('harness.hiddenModels')).toBeNull()
+
+    releaseModels({
+      models: [
+        {
+          id: 'gpt-5.6-sol',
+          displayName: 'GPT-5.6 Sol',
+          isDefault: true,
+          reasoningEfforts: [],
+          serviceTiers: [],
+        },
+        {
+          id: 'gpt-5.5',
+          displayName: 'GPT-5.5',
+          isDefault: false,
+          reasoningEfforts: [],
+          serviceTiers: [],
+        },
+      ],
+    })
+
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.5"]'),
+    )
+  })
+
+  it('never replaces a saved model-visibility choice with curated defaults', async () => {
+    const saved = '["codex:gpt-5.6-sol"]'
+    localStorage.setItem('harness.hiddenModels', saved)
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list'
+        ? Promise.resolve({
+            models: [
+              {
+                id: 'gpt-5.6-sol',
+                displayName: 'GPT-5.6 Sol',
+                isDefault: true,
+                reasoningEfforts: [],
+                serviceTiers: [],
+              },
+              {
+                id: 'gpt-5.5',
+                displayName: 'GPT-5.5',
+                isDefault: false,
+                reasoningEfforts: [],
+                serviceTiers: [],
+              },
+            ],
+          })
+        : request(method, params),
+    )
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' }),
+    )
+    expect(localStorage.getItem('harness.hiddenModels')).toBe(saved)
+  })
+
   it('explains project loading failures and retries the request', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
