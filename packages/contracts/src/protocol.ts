@@ -8,6 +8,8 @@ import {
   AccountSchema,
   ApprovalDecisionSchema,
   ApprovalModeSchema,
+  CustomHarnessSchema,
+  CustomHarnessVerificationSchema,
   DomainEventSchema,
   ModelSchema,
   ProviderIdSchema,
@@ -685,6 +687,26 @@ export const methods = {
     params: z.object({}),
     result: z.object({ providers: z.array(ProviderStatusSchema) }),
   },
+  /** User-owned protocol-compatible CLIs. Secrets never belong in these fields. */
+  'harnesses.list': {
+    params: z.object({}),
+    result: z.object({ harnesses: z.array(CustomHarnessSchema) }),
+  },
+  'harnesses.upsert': {
+    params: CustomHarnessSchema,
+    result: z.object({ harness: CustomHarnessSchema }),
+  },
+  'harnesses.verify': {
+    params: z.object({
+      harness: CustomHarnessSchema,
+      workspacePath: z.string().min(1).optional(),
+    }),
+    result: z.object({ verification: CustomHarnessVerificationSchema }),
+  },
+  'harnesses.remove': {
+    params: z.object({ harnessId: z.string().min(1) }),
+    result: z.object({}),
+  },
   /**
    * Install a provider CLI in the background. The client only names the
    * target; the server resolves the install command from its own table, so no
@@ -924,6 +946,51 @@ export const methods = {
       dirtyFiles: z.number(),
     }),
   },
+  /** Structured staged, unstaged and untracked changes in the active checkout. */
+  'workspace.diff': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+    }),
+    result: SessionDiffSchema,
+  },
+  /** Lazily list one folder in a registered project or a session's isolated checkout. */
+  'workspace.listDirectory': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+      directory: z.string().max(4096).optional(),
+    }),
+    result: z.object({
+      path: z.string(),
+      entries: z.array(
+        z.object({
+          name: z.string().min(1),
+          path: z.string(),
+          kind: z.enum(['directory', 'file']),
+          size: z.number().nonnegative(),
+          modifiedAt: z.number().nonnegative(),
+          restricted: z.boolean(),
+        }),
+      ),
+    }),
+  },
+  /** Read a bounded public text file without exposing renderer filesystem access. */
+  'workspace.readFile': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+      path: z.string().min(1).max(4096),
+    }),
+    result: z.object({
+      name: z.string().min(1),
+      path: z.string().min(1),
+      size: z.number().nonnegative(),
+      binary: z.boolean(),
+      truncated: z.boolean(),
+      content: z.string().optional(),
+    }),
+  },
   'models.list': {
     params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
     result: z.object({ models: z.array(ModelSchema) }),
@@ -1103,9 +1170,12 @@ export const methods = {
     params: z.object({ path: z.string() }),
     result: z.object({}),
   },
-  /** Open the session's platform-selected shell in its actual checkout. */
+  /** Open the platform-selected shell in a session checkout or registered project. */
   'terminal.open': {
-    params: z.object({ threadId: z.string().min(1), ...TerminalSizeSchema.shape }),
+    params: z.union([
+      z.object({ threadId: z.string().min(1), ...TerminalSizeSchema.shape }).strict(),
+      z.object({ projectPath: z.string().min(1), ...TerminalSizeSchema.shape }).strict(),
+    ]),
     result: z.object({ terminalId: TerminalIdSchema }),
   },
   'terminal.input': {
@@ -1228,6 +1298,22 @@ export const methods = {
   'usage.resetHistory': {
     params: z.object({}),
     result: z.object({ started: z.literal(true) }),
+  },
+  /** Start a temporary conversation forked from the current main chat. */
+  'sideChat.start': {
+    params: z.object({
+      parentThreadId: z.string().min(1),
+      model: z.string().min(1).optional(),
+      serviceTier: z.string().min(1).optional(),
+      effort: z.string().min(1).optional(),
+      approval: ApprovalModeSchema.optional(),
+    }),
+    result: z.object({ threadId: z.string().min(1) }),
+  },
+  /** Dispose the provider session and erase its temporary transcript. */
+  'sideChat.close': {
+    params: z.object({ threadId: z.string().min(1) }),
+    result: z.object({}),
   },
   'thread.start': {
     params: z
@@ -1462,6 +1548,12 @@ export const channels = {
      * without it, events landing during the round trip are either dropped
      * or applied twice. Optional for one release of compatibility.
      */
+    seq: z.number().optional(),
+  }),
+  /** Events from an ephemeral Side chat stay out of the main conversation stream. */
+  'sideChat.event': z.object({
+    threadId: z.string(),
+    event: DomainEventSchema,
     seq: z.number().optional(),
   }),
   'thread.queue': z.object({

@@ -15,6 +15,7 @@ export const ProviderIdSchema = z.enum([
   'cursor',
   'opencode',
   'antigravity',
+  'pi',
   'acp',
   'api',
 ])
@@ -312,6 +313,89 @@ export const ProviderSetupSchema = z.object({
   login: z.enum(['app', 'provider']),
 })
 export type ProviderSetup = z.infer<typeof ProviderSetupSchema>
+
+/**
+ * A user-owned CLI that speaks one of the protocols Harness already knows.
+ * `command` is an executable name on PATH or an absolute executable path;
+ * fixed argv entries stay separate so paths and values containing spaces are
+ * never re-parsed through a shell.
+ */
+export const CustomHarnessSchema = z.object({
+  id: z.string().trim().min(1).max(128),
+  displayName: z.string().trim().min(1).max(80),
+  provider: z.enum([
+    'codex',
+    'claude-code',
+    'grok',
+    'cursor',
+    'opencode',
+    'antigravity',
+    'pi',
+    'acp',
+  ]),
+  command: z
+    .string()
+    .trim()
+    .min(1)
+    .max(4096)
+    .refine((value) => !value.includes('\0'), 'command cannot contain a null byte'),
+  args: z
+    .array(
+      z
+        .string()
+        .max(4096)
+        .refine((value) => !value.includes('\0'), 'argument cannot contain a null byte'),
+    )
+    .max(64),
+  /**
+   * Optional launcher cwd. The active project remains available to wrappers
+   * as HARNESS_WORKSPACE_PATH even when a mod has to boot from its own source
+   * directory.
+   */
+  workingDirectory: z
+    .string()
+    .trim()
+    .min(1)
+    .max(4096)
+    .refine((value) => !value.includes('\0'), 'working directory cannot contain a null byte')
+    .optional(),
+  /** Non-secret process settings such as an isolated state/config directory. */
+  environment: z
+    .record(
+      z
+        .string()
+        .trim()
+        .min(1)
+        .max(128)
+        .refine(
+          (value) => !value.includes('=') && !value.includes('\0'),
+          'invalid environment key',
+        ),
+      z
+        .string()
+        .max(8192)
+        .refine((value) => !value.includes('\0'), 'environment value cannot contain a null byte'),
+    )
+    .refine((value) => Object.keys(value).length <= 64, 'too many environment entries')
+    .optional(),
+})
+export type CustomHarness = z.infer<typeof CustomHarnessSchema>
+
+export const CustomHarnessVerificationCheckSchema = z.object({
+  label: z.string().min(1),
+  status: z.enum(['passed', 'warning', 'failed']),
+  detail: z.string().min(1),
+})
+export type CustomHarnessVerificationCheck = z.infer<typeof CustomHarnessVerificationCheckSchema>
+
+export const CustomHarnessVerificationSchema = z.object({
+  status: z.enum(['ready', 'warning', 'error']),
+  summary: z.string().min(1),
+  checkedAt: z.number().int().nonnegative(),
+  resolvedCommand: z.string().min(1).optional(),
+  checks: z.array(CustomHarnessVerificationCheckSchema).min(1),
+})
+export type CustomHarnessVerification = z.infer<typeof CustomHarnessVerificationSchema>
 
 export const ProviderStatusSchema = z.object({
   id: ProviderIdSchema,

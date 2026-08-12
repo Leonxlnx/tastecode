@@ -360,6 +360,44 @@ describe('protocol envelopes', () => {
       provider: 'acp',
       agent: 'kimi',
     })
+    expect(
+      methods['harnesses.upsert'].params.parse({
+        id: 'deepseek-pi',
+        displayName: 'DeepSeek Pi',
+        provider: 'pi',
+        command: '/Applications/Pi forks/deepseek-pi',
+        args: ['--openrouter', 'value with spaces'],
+        workingDirectory: '~/Developer/pi-deepseek',
+        environment: { PI_CODING_AGENT_DIR: '/Users/me/.pi-deepseek' },
+      }),
+    ).toMatchObject({
+      provider: 'pi',
+      args: ['--openrouter', 'value with spaces'],
+      workingDirectory: '~/Developer/pi-deepseek',
+      environment: { PI_CODING_AGENT_DIR: '/Users/me/.pi-deepseek' },
+    })
+    expect(
+      methods['harnesses.verify'].result.parse({
+        verification: {
+          status: 'ready',
+          summary: 'DeepSeek Pi is compatible',
+          checkedAt: 1,
+          resolvedCommand: '/Users/me/.local/bin/deepseek-pi',
+          checks: [
+            { label: 'Pi RPC', status: 'passed', detail: 'Initialize handshake completed.' },
+          ],
+        },
+      }),
+    ).toMatchObject({ verification: { status: 'ready' } })
+    expect(() =>
+      methods['harnesses.upsert'].params.parse({
+        id: 'bad',
+        displayName: 'Bad',
+        provider: 'api',
+        command: 'bad',
+        args: [],
+      }),
+    ).toThrow()
     expect(() => methods['models.list'].params.parse({ provider: 'acp', agent: '' })).toThrow()
     expect(methods['auth.status'].params.parse({ provider: 'acp', agent: 'kimi' })).toEqual({
       provider: 'acp',
@@ -516,6 +554,21 @@ describe('protocol envelopes', () => {
       rows: 40,
     })
     expect(opened).toEqual({ threadId: 'thread-1', columns: 120, rows: 40 })
+    expect(
+      methods['terminal.open'].params.parse({
+        projectPath: '/workspace',
+        columns: 100,
+        rows: 30,
+      }),
+    ).toEqual({ projectPath: '/workspace', columns: 100, rows: 30 })
+    expect(() =>
+      methods['terminal.open'].params.parse({
+        threadId: 'thread-1',
+        projectPath: '/workspace',
+        columns: 100,
+        rows: 30,
+      }),
+    ).toThrow()
 
     const { terminalId } = methods['terminal.open'].result.parse({ terminalId: 'terminal-1' })
     expect(methods['terminal.input'].params.parse({ terminalId, data: '\u0003' })).toEqual({
@@ -714,6 +767,13 @@ describe('protocol envelopes', () => {
     }
 
     expect(methods['thread.diff'].result.parse(diff)).toEqual(diff)
+    expect(
+      methods['workspace.diff'].params.parse({
+        projectPath: '/repo',
+        threadId: 'thread-1',
+      }),
+    ).toEqual({ projectPath: '/repo', threadId: 'thread-1' })
+    expect(methods['workspace.diff'].result.parse(diff)).toEqual(diff)
     expect(
       methods['thread.reviewHunk'].params.parse({
         threadId: 'thread-1',
@@ -1230,6 +1290,13 @@ describe('protocol envelopes', () => {
       }),
     ).toBeTruthy()
     expect(
+      channels['sideChat.event'].parse({
+        threadId: 'side-1',
+        seq: 12,
+        event: { type: 'turn.completed', turnId: 't1', status: 'completed' },
+      }),
+    ).toBeTruthy()
+    expect(
       channels['thread.queue'].parse({
         threadId: 'th1',
         items: [
@@ -1243,5 +1310,25 @@ describe('protocol envelopes', () => {
         canSteer: false,
       }),
     ).toBeTruthy()
+  })
+
+  it('validates the ephemeral Side chat lifecycle', () => {
+    expect(
+      methods['sideChat.start'].params.parse({
+        parentThreadId: 'main-1',
+        model: 'gpt-5.6',
+        effort: 'high',
+        approval: 'ask',
+      }),
+    ).toEqual({
+      parentThreadId: 'main-1',
+      model: 'gpt-5.6',
+      effort: 'high',
+      approval: 'ask',
+    })
+    expect(methods['sideChat.close'].params.parse({ threadId: 'side-1' })).toEqual({
+      threadId: 'side-1',
+    })
+    expect(() => methods['sideChat.start'].params.parse({ parentThreadId: '' })).toThrow()
   })
 })
