@@ -191,17 +191,20 @@ describe('long-thread hot paths', () => {
 
   for (const count of ITEM_COUNTS) {
     bench(
-      `folds command and tool deltas into a ${count.toLocaleString()}-item history`,
+      `folds command and tool deltas into a ${count.toLocaleString('en-US')}-item history`,
       () => {
         const fixture = activityFrames.get(count)!
         const state = reduceDeltas(fixture.state, fixture.frame)
+        if (!state.items.at(-2)?.text?.endsWith('output')) {
+          throw new Error('invalid command fold')
+        }
         if (!state.items.at(-1)?.text?.endsWith(' result')) throw new Error('invalid activity fold')
       },
       OPTIONS,
     )
 
     bench(
-      `replays ${(count * 52).toLocaleString()} persisted events into a ${count.toLocaleString()}-item thread`,
+      `replays ${(count * 52).toLocaleString('en-US')} persisted events into a ${count.toLocaleString('en-US')}-item thread`,
       () => {
         const state = reduceEventLog(emptyThread, replayEntries.get(count)!)
         if (state.items.length !== count) throw new Error('invalid replay')
