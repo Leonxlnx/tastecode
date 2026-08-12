@@ -1,3 +1,4 @@
+import path from 'node:path'
 import type { Item, ItemStatus } from '@harness/contracts'
 import type { ThreadItem } from './generated/v2/ThreadItem'
 
@@ -109,6 +110,17 @@ export function mapThreadItem(
 
     case 'webSearch':
       return { ...base, type: 'tool_call', text: 'web search' }
+
+    case 'imageView': {
+      // Keep enough context to distinguish repeated inspections without
+      // persisting a user's full local path in the provider-neutral transcript.
+      const name = path.win32.basename(path.posix.basename(String(raw.path)))
+      return {
+        ...base,
+        type: 'tool_call',
+        text: name ? `image view\n${name}` : 'image view',
+      }
+    }
 
     default:
       return { ...base, type: 'unknown', text: `[${raw.type}]` }

@@ -4,6 +4,13 @@ import { mapThreadItem } from './map-item.js'
 
 const context = { turnId: 'turn-1', status: 'completed', createdAt: 10 } as const
 
+/** Sanitized lifecycle item captured from Codex 0.146.0 on Windows. */
+const capturedImageView = {
+  type: 'imageView',
+  id: 'exec-e4010f67-cbbb-4f18-8e4b-aa4baf3a2d3c',
+  path: 'D:\\project\\qa\\desktop.png',
+} satisfies ThreadItem
+
 function collab(overrides: Partial<Extract<ThreadItem, { type: 'collabAgentToolCall' }>> = {}) {
   return {
     type: 'collabAgentToolCall',
@@ -95,5 +102,46 @@ describe('Codex assistant messages', () => {
         context,
       ),
     ).toMatchObject({ type: 'message', role: 'assistant', phase })
+  })
+})
+
+describe('Codex image inspection items', () => {
+  it('maps the captured lifecycle to one stable provider-neutral activity', () => {
+    const started = mapThreadItem(capturedImageView, { ...context, status: 'started' })
+    const completed = mapThreadItem(capturedImageView, context)
+
+    expect(started).toMatchObject({
+      id: capturedImageView.id,
+      type: 'tool_call',
+      status: 'started',
+      text: 'image view\ndesktop.png',
+    })
+    expect(completed).toMatchObject({
+      id: capturedImageView.id,
+      type: 'tool_call',
+      status: 'completed',
+      text: 'image view\ndesktop.png',
+    })
+    expect(completed.text).not.toContain('D:\\project')
+  })
+
+  it('keeps sequential views distinct and ordered', () => {
+    const items = [
+      capturedImageView,
+      { ...capturedImageView, id: 'exec-image-2', path: '/project/qa/mobile.png' },
+    ].map((item) => mapThreadItem(item, context))
+
+    expect(items.map(({ id, text }) => ({ id, text }))).toEqual([
+      { id: capturedImageView.id, text: 'image view\ndesktop.png' },
+      { id: 'exec-image-2', text: 'image view\nmobile.png' },
+    ])
+  })
+
+  it('preserves a failed lifecycle without claiming the image was viewed', () => {
+    expect(mapThreadItem(capturedImageView, { ...context, status: 'failed' })).toMatchObject({
+      type: 'tool_call',
+      status: 'failed',
+      text: 'image view\ndesktop.png',
+    })
   })
 })
