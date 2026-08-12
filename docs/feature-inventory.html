@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-12 2a05a864</span>
+        <span class="meta">2026-08-12 6716c9f3</span>
       </div>
     </div>
 
@@ -308,7 +308,10 @@
             <label
               ><input type="checkbox" /><span
                 >Rate limit windows in the account popup
-                <span class="d">5 hour and weekly, with reset times</span></span
+                <span class="d"
+                  >5 hour and weekly, with reset times; non-ChatGPT accounts are honestly
+                  unavailable and malformed provider responses stay errors</span
+                ></span
               ></label
             >
           </li>
@@ -365,6 +368,17 @@
               ><input type="checkbox" /><span
                 >Permission modes mapped to the CLI
                 <span class="d">ask, accept edits, bypass</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Provider-owned subscription-limit source
+                <span class="d"
+                  >distinguishes absent OAuth from valid empty usage and sanitized credential,
+                  refresh, transport, HTTP, or schema failures</span
+                ></span
               ></label
             >
           </li>
@@ -472,7 +486,21 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Signed-in detection through the CLI itself, sign out runs grok logout</span
+                >Signed-in detection through the CLI itself, sign out runs grok logout
+                <span class="d"
+                  >the provider exposes no account email, so Settings honestly shows Signed in</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Provider-reported billing limits over ACP
+                <span class="d"
+                  >weekly/reset, prepaid, and pay-as-you-go rows appear only when reported; signed
+                  out is unavailable and provider failures remain errors</span
+                ></span
               ></label
             >
           </li>
