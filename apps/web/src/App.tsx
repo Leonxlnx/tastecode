@@ -194,8 +194,6 @@ function resolveSendAvailability(input: {
   providerStatuses: ProviderStatus[]
   accountCheck: AccountCheck
 }): SendAvailability {
-  // A loaded source without a synthesizable choice is already bound to its
-  // server-owned runtime and does not depend on the public-beta catalog.
   if (input.serverBoundSession) return 'ready'
   if (input.catalog === 'loading') return 'loading'
   if (input.catalog === 'failed') return 'unavailable'
@@ -912,6 +910,22 @@ export function App() {
       if (cancelled) return
       setProviderStatuses(providers)
       setCatalogAvailability('ready')
+      if (
+        !activeIdRef.current &&
+        !PUBLIC_BETA_PROVIDER_IDS.has(readSetting(SETUP_KEY) as ProviderId)
+      ) {
+        const fallback = providers.find(
+          (status) =>
+            PUBLIC_BETA_PROVIDER_IDS.has(status.id) &&
+            status.installed &&
+            status.capabilities &&
+            !status.problem &&
+            status.auth !== 'unauthenticated',
+        )
+        if (fallback) {
+          setProvider(fallback.id)
+        }
+      }
       const unknownKeys = new Set<string>()
       const direct = await Promise.all(
         providers

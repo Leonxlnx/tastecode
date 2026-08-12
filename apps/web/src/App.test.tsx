@@ -1064,24 +1064,10 @@ describe('new chats', () => {
   })
 
   it('preserves a parked custom model without blocking a catalogless beta source', async () => {
-    const parked = JSON.stringify([
-      { provider: 'cursor', modelId: 'cursor-large', displayName: 'Cursor Large' },
-    ])
+    const parked = '[{"provider":"cursor","modelId":"cursor-large","displayName":"Cursor Large"}]'
+    localStorage.setItem('harness.provider', 'cursor')
     localStorage.setItem('harness.model', 'custom:cursor:cursor-large')
     localStorage.setItem('harness.customModels.v1', parked)
-    let releaseModels!: () => void
-    const modelsGate = new Promise<void>((resolve) => {
-      releaseModels = resolve
-    })
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'models.list') {
-        return modelsGate.then(() => ({ models: [] }))
-      }
-      return request(method, params)
-    })
-
     render(<App />)
 
     const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
@@ -1099,10 +1085,6 @@ describe('new chats', () => {
         approval: 'ask',
       }),
     )
-    await act(async () => {
-      releaseModels()
-      await modelsGate
-    })
   })
 
   it('keeps a draft through provider discovery failure and recovery', async () => {
@@ -3664,15 +3646,15 @@ describe('reopening a session', () => {
         ],
       },
     ]
-    let releaseProviders!: () => void
-    const providersGate = new Promise<void>((resolve) => {
-      releaseProviders = resolve
+    let releaseModels!: () => void
+    const modelsGate = new Promise<void>((resolve) => {
+      releaseModels = resolve
     })
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'providers.list') {
-        return providersGate.then(() => ({ providers: serverProviders }))
+        return modelsGate.then(() => ({ providers: serverProviders }))
       }
       return request(method, params)
     })
@@ -3699,8 +3681,8 @@ describe('reopening a session', () => {
       })
     })
     await act(async () => {
-      releaseProviders()
-      await providersGate
+      releaseModels()
+      await modelsGate
     })
   })
 
