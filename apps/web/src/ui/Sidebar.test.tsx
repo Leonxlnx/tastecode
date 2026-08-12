@@ -141,6 +141,7 @@ describe('Sidebar chat actions', () => {
     const identity = within(chat).getByText('Codex').closest('.source-identity')
     expect(identity?.classList.contains('source-identity--compact')).toBe(true)
     expect(identity?.querySelector('svg')).toBeTruthy()
+    expect(chat.getAttribute('aria-label')).toBe('Polish the sidebar, Codex')
 
     const rename = screen.getByRole('button', { name: 'Rename Polish the sidebar' })
     const archive = screen.getByRole('button', { name: 'Archive Polish the sidebar' })
@@ -261,7 +262,7 @@ describe('Sidebar chat actions', () => {
 
     expect(screen.getByText('Pinned')).toBeTruthy()
     expect(screen.getAllByText('Pinned chat')).toHaveLength(1)
-    fireEvent.contextMenu(screen.getByRole('button', { name: 'Pinned chat' }))
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Pinned chat, Codex' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Unpin chat' }))
     expect(onToggleSessionPin).toHaveBeenCalledWith('thread-1')
   })
@@ -301,18 +302,18 @@ describe('Sidebar chat actions', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: 'Chat 5' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Chat 6' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Chat 5, Codex' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Chat 6, Codex' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
-    expect(screen.getByRole('button', { name: 'Chat 7' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Chat 7, Codex' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Show less' }))
-    expect(screen.queryByRole('button', { name: 'Chat 6' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Chat 6, Codex' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
     fireEvent.click(screen.getByRole('button', { name: 'Harness' }))
     fireEvent.click(screen.getByRole('button', { name: 'Harness' }))
-    expect(screen.queryByRole('button', { name: 'Chat 6' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Chat 6, Codex' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
   })
 
@@ -351,8 +352,8 @@ describe('Sidebar chat actions', () => {
       />,
     )
 
-    const source = screen.getByRole('button', { name: 'First chat' }).closest('li')!
-    const target = screen.getByRole('button', { name: 'Second chat' }).closest('li')!
+    const source = screen.getByRole('button', { name: 'First chat, Codex' }).closest('li')!
+    const target = screen.getByRole('button', { name: 'Second chat, Codex' }).closest('li')!
     vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
       bottom: 88,
       height: 28,

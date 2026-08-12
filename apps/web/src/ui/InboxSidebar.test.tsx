@@ -235,6 +235,7 @@ describe('InboxSidebar', () => {
       const identity = screen.getByText(label).closest('.source-identity')
       expect(identity?.classList.contains('source-identity--compact')).toBe(true)
       expect(identity?.querySelector('svg')).toBeTruthy()
+      expect(identity?.closest('button')?.getAttribute('aria-label')).toContain(label)
     }
   })
 })

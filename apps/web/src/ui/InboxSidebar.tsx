@@ -978,7 +978,7 @@ function projectName(project: Project): string {
 }
 
 function rowLabel(project: Project, session: Session, now: number): string {
-  return `${session.title}, ${projectName(project)}, ${statusPresentation(session, now).label}`
+  return `${session.title}, ${projectName(project)}, ${providerName(session)}, ${statusPresentation(session, now).label}`
 }
 
 function threadSummary(project: Project, session: Session, now: number): string {

@@ -1215,23 +1215,24 @@ function SessionStatus(props: { status: Session['status'] }) {
 }
 
 function sessionLabel(session: Session): string {
+  const source = sessionSourcePresentation(session.provider, session.agent).label
   const branch = session.worktreeBranch ? `, isolated on ${session.worktreeBranch}` : ''
   switch (session.status) {
     case 'starting':
     case 'working':
-      return `${session.title}, working${branch}`
+      return `${session.title}, ${source}, working${branch}`
     case 'queued':
-      return `${session.title}, queued${branch}`
+      return `${session.title}, ${source}, queued${branch}`
     case 'approval':
-      return `${session.title}, waiting for approval${branch}`
+      return `${session.title}, ${source}, waiting for approval${branch}`
     case 'input':
-      return `${session.title}, needs attention${branch}`
+      return `${session.title}, ${source}, needs attention${branch}`
     case 'failed':
-      return `${session.title}, failed${branch}`
+      return `${session.title}, ${source}, failed${branch}`
     case 'ready':
-      return `${session.title}, ready${branch}`
+      return `${session.title}, ${source}, ready${branch}`
     default:
-      return `${session.title}${branch}`
+      return `${session.title}, ${source}${branch}`
   }
 }
 
