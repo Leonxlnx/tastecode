@@ -764,7 +764,7 @@ export function startServer(
       case 'thread.history': {
         const p = params as { threadId: string; afterSeq?: number }
         const result = {
-          events: orchestrator.history(p.threadId, p.afterSeq ?? 0),
+          events: await orchestrator.history(p.threadId, p.afterSeq ?? 0),
           running: orchestrator.isTurnRunning(p.threadId),
         }
         orchestrator.markThreadRead(p.threadId)

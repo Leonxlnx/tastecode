@@ -330,7 +330,7 @@ export class Orchestrator {
   #startingTurns = new Set<string>()
   #pendingTurnStarts = new Map<string, PendingTurnStart>()
   #acceptedTurnStarts = new Map<string, Map<string, PendingTurnStart>>()
-  #restoringThreads = new Set<string>()
+  #restoringThreads = new Map<string, Promise<void>>()
   #reviewingDiffs = new Set<string>()
   #queuedTurns = new Map<string, QueuedTurnEntry[]>()
   #drainingQueues = new Set<string>()
@@ -1209,7 +1209,11 @@ export class Orchestrator {
   }
 
   /** A thread's history, for a client opening or reattaching to it. */
-  history(threadId: string, afterSeq = 0): Array<{ seq: number; event: DomainEvent }> {
+  async history(
+    threadId: string,
+    afterSeq = 0,
+  ): Promise<Array<{ seq: number; event: DomainEvent }>> {
+    await this.#restoringThreads.get(threadId)
     return this.#store.history(threadId, afterSeq)
   }
 
@@ -1599,7 +1603,8 @@ export class Orchestrator {
     if (this.#reviewingDiffs.has(threadId)) {
       throw new Error('cannot restore while a diff rejection is running')
     }
-    this.#restoringThreads.add(threadId)
+    let finishRestore!: () => void
+    this.#restoringThreads.set(threadId, new Promise((resolve) => (finishRestore = resolve)))
     try {
       const stored = this.#store.thread(threadId)
       const checkpoint = this.#store.checkpoint(checkpointId)
@@ -1621,6 +1626,7 @@ export class Orchestrator {
       }
     } finally {
       this.#restoringThreads.delete(threadId)
+      finishRestore()
     }
   }
 
@@ -1635,7 +1641,8 @@ export class Orchestrator {
     if (this.#reviewingDiffs.has(threadId)) {
       throw new Error('cannot restore while a diff rejection is running')
     }
-    this.#restoringThreads.add(threadId)
+    let finishRestore!: () => void
+    this.#restoringThreads.set(threadId, new Promise((resolve) => (finishRestore = resolve)))
     try {
       const stored = this.#store.thread(threadId)
       const undo = this.#store.restoreUndo(threadId, token)
@@ -1652,6 +1659,7 @@ export class Orchestrator {
       }
     } finally {
       this.#restoringThreads.delete(threadId)
+      finishRestore()
     }
   }
 

@@ -2314,7 +2314,12 @@ describe('rolling a session back', () => {
     const restoring = orchestrator.restoreCheckpoint(thread.id, first.id)
     await vi.waitFor(() => expect(restoreSnapshot).toHaveBeenCalledTimes(1))
 
+    const history = Promise.resolve(orchestrator.history(thread.id))
+    let historySettled = false
+    void history.then(() => (historySettled = true))
     try {
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(historySettled).toBe(false)
       await expect(orchestrator.restoreCheckpoint(thread.id, first.id)).rejects.toThrow(
         'cannot restore while another restore is running',
       )
@@ -2322,6 +2327,7 @@ describe('rolling a session back', () => {
       release({ commit: 'replaced', clean: false })
       await restoring
     }
+    expect(await history).toEqual([])
   })
 
   it('refuses a new turn while a checkpoint restore is still in progress', async () => {
