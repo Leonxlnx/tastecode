@@ -1,16 +1,12 @@
 import { useId, useLayoutEffect, useRef } from 'react'
-import type { ProviderId, ResultOf } from '@harness/contracts'
+import type { ProviderId, ProviderLimitSource, ResultOf } from '@harness/contracts'
 import { CircleAlert, Gauge, RefreshCw } from 'lucide-react'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import { ProviderIcon } from './ProviderIcon.js'
 
 type Limit = ResultOf<'usage.summary'>['limits'][number]
 
-export type AccountLimitSource =
-  | { provider: ProviderId; status: 'ready'; limits: Limit[] }
-  | { provider: ProviderId; status: 'unavailable' }
-
-type Summary = ResultOf<'usage.summary'> & { limitSource?: AccountLimitSource }
+type Summary = ResultOf<'usage.summary'>
 
 export type AccountLimitsState =
   | { status: 'loading'; provider: ProviderId; summary?: Summary }
@@ -63,7 +59,7 @@ export function AccountLimits(props: { state: AccountLimitsState; onRetry: () =>
   )
 }
 
-function LimitSource(props: { source: AccountLimitSource }) {
+function LimitSource(props: { source: ProviderLimitSource }) {
   const titleId = useId()
   const name = providerDisplayName(props.source.provider)
   return (
@@ -108,7 +104,7 @@ function LimitSource(props: { source: AccountLimitSource }) {
   )
 }
 
-function limitSource(state: AccountLimitsState): AccountLimitSource | undefined {
+function limitSource(state: AccountLimitsState): ProviderLimitSource | undefined {
   const summary = state.summary
   if (!summary) return undefined
   return (
