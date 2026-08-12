@@ -1088,35 +1088,31 @@ describe('provider-neutral design briefing', () => {
     try {
       const request =
         'Create a calm one-page Acme payroll landing page for small agencies with a Start free trial CTA, pricing, security, responsive behavior, and WCAG 2.2 AA support.'
+      const completeOutput = JSON.stringify({
+        status: 'complete',
+        message: 'Brief complete.',
+        questions: [],
+        brief: {
+          originalRequest: request,
+          subject: 'Acme payroll',
+          pageType: 'Landing page',
+          scope: 'One responsive page',
+          primaryGoal: 'Start free trials',
+          audience: 'Small agencies',
+          offer: 'Payroll software',
+          primaryAction: 'Start free trial',
+          requiredContent: ['Pricing', 'Security'],
+          constraints: ['WCAG 2.2 AA'],
+          brandInputs: ['Calm'],
+          creativeControl: 'Agent-led',
+          explicitAnswers: [],
+          assumptions: [],
+          unresolved: [],
+        },
+      })
       const thread = await orchestrator.startThread('codex', workspace)
       await orchestrator.sendTurn(thread.id, request, [DESIGN_BRIEF_ATTACHMENT])
-      sessions[0]?.emit(
-        message(
-          JSON.stringify({
-            status: 'complete',
-            message: 'Brief complete.',
-            questions: [],
-            brief: {
-              originalRequest: request,
-              subject: 'Acme payroll',
-              pageType: 'Landing page',
-              scope: 'One responsive page',
-              primaryGoal: 'Start free trials',
-              audience: 'Small agencies',
-              offer: 'Payroll software',
-              primaryAction: 'Start free trial',
-              requiredContent: ['Pricing', 'Security'],
-              constraints: ['WCAG 2.2 AA'],
-              brandInputs: ['Calm'],
-              creativeControl: 'Agent-led',
-              explicitAnswers: [],
-              assumptions: [],
-              unresolved: [],
-            },
-          }),
-          's1-turn',
-        ),
-      )
+      sessions[0]?.emit(message(completeOutput, 's1-turn'))
       sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
 
       const finalRequests = () =>
@@ -1133,9 +1129,43 @@ describe('provider-neutral design briefing', () => {
         options: [{ label: "No, that's everything" }],
       })
 
+      sessions[0]?.turnIds.push('final-note-turn', 'motion-turn', 'brand-turn')
       orchestrator.respondToUserInput(thread.id, finalRequest.request.id, {
-        final_note: ["No, that's everything"],
+        final_note: ['Keep the page motion-free.'],
       })
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+      sessions[0]?.emit(
+        message(
+          JSON.stringify({
+            status: 'questions',
+            message: 'Preparing questions.',
+            questions: [
+              {
+                id: 'motion',
+                header: 'Motion',
+                question: 'Should every animation be removed?',
+                allowOther: true,
+                options: [
+                  { label: 'Yes', description: 'Use no animation.' },
+                  { label: 'No', description: 'Keep restrained feedback.' },
+                ],
+              },
+            ],
+            brief: null,
+          }),
+          'final-note-turn',
+        ),
+      )
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 'final-note-turn', status: 'completed' })
+      const motionRequest = received
+        .filter(({ event }) => event.type === 'user_input.requested')
+        .at(-1)?.event
+      if (motionRequest?.type !== 'user_input.requested') throw new Error('missing clarification')
+      orchestrator.respondToUserInput(thread.id, motionRequest.request.id, { motion: ['Yes'] })
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
+      sessions[0]?.emit(message(completeOutput, 'motion-turn'))
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 'motion-turn', status: 'completed' })
+
       await vi.waitFor(() => expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand' }))
       expect(finalRequests()).toHaveLength(1)
     } finally {

@@ -2318,7 +2318,6 @@ export class Orchestrator {
     if (output.status === 'questions') {
       const round = flow.askedQuestions ? 'follow-up' : 'first'
       flow.askedQuestions = true
-      flow.finalAsked = false
       flow.pendingBrief = undefined
       this.#saveDesignFlow(threadId)
       this.#requestDesignInput(threadId, turnId, output.questions, false, round)
