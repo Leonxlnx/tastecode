@@ -7,6 +7,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parsePreviewPlan } from '@harness/design-agent'
 import {
+  assertRunsWorkspaceCode,
   startDesignPreview,
   type RunningPreview,
   waitForPreview,
@@ -283,9 +284,11 @@ describe('design preview runner', () => {
     ['pnpm', ['--dir=../outside', 'run', 'dev']],
     ['pnpm', ['-C', '../outside', 'run', 'dev']],
     ['pnpm', ['--workspace-root', 'run', 'dev']],
+    ['pnpm', ['-r', 'run', 'dev']],
     ['npm', ['--prefix', '../outside', 'run', 'dev']],
     ['npm', ['--workspace', 'outside', 'run', 'dev']],
     ['yarn', ['--cwd', '../outside', 'run', 'dev']],
+    ['yarn', ['workspace', 'outside', 'run', 'dev']],
     ['bun', ['--cwd', '../outside', 'run', 'dev']],
   ])('rejects %s options that can change the selected package', async (command, args) => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-packages-'))
@@ -295,7 +298,10 @@ describe('design preview runner', () => {
     const marker = path.join(outside, 'spawned.txt')
     mkdirSync(workspace)
     mkdirSync(outside)
-    writeFileSync(path.join(workspace, 'package.json'), JSON.stringify({ scripts: { dev: 'x' } }))
+    writeFileSync(
+      path.join(workspace, 'package.json'),
+      JSON.stringify({ scripts: { dev: 'x', workspace: 'x' } }),
+    )
     writeFileSync(
       path.join(outside, 'package.json'),
       JSON.stringify({
@@ -312,9 +318,25 @@ describe('design preview runner', () => {
     })
 
     await expect(startDesignPreview(workspace, plan)).rejects.toThrow(
-      'preview package-manager options are not allowed',
+      'preview package-manager workspace selectors are not allowed',
     )
     expect(existsSync(marker)).toBe(false)
+  })
+
+  it('keeps ordinary package-script arguments working', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    writeFileSync(path.join(workspace, 'package.json'), JSON.stringify({ scripts: { dev: 'x' } }))
+    const plan = parsePreviewPlan({
+      version: 1,
+      command: 'pnpm',
+      args: ['dev', '--host', '127.0.0.1'],
+      cwd: '.',
+      url: 'http://127.0.0.1:5173',
+      viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+    })
+
+    expect(() => assertRunsWorkspaceCode(workspace, workspace, plan)).not.toThrow()
   })
 })
 
