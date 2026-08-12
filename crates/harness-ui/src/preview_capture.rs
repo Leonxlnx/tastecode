@@ -120,6 +120,7 @@ impl PreviewCaptureRuntime {
                 path,
                 width: viewport.width,
                 height: viewport.height,
+                dom_audit: None,
             });
         }
         capture_directory.preserve();

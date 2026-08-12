@@ -1186,11 +1186,30 @@ pub struct PreviewViewport {
     pub height: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewInteractiveTargetViolation {
+    pub selector: String,
+    pub label: String,
+    pub width: f64,
+    pub height: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewDomAudit {
+    pub h1_count: u32,
+    pub interactive_target_violations: Vec<PreviewInteractiveTargetViolation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PreviewScreenshot {
     pub path: String,
     pub width: u32,
     pub height: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dom_audit: Option<PreviewDomAudit>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1201,7 +1220,7 @@ pub struct PreviewCaptureRequest {
     pub viewports: Vec<PreviewViewport>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "status",
     rename_all = "lowercase",
@@ -1591,6 +1610,7 @@ mod tests {
                 path: "/tmp/mobile.png".into(),
                 width: request.viewports[0].width,
                 height: request.viewports[0].height,
+                dom_audit: None,
             }],
         };
 
@@ -1606,6 +1626,24 @@ mod tests {
                 }]
             })
         );
+
+        let audited_value = json!({
+            "path": "/tmp/mobile.png",
+            "width": 390,
+            "height": 844,
+            "domAudit": {
+                "h1Count": 0,
+                "interactiveTargetViolations": [{
+                    "selector": "#theme",
+                    "label": "Theme",
+                    "width": 32,
+                    "height": 32
+                }]
+            }
+        });
+        let audited: PreviewScreenshot = serde_json::from_value(audited_value.clone()).unwrap();
+        assert_eq!(audited.dom_audit.as_ref().unwrap().h1_count, 0);
+        assert_eq!(serde_json::to_value(audited).unwrap(), audited_value);
     }
 
     #[test]
