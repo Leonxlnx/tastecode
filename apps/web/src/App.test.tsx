@@ -1068,15 +1068,10 @@ describe('new chats', () => {
       ).toHaveLength(3),
     )
     transport.request.mockClear()
-    act(() => {
-      for (const listener of transport.sequenceGapListeners) listener(2, 4)
-    })
-    await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('thread.history', {
-        threadId: 'thread-1',
-        afterSeq: 1,
-      }),
-    )
+    // prettier-ignore
+    act(() => { for (const listener of transport.sequenceGapListeners) listener(2, 4) })
+    // prettier-ignore
+    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('thread.history', { threadId: 'thread-1', afterSeq: 1 }))
   })
 
   it('keeps a draft and asks for a project when sending without one', async () => {
@@ -3640,21 +3635,8 @@ function emitThreadEvent(threadId: string, event: DomainEvent, seq?: number) {
 }
 
 function completedHistoryEvent(seq: number, id: string, text: string) {
-  return {
-    seq,
-    event: {
-      type: 'item.completed' as const,
-      item: {
-        id,
-        turnId: 'turn-1',
-        type: 'message' as const,
-        role: 'assistant' as const,
-        status: 'completed' as const,
-        text,
-        createdAt: seq,
-      },
-    },
-  }
+  // prettier-ignore
+  return { seq, event: { type: 'item.completed' as const, item: { id, turnId: 'turn-1', type: 'message' as const, role: 'assistant' as const, status: 'completed' as const, text, createdAt: seq } } }
 }
 
 function emitQueue(
