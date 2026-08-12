@@ -88,6 +88,7 @@ import {
 import { McpSettings } from './McpSettings.js'
 import { Menu, MenuItem } from './Menu.js'
 import { ModelSearchField } from './ModelSearchField.js'
+import { groupModelsBySource } from './ModelSelector.js'
 import { CustomModelForm } from './CustomModelForm.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderIcon } from './ProviderIcon.js'
@@ -795,12 +796,7 @@ function ModelSettings(props: {
   // groups above only ever hold what the engines themselves enumerated.
   const catalogModels = props.models.filter((choice) => !isCustomModelChoice(choice))
   const customModels = props.models.filter(isCustomModelChoice)
-  const sources = catalogModels.reduce((groups, choice) => {
-    const group = groups.get(choice.sourceName) ?? []
-    group.push(choice)
-    groups.set(choice.sourceName, group)
-    return groups
-  }, new Map<string, ModelChoice[]>())
+  const sources = groupModelsBySource(catalogModels)
   const visibleModelCount = catalogModels.filter(
     (choice) => !props.hiddenModels.has(choice.key),
   ).length
@@ -815,13 +811,13 @@ function ModelSettings(props: {
         </div>
       ) : null}
 
-      {sources.size > 0 ? (
+      {sources.length > 0 ? (
         <div className="model-settings__sources">
-          {[...sources.entries()].map(([source, choices]) => (
+          {sources.map((group) => (
             <ModelVisibilityGroup
-              key={source}
-              source={source}
-              choices={choices}
+              key={group.key}
+              source={group.name}
+              choices={group.entries}
               hiddenModels={props.hiddenModels}
               onModelVisibilityChange={props.onModelVisibilityChange}
               providers={props.providers}
@@ -906,7 +902,8 @@ function ModelVisibilityGroup(props: {
   const deferredQuery = useDeferredValue(query)
   const [addingCustom, setAddingCustom] = useState(false)
   const visibleCount = props.choices.filter((choice) => !props.hiddenModels.has(choice.key)).length
-  const anyVisible = visibleCount > 0
+  const allVisible = visibleCount === props.choices.length
+  const mixedVisibility = visibleCount > 0 && !allVisible
   const filteredChoices = filterModelChoicesByQuery(props.choices, deferredQuery)
   const provider = props.choices[0]?.provider
   const canAddCustom = provider !== undefined && provider !== 'acp' && provider !== 'api'
@@ -928,17 +925,17 @@ function ModelVisibilityGroup(props: {
           onChange={setQuery}
         />
         <button
-          className={`switch switch--source${anyVisible ? ' is-on' : ''}`}
+          className={`switch switch--source${allVisible ? ' is-on' : ''}${mixedVisibility ? ' is-mixed' : ''}`}
           type="button"
-          role="switch"
-          aria-label={`Show any models from ${props.source}`}
-          aria-checked={anyVisible}
+          role="checkbox"
+          aria-label={`Show models from ${props.source}`}
+          aria-checked={mixedVisibility ? 'mixed' : allVisible}
           onClick={() => {
-            // One master switch per provider: off hides every model, on
-            // brings them all back — "deselect a provider" without
-            // disconnecting it.
+            // Mixed and off both converge to all visible; only a fully-on
+            // source turns off. The tri-state control never hides a model
+            // just because a sibling was already hidden.
             for (const choice of props.choices)
-              props.onModelVisibilityChange(choice.key, !anyVisible)
+              props.onModelVisibilityChange(choice.key, !allVisible)
           }}
         >
           <span className="switch__thumb" />

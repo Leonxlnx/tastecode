@@ -2390,7 +2390,7 @@ describe('new chats', () => {
     })
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
-    fireEvent.click(await screen.findByRole('switch', { name: 'Show any models from Codex' }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Show models from Codex' }))
     fireEvent.click(screen.getByRole('button', { name: 'Back to app' }))
 
     await waitFor(() => {
@@ -2454,7 +2454,7 @@ describe('new chats', () => {
     })
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
-    fireEvent.click(await screen.findByRole('switch', { name: 'Show any models from Codex' }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Show models from Codex' }))
     fireEvent.click(screen.getByRole('button', { name: 'Back to app' }))
 
     await waitFor(() => {
@@ -3872,7 +3872,7 @@ describe('reopening a session', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
-    fireEvent.click(await screen.findByRole('switch', { name: 'Show any models from Codex' }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Show models from Codex' }))
     fireEvent.click(screen.getByRole('button', { name: 'Back to app' }))
 
     await waitFor(() => {

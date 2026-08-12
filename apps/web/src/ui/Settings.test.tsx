@@ -294,7 +294,7 @@ describe('paired device timestamps', () => {
 })
 
 describe('model settings', () => {
-  it('filters each provider locally while its master switch still controls every model', () => {
+  it('filters each provider locally and exposes mixed visibility honestly', () => {
     const models: ModelChoice[] = [
       {
         key: 'opencode:ling',
@@ -384,10 +384,14 @@ describe('model settings', () => {
     expect(screen.queryByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeNull()
     expect(screen.getByText('OpenCode Go · Qwen3.8 Max')).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('switch', { name: 'Show any models from OpenCode' }))
+    const providerSwitch = screen.getByRole('checkbox', { name: 'Show models from OpenCode' })
+    expect(providerSwitch.getAttribute('aria-checked')).toBe('mixed')
+    expect(providerSwitch.classList.contains('is-mixed')).toBe(true)
+
+    fireEvent.click(providerSwitch)
     expect(onModelVisibilityChange).toHaveBeenCalledTimes(2)
-    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'opencode:ling', false)
-    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'opencode:qwen', false)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'opencode:ling', true)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'opencode:qwen', true)
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear Search OpenCode models' }))
     expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
