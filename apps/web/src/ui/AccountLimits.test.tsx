@@ -24,11 +24,13 @@ const summary = (limits: ResultOf<'usage.summary'>['limits'] = []): ResultOf<'us
   limits,
 })
 
+function limits(state: AccountLimitsState, onRetry = () => {}) {
+  return <AccountLimits state={state} onRetry={onRetry} />
+}
+
 describe('account limits', () => {
   it('distinguishes loading from an empty successful response', () => {
-    const view = render(
-      <AccountLimits state={{ status: 'loading', provider: 'codex' }} onRetry={() => {}} />,
-    )
+    const view = render(limits({ status: 'loading', provider: 'codex' }))
     expect(screen.getByRole('status').textContent).toContain('Checking plan limits')
     expect(screen.getByRole('region', { name: 'Codex' })).toBeTruthy()
     expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Plan limits' }))
@@ -37,35 +39,22 @@ describe('account limits', () => {
     )
 
     view.rerender(
-      <AccountLimits
-        state={{
-          status: 'ready',
-          provider: 'codex',
-          summary: {
-            ...summary(),
-            limitSource: { provider: 'codex', status: 'ready', limits: [] },
-          },
-        }}
-        onRetry={() => {}}
-      />,
+      limits({
+        status: 'ready',
+        provider: 'codex',
+        summary: {
+          ...summary(),
+          limitSource: { provider: 'codex', status: 'ready', limits: [] },
+        },
+      }),
     )
     expect(screen.queryByRole('status')).toBeNull()
     expect(screen.getByText('No plan limits reported.')).toBeTruthy()
 
-    view.rerender(
-      <AccountLimits
-        state={{ status: 'ready', provider: 'claude-code', summary: summary() }}
-        onRetry={() => {}}
-      />,
-    )
+    view.rerender(limits({ status: 'ready', provider: 'claude-code', summary: summary() }))
     expect(screen.getByText(/aren’t available/)).toBeTruthy()
 
-    view.rerender(
-      <AccountLimits
-        state={{ status: 'error', provider: 'grok', message: 'Offline' }}
-        onRetry={() => {}}
-      />,
-    )
+    view.rerender(limits({ status: 'error', provider: 'grok', message: 'Offline' }))
     expect(screen.getByRole('region', { name: 'Grok' })).toBeTruthy()
   })
 
@@ -85,7 +74,7 @@ describe('account limits', () => {
         },
       },
     }
-    const view = render(<AccountLimits state={state} onRetry={() => {}} />)
+    const view = render(limits(state))
 
     const codex = screen.getByRole('region', { name: 'Codex' })
     expect(within(codex).getByText('15% left')).toBeTruthy()
@@ -95,14 +84,11 @@ describe('account limits', () => {
     expect((bar.firstElementChild as HTMLElement).style.width).toBe('15%')
 
     view.rerender(
-      <AccountLimits
-        state={{
-          status: 'ready',
-          provider: 'grok',
-          summary: { ...summary(), limitSource: { provider: 'grok', status: 'unavailable' } },
-        }}
-        onRetry={() => {}}
-      />,
+      limits({
+        status: 'ready',
+        provider: 'grok',
+        summary: { ...summary(), limitSource: { provider: 'grok', status: 'unavailable' } },
+      }),
     )
     const grok = screen.getByRole('region', { name: 'Grok' })
     expect(within(grok).getByText(/aren’t available/)).toBeTruthy()
@@ -112,10 +98,7 @@ describe('account limits', () => {
       summary(),
     ]) {
       view.rerender(
-        <AccountLimits
-          state={{ status: 'error', provider: 'grok', message: 'Offline', summary: emptySummary }}
-          onRetry={() => {}}
-        />,
+        limits({ status: 'error', provider: 'grok', message: 'Offline', summary: emptySummary }),
       )
       expect(screen.getByRole('alert').textContent).not.toContain('Last known values')
       expect(screen.queryByText('No plan limits reported.')).toBeNull()
@@ -126,15 +109,15 @@ describe('account limits', () => {
   it('preserves usable values through a failed refresh and retries', () => {
     const onRetry = vi.fn()
     const view = render(
-      <AccountLimits
-        state={{
+      limits(
+        {
           status: 'error',
           provider: 'claude-code',
           message: 'Temporary connection failure',
           summary: summary([{ label: 'Session', usedPercent: 42 }]),
-        }}
-        onRetry={onRetry}
-      />,
+        },
+        onRetry,
+      ),
     )
 
     expect(screen.getByText('58% left')).toBeTruthy()
@@ -148,10 +131,7 @@ describe('account limits', () => {
     expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Plan limits' }))
 
     view.rerender(
-      <AccountLimits
-        state={{ status: 'loading', provider: 'claude-code', summary: summary() }}
-        onRetry={onRetry}
-      />,
+      limits({ status: 'loading', provider: 'claude-code', summary: summary() }, onRetry),
     )
     expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Plan limits' }))
   })
