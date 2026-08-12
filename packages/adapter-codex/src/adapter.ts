@@ -14,6 +14,7 @@ import type {
   Skill,
   SkillDiscoveryError,
   Thread,
+  Usage,
   UserInputRequest,
 } from '@harness/contracts'
 import type { LoginAccountResponse } from './generated/v2/LoginAccountResponse'
@@ -91,6 +92,26 @@ export function mapCodexError(notification: ErrorNotification): DomainEvent | un
     type: 'thread.error',
     threadId: notification.threadId,
     message: notification.error.message,
+  }
+}
+
+export function mapCodexUsage(
+  notification: ThreadTokenUsageUpdatedNotification,
+  model?: string,
+): Usage {
+  const total = notification.tokenUsage.total
+  // Codex's total is cumulative spend; its last counter is context occupancy.
+  // Usage cannot carry both numerators, so exposing the window beside total
+  // would render an impossible context percentage after a few turns.
+  return {
+    ...(model ? { model } : {}),
+    inputTokens: total.inputTokens,
+    cachedInputTokens: total.cachedInputTokens,
+    outputTokens: total.outputTokens,
+    reasoningTokens: total.reasoningOutputTokens,
+    totalTokens: total.totalTokens,
+    cumulative: true,
+    inputIncludesCached: true,
   }
 }
 
@@ -1093,23 +1114,9 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'thread/tokenUsage/updated': {
         const p = params as ThreadTokenUsageUpdatedNotification
-        const total = p.tokenUsage.total
-        const model = this.#threadModels.get(p.threadId)
         emit({
           type: 'usage.updated',
-          usage: {
-            ...(model ? { model } : {}),
-            inputTokens: total.inputTokens,
-            cachedInputTokens: total.cachedInputTokens,
-            outputTokens: total.outputTokens,
-            reasoningTokens: total.reasoningOutputTokens,
-            totalTokens: total.totalTokens,
-            cumulative: true,
-            inputIncludesCached: true,
-            ...(p.tokenUsage.modelContextWindow
-              ? { contextWindow: p.tokenUsage.modelContextWindow }
-              : {}),
-          },
+          usage: mapCodexUsage(p, this.#threadModels.get(p.threadId)),
         })
         return
       }

@@ -4,6 +4,7 @@ import type { ItemGuardianApprovalReviewCompletedNotification } from './generate
 import type { ItemGuardianApprovalReviewStartedNotification } from './generated/v2/ItemGuardianApprovalReviewStartedNotification'
 import type { RemoteControlStatusChangedNotification } from './generated/v2/RemoteControlStatusChangedNotification'
 import type { ThreadStatusChangedNotification } from './generated/v2/ThreadStatusChangedNotification'
+import type { ThreadTokenUsageUpdatedNotification } from './generated/v2/ThreadTokenUsageUpdatedNotification'
 import type { WarningNotification } from './generated/v2/WarningNotification'
 import type { ErrorNotification } from './generated/v2/ErrorNotification'
 import {
@@ -12,6 +13,7 @@ import {
   CodexAdapter,
   formatCodexWarning,
   mapCodexError,
+  mapCodexUsage,
   isIgnorableCodexNotification,
   mapApprovalResponse,
   mapApprovalRequest,
@@ -19,6 +21,28 @@ import {
   mapUserInputRequest,
   permissionInterruptParams,
 } from './adapter.js'
+
+const capturedTokenUsage = {
+  threadId: 'captured-thread',
+  turnId: 'captured-turn',
+  tokenUsage: {
+    total: {
+      inputTokens: 570_000,
+      cachedInputTokens: 490_000,
+      outputTokens: 25_000,
+      reasoningOutputTokens: 6_152,
+      totalTokens: 601_152,
+    },
+    last: {
+      inputTokens: 97_000,
+      cachedInputTokens: 80_000,
+      outputTokens: 4_000,
+      reasoningOutputTokens: 1_000,
+      totalTokens: 102_000,
+    },
+    modelContextWindow: 258_400,
+  },
+} satisfies ThreadTokenUsageUpdatedNotification
 
 /** Sanitized frames captured from Codex 0.146.0 on Windows. */
 const capturedStarted = {
@@ -83,6 +107,19 @@ const capturedError = {
 } satisfies ErrorNotification
 
 describe('Codex notifications', () => {
+  it('does not present cumulative thread usage as current context occupancy', () => {
+    expect(mapCodexUsage(capturedTokenUsage, 'gpt-5.6')).toEqual({
+      model: 'gpt-5.6',
+      inputTokens: 570_000,
+      cachedInputTokens: 490_000,
+      outputTokens: 25_000,
+      reasoningTokens: 6_152,
+      totalTokens: 601_152,
+      cumulative: true,
+      inputIncludesCached: true,
+    })
+  })
+
   it('does not collapse a failed account read into signed out', async () => {
     await expect(new CodexAdapter().account()).rejects.toThrow('adapter not started')
   })
