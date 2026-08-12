@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-12 main 7ead8ec9</span>
+        <span class="meta">2026-08-12 main 5597acf0</span>
       </div>
     </div>
 
@@ -314,9 +314,9 @@
             <small>thread, review, sessions, git, settings</small>
           </div>
           <div class="kpi">
-            <b>3</b>
+            <b>2</b>
             <span>workstreams running</span>
-            <small>design, provider UX, performance</small>
+            <small>design, provider UX</small>
           </div>
           <div class="kpi">
             <b>8</b>
@@ -334,7 +334,7 @@
         </p>
         <div class="lanes">
           <div class="lane l-done">
-            <header>Ready <span class="count">24</span></header>
+            <header>Ready <span class="count">25</span></header>
             <ul>
               <li>
                 <i class="tick">✓</i>
@@ -578,11 +578,25 @@
                   >
                 </span>
               </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Long-thread and first-progress performance
+                  <span class="d"
+                    >bounded active-tail reads, incremental live Markdown, stable completed rows,
+                    and linear 10k-item replay are pinned deterministically; new tasks show the
+                    optimistic user row plus one stable Working and Stop surface before the next
+                    paint, while the reopened 1,513-event Desktop trace captured the same stable
+                    state at +87 ms without a reload flash, duplicate status, timer restart, or
+                    limit-induced layout shift</span
+                  >
+                </span>
+              </li>
             </ul>
           </div>
 
           <div class="lane l-active">
-            <header>In progress <span class="count">3</span></header>
+            <header>In progress <span class="count">2</span></header>
             <ul>
               <li>
                 <i class="tick">●</i>
@@ -611,18 +625,6 @@
                     installed source keeps independent loading, ready, unavailable, error, stale,
                     and Retry state, while cross-app state/count/plain-metadata labels share one
                     grammar</span
-                  >
-                </span>
-              </li>
-              <li>
-                <i class="tick">●</i>
-                <span
-                  >Long-thread and first-progress performance
-                  <span class="d"
-                    >bounded parsing, stable virtual-row identity, incremental live Markdown, and
-                    linear 10k-item completed replay are on main; one stable live status owns
-                    narration and activity transitions, while #598 retains first durable provider
-                    progress latency and checkpoint sequencing</span
                   >
                 </span>
               </li>
