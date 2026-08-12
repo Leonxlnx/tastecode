@@ -1060,15 +1060,22 @@ describe('new chats', () => {
     })
     expect(screen.getByTestId('thread')).toBe(threadElement)
 
-    emitThreadEvent('thread-1', {
-      type: 'turn.completed',
-      turnId: 'turn-1',
-      status: 'completed',
-    })
+    // prettier-ignore
+    emitThreadEvent('thread-1', { type: 'turn.completed', turnId: 'turn-1', status: 'completed' }, 1)
     await waitFor(() =>
       expect(
         transport.request.mock.calls.filter(([method]) => method === 'usage.summary'),
       ).toHaveLength(3),
+    )
+    transport.request.mockClear()
+    act(() => {
+      for (const listener of transport.sequenceGapListeners) listener(2, 4)
+    })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'thread-1',
+        afterSeq: 1,
+      }),
     )
   })
 

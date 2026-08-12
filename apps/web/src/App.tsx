@@ -1738,6 +1738,7 @@ export function App() {
         const provisional = threadStates.current.get(provisionalId) ?? emptyThread
         threadStates.current.delete(provisionalId)
         threadStates.current.set(threadId, provisional)
+        durableSequences.current.set(threadId, 0)
         const pending =
           pendingSession.current?.id === provisionalId ? pendingSession.current : undefined
         if (pending) pending.threadId = threadId
