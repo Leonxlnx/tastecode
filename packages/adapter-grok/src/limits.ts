@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { StdioJsonRpc } from '@harness/proc'
-import { grokCommand } from './adapter.js'
+import { grokAccount, grokCommand } from './adapter.js'
 
 /**
  * Weekly credit pool through Grok Build's own ACP extension. The provider
@@ -16,6 +16,9 @@ export type ProviderLimit = {
   resetsAt?: number | undefined
   valueLabel?: string | undefined
 }
+
+export type GrokLimitSource =
+  { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
 
 function object(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -198,4 +201,14 @@ function grokBilling(): Promise<unknown> {
 
 export async function grokLimits(): Promise<ProviderLimit[]> {
   return mapGrokBilling(await grokBilling())
+}
+
+/** Provider-local availability keeps shared code free of Grok auth checks. */
+export async function grokLimitSource(
+  account: typeof grokAccount = grokAccount,
+): Promise<GrokLimitSource> {
+  if (!(await account()).signedIn) return { status: 'unavailable' }
+  const body = await grokBilling()
+  if (!object(object(body)?.['config'])) throw new Error('Grok billing response was invalid.')
+  return { status: 'ready', limits: mapGrokBilling(body) }
 }

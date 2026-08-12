@@ -12,4 +12,4 @@ export {
   signOutGrok,
 } from './adapter.js'
 export { readGrokUsageHistory } from './usage-history.js'
-export { grokLimits, mapGrokBilling } from './limits.js'
+export { grokLimitSource, grokLimits, mapGrokBilling, type GrokLimitSource } from './limits.js'

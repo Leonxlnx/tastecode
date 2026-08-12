@@ -33,7 +33,7 @@ vi.mock('@harness/proc', () => ({
 }))
 
 const { grokCommand } = await import('./adapter.js')
-const { grokLimits, mapGrokBilling } = await import('./limits.js')
+const { grokLimitSource, grokLimits, mapGrokBilling } = await import('./limits.js')
 
 beforeEach(() => {
   fake.calls = []
@@ -204,6 +204,36 @@ describe('mapGrokBilling', () => {
     ).toEqual([{ label: 'Weekly', usedPercent: 0, valueLabel: 'Usage not reported' }])
     expect(mapGrokBilling({})).toEqual([])
     expect(mapGrokBilling(undefined)).toEqual([])
+  })
+
+  it('reports signed-out billing as unavailable without starting provider ACP', async () => {
+    const account = vi.fn().mockResolvedValue({ signedIn: false })
+
+    await expect(grokLimitSource(account)).resolves.toEqual({ status: 'unavailable' })
+    expect(account).toHaveBeenCalledOnce()
+    expect(fake.spawns).toEqual([])
+  })
+
+  it('reports a recognized signed-in billing response as ready', async () => {
+    fake.billing = {
+      config: {
+        creditUsagePercent: 12,
+        currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' },
+      },
+    }
+
+    await expect(grokLimitSource(async () => ({ signedIn: true }))).resolves.toEqual({
+      status: 'ready',
+      limits: [{ label: 'Weekly', usedPercent: 12 }],
+    })
+  })
+
+  it('rejects an unrecognized signed-in billing response', async () => {
+    fake.billing = { futureBillingShape: true }
+
+    await expect(grokLimitSource(async () => ({ signedIn: true }))).rejects.toThrow(
+      'Grok billing response was invalid.',
+    )
   })
 
   it('reads billing through the resolved Grok binary and provider ACP', async () => {
