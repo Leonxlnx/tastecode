@@ -18,6 +18,7 @@ export type JsonRpcId = number | string
 type PendingCall = {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
+  timer?: ReturnType<typeof setTimeout>
 }
 
 export type ServerRequestHandler = (
@@ -95,7 +96,11 @@ export class StdioJsonRpc {
     this.#onStderr = handler
   }
 
-  request<T = unknown>(method: string, params: unknown = {}): Promise<T> {
+  request<T = unknown>(
+    method: string,
+    params: unknown = {},
+    options: { timeoutMs?: number } = {},
+  ): Promise<T> {
     // Also when the process is gone: #write silently drops the frame once the
     // child has exited, so a call made after a crash used to sit pending
     // forever — the session stayed at "Working" with no error and no way out.
@@ -103,7 +108,15 @@ export class StdioJsonRpc {
     if (this.#disposed) return Promise.reject(new Error('transport disposed'))
     const id = this.#nextId++
     const promise = new Promise<unknown>((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject })
+      const call: PendingCall = { resolve, reject }
+      if (options.timeoutMs !== undefined) {
+        call.timer = setTimeout(() => {
+          if (this.#pending.delete(id)) {
+            reject(new Error(`${this.#label} request timed out: ${method}`))
+          }
+        }, options.timeoutMs)
+      }
+      this.#pending.set(id, call)
     })
     this.#write({ jsonrpc: '2.0', id, method, params })
     return promise as Promise<T>
@@ -181,6 +194,7 @@ export class StdioJsonRpc {
     const call = this.#pending.get(id)
     if (!call) return
     this.#pending.delete(id)
+    clearTimeout(call.timer)
 
     const error = message['error'] as
       { code?: number; message?: string; data?: unknown } | undefined
@@ -192,7 +206,10 @@ export class StdioJsonRpc {
   }
 
   #failAll(error: Error): void {
-    for (const [, call] of this.#pending) call.reject(error)
+    for (const [, call] of this.#pending) {
+      clearTimeout(call.timer)
+      call.reject(error)
+    }
     this.#pending.clear()
   }
 }

@@ -1,9 +1,36 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
-import { killTree, readNdjson, runCli, spawnCli } from './index.js'
+import { killTree, readNdjson, runCli, spawnCli, StdioJsonRpc } from './index.js'
+
+describe('StdioJsonRpc', () => {
+  it('forgets a timed-out request and still accepts the next reply', async () => {
+    vi.useFakeTimers()
+    try {
+      const child = new EventEmitter() as ChildProcessWithoutNullStreams
+      child.stdin = new PassThrough()
+      child.stdout = new PassThrough()
+      child.stderr = new PassThrough()
+      const rpc = new StdioJsonRpc(child, 'test agent')
+
+      const timedOut = rpc.request('slow', {}, { timeoutMs: 10 })
+      const rejection = expect(timedOut).rejects.toThrow('test agent request timed out: slow')
+      await vi.advanceTimersByTimeAsync(10)
+      await rejection
+
+      const next = rpc.request('fast')
+      child.stdout.write('{"jsonrpc":"2.0","id":1,"result":"late"}\n')
+      child.stdout.write('{"jsonrpc":"2.0","id":2,"result":"ready"}\n')
+      await expect(next).resolves.toBe('ready')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
 
 describe('runCli', () => {
   it('captures a short command without invoking a platform shell directly', async () => {
