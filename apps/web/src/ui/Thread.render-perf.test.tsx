@@ -179,6 +179,63 @@ describe('streamed thread renders', () => {
     expect(orbRender).toHaveBeenCalledTimes(initialRenders)
   })
 
+  it('uses the stable rail as the only live status and clears completed activity', () => {
+    const user = message({
+      id: 'user-1',
+      turnId: 'turn-2',
+      role: 'user',
+      text: 'Run the checks',
+    })
+    const opening = message({
+      id: 'opening-1',
+      turnId: 'turn-2',
+      status: 'started',
+      text: 'I will run the checks.',
+    })
+    const command = message({
+      id: 'command-1',
+      turnId: 'turn-2',
+      type: 'command',
+      role: undefined,
+      status: 'started',
+      command: 'pnpm test',
+    })
+    const rendered = render(view([user, opening]))
+    const rail = rendered.container.querySelector('.activity--working')
+
+    expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
+      'Working',
+    )
+    rendered.rerender(view([user, opening, command]))
+
+    expect(rendered.container.querySelector('.activity--working')).toBe(rail)
+    expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
+      'Running a command',
+    )
+    expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
+
+    rendered.rerender(view([user, opening, { ...command, text: 'Tests passed.' }]))
+    expect(rendered.container.querySelector('.activity--working')).toBe(rail)
+    expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
+
+    const narration = message({
+      id: 'answer-1',
+      turnId: 'turn-2',
+      status: 'started',
+      text: 'The checks passed.',
+    })
+    rendered.rerender(
+      view([user, opening, { ...command, status: 'completed', text: 'Tests passed.' }, narration]),
+    )
+
+    expect(rendered.container.querySelector('.activity--working')).toBe(rail)
+    expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
+      'Working',
+    )
+    expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
+    expect(markdownRender).toHaveBeenLastCalledWith({ text: narration.text, streaming: true })
+  })
+
   it('does not restart the entry animation timer for streamed text updates', () => {
     vi.useFakeTimers()
     const existing: Item[] = [

@@ -229,20 +229,6 @@ export function Thread(props: {
     () => workLabel(props.items, props.activeTurn?.id, props.searching),
     [props.items, props.activeTurn?.id, props.searching],
   )
-  // Between two tool calls — which is exactly while prose streams — nothing
-  // is 'started', so the label fell back to the generic "Working" and then
-  // returned. Each flip remounts the span and replays its fade, so a normal
-  // read/search/edit sequence strobed. Hold the last specific label instead.
-  const lastSpecific = useRef<string | undefined>(undefined)
-  const activeTurnId = props.activeTurn?.id
-  const previousTurnId = useRef(activeTurnId)
-  if (previousTurnId.current !== activeTurnId) {
-    previousTurnId.current = activeTurnId
-    lastSpecific.current = undefined
-  }
-  if (rawWorkLabel !== 'Working') lastSpecific.current = rawWorkLabel
-  const activeWorkLabel =
-    rawWorkLabel === 'Working' ? (lastSpecific.current ?? 'Working') : rawWorkLabel
 
   useEffect(() => {
     const target = props.searchJump
@@ -327,8 +313,10 @@ export function Thread(props: {
                 !live &&
                 presentation?.complete === true &&
                 presentation.finalAnswerIndex === row.index
+              const liveActivity = live && isActivity(item)
               const suppressed =
                 (compactedActivity && !activityLead) ||
+                liveActivity ||
                 isRepeatedDesignRow(item, props.items[row.index - 1]) ||
                 // A design turn tells its story through the phase labels and
                 // Harness notes; the provider's raw commands, tool calls, and
@@ -337,7 +325,6 @@ export function Thread(props: {
                   !compactedActivity &&
                   isActivity(item) &&
                   !designPhaseLabel(toolText(item)))
-              const liveActivity = live && isActivity(item)
               const settling = settledTurnId === item.turnId
               const railAnchor = live && presentation?.firstResponseIndex === row.index
               return (
@@ -379,7 +366,7 @@ export function Thread(props: {
               // sits at the end of the runway, over the space the spacer
               // below holds.
               <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
-                <WorkingRail startedAt={props.activeTurn.startedAt} label={activeWorkLabel} />
+                <WorkingRail startedAt={props.activeTurn.startedAt} label={rawWorkLabel} />
               </div>
             ) : null}
           </div>
