@@ -750,11 +750,17 @@ describe('web client', () => {
     })
   })
 
-  it('sends the normalized cached model setup before discovery finishes', async () => {
+  it('keeps the normalized cached setup and draft until provider discovery finishes', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
+    let releaseProviders!: () => void
+    const providersGate = new Promise<void>((resolve) => {
+      releaseProviders = resolve
+    })
     transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'providers.list') return new Promise(() => {})
+      if (method === 'providers.list') {
+        return providersGate.then(() => ({ providers: serverProviders }))
+      }
       return request(method, params)
     })
     localStorage.setItem(
@@ -778,20 +784,30 @@ describe('web client', () => {
     fireEvent.change(composer, { target: { value: 'Use what the UI shows' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
 
+    expect((composer as HTMLTextAreaElement).value).toBe('Use what the UI shows')
+    expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
+
+    await act(async () => {
+      releaseProviders()
+      await providersGate
+    })
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    )
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
         approval: 'ask',
-        model: 'gpt-5.6-sol',
-        effort: 'high',
       })
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'thread-1',
         text: 'Use what the UI shows',
         clientSubmissionId: expect.stringMatching(/^local:/),
-        model: 'gpt-5.6-sol',
-        effort: 'high',
       })
     })
   })
@@ -1009,6 +1025,173 @@ describe('new chats', () => {
     )
     expect((composer as HTMLTextAreaElement).value).toBe('Start after I choose a project')
     expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
+  })
+
+  it('keeps a fresh draft editable while provider discovery is loading', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'providers.list' ? new Promise(() => {}) : request(method, params),
+    )
+
+    render(<App />)
+
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Keep this draft' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect((composer as HTMLTextAreaElement).disabled).toBe(false)
+    expect((composer as HTMLTextAreaElement).value).toBe('Keep this draft')
+    expect(screen.getByRole('status').textContent).toContain('Checking providers')
+    expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
+    expect(transport.request).not.toHaveBeenCalledWith('thread.sendTurn', expect.anything())
+  })
+
+  it('offers setup without clearing a fresh draft when its provider cannot run', async () => {
+    serverProviders = [
+      {
+        id: 'codex',
+        displayName: 'Codex',
+        installed: false,
+        auth: 'unknown',
+        setup: { installUrl: 'https://example.test/codex', login: 'app' },
+        problem: 'codex is not on PATH',
+      },
+    ]
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Send after setup' } })
+
+    const setup = await screen.findByRole('button', { name: 'Set up a provider' })
+    expect(screen.getByRole('status').textContent).toContain('Provider setup required')
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((composer as HTMLTextAreaElement).value).toBe('Send after setup')
+
+    fireEvent.click(setup)
+    expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeTruthy()
+    expect(transport.request).not.toHaveBeenCalledWith('thread.sendTurn', expect.anything())
+  })
+
+  it('ignores a stale auth result after switching loaded providers', async () => {
+    let resolveStaleAuth!: (account: { signedIn: boolean }) => void
+    const staleAuth = new Promise<{ signedIn: boolean }>((resolve) => {
+      resolveStaleAuth = resolve
+    })
+    const available = serverProviders[0] as Record<string, unknown>
+    serverProviders = [
+      { ...available, auth: 'unknown' },
+      { ...available, id: 'claude-code', displayName: 'Claude Code', auth: 'unknown' },
+    ]
+    serverProjects = [
+      {
+        ...(serverProjects[0] as Record<string, unknown>),
+        sessions: [
+          { id: 'codex-thread', title: 'Codex thread', provider: 'codex', createdAt: 0 },
+          { id: 'claude-thread', title: 'Claude thread', provider: 'claude-code', createdAt: 1 },
+        ],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'auth.status'
+        ? (params as { provider: string }).provider === 'codex'
+          ? staleAuth
+          : Promise.resolve({ signedIn: false })
+        : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Claude thread' }))
+    await screen.findByRole('button', { name: 'Set up a provider' })
+    resolveStaleAuth({ signedIn: true })
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toContain('Provider setup required'),
+    )
+  })
+
+  it('drops a parked cached source before it can become the effective sender', async () => {
+    localStorage.setItem('harness.provider', 'cursor')
+    localStorage.setItem('harness.model', 'cursor:cursor-large')
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([
+        {
+          key: 'cursor:cursor-large',
+          provider: 'cursor',
+          sourceName: 'Cursor',
+          mark: 'cursor',
+          model: {
+            id: 'cursor-large',
+            displayName: 'Cursor Large',
+            isDefault: true,
+            reasoningEfforts: [],
+            serviceTiers: [],
+          },
+        },
+      ]),
+    )
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models: [
+            {
+              id: 'gpt-5.6-sol',
+              displayName: 'GPT-5.6 Sol',
+              isDefault: true,
+              reasoningEfforts: ['low'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Sol',
+      )
+      expect(localStorage.getItem('harness.provider')).toBe('codex')
+    })
+    expect(screen.queryByText('Cursor Large')).toBeNull()
+  })
+
+  it('keeps a draft through provider discovery failure and recovery', async () => {
+    let failing = true
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'providers.list' && failing) {
+        return Promise.reject(new Error('provider discovery unavailable'))
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Recover this draft' } })
+    const setup = await screen.findByRole('button', { name: 'Set up a provider' })
+    expect(screen.getByRole('status').textContent).toContain('Provider unavailable')
+
+    failing = false
+    fireEvent.click(setup)
+
+    await waitFor(() => {
+      expect(screen.queryByText('Provider unavailable')).toBeNull()
+      expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      )
+    })
+    expect((composer as HTMLTextAreaElement).value).toBe('Recover this draft')
   })
 
   it('moves the composer from the centered new-chat layout after the first prompt', async () => {

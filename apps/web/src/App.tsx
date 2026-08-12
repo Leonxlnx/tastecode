@@ -42,7 +42,7 @@ import {
 } from './thread-store.js'
 import { CommandPalette, type CommandScope, type PaletteCommand } from './ui/CommandPalette.js'
 import { CheckoutDiscardDialog } from './ui/CheckoutDiscardDialog.js'
-import { Composer, type WorkspaceInfo } from './ui/Composer.js'
+import { Composer, type SendAvailability, type WorkspaceInfo } from './ui/Composer.js'
 import { getFastModeOffValue, getNextServiceTierForModel } from './ui/ModelSelector.js'
 import { RollbackDialog, type Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchHost.js'
@@ -108,6 +108,7 @@ const PROVIDER_IDS = [
   'acp',
   'api',
 ] as const satisfies readonly ProviderId[]
+const PUBLIC_BETA_PROVIDER_IDS = new Set<ProviderId>(['codex', 'claude-code', 'grok'])
 /** Engines a custom model can be attached to — ACP agents and API
  *  connections carry their own roster concepts and stay out of this list. */
 const DIRECT_PROVIDER_IDS = PROVIDER_IDS.filter((id) => id !== 'acp' && id !== 'api')
@@ -176,6 +177,46 @@ type PendingSubmission = {
   indeterminate: boolean
   optimisticTurn?: NonNullable<ThreadState['activeTurn']>
   precedingTurnId?: string
+}
+
+type CatalogAvailability = 'loading' | 'ready' | 'failed'
+type AccountCheck = {
+  provider: ProviderId
+  state: 'loading' | 'ready' | 'failed'
+  account?: Account | undefined
+}
+
+function resolveSendAvailability(input: {
+  catalog: CatalogAvailability
+  activeProvider?: ProviderId | undefined
+  selectedChoice?: ModelChoice | undefined
+  providerStatuses: ProviderStatus[]
+  accountCheck: AccountCheck
+}): SendAvailability {
+  if (input.catalog === 'loading') return 'loading'
+  if (input.catalog === 'failed') return 'unavailable'
+
+  const provider = input.activeProvider ?? input.selectedChoice?.provider
+  if (!provider) {
+    return input.providerStatuses.some(
+      (status) => !status.installed || status.auth === 'unauthenticated',
+    )
+      ? 'setup-required'
+      : 'unavailable'
+  }
+
+  const status = input.providerStatuses.find((entry) => entry.id === provider)
+  // A persisted server session remains runnable even when its source is parked
+  // from this release's new-session roster (for example a direct API thread).
+  if (!status) return input.activeProvider ? 'ready' : 'unavailable'
+  if (!status.installed || status.auth === 'unauthenticated') return 'setup-required'
+  if (status.problem || !status.capabilities) return 'unavailable'
+  if (status.auth === 'authenticated') return 'ready'
+  if (input.accountCheck.provider !== provider || input.accountCheck.state === 'loading') {
+    return 'loading'
+  }
+  if (input.accountCheck.state === 'failed') return 'unavailable'
+  return input.accountCheck.account?.signedIn ? 'ready' : 'setup-required'
 }
 
 function readCustomModels(): CustomModel[] {
@@ -307,6 +348,7 @@ export function App() {
   const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
   const [modelConnections, setModelConnections] = useState<ModelConnection[]>([])
   const [catalogRequest, setCatalogRequest] = useState(0)
+  const [catalogAvailability, setCatalogAvailability] = useState<CatalogAvailability>('loading')
   const [hiddenModels, setHiddenModels] = useState<Set<string>>(() => {
     try {
       return new Set(JSON.parse(readSetting(HIDDEN_MODELS_KEY) ?? '[]') as string[])
@@ -348,6 +390,10 @@ export function App() {
   const [workspace, setWorkspace] = useState<WorkspaceInfo | undefined>()
   const [branches, setBranches] = useState<string[]>([])
   const [account, setAccount] = useState<Account | undefined>()
+  const [accountCheck, setAccountCheck] = useState<AccountCheck>({
+    provider,
+    state: 'loading',
+  })
   const [voiceAvailable, setVoiceAvailable] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
@@ -404,18 +450,22 @@ export function App() {
     () => mergeCustomModels(catalogModels, customModels),
     [catalogModels, customModels],
   )
+  const rosterModels = useMemo(
+    () => models.filter((choice) => PUBLIC_BETA_PROVIDER_IDS.has(choice.provider)),
+    [models],
+  )
   const catalogModelsRef = useRef(catalogModels)
   catalogModelsRef.current = catalogModels
   const modelsRef = useRef(models)
   modelsRef.current = models
   /** The fixed direct roster with human names, for the custom-model form. */
   const customModelProviders = useMemo(
-    () => DIRECT_PROVIDER_IDS.map((id) => ({ id, name: providerDisplayName(id) })),
+    () => [...PUBLIC_BETA_PROVIDER_IDS].map((id) => ({ id, name: providerDisplayName(id) })),
     [],
   )
   const visibleModels = useMemo(
-    () => models.filter((choice) => !hiddenModels.has(choice.key)),
-    [models, hiddenModels],
+    () => rosterModels.filter((choice) => !hiddenModels.has(choice.key)),
+    [rosterModels, hiddenModels],
   )
   // Memoised for identity: while the catalog is empty this is the selected
   // choice, and a fresh object per render would give every consumer downstream
@@ -438,15 +488,18 @@ export function App() {
         : undefined,
     [provider, acpAgent, acpAgentName],
   )
+  const activeSession = useMemo(
+    () => (activeId ? findSession(projects, activeId)?.session : undefined),
+    [activeId, projects],
+  )
   const activeModelSource = useMemo(() => {
-    const session = activeId ? findSession(projects, activeId)?.session : undefined
-    return session
+    return activeSession
       ? sourceKey({
-          provider: session.provider,
-          agentId: session.agent,
+          provider: activeSession.provider,
+          agentId: activeSession.agent,
         })
       : undefined
-  }, [activeId, projects])
+  }, [activeSession])
   const selectableModels = useMemo(
     () =>
       activeModelSource
@@ -472,6 +525,23 @@ export function App() {
     selectableModels.find((choice) => choice.key === modelId) ??
     selectableModels[0] ??
     selectableImplicitChoice
+  const sendAvailability = useMemo(
+    () =>
+      resolveSendAvailability({
+        catalog: catalogAvailability,
+        activeProvider: activeSession?.provider,
+        selectedChoice: selectedModelChoice,
+        providerStatuses,
+        accountCheck,
+      }),
+    [
+      catalogAvailability,
+      activeSession?.provider,
+      selectedModelChoice,
+      providerStatuses,
+      accountCheck,
+    ],
+  )
   // One effective setup drives both the picker and requests. State can briefly
   // contain values from storage or the model that was just hidden; resolving
   // in render prevents that transition from leaking into an immediate send.
@@ -824,6 +894,7 @@ export function App() {
   // unique, so each choice keeps the provider/connection that will pay for it.
   useEffect(() => {
     let cancelled = false
+    setCatalogAvailability('loading')
     void (async () => {
       const [providersResult, connectionsResult, agentsResult] = await Promise.all([
         transport.request('providers.list', {}),
@@ -869,6 +940,7 @@ export function App() {
       setAcpAgents(agentsResult?.agents ?? [])
       setModelConnections(connections)
       setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
+      setCatalogAvailability('ready')
       // A synthetic cache-miss entry has no tier metadata. Do not persist it
       // as an authoritative snapshot after a transient discovery failure.
       if (unknownKeys.size === 0) {
@@ -878,9 +950,15 @@ export function App() {
       // A hidden model cannot remain the internal selection. Otherwise the
       // picker shows no such choice while a turn can still silently use it.
       const hidden = hiddenModelsRef.current
-      const customPool = customModelsRef.current.map((entry) =>
-        customModelChoice(entry, providerDisplayName(entry.provider), providerMark(entry.provider)),
-      )
+      const customPool = customModelsRef.current
+        .filter((entry) => PUBLIC_BETA_PROVIDER_IDS.has(entry.provider))
+        .map((entry) =>
+          customModelChoice(
+            entry,
+            providerDisplayName(entry.provider),
+            providerMark(entry.provider),
+          ),
+        )
       const all = [...catalog, ...customPool]
       const visible = all.filter((choice) => !hidden.has(choice.key))
       const currentSession = activeIdRef.current
@@ -972,7 +1050,10 @@ export function App() {
         })
       })
     })().catch(() => {
-      if (!cancelled) setModelCatalog((current) => ({ ...current, loaded: true }))
+      if (!cancelled) {
+        setModelCatalog((current) => ({ ...current, loaded: true }))
+        setCatalogAvailability('failed')
+      }
     })
     return () => {
       cancelled = true
@@ -1048,10 +1129,24 @@ export function App() {
   }, [transport, activePath, thread.running])
 
   useEffect(() => {
+    let cancelled = false
+    setAccount(undefined)
+    setAccountCheck({ provider, state: 'loading' })
     void transport
       .request('auth.status', { provider })
-      .then(setAccount)
-      .catch(() => setAccount(undefined))
+      .then((nextAccount) => {
+        if (cancelled) return
+        setAccount(nextAccount)
+        setAccountCheck({ provider, state: 'ready', account: nextAccount })
+      })
+      .catch(() => {
+        if (cancelled) return
+        setAccount(undefined)
+        setAccountCheck({ provider, state: 'failed' })
+      })
+    return () => {
+      cancelled = true
+    }
   }, [transport, provider])
 
   const refreshProjects = useCallback(async () => {
@@ -1671,6 +1766,10 @@ export function App() {
       // for the paragraph someone just typed.
       const restoreDraft = () =>
         setComposerDraft((current) => ({ text, request: (current?.request ?? 0) + 1 }))
+      if (sendAvailability !== 'ready') {
+        restoreDraft()
+        return
+      }
       // Design briefing questions are Harness-owned and answered by the server,
       // so they work for every provider that can complete a text turn — no
       // structured-input capability gate here (that gates provider-originated
@@ -1937,6 +2036,7 @@ export function App() {
       updateQueue,
       designMode,
       restoreRejectedDraft,
+      sendAvailability,
     ],
   )
 
@@ -1988,7 +2088,10 @@ export function App() {
 
   const handleAccountChange = useCallback(
     (changedProvider: ProviderId, changedAccount: Account) => {
-      if (changedProvider === provider) setAccount(changedAccount)
+      if (changedProvider === provider) {
+        setAccount(changedAccount)
+        setAccountCheck({ provider: changedProvider, state: 'ready', account: changedAccount })
+      }
     },
     [provider],
   )
@@ -2689,6 +2792,10 @@ export function App() {
     setSettingsSection(section)
     setSettingsOpen(true)
   }, [])
+  const openProviderSetup = useCallback(() => {
+    refreshCatalog()
+    openSettings('providers')
+  }, [refreshCatalog, openSettings])
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
   const resetSettings = useCallback(() => {
     localStorage.clear()
@@ -2940,6 +3047,7 @@ export function App() {
                   autoReviewSupported={autoReviewSupported}
                   voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
                   disabled={false}
+                  sendAvailability={sendAvailability}
                   running={thread.running}
                   newSession={!activeId}
                   isolate={active?.session.worktreeBranch ? true : isolateSession}
@@ -2960,6 +3068,7 @@ export function App() {
                   onProjectChange={selectProject}
                   onBranchChange={changeBranch}
                   onProjectRequired={requireProject}
+                  onSetupProvider={openProviderSetup}
                   onSend={sendTurn}
                   onSteer={steerTurn}
                   onInterrupt={interrupt}
@@ -2986,7 +3095,7 @@ export function App() {
           providerStatuses={providerStatuses}
           acpAgents={acpAgents}
           modelConnections={modelConnections}
-          models={models}
+          models={rosterModels}
           hiddenModels={hiddenModels}
           onModelVisibilityChange={changeModelVisibility}
           providers={customModelProviders}

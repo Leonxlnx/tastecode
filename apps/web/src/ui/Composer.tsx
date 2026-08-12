@@ -116,6 +116,8 @@ type ComposerAttachment = {
 
 type RunningSubmission = 'queue' | 'steer'
 
+export type SendAvailability = 'loading' | 'ready' | 'setup-required' | 'unavailable'
+
 function ComposerComponent(props: {
   projects: Project[]
   projectPath: string | undefined
@@ -133,6 +135,7 @@ function ComposerComponent(props: {
   autoReviewSupported: boolean
   voiceAvailable: boolean
   disabled: boolean
+  sendAvailability: SendAvailability
   running: boolean
   newSession: boolean
   isolate: boolean
@@ -153,6 +156,7 @@ function ComposerComponent(props: {
   onProjectChange: (path: string) => void
   onBranchChange: (branch: string) => void
   onProjectRequired: () => void
+  onSetupProvider: () => void
   onSend: (text: string, attachments: string[]) => void
   onSteer: (text: string, attachments: string[]) => void
   onInterrupt: () => void
@@ -350,7 +354,13 @@ function ComposerComponent(props: {
   const sendContent = (content: string, submission: RunningSubmission = 'queue') => {
     const trimmed = content.trim()
     const paths = attachments.flatMap((attachment) => attachment.path ?? [])
-    if (trimmed === '' || paths.length !== attachments.length || props.disabled) return
+    if (
+      trimmed === '' ||
+      paths.length !== attachments.length ||
+      props.disabled ||
+      props.sendAvailability !== 'ready'
+    )
+      return
     if (!props.projectPath) {
       props.onProjectRequired()
       return
@@ -502,7 +512,10 @@ function ComposerComponent(props: {
   const showStop = props.running && text.trim() === '' && attachments.length === 0
   const submitLabel = props.running ? 'Queue' : 'Send'
   const sendDisabled =
-    text.trim() === '' || attachments.some((attachment) => !attachment.path) || props.disabled
+    text.trim() === '' ||
+    attachments.some((attachment) => !attachment.path) ||
+    props.disabled ||
+    props.sendAvailability !== 'ready'
 
   return (
     <>
@@ -778,6 +791,23 @@ function ComposerComponent(props: {
                   placeholder={props.disabled ? 'Add a project folder first' : 'Do anything'}
                 />
               </div>
+
+              {props.sendAvailability !== 'ready' ? (
+                <div className="composer__provider-state">
+                  <span role="status">
+                    {props.sendAvailability === 'loading'
+                      ? 'Checking providers…'
+                      : props.sendAvailability === 'setup-required'
+                        ? 'Provider setup required'
+                        : 'Provider unavailable'}
+                  </span>
+                  {props.sendAvailability !== 'loading' ? (
+                    <button type="button" onClick={props.onSetupProvider}>
+                      Set up a provider
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div className="tools">
                 <button

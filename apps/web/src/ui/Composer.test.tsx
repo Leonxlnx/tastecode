@@ -431,6 +431,7 @@ function renderComposer(
       autoReviewSupported={false}
       voiceAvailable={false}
       disabled={false}
+      sendAvailability="ready"
       running={false}
       newSession
       isolate={false}
@@ -449,6 +450,7 @@ function renderComposer(
       onProjectChange={vi.fn()}
       onBranchChange={vi.fn()}
       onProjectRequired={vi.fn()}
+      onSetupProvider={vi.fn()}
       onSend={onSend}
       onSteer={vi.fn()}
       onInterrupt={vi.fn()}

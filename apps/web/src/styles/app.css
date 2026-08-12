@@ -7441,6 +7441,28 @@
   cursor: not-allowed;
 }
 
+.composer__provider-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 10px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.composer__provider-state button {
+  border: 0;
+  padding: 2px 0;
+  color: var(--text-2);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.composer__provider-state button:is(:hover, :focus-visible) {
+  color: var(--text);
+}
+
 /* ---------- context chip & tool row ---------- */
 
 .chips {
