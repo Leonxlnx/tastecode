@@ -1325,7 +1325,13 @@ export function App() {
         // Only a boundary returned by this read (or its live buffer) is fresh
         // authority; the cached prefix must not settle an indeterminate send.
         const suffix = reduceEventLog(reduceEventLog(emptyThread, events), buffer, lastSeq)
-        return { ...live, activeTurn: suffix.activeTurn }
+        const crossedTurnBoundary = [...events, ...buffer].some(
+          ({ event }) => event.type === 'turn.started' || event.type === 'turn.completed',
+        )
+        return {
+          ...live,
+          activeTurn: crossedTurnBoundary ? suffix.activeTurn : live.activeTurn,
+        }
       } finally {
         buffers.delete(buffer)
         if (buffers.size === 0) historyBuffers.current.delete(threadId)

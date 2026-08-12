@@ -2877,7 +2877,7 @@ describe('live sessions', () => {
       expect([kind === 'queue' ? screen.queryByLabelText('Queued prompts')?.textContent : screen.getByTestId('thread').textContent, draft()]).toEqual([expect.stringContaining('Submit exactly once'), ''])
       if (kind === 'turn' && outcome === 'accepted') emitThreadEvent('thread-1', started.event)
       // prettier-ignore
-      await act(async () => resyncs.at(-1)?.({ events: outcome === 'rejected' ? [started] : [], running: kind === 'queue' }))
+      await act(async () => resyncs.at(-1)?.({ events: outcome === 'rejected' && kind === 'turn' ? [started] : [], running: kind === 'queue' }))
       if (outcome === 'accepted') {
         // prettier-ignore
         emitThreadEvent('thread-1', { type: 'item.completed', item: { id: submissionId, turnId: 'turn-1', type: 'message', role: 'user', status: 'completed', text: 'Submit exactly once', createdAt: 1 } })
