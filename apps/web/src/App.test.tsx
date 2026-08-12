@@ -1080,6 +1080,28 @@ describe('web client', () => {
   })
 })
 describe('new chats', () => {
+  it('refreshes usage once for active-provider change bursts', async () => {
+    render(<App />)
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+    )
+    transport.request.mockClear()
+
+    act(() => transport.listeners.get('usage.changed')?.({ provider: 'grok' }))
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 120)))
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+
+    act(() => {
+      transport.listeners.get('usage.changed')?.({ provider: 'codex' })
+      transport.listeners.get('usage.changed')?.({ provider: 'codex' })
+    })
+    await waitFor(() =>
+      expect(
+        transport.request.mock.calls.filter(([method]) => method === 'usage.summary'),
+      ).toHaveLength(1),
+    )
+  })
+
   it('shows consecutive prompts while the new session is still starting', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
