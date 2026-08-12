@@ -32,6 +32,7 @@ import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import { UsageHistoryService } from './usage-history.js'
+import { usageSummaryWithLimits } from './usage-summary.js'
 import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
 
 export const SERVER_VERSION = '0.0.0'
@@ -144,6 +145,7 @@ export function startServer(
       push.broadcast('mcp.changed', { provider, projectPath }),
     onSkillsChanged: (provider, projectPath) =>
       push.broadcast('skills.changed', { provider, projectPath }),
+    onUsageChanged: (provider) => push.broadcast('usage.changed', { provider }),
     onLifecycle: (threadId, lifecycle) =>
       push.broadcast('thread.lifecycle', { threadId, lifecycle }),
     onTerminalOutput: (terminalId, data) => push.broadcast('terminal.output', { terminalId, data }),
@@ -816,12 +818,13 @@ export function startServer(
           reasoningTokens: 0,
           totalTokens: 0,
         }
-        return {
-          ...('threadId' in p
+        const totals =
+          'threadId' in p
             ? store.usageSummary(p.threadId, startOfToday.getTime())
-            : { session: empty, today: empty }),
-          limits: await orchestrator.usageLimits(provider),
-        }
+            : { session: empty, today: empty }
+        return usageSummaryWithLimits(totals, provider, (requestedProvider) =>
+          orchestrator.usageLimitSource(requestedProvider),
+        )
       }
 
       case 'usage.history': {
