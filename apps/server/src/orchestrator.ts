@@ -28,6 +28,7 @@ import {
   designPreviewPrompt,
   designRepairPrompt,
   designReviewPrompt,
+  enforceDomAuditFindings,
   parseAssetPhaseOutput,
   parseBrandPhaseOutput,
   parseBriefingOutput,
@@ -2547,7 +2548,10 @@ export class Orchestrator {
       return
     }
     if (flow.phase === 'review') {
-      const review = writeVisualReview(flow.workspacePath, parseReviewPhaseOutput(text))
+      const review = writeVisualReview(
+        flow.workspacePath,
+        enforceDomAuditFindings(parseReviewPhaseOutput(text), flow.screenshots ?? []),
+      )
       flow.correcting = false
       flow.review = review
       if (review.verdict === 'pass') {

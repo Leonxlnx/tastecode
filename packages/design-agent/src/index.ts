@@ -47,6 +47,7 @@ export {
 export {
   designRepairPrompt,
   designReviewPrompt,
+  enforceDomAuditFindings,
   parseRepairPhaseOutput,
   parseReviewPhaseOutput,
   readVisualReview,

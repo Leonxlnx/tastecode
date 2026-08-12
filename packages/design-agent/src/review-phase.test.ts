@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   designRepairPrompt,
+  enforceDomAuditFindings,
   parseRepairPhaseOutput,
   parseReviewPhaseOutput,
   readVisualReview,
@@ -70,5 +71,48 @@ describe('review and repair phases', () => {
         }),
       ),
     ).toMatchObject({ status: 'complete' })
+  })
+
+  it('turns a model pass into a bounded repair from objective DOM evidence', () => {
+    const result = enforceDomAuditFindings(
+      { version: 1, verdict: 'pass', summary: 'Looks ready.', findings: [] },
+      [
+        {
+          path: 'mobile.png',
+          width: 390,
+          height: 844,
+          domAudit: {
+            h1Count: 0,
+            interactiveTargetViolations: [
+              { selector: '#menu', label: 'Menu', width: 32, height: 40 },
+            ],
+          },
+        },
+      ],
+    )
+
+    expect(result.verdict).toBe('repair')
+    expect(result.findings.map(({ id }) => id)).toEqual([
+      'document_h1_count',
+      'mobile_interactive_target_size',
+    ])
+  })
+
+  it('preserves model findings and ignores target sizes outside mobile viewports', () => {
+    expect(
+      enforceDomAuditFindings(review, [
+        {
+          path: 'desktop.png',
+          width: 1440,
+          height: 1000,
+          domAudit: {
+            h1Count: 1,
+            interactiveTargetViolations: [
+              { selector: '#utility', label: 'Utility', width: 20, height: 20 },
+            ],
+          },
+        },
+      ]),
+    ).toEqual(review)
   })
 })
