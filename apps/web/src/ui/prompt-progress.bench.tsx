@@ -63,7 +63,7 @@ describe('prompt to first visible delta', () => {
         const run = runPromptProgress(scenario)
         run.rendered.unmount()
       },
-      { iterations: 10, warmupIterations: 2, time: 0, warmupTime: 0 },
+      { iterations: 20, warmupIterations: 5, time: 0, warmupTime: 0 },
     )
   }
 })

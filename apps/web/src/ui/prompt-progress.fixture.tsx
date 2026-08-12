@@ -28,6 +28,13 @@ const TURN_ID = 'prompt-progress-turn'
 const ANSWER_ID = 'prompt-progress-answer'
 const CREATED_AT = 1_800_000
 const PROMPT = 'Build the requested page and report the result.'
+const HISTORIES = new Map([[1_000, makeFixtureThread(1_000)]])
+const LIVE_DELTAS = new Map(
+  PROMPT_PROGRESS_SCENARIOS.map(({ liveCharacters }) => [
+    liveCharacters,
+    ['x'.repeat(liveCharacters - 1), '!'] as const,
+  ]),
+)
 
 function view(state: ThreadState) {
   return (
@@ -48,9 +55,10 @@ function view(state: ThreadState) {
 }
 
 function startingState(historyItems: number): ThreadState {
-  return historyItems === 0
-    ? emptyThread
-    : { ...emptyThread, items: makeFixtureThread(historyItems) }
+  if (historyItems === 0) return emptyThread
+  const items = HISTORIES.get(historyItems)
+  if (!items) throw new Error(`Missing ${historyItems}-item prompt progress fixture`)
+  return { ...emptyThread, items }
 }
 
 export type PromptProgressRun = {
@@ -122,14 +130,16 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
   rendered.rerender(view(state))
   const startedRail = oneWorkingRail(rendered)
 
+  const textDeltas = LIVE_DELTAS.get(scenario.liveCharacters)
+  if (!textDeltas) throw new Error(`Missing ${scenario.liveCharacters}-character live fixture`)
   state = reduceDeltas(state, [
     {
       type: 'item.delta',
       turnId: TURN_ID,
       itemId: ANSWER_ID,
-      textDelta: 'x'.repeat(scenario.liveCharacters - 1),
+      textDelta: textDeltas[0],
     },
-    { type: 'item.delta', turnId: TURN_ID, itemId: ANSWER_ID, textDelta: '!' },
+    { type: 'item.delta', turnId: TURN_ID, itemId: ANSWER_ID, textDelta: textDeltas[1] },
   ])
   rendered.rerender(view(state))
 
