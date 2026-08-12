@@ -2197,6 +2197,33 @@ describe('new chats', () => {
     )
   })
 
+  it('opens an empty project from the sidebar', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'Personal Harness',
+        pinned: false,
+        createdAt: 0,
+        sessions: [],
+      },
+      {
+        path: '/work/another-project',
+        name: 'Another Project',
+        pinned: false,
+        createdAt: 1,
+        sessions: [],
+      },
+    ]
+
+    render(<App />)
+    await screen.findByRole('heading', { name: 'What should we build in Personal Harness?' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Another Project' }))
+
+    expect(screen.getByRole('heading').textContent).toBe('What should we build in Another Project?')
+    expect(screen.getByPlaceholderText('Do anything')).toBeTruthy()
+  })
+
   it('keeps an untouched session out of the sidebar until the first prompt', async () => {
     render(<App />)
     await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
