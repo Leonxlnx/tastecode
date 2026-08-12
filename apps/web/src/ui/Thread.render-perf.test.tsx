@@ -32,8 +32,23 @@ vi.mock('@tanstack/react-virtual', () => ({
 }))
 
 vi.mock('./Markdown.js', () => ({
-  Markdown: ({ text, streaming = false }: { text: string; streaming?: boolean }) => {
-    markdownRender({ text, streaming })
+  Markdown: ({
+    text,
+    streaming = false,
+    liveUpdate,
+    updateVersion,
+  }: {
+    text: string
+    streaming?: boolean
+    liveUpdate?: { kind: 'append'; text: string }
+    updateVersion?: number
+  }) => {
+    markdownRender({
+      text,
+      streaming,
+      ...(liveUpdate ? { liveUpdate } : {}),
+      ...(updateVersion === undefined ? {} : { updateVersion }),
+    })
     return <span>{text}</span>
   },
 }))
@@ -68,11 +83,21 @@ function message(overrides: Partial<Item>): Item {
 function view(
   items: Item[],
   running = true,
-  identity: { threadId?: string; revealRequest?: number } = {},
+  identity: {
+    threadId?: string
+    revealRequest?: number
+    liveItems?: ReadonlyMap<
+      number,
+      { item: Item; version: number; textUpdate: { kind: 'append'; text: string } }
+    >
+    itemVersion?: number
+  } = {},
 ) {
   return (
     <Thread
       items={items}
+      liveItems={identity.liveItems}
+      itemVersion={identity.itemVersion}
       running={running}
       activeTurn={running ? { id: 'turn-2', startedAt: 0 } : undefined}
       threadId={identity.threadId}
@@ -163,6 +188,32 @@ describe('streamed thread renders', () => {
     expect(initialRenders).toBe(2)
     expect(markdownRender).toHaveBeenCalledTimes(initialRenders + 1)
     expect(markdownRender).toHaveBeenLastCalledWith({ text: 'Hello', streaming: true })
+  })
+
+  it('passes the exact frame delta and stable version to live Markdown', () => {
+    const items: Item[] = [
+      message({ id: 'user-2', turnId: 'turn-2', role: 'user', text: 'Question' }),
+      message({ id: 'answer-2', turnId: 'turn-2', status: 'started', text: '' }),
+    ]
+    const liveItem = { ...items[1]!, text: 'Hello' }
+    render(
+      view(items, true, {
+        liveItems: new Map([
+          [
+            1,
+            { item: liveItem, version: 7, textUpdate: { kind: 'append' as const, text: 'Hello' } },
+          ],
+        ]),
+        itemVersion: 7,
+      }),
+    )
+
+    expect(markdownRender).toHaveBeenLastCalledWith({
+      text: 'Hello',
+      streaming: true,
+      liveUpdate: { kind: 'append', text: 'Hello' },
+      updateVersion: 7,
+    })
   })
 
   it('does not reconcile the working animation for streamed text updates', () => {

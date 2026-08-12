@@ -329,6 +329,7 @@ export function Thread(props: {
             {rows.map((row) => {
               const item = itemAt(row.index)
               if (!item) return null
+              const liveItemUpdate = liveItems.get(row.index)
               const presentation = presentations.get(item.turnId)
               const live = props.running && props.activeTurn?.id === item.turnId
               const activityGroup =
@@ -376,6 +377,8 @@ export function Thread(props: {
                 >
                   <Row
                     item={item}
+                    liveTextUpdate={liveItemUpdate?.textUpdate}
+                    liveUpdateVersion={liveItemUpdate?.version}
                     projectPath={props.projectPath}
                     hidden={suppressed}
                     activity={activityLead ? activityGroup.items : undefined}
@@ -594,6 +597,8 @@ function isActivity(item: Item): boolean {
 
 const Row = memo(function Row({
   item,
+  liveTextUpdate,
+  liveUpdateVersion,
   projectPath,
   hidden,
   activity,
@@ -608,6 +613,8 @@ const Row = memo(function Row({
   onRevertCheckpoint,
 }: {
   item: Item
+  liveTextUpdate: LiveItemUpdate['textUpdate'] | undefined
+  liveUpdateVersion: number | undefined
   projectPath: string | undefined
   hidden: boolean
   activity: Item[] | undefined
@@ -692,6 +699,8 @@ const Row = memo(function Row({
           text={text}
           projectPath={projectPath}
           streaming={live && item.status === 'started'}
+          liveUpdate={liveTextUpdate}
+          updateVersion={liveUpdateVersion}
         />
         {finalResponse && !live && item.status === 'completed' && text ? (
           <ResponseActions text={text} createdAt={item.createdAt} />

@@ -169,9 +169,53 @@ describe('Markdown streaming motion', () => {
     expect(preserve).toHaveBeenCalledOnce()
   })
 
-  it('marks newly streamed words for a zero-stagger reveal', () => {
-    const { container } = render(<Markdown text="A smoother streamed reply" streaming />)
+  it('keeps common Markdown styled while appending safely', () => {
+    const rendered = render(<Markdown text={'## Title\n\n- one\n\n```ts\nconst a ='} streaming />)
+    const heading = rendered.container.querySelector('h2')
+    rendered.rerender(
+      <Markdown
+        text={'## Title\n\n- one\n\n```ts\nconst a = 1'}
+        streaming
+        liveUpdate={{ kind: 'append', text: ' 1' }}
+        updateVersion={1}
+      />,
+    )
 
-    expect(container.querySelectorAll('[data-sd-animate]').length).toBeGreaterThan(0)
+    expect(rendered.container.querySelector('h2')).toBe(heading)
+    expect(heading?.textContent).toBe('Title')
+    expect(rendered.container.querySelector('li')?.textContent).toBe('one')
+    expect(rendered.container.querySelector('pre')?.textContent).toContain('const a = 1')
+    expect(rendered.container.querySelector('[data-live-markdown-leaf]')).toBeTruthy()
+    expect(rendered.container.querySelector('[style*="animation"]')).toBeTruthy()
+  })
+
+  it('does not replay streaming motion for an initial or reset document', () => {
+    const text = 'x'.repeat(4_096)
+    const rendered = render(<Markdown text={text} streaming />)
+
+    expect(rendered.container.querySelector('[style*="animation"]')).toBeNull()
+    rendered.rerender(
+      <Markdown
+        text="replacement"
+        streaming
+        liveUpdate={{ kind: 'reset', text: 'replacement' }}
+        updateVersion={1}
+      />,
+    )
+    expect(rendered.container.querySelector('[style*="animation"]')).toBeNull()
+  })
+
+  it('keeps a completed local destination inert without a blocked-link flash', () => {
+    const { container } = render(
+      <Markdown
+        text={'Updated [index.html](file:///E:/project/index.html).'}
+        streaming
+        projectPath="E:\project"
+      />,
+    )
+
+    expect(container.textContent).not.toContain('[blocked]')
+    expect(container.textContent).toContain('index.html')
+    expect(container.querySelector('a, button')).toBeNull()
   })
 })

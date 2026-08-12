@@ -27,35 +27,106 @@ vi.mock('streamdown', () => ({
 }))
 
 import { Markdown } from './Markdown.js'
+import { LiveMarkdownParser } from './live-markdown.js'
 
 afterEach(() => {
   cleanup()
+  vi.restoreAllMocks()
   streamdownRender.mockReset()
   shikiHighlight.mockReset()
   plainHighlight.mockReset()
 })
 
 describe('streamed Markdown renders', () => {
-  it('keeps Streamdown configuration stable while text grows', () => {
-    const rendered = render(<Markdown text="First frame" streaming />)
-    const first = streamdownRender.mock.calls.at(-1)?.[0]
+  it.each([4 * 1024, 64 * 1024])(
+    'parses only the appended suffix of a %i-character live reply',
+    (size) => {
+      const prefix = 'x'.repeat(size)
+      const append = vi.spyOn(LiveMarkdownParser.prototype, 'append')
+      const replace = vi.spyOn(LiveMarkdownParser.prototype, 'replace')
+      const rendered = render(<Markdown text={prefix} streaming />)
+      const paragraph = rendered.container.querySelector('p')
 
-    rendered.rerender(<Markdown text="First frame, next words" streaming />)
-    const second = streamdownRender.mock.calls.at(-1)?.[0]
+      append.mockClear()
+      replace.mockClear()
+      rendered.rerender(
+        <Markdown
+          text={`${prefix} next`}
+          streaming
+          liveUpdate={{ kind: 'append', text: ' next' }}
+          updateVersion={1}
+        />,
+      )
 
-    expect(second.controls).toBe(first.controls)
-    expect(second.plugins).toBe(first.plugins)
-    expect(second.animated).toBe(first.animated)
+      expect(rendered.container.querySelector('p')).toBe(paragraph)
+      expect(rendered.container.textContent).toBe(`${prefix} next`)
+      expect(append).toHaveBeenCalledOnce()
+      expect(append).toHaveBeenCalledWith(' next')
+      expect(replace).not.toHaveBeenCalled()
+      expect(streamdownRender).not.toHaveBeenCalled()
+      expect(plainHighlight).not.toHaveBeenCalled()
+      expect(shikiHighlight).not.toHaveBeenCalled()
+    },
+  )
+
+  it('applies each version once and resets mismatched reconciliation', () => {
+    const append = vi.spyOn(LiveMarkdownParser.prototype, 'append')
+    const replace = vi.spyOn(LiveMarkdownParser.prototype, 'replace')
+    const rendered = render(<Markdown text="Old answer" streaming />)
+    rendered.rerender(
+      <Markdown
+        text="Corrected **answer**"
+        streaming
+        liveUpdate={{ kind: 'reset', text: 'Corrected **answer**' }}
+        updateVersion={1}
+      />,
+    )
+
+    expect(rendered.container.textContent).toBe('Corrected answer')
+    expect(rendered.container.querySelector('strong')).toBeTruthy()
+    expect(streamdownRender).not.toHaveBeenCalled()
+
+    replace.mockClear()
+    rendered.rerender(
+      <Markdown
+        text="Corrected **answer** plus"
+        streaming
+        liveUpdate={{ kind: 'append', text: ' plus' }}
+        updateVersion={2}
+      />,
+    )
+    rendered.rerender(
+      <Markdown
+        text="Corrected **answer** plus"
+        streaming
+        liveUpdate={{ kind: 'append', text: ' plus' }}
+        updateVersion={2}
+      />,
+    )
+    expect(append).toHaveBeenCalledTimes(1)
+    expect(rendered.container.textContent).toBe('Corrected answer plus')
+
+    rendered.rerender(
+      <Markdown
+        text="Authoritative replacement"
+        streaming
+        liveUpdate={{ kind: 'append', text: 'wrong suffix' }}
+        updateVersion={3}
+      />,
+    )
+    expect(replace).toHaveBeenCalledWith('Authoritative replacement')
+    expect(rendered.container.textContent).toBe('Authoritative replacement')
   })
 
-  it('defers syntax highlighting until streamed code completes', () => {
-    const rendered = render(<Markdown text={'```ts\nconst value ='} streaming />)
-    rendered.rerender(<Markdown text={'```ts\nconst value = 1\n```'} streaming />)
+  it('parses and highlights the completed reply exactly once', () => {
+    const text = '```ts\nconst value = 1\n```'
+    const rendered = render(<Markdown text={text} streaming />)
 
-    expect(plainHighlight).toHaveBeenCalledTimes(2)
-    expect(shikiHighlight).not.toHaveBeenCalled()
+    expect(streamdownRender).not.toHaveBeenCalled()
+    expect(plainHighlight).not.toHaveBeenCalled()
 
-    rendered.rerender(<Markdown text={'```ts\nconst value = 1\n```'} />)
+    rendered.rerender(<Markdown text={text} />)
+    expect(streamdownRender).toHaveBeenCalledTimes(1)
     expect(shikiHighlight).toHaveBeenCalledTimes(1)
   })
 })
