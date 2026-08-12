@@ -3664,26 +3664,15 @@ describe('reopening a session', () => {
         ],
       },
     ]
-    let releaseModels!: () => void
-    const modelsGate = new Promise<void>((resolve) => {
-      releaseModels = resolve
+    let releaseProviders!: () => void
+    const providersGate = new Promise<void>((resolve) => {
+      releaseProviders = resolve
     })
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'models.list') {
-        return modelsGate.then(() => ({
-          models: [
-            {
-              id: 'gpt-5.6-sol',
-              displayName: 'GPT-5.6 Sol',
-              isDefault: true,
-              reasoningEfforts: ['low', 'high'],
-              defaultReasoningEffort: 'low',
-              serviceTiers: [],
-            },
-          ],
-        }))
+      if (method === 'providers.list') {
+        return providersGate.then(() => ({ providers: serverProviders }))
       }
       return request(method, params)
     })
@@ -3710,8 +3699,8 @@ describe('reopening a session', () => {
       })
     })
     await act(async () => {
-      releaseModels()
-      await modelsGate
+      releaseProviders()
+      await providersGate
     })
   })
 
