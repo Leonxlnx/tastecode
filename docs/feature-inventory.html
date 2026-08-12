@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-12 d0e8050e</span>
+        <span class="meta">2026-08-12 dc8205f7</span>
       </div>
     </div>
 
@@ -636,7 +636,9 @@
                 <span class="d"
                   >adapters own ready, unavailable, and error truth; the server returns one
                   authoritative source with an exact legacy flatten, while change notifications
-                  carry only the provider id</span
+                  carry only the provider id; the active-source dialog distinguishes loading,
+                  successful-empty, unavailable, and failure, retains usable values during failed
+                  refreshes, and provides Retry with dialog focus entry and return</span
                 ></span
               ></label
             >
@@ -778,8 +780,9 @@
               ><input type="checkbox" /><span
                 >Streaming markdown with syntax highlighting
                 <span class="d"
-                  >the visible live tail keeps its current renderer; a bounded incremental parser
-                  foundation scans only appended text and preserves exact completion source</span
+                  >the visible live tail applies each versioned suffix once through the bounded
+                  incremental parser; full Markdown and syntax highlighting run from the exact
+                  source at completion</span
                 ></span
               ></label
             >
@@ -814,7 +817,8 @@
                 >Virtualized list with folded deltas once per frame
                 <span class="d"
                   >completed replay rebuilds 10,000 items linearly, while active-tail search stays
-                  bounded independently of transcript length; stable row identities survive
+                  bounded independently of transcript length; streamed frames overlay only the
+                  active turn, and stable completed-row identities survive both streaming and
                   optimistic-to-canonical reconciliation</span
                 ></span
               ></label

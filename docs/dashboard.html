@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-12 main d0e8050e</span>
+        <span class="meta">2026-08-12 main dc8205f7</span>
       </div>
     </div>
 
@@ -546,9 +546,11 @@
                 <span
                   >Settings
                   <span class="d"
-                    >fixed provider rows, masked emails, limits in the popup, short-window
-                    scrolling, contained keyboard focus, and a scoped confirmation before resetting
-                    renderer preferences that preserves projects, files, history, and credentials;
+                    >fixed provider rows, masked emails, and a focused limits dialog that separates
+                    loading, unavailable, successful-empty, and failure states while preserving
+                    usable values through Retry; short-window scrolling, contained keyboard focus,
+                    and a scoped confirmation before resetting renderer preferences that preserves
+                    projects, files, history, and credentials;
                     <a href="./screenshots/provider-settings-desktop.png">desktop</a> and
                     <a href="./screenshots/provider-settings-390.png">390 px</a> provider evidence,
                     plus
@@ -600,11 +602,11 @@
                 <span
                   >Provider, composer, and visual polish
                   <span class="d"
-                    >session source identity, attachment gating, provider-owned limit states, the
-                    neutral usage-change signal, and authoritative server summaries are consistent;
-                    project and conversation empty states now have honest actions; #608 renderer
-                    refresh and Settings wiring plus remaining setup/status UX (#593, #595, #603)
-                    remain</span
+                    >session source identity, attachment gating, provider-owned limit states,
+                    provider-neutral change events, stale-safe renderer refresh, and authoritative
+                    server summaries are consistent; project and conversation empty states now have
+                    honest actions; a separate multi-source limits overview remains in #595, and the
+                    cross-app state/count/plain-metadata grammar remains in #603</span
                   >
                 </span>
               </li>
@@ -613,10 +615,10 @@
                 <span
                   >Long-thread and first-progress performance
                   <span class="d"
-                    >bounded parsing, stable virtual-row identity, durable suffix catch-up, and
-                    linear 10k-item completed replay are on main; one stable live status now owns
-                    narration and activity transitions, while visible live-tail integration remains
-                    in #598</span
+                    >bounded parsing, stable virtual-row identity, incremental live Markdown, and
+                    linear 10k-item completed replay are on main; one stable live status owns
+                    narration and activity transitions, while #598 retains first durable provider
+                    progress latency and checkpoint sequencing</span
                   >
                 </span>
               </li>
