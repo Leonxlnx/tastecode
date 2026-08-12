@@ -55,7 +55,6 @@ import {
   filterModelChoicesByQuery,
   isCustomModelChoice,
   providerMark,
-  type CustomModelInput,
   type ModelChoice,
   type ProviderMark,
 } from '../model-catalog.js'
@@ -177,10 +176,6 @@ function SettingsComponent(props: {
   models: ModelChoice[]
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
-  /** Engines a custom model can be attached to. */
-  providers: { id: ProviderId; name: string }[]
-  onCustomModelAdd: (input: CustomModelInput) => void
-  onCustomModelRemove: (key: string) => void
   onConnectionsChanged: () => void
   projectCount: number
   sidebarSettings: SidebarSettings

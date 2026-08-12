@@ -71,7 +71,6 @@ import {
   providerMark,
   resolveReasoningEffort,
   sourceKey,
-  type CustomModelInput,
   type ModelChoice,
 } from './model-catalog.js'
 import { parseModelCatalogCache, serializeModelCatalogCache } from './model-catalog-cache.js'
@@ -491,11 +490,6 @@ export function App() {
   catalogModelsRef.current = catalogModels
   const modelsRef = useRef(models)
   modelsRef.current = models
-  /** The fixed direct roster with human names, for the custom-model form. */
-  const customModelProviders = useMemo(
-    () => [...PUBLIC_BETA_PROVIDER_IDS].map((id) => ({ id, name: providerDisplayName(id) })),
-    [],
-  )
   const visibleModels = useMemo(
     () => rosterModels.filter((choice) => !hiddenModels.has(choice.key)),
     [rosterModels, hiddenModels],
@@ -1902,50 +1896,6 @@ export function App() {
       commitModelChoice(selected)
     },
     [models, commitModelChoice],
-  )
-
-  const addCustomModel = useCallback(
-    (input: CustomModelInput) => {
-      const entry: CustomModel = {
-        provider: input.provider,
-        modelId: input.modelId.trim(),
-        displayName: input.displayName.trim(),
-      }
-      if (!entry.modelId) return
-      // Adding the same id twice is an edit, not a duplicate: the last entry
-      // for a provider+id wins, so the displayed name can be corrected.
-      const next = [
-        ...customModelsRef.current.filter(
-          (existing) =>
-            !(existing.provider === entry.provider && existing.modelId === entry.modelId),
-        ),
-        entry,
-      ]
-      setCustomModels(next)
-      writeSetting(CUSTOM_MODELS_KEY, JSON.stringify(next))
-      // Selecting it immediately is the point: the custom id is now what the
-      // next turn runs through.
-      commitModelChoice(
-        customModelChoice(entry, providerDisplayName(entry.provider), providerMark(entry.provider)),
-      )
-    },
-    [commitModelChoice],
-  )
-
-  const removeCustomModel = useCallback(
-    (key: string) => {
-      const next = customModelsRef.current.filter((entry) => customModelKey(entry) !== key)
-      if (next.length === customModelsRef.current.length) return
-      setCustomModels(next)
-      writeSetting(CUSTOM_MODELS_KEY, JSON.stringify(next))
-      // The removed model was selected: fall back to the next available choice
-      // so the composer never points at a model id that no longer exists.
-      if (modelId === key) {
-        const fallback = models.find((choice) => choice.key !== key)
-        if (fallback) selectModel(fallback.key)
-      }
-    },
-    [modelId, models, selectModel],
   )
 
   const addProject = useCallback(async () => {
@@ -3547,9 +3497,6 @@ export function App() {
           models={rosterModels}
           hiddenModels={hiddenModels}
           onModelVisibilityChange={changeModelVisibility}
-          providers={customModelProviders}
-          onCustomModelAdd={addCustomModel}
-          onCustomModelRemove={removeCustomModel}
           onConnectionsChanged={refreshCatalog}
           projectCount={projects.length}
           sidebarSettings={sidebarSettings}

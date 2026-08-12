@@ -48,9 +48,6 @@ function renderSettings(
       models={[]}
       hiddenModels={new Set()}
       onModelVisibilityChange={() => {}}
-      providers={[{ id: 'codex', name: 'Codex' }]}
-      onCustomModelAdd={() => {}}
-      onCustomModelRemove={() => {}}
       onConnectionsChanged={() => {}}
       projectCount={0}
       sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
@@ -489,9 +486,6 @@ function mobileAccessSettings(transport: Transport) {
       models={[]}
       hiddenModels={new Set()}
       onModelVisibilityChange={() => {}}
-      providers={[{ id: 'codex', name: 'Codex' }]}
-      onCustomModelAdd={() => {}}
-      onCustomModelRemove={() => {}}
       onConnectionsChanged={() => {}}
       projectCount={0}
       sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
@@ -585,12 +579,6 @@ describe('model settings', () => {
         models={models}
         hiddenModels={new Set(['opencode:ling'])}
         onModelVisibilityChange={onModelVisibilityChange}
-        providers={[
-          { id: 'codex', name: 'Codex' },
-          { id: 'opencode', name: 'OpenCode' },
-        ]}
-        onCustomModelAdd={() => {}}
-        onCustomModelRemove={() => {}}
         onConnectionsChanged={() => {}}
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
@@ -668,9 +656,6 @@ describe('model settings', () => {
         models={[custom]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
-        providers={[{ id: 'codex', name: 'Codex' }]}
-        onCustomModelAdd={onCustomModelAdd}
-        onCustomModelRemove={onCustomModelRemove}
         onConnectionsChanged={() => {}}
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
@@ -740,12 +725,6 @@ describe('model settings', () => {
         models={models}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
-        providers={[
-          { id: 'codex', name: 'Codex' },
-          { id: 'opencode', name: 'OpenCode' },
-        ]}
-        onCustomModelAdd={onCustomModelAdd}
-        onCustomModelRemove={() => {}}
         onConnectionsChanged={() => {}}
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
@@ -1162,9 +1141,6 @@ describe('provider settings', () => {
         models={[]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
-        providers={[{ id: 'codex', name: 'Codex' }]}
-        onCustomModelAdd={() => {}}
-        onCustomModelRemove={() => {}}
         onConnectionsChanged={() => {}}
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
@@ -1302,9 +1278,6 @@ describe('provider settings', () => {
         models={[]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
-        providers={[{ id: 'codex', name: 'Codex' }]}
-        onCustomModelAdd={() => {}}
-        onCustomModelRemove={() => {}}
         onConnectionsChanged={onChanged}
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
@@ -1425,9 +1398,6 @@ describe('provider settings', () => {
         models={[]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
-        providers={[{ id: 'codex', name: 'Codex' }]}
-        onCustomModelAdd={() => {}}
-        onCustomModelRemove={() => {}}
         onConnectionsChanged={onConnectionsChanged}
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
