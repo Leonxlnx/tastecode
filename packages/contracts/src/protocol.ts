@@ -173,8 +173,8 @@ export const PreviewInteractiveTargetViolationSchema = z
   .object({
     selector: z.string().min(1).max(512),
     label: z.string().max(200),
-    width: z.number().finite().nonnegative().max(3_840),
-    height: z.number().finite().nonnegative().max(2_160),
+    width: z.number().finite().nonnegative(),
+    height: z.number().finite().nonnegative(),
   })
   .refine(({ width, height }) => width < 44 || height < 44, {
     message: 'interactive target violations must be smaller than 44 CSS px',
