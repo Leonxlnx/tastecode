@@ -66,6 +66,21 @@ _Rejected:_ Tauri/Wails/Neutralino retain divergent OS webviews · separate AppK
 clients create two permanent UI implementations · a web-only primary cannot own the native
 terminal, filesystem and credential-store surface.
 
+### Embedded browser during the Electron reference phase
+
+**Page previews use a renderer-owned Electron `<webview>` guest, never an iframe or an
+operating-system webview.** Before attachment, the main process strips preload access, assigns a
+dedicated persistent partition, disables Node integration, and requires sandboxing, context
+isolation, and web security. The guest accepts only HTTP(S) navigation, denies permissions, keeps
+attempted new windows in the same preview, and exposes an explicit validated system-browser
+handoff.
+
+The guest remains a normal DOM element, so it follows the animated workspace without a native
+overlay or bounds IPC. A renderer `ResizeObserver` fits fluid, desktop, tablet, and mobile modes;
+fixed modes retain their requested CSS viewport and scale the complete guest to fit instead of
+stretching it. All modes therefore share Electron's Chromium path across macOS, Windows, and
+Linux.
+
 ---
 
 ## Target stack
@@ -104,15 +119,33 @@ designed and maps straight onto the UI. Items are `message`, `reasoning`, `comma
 `file_change`, `tool_call`, `plan`, `error`, each with a `started → deltas → completed`
 lifecycle. Adapters translate _into_ this. Nothing engine-specific leaks past them.
 
-| Tier       | Mechanism                        | Engines                                             | Fidelity                                 |
-| ---------- | -------------------------------- | --------------------------------------------------- | ---------------------------------------- |
-| 1 — Native | Vendor's own protocol            | Codex (`app-server` JSON-RPC), OpenCode (JS/TS SDK) | Full — approvals, fork, steer, fs events |
-| 2 — ACP    | Agent Client Protocol over stdio | Gemini CLI + ~25 others                             | Good. One adapter, long tail for free    |
-| 3 — CLI    | Headless NDJSON                  | Claude Code, Cursor, Grok                           | Adequate. Version-pinned, fragile        |
+| Tier       | Mechanism                        | Engines                                                        | Fidelity                              |
+| ---------- | -------------------------------- | -------------------------------------------------------------- | ------------------------------------- |
+| 1 — Native | Vendor's own protocol            | Codex (`app-server` JSON-RPC), OpenCode (HTTP), Pi (RPC JSONL) | Full where the protocol exposes it    |
+| 2 — ACP    | Agent Client Protocol over stdio | Gemini CLI + ~25 others                                        | Good. One adapter, long tail for free |
+| 3 — CLI    | Headless NDJSON                  | Claude Code, Cursor, Grok                                      | Adequate. Version-pinned, fragile     |
 
 Engines can appear in more than one tier. We default to the highest fidelity available, with
 a user override — so if Claude Code's ACP surface proves more stable than its CLI surface,
 we switch tiers without touching the UI. That's the point of the layer.
+
+**Users may register protocol-compatible executables as separate harness sources.** Each
+entry names an existing adapter protocol and stores an executable, fixed argv, optional launch
+directory, and non-secret environment overrides in
+`~/.personalharness/custom-harnesses.json`; arguments never pass through a shell, and secrets
+never belong in this file. Custom commands resolve against a desktop-safe PATH that includes
+conventional user locations such as `~/.local/bin`. When a mod boots from its own directory,
+`HARNESS_WORKSPACE_PATH` retains the active project for its wrapper and native protocols still
+receive that project normally. The source gets its own model catalog and persisted identity, so
+a fork can coexist with the stock CLI without replacing it.
+
+Settings can run a bounded compatibility check before the first prompt. Codex, Pi, OpenCode,
+and ACP complete their actual initialize handshake; one-shot CLI adapters run only their free
+help/model-discovery command. Missing executables, inaccessible directories, protocol failures,
+and timeouts are reported separately, and timed-out protocol children are disposed. A successful
+check proves the advertised handshake, not arbitrary behavior in a modified implementation, so
+version drift and custom-server instability remain disclosed. Parked built-ins stay hidden unless
+the user explicitly registers one of these sources.
 
 **`capabilities()` is what makes it honest.** Not every engine can fork, steer, or emit
 reasoning. The UI reads capabilities and hides what's unavailable rather than showing a
@@ -133,6 +166,13 @@ own shared product behavior. New features are designed against the internal cont
 first, then mapped through every adapter. A missing provider capability hides or degrades
 only that capability, never the surrounding workflow. Behavioral provider-name branches
 belong inside adapters, not the server or renderer.
+
+**Side chat is a provider-neutral ephemeral session, not a native-fork dependency.** At the
+fork boundary the orchestrator folds a bounded, reasoning-free snapshot of the parent event
+log into session instructions and starts a normal session through the selected adapter.
+The side event channel and transcript are independent, the row stays out of project history
+and search, and closing the panel disposes and deletes it. A provider may expose native fork,
+but shared Side chat semantics cannot depend on that optional capability.
 
 **Direct model APIs use one small Harness-owned agent runtime.** OpenAI, Anthropic and
 OpenAI-compatible endpoints provide inference and tool calls, not a complete coding-agent
@@ -299,3 +339,6 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-08-02 | Added Codex-backed voice dictation.                                    |
 | 2026-08-03 | Added the provider-neutral direct API runtime decision.                |
 | 2026-08-06 | Replaced the Electron target with a staged Rust + GPUI migration.      |
+| 2026-08-12 | Added user-owned, protocol-compatible harness commands and Pi RPC.     |
+| 2026-08-12 | Defined provider-neutral ephemeral Side chat sessions.                 |
+| 2026-08-12 | Standardized Electron browser previews on sandboxed `<webview>` guests. |
