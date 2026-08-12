@@ -779,6 +779,7 @@ describe('provider-neutral design briefing', () => {
     if (queued.queued)
       result.orchestrator.deleteQueuedTurn('preview-recovery', queued.queuedTurn.id)
     await vi.waitFor(() => expect(result.sessions[0]?.sent).toHaveLength(1))
+    result.sessions[0]?.emit(turnStarted('preview-recovery', 's1-turn'))
     return { ...result, workspace, artifacts }
   }
 
@@ -1242,19 +1243,21 @@ describe('provider-neutral design briefing', () => {
     const startCount = previewStarts.count
     try {
       sessions[0]?.emit(message(JSON.stringify(plan), 's1-turn'))
-      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
-
-      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
-      expect(sessions[0]?.sent[1]).toContain('previous Design Mode response failed validation')
-      expect(store.designRun('preview-recovery')).toMatchObject({
-        originalRequest: 'Build a site.',
-        options: { effort: 'high' },
-        phase: 'preview',
-        correcting: true,
-      })
+      await vi.waitFor(() =>
+        expect(store.designRun('preview-recovery')).toMatchObject({
+          originalRequest: 'Build a site.',
+          options: { effort: 'high' },
+          phase: 'preview',
+          correcting: true,
+        }),
+      )
+      expect(sessions[0]?.sent).toHaveLength(1)
       expect(artifacts.map(([file]) => readFileSync(file, 'utf8'))).toEqual(
         artifacts.map(([, contents]) => contents),
       )
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+      expect(sessions[0]?.sent[1]).toContain('previous Design Mode response failed validation')
 
       sessions[0]?.emit(message(JSON.stringify(plan), 's1-turn'))
       sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
@@ -1286,13 +1289,15 @@ describe('provider-neutral design briefing', () => {
     previewStarts.failures.push(failure)
     try {
       sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+      await vi.waitFor(() =>
+        expect(store.designRun('preview-recovery')).toMatchObject({ correcting: true }),
+      )
       sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
       await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
 
       sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
-      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
-
       await vi.waitFor(() => expect(store.designRun('preview-recovery')).toBeUndefined())
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
       expect(sessions[0]?.sent).toHaveLength(2)
       expect(
         received.some(
@@ -1316,9 +1321,8 @@ describe('provider-neutral design briefing', () => {
       )
       try {
         sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
-        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
-
         await vi.waitFor(() => expect(store.designRun('preview-recovery')).toBeUndefined())
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         expect(sessions[0]?.sent).toHaveLength(1)
         expect(
           received.some(

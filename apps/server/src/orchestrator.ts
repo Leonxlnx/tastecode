@@ -2498,6 +2498,7 @@ export class Orchestrator {
           isRecoverablePreviewError(error) &&
           this.#queueDesignCorrection(threadId, flow, error)
         ) {
+          if (this.#activeTurns.has(threadId)) return
           const prompt = flow.pendingPrompt!
           delete flow.pendingPrompt
           this.#saveDesignFlow(threadId)
@@ -2506,7 +2507,11 @@ export class Orchestrator {
             prompt,
             this.#designAttachmentsFor(flow),
             this.#designTurnOptions(flow),
-          ).catch((sendError: unknown) => this.#failDesignFlow(threadId, sendError))
+          ).catch((sendError: unknown) => {
+            if (this.#designFlows.get(threadId) === flow) {
+              this.#failDesignFlow(threadId, sendError)
+            }
+          })
           return
         }
         this.#failDesignFlow(threadId, error)
