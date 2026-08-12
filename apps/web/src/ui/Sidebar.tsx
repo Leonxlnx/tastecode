@@ -512,7 +512,7 @@ function SidebarComponent(props: {
         <div className="rail__foot">
           <Menu
             drop="up"
-            gap={10}
+            gap={14}
             label="Account"
             panelClassName="menu--settings"
             panelRole="dialog"

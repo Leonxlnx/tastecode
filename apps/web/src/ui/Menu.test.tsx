@@ -86,14 +86,14 @@ describe('Menu', () => {
 
   it('honors a larger gap for a raised panel', () => {
     render(
-      <Menu drop="up" gap={10} label="Account" trigger={() => <span>Account</span>}>
+      <Menu drop="up" gap={14} label="Account" trigger={() => <span>Account</span>}>
         {() => <div>Plan limits</div>}
       </Menu>,
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
 
-    expect(screen.getByRole('menu').style.bottom).toBe('40px')
+    expect(screen.getByRole('menu').style.bottom).toBe('44px')
   })
 
   it('does not reposition when its own content scrolls', () => {
