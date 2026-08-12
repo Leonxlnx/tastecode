@@ -331,9 +331,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0;
   font-size: var(--t-md);
-  font-weight: 500;
 }
 
 .account-menu__usage-head svg {
@@ -342,27 +340,7 @@
 }
 
 .account-menu__usage-note {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
   color: var(--text-3);
-  line-height: 1.4;
-}
-
-.account-menu__source {
-  display: grid;
-  gap: 6px;
-}
-
-.account-menu__source h3 {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin: 0;
-  color: var(--text);
-  font-size: var(--t-sm);
-  font-weight: 500;
 }
 
 .account-menu__limit {
@@ -395,55 +373,9 @@
   background: var(--running);
 }
 
-.account-menu__limit-bar > span[data-low] {
-  background: var(--error);
-}
-
 .account-menu__limit-reset {
   color: var(--text-3);
   font-size: var(--t-xs);
-}
-
-.account-menu__usage-error {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 6px;
-  color: var(--error);
-  line-height: 1.35;
-}
-
-.account-menu__usage-error small {
-  display: block;
-  margin-top: 2px;
-  color: var(--text-3);
-  font-size: var(--t-xs);
-}
-
-.account-menu__usage-error button {
-  padding: 0;
-  background: none;
-  border: 0;
-  color: var(--text-2);
-  cursor: pointer;
-  font: inherit;
-  font-weight: 500;
-  transition:
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
-}
-
-.account-menu__usage-error button:is(:hover, :focus-visible) {
-  color: var(--text);
-}
-
-.account-menu__usage-error button:focus-visible {
-  outline: 1px solid var(--text-2);
-  outline-offset: 2px;
-}
-
-.account-menu__usage-error button:active {
-  transform: translateY(1px);
 }
 
 .search {
