@@ -3,7 +3,7 @@ import { killTree, runCli, spawnCli } from '@harness/proc'
 
 export async function claudeAccount(): Promise<Account> {
   const result = await runCli('claude', ['auth', 'status'])
-  if (result.code !== 0) return { signedIn: false }
+  if (result.code !== 0) throw new Error(`claude auth status exited with code ${result.code}`)
   return parseClaudeAccount(result.stdout)
 }
 

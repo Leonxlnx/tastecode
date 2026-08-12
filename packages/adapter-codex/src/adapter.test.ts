@@ -8,6 +8,7 @@ import type { WarningNotification } from './generated/v2/WarningNotification'
 import {
   CODEX_APPROVAL,
   CODEX_CAPABILITIES,
+  CodexAdapter,
   formatCodexWarning,
   isIgnorableCodexNotification,
   mapAutoApprovalReview,
@@ -66,6 +67,10 @@ const capturedWarning = {
 } satisfies WarningNotification
 
 describe('Codex notifications', () => {
+  it('does not collapse a failed account read into signed out', async () => {
+    await expect(new CodexAdapter().account()).rejects.toThrow('adapter not started')
+  })
+
   it('silences the captured startup-only remote-control status', () => {
     expect(capturedRemoteControlStatus.status).toBe('disabled')
     expect(isIgnorableCodexNotification('remoteControl/status/changed')).toBe(true)

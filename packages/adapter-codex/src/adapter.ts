@@ -370,8 +370,9 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         default:
           return { signedIn: true }
       }
-    } catch {
-      return { signedIn: false }
+    } catch (cause) {
+      // A failed read is not evidence that the user signed out.
+      throw cause
     }
   }
 
