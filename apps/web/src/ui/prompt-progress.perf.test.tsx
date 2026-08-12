@@ -52,6 +52,7 @@ vi.mock('./highlighter.js', () => {
 })
 
 import { PROMPT_PROGRESS_SCENARIOS, runPromptProgress } from './prompt-progress.fixture.js'
+import { threadItems } from '../thread-store.js'
 
 afterEach(cleanup)
 
@@ -69,7 +70,7 @@ describe('prompt progress lifecycle', () => {
     expect(run.rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
       'Working',
     )
-    expect(run.finalState.items.at(-1)?.text).toHaveLength(scenario.liveCharacters)
+    expect(threadItems(run.finalState).at(-1)?.text).toHaveLength(scenario.liveCharacters)
     expect(run.rendered.container.querySelector('.reply.is-streaming')?.textContent).toHaveLength(
       scenario.liveCharacters,
     )

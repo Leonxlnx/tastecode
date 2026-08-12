@@ -6,6 +6,7 @@ import {
   reduce,
   reduceDeltas,
   reduceEventLog,
+  threadItemAt,
   type ItemDeltaEvent,
   type ThreadState,
 } from '../thread-store.js'
@@ -175,7 +176,11 @@ describe('long-thread hot paths', () => {
     () => {
       let state = streamingState
       for (const event of deltas) state = reduce(state, event)
-      if (state.items.at(-1)?.text?.length !== deltas.length) throw new Error('invalid fold')
+      if (
+        threadItemAt(state.items, state.liveItems, state.items.length - 1)?.text?.length !==
+        deltas.length
+      )
+        throw new Error('invalid fold')
     },
     OPTIONS,
   )
@@ -184,7 +189,11 @@ describe('long-thread hot paths', () => {
     'folds a 500-delta frame into a 1,000-item thread',
     () => {
       const state = reduceDeltas(streamingState, deltas)
-      if (state.items.at(-1)?.text?.length !== deltas.length) throw new Error('invalid batch')
+      if (
+        threadItemAt(state.items, state.liveItems, state.items.length - 1)?.text?.length !==
+        deltas.length
+      )
+        throw new Error('invalid batch')
     },
     OPTIONS,
   )
@@ -195,10 +204,19 @@ describe('long-thread hot paths', () => {
       () => {
         const fixture = activityFrames.get(count)!
         const state = reduceDeltas(fixture.state, fixture.frame)
-        if (!state.items.at(-2)?.text?.endsWith('output')) {
+        if (
+          !threadItemAt(state.items, state.liveItems, state.items.length - 2)?.text?.endsWith(
+            'output',
+          )
+        ) {
           throw new Error('invalid command fold')
         }
-        if (!state.items.at(-1)?.text?.endsWith(' result')) throw new Error('invalid activity fold')
+        if (
+          !threadItemAt(state.items, state.liveItems, state.items.length - 1)?.text?.endsWith(
+            ' result',
+          )
+        )
+          throw new Error('invalid activity fold')
       },
       OPTIONS,
     )

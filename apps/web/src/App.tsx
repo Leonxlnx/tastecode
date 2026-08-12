@@ -3208,7 +3208,12 @@ export function App() {
     () => projects.find((project) => project.path === activePath),
     [projects, activePath],
   )
-  const searching = activeTurnIsSearching(thread.items, thread.activeTurn?.id)
+  const searching = activeTurnIsSearching(
+    thread.items,
+    thread.activeTurn?.id,
+    thread.liveItems,
+    thread.liveStart,
+  )
   const commands = useMemo<PaletteCommand[]>(() => {
     if (!paletteScope) return EMPTY_PALETTE_COMMANDS
     return [
@@ -3377,6 +3382,9 @@ export function App() {
                   <Thread
                     items={thread.items}
                     loading={loadingThreadId === activeId}
+                    liveItems={thread.liveItems}
+                    itemVersion={thread.itemVersion}
+                    liveStart={thread.liveStart}
                     projectPath={activePath}
                     running={thread.running}
                     searching={searching}

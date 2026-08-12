@@ -40,6 +40,9 @@ function view(state: ThreadState) {
   return (
     <Thread
       items={state.items}
+      liveItems={state.liveItems}
+      itemVersion={state.itemVersion}
+      liveStart={state.liveStart}
       running={state.running}
       activeTurn={state.activeTurn}
       turnTiming={state.turnTiming}

@@ -42,6 +42,9 @@ import { isAtBottom, modeForNewTurn, shouldReleaseAnchor, type ScrollMode } from
 import { useVirtualItemKey } from './use-virtual-item-key.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
+import { threadItemAt, type LiveItemUpdate } from '../thread-store.js'
+
+const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()
 
 /**
  * The thread.
@@ -58,6 +61,9 @@ import type { Checkpoint } from './RollbackDialog.js'
 export function Thread(props: {
   items: Item[]
   loading?: boolean
+  liveItems?: ReadonlyMap<number, LiveItemUpdate> | undefined
+  itemVersion?: number | undefined
+  liveStart?: number | undefined
   projectPath?: string | undefined
   running: boolean
   searching?: boolean
@@ -110,6 +116,11 @@ export function Thread(props: {
     writtenScrollTop.current = target
     el.scrollTop = target
   }, [])
+  const liveItems = props.liveItems ?? EMPTY_LIVE_ITEMS
+  const itemAt = useCallback(
+    (index: number) => threadItemAt(props.items, liveItems, index),
+    [props.items, liveItems],
+  )
   const enteringItemIds = useEnteringItemIds(props.items, props.threadId)
   const settledTurnId = useSettledTurnId(props.running, props.activeTurn?.id)
   const getItemKey = useVirtualItemKey(props.items, props.threadId)
@@ -169,7 +180,7 @@ export function Thread(props: {
       }
       writeScrollTop(el, start)
     }
-  }, [props.items, props.revealRequest, virtualizer, writeScrollTop])
+  }, [props.items, props.itemVersion, props.revealRequest, virtualizer, writeScrollTop])
 
   const onScroll = useCallback(() => {
     const el = scroller.current
@@ -227,8 +238,8 @@ export function Thread(props: {
   const { turns, presentations } = projectThread(props.items, props.turnTiming)
   const activePresentation = props.activeTurn ? presentations.get(props.activeTurn.id) : undefined
   const rawWorkLabel = useMemo(
-    () => workLabel(props.items, props.activeTurn?.id, props.searching),
-    [props.items, props.activeTurn?.id, props.searching],
+    () => workLabel(props.items, props.activeTurn?.id, props.searching, liveItems, props.liveStart),
+    [props.items, props.activeTurn?.id, props.searching, liveItems, props.liveStart],
   )
 
   useEffect(() => {
@@ -291,7 +302,13 @@ export function Thread(props: {
     // latest" rendered below the viewport exactly when it was needed.
     <div className="thread-shell">
       {finding ? (
-        <ThreadSearch items={props.items} onJump={jumpTo} onClose={() => setFinding(false)} />
+        <ThreadSearch
+          items={props.items}
+          liveItems={liveItems}
+          threadId={props.threadId}
+          onJump={jumpTo}
+          onClose={() => setFinding(false)}
+        />
       ) : null}
       {props.items.length === 0 && !props.running ? (
         props.loading ? (
@@ -310,7 +327,7 @@ export function Thread(props: {
         <div className="thread__col">
           <div className="thread__runway" style={{ height: virtualizer.getTotalSize() }}>
             {rows.map((row) => {
-              const item = props.items[row.index]
+              const item = itemAt(row.index)
               if (!item) return null
               const presentation = presentations.get(item.turnId)
               const live = props.running && props.activeTurn?.id === item.turnId
@@ -916,6 +933,8 @@ export function workLabel(
   items: Item[],
   turnId: string | undefined,
   searching: boolean | undefined,
+  liveItems: ReadonlyMap<number, LiveItemUpdate> = EMPTY_LIVE_ITEMS,
+  liveStart = 0,
 ) {
   if (searching) return 'Searching'
   if (!turnId) return 'Working'
@@ -924,8 +943,8 @@ export function workLabel(
   // leaves them there is nothing further back worth scanning — without the
   // break this was a full-transcript scan per streamed frame.
   let latest: string | undefined
-  for (let index = items.length - 1; index >= 0; index--) {
-    const item = items[index]
+  for (let index = items.length - 1; index >= liveStart; index--) {
+    const item = threadItemAt(items, liveItems, index)
     if (!item) continue
     if (item.turnId !== turnId) break
     if (item.status !== 'started' || !isActivity(item)) continue

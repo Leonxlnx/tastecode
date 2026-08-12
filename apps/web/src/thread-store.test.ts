@@ -7,6 +7,8 @@ import {
   reduce,
   reduceDeltas,
   reduceEventLog,
+  threadItemAt,
+  threadItems,
 } from './thread-store.js'
 import { presentTurns } from './ui/turns.js'
 
@@ -79,7 +81,7 @@ describe('thread reducer', () => {
       { type: 'item.delta', turnId: 't1', itemId: 'i1', textDelta: 'lo' },
     ])
     expect(state.items).toHaveLength(1)
-    expect(state.items[0]?.text).toBe('hello')
+    expect(threadItems(state)[0]?.text).toBe('hello')
   })
 
   it('folds a frame of interleaved deltas to the same state as replay', () => {
@@ -98,7 +100,7 @@ describe('thread reducer', () => {
       deltas.filter((event) => event.type === 'item.delta'),
     )
 
-    expect(batched).toEqual(replayed)
+    expect(threadItems(batched)).toEqual(threadItems(replayed))
   })
 
   it('coalesces early deltas into one placeholder per missing item', () => {
@@ -241,7 +243,7 @@ describe('thread reducer', () => {
     )
 
     expect(live.turnTiming).toEqual(replayed.turnTiming)
-    expect(live).toEqual(replayed)
+    expect({ ...live, itemVersion: 0 }).toEqual({ ...replayed, itemVersion: 0 })
     expect(presentTurns(live.items, live.turnTiming).get('t1')?.elapsedMs).toBe(3_000)
     expect(presentTurns(replayed.items, replayed.turnTiming).get('t1')?.elapsedMs).toBe(3_000)
   })
@@ -335,7 +337,7 @@ describe('thread reducer', () => {
       events.map((event, index) => ({ seq: index + 1, event })),
     )
 
-    expect(batched).toEqual(sequential)
+    expect({ ...batched, itemVersion: 0 }).toEqual({ ...sequential, itemVersion: 0 })
     expect(batched.items.map(({ id, text }) => ({ id, text }))).toEqual([
       { id: 'a1', text: 'one three' },
       { id: 'a2', text: 'two four' },
@@ -435,7 +437,7 @@ describe('thread reducer', () => {
     )
     const live = events.reduce(reduce, emptyThread)
 
-    expect(replayed).toEqual(live)
+    expect({ ...replayed, itemVersion: 0 }).toEqual({ ...live, itemVersion: 0 })
     expect(replayed.items.map(({ id, status, text }) => ({ id, status, text }))).toEqual([
       { id: 'agent-a', status: 'completed', text: 'Spawned a subagent' },
       { id: 'agent-b', status: 'failed', text: 'Subagent failed' },
@@ -511,6 +513,83 @@ describe('thread reducer', () => {
 })
 
 describe('overnight regression pins', () => {
+  it.each([100, 1_000, 10_000])(
+    'keeps active-tail delta reads bounded at %i completed items',
+    (count) => {
+      let reads = 0
+      const history = Array.from({ length: count }, (_, index) =>
+        item({ id: `history-${index}`, status: 'completed', text: 'done' }),
+      )
+      const live = item({ id: 'live', turnId: 'active', text: '' })
+      const items = new Proxy([...history, live], {
+        get(target, property, receiver) {
+          if (typeof property === 'string' && /^\d+$/.test(property)) reads += 1
+          return Reflect.get(target, property, receiver)
+        },
+      })
+      const state = {
+        ...emptyThread,
+        items,
+        running: true,
+        activeTurn: { id: 'active', startedAt: 0 },
+        liveStart: count,
+      }
+
+      const next = reduceDeltas(state, [
+        { type: 'item.delta', turnId: 'active', itemId: live.id, textDelta: 'x' },
+      ])
+
+      expect(next.items).toBe(items)
+      expect(threadItemAt(next.items, next.liveItems, count)?.text).toBe('x')
+      expect(next.liveItems.get(count)?.textUpdate).toEqual({ kind: 'append', text: 'x' })
+      expect(next.liveItems.get(count)?.version).toBe(next.itemVersion)
+      expect(reads).toBeLessThanOrEqual(3)
+      const activeReads = reads
+      for (let frame = 0; frame < 3; frame += 1) {
+        reduceDeltas(next, [
+          { type: 'item.delta', turnId: 'old', itemId: 'history-0', textDelta: ' stale' },
+        ])
+      }
+      expect(reads - activeReads).toBeLessThanOrEqual(3)
+    },
+  )
+
+  it('materializes a completed turn once and never mutates its history objects', () => {
+    const history = item({ id: 'history', status: 'completed', text: 'done' })
+    const started = reduce(
+      { ...emptyThread, items: [history] },
+      {
+        type: 'turn.started',
+        turn: { id: 'active', threadId: 'thread', status: 'running', createdAt: 1 },
+      },
+    )
+    const withItem = reduce(started, {
+      type: 'item.started',
+      item: item({ id: 'live', turnId: 'active', text: '' }),
+    })
+    const streamed = reduceDeltas(withItem, [
+      { type: 'item.delta', turnId: 'active', itemId: 'live', textDelta: 'hello' },
+    ])
+    const completed = reduce(streamed, {
+      type: 'turn.completed',
+      turnId: 'active',
+      status: 'completed',
+    })
+
+    expect(streamed.items).toBe(withItem.items)
+    expect(completed.items[0]).toBe(history)
+    expect(completed.items[1]?.text).toBe('hello')
+    const nextTurn = reduce(completed, {
+      type: 'turn.started',
+      turn: { id: 'next', threadId: 'thread', status: 'running', createdAt: 2 },
+    })
+    expect(
+      reduceDeltas(nextTurn, [
+        { type: 'item.delta', turnId: 'active', itemId: 'live', textDelta: ' stale' },
+      ]),
+    ).toBe(nextTurn)
+  })
+
   it('clears unanswerable approvals when the turn ends, however it ends', () => {
     const requested = reduce(emptyThread, {
       type: 'approval.requested',
@@ -552,6 +631,6 @@ describe('overnight regression pins', () => {
       itemId: 'x',
       textDelta: 'lo',
     })
-    expect(delta.items[0]?.text).toBe('Hello')
+    expect(threadItems(delta)[0]?.text).toBe('Hello')
   })
 })
