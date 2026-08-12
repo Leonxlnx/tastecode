@@ -308,6 +308,7 @@ type DesignInput = {
   final: boolean
 }
 const PANIC_STOP_TIMEOUT_MS = 5_000
+const DESIGN_START_TIMEOUT_MS = 30_000
 const DESIGN_REPAIR_LIMIT = 2
 const UNSUPPORTED_MCP_CAPABILITIES: McpCapabilities = {
   inventory: false,
@@ -365,6 +366,7 @@ export class Orchestrator {
   #designFlows = new Map<string, DesignFlow>()
   #designTurns = new Map<string, string>()
   #designStartingThreads = new Set<string>()
+  #designStartWaiters = new Map<string, (turnId: string) => void>()
   #designMessageItems = new Set<string>()
   #acceptedDesignOutputs = new Set<string>()
   #designOutputErrors = new Map<string, unknown>()
@@ -966,13 +968,20 @@ export class Orchestrator {
         }
         this.#designFlows.set(threadId, flow)
         this.#saveDesignFlow(threadId)
-        const turnId = await this.#sendDesignTurn(
-          threadId,
-          designBriefingPrompt(text),
-          attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT),
-          this.#designTurnOptions(flow),
-          pendingStart,
-        )
+        let turnId: string
+        try {
+          turnId = await this.#sendDesignTurn(
+            threadId,
+            designBriefingPrompt(text),
+            attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT),
+            this.#designTurnOptions(flow),
+            pendingStart,
+          )
+        } catch (error) {
+          this.#startingTurns.delete(threadId)
+          if (this.#designFlows.has(threadId)) this.#failDesignFlow(threadId, error)
+          throw error
+        }
         // Ask-first cannot answer a permission prompt on an agent without
         // interactive approvals, so its Build writes get denied one by one.
         // Say so up front instead of letting the run die on it.
@@ -1875,6 +1884,7 @@ export class Orchestrator {
     this.#pendingTurnStarts.delete(threadId)
     this.#acceptedTurnStarts.delete(threadId)
     this.#designStartingThreads.delete(threadId)
+    this.#designStartWaiters.delete(threadId)
     this.#reviewingDiffs.delete(threadId)
     this.#queuedTurns.delete(threadId)
     this.#drainingQueues.delete(threadId)
@@ -1970,6 +1980,7 @@ export class Orchestrator {
     this.#designFlows.clear()
     this.#designTurns.clear()
     this.#designStartingThreads.clear()
+    this.#designStartWaiters.clear()
     this.#designMessageItems.clear()
     this.#acceptedDesignOutputs.clear()
     this.#designOutputErrors.clear()
@@ -2130,36 +2141,82 @@ export class Orchestrator {
       if (owner === threadId) {
         this.#acceptedDesignOutputs.delete(turnId)
         this.#designOutputErrors.delete(turnId)
+        this.#completeDesignActivity(threadId, turnId)
       }
     }
     this.#designStartingThreads.add(threadId)
+    let resolveStarted = (_turnId: string) => {}
+    const started = new Promise<string>((resolve) => (resolveStarted = resolve))
+    this.#designStartWaiters.set(threadId, resolveStarted)
+    const session = this.#get(threadId).session
+    const providerStart = session.sendTurn(threadId, prompt, attachments, options)
+    const flow = this.#designFlows.get(threadId)
+    let timedOut = false
+    let timeout: NodeJS.Timeout | undefined
     try {
-      const turnId = await this.#get(threadId).session.sendTurn(
-        threadId,
-        prompt,
-        attachments,
-        options,
-      )
+      const result = await Promise.race([
+        providerStart.then((turnId) => ({ source: 'provider' as const, turnId })),
+        started.then((turnId) => ({ source: 'event' as const, turnId })),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => {
+            timedOut = true
+            reject(new Error('the agent did not start the Design phase within 30 seconds'))
+          }, DESIGN_START_TIMEOUT_MS)
+        }),
+      ])
+      const { turnId } = result
       this.#acceptTurnStart(threadId, turnId, pendingStart)
-      this.#designTurns.set(turnId, threadId)
-      const flow = this.#designFlows.get(threadId)
-      if (flow) {
-        const item: Item = {
-          id: `design-activity-${crypto.randomUUID()}`,
-          turnId,
-          type: 'tool_call',
-          status: 'started',
-          text: `design:${flow.phase}`,
-          createdAt: Date.now(),
-        }
-        this.#designActivityItems.set(turnId, item)
-        this.#record(threadId, { type: 'item.started', item })
+      this.#startDesignActivity(threadId, turnId)
+      if (result.source === 'event') {
+        void providerStart.then(
+          (returnedTurnId) => {
+            if (returnedTurnId !== turnId && this.#designFlows.get(threadId) === flow) {
+              this.#onLog('provider returned a different turn id after Design already started')
+            }
+          },
+          (error: unknown) => {
+            if (this.#designFlows.get(threadId) === flow) this.#failDesignFlow(threadId, error)
+          },
+        )
       }
       return turnId
+    } catch (error) {
+      if (timedOut) {
+        await Promise.race([
+          session
+            .interrupt(threadId)
+            .catch((interruptError) =>
+              this.#onLog(`Design start interruption failed: ${errorMessage(interruptError)}`),
+            ),
+          new Promise<void>((resolve) => setTimeout(resolve, PANIC_STOP_TIMEOUT_MS)),
+        ])
+      }
+      throw error
     } finally {
+      if (timeout) clearTimeout(timeout)
+      if (this.#designStartWaiters.get(threadId) === resolveStarted) {
+        this.#designStartWaiters.delete(threadId)
+      }
       this.#forgetPendingTurnStart(threadId, pendingStart)
       this.#designStartingThreads.delete(threadId)
     }
+  }
+
+  #startDesignActivity(threadId: string, turnId: string): void {
+    this.#designTurns.set(turnId, threadId)
+    if (this.#designActivityItems.has(turnId)) return
+    const flow = this.#designFlows.get(threadId)
+    if (!flow) return
+    const item: Item = {
+      id: `design-activity-${crypto.randomUUID()}`,
+      turnId,
+      type: 'tool_call',
+      status: 'started',
+      text: `design:${flow.phase}`,
+      createdAt: Date.now(),
+    }
+    this.#designActivityItems.set(turnId, item)
+    this.#record(threadId, { type: 'item.started', item })
   }
 
   #acceptTurnStart(threadId: string, turnId: string, pendingStart: PendingTurnStart): void {
@@ -2235,10 +2292,6 @@ export class Orchestrator {
       void this.#drainQueue(threadId)
       return
     }
-    if (event.type === 'turn.started' && this.#designStartingThreads.has(threadId)) {
-      this.#designTurns.set(event.turn.id, threadId)
-    }
-
     const turnId =
       event.type === 'turn.started'
         ? event.turn.id
@@ -2247,6 +2300,11 @@ export class Orchestrator {
           : event.type === 'item.started' || event.type === 'item.completed'
             ? event.item.turnId
             : undefined
+    if (turnId && this.#designStartingThreads.has(threadId)) {
+      this.#designTurns.set(turnId, threadId)
+      this.#designStartWaiters.get(threadId)?.(turnId)
+      if (event.type !== 'turn.started') this.#startDesignActivity(threadId, turnId)
+    }
     if (!turnId || this.#designTurns.get(turnId) !== threadId) {
       this.#record(threadId, event)
       return
@@ -2337,6 +2395,9 @@ export class Orchestrator {
       }
     }
     this.#record(threadId, event)
+    if (event.type === 'turn.started' && this.#designTurns.get(event.turn.id) === threadId) {
+      this.#startDesignActivity(threadId, event.turn.id)
+    }
   }
 
   #handleDesignOutput(threadId: string, turnId: string, text: string): void {
@@ -2701,6 +2762,9 @@ export class Orchestrator {
   }
 
   #failDesignFlow(threadId: string, error: unknown): void {
+    for (const [turnId, owner] of this.#designTurns) {
+      if (owner === threadId) this.#completeDesignActivity(threadId, turnId, 'failed')
+    }
     this.#clearDesignFlow(threadId)
     const detail = error instanceof Error ? error.message : String(error)
     // A raw JSON.parse message reads as gibberish in the transcript; name

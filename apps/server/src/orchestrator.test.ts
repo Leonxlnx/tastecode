@@ -746,6 +746,122 @@ describe('durable user submissions', () => {
 })
 
 describe('provider-neutral design briefing', () => {
+  it('accepts a Design turn from turn.started while sendTurn is still pending', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-started-'))
+    const { orchestrator, sessions, received, store, logs } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      const session = sessions[0]!
+      session.release = () => {}
+      const sending = orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      await vi.waitFor(() => expect(session.sent).toHaveLength(1))
+      const releaseProvider = session.release
+
+      session.emit(turnStarted(thread.id, 'design-turn'))
+      await expect(sending).resolves.toBe('design-turn')
+      session.turnIds.push('different-late-id')
+      releaseProvider?.()
+      await vi.waitFor(() =>
+        expect(logs).toContain(
+          'provider returned a different turn id after Design already started',
+        ),
+      )
+      for (let index = 0; index < 4; index += 1) {
+        session.emit({
+          type: 'item.completed',
+          item: {
+            id: `thinking-${index}`,
+            turnId: 'design-turn',
+            type: 'reasoning',
+            status: 'completed',
+            text: 'Thinking',
+            createdAt: index,
+          },
+        })
+      }
+      session.emit(
+        message(
+          JSON.stringify({
+            status: 'questions',
+            message: 'Preparing questions.',
+            questions: [
+              {
+                id: 'audience',
+                header: 'Audience',
+                question: 'Who is this for?',
+                allowOther: true,
+                options: [{ label: 'Decide for me', description: 'Let the Design Agent decide.' }],
+              },
+            ],
+            brief: null,
+          }),
+          'design-turn',
+        ),
+      )
+      session.emit({ type: 'turn.completed', turnId: 'design-turn', status: 'completed' })
+
+      const history = store.history(thread.id)
+      expect(
+        history.filter(
+          ({ event }) => event.type === 'item.started' && event.item.text === 'design:brief',
+        ),
+      ).toHaveLength(1)
+      expect(
+        presentTurns(reduceEventLog(emptyThread, history).items).get('design-turn')?.design,
+      ).toBe(true)
+      expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('fails and drains a Design start that the provider never acknowledges', async () => {
+    vi.useFakeTimers()
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-start-timeout-'))
+    const { orchestrator, sessions, received, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      const session = sessions[0]!
+      session.release = () => {}
+      let releaseInterrupt = () => {}
+      session.interruptBarrier = new Promise<void>((resolve) => (releaseInterrupt = resolve))
+      const sending = orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      await vi.waitFor(() => expect(session.sent).toHaveLength(1))
+      session.release = undefined
+      await orchestrator.submitTurn(thread.id, 'Continue normally.')
+      const failure = expect(sending).rejects.toThrow('did not start the Design phase')
+
+      await vi.advanceTimersByTimeAsync(30_000)
+      await vi.waitFor(() => expect(session.interrupted).toBe(true))
+      session.emit(turnStarted(thread.id, 'late-design-turn'))
+      releaseInterrupt()
+
+      await failure
+      expect(store.designRun(thread.id)).toBeUndefined()
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'thread.error' && event.message.includes('Design mode failed'),
+        ),
+      ).toBe(true)
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'item.completed' &&
+            event.item.turnId === 'late-design-turn' &&
+            event.item.text === 'design:brief' &&
+            event.item.status === 'failed',
+        ),
+      ).toBe(true)
+      await vi.waitFor(() => expect(session.sent.at(-1)).toBe('Continue normally.'))
+    } finally {
+      vi.useRealTimers()
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
   async function previewRecoveryHarness(error: unknown) {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-preview-recovery-'))
     const taste = path.join(workspace, '.taste')
