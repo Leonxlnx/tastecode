@@ -675,7 +675,7 @@ export function startServer(
         }
         // The sidebar entry can disappear while its history remains available
         // when the project is added again. Running processes still need an owner.
-        for (const thread of store.threads(p.path)) orchestrator.close(thread.id)
+        await Promise.all(store.threads(p.path).map((thread) => orchestrator.close(thread.id)))
         orchestrator.forgetProject(p.path)
         store.removeProject(p.path)
         return {}
@@ -758,7 +758,7 @@ export function startServer(
         if (store.thread(p.threadId)?.worktreePath) {
           throw new Error('discard the isolated session checkout before deleting it')
         }
-        orchestrator.close(p.threadId)
+        await orchestrator.close(p.threadId)
         store.deleteThread(p.threadId)
         return {}
       }
@@ -981,7 +981,7 @@ export function startServer(
 
       case 'thread.close': {
         const p = params as { threadId: string }
-        orchestrator.close(p.threadId)
+        await orchestrator.close(p.threadId)
         return {}
       }
 

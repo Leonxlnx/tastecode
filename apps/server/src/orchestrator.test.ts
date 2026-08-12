@@ -30,7 +30,7 @@ import { beginOptimisticTurn, emptyThread, reduceEventLog } from '../../web/src/
 import { presentTurns } from '../../web/src/ui/turns.js'
 
 /** Counts stops, so tests can prove the dev server does not outlive its flow. */
-const previewStops = vi.hoisted(() => ({ count: 0 }))
+const previewStops = vi.hoisted(() => ({ count: 0, barriers: [] as Promise<void>[] }))
 const previewStarts = vi.hoisted(() => ({
   count: 0,
   barriers: [] as Promise<void>[],
@@ -50,6 +50,7 @@ vi.mock('./design-preview-runner.js', () => ({
         output: () => 'ready',
         stop: async () => {
           previewStops.count += 1
+          await previewStops.barriers.shift()
         },
       }
     },
@@ -1036,12 +1037,168 @@ describe('provider-neutral design briefing', () => {
     viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
   }
 
+  async function completedPreviewHarness() {
+    const result = await previewRecoveryHarness(undefined)
+    result.sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+    await vi.waitFor(() =>
+      expect(
+        result.received.some(
+          ({ event }) =>
+            event.type === 'item.completed' && event.item.text?.startsWith('Website built.'),
+        ),
+      ).toBe(true),
+    )
+    return result
+  }
+
+  function delayNextPreviewStop(): () => void {
+    let release = () => {}
+    previewStops.barriers.push(new Promise<void>((resolve) => (release = resolve)))
+    return release
+  }
+
+  it('waits for its successful preview to stop before close resolves', async () => {
+    const result = await completedPreviewHarness()
+    const stopCount = previewStops.count
+    const release = delayNextPreviewStop()
+    let closed = false
+    try {
+      const closing = Promise.resolve(result.orchestrator.close('preview-recovery')).then(() => {
+        closed = true
+      })
+      await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(closed).toBe(false)
+      release()
+      await closing
+    } finally {
+      release()
+      await result.orchestrator.disposeAll()
+      result.store.close()
+      rmSync(result.workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('waits for every successful preview to stop before disposal resolves', async () => {
+    const result = await completedPreviewHarness()
+    const stopCount = previewStops.count
+    const release = delayNextPreviewStop()
+    let disposed = false
+    try {
+      const disposing = result.orchestrator.disposeAll().then(() => {
+        disposed = true
+      })
+      await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(disposed).toBe(false)
+      release()
+      await disposing
+    } finally {
+      release()
+      await result.orchestrator.disposeAll()
+      result.store.close()
+      rmSync(result.workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('drains a preview start already in flight before disposal resolves', async () => {
+    const result = await previewRecoveryHarness(undefined)
+    const startCount = previewStarts.count
+    const stopCount = previewStops.count
+    let releaseStart = () => {}
+    previewStarts.barriers.push(new Promise<void>((resolve) => (releaseStart = resolve)))
+    const releaseStop = delayNextPreviewStop()
+    let disposed = false
+    try {
+      result.sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+      await vi.waitFor(() => expect(previewStarts.count).toBe(startCount + 1))
+      const disposing = result.orchestrator.disposeAll().then(() => {
+        disposed = true
+      })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(disposed).toBe(false)
+      releaseStart()
+      await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(disposed).toBe(false)
+      releaseStop()
+      await disposing
+    } finally {
+      releaseStart()
+      releaseStop()
+      await result.orchestrator.disposeAll()
+      result.store.close()
+      rmSync(result.workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('stops the prior successful preview before starting the next Design run', async () => {
+    const result = await completedPreviewHarness()
+    const stopCount = previewStops.count
+    const sentCount = result.sessions[0]!.sent.length
+    const release = delayNextPreviewStop()
+    try {
+      const sending = result.orchestrator.sendTurn('preview-recovery', 'Build another site.', [
+        DESIGN_BRIEF_ATTACHMENT,
+      ])
+      await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(result.sessions[0]?.sent).toHaveLength(sentCount)
+      release()
+      await sending
+      expect(result.sessions[0]?.sent).toHaveLength(sentCount + 1)
+    } finally {
+      release()
+      await result.orchestrator.disposeAll()
+      result.store.close()
+      rmSync(result.workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('drains a stale preview start before starting the next Design run', async () => {
+    const result = await previewRecoveryHarness(undefined)
+    const startCount = previewStarts.count
+    const stopCount = previewStops.count
+    let releaseStart = () => {}
+    previewStarts.barriers.push(new Promise<void>((resolve) => (releaseStart = resolve)))
+    const releaseStop = delayNextPreviewStop()
+    try {
+      result.sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+      await vi.waitFor(() => expect(previewStarts.count).toBe(startCount + 1))
+      result.sessions[0]?.emit({
+        type: 'turn.completed',
+        turnId: 's1-turn',
+        status: 'interrupted',
+      })
+      const sentCount = result.sessions[0]!.sent.length
+      const sending = result.orchestrator.sendTurn('preview-recovery', 'Build another site.', [
+        DESIGN_BRIEF_ATTACHMENT,
+      ])
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(result.sessions[0]?.sent).toHaveLength(sentCount)
+      releaseStart()
+      await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(result.sessions[0]?.sent).toHaveLength(sentCount)
+      releaseStop()
+      await sending
+      expect(result.sessions[0]?.sent).toHaveLength(sentCount + 1)
+    } finally {
+      releaseStart()
+      releaseStop()
+      await result.orchestrator.disposeAll()
+      result.store.close()
+      rmSync(result.workspace, { recursive: true, force: true })
+    }
+  })
+
   it.each(ProviderIdSchema.options)(
     'runs the same adaptive question loop with %s',
     async (provider) => {
       const model = 'future-provider/model-that-needs-no-design-code'
       const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-flow-'))
       const { orchestrator, sessions, received, store, capturePreview } = harness()
+      const stopCount = previewStops.count
       try {
         const thread = await orchestrator.startThread(provider, workspace, {})
         await orchestrator.sendTurn(thread.id, 'Create a website.', [DESIGN_BRIEF_ATTACHMENT], {
@@ -1357,10 +1514,7 @@ describe('provider-neutral design briefing', () => {
           'review.json',
         ])
         expect(store.designRun(thread.id)).toBeUndefined()
-        // The preview is a real dev server with its cwd in the session's
-        // worktree. Left running it holds a port and, on Windows, a lock that
-        // makes removing that worktree fail.
-        expect(previewStops.count).toBeGreaterThan(0)
+        expect(previewStops.count).toBe(stopCount)
         expect(capturePreview).toHaveBeenCalledTimes(2)
         expect(
           JSON.parse(readFileSync(path.join(workspace, '.taste', 'review.json'), 'utf8')),
@@ -1385,7 +1539,10 @@ describe('provider-neutral design briefing', () => {
           'design:repair',
           'design:review',
         ])
+        orchestrator.close(thread.id)
+        await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
       } finally {
+        await orchestrator.disposeAll()
         rmSync(workspace, { recursive: true, force: true })
       }
     },
@@ -1884,13 +2041,16 @@ describe('provider-neutral design briefing', () => {
       sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'interrupted' })
       expect(store.designRun('late-preview')).toBeUndefined()
       sessions[0]?.turnIds.push('replacement-turn')
-      await orchestrator.sendTurn('late-preview', 'Build a replacement.', [DESIGN_BRIEF_ATTACHMENT])
+      const replacement = orchestrator.sendTurn('late-preview', 'Build a replacement.', [
+        DESIGN_BRIEF_ATTACHMENT,
+      ])
+      if (outcome === 'resolve') releaseAwait()
+      else rejectAwait(new Error('stale preview failed'))
+      await replacement
       expect(store.designRun('late-preview')).toMatchObject({
         originalRequest: 'Build a replacement.',
         phase: 'brief',
       })
-      if (outcome === 'resolve') releaseAwait()
-      else rejectAwait(new Error('stale preview failed'))
 
       await new Promise<void>((resolve) => setImmediate(resolve))
 

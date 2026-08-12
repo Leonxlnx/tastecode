@@ -374,6 +374,8 @@ export class Orchestrator {
   #designInputs = new Map<string, DesignInput>()
   #designInputByThread = new Map<string, string>()
   #designPreviews = new Map<string, RunningPreview>()
+  #designPreviewTasks = new Map<string, Promise<void>>()
+  #stoppingDesignPreviews = new Map<string, Promise<void>>()
   #resumingThreads = new Map<string, Promise<void>>()
   #panicGeneration = 0
   #panicStopping = false
@@ -950,7 +952,7 @@ export class Orchestrator {
       }
       const design = attachments.includes(DESIGN_BRIEF_ATTACHMENT)
       if (design) {
-        this.#stopDesignPreview(threadId)
+        await this.#stopDesignPreview(threadId)
         // The flow keeps the user's own options; only brief-phase turns force
         // low effort (see #designTurnOptions). Storing the lowered options
         // here made Brand, Page, Build, and Review inherit the fast briefing
@@ -1845,7 +1847,7 @@ export class Orchestrator {
             ])
             return { threadId, status: 'interrupted' as const }
           } catch (error) {
-            this.close(threadId)
+            await this.close(threadId)
             return {
               threadId,
               status: 'failed' as const,
@@ -1863,11 +1865,11 @@ export class Orchestrator {
     }
   }
 
-  close(threadId: string): void {
-    void this.#terminals
+  async close(threadId: string): Promise<void> {
+    const terminalsClosed = this.#terminals
       .closeThread(threadId)
       .catch((error) => this.#onLog(`[terminal] thread close failed: ${errorMessage(error)}`))
-    this.#stopDesignPreview(threadId)
+    const previewStopped = this.#stopDesignPreview(threadId)
     this.#inboxProjections.delete(threadId)
     const entry = this.#threads.get(threadId)
     if (entry) {
@@ -1901,6 +1903,7 @@ export class Orchestrator {
     // The worktree deliberately survives: it may hold work the agent did not
     // commit, and closing a session is not a statement about that work.
     this.#store.closeThread(threadId)
+    await Promise.all([terminalsClosed, previewStopped])
   }
 
   /**
@@ -1926,7 +1929,7 @@ export class Orchestrator {
     const stored = this.#store.thread(threadId)
     if (!stored?.worktreePath || !stored.worktreeBranch) return
 
-    await this.#terminals.closeThread(threadId)
+    await Promise.all([this.#terminals.closeThread(threadId), this.#stopDesignPreview(threadId)])
 
     await removeWorktree(
       {
@@ -1963,6 +1966,9 @@ export class Orchestrator {
 
   async disposeAll(): Promise<void> {
     const terminalsClosed = this.#terminals.closeAll()
+    const previewsStopped = [...this.#designPreviews.keys()].map((threadId) =>
+      this.#stopDesignPreview(threadId),
+    )
     for (const controller of this.#voiceRequests.values()) controller.abort()
     this.#voiceRequests.clear()
     for (const [, entry] of this.#threads) entry.session.dispose()
@@ -1988,8 +1994,6 @@ export class Orchestrator {
     this.#designActivityItems.clear()
     this.#designInputs.clear()
     this.#designInputByThread.clear()
-    for (const preview of this.#designPreviews.values()) void preview.stop()
-    this.#designPreviews.clear()
     this.#resumingThreads.clear()
     void this.#controlStarting?.then(
       (adapter) => adapter.dispose(),
@@ -1998,6 +2002,8 @@ export class Orchestrator {
     this.#controlStarting = undefined
     this.#control?.dispose()
     this.#control = undefined
+    await Promise.allSettled([...this.#designPreviewTasks.values(), ...previewsStopped])
+    await Promise.allSettled(this.#stoppingDesignPreviews.values())
     await terminalsClosed
   }
 
@@ -2583,30 +2589,45 @@ export class Orchestrator {
     }
     if (flow.phase === 'preview') {
       const plan = parsePreviewPhaseOutput(text)
-      void this.#startDesignPreview(threadId, turnId, flow, plan).catch((error: unknown) => {
-        if (this.#designFlows.get(threadId) !== flow) return
-        if (
-          isRecoverablePreviewError(error) &&
-          this.#queueDesignCorrection(threadId, flow, error)
-        ) {
-          if (this.#activeTurns.has(threadId)) return
-          const prompt = flow.pendingPrompt!
-          delete flow.pendingPrompt
-          this.#saveDesignFlow(threadId)
-          void this.#sendDesignTurn(
-            threadId,
-            prompt,
-            this.#designAttachmentsFor(flow),
-            this.#designTurnOptions(flow),
-          ).catch((sendError: unknown) => {
-            if (this.#designFlows.get(threadId) === flow) {
-              this.#failDesignFlow(threadId, sendError)
-            }
-          })
-          return
-        }
-        this.#failDesignFlow(threadId, error)
-      })
+      const task = this.#startDesignPreview(threadId, turnId, flow, plan).catch(
+        (error: unknown) => {
+          if (this.#designFlows.get(threadId) !== flow) return
+          if (
+            isRecoverablePreviewError(error) &&
+            this.#queueDesignCorrection(threadId, flow, error)
+          ) {
+            if (this.#activeTurns.has(threadId)) return
+            const prompt = flow.pendingPrompt!
+            delete flow.pendingPrompt
+            this.#saveDesignFlow(threadId)
+            void this.#sendDesignTurn(
+              threadId,
+              prompt,
+              this.#designAttachmentsFor(flow),
+              this.#designTurnOptions(flow),
+            ).catch((sendError: unknown) => {
+              if (this.#designFlows.get(threadId) === flow) {
+                this.#failDesignFlow(threadId, sendError)
+              }
+            })
+            return
+          }
+          this.#failDesignFlow(threadId, error)
+        },
+      )
+      this.#designPreviewTasks.set(threadId, task)
+      void task.then(
+        () => {
+          if (this.#designPreviewTasks.get(threadId) === task) {
+            this.#designPreviewTasks.delete(threadId)
+          }
+        },
+        () => {
+          if (this.#designPreviewTasks.get(threadId) === task) {
+            this.#designPreviewTasks.delete(threadId)
+          }
+        },
+      )
       return
     }
     if (flow.phase === 'review') {
@@ -2647,7 +2668,7 @@ export class Orchestrator {
   }
 
   #finishDesignFlow(threadId: string, turnId: string, summary: string): void {
-    this.#clearDesignFlow(threadId)
+    this.#clearDesignFlow(threadId, true)
     this.#record(threadId, {
       type: 'item.completed',
       item: {
@@ -2801,17 +2822,29 @@ export class Orchestrator {
    * which then makes removing that worktree fail with a git error the user
    * cannot act on.
    */
-  #stopDesignPreview(threadId: string): void {
+  async #stopDesignPreview(threadId: string): Promise<void> {
+    await this.#designPreviewTasks.get(threadId)
+    const stopping = this.#stoppingDesignPreviews.get(threadId)
+    if (stopping) return stopping
     const preview = this.#designPreviews.get(threadId)
     if (!preview) return
     this.#designPreviews.delete(threadId)
-    void preview.stop()
+    const stop = preview
+      .stop()
+      .catch((error: unknown) =>
+        this.#onLog(`[design] preview stop failed: ${errorMessage(error)}`),
+      )
+      .finally(() => {
+        if (this.#stoppingDesignPreviews.get(threadId) === stop) {
+          this.#stoppingDesignPreviews.delete(threadId)
+        }
+      })
+    this.#stoppingDesignPreviews.set(threadId, stop)
+    return stop
   }
 
-  #clearDesignFlow(threadId: string): void {
-    // The flow is over however it ended — completed, failed, or "not a design
-    // task". Its preview server has no owner left to stop it.
-    this.#stopDesignPreview(threadId)
+  #clearDesignFlow(threadId: string, keepPreview = false): void {
+    if (!keepPreview) void this.#stopDesignPreview(threadId)
     this.#designFlows.delete(threadId)
     this.#store.deleteDesignRun(threadId)
     const requestId = this.#designInputByThread.get(threadId)
