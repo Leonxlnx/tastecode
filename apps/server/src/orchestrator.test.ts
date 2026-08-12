@@ -2317,6 +2317,7 @@ describe('sidebar inbox lifecycle', () => {
       keepActive: true,
     })
 
+    sessions[0]!.turnIds.push('turn-1')
     await orchestrator.submitTurn(thread.id, 'working')
     expect(() => orchestrator.settleThread(thread.id)).toThrow(/status is working/)
     sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
@@ -2413,7 +2414,11 @@ describe('queued turns', () => {
         expect(restarted.sessions[0]?.sentAttachments[0]).toEqual(['C:\\private\\c.png'])
         expect(restarted.sessions[0]?.sentOptions[0]).toEqual({ model: 'model-c' })
 
-        restarted.sessions[0]!.emit({ type: 'turn.completed', turnId: 't', status: 'completed' })
+        restarted.sessions[0]!.emit({
+          type: 'turn.completed',
+          turnId: 's1-turn',
+          status: 'completed',
+        })
         await vi.waitFor(() => expect(restarted.sessions[0]?.sent).toHaveLength(2))
         expect(restarted.orchestrator.queue(thread.id).items).toHaveLength(1)
       } finally {
@@ -2521,6 +2526,7 @@ describe('queued turns', () => {
   it('runs queued prompts in order after the active turn completes', async () => {
     const { sessions, orchestrator } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
+    sessions[0]!.turnIds.push('first-turn', 'second-turn', 'third-turn')
 
     await expect(orchestrator.submitTurn(thread.id, 'first')).resolves.toMatchObject({
       queued: false,
