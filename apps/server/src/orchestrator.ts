@@ -777,7 +777,16 @@ export class Orchestrator {
 
   async usageLimitSource(provider: ProviderId): Promise<ProviderLimitSource> {
     const readers: Partial<Record<ProviderId, () => Promise<AdapterLimitSource>>> = {
-      codex: async () => (await this.#controlAdapter()).rateLimitSource(),
+      codex: async () => {
+        const adapter = new CodexAdapter()
+        adapter.on('log', (line) => this.#onLog(line))
+        try {
+          await adapter.start()
+          return await adapter.rateLimitSource()
+        } finally {
+          adapter.dispose()
+        }
+      },
       'claude-code': claudeLimitSource,
       grok: grokLimitSource,
     }

@@ -6,6 +6,8 @@ const sources = vi.hoisted(() => ({
   codex: vi.fn(),
   claude: vi.fn(),
   grok: vi.fn(),
+  constructed: 0,
+  disposed: [] as number[],
 }))
 
 vi.mock('@harness/adapter-codex', async (importOriginal) => {
@@ -13,10 +15,16 @@ vi.mock('@harness/adapter-codex', async (importOriginal) => {
   return {
     ...original,
     CodexAdapter: class {
+      readonly id = ++sources.constructed
       on(): void {}
       onUsageChanged(): void {}
-      dispose(): void {}
+      dispose(): void {
+        sources.disposed.push(this.id)
+      }
       async start(): Promise<void> {}
+      async account(): Promise<{ signedIn: boolean }> {
+        return { signedIn: true }
+      }
       rateLimitSource(): Promise<unknown> {
         return sources.codex()
       }
@@ -47,6 +55,8 @@ beforeEach(() => {
   sources.codex.mockReset()
   sources.claude.mockReset()
   sources.grok.mockReset()
+  sources.constructed = 0
+  sources.disposed = []
 })
 
 describe('provider limit sources', () => {
@@ -66,7 +76,21 @@ describe('provider limit sources', () => {
       status: 'ready',
       limits: [{ label: 'Weekly', usedPercent: 25 }],
     })
+    if (provider === 'codex') expect(sources.disposed).toEqual([1])
     await instance.disposeAll()
+  })
+
+  it('does not reuse or dispose the long-lived account adapter', async () => {
+    sources.codex.mockResolvedValue({ status: 'ready', limits: [] })
+    const instance = orchestrator()
+
+    await instance.account('codex')
+    await instance.usageLimitSource('codex')
+
+    expect(sources.constructed).toBe(2)
+    expect(sources.disposed).toEqual([2])
+    await instance.disposeAll()
+    expect(sources.disposed).toEqual([2, 1])
   })
 
   it('preserves a supported provider unavailable state', async () => {
