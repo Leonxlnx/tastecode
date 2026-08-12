@@ -57,7 +57,6 @@ import {
   filterModelChoicesByQuery,
   isCustomModelChoice,
   providerMark,
-  providerDisplayName,
   type CustomModelInput,
   type ModelChoice,
   type ProviderMark,
@@ -96,6 +95,7 @@ import { ProviderIcon } from './ProviderIcon.js'
 import { ProviderRow, type ProviderAction } from './ProviderRow.js'
 import { ProfileSettings } from './ProfileSettings.js'
 import { renderQrSvg } from './qr-code.js'
+import { SourceIdentity } from './SourceIdentity.js'
 import { UsageSettings } from './UsageSettings.js'
 
 const InstallTerminal = lazy(() =>
@@ -892,12 +892,12 @@ function CustomModelsSection(props: {
         <ul className="model-settings__custom-list">
           {props.models.map((choice) => (
             <li key={choice.key} className="model-settings__custom-row">
-              <ProviderIcon mark={choice.mark} size={16} />
+              <SourceIdentity
+                presentation={{ label: choice.sourceName, mark: choice.mark }}
+                density="compact"
+              />
               <span className="model-settings__custom-name">{choice.model.displayName}</span>
               <code className="model-settings__custom-id">{choice.model.id}</code>
-              <span className="model-settings__custom-provider">
-                {providerDisplayName(choice.provider)}
-              </span>
               <button
                 type="button"
                 className="model-settings__custom-remove"
@@ -946,8 +946,11 @@ function ModelVisibilityGroup(props: {
     <section className="model-visibility" aria-label={props.source}>
       <header className="model-visibility__source">
         <div className="model-visibility__source-copy">
-          {props.choices[0] ? <ProviderIcon mark={props.choices[0].mark} size={18} /> : null}
-          <h3>{props.source}</h3>
+          {props.choices[0] ? (
+            <h3>
+              <SourceIdentity presentation={{ label: props.source, mark: props.choices[0].mark }} />
+            </h3>
+          ) : null}
           <span className="settings__status">
             {visibleCount}/{props.choices.length}
           </span>

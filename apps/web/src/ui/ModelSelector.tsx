@@ -19,6 +19,7 @@ import { DitherSlider } from './dither-kit/DitherSlider.js'
 import { Menu } from './Menu.js'
 import { ModelSearchField } from './ModelSearchField.js'
 import { ProviderIcon } from './ProviderIcon.js'
+import { SourceIdentity } from './SourceIdentity.js'
 
 const SLIDER_DITHER_MIN_WIDTH = 44
 const SLIDER_DITHER_INSET = 2
@@ -215,7 +216,11 @@ function ProviderModelList(props: {
         {visibleGroup ? (
           <section className="model-selector__group">
             <div className="model-selector__group-head">
-              <p className="model-selector__group-title">{visibleGroup.name}</p>
+              <p className="model-selector__group-title">
+                <SourceIdentity
+                  presentation={{ label: visibleGroup.name, mark: visibleGroup.mark }}
+                />
+              </p>
               <ModelSearchField
                 className="model-selector__search"
                 value={query}
@@ -282,8 +287,10 @@ function FlatModelList(props: {
       {groups.map((group) => (
         <section className="model-selector__group" key={group.key}>
           <p className="model-selector__group-title">
-            <ProviderIcon mark={group.mark} size={13} />
-            {group.name}
+            <SourceIdentity
+              presentation={{ label: group.name, mark: group.mark }}
+              density="compact"
+            />
           </p>
           {group.entries.map((entry) => {
             const selected = entry.key === props.selectedChoice?.key

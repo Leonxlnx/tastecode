@@ -549,6 +549,9 @@ describe('model settings', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
     const search = screen.getByRole('searchbox', { name: 'Search OpenCode models' })
+    const sourceHeading = search.closest('.model-visibility')?.querySelector('.source-identity')
+    expect(sourceHeading?.getAttribute('title')).toBe('OpenCode')
+    expect(sourceHeading?.querySelector('svg')?.getAttribute('width')).toBe('15')
     fireEvent.change(search, { target: { value: 'qwen 3.8' } })
 
     expect(screen.queryByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeNull()
@@ -628,6 +631,7 @@ describe('model settings', () => {
     const row = within(section).getByText('Qwen Max').closest('li')
     if (!row) throw new Error('custom model row missing')
     expect(within(row).getByText('Codex')).toBeTruthy()
+    expect(row.querySelector('.source-identity')?.getAttribute('title')).toBe('Codex')
 
     // The custom entry does not leak into a provider visibility group.
     expect(screen.queryByRole('switch', { name: 'Show Qwen Max' })).toBeNull()

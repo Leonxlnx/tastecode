@@ -193,8 +193,14 @@ describe('usage settings', () => {
     for (const provider of providers) {
       expect(screen.getAllByText(provider.label).length).toBeGreaterThan(0)
       expect(breakdown?.textContent).toContain(provider.label)
+      expect(
+        Array.from(document.querySelectorAll('.source-identity')).some(
+          (identity) => identity.getAttribute('title') === provider.label,
+        ),
+      ).toBe(true)
     }
     expect(breakdown?.textContent).toContain('12.5%')
+    expect(breakdown?.querySelectorAll('.source-identity--compact')).toHaveLength(providers.length)
   })
 })
 

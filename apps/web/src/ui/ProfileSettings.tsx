@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Account, ResultOf, UsageHistoryDay } from '@harness/contracts'
 import { CircleAlert, RefreshCw } from 'lucide-react'
-import { providerDisplayName, providerMark } from '../provider-presentation.js'
+import { providerPresentation } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
-import { ProviderIcon } from './ProviderIcon.js'
+import { SourceIdentity } from './SourceIdentity.js'
 
 const PROFILE_ACTIVITY_DAYS = 365
 const integer = new Intl.NumberFormat('en-US')
@@ -187,7 +187,11 @@ export function ProfileSettings(props: {
             <ProfileInsight
               label="Top provider"
               value={
-                topProvider ? providerDisplayName(topProvider.provider) : 'No provider activity'
+                topProvider ? (
+                  <SourceIdentity presentation={providerPresentation(topProvider.provider)} />
+                ) : (
+                  'No provider activity'
+                )
               }
             />
             <ProfileInsight
@@ -209,8 +213,10 @@ export function ProfileSettings(props: {
               {topModels.map((model) => (
                 <li data-provider={model.provider} key={`${model.provider}:${model.model}`}>
                   <span className="profile-models__name">
-                    <ProviderIcon mark={providerMark(model.provider)} size={16} />
-                    <span>{model.model}</span>
+                    <SourceIdentity
+                      presentation={providerPresentation(model.provider)}
+                      qualifier={model.model}
+                    />
                   </span>
                   <span>{formatTokens(model.totals.processedTokens)}</span>
                 </li>
@@ -250,7 +256,7 @@ function ProfileStat(props: { value: string; label: string }) {
   )
 }
 
-function ProfileInsight(props: { label: string; value: string }) {
+function ProfileInsight(props: { label: string; value: ReactNode }) {
   return (
     <div>
       <dt>{props.label}</dt>
@@ -361,8 +367,10 @@ function ActivityHeatmap(props: { daily: UsageHistoryDay[]; endDate: string }) {
                   return (
                     <li data-provider={provider.provider} key={provider.provider}>
                       <span className="profile-activity__tooltip-provider-name">
-                        <ProviderIcon mark={providerMark(provider.provider)} size={15} />
-                        {providerDisplayName(provider.provider)}
+                        <SourceIdentity
+                          presentation={providerPresentation(provider.provider)}
+                          density="compact"
+                        />
                       </span>
                       <span className="profile-activity__tooltip-provider-value">
                         <b>{formatTokens(provider.tokens)}</b>

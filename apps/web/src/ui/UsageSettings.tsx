@@ -14,9 +14,9 @@ import type {
   UsageHistoryTotals,
 } from '@harness/contracts'
 import { CalendarDays, CircleAlert, RefreshCw } from 'lucide-react'
-import { providerDisplayName, providerMark } from '../provider-presentation.js'
+import { providerPresentation } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
-import { ProviderIcon } from './ProviderIcon.js'
+import { SourceIdentity } from './SourceIdentity.js'
 
 const RANGE_OPTIONS = [
   { value: '7d', label: '7 days' },
@@ -215,10 +215,7 @@ function CostSummary(props: { data: ResultOf<'usage.history'> }) {
                 key={provider.provider}
               >
                 <div className="usage-provider__heading">
-                  <span>
-                    <ProviderIcon mark={providerMark(provider.provider)} size={17} />
-                    {providerDisplayName(provider.provider)}
-                  </span>
+                  <SourceIdentity presentation={providerPresentation(provider.provider)} />
                   <strong>{formatMoney(provider.totals.estimatedCostUsd)}</strong>
                 </div>
                 <div className="usage-provider__track" aria-hidden>
@@ -342,8 +339,10 @@ function Metric(props: {
             {props.providers.map((provider) => (
               <li data-provider={provider.provider} key={provider.provider}>
                 <span className="usage-metric__provider-name">
-                  <ProviderIcon mark={providerMark(provider.provider)} size={15} />
-                  {providerDisplayName(provider.provider)}
+                  <SourceIdentity
+                    presentation={providerPresentation(provider.provider)}
+                    density="compact"
+                  />
                 </span>
                 <span className="usage-metric__provider-value">
                   <b>{provider.value}</b>
@@ -433,8 +432,10 @@ function DailyUsageChart(props: { data: ResultOf<'usage.history'> }) {
           <div className="usage-chart__legend" aria-label="Providers">
             {props.data.providers.map((provider) => (
               <span data-provider={provider.provider} key={provider.provider}>
-                <ProviderIcon mark={providerMark(provider.provider)} size={14} />
-                {providerDisplayName(provider.provider)}
+                <SourceIdentity
+                  presentation={providerPresentation(provider.provider)}
+                  density="compact"
+                />
               </span>
             ))}
           </div>
@@ -529,7 +530,10 @@ function ChartTooltip(props: {
       </span>
       {props.day.providers.map((provider) => (
         <span data-provider={provider.provider} key={provider.provider}>
-          {providerDisplayName(provider.provider)}
+          <SourceIdentity
+            presentation={providerPresentation(provider.provider)}
+            density="compact"
+          />
           <b>
             {props.mode === 'cost'
               ? formatMoney(provider.estimatedCostUsd)
@@ -624,11 +628,15 @@ function UsageBreakdown(props: { data: ResultOf<'usage.history'> }) {
                     <th scope="row">
                       <span className="usage-breakdown__name">
                         {'provider' in row ? (
-                          <ProviderIcon mark={providerMark(row.provider)} size={15} />
+                          <SourceIdentity
+                            presentation={providerPresentation(row.provider)}
+                            qualifier={row.name}
+                            density="compact"
+                          />
                         ) : (
                           <CalendarDays size={15} aria-hidden />
                         )}
-                        <span>{row.name}</span>
+                        {'provider' in row ? null : <span>{row.name}</span>}
                         {badge ? <em>{badge}</em> : null}
                       </span>
                     </th>

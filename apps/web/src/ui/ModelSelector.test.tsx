@@ -287,6 +287,9 @@ describe('ModelSelector', () => {
     expect(document.querySelector('.model-selector__models--flat')).toBeTruthy()
     expect(screen.getByRole('searchbox', { name: 'Search models' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
+    const heading = document.querySelector('.model-selector__group-title .source-identity')
+    expect(heading?.getAttribute('title')).toBe('Codex')
+    expect(heading?.querySelector('svg')?.getAttribute('width')).toBe('11')
   })
 
   it('searches every flat-list source without changing the selected model', () => {
@@ -382,6 +385,11 @@ describe('ModelSelector', () => {
       (title) => title.textContent,
     )
     expect(titles).toEqual(['Codex'])
+    expect(
+      document
+        .querySelector('.model-selector__group-title .source-identity')
+        ?.getAttribute('title'),
+    ).toBe('Codex')
 
     fireEvent.click(screen.getByRole('button', { name: 'Show Claude Code models' }))
 

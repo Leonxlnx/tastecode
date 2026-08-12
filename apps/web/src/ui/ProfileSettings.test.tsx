@@ -32,6 +32,12 @@ describe('profile settings', () => {
     expect(screen.getAllByText('3 days')).toHaveLength(2)
     expect(screen.getByText('75%')).toBeTruthy()
     expect(screen.getAllByText('gpt-5.6-sol').length).toBeGreaterThan(0)
+    const topProvider = screen.getByText('Top provider').closest('div')
+    expect(topProvider?.querySelector('.source-identity')?.getAttribute('title')).toBe('Codex')
+    const topModel = document.querySelector('.profile-models li')
+    expect(topModel?.querySelector('.source-identity')?.getAttribute('title')).toBe(
+      'Codex · gpt-5.6-sol',
+    )
     const activityCell = document.querySelector<HTMLElement>('[data-activity-date="2026-08-08"]')
     expect(activityCell).not.toBeNull()
     fireEvent.pointerEnter(activityCell!)
@@ -44,6 +50,7 @@ describe('profile settings', () => {
     expect(tooltip.textContent).toContain('Claude Code')
     expect(tooltip.textContent).toContain('150')
     expect(tooltip.textContent).toContain('38%')
+    expect(tooltip.querySelectorAll('.source-identity--compact')).toHaveLength(2)
     fireEvent.pointerLeave(activityCell!)
     expect(screen.queryByRole('tooltip')).toBeNull()
 

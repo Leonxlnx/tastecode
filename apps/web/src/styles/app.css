@@ -3252,7 +3252,7 @@
 
 .model-settings__custom-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   min-height: 38px;
@@ -3273,11 +3273,6 @@
 }
 
 .model-settings__custom-id {
-  color: var(--text-3);
-  font-size: var(--t-xs);
-}
-
-.model-settings__custom-provider {
   color: var(--text-3);
   font-size: var(--t-xs);
 }

@@ -224,6 +224,11 @@ describe('cross-session search', () => {
     await waitFor(() => {
       expect(screen.getAllByRole('option', { name: /Gemini roadmap.*Gemini CLI/ })).toHaveLength(2)
     })
+    for (const option of screen.getAllByRole('option', { name: /Gemini roadmap.*Gemini CLI/ })) {
+      const identity = option.querySelector('.source-identity')
+      expect(identity?.getAttribute('title')).toBe('Gemini CLI')
+      expect(identity?.querySelector('svg')?.getAttribute('width')).toBe('11')
+    }
   })
 
   it('keeps same-turn, same-timestamp content hits distinct by server identity', async () => {

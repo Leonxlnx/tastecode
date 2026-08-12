@@ -5,8 +5,10 @@ import {
   agentPresentation,
   providerDisplayName,
   sourcePresentation,
+  type ProviderPresentation,
 } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
+import { SourceIdentity } from './SourceIdentity.js'
 
 const SEARCH_DEBOUNCE_MS = 80
 const MAX_TITLE_RESULTS = 6
@@ -404,7 +406,10 @@ function SessionSearchComponent(props: {
                         ) : null}
                         <span>{result.projectName}</span>
                         <span aria-hidden>·</span>
-                        <span>{resultProviderLabel(result)}</span>
+                        <SourceIdentity
+                          presentation={resultSourcePresentation(result)}
+                          density="compact"
+                        />
                         <span aria-hidden>·</span>
                         <time
                           dateTime={new Date(result.createdAt).toISOString()}
@@ -491,11 +496,15 @@ function contentResultKey(
   return `content:legacy:${JSON.stringify([identity, occurrence])}`
 }
 
-function resultProviderLabel(result: DisplaySearchResult): string {
+function resultSourcePresentation(result: DisplaySearchResult): ProviderPresentation {
   return sourcePresentation({
     provider: result.provider,
     sourceName: result.sourceName,
-  }).label
+  })
+}
+
+function resultProviderLabel(result: DisplaySearchResult): string {
+  return resultSourcePresentation(result).label
 }
 
 function searchTerms(query: string): string[] {
