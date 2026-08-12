@@ -2,7 +2,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { designBuildPrompt, parseBuildPhaseOutput, validateExactBuildFiles } from './build-phase.js'
+import {
+  designBuildPrompt,
+  exactBuildFileBaseline,
+  parseBuildPhaseOutput,
+  validateExactBuildFiles,
+} from './build-phase.js'
 
 const artifacts = [
   {
@@ -81,6 +86,8 @@ describe('build phase', () => {
         'Create exactly index.html, styles.css, and app.js in the current directory; do not create other files.',
     }
     try {
+      writeFileSync(path.join(workspace, 'README.md'), 'pre-existing user file')
+      const baseline = exactBuildFileBaseline(workspace, brief)
       for (const file of [
         'index.html',
         'styles.css',
@@ -96,9 +103,42 @@ describe('build phase', () => {
       expect(designBuildPrompt(brief, ...artifacts.slice(1))).toContain(
         'exactly index.html, styles.css, and app.js',
       )
-      expect(() => validateExactBuildFiles(workspace, brief)).toThrow(
+      expect(() => validateExactBuildFiles(workspace, brief, baseline)).toThrow(
         'unexpected files: extra.json, node_modules/, preview-server.js',
       )
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    'Only create index.html, styles.css, and app.js; no other files.',
+    'The files must be exactly index.html, styles.css, and app.js.',
+    'Create these three files: index.html, styles.css, and app.js.',
+  ])('recognizes an exact file-list variant: %s', (constraint) => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-variant-'))
+    try {
+      for (const file of ['index.html', 'styles.css', 'app.js', 'extra.json']) {
+        writeFileSync(path.join(workspace, file), file)
+      }
+      expect(() =>
+        validateExactBuildFiles(workspace, { ...artifacts[0], constraints: [constraint] }),
+      ).toThrow('unexpected files: extra.json')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('supports explicitly required dotfiles', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-dotfile-'))
+    try {
+      writeFileSync(path.join(workspace, '.nojekyll'), '')
+      expect(() =>
+        validateExactBuildFiles(workspace, {
+          ...artifacts[0],
+          constraints: ['Create exactly .nojekyll.'],
+        }),
+      ).not.toThrow()
     } finally {
       rmSync(workspace, { recursive: true, force: true })
     }
@@ -109,12 +149,15 @@ describe('build phase', () => {
     try {
       writeFileSync(path.join(workspace, 'anything.txt'), 'kept')
       expect(() => validateExactBuildFiles(workspace, artifacts[0])).not.toThrow()
-      expect(() =>
-        validateExactBuildFiles(workspace, {
-          ...artifacts[0],
-          constraints: ['Use exactly v1.0 syntax.'],
-        }),
-      ).not.toThrow()
+      for (const constraint of [
+        'Use exactly v1.0 syntax.',
+        'Create exactly the layout shown in reference.png using index.html.',
+        'The files must contain exactly the copy from copy.md.',
+      ]) {
+        expect(() =>
+          validateExactBuildFiles(workspace, { ...artifacts[0], constraints: [constraint] }),
+        ).not.toThrow()
+      }
     } finally {
       rmSync(workspace, { recursive: true, force: true })
     }

@@ -38,6 +38,7 @@ export {
 export {
   designBuildCorrectionPrompt,
   designBuildPrompt,
+  exactBuildFileBaseline,
   parseBuildPhaseOutput,
   validateExactBuildFiles,
   type BuildPhaseOutput,

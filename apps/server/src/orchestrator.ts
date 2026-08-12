@@ -22,6 +22,7 @@ import {
   designBriefingPrompt,
   designBuildCorrectionPrompt,
   designBuildPrompt,
+  exactBuildFileBaseline,
   designPagePrompt,
   designPhaseCorrectionPrompt,
   designPreviewPrompt,
@@ -137,6 +138,7 @@ type DesignFlow = {
   previewUrl?: string
   screenshots?: ReviewScreenshot[]
   review?: VisualReview
+  buildFileBaseline?: string[] | undefined
 }
 
 function resolveWorkspacePath(workspacePath: string): string {
@@ -241,6 +243,10 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     ...(previewPlan ? { previewUrl: previewPlan.url } : {}),
     ...(screenshots ? { screenshots } : {}),
     ...(review ? { review } : {}),
+    ...(Array.isArray(stored.buildFileBaseline) &&
+    stored.buildFileBaseline.every((file) => typeof file === 'string')
+      ? { buildFileBaseline: stored.buildFileBaseline as string[] }
+      : {}),
   }
 }
 
@@ -2461,6 +2467,10 @@ export class Orchestrator {
       const output = parseAssetPhaseOutput(text)
       flow.correcting = false
       const assets = writeAssetManifest(flow.workspacePath, output)
+      flow.buildFileBaseline = exactBuildFileBaseline(
+        flow.workspacePath,
+        readDesignBrief(flow.workspacePath),
+      )
       flow.phase = 'build'
       flow.pendingPrompt = designBuildPrompt(
         readDesignBrief(flow.workspacePath),
@@ -2474,7 +2484,11 @@ export class Orchestrator {
     if (flow.phase === 'build') {
       const output = parseBuildPhaseOutput(text)
       if (output.status === 'failed') throw new Error(output.error)
-      validateExactBuildFiles(flow.workspacePath, readDesignBrief(flow.workspacePath))
+      validateExactBuildFiles(
+        flow.workspacePath,
+        readDesignBrief(flow.workspacePath),
+        flow.buildFileBaseline,
+      )
       flow.correcting = false
       flow.phase = 'preview'
       flow.pendingPrompt = designPreviewPrompt()
