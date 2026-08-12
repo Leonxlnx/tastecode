@@ -53,6 +53,9 @@ import {
 import type { SkillsListResponse } from './generated/v2/SkillsListResponse.js'
 import type { SkillsConfigWriteResponse } from './generated/v2/SkillsConfigWriteResponse.js'
 import type { ToolRequestUserInputParams } from './generated/v2/ToolRequestUserInputParams.js'
+import type { PermissionsRequestApprovalParams } from './generated/v2/PermissionsRequestApprovalParams.js'
+import type { PermissionsRequestApprovalResponse } from './generated/v2/PermissionsRequestApprovalResponse.js'
+import type { RequestPermissionProfile } from './generated/v2/RequestPermissionProfile.js'
 import { mapSkillList } from './skills.js'
 import {
   CodexVoiceTranscriber,
@@ -374,6 +377,24 @@ const DECISION: Record<ApprovalRequest['kind'], Record<ApprovalDecision, string>
   },
 }
 
+export function mapApprovalResponse(
+  kind: ApprovalRequest['kind'],
+  decision: ApprovalDecision,
+  requested?: RequestPermissionProfile,
+): { decision: string } | PermissionsRequestApprovalResponse {
+  if (kind !== 'permissions') return { decision: DECISION[kind][decision] }
+  return {
+    permissions:
+      decision === 'approve' || decision === 'approve-session'
+        ? {
+            ...(requested?.network ? { network: requested.network } : {}),
+            ...(requested?.fileSystem ? { fileSystem: requested.fileSystem } : {}),
+          }
+        : {},
+    scope: decision === 'approve-session' ? 'session' : 'turn',
+  }
+}
+
 export type CodexAdapterEvents = {
   event: [DomainEvent]
   log: [string]
@@ -405,7 +426,12 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
    */
   #approvals = new Map<
     string,
-    { kind: ApprovalRequest['kind']; respond: (result: unknown) => void }
+    {
+      kind: ApprovalRequest['kind']
+      respond: (result: unknown) => void
+      permissions?: RequestPermissionProfile
+      threadId?: string
+    }
   >()
   #userInputs = new Map<string, (result: unknown) => void>()
 
@@ -768,8 +794,13 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const pending = this.#approvals.get(approvalId)
     if (!pending) return
     this.#approvals.delete(approvalId)
-    pending.respond({ decision: DECISION[pending.kind][decision] })
+    pending.respond(mapApprovalResponse(pending.kind, decision, pending.permissions))
     this.emit('event', { type: 'approval.resolved', id: approvalId })
+    if (pending.kind === 'permissions' && decision === 'abort' && pending.threadId) {
+      void this.interrupt(pending.threadId).catch(() =>
+        this.emit('log', 'Codex permission abort failed to stop the turn'),
+      )
+    }
   }
 
   respondToUserInput(requestId: string, answers: Record<string, string[]>): void {
@@ -848,15 +879,21 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       cwd?: string | null
       grantRoot?: string | null
     }
+    const permission =
+      kind === 'permissions' ? (params as PermissionsRequestApprovalParams) : undefined
     const id = p.approvalId ?? p.itemId ?? crypto.randomUUID()
     // An id collision (a retried command reusing its itemId) would silently
     // drop the earlier responder and leave Codex blocked on it forever.
     const previous = this.#approvals.get(id)
     if (previous) {
-      previous.respond({ decision: DECISION[previous.kind]['deny'] })
+      previous.respond(mapApprovalResponse(previous.kind, 'deny', previous.permissions))
       this.emit('event', { type: 'approval.resolved', id })
     }
-    this.#approvals.set(id, { kind, respond })
+    this.#approvals.set(id, {
+      kind,
+      respond,
+      ...(permission ? { permissions: permission.permissions, threadId: permission.threadId } : {}),
+    })
 
     this.emit('event', {
       type: 'approval.requested',
@@ -918,7 +955,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         // the ghost card. Decline what nobody answered.
         for (const [id, pending] of [...this.#approvals]) {
           this.#approvals.delete(id)
-          pending.respond({ decision: DECISION[pending.kind]['deny'] })
+          pending.respond(mapApprovalResponse(pending.kind, 'deny', pending.permissions))
           emit({ type: 'approval.resolved', id })
         }
         for (const [id, respond] of [...this.#userInputs]) {

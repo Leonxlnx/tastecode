@@ -13,6 +13,7 @@ import {
   formatCodexWarning,
   mapCodexError,
   isIgnorableCodexNotification,
+  mapApprovalResponse,
   mapAutoApprovalReview,
   mapUserInputRequest,
 } from './adapter.js'
@@ -213,6 +214,31 @@ describe('Codex structured user input', () => {
           options: [{ label: 'Decide for me', description: 'Infer the strongest direction.' }],
         },
       ],
+    })
+  })
+})
+
+describe('Codex permission approval', () => {
+  const requested = {
+    network: { enabled: true },
+    fileSystem: { read: ['D:\\reference'], write: null },
+  }
+
+  it('answers the permission-profile wire request with the requested grant and scope', () => {
+    expect(mapApprovalResponse('permissions', 'approve', requested)).toEqual({
+      permissions: requested,
+      scope: 'turn',
+    })
+    expect(mapApprovalResponse('permissions', 'approve-session', requested)).toEqual({
+      permissions: requested,
+      scope: 'session',
+    })
+  })
+
+  it('denies the permission-profile wire request with an empty turn grant', () => {
+    expect(mapApprovalResponse('permissions', 'deny', requested)).toEqual({
+      permissions: {},
+      scope: 'turn',
     })
   })
 })
