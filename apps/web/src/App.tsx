@@ -1581,7 +1581,7 @@ export function App() {
       }
       refreshWorkspaceAfterCompletion(path)
     })
-    if (activeId && !activeId.startsWith('pending:')) refreshUsage()
+    refreshUsage()
     const sourceRevision = sidebarSettingsSourceRevision.current
     void transport
       .request('sidebar.settings', {})
@@ -1637,7 +1637,7 @@ export function App() {
 
   const usageThreadId = activeId && !activeId.startsWith('pending:') ? activeId : undefined
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     usageController.select({ provider, ...(usageThreadId ? { threadId: usageThreadId } : {}) })
   }, [usageController, usageThreadId, provider])
 

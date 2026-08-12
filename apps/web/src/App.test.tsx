@@ -1102,6 +1102,26 @@ describe('new chats', () => {
     )
   })
 
+  it('refreshes provider usage after reconnecting without a selected thread', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+    )
+    transport.request.mockClear()
+
+    act(() => {
+      workspaceTest.setConnectionState('reconnecting')
+      workspaceTest.setConnectionState('open')
+    })
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+    )
+  })
+
   it('shows consecutive prompts while the new session is still starting', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
