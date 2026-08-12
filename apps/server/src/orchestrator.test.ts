@@ -1235,91 +1235,115 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  it.each(['preview start', 'screenshot capture'] as const)(
-    'does not revive an interrupted flow after a late %s',
-    async (delay) => {
-      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-late-preview-'))
-      const store = new Store(':memory:')
-      store.addProject(workspace)
-      store.addThread({
-        id: 'late-preview',
-        projectPath: workspace,
-        provider: 'codex',
-        title: 'Late preview',
+  it.each(
+    (['preview start', 'screenshot capture'] as const).flatMap((delay) =>
+      (['resolve', 'reject'] as const).map((outcome) => ({ delay, outcome })),
+    ),
+  )('does not revive a replaced flow after a late $delay $outcome', async ({ delay, outcome }) => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-late-preview-'))
+    const store = new Store(':memory:')
+    store.addProject(workspace)
+    store.addThread({
+      id: 'late-preview',
+      projectPath: workspace,
+      provider: 'codex',
+      title: 'Late preview',
+    })
+    store.setDesignRun('late-preview', {
+      originalRequest: 'Build a site.',
+      options: {},
+      phase: 'preview',
+      pendingPrompt: 'Preview Setup phase',
+      askedQuestions: false,
+      finalAsked: false,
+      explicitAnswers: [],
+    })
+    expect(store.designRun('late-preview')).toMatchObject({ phase: 'preview' })
+    const { orchestrator, sessions, received, capturePreview } = harness(undefined, store)
+    const startCount = previewStarts.count
+    const stopCount = previewStops.count
+    let releaseAwait = () => {}
+    let rejectAwait = (_error: Error) => {}
+    const barrier = new Promise<void>((resolve, reject) => {
+      releaseAwait = resolve
+      rejectAwait = reject
+    })
+    if (delay === 'preview start') {
+      previewStarts.barriers.push(barrier)
+    } else {
+      capturePreview.mockImplementationOnce(async (_url, viewports) => {
+        await barrier
+        return viewports.map((viewport) => ({
+          path: path.join(os.tmpdir(), `${viewport.width}x${viewport.height}.png`),
+          ...viewport,
+        }))
       })
-      store.setDesignRun('late-preview', {
-        originalRequest: 'Build a site.',
-        options: {},
-        phase: 'preview',
-        pendingPrompt: 'Preview Setup phase',
-        askedQuestions: false,
-        finalAsked: false,
-        explicitAnswers: [],
-      })
-      expect(store.designRun('late-preview')).toMatchObject({ phase: 'preview' })
-      const { orchestrator, sessions, received, capturePreview } = harness(undefined, store)
-      const startCount = previewStarts.count
-      const stopCount = previewStops.count
-      let releaseAwait = () => {}
-      const barrier = new Promise<void>((resolve) => (releaseAwait = resolve))
+    }
+    try {
+      const queued = await orchestrator.submitTurn('late-preview', 'Continue afterward.')
+      expect(queued).toMatchObject({ queued: true })
+      if (queued.queued) orchestrator.deleteQueuedTurn('late-preview', queued.queuedTurn.id)
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
+      sessions[0]?.emit(
+        message(
+          JSON.stringify({
+            version: 1,
+            command: 'pnpm',
+            args: ['dev', '--host', '127.0.0.1'],
+            cwd: '.',
+            url: 'http://127.0.0.1:5173',
+            viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+          }),
+          's1-turn',
+        ),
+      )
       if (delay === 'preview start') {
-        previewStarts.barriers.push(barrier)
+        await vi.waitFor(() => expect(previewStarts.count).toBe(startCount + 1))
       } else {
-        capturePreview.mockImplementationOnce(async (_url, viewports) => {
-          await barrier
-          return viewports.map((viewport) => ({
-            path: path.join(os.tmpdir(), `${viewport.width}x${viewport.height}.png`),
-            ...viewport,
-          }))
-        })
+        await vi.waitFor(() => expect(capturePreview).toHaveBeenCalledTimes(1))
       }
-      try {
-        const queued = await orchestrator.submitTurn('late-preview', 'Continue afterward.')
-        expect(queued).toMatchObject({ queued: true })
-        if (queued.queued) orchestrator.deleteQueuedTurn('late-preview', queued.queuedTurn.id)
-        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
-        sessions[0]?.emit(
-          message(
-            JSON.stringify({
-              version: 1,
-              command: 'pnpm',
-              args: ['dev', '--host', '127.0.0.1'],
-              cwd: '.',
-              url: 'http://127.0.0.1:5173',
-              viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
-            }),
-            's1-turn',
-          ),
-        )
-        if (delay === 'preview start') {
-          await vi.waitFor(() => expect(previewStarts.count).toBe(startCount + 1))
-        } else {
-          await vi.waitFor(() => expect(capturePreview).toHaveBeenCalledTimes(1))
-        }
 
-        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'interrupted' })
-        expect(store.designRun('late-preview')).toBeUndefined()
-        releaseAwait()
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'interrupted' })
+      expect(store.designRun('late-preview')).toBeUndefined()
+      sessions[0]?.turnIds.push('replacement-turn')
+      await orchestrator.sendTurn('late-preview', 'Build a replacement.', [DESIGN_BRIEF_ATTACHMENT])
+      expect(store.designRun('late-preview')).toMatchObject({
+        originalRequest: 'Build a replacement.',
+        phase: 'brief',
+      })
+      if (outcome === 'resolve') releaseAwait()
+      else rejectAwait(new Error('stale preview failed'))
 
-        await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
-        expect(capturePreview).toHaveBeenCalledTimes(delay === 'preview start' ? 0 : 1)
-        expect(sessions[0]?.sent.some((prompt) => prompt.includes('visual Review phase'))).toBe(
-          false,
-        )
-        expect(
-          received.some(
-            ({ event }) =>
-              event.type === 'item.completed' && event.item.text?.startsWith('Website built.'),
-          ),
-        ).toBe(false)
-      } finally {
-        releaseAwait()
-        await orchestrator.disposeAll()
-        store.close()
-        rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
-      }
-    },
-  )
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      expect(previewStops.count).toBe(
+        stopCount + (delay === 'screenshot capture' || outcome === 'resolve' ? 1 : 0),
+      )
+      expect(capturePreview).toHaveBeenCalledTimes(delay === 'preview start' ? 0 : 1)
+      expect(sessions[0]?.sent.some((prompt) => prompt.includes('visual Review phase'))).toBe(false)
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'item.completed' && event.item.text?.startsWith('Website built.'),
+        ),
+      ).toBe(false)
+      expect(store.designRun('late-preview')).toMatchObject({
+        originalRequest: 'Build a replacement.',
+        phase: 'brief',
+      })
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'thread.error' && event.message.includes('stale preview failed'),
+        ),
+      ).toBe(false)
+    } finally {
+      releaseAwait()
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
 })
 
 describe('persisted threads', () => {
