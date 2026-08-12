@@ -16,17 +16,16 @@ export type AccountLimitsState =
 export function AccountLimits(props: { state: AccountLimitsState; onRetry: () => void }) {
   const headingId = useId()
   const heading = useRef<HTMLHeadingElement>(null)
-  const previousStatus = useRef<AccountLimitsState['status'] | undefined>(undefined)
   const source = limitSource(props.state)
   const hasSource = source !== undefined
   const hasUsableValues = source?.status === 'ready' && source.limits.length > 0
 
-  useLayoutEffect(() => {
-    if (previousStatus.current === undefined || previousStatus.current === 'error') {
-      heading.current?.focus()
-    }
-    previousStatus.current = props.state.status
-  }, [props.state.status])
+  useLayoutEffect(() => heading.current?.focus(), [])
+
+  const retry = () => {
+    heading.current?.focus()
+    props.onRetry()
+  }
 
   return (
     <section
@@ -39,7 +38,12 @@ export function AccountLimits(props: { state: AccountLimitsState; onRetry: () =>
         <span>Plan limits</span>
       </h2>
 
-      {source ? <LimitSource source={source} /> : null}
+      {source ? (
+        <LimitSource
+          source={source}
+          showContents={props.state.status !== 'error' || hasUsableValues}
+        />
+      ) : null}
 
       {props.state.status === 'loading' ? (
         <p className="account-menu__usage-note" role="status">
@@ -57,7 +61,7 @@ export function AccountLimits(props: { state: AccountLimitsState; onRetry: () =>
               : 'Plan limits couldn’t be loaded.'}
             <small>{props.state.message}</small>
           </span>
-          <button type="button" onClick={props.onRetry}>
+          <button type="button" onClick={retry}>
             Retry
           </button>
         </div>
@@ -66,7 +70,7 @@ export function AccountLimits(props: { state: AccountLimitsState; onRetry: () =>
   )
 }
 
-function LimitSource(props: { source: ProviderLimitSource }) {
+function LimitSource(props: { source: ProviderLimitSource; showContents: boolean }) {
   const titleId = useId()
   const name = providerDisplayName(props.source.provider)
   return (
@@ -75,7 +79,7 @@ function LimitSource(props: { source: ProviderLimitSource }) {
         <ProviderIcon mark={providerMark(props.source.provider)} size={14} />
         {name}
       </h3>
-      {props.source.status === 'unavailable' ? (
+      {!props.showContents ? null : props.source.status === 'unavailable' ? (
         <p className="account-menu__usage-note">Plan limits aren’t available from this source.</p>
       ) : props.source.limits.length === 0 ? (
         <p className="account-menu__usage-note">No plan limits reported.</p>
@@ -114,9 +118,10 @@ function LimitSource(props: { source: ProviderLimitSource }) {
 function limitSource(state: AccountLimitsState): ProviderLimitSource | undefined {
   const summary = state.summary
   if (!summary) return undefined
-  return (
-    summary.limitSource ?? { provider: state.provider, status: 'ready', limits: summary.limits }
-  )
+  if (summary.limitSource) return summary.limitSource
+  return summary.limits.length > 0
+    ? { provider: state.provider, status: 'ready', limits: summary.limits }
+    : { provider: state.provider, status: 'unavailable' }
 }
 
 function remaining(limit: Limit): number {

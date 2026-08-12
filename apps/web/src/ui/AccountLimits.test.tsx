@@ -37,12 +37,27 @@ describe('account limits', () => {
 
     view.rerender(
       <AccountLimits
-        state={{ status: 'ready', provider: 'codex', summary: summary() }}
+        state={{
+          status: 'ready',
+          provider: 'codex',
+          summary: {
+            ...summary(),
+            limitSource: { provider: 'codex', status: 'ready', limits: [] },
+          },
+        }}
         onRetry={() => {}}
       />,
     )
     expect(screen.queryByRole('status')).toBeNull()
     expect(screen.getByText('No plan limits reported.')).toBeTruthy()
+
+    view.rerender(
+      <AccountLimits
+        state={{ status: 'ready', provider: 'claude-code', summary: summary() }}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getByText(/aren’t available/)).toBeTruthy()
   })
 
   it('labels each source and keeps unavailable separate from ready values', () => {
@@ -94,6 +109,8 @@ describe('account limits', () => {
         />,
       )
       expect(screen.getByRole('alert').textContent).not.toContain('Last known values')
+      expect(screen.queryByText('No plan limits reported.')).toBeNull()
+      expect(screen.queryByText(/aren’t available/)).toBeNull()
     }
   })
 
@@ -114,8 +131,12 @@ describe('account limits', () => {
     expect(screen.getByText('58% left')).toBeTruthy()
     expect(screen.getByRole('alert').textContent).toContain('Last known values are still shown')
     expect(screen.getByRole('alert').textContent).toContain('Temporary connection failure')
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    const retry = screen.getByRole('button', { name: 'Retry' })
+    retry.focus()
+    expect(document.activeElement).toBe(retry)
+    fireEvent.click(retry)
     expect(onRetry).toHaveBeenCalledOnce()
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Plan limits' }))
 
     view.rerender(
       <AccountLimits
