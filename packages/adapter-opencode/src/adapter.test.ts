@@ -231,6 +231,60 @@ describe('OpenCode adapter', () => {
     adapter.dispose()
   })
 
+  it.each([
+    { approval: 'full' as const, action: 'bash' },
+    { approval: 'auto' as const, action: 'read' },
+  ])('surfaces a retry when $approval auto-reply fails', async ({ approval, action }) => {
+    const mock = await serveOpenCodeV2(1)
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    const requested: string[] = []
+    const resolved: string[] = []
+    adapter.on('event', (event) => {
+      if (event.type === 'approval.requested') requested.push(event.request.id)
+      if (event.type === 'approval.resolved') resolved.push(event.id)
+    })
+    await adapter.resumeThread('opencode-session-v2', 'C:\\repo', { approval })
+
+    mock.broadcast({
+      type: 'permission.asked',
+      data: { id: 'permission-auto', sessionID: 'session-v2', action, resources: ['file.txt'] },
+    })
+    await expect.poll(() => requested).toEqual(['permission-auto'])
+    adapter.respondToApproval('permission-auto', 'approve')
+
+    await expect.poll(() => mock.requests.filter(isPermissionReply)).toHaveLength(2)
+    await expect.poll(() => resolved).toEqual(['permission-auto'])
+    adapter.dispose()
+  })
+
+  it('ignores a late reply from a disposed session with the same approval id', async () => {
+    const mock = await serveOpenCodeV2(0, true)
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    const requested: string[] = []
+    const resolved: string[] = []
+    adapter.on('event', (event) => {
+      if (event.type === 'approval.requested') requested.push(event.request.id)
+      if (event.type === 'approval.resolved') resolved.push(event.id)
+    })
+    await adapter.resumeThread('opencode-session-v2', 'C:\\repo')
+    mock.broadcast(permissionAsked('permission-reused'))
+    await expect.poll(() => requested).toHaveLength(1)
+    adapter.respondToApproval('permission-reused', 'approve')
+    await mock.waitFor('/api/session/session-v2/permission/permission-reused/reply')
+
+    adapter.dispose()
+    await adapter.resumeThread('opencode-session-v2', 'C:\\repo')
+    mock.broadcast(permissionAsked('permission-reused'))
+    await expect.poll(() => requested).toHaveLength(2)
+    adapter.respondToApproval('permission-reused', 'approve')
+    await expect.poll(() => resolved).toEqual(['permission-reused'])
+
+    await mock.releaseHeldPermissionReply()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(resolved).toEqual(['permission-reused'])
+    adapter.dispose()
+  })
+
   it('reads model-specific variants from both OpenCode catalog shapes', () => {
     expect(
       openCodeReasoningEfforts({
@@ -469,15 +523,20 @@ async function serveOpenCode(): Promise<{
   }
 }
 
-async function serveOpenCodeV2(failedPermissionReplies = 0): Promise<{
+async function serveOpenCodeV2(
+  failedPermissionReplies = 0,
+  holdFirstPermissionReply = false,
+): Promise<{
   baseUrl: string
   requests: RequestRecord[]
   broadcast(event: unknown): void
   waitFor(url: string): Promise<RequestRecord>
+  releaseHeldPermissionReply(): Promise<void>
 }> {
   const requests: RequestRecord[] = []
   const streams = new Set<ServerResponse>()
   const waiters: { url: string; resolve: (request: RequestRecord) => void }[] = []
+  let heldPermissionReply: ServerResponse | undefined
   const session = {
     id: 'session-v2',
     title: 'Harness v2 session',
@@ -563,6 +622,10 @@ async function serveOpenCodeV2(failedPermissionReplies = 0): Promise<{
         response.writeHead(503)
         return response.end()
       }
+      if (holdFirstPermissionReply && !heldPermissionReply) {
+        heldPermissionReply = response
+        return
+      }
       response.writeHead(204)
       return response.end()
     }
@@ -585,6 +648,20 @@ async function serveOpenCodeV2(failedPermissionReplies = 0): Promise<{
         ? Promise.resolve(request)
         : new Promise((resolve) => waiters.push({ url, resolve }))
     },
+    async releaseHeldPermissionReply() {
+      if (!heldPermissionReply) return
+      const finished = once(heldPermissionReply, 'finish')
+      heldPermissionReply.writeHead(204)
+      heldPermissionReply.end()
+      await finished
+    },
+  }
+}
+
+function permissionAsked(id: string): unknown {
+  return {
+    type: 'permission.asked',
+    data: { id, sessionID: 'session-v2', action: 'bash', resources: ['pnpm test'] },
   }
 }
 

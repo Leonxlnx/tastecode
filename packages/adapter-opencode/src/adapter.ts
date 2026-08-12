@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type {
   ApprovalDecision,
   ApprovalMode,
+  ApprovalRequest,
   Capabilities,
   DomainEvent,
   McpServerConfig,
@@ -153,8 +154,8 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   #mapper: OpenCodeEventMapper | undefined
   #eventController: AbortController | undefined
   #approval: ApprovalMode = 'ask'
-  #pendingApprovals = new Set<string>()
-  #replyingApprovals = new Set<string>()
+  #pendingApprovals = new Map<string, { request: ApprovalRequest; surfaced: boolean }>()
+  #replyingApprovals = new Map<string, Promise<unknown>>()
   #model: string | undefined
   #effort: string | undefined
   #instructions: string | undefined
@@ -349,9 +350,10 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   }
 
   respondToApproval(approvalId: string, decision: ApprovalDecision): void {
+    const pending = this.#pendingApprovals.get(approvalId)
     if (
       !this.#sessionId ||
-      !this.#pendingApprovals.has(approvalId) ||
+      !pending ||
       this.#replyingApprovals.has(approvalId) ||
       (this.#protocol !== 'v2' && !this.#client)
     )
@@ -369,14 +371,29 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
             body: { response },
             throwOnError: true,
           })
-    this.#replyingApprovals.add(approvalId)
+    this.#replyingApprovals.set(approvalId, reply)
     void reply
       .then(() => {
-        if (this.#pendingApprovals.delete(approvalId))
+        if (
+          this.#replyingApprovals.get(approvalId) === reply &&
+          this.#pendingApprovals.get(approvalId) === pending &&
+          this.#pendingApprovals.delete(approvalId)
+        )
           this.emit('event', { type: 'approval.resolved', id: approvalId })
       })
-      .catch(() => this.emit('log', 'OpenCode permission response failed'))
-      .finally(() => this.#replyingApprovals.delete(approvalId))
+      .catch(() => {
+        if (this.#replyingApprovals.get(approvalId) !== reply) return
+        this.#replyingApprovals.delete(approvalId)
+        if (this.#pendingApprovals.get(approvalId) === pending && !pending.surfaced) {
+          pending.surfaced = true
+          this.emit('event', { type: 'approval.requested', request: pending.request })
+        }
+        this.emit('log', 'OpenCode permission response failed')
+      })
+      .finally(() => {
+        if (this.#replyingApprovals.get(approvalId) === reply)
+          this.#replyingApprovals.delete(approvalId)
+      })
     if (decision === 'abort') {
       // The abort call can reject (server down, restarting); without a catch
       // that rejection escapes respondToApproval and kills the process.
@@ -586,7 +603,16 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
         ? data.resources.filter((value): value is string => typeof value === 'string')
         : []
       const command = /bash|shell|command|execute/i.test(action)
-      this.#pendingApprovals.add(approvalId)
+      const request: ApprovalRequest = {
+        id: approvalId,
+        kind: command ? 'command' : 'file_change',
+        ...(command
+          ? { command: resources.join(' ') || action }
+          : { path: resources[0] || action }),
+        createdAt: event.created ?? Date.now(),
+      }
+      const surfaced = this.#approval === 'ask' || (this.#approval === 'auto' && command)
+      this.#pendingApprovals.set(approvalId, { request, surfaced })
       if (this.#approval === 'full' || (this.#approval === 'auto' && !command)) {
         this.respondToApproval(
           approvalId,
@@ -596,14 +622,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       }
       this.emit('event', {
         type: 'approval.requested',
-        request: {
-          id: approvalId,
-          kind: command ? 'command' : 'file_change',
-          ...(command
-            ? { command: resources.join(' ') || action }
-            : { path: resources[0] || action }),
-          createdAt: event.created ?? Date.now(),
-        },
+        request,
       })
       return
     }
@@ -634,23 +653,24 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     if (event.type === 'permission.updated') {
       const permission = event.properties
       const command = /bash|shell|command/i.test(permission.type)
-      if (this.#approval === 'full' || (this.#approval === 'auto' && !command)) {
-        this.#pendingApprovals.add(permission.id)
+      const request: ApprovalRequest = {
+        id: permission.id,
+        kind: command ? 'command' : 'file_change',
+        ...(command ? { command: permission.title } : { path: permission.title }),
+        createdAt: permission.time.created,
+      }
+      const autoReply = this.#approval === 'full' || (this.#approval === 'auto' && !command)
+      this.#pendingApprovals.set(permission.id, { request, surfaced: !autoReply })
+      if (autoReply) {
         this.respondToApproval(
           permission.id,
           this.#approval === 'full' ? 'approve-session' : 'approve',
         )
         return
       }
-      this.#pendingApprovals.add(permission.id)
       this.emit('event', {
         type: 'approval.requested',
-        request: {
-          id: permission.id,
-          kind: command ? 'command' : 'file_change',
-          ...(command ? { command: permission.title } : { path: permission.title }),
-          createdAt: permission.time.created,
-        },
+        request,
       })
       return
     }
@@ -681,7 +701,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     if (!this.#turnId) return
     const turnId = this.#turnId
     const finishEvents = this.#mapper?.finish() ?? []
-    const approvals = [...this.#pendingApprovals]
+    const approvals = [...this.#pendingApprovals.keys()]
     this.#pendingApprovals.clear()
     // Live-turn state clears before any emit: the orchestrator reacts to
     // `turn.completed` synchronously inside the emit (the design flow sends
@@ -702,7 +722,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     const failedTurnId = this.#turnId
     const threadId = this.#threadId
     const finishEvents = this.#mapper?.finish('failed') ?? []
-    const approvals = [...this.#pendingApprovals]
+    const approvals = [...this.#pendingApprovals.keys()]
     this.#pendingApprovals.clear()
     // Same ordering as #finishTurn: listeners may start the next turn inside
     // these emits, so the live-turn state must already be gone.
