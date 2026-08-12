@@ -7,8 +7,9 @@ import { clipboardText } from './clipboard-text.js'
  *
  * Everything else goes over the server socket, because the renderer is the
  * least trusted process in the app and every function added here is permanent
- * attack surface. Native dialogs and materializing validated clipboard images
- * are the only operations that cannot work through the browser surface.
+ * attack surface. Native dialogs, window-integrated surfaces, trackpad
+ * feedback, and materializing validated clipboard images are the operations
+ * that cannot work through the browser surface.
  */
 const api = {
   pickFolder: (): Promise<string | undefined> => ipcRenderer.invoke('harness:pickFolder'),
@@ -25,8 +26,12 @@ const api = {
     ipcRenderer.invoke('harness:setZoom', action),
   setTheme: (preference: 'system' | 'light' | 'dark'): Promise<void> =>
     ipcRenderer.invoke('harness:setTheme', preference),
+  prepareHaptics: (): void => ipcRenderer.send('harness:hapticsPrepare'),
+  performHaptic: (pattern: NativeHapticPattern): void =>
+    ipcRenderer.send('harness:hapticFeedback', pattern),
   capturePreview: (request: PreviewCaptureRequest): Promise<PreviewCaptureResult> =>
     ipcRenderer.invoke('harness:capturePreview', request),
+  openExternal: (url: string): Promise<void> => ipcRenderer.invoke('harness:openExternal', url),
   onZoomChange: (listener: (factor: number) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, factor: unknown) => {
       if (typeof factor === 'number' && Number.isFinite(factor)) listener(factor)
@@ -40,3 +45,5 @@ const api = {
 contextBridge.exposeInMainWorld('harness', api)
 
 export type HarnessBridge = typeof api
+
+type NativeHapticPattern = 'alignment' | 'generic'

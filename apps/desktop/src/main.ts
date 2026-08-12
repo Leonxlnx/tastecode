@@ -25,6 +25,8 @@ import {
 } from '@harness/contracts'
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
 import { clipboardText } from './clipboard-text.js'
+import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
+import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { allowsMicrophoneRequest } from './media-permissions.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
 import { revealablePath } from './reveal-path.js'
@@ -94,6 +96,7 @@ let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
+const macOSHaptics = new MacOSHaptics()
 
 if (!ownsSingleInstance) {
   console.error('[desktop] another Harness instance owns the single-instance lock')
@@ -171,6 +174,7 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      webviewTag: true,
       // Defaults to on, which loads Chromium's spellcheck service and
       // downloads Hunspell dictionaries at first run — the only network
       // traffic the app would ever do outside the renderer's own CSP.
@@ -179,6 +183,7 @@ function createWindow(): void {
     },
   })
   mainWindow = window
+  configureEmbeddedBrowser(window.webContents)
   restoreMainWindowPresence(process.platform, app, window)
   const stopWatchdog = startVisibilityWatchdog(window, (line) => console.warn('[desktop]', line))
   window.on('closed', stopWatchdog)
@@ -315,6 +320,16 @@ ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
   }
 })
 
+ipcMain.on('harness:hapticsPrepare', (event) => {
+  if (!isOwnRenderer(event.sender)) return
+  macOSHaptics.prepare()
+})
+
+ipcMain.on('harness:hapticFeedback', (event, pattern: unknown) => {
+  if (!isOwnRenderer(event.sender) || !isMacHapticPattern(pattern)) return
+  macOSHaptics.perform(pattern)
+})
+
 ipcMain.handle('harness:writeClipboardText', (event, value: unknown) => {
   requireOwnRenderer(event.sender)
   clipboard.writeText(clipboardText(value))
@@ -325,6 +340,11 @@ ipcMain.handle('harness:capturePreview', async (event, value: unknown) => {
   const parsed = PreviewCaptureRequestSchema.safeParse(value)
   if (!parsed.success) throw new Error('Invalid preview capture request')
   return capturePreview(parsed.data)
+})
+
+ipcMain.handle('harness:openExternal', async (event, url: unknown) => {
+  requireOwnRenderer(event.sender)
+  await shell.openExternal(browserGuestUrl(url))
 })
 
 function applyZoom(window: BrowserWindow, action: ZoomAction): void {
@@ -502,6 +522,7 @@ if (ownsSingleInstance) {
     appIsQuitting = true
   })
   app.on('will-quit', () => {
+    macOSHaptics.stop()
     serverSupervisor?.stop()
     serverSupervisor = undefined
     tray?.destroy()
