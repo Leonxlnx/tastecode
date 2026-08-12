@@ -412,7 +412,31 @@ describe('thread reducer', () => {
 
     const state = reduceEventLog(started, buffered, 10)
 
+    expect(state.items).not.toBe(started.items)
+    expect(started.items[0]?.text).toBe('')
     expect(state.items[0]?.text).toBe('local live')
+  })
+
+  it('keeps indexed replay exact when an error row interrupts item events', () => {
+    vi.stubGlobal('crypto', { randomUUID: () => 'replay-error' })
+    const now = vi.spyOn(Date, 'now').mockReturnValue(100)
+    const events: DomainEvent[] = [
+      { type: 'item.started', item: item({ id: 'before-error', text: '' }) },
+      { type: 'item.delta', turnId: 't1', itemId: 'before-error', textDelta: 'partial' },
+      { type: 'thread.error', threadId: 'th1', message: 'Disconnected' },
+      { type: 'item.started', item: item({ id: 'after-error', text: '' }) },
+      { type: 'item.delta', turnId: 't1', itemId: 'after-error', textDelta: 'recovered' },
+      { type: 'item.completed', item: item({ id: 'after-error', status: 'completed' }) },
+    ]
+
+    const sequential = events.reduce(reduce, emptyThread)
+    const replayed = reduceEventLog(
+      emptyThread,
+      events.map((event, index) => ({ seq: index + 1, event })),
+    )
+
+    expect(replayed).toEqual(sequential)
+    now.mockRestore()
   })
 
   it('tracks whether a turn is running', () => {
