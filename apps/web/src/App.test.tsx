@@ -828,7 +828,6 @@ describe('web client', () => {
       }
       return request(method, params)
     })
-
     render(<App />)
 
     // The catalog settles once the direct providers answered.
@@ -1445,12 +1444,16 @@ describe('new chats', () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     let historyReads = 0
+    let restoreRequests = 0
+    let rejectRestore!: (error: Error) => void
     let releaseRestoreHistory: (() => void) | undefined
     const restoreHistory = new Promise<{ events: never[]; running: false }>((resolve) => {
       releaseRestoreHistory = () => resolve({ events: [], running: false })
     })
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'thread.history' && ++historyReads === 2) return restoreHistory
+      if (method === 'thread.restore' && restoreRequests++ === 0)
+        return new Promise((_, reject) => (rejectRestore = reject))
       return request(method, params)
     })
 
@@ -1461,24 +1464,19 @@ describe('new chats', () => {
 
     expect(await screen.findByText('src/parser.ts')).toBeTruthy()
     expect(screen.getByText('src/parser.test.ts')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
-
-    await waitFor(() => {
-      expect(transport.request).toHaveBeenCalledWith('thread.restore', {
-        threadId: 'thread-rollback',
-        checkpointId: 7,
-      })
-    })
-    await waitFor(() => expect(historyReads).toBe(2))
     act(() => {
       for (const listener of transport.stateListeners) listener('reconnecting')
       for (const listener of transport.stateListeners) listener('open')
     })
-    await waitFor(() => expect(historyReads).toBe(3))
-    expect(
-      transport.request.mock.calls.filter(([method]) => method === 'thread.history').at(-1)?.[1],
-    ).toEqual({ threadId: 'thread-rollback' })
+    await waitFor(() => expect(historyReads).toBe(2))
+    fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+    await waitFor(() => expect(restoreRequests).toBe(1))
     await act(async () => releaseRestoreHistory?.())
+    await act(async () => rejectRestore(new IndeterminateRequestError('restore reply lost')))
+    // prettier-ignore
+    act(() => { for (const listener of transport.stateListeners) listener('reconnecting'); for (const listener of transport.stateListeners) listener('open') })
+    await waitFor(() => expect(historyReads).toBe(3))
+    fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.undoRestore', {
@@ -1486,16 +1484,8 @@ describe('new chats', () => {
         undo: 'undo-token',
       })
     })
-    expect(
-      transport.request.mock.calls
-        .filter(([method]) => method === 'thread.history')
-        .map(([, params]) => params),
-    ).toEqual([
-      { threadId: 'thread-rollback' },
-      { threadId: 'thread-rollback' },
-      { threadId: 'thread-rollback' },
-      { threadId: 'thread-rollback' },
-    ])
+    // prettier-ignore
+    expect(transport.request.mock.calls.filter(([method]) => method === 'thread.history').map(([, params]) => params)).toEqual([{ threadId: 'thread-rollback' }, { threadId: 'thread-rollback', afterSeq: 0 }, ...Array.from({ length: 3 }, () => ({ threadId: 'thread-rollback' }))])
   })
 
   it('persists the macOS font smoothing setting', async () => {
@@ -4011,9 +4001,7 @@ describe('reopening a session', () => {
       expect(screen.getByTestId('thread').textContent).not.toContain('Cached base'),
     )
     transport.request.mockClear()
-
     fireEvent.click(screen.getByRole('button', { name: /^Foreground,/ }))
-
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'thread-1',

@@ -2424,6 +2424,7 @@ export function App() {
     setRollbackRestoring(true)
     try {
       durableSequences.current.delete(activeId)
+      historyOwners.current.delete(activeId)
       const { undo } = await transport.request('thread.restore', {
         threadId: activeId,
         checkpointId: rollbackInspection.checkpoint.id,
@@ -2446,6 +2447,7 @@ export function App() {
     if (!undoRestore) return
     try {
       durableSequences.current.delete(undoRestore.threadId)
+      historyOwners.current.delete(undoRestore.threadId)
       await transport.request('thread.undoRestore', {
         threadId: undoRestore.threadId,
         undo: undoRestore.token,
