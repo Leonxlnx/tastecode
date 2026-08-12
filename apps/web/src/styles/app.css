@@ -2827,7 +2827,7 @@
 
 .provider-row {
   display: grid;
-  grid-template-columns: 20px minmax(80px, 1fr) minmax(88px, 0.9fr) 22px 136px 86px;
+  grid-template-columns: 20px minmax(80px, 1fr) minmax(88px, 0.9fr) 22px 86px 136px;
   gap: 10px;
   min-height: 58px;
 }
@@ -2881,6 +2881,18 @@
   min-height: 30px;
 }
 
+.provider-row__primary {
+  grid-column: 6;
+}
+
+.provider-row__secondary {
+  grid-column: 5;
+}
+
+.provider-row__primary:empty + .provider-row__secondary {
+  grid-column: 6;
+}
+
 .provider-row .settings__action {
   justify-content: center;
   width: 100%;
@@ -2906,6 +2918,8 @@
 }
 
 .provider-row .settings__action.is-quiet {
+  width: auto;
+  margin-left: auto;
   border-color: transparent;
 }
 
@@ -2914,7 +2928,7 @@
     grid-template-areas:
       'mark identity issue'
       'status status status'
-      'primary primary secondary';
+      'secondary primary primary';
     grid-template-columns: 20px minmax(0, 1fr) 86px;
     row-gap: 8px;
   }
@@ -2944,6 +2958,11 @@
 
   .provider-row__secondary {
     grid-area: secondary;
+  }
+
+  .provider-row__primary:empty + .provider-row__secondary {
+    grid-area: primary;
+    justify-content: flex-end;
   }
 
   .provider-row__primary .settings__action {
