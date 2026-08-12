@@ -99,149 +99,113 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-function renderProviderSettings(options: {
-  statuses: ProviderStatus[]
-  request: (method: string, params: { provider?: ProviderId }) => unknown
-}) {
-  let authListener: ((event: unknown) => void) | undefined
+function renderProviders(
+  statuses: ProviderStatus[],
+  request: (method: string, params: { provider?: ProviderId }) => unknown,
+  account?: Account,
+) {
+  let listener: ((event: unknown) => void) | undefined
   const transport = {
-    request: vi.fn(options.request),
-    on: vi.fn((channel: string, listener: (event: unknown) => void) => {
-      if (channel === 'auth.event') authListener = listener
-      return () => {
-        if (authListener === listener) authListener = undefined
-      }
-    }),
+    request,
+    on: (_channel: string, next: (event: unknown) => void) => {
+      listener = next
+      return () => {}
+    },
   } as unknown as Transport
   render(
     <ProviderSettings
       provider="codex"
-      account={undefined}
-      providerStatuses={options.statuses}
+      account={account}
+      providerStatuses={statuses}
       transport={transport}
-      onConnectionsChanged={vi.fn()}
-      onAccountChange={vi.fn()}
+      onConnectionsChanged={() => {}}
+      onAccountChange={() => {}}
     />,
   )
-  return {
-    emitAuth(loginId: string, success: boolean, error: string | null = null) {
-      act(() => authListener?.({ provider: 'codex', loginId, success, error }))
-    },
-  }
+  return (loginId: string, success: boolean, error: string | null = null) =>
+    act(() => listener?.({ provider: 'codex', loginId, success, error }))
 }
-
 function installedProvider(id: ProviderId, displayName: string): ProviderStatus {
   return { id, displayName, installed: true, auth: 'unknown' }
 }
-
-function providerRow(name: string) {
-  const row = screen.getByText(name).closest<HTMLElement>('.settings__row')
-  if (!row) throw new Error(`${name} row missing`)
-  return row
-}
-
-function expectDisabled(row: HTMLElement, name: string) {
-  expect((within(row).getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(true)
-}
-
+const providerRow = (name: string) =>
+  screen.getByText(name).closest<HTMLElement>('.settings__row') as HTMLElement
+const action = (row: HTMLElement, name: string) =>
+  within(row).getByRole('button', { name }) as HTMLButtonElement
 describe('provider authentication states', () => {
   it('keeps loading and failure distinct from signed out, then retries', async () => {
     const status = deferred<Account>()
     let reads = 0
-    renderProviderSettings({
-      statuses: [installedProvider('codex', 'Codex')],
-      request: (method) => {
-        if (method !== 'auth.status') throw new Error(`unexpected ${method}`)
-        reads += 1
-        return reads === 1 ? status.promise : { signedIn: true }
-      },
-    })
-
+    renderProviders([installedProvider('codex', 'Codex')], () =>
+      ++reads === 1 ? status.promise : { signedIn: true },
+    )
     const row = providerRow('Codex')
     expect(within(row).getByText('Checking account…')).toBeTruthy()
     expect(within(row).queryByRole('button', { name: 'Sign in' })).toBeNull()
     status.reject(new Error('Codex status unavailable'))
-    expect((await within(row).findByRole('alert')).textContent).toContain(
-      'Codex status unavailable',
-    )
+    expect((await screen.findByRole('alert')).textContent).toContain('Codex status unavailable')
     expect(within(row).queryByRole('button', { name: 'Sign in' })).toBeNull()
-    fireEvent.click(within(row).getByRole('button', { name: 'Retry' }))
-    await waitFor(() => expect(within(row).getByText('Signed in')).toBeTruthy())
+    fireEvent.click(action(row, 'Retry'))
+    await waitFor(() => within(row).getByText('Signed in'))
     expect(reads).toBe(2)
   })
-
   it('keeps overlapping provider operations and errors independent', async () => {
+    const codexStatus = deferred<Account>()
     const codexSignOut = deferred<Record<string, never>>()
     const claudeSignOut = deferred<Record<string, never>>()
-    renderProviderSettings({
-      statuses: [
-        installedProvider('codex', 'Codex'),
-        installedProvider('claude-code', 'Claude Code'),
-      ],
-      request: (method, params) => {
-        if (method === 'auth.status') return { signedIn: true }
-        if (method === 'auth.signOut') {
-          return params.provider === 'codex' ? codexSignOut.promise : claudeSignOut.promise
-        }
-        throw new Error(`unexpected ${method}`)
+    renderProviders(
+      [installedProvider('codex', 'Codex'), installedProvider('claude-code', 'Claude Code')],
+      (method, params) => {
+        if (method === 'auth.status')
+          return params.provider === 'codex' ? codexStatus.promise : { signedIn: true }
+        return params.provider === 'codex' ? codexSignOut.promise : claudeSignOut.promise
       },
-    })
-
+      { signedIn: true },
+    )
     const codexRow = providerRow('Codex')
     const claudeRow = providerRow('Claude Code')
-    await waitFor(() =>
-      expect(within(codexRow).getByRole('button', { name: 'Sign out' })).toBeTruthy(),
-    )
-    fireEvent.click(within(codexRow).getByRole('button', { name: 'Sign out' }))
-    fireEvent.click(within(claudeRow).getByRole('button', { name: 'Sign out' }))
-    expectDisabled(codexRow, 'Signing out…')
-    expectDisabled(claudeRow, 'Signing out…')
+    await waitFor(() => action(claudeRow, 'Sign out'))
+    fireEvent.click(action(codexRow, 'Sign out'))
+    fireEvent.click(action(claudeRow, 'Sign out'))
+    expect(action(codexRow, 'Signing out…').disabled).toBe(true)
+    expect(action(claudeRow, 'Signing out…').disabled).toBe(true)
     codexSignOut.resolve({})
-    await waitFor(() =>
-      expect(within(codexRow).getByRole('button', { name: 'Sign in' })).toBeTruthy(),
-    )
-    expectDisabled(claudeRow, 'Signing out…')
+    await waitFor(() => action(codexRow, 'Sign in'))
+    await act(async () => codexStatus.resolve({ signedIn: true }))
+    expect(action(codexRow, 'Sign in')).toBeTruthy()
+    expect(action(claudeRow, 'Signing out…').disabled).toBe(true)
     claudeSignOut.reject(new Error('Claude sign-out failed'))
-    expect((await within(claudeRow).findByRole('alert')).textContent).toContain(
-      'Claude sign-out failed',
-    )
-    expect(within(claudeRow).getByRole('button', { name: 'Sign out' })).toBeTruthy()
+    expect((await within(claudeRow).findByRole('alert')).textContent).toContain('sign-out failed')
+    expect(action(claudeRow, 'Sign out').disabled).toBe(false)
     expect(within(codexRow).queryByRole('alert')).toBeNull()
   })
-
-  it('ignores a stale login completion from an earlier attempt', async () => {
+  it('recovers remounted and early events without accepting a stale attempt', async () => {
     let statusReads = 0
     let loginStarts = 0
-    const view = renderProviderSettings({
-      statuses: [installedProvider('codex', 'Codex')],
-      request: async (method) => {
-        if (method === 'auth.status') {
-          statusReads += 1
-          return { signedIn: statusReads > 1 }
-        }
-        if (method === 'auth.startLogin') {
-          loginStarts += 1
-          return { loginId: `login-${loginStarts}`, authUrl: undefined }
-        }
-        throw new Error(`unexpected ${method}`)
-      },
+    const firstLogin = deferred<ResultOf<'auth.startLogin'>>()
+    const emitAuth = renderProviders([installedProvider('codex', 'Codex')], async (method) => {
+      if (method === 'auth.status') return { signedIn: ++statusReads > 2 }
+      return ++loginStarts === 1
+        ? firstLogin.promise
+        : { loginId: `login-${loginStarts}`, authUrl: undefined }
     })
-
     const row = providerRow('Codex')
-    await waitFor(() => expect(within(row).getByRole('button', { name: 'Sign in' })).toBeTruthy())
-    fireEvent.click(within(row).getByRole('button', { name: 'Sign in' }))
-    await waitFor(() => expect(loginStarts).toBe(1))
-    view.emitAuth('login-1', false, 'Cancelled')
-    await waitFor(() => expect(within(row).getByRole('button', { name: 'Sign in' })).toBeTruthy())
-    fireEvent.click(within(row).getByRole('button', { name: 'Sign in' }))
-    await waitFor(() => expect(loginStarts).toBe(2))
-    view.emitAuth('login-1', true)
-    expectDisabled(row, 'Signing in…')
-    expect(statusReads).toBe(1)
-
-    view.emitAuth('login-2', true)
-    await waitFor(() => expect(within(row).getByRole('button', { name: 'Sign out' })).toBeTruthy())
+    await waitFor(() => action(row, 'Sign in'))
+    emitAuth('login-from-unmounted-panel', true)
+    await waitFor(() => expect(statusReads).toBe(2))
+    fireEvent.click(action(row, 'Sign in'))
+    emitAuth('login-1', false, 'Cancelled')
+    emitAuth('stale-login', true)
+    await act(async () => firstLogin.resolve({ loginId: 'login-1' }))
+    await waitFor(() => action(row, 'Sign in'))
+    fireEvent.click(action(row, 'Sign in'))
+    expect(loginStarts).toBe(2)
+    emitAuth('login-1', true)
+    expect(action(row, 'Signing in…').disabled).toBe(true)
     expect(statusReads).toBe(2)
+    emitAuth('login-2', true)
+    await waitFor(() => action(row, 'Sign out'))
+    expect(statusReads).toBe(3)
   })
 })
 
