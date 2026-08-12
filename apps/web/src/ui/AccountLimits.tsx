@@ -38,12 +38,11 @@ export function AccountLimits(props: { state: AccountLimitsState; onRetry: () =>
         <span>Plan limits</span>
       </h2>
 
-      {source ? (
-        <LimitSource
-          source={source}
-          showContents={props.state.status !== 'error' || hasUsableValues}
-        />
-      ) : null}
+      <LimitSource
+        provider={source?.provider ?? props.state.provider}
+        source={source}
+        showContents={props.state.status !== 'error' || hasUsableValues}
+      />
 
       {props.state.status === 'loading' ? (
         <p className="account-menu__usage-note" role="status">
@@ -70,16 +69,20 @@ export function AccountLimits(props: { state: AccountLimitsState; onRetry: () =>
   )
 }
 
-function LimitSource(props: { source: ProviderLimitSource; showContents: boolean }) {
+function LimitSource(props: {
+  provider: ProviderId
+  source: ProviderLimitSource | undefined
+  showContents: boolean
+}) {
   const titleId = useId()
-  const name = providerDisplayName(props.source.provider)
+  const name = providerDisplayName(props.provider)
   return (
     <section className="account-menu__source" aria-labelledby={titleId}>
       <h3 id={titleId}>
-        <ProviderIcon mark={providerMark(props.source.provider)} size={14} />
+        <ProviderIcon mark={providerMark(props.provider)} size={14} />
         {name}
       </h3>
-      {!props.showContents ? null : props.source.status === 'unavailable' ? (
+      {!props.source || !props.showContents ? null : props.source.status === 'unavailable' ? (
         <p className="account-menu__usage-note">Plan limits aren’t available from this source.</p>
       ) : props.source.limits.length === 0 ? (
         <p className="account-menu__usage-note">No plan limits reported.</p>
