@@ -1,25 +1,34 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { grokLimits, mapGrokBilling } from './limits.js'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-let grokHome: string | undefined
+const fake = vi.hoisted(() => ({
+  calls: [] as Array<{ method: string; params: unknown }>,
+  disposed: 0,
+  billing: {} as unknown,
+  error: undefined as Error | undefined,
+}))
 
-afterEach(async () => {
-  vi.unstubAllEnvs()
-  vi.unstubAllGlobals()
-  if (grokHome) await rm(grokHome, { recursive: true, force: true })
-  grokHome = undefined
+vi.mock('@harness/proc', () => ({
+  spawnCli: vi.fn(() => ({ pid: 1 })),
+  StdioJsonRpc: class {
+    request(method: string, params: unknown): Promise<unknown> {
+      fake.calls.push({ method, params })
+      if (method === 'initialize') return Promise.resolve({ protocolVersion: 1 })
+      return fake.error ? Promise.reject(fake.error) : Promise.resolve(fake.billing)
+    }
+    dispose(): void {
+      fake.disposed += 1
+    }
+  },
+}))
+
+const { grokLimits, mapGrokBilling } = await import('./limits.js')
+
+beforeEach(() => {
+  fake.calls = []
+  fake.disposed = 0
+  fake.error = undefined
+  fake.billing = {}
 })
-
-async function auth(body: unknown): Promise<string> {
-  grokHome = await mkdtemp(join(tmpdir(), 'harness-grok-limits-'))
-  vi.stubEnv('GROK_HOME', grokHome)
-  const path = join(grokHome, 'auth.json')
-  await writeFile(path, typeof body === 'string' ? body : JSON.stringify(body), 'utf8')
-  return path
-}
 
 describe('mapGrokBilling', () => {
   it('maps the weekly credit pool with its reset time', () => {
@@ -74,63 +83,21 @@ describe('mapGrokBilling', () => {
     expect(mapGrokBilling(undefined)).toEqual([])
   })
 
-  it('ignores malformed auth JSON without making a request', async () => {
-    await auth('{not-json')
-    const fetch = vi.fn()
-    vi.stubGlobal('fetch', fetch)
-
-    await expect(grokLimits()).resolves.toEqual([])
-    expect(fetch).not.toHaveBeenCalled()
-  })
-
-  it('merge-saves rotated tokens without retaining expired metadata', async () => {
-    const path = await auth({
-      'person::client-1': {
-        key: 'old-access',
-        refresh: 'old-refresh',
-        expires_at: '2000-01-01T00:00:00.000Z',
-        label: 'primary',
+  it('reads billing through Grok ACP and lets provider failures stay failures', async () => {
+    fake.billing = {
+      config: {
+        creditUsagePercent: 12,
+        currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' },
       },
-      'other::client-2': {
-        key: 'other-access',
-        refresh_token: 'other-refresh',
-      },
-    })
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            access_token: 'new-access',
-            refresh_token: 'rotated-refresh',
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            config: {
-              creditUsagePercent: 12,
-              currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' },
-            },
-          }),
-          { status: 200 },
-        ),
-      )
-    vi.stubGlobal('fetch', fetch)
+    }
 
     await expect(grokLimits()).resolves.toEqual([{ label: 'Weekly limit', usedPercent: 12 }])
-    const saved = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
-    expect(saved['person::client-1']).toEqual({
-      key: 'new-access',
-      refresh: 'old-refresh',
-      refresh_token: 'rotated-refresh',
-      label: 'primary',
-    })
-    expect(saved['other::client-2']).toEqual({
-      key: 'other-access',
-      refresh_token: 'other-refresh',
-    })
+    expect(fake.calls.map((call) => call.method)).toEqual(['initialize', '_x.ai/billing'])
+    expect(fake.disposed).toBe(1)
+
+    fake.calls = []
+    fake.error = new Error('billing unavailable')
+    await expect(grokLimits()).rejects.toThrow('billing unavailable')
+    expect(fake.disposed).toBe(2)
   })
 })
