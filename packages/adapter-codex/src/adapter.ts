@@ -395,6 +395,42 @@ export function mapApprovalResponse(
   }
 }
 
+type ApprovalParams = {
+  itemId?: string
+  approvalId?: string | null
+  reason?: string | null
+  command?: string | null
+  cwd?: string | null
+  grantRoot?: string | null
+}
+
+export function mapApprovalRequest(
+  kind: ApprovalRequest['kind'],
+  params: ApprovalParams | PermissionsRequestApprovalParams,
+): ApprovalRequest {
+  const permission =
+    kind === 'permissions' ? (params as PermissionsRequestApprovalParams) : undefined
+  return {
+    id:
+      ('approvalId' in params ? params.approvalId : undefined) ??
+      params.itemId ??
+      crypto.randomUUID(),
+    kind,
+    ...(params.reason ? { reason: params.reason } : {}),
+    ...('command' in params && params.command ? { command: params.command } : {}),
+    ...(permission
+      ? { command: `Requested access:\n${JSON.stringify(permission.permissions, null, 2)}` }
+      : {}),
+    ...(params.cwd ? { cwd: String(params.cwd) } : {}),
+    ...('grantRoot' in params && params.grantRoot ? { path: String(params.grantRoot) } : {}),
+    createdAt: Date.now(),
+  }
+}
+
+export function permissionInterruptParams(threadId: string, turnId: string) {
+  return { threadId, turnId }
+}
+
 export type CodexAdapterEvents = {
   event: [DomainEvent]
   log: [string]
@@ -431,6 +467,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       respond: (result: unknown) => void
       permissions?: RequestPermissionProfile
       threadId?: string
+      turnId?: string
     }
   >()
   #userInputs = new Map<string, (result: unknown) => void>()
@@ -796,10 +833,16 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#approvals.delete(approvalId)
     pending.respond(mapApprovalResponse(pending.kind, decision, pending.permissions))
     this.emit('event', { type: 'approval.resolved', id: approvalId })
-    if (pending.kind === 'permissions' && decision === 'abort' && pending.threadId) {
-      void this.interrupt(pending.threadId).catch(() =>
-        this.emit('log', 'Codex permission abort failed to stop the turn'),
-      )
+    if (
+      pending.kind === 'permissions' &&
+      decision === 'abort' &&
+      pending.threadId &&
+      pending.turnId
+    ) {
+      void this.#call(
+        'turn/interrupt',
+        permissionInterruptParams(pending.threadId, pending.turnId),
+      ).catch(() => this.emit('log', 'Codex permission abort failed to stop the turn'))
     }
   }
 
@@ -871,17 +914,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       return
     }
 
-    const p = params as {
-      itemId?: string
-      approvalId?: string | null
-      reason?: string | null
-      command?: string | null
-      cwd?: string | null
-      grantRoot?: string | null
-    }
+    const p = params as ApprovalParams
     const permission =
       kind === 'permissions' ? (params as PermissionsRequestApprovalParams) : undefined
-    const id = p.approvalId ?? p.itemId ?? crypto.randomUUID()
+    const request = mapApprovalRequest(kind, permission ?? p)
+    const id = request.id
     // An id collision (a retried command reusing its itemId) would silently
     // drop the earlier responder and leave Codex blocked on it forever.
     const previous = this.#approvals.get(id)
@@ -893,20 +930,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       kind,
       respond,
       ...(permission ? { permissions: permission.permissions, threadId: permission.threadId } : {}),
+      ...(permission ? { turnId: permission.turnId } : {}),
     })
 
-    this.emit('event', {
-      type: 'approval.requested',
-      request: {
-        id,
-        kind,
-        ...(p.reason ? { reason: p.reason } : {}),
-        ...(p.command ? { command: p.command } : {}),
-        ...(p.cwd ? { cwd: String(p.cwd) } : {}),
-        ...(p.grantRoot ? { path: String(p.grantRoot) } : {}),
-        createdAt: Date.now(),
-      },
-    })
+    this.emit('event', { type: 'approval.requested', request })
   }
 
   #onNotification(method: string, params: unknown): void {

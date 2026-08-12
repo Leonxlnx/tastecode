@@ -14,8 +14,10 @@ import {
   mapCodexError,
   isIgnorableCodexNotification,
   mapApprovalResponse,
+  mapApprovalRequest,
   mapAutoApprovalReview,
   mapUserInputRequest,
+  permissionInterruptParams,
 } from './adapter.js'
 
 /** Sanitized frames captured from Codex 0.146.0 on Windows. */
@@ -239,6 +241,38 @@ describe('Codex permission approval', () => {
     expect(mapApprovalResponse('permissions', 'deny', requested)).toEqual({
       permissions: {},
       scope: 'turn',
+    })
+    expect(mapApprovalResponse('permissions', 'abort', requested)).toEqual({
+      permissions: {},
+      scope: 'turn',
+    })
+  })
+
+  it('shows the exact requested access separately from the provider reason', () => {
+    expect(
+      mapApprovalRequest('permissions', {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'permission-1',
+        environmentId: null,
+        startedAtMs: 1,
+        cwd: 'D:\\repo',
+        reason: 'Read the supplied reference and fetch its font.',
+        permissions: requested,
+      }),
+    ).toMatchObject({
+      id: 'permission-1',
+      kind: 'permissions',
+      cwd: 'D:\\repo',
+      reason: 'Read the supplied reference and fetch its font.',
+      command: `Requested access:\n${JSON.stringify(requested, null, 2)}`,
+    })
+  })
+
+  it('interrupts the exact turn after aborting its permission request', () => {
+    expect(permissionInterruptParams('thread-1', 'turn-1')).toEqual({
+      threadId: 'thread-1',
+      turnId: 'turn-1',
     })
   })
 })
