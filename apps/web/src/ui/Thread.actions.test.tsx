@@ -308,12 +308,15 @@ describe('completed activity disclosure', () => {
     expect(screen.queryByText('Viewed image')).toBeNull()
   })
 
-  it('uses the same completed image label live and after replay', () => {
-    const image = turnItem('image-1', 2, {
+  it('keeps image inspection status honest live and after replay', () => {
+    const startedImage = turnItem('image-1', 2, {
       type: 'tool_call',
+      status: 'started',
       text: 'image view\ndesktop.png',
     })
-    const rendered = render(
+    const completedImage = { ...startedImage, status: 'completed' as const }
+    const failedImage = { ...startedImage, status: 'failed' as const }
+    const view = (image: Item) => (
       <Thread
         items={[image]}
         running
@@ -325,14 +328,37 @@ describe('completed activity disclosure', () => {
         reviews={[]}
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
-      />,
+      />
     )
+
+    const rendered = render(view(startedImage))
+    const rail = rendered.container.querySelector('.activity--working')
+    expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
+      'Viewing image',
+    )
+    expect(screen.queryByRole('button', { name: 'Viewing image' })).toBeNull()
+    expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
+
+    rendered.rerender(view(completedImage))
+    expect(rendered.container.querySelector('.activity--working')).toBe(rail)
     expect(screen.getByRole('button', { name: 'Viewed image' })).toBeTruthy()
+    expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
+      'Working',
+    )
+    expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
+
+    rendered.rerender(view(failedImage))
+    expect(rendered.container.querySelector('.activity--working')).toBe(rail)
+    expect(screen.getByRole('button', { name: 'Could not view image' })).toBeTruthy()
+    expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
+      'Working',
+    )
+    expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
 
     rendered.unmount()
     renderCompleted([
       turnItem('prompt-1', 1, { role: 'user', text: 'Review the layout' }),
-      image,
+      completedImage,
       turnItem('answer-1', 3, { role: 'assistant', text: 'Reviewed.' }),
     ])
     fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))

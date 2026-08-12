@@ -313,10 +313,18 @@ export function Thread(props: {
                 !live &&
                 presentation?.complete === true &&
                 presentation.finalAnswerIndex === row.index
+              // Image inspection is an authored result, not another running
+              // status. Keep its completed/failed outcome visible while the
+              // turn continues, but render it as settled so it never gains
+              // the duplicate `.aux--live` treatment.
+              const visibleLiveImageResult =
+                live &&
+                (item.status === 'completed' || item.status === 'failed') &&
+                isImageView(item)
               const liveActivity = live && isActivity(item)
               const suppressed =
                 (compactedActivity && !activityLead) ||
-                liveActivity ||
+                (liveActivity && !visibleLiveImageResult) ||
                 isRepeatedDesignRow(item, props.items[row.index - 1]) ||
                 // A design turn tells its story through the phase labels and
                 // Harness notes; the provider's raw commands, tool calls, and
@@ -341,7 +349,7 @@ export function Thread(props: {
                     hidden={suppressed}
                     activity={activityLead ? activityGroup.items : undefined}
                     elapsedMs={presentation?.elapsedMs}
-                    live={live}
+                    live={live && !visibleLiveImageResult}
                     responseText={responseLead ? presentation.responseText : undefined}
                     finalResponse={responseLead}
                     settling={settling}
