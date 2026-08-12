@@ -107,6 +107,53 @@ describe('profile settings', () => {
       expect(screen.queryByText(/Indexing local activity/)).toBeNull()
     })
   })
+
+  it('edits the local display name and validates profile photos', async () => {
+    const onIdentityChange = vi.fn()
+    const transport = {
+      request: vi.fn(async () => historyResult()),
+    } as unknown as Transport
+    const { rerender } = render(
+      <ProfileSettings
+        transport={transport}
+        account={undefined}
+        providerName="Codex"
+        identity={{ displayName: '' }}
+        onIdentityChange={onIdentityChange}
+      />,
+    )
+    await screen.findByRole('heading', { name: 'Profile' })
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Display name' }), {
+      target: { value: 'Leon' },
+    })
+    expect(onIdentityChange).toHaveBeenLastCalledWith({ displayName: 'Leon' })
+
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
+    fireEvent.change(input, {
+      target: { files: [new File(['nope'], 'avatar.png', { type: 'image/png' })] },
+    })
+    expect((await screen.findByRole('alert')).textContent).toContain('not a valid image')
+
+    const avatarDataUrl = 'data:image/png;base64,iVBORw0KGgo='
+    rerender(
+      <ProfileSettings
+        transport={transport}
+        account={undefined}
+        providerName="Codex"
+        identity={{ displayName: 'Leon', avatarDataUrl }}
+        onIdentityChange={onIdentityChange}
+      />,
+    )
+    expect(document.querySelector('.profile-identity__avatar img')?.getAttribute('src')).toBe(
+      avatarDataUrl,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+    expect(onIdentityChange).toHaveBeenLastCalledWith({
+      displayName: 'Leon',
+      avatarDataUrl: undefined,
+    })
+  })
 })
 
 function historyResult(): ResultOf<'usage.history'> {

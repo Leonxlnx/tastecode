@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Account, ResultOf, UsageHistoryDay } from '@harness/contracts'
-import { CircleAlert, RefreshCw } from 'lucide-react'
+import { CircleAlert, ImagePlus, RefreshCw, Trash2 } from 'lucide-react'
 import { providerPresentation } from '../provider-presentation.js'
+import {
+  PROFILE_IMAGE_ACCEPT,
+  profileInitials,
+  readProfileImage,
+  type ProfileIdentityPreferences,
+} from '../profile-preferences.js'
 import type { Transport } from '../transport.js'
 import { SourceIdentity } from './SourceIdentity.js'
 
@@ -29,12 +35,29 @@ export function ProfileSettings(props: {
   transport: Transport
   account: Account | undefined
   providerName: string
+  identity?: ProfileIdentityPreferences | undefined
+  onIdentityChange?: ((identity: ProfileIdentityPreferences) => void) | undefined
 }) {
   const [data, setData] = useState<ResultOf<'usage.history'>>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
   const [requestVersion, setRequestVersion] = useState(0)
   const forceRefresh = useRef(false)
+  const [imageError, setImageError] = useState<string>()
+
+  const changeIdentity = (updates: Partial<ProfileIdentityPreferences>) => {
+    props.onIdentityChange?.({ displayName: '', ...props.identity, ...updates })
+  }
+
+  const chooseImage = async (file: File | undefined) => {
+    if (!file) return
+    setImageError(undefined)
+    try {
+      changeIdentity({ avatarDataUrl: await readProfileImage(file) })
+    } catch (requestError) {
+      setImageError(requestError instanceof Error ? requestError.message : String(requestError))
+    }
+  }
 
   useEffect(() => {
     let active = true
@@ -100,7 +123,7 @@ export function ProfileSettings(props: {
   }
 
   const scanning = data.scan.status === 'scanning'
-  const identity = profileIdentity(props.account, props.providerName)
+  const identity = profileIdentity(props.account, props.providerName, props.identity?.displayName)
   const streaks = streakSummary(data.daily)
   const peakTokens = data.daily.reduce((peak, day) => Math.max(peak, day.totals.processedTokens), 0)
   const topProvider = data.providers.toSorted(
@@ -155,13 +178,63 @@ export function ProfileSettings(props: {
 
       <section className="profile-identity" aria-label="Profile identity">
         <div className="profile-identity__avatar" aria-hidden>
-          {identity.initials}
+          {props.identity?.avatarDataUrl ? (
+            <img src={props.identity.avatarDataUrl} alt="" />
+          ) : (
+            identity.initials
+          )}
         </div>
         <h2>{identity.name}</h2>
         <div className="profile-identity__meta">
           <span>{identity.handle}</span>
           {props.account?.plan ? (
             <span className="profile-identity__plan">{props.account.plan}</span>
+          ) : null}
+        </div>
+        <div className="profile-identity__editor">
+          <label className="profile-identity__field">
+            <span>Display name</span>
+            <input
+              type="text"
+              maxLength={64}
+              value={props.identity?.displayName ?? ''}
+              placeholder={identity.name}
+              onChange={(event) => changeIdentity({ displayName: event.target.value })}
+            />
+          </label>
+          <div className="profile-identity__photo-actions">
+            <label className="settings__action profile-identity__photo">
+              <ImagePlus size={14} aria-hidden />
+              <span>{props.identity?.avatarDataUrl ? 'Change photo' : 'Add photo'}</span>
+              <input
+                className="visually-hidden"
+                type="file"
+                accept={PROFILE_IMAGE_ACCEPT}
+                onChange={(event) => {
+                  void chooseImage(event.target.files?.[0])
+                  event.target.value = ''
+                }}
+              />
+            </label>
+            {props.identity?.avatarDataUrl ? (
+              <button
+                className="settings__action profile-identity__remove-photo"
+                type="button"
+                onClick={() => {
+                  setImageError(undefined)
+                  changeIdentity({ avatarDataUrl: undefined })
+                }}
+              >
+                <Trash2 size={14} aria-hidden />
+                <span>Remove</span>
+              </button>
+            ) : null}
+          </div>
+          <p className="profile-identity__photo-note">PNG, JPEG, or WebP · 1 MB maximum</p>
+          {imageError ? (
+            <p className="profile-identity__photo-error" role="alert">
+              {imageError}
+            </p>
           ) : null}
         </div>
       </section>
@@ -430,29 +503,18 @@ function buildActivityGrid(daily: UsageHistoryDay[], endDate: string) {
   }
 }
 
-function profileIdentity(account: Account | undefined, providerName: string) {
+function profileIdentity(
+  account: Account | undefined,
+  providerName: string,
+  displayName: string | undefined,
+) {
   const localPart = account?.email?.split('@')[0]?.trim()
-  const name = localPart ? titleCase(localPart) : 'Local profile'
+  const name = displayName?.trim() || (localPart ? titleCase(localPart) : 'Local profile')
   return {
     name,
     handle: localPart ? `@${localPart}` : providerName,
     initials: profileInitials(name || providerName),
   }
-}
-
-function profileInitials(value: string): string {
-  const words = value.trim().split(/\s+/u).filter(Boolean)
-  if (words.length > 1) {
-    return words
-      .slice(0, 2)
-      .map((word) => Array.from(word)[0])
-      .join('')
-      .toUpperCase()
-  }
-  return Array.from(words[0] ?? 'P')
-    .slice(0, 2)
-    .join('')
-    .toUpperCase()
 }
 
 function titleCase(value: string): string {
