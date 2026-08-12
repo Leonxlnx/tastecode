@@ -1,7 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { createServer } from 'node:http'
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -277,6 +277,44 @@ describe('design preview runner', () => {
     await expect(
       startDesignPreview(workspace, plan('node', ['--import=../outside.mjs', 'local.mjs'])),
     ).rejects.toThrow()
+  })
+
+  it.each([
+    ['pnpm', ['--dir=../outside', 'run', 'dev']],
+    ['pnpm', ['-C', '../outside', 'run', 'dev']],
+    ['pnpm', ['--workspace-root', 'run', 'dev']],
+    ['npm', ['--prefix', '../outside', 'run', 'dev']],
+    ['npm', ['--workspace', 'outside', 'run', 'dev']],
+    ['yarn', ['--cwd', '../outside', 'run', 'dev']],
+    ['bun', ['--cwd', '../outside', 'run', 'dev']],
+  ])('rejects %s options that can change the selected package', async (command, args) => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-packages-'))
+    workspaces.push(root)
+    const workspace = path.join(root, 'workspace')
+    const outside = path.join(root, 'outside')
+    const marker = path.join(outside, 'spawned.txt')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    writeFileSync(path.join(workspace, 'package.json'), JSON.stringify({ scripts: { dev: 'x' } }))
+    writeFileSync(
+      path.join(outside, 'package.json'),
+      JSON.stringify({
+        scripts: { dev: `node -e "require('fs').writeFileSync('spawned.txt','yes')"` },
+      }),
+    )
+    const plan = parsePreviewPlan({
+      version: 1,
+      command,
+      args,
+      cwd: '.',
+      url: 'http://127.0.0.1:5173',
+      viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+    })
+
+    await expect(startDesignPreview(workspace, plan)).rejects.toThrow(
+      'preview package-manager options are not allowed',
+    )
+    expect(existsSync(marker)).toBe(false)
   })
 })
 

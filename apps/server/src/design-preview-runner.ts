@@ -152,10 +152,16 @@ export function assertRunsWorkspaceCode(
     return
   }
 
+  // Keep package-manager control in the selected cwd. Script arguments belong after `--`.
+  const separator = plan.args.indexOf('--')
+  const launcherArgs = plan.args.slice(0, separator === -1 ? undefined : separator)
+  const scriptIndex = launcherArgs[0] === 'run' ? 1 : 0
   // `pnpm dev` and `pnpm run dev` are both idiomatic; both must name a script.
-  const named = plan.args.filter((arg) => !arg.startsWith('-'))
-  const script = named[0] === 'run' ? named[1] : named[0]
+  const script = launcherArgs[scriptIndex]
   if (!script) throw new Error('preview command must name a package script')
+  if (launcherArgs.some((arg) => arg.startsWith('-')) || launcherArgs.length !== scriptIndex + 1) {
+    throw new Error('preview package-manager options are not allowed before "--"')
+  }
   if (!packageScripts(cwd).has(script)) {
     throw new Error(`preview script "${script}" is not declared in package.json`)
   }
