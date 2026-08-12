@@ -2762,6 +2762,94 @@
   color: var(--text-2);
 }
 
+.settings__group--providers {
+  overflow: visible;
+}
+
+.provider-row {
+  display: grid;
+  grid-template-columns: 20px minmax(80px, 1fr) minmax(88px, 0.9fr) 22px 136px 86px;
+  gap: 10px;
+  min-height: 58px;
+}
+
+.provider-row__mark,
+.provider-row__issue,
+.provider-row__primary,
+.provider-row__secondary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.provider-row__identity,
+.provider-row__status {
+  min-width: 0;
+}
+
+.provider-row__identity {
+  display: flex;
+  min-height: 34px;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.provider-row__version {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-row__status {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-row__primary,
+.provider-row__secondary {
+  min-height: 30px;
+}
+
+.provider-row .settings__action {
+  justify-content: center;
+  width: 100%;
+  text-decoration: none;
+}
+
+.provider-row .settings__action.is-primary {
+  background: var(--light);
+  border-color: var(--light);
+  box-shadow: none;
+  color: var(--on-light);
+  font-weight: 520;
+}
+
+.provider-row .settings__action.is-primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--light) 86%, var(--bg));
+  color: var(--on-light);
+}
+
+.provider-row .settings__action:is(.is-secondary, .is-quiet) {
+  background: transparent;
+  box-shadow: none;
+}
+
+.provider-row .settings__action.is-quiet {
+  border-color: transparent;
+}
+
 .provider-settings__add {
   display: flex;
   align-items: center;
@@ -9531,6 +9619,46 @@
   .settings__row {
     flex-direction: column;
     gap: 10px;
+  }
+
+  .provider-row {
+    grid-template-areas:
+      'mark identity issue'
+      'status status status'
+      'primary primary secondary';
+    grid-template-columns: 20px minmax(0, 1fr) 86px;
+    row-gap: 8px;
+  }
+
+  .provider-row__mark {
+    grid-area: mark;
+  }
+
+  .provider-row__identity {
+    grid-area: identity;
+  }
+
+  .provider-row__status {
+    grid-area: status;
+    text-align: left;
+  }
+
+  .provider-row__issue {
+    grid-area: issue;
+    justify-content: flex-end;
+  }
+
+  .provider-row__primary {
+    grid-area: primary;
+    justify-content: flex-end;
+  }
+
+  .provider-row__secondary {
+    grid-area: secondary;
+  }
+
+  .provider-row__primary .settings__action {
+    width: 136px;
   }
 
   .settings__row-control {
