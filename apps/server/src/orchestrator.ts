@@ -4,10 +4,10 @@ import {
   CodexAdapter,
 } from '@harness/adapter-codex'
 import { acpAccount, acpSignOut } from '@harness/adapter-acp'
-import { grokAccount, grokLimits, signOutGrok } from '@harness/adapter-grok'
+import { grokAccount, grokLimitSource, signOutGrok } from '@harness/adapter-grok'
 import {
   claudeAccount,
-  claudeLimits,
+  claudeLimitSource,
   signOutClaude,
   startClaudeLogin,
 } from '@harness/adapter-claude-code'
@@ -84,6 +84,8 @@ import type {
   PanicStopResult,
   ParamsOf,
   ProviderId,
+  ProviderLimit,
+  ProviderLimitSource,
   QueuedTurn,
   SessionDiff,
   Skill,
@@ -111,6 +113,7 @@ type UserSubmission = { id: string; text: string; createdAt: number; queueId?: s
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions; clientSubmissionId?: string }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
+type AdapterLimitSource = { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
 const userTurnKey = (threadId: string, turnId: string) => JSON.stringify([threadId, turnId])
 type DesignFlowPhase =
   'brief' | 'brand' | 'page' | 'assets' | 'build' | 'preview' | 'review' | 'repair' | 'complete'
@@ -743,18 +746,22 @@ export class Orchestrator {
     return { signedIn: false }
   }
 
-  async usageLimits(provider: ProviderId): Promise<
-    Array<{
-      label: string
-      usedPercent: number
-      resetsAt?: number | undefined
-      valueLabel?: string | undefined
-    }>
-  > {
-    if (provider === 'codex') return (await this.#controlAdapter()).rateLimits()
-    if (provider === 'claude-code') return claudeLimits()
-    if (provider === 'grok') return grokLimits()
-    return []
+  async usageLimitSource(provider: ProviderId): Promise<ProviderLimitSource> {
+    const readers: Partial<Record<ProviderId, () => Promise<AdapterLimitSource>>> = {
+      codex: async () => (await this.#controlAdapter()).rateLimitSource(),
+      'claude-code': claudeLimitSource,
+      grok: grokLimitSource,
+    }
+    const source = await (readers[provider]?.() ?? Promise.resolve({ status: 'unavailable' }))
+    return source.status === 'ready'
+      ? { provider, status: 'ready', limits: source.limits }
+      : { provider, status: 'unavailable' }
+  }
+
+  /** Compatibility view while the server route migrates to the authoritative source. */
+  async usageLimits(provider: ProviderId): Promise<ProviderLimit[]> {
+    const source = await this.usageLimitSource(provider)
+    return source.status === 'ready' ? source.limits : []
   }
 
   async startLogin(provider: ProviderId): Promise<{ loginId: string; authUrl?: string }> {
