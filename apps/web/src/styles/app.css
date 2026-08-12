@@ -8926,8 +8926,8 @@
   font-size: var(--t-xs);
 }
 
-.custom-model-form select,
-.custom-model-form input {
+.custom-model-form input,
+.custom-model-form__provider-trigger {
   width: 100%;
   min-width: 0;
   height: 30px;
@@ -8942,14 +8942,41 @@
   font-size: var(--t-sm);
 }
 
-.custom-model-form select:focus-visible,
-.custom-model-form input:focus-visible {
+.custom-model-form input:focus-visible,
+.custom-model-form__provider-trigger:focus-visible {
   outline: 1px solid var(--text-2);
   outline-offset: 1px;
 }
 
-.custom-model-form select {
-  cursor: pointer;
+.custom-model-form__field > .menuwrap,
+.custom-model-form__provider-trigger {
+  width: 100%;
+}
+
+.custom-model-form__provider-trigger {
+  justify-content: stretch;
+}
+
+.custom-model-form__provider-value {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.custom-model-form__provider-value > svg:last-child {
+  margin-left: auto;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.custom-model-form__provider-value > svg:last-child.is-open {
+  transform: rotate(180deg);
+}
+
+.custom-model-form__provider-menu {
+  min-width: 0;
+  width: min(var(--menu-trigger-w, 180px), calc(100vw - 16px));
 }
 
 .custom-model-form__actions {
@@ -8996,6 +9023,12 @@
   margin: 0;
   color: var(--error);
   font-size: var(--t-xs);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .custom-model-form__provider-value > svg:last-child {
+    transition: none;
+  }
 }
 
 @media (hover: hover) and (pointer: fine) {

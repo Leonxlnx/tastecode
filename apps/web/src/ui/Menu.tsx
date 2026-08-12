@@ -25,7 +25,7 @@ type MenuPosition = {
 
 const MENU_GAP = 6
 const VIEWPORT_GUTTER = 8
-const MENU_ITEM_SELECTOR = '[role="menuitem"]'
+const MENU_ITEM_SELECTOR = '[role="menuitem"], [role="menuitemradio"]'
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
@@ -346,6 +346,7 @@ export function Menu(props: {
   return (
     <div className="menuwrap" ref={wrap}>
       <button
+        type="button"
         ref={trigger}
         id={triggerId}
         className={`menutrigger${props.triggerClassName ? ` ${props.triggerClassName}` : ''}`}
@@ -422,6 +423,7 @@ export function Menu(props: {
 export function MenuItem(props: {
   onClick: () => void
   active?: boolean
+  checked?: boolean
   disabled?: boolean
   title: string
   detail?: string | undefined
@@ -435,7 +437,8 @@ export function MenuItem(props: {
       className={`menu__item${props.className ? ` ${props.className}` : ''}${props.active ? ' is-active' : ''}`}
       onClick={props.onClick}
       disabled={props.disabled}
-      role="menuitem"
+      role={props.checked === undefined ? 'menuitem' : 'menuitemradio'}
+      aria-checked={props.checked}
       tabIndex={-1}
       aria-keyshortcuts={props.shortcutAria}
     >
