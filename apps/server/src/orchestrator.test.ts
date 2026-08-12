@@ -776,7 +776,8 @@ describe('provider-neutral design briefing', () => {
     result.capturePreview.mockResolvedValueOnce(undefined)
     previewStarts.failures.push(error)
     const queued = await result.orchestrator.submitTurn('preview-recovery', 'Continue afterward.')
-    if (queued.queued) result.orchestrator.deleteQueuedTurn('preview-recovery', queued.queuedTurn.id)
+    if (queued.queued)
+      result.orchestrator.deleteQueuedTurn('preview-recovery', queued.queuedTurn.id)
     await vi.waitFor(() => expect(result.sessions[0]?.sent).toHaveLength(1))
     return { ...result, workspace, artifacts }
   }
