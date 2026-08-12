@@ -1186,7 +1186,7 @@ pub struct PreviewViewport {
     pub height: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewInteractiveTargetViolation {
     pub selector: String,
@@ -1195,11 +1195,71 @@ pub struct PreviewInteractiveTargetViolation {
     pub height: f64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+impl<'de> Deserialize<'de> for PreviewInteractiveTargetViolation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            selector: String,
+            label: String,
+            width: f64,
+            height: f64,
+        }
+
+        let value = Wire::deserialize(deserializer)?;
+        let valid_geometry = value.width.is_finite()
+            && value.width >= 0.0
+            && value.height.is_finite()
+            && value.height >= 0.0
+            && (value.width < 44.0 || value.height < 44.0);
+        if value.selector.is_empty()
+            || value.selector.encode_utf16().count() > 512
+            || value.label.encode_utf16().count() > 200
+            || !valid_geometry
+        {
+            return Err(serde::de::Error::custom(
+                "invalid preview interactive target violation",
+            ));
+        }
+        Ok(Self {
+            selector: value.selector,
+            label: value.label,
+            width: value.width,
+            height: value.height,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewDomAudit {
     pub h1_count: u32,
     pub interactive_target_violations: Vec<PreviewInteractiveTargetViolation>,
+}
+
+impl<'de> Deserialize<'de> for PreviewDomAudit {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Wire {
+            h1_count: u32,
+            interactive_target_violations: Vec<PreviewInteractiveTargetViolation>,
+        }
+
+        let value = Wire::deserialize(deserializer)?;
+        if value.h1_count > 10_000 || value.interactive_target_violations.len() > 200 {
+            return Err(serde::de::Error::custom("invalid preview DOM audit bounds"));
+        }
+        Ok(Self {
+            h1_count: value.h1_count,
+            interactive_target_violations: value.interactive_target_violations,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1644,6 +1704,38 @@ mod tests {
         let audited: PreviewScreenshot = serde_json::from_value(audited_value.clone()).unwrap();
         assert_eq!(audited.dom_audit.as_ref().unwrap().h1_count, 0);
         assert_eq!(serde_json::to_value(audited).unwrap(), audited_value);
+
+        let target = |selector: String, label: String, width: f64, height: f64| json!({ "selector": selector, "label": label, "width": width, "height": height });
+        let screenshot = |h1_count: u32, violations: Vec<Value>| {
+            json!({
+                "path": "/tmp/mobile.png",
+                "width": 390,
+                "height": 844,
+                "domAudit": {
+                    "h1Count": h1_count,
+                    "interactiveTargetViolations": violations
+                }
+            })
+        };
+        for invalid in [
+            screenshot(10_001, vec![]),
+            screenshot(1, vec![target("#large".into(), "Large".into(), 44.0, 44.0)]),
+            screenshot(
+                1,
+                vec![target("#negative".into(), "Bad".into(), -1.0, 20.0)],
+            ),
+            screenshot(1, vec![target(String::new(), "Empty".into(), 20.0, 20.0)]),
+            screenshot(1, vec![target("x".repeat(513), "Label".into(), 20.0, 20.0)]),
+            screenshot(1, vec![target("#item".into(), "x".repeat(201), 20.0, 20.0)]),
+            screenshot(
+                1,
+                (0..201)
+                    .map(|index| target(format!("#item-{index}"), String::new(), 20.0, 20.0))
+                    .collect(),
+            ),
+        ] {
+            assert!(serde_json::from_value::<PreviewScreenshot>(invalid).is_err());
+        }
     }
 
     #[test]
