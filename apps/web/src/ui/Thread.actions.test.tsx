@@ -164,6 +164,34 @@ describe('design activity rows', () => {
   })
 })
 
+describe('empty thread', () => {
+  it('explains how to start an idle thread', () => {
+    const rendered = renderCompleted([])
+
+    expect(screen.getByRole('heading').textContent).toContain(
+      'Tell the agent what you want to build',
+    )
+
+    rendered.rerender(
+      <Thread
+        items={[]}
+        loading
+        running={false}
+        activeTurn={undefined}
+        plan={[]}
+        diff={undefined}
+        approvals={[]}
+        userInputs={[]}
+        reviews={[]}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+    expect(screen.queryByRole('heading')).toBeNull()
+    expect(screen.getByRole('status').textContent).toContain('Loading conversation')
+  })
+})
+
 describe('completed activity disclosure', () => {
   it('keeps the content mounted while toggling the animated reveal state', () => {
     const items: Item[] = [

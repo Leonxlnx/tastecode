@@ -57,6 +57,7 @@ import type { Checkpoint } from './RollbackDialog.js'
  */
 export function Thread(props: {
   items: Item[]
+  loading?: boolean
   projectPath?: string | undefined
   running: boolean
   searching?: boolean
@@ -291,6 +292,19 @@ export function Thread(props: {
     <div className="thread-shell">
       {finding ? (
         <ThreadSearch items={props.items} onJump={jumpTo} onClose={() => setFinding(false)} />
+      ) : null}
+      {props.items.length === 0 && !props.running ? (
+        props.loading ? (
+          <div className="empty thread__empty" role="status">
+            Loading conversation…
+          </div>
+        ) : (
+          <div className="empty thread__empty">
+            <div className="empty__prompt" role="heading" aria-level={1}>
+              Tell the agent what you want to build, then send it below.
+            </div>
+          </div>
+        )
       ) : null}
       <div className="thread" ref={scroller} onScroll={onScroll}>
         <div className="thread__col">

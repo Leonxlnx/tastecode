@@ -34,6 +34,7 @@ const utilityRenders = vi.hoisted(() => ({
 }))
 
 const appRenders = vi.hoisted(() => vi.fn())
+const pickFolder = vi.hoisted(() => vi.fn())
 
 vi.mock('./transport.js', () => ({
   IndeterminateRequestError: class IndeterminateRequestError extends Error {
@@ -186,6 +187,7 @@ vi.mock('./ui/TerminalPane.js', async (importOriginal) => {
 
 vi.mock('./bridge.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./bridge.js')>()),
+  pickFolder,
   isMacOS: () => {
     // App samples the platform once per render, so this catches root work
     // without adding test-only instrumentation to production code.
@@ -225,6 +227,7 @@ function contractValidServerProjects(): unknown[] {
 }
 
 beforeEach(() => {
+  pickFolder.mockReset().mockResolvedValue(undefined)
   appRenders.mockClear()
   shellRenders.composer.mockClear()
   shellRenders.sidebar.mockClear()
@@ -514,6 +517,66 @@ const workspaceTest = { projectsSnapshot: (running: boolean) => ({ projects: ser
 // prettier-ignore
 const { projectsSnapshot, renderWithDeferredProjectProbes, rpcCount, completeTurn, startTurn, submitTurn, waitForWorkspace, waitForInitialWorkspace, openNewSession, setConnectionState, serverProject } = workspaceTest
 describe('web client', () => {
+  it('explains project loading failures and retries the request', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let attempts = 0
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'projects.list' && attempts++ === 0) {
+        return Promise.reject(new Error('server unavailable'))
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    expect(screen.getByText('Loading projects…').closest('[role="status"]')).not.toBeNull()
+    const retry = await screen.findByRole('button', { name: 'Retry' })
+    expect(screen.getByRole('heading').textContent).toContain('Projects could not be loaded')
+
+    fireEvent.click(retry)
+
+    expect((await screen.findByRole('heading')).textContent).toContain(
+      'What should we build in project?',
+    )
+    expect(attempts).toBe(2)
+  })
+
+  it('adds the first project from the empty state', async () => {
+    serverProjects = []
+    pickFolder.mockResolvedValue('/work/new-project')
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'projects.add') {
+        serverProjects = [
+          {
+            path: '/work/new-project',
+            name: 'new-project',
+            pinned: false,
+            createdAt: 0,
+            sessions: [],
+          },
+        ]
+        return Promise.resolve({})
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Add project' }))
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('projects.add', {
+        path: '/work/new-project',
+      })
+    })
+    expect((await screen.findByRole('heading')).textContent).toContain(
+      'What should we build in new-project?',
+    )
+  })
+
   it('opens the workspace directly on first launch', async () => {
     localStorage.removeItem('harness.provider')
 

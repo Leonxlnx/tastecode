@@ -291,13 +291,14 @@ export function App() {
   // A cache of what the server says, not a source of truth. Every change goes
   // to the server and comes back through here.
   const [projects, setProjects] = useState<Project[]>([])
-  const [projectsLoaded, setProjectsLoaded] = useState(false)
+  const [projectsStatus, setProjectsStatus] = useState<'loading' | 'ready' | 'failed'>('loading')
   /** The thread whose interrupt has been sent but not yet acknowledged. */
   const [stoppingThreadId, setStoppingThreadId] = useState<string | undefined>()
   const [offline, setOffline] = useState(false)
   const [activeId, setActiveId] = useState<string | undefined>()
   const [activePath, setActivePath] = useState<string | undefined>()
   const [thread, setThread] = useState<ThreadState>(emptyThread)
+  const [loadingThreadId, setLoadingThreadId] = useState<string | undefined>()
   /** A fresh array every streamed frame would defeat any memo below it. */
   const reviewList = useMemo(() => Object.values(thread.reviews), [thread.reviews])
   const [usageSummary, setUsageSummary] = useState<ResultOf<'usage.summary'> | undefined>()
@@ -1303,7 +1304,6 @@ export function App() {
 
   const refreshProjects = useCallback(async () => {
     const { projects: list } = await transport.request('projects.list', {})
-    setProjectsLoaded(true)
     const savedOrder = loadSessionOrder()
     setProjects(
       list.map((project) => ({
@@ -1653,12 +1653,28 @@ export function App() {
         await transport.request('projects.add', project).catch(() => undefined)
       }
       if (legacy.length > 0) removeSetting(PROJECTS_KEY)
-      if (!cancelled) await refreshProjects().catch(() => undefined)
+      if (!cancelled) {
+        setProjectsStatus('loading')
+        await refreshProjects()
+          .then(() => {
+            if (!cancelled) setProjectsStatus('ready')
+          })
+          .catch(() => {
+            if (!cancelled) setProjectsStatus('failed')
+          })
+      }
     })()
     return () => {
       cancelled = true
     }
   }, [transport, refreshProjects])
+
+  const retryProjects = useCallback(() => {
+    setProjectsStatus('loading')
+    void refreshProjects()
+      .then(() => setProjectsStatus('ready'))
+      .catch(() => setProjectsStatus('failed'))
+  }, [refreshProjects])
 
   useEffect(() => {
     if (projects.length > 0) saveSessionOrder(projects)
@@ -2586,10 +2602,13 @@ export function App() {
         setThread(emptyThread)
       }
 
+      setLoadingThreadId(id)
       try {
         await loadHistory(id, cached ? durableSequences.current.get(id) : undefined)
       } catch (error) {
         setNotice(error instanceof Error ? error.message : String(error))
+      } finally {
+        setLoadingThreadId((current) => (current === id ? undefined : current))
       }
     },
     [projects, visibleModels, selectedModelChoice, commitModelChoice, loadHistory, transport],
@@ -3355,6 +3374,7 @@ export function App() {
                 {activeId ? (
                   <Thread
                     items={thread.items}
+                    loading={loadingThreadId === activeId}
                     projectPath={activePath}
                     running={thread.running}
                     searching={searching}
@@ -3376,7 +3396,13 @@ export function App() {
                     onRevertCheckpoint={revertCheckpoint}
                   />
                 ) : (
-                  <Empty projects={projects} activePath={activePath} loaded={projectsLoaded} />
+                  <Empty
+                    projects={projects}
+                    activePath={activePath}
+                    status={projectsStatus}
+                    onAddProject={addSidebarProject}
+                    onRetry={retryProjects}
+                  />
                 )}
 
                 {active && terminalOpen ? (
@@ -3573,12 +3599,37 @@ function readRailWidth(): number {
   return Number.isFinite(stored) && stored >= 176 && stored <= 420 ? stored : 248
 }
 
-function Empty(props: { projects: Project[]; activePath: string | undefined; loaded: boolean }) {
+function Empty(props: {
+  projects: Project[]
+  activePath: string | undefined
+  status: 'loading' | 'ready' | 'failed'
+  onAddProject: () => void
+  onRetry: () => void
+}) {
   const activeProject = props.projects.find((project) => project.path === props.activePath)
 
   // Before the first projects.list reply, "no projects" is not a fact yet —
   // flashing the add-a-project prompt for one round trip reads as a glitch.
-  if (!props.loaded) return <div className="empty" />
+  if (props.status === 'loading') {
+    return (
+      <div className="empty" role="status">
+        <div className="empty__prompt">Loading projects…</div>
+      </div>
+    )
+  }
+
+  if (props.status === 'failed') {
+    return (
+      <div className="empty">
+        <div className="empty__prompt" role="heading" aria-level={1}>
+          Projects could not be loaded.
+        </div>
+        <button className="btn" type="button" onClick={props.onRetry}>
+          Retry
+        </button>
+      </div>
+    )
+  }
 
   if (props.projects.length === 0) {
     return (
@@ -3586,6 +3637,9 @@ function Empty(props: { projects: Project[]; activePath: string | undefined; loa
         <div className="empty__prompt" role="heading" aria-level={1}>
           Add a project to start building.
         </div>
+        <button className="btn" type="button" onClick={props.onAddProject}>
+          Add project
+        </button>
       </div>
     )
   }

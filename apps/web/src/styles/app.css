@@ -9482,10 +9482,17 @@
 
 .empty {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 16px;
   min-height: 0;
   padding: 24px;
+}
+
+.thread__empty {
+  position: absolute;
+  inset: 0;
 }
 
 .empty__prompt {
