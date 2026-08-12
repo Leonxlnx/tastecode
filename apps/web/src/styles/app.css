@@ -3543,6 +3543,10 @@
   min-width: 0;
 }
 
+.settings__row-control:has(> .state-label) {
+  max-width: 100%;
+}
+
 .settings__inline-controls {
   display: flex;
   align-items: center;

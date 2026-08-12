@@ -14,4 +14,10 @@ describe('settings viewport CSS', () => {
       /@media \(max-width: 700px\) \{[\s\S]*?\.settings__nav \{[^}]*overflow-x: auto;/s,
     )
   })
+
+  it('bounds state and action controls to the narrow row width', () => {
+    expect(appCss).toMatch(
+      /\.settings__row-control:has\(> \.state-label\) \{[^}]*max-width: 100%;/s,
+    )
+  })
 })
