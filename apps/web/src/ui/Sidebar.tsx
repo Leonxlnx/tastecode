@@ -136,6 +136,7 @@ function SidebarComponent(props: {
   onOpenPullRequests?: (() => void) | undefined
   onOpenSettings: (section?: 'profile') => void
 }) {
+  const profileDisplayName = props.profileIdentity?.displayName.trim()
   const [edgeRevealed, setEdgeRevealed] = useState(false)
   const slotRef = useRef<HTMLDivElement>(null)
   /** Set by the resize handle when its release is what collapsed the rail. */
@@ -533,15 +534,11 @@ function SidebarComponent(props: {
                     <img src={props.profileIdentity.avatarDataUrl} alt="" />
                   ) : (
                     profileInitials(
-                      props.profileIdentity?.displayName ||
-                        props.account?.email ||
-                        props.providerName,
+                      profileDisplayName || props.account?.email || props.providerName,
                     )
                   )}
                 </span>
-                <span className="account__name">
-                  {props.profileIdentity?.displayName || props.providerName}
-                </span>
+                <span className="account__name">{profileDisplayName || props.providerName}</span>
               </span>
             )}
           >
