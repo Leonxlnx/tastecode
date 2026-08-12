@@ -294,6 +294,51 @@ describe('completed activity disclosure', () => {
     expect(container.querySelectorAll('.lucide-images')).toHaveLength(3)
   })
 
+  it('does not claim an interrupted image inspection completed', () => {
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Review the layout' }),
+      turnItem('image-1', 2, {
+        type: 'tool_call',
+        status: 'started',
+        text: 'image view\ndesktop.png',
+      }),
+    ])
+
+    expect(screen.getByRole('button', { name: 'Image inspection interrupted' })).toBeTruthy()
+    expect(screen.queryByText('Viewed image')).toBeNull()
+  })
+
+  it('uses the same completed image label live and after replay', () => {
+    const image = turnItem('image-1', 2, {
+      type: 'tool_call',
+      text: 'image view\ndesktop.png',
+    })
+    const rendered = render(
+      <Thread
+        items={[image]}
+        running
+        activeTurn={{ id: 'turn-1', startedAt: 1 }}
+        plan={[]}
+        diff={undefined}
+        approvals={[]}
+        userInputs={[]}
+        reviews={[]}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Viewed image' })).toBeTruthy()
+
+    rendered.unmount()
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Review the layout' }),
+      image,
+      turnItem('answer-1', 3, { role: 'assistant', text: 'Reviewed.' }),
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
+    expect(screen.getByText('Viewed image')).toBeTruthy()
+  })
+
   it('does not repeat identical file path and output details', () => {
     renderCompleted([
       turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),

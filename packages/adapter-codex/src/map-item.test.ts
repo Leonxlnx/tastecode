@@ -4,7 +4,7 @@ import { mapThreadItem } from './map-item.js'
 
 const context = { turnId: 'turn-1', status: 'completed', createdAt: 10 } as const
 
-/** Sanitized lifecycle item captured from Codex 0.146.0 on Windows. */
+/** Sanitized lifecycle item captured from Codex 0.147.0 on Windows. */
 const capturedImageView = {
   type: 'imageView',
   id: 'exec-e4010f67-cbbb-4f18-8e4b-aa4baf3a2d3c',

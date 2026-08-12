@@ -706,7 +706,7 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
         {item.durationMs !== undefined && item.durationMs >= 1000 ? (
           <span className="aux__time">{duration(item.durationMs)}</span>
         ) : null}
-        {!live && item.status === 'started' ? (
+        {!live && item.status === 'started' && !isImageView(item) ? (
           <LoaderCircle className="spinner" aria-hidden />
         ) : null}
       </button>
@@ -1058,7 +1058,9 @@ function summarise(item: Item): string {
         (isImageView(item)
           ? item.status === 'failed'
             ? 'Could not view image'
-            : 'Viewed image'
+            : item.status === 'started'
+              ? 'Image inspection interrupted'
+              : 'Viewed image'
           : item.text) ??
         'Tool call'
       )
