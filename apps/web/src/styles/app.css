@@ -6168,12 +6168,7 @@
 .reply {
   color: var(--response-text);
   line-height: 1.52;
-  /* Room for the copy row, reserved whether or not it is rendered yet: it
-     only appears once the answer completes, and in normal flow that made the
-     transcript jump 32px at the exact moment a stream ended. Same technique
-     the user prompts already use for .said__actions. */
   position: relative;
-  padding-bottom: 32px;
 }
 
 .reply > .md {
@@ -6611,9 +6606,10 @@
 
 .reply > .response-actions {
   position: absolute;
-  bottom: 0;
+  top: 100%;
   left: 0;
-  margin-top: 0;
+  z-index: 1;
+  margin-top: 3px;
 }
 
 .response-actions {
