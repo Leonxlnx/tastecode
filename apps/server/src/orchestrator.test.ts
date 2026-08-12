@@ -1276,6 +1276,7 @@ describe('provider-neutral design briefing', () => {
         ),
       ).toBe(true)
       await vi.waitFor(() => expect(sessions[0]?.sent.at(-1)).toBe('Continue normally.'))
+      sessions[0]?.emit(turnStarted(thread.id, 'queued-turn'))
 
       // Codex follows a terminal error with completion for the failed turn.
       // That stale completion must not release the new turn behind it.
@@ -1284,6 +1285,14 @@ describe('provider-neutral design briefing', () => {
         queued: true,
       })
       expect(sessions[0]?.sent.at(-1)).toBe('Continue normally.')
+      const state = reduceEventLog(emptyThread, store.history(thread.id))
+      expect(state.running).toBe(true)
+      expect(state.activeTurn?.id).toBe('queued-turn')
+      expect(
+        received.some(
+          ({ event }) => event.type === 'turn.completed' && event.turnId === 'design-turn',
+        ),
+      ).toBe(false)
     } finally {
       await orchestrator.disposeAll()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })

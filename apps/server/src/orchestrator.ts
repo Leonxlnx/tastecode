@@ -1155,6 +1155,13 @@ export class Orchestrator {
    * write has to happen first even though it is the slower half.
    */
   #record(threadId: string, event: DomainEvent): void {
+    if (
+      event.type === 'turn.completed' &&
+      this.#activeTurnIds.has(threadId) &&
+      this.#activeTurnIds.get(threadId) !== event.turnId
+    ) {
+      return
+    }
     let matchedStart: PendingTurnStart | undefined
     if (event.type === 'turn.started') {
       const acceptedStarts = this.#acceptedTurnStarts.get(threadId)
@@ -1181,10 +1188,7 @@ export class Orchestrator {
       this.#activeTurns.add(threadId)
       this.#activeTurnIds.set(threadId, event.turn.id)
     }
-    if (
-      event.type === 'thread.error' ||
-      (event.type === 'turn.completed' && this.#activeTurnIds.get(threadId) === event.turnId)
-    ) {
+    if (event.type === 'turn.completed' || event.type === 'thread.error') {
       this.#activeTurns.delete(threadId)
       const activeTurnId =
         event.type === 'turn.completed' ? event.turnId : this.#activeTurnIds.get(threadId)
