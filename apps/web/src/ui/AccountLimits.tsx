@@ -2,92 +2,68 @@ import { useId, useLayoutEffect, useRef } from 'react'
 import type { ProviderId, ProviderLimitSource, ResultOf } from '@harness/contracts'
 import { CircleAlert, Gauge, RefreshCw } from 'lucide-react'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
+import type { UsageSummaryState } from '../usage-summary-state.js'
 import { ProviderIcon } from './ProviderIcon.js'
 
 type Limit = ResultOf<'usage.summary'>['limits'][number]
 
-type Summary = ResultOf<'usage.summary'>
+export type AccountLimitsState = UsageSummaryState
 
-export type AccountLimitsState =
-  | { status: 'loading'; provider: ProviderId; summary?: Summary }
-  | { status: 'ready'; provider: ProviderId; summary: Summary }
-  | { status: 'error'; provider: ProviderId; message: string; summary?: Summary }
-
-export function AccountLimits(props: { state: AccountLimitsState; onRetry: () => void }) {
+export function AccountLimits(props: {
+  states: AccountLimitsState[]
+  onRetry: (provider: ProviderId) => void
+}) {
   const headingId = useId()
   const heading = useRef<HTMLHeadingElement>(null)
-  const source = limitSource(props.state)
-  const hasSource = source !== undefined
-  const hasUsableValues = source?.status === 'ready' && source.limits.length > 0
 
   useLayoutEffect(() => heading.current?.focus(), [])
 
-  const retry = () => {
+  const retry = (provider: ProviderId) => {
     heading.current?.focus()
-    props.onRetry()
+    props.onRetry(provider)
   }
 
   return (
     <section
       className="account-menu__usage"
       aria-labelledby={headingId}
-      aria-busy={props.state.status === 'loading'}
+      aria-busy={props.states.some((state) => state.status === 'loading')}
     >
       <h2 ref={heading} className="account-menu__usage-head" id={headingId} tabIndex={-1}>
         <Gauge size={14} aria-hidden />
         <span>Plan limits</span>
       </h2>
 
-      <LimitSource
-        provider={source?.provider ?? props.state.provider}
-        source={source}
-        showContents={props.state.status !== 'error' || hasUsableValues}
-      />
-
-      {props.state.status === 'loading' ? (
-        <p className="account-menu__usage-note" role="status">
-          <RefreshCw size={13} aria-hidden />
-          {hasSource ? 'Refreshing plan limits…' : 'Checking plan limits…'}
-        </p>
-      ) : null}
-
-      {props.state.status === 'error' ? (
-        <div className="account-menu__usage-error" role="alert">
-          <CircleAlert size={13} aria-hidden />
-          <span>
-            {hasUsableValues
-              ? 'Couldn’t refresh plan limits. Last known values are still shown.'
-              : 'Plan limits couldn’t be loaded.'}
-            <small>{props.state.message}</small>
-          </span>
-          <button type="button" onClick={retry}>
-            Retry
-          </button>
-        </div>
-      ) : null}
+      {props.states.map((state) => (
+        <LimitSource key={state.provider} state={state} onRetry={() => retry(state.provider)} />
+      ))}
     </section>
   )
 }
 
-function LimitSource(props: {
-  provider: ProviderId
-  source: ProviderLimitSource | undefined
-  showContents: boolean
-}) {
+function LimitSource(props: { state: AccountLimitsState; onRetry: () => void }) {
   const titleId = useId()
-  const name = providerDisplayName(props.provider)
+  const source = limitSource(props.state)
+  const hasSource = source !== undefined
+  const hasUsableValues = source?.status === 'ready' && source.limits.length > 0
+  const name = providerDisplayName(props.state.provider)
   return (
-    <section className="account-menu__source" aria-labelledby={titleId}>
+    <section
+      className="account-menu__source"
+      aria-labelledby={titleId}
+      aria-busy={props.state.status === 'loading'}
+    >
       <h3 id={titleId}>
-        <ProviderIcon mark={providerMark(props.provider)} size={14} />
+        <ProviderIcon mark={providerMark(props.state.provider)} size={14} />
         {name}
       </h3>
-      {!props.source || !props.showContents ? null : props.source.status === 'unavailable' ? (
+      {!source || (props.state.status === 'error' && !hasUsableValues) ? null : source.status ===
+        'unavailable' ? (
         <p className="account-menu__usage-note">Plan limits aren’t available from this source.</p>
-      ) : props.source.limits.length === 0 ? (
+      ) : source.limits.length === 0 ? (
         <p className="account-menu__usage-note">No plan limits reported.</p>
       ) : (
-        props.source.limits.map((limit, index) => (
+        source.limits.map((limit, index) => (
           <div className="account-menu__limit" key={`${limit.label}:${index}`}>
             <div className="account-menu__limit-row">
               <span className="account-menu__limit-label">{limit.label}</span>
@@ -114,6 +90,27 @@ function LimitSource(props: {
           </div>
         ))
       )}
+      {props.state.status === 'loading' ? (
+        <p className="account-menu__usage-note" role="status">
+          <RefreshCw size={13} aria-hidden />
+          {hasSource ? 'Refreshing plan limits…' : 'Checking plan limits…'}
+          {hasUsableValues ? ' Last known values are shown.' : null}
+        </p>
+      ) : null}
+      {props.state.status === 'error' ? (
+        <div className="account-menu__usage-error" role="alert">
+          <CircleAlert size={13} aria-hidden />
+          <span>
+            {hasUsableValues
+              ? 'Couldn’t refresh plan limits. Last known values are still shown.'
+              : 'Plan limits couldn’t be loaded.'}
+            <small>{props.state.message}</small>
+          </span>
+          <button type="button" onClick={props.onRetry}>
+            Retry
+          </button>
+        </div>
+      ) : null}
     </section>
   )
 }

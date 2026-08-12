@@ -28,7 +28,7 @@ const summary = (limits: ResultOf<'usage.summary'>['limits'] = []): ResultOf<'us
 })
 
 function limits(state: AccountLimitsState, onRetry = () => {}) {
-  return <AccountLimits state={state} onRetry={onRetry} />
+  return <AccountLimits states={[state]} onRetry={onRetry} />
 }
 
 describe('account limits', () => {
