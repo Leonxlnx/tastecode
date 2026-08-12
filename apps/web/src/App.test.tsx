@@ -34,6 +34,10 @@ const utilityRenders = vi.hoisted(() => ({
 }))
 
 const appRenders = vi.hoisted(() => vi.fn())
+const threadCallbacks = vi.hoisted(() => ({
+  answerUserInput: undefined as
+    ((id: string, answers: Record<string, string[]>) => void | Promise<void>) | undefined,
+}))
 const pickFolder = vi.hoisted(() => vi.fn())
 
 vi.mock('./transport.js', () => ({
@@ -104,8 +108,15 @@ vi.mock('./ui/Thread.js', () => ({
     liveItems?: ReadonlyMap<number, { item: { id: string; text?: string } }>
     running: boolean
     activeTurn?: { id: string; startedAt: number }
+    onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
   }) => (
-    <div data-testid="thread" data-started-at={props.activeTurn?.startedAt}>
+    <div
+      data-testid="thread"
+      data-started-at={props.activeTurn?.startedAt}
+      ref={() => {
+        threadCallbacks.answerUserInput = props.onAnswerUserInput
+      }}
+    >
       {props.items.map((base, index) => (
         <span key={base.id} data-item-id={base.id}>
           {props.liveItems?.get(index)?.item.text ?? base.text}
@@ -241,6 +252,7 @@ beforeEach(() => {
   transport.stateListeners.clear()
   transport.sequenceGapListeners.clear()
   transport.urls.length = 0
+  threadCallbacks.answerUserInput = undefined
   window.location.hash = ''
   document.documentElement.removeAttribute('data-theme')
   document.documentElement.classList.remove('dark')
@@ -1490,6 +1502,22 @@ describe('new chats', () => {
     expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe('true')
     expect(screen.queryByRole('alert')).toBeNull()
     expect((composer as HTMLTextAreaElement).value).toBe('')
+  })
+
+  it('passes a rejected brief-answer request back through the thread', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.respondToUserInput'
+        ? Promise.reject(new Error('disconnected'))
+        : request(method, params),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+
+    await expect(
+      threadCallbacks.answerUserInput?.('brief-1', { palette: ['Warm'] }),
+    ).rejects.toThrow('disconnected')
   })
 
   it('starts a new session in an isolated checkout when selected', async () => {

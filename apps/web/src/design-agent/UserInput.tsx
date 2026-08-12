@@ -1,6 +1,7 @@
-import { useRef, useState, type WheelEvent } from 'react'
+import { useEffect, useRef, useState, type WheelEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { UserInputRequest } from '@harness/contracts'
+import { isIndeterminateRequestError } from '../transport.js'
 import './user-input.css'
 
 export function UserInput(props: {
@@ -10,7 +11,8 @@ export function UserInput(props: {
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [step, setStep] = useState(0)
   const [submitting, setSubmitting] = useState(false)
-  const [submissionError, setSubmissionError] = useState(false)
+  const [submissionError, setSubmissionError] = useState<'definite' | 'indeterminate'>()
+  const previousRequest = useRef(props.request)
   const lastWheelAt = useRef(0)
   const question = props.request.questions[step]
   const answer = question ? answers[question.id]?.trim() : undefined
@@ -18,11 +20,21 @@ export function UserInput(props: {
   const composer =
     typeof document === 'undefined' ? null : document.querySelector<HTMLElement>('.composer__box')
 
+  useEffect(() => {
+    if (previousRequest.current === props.request) return
+    previousRequest.current = props.request
+    if (submissionError !== 'indeterminate') return
+    setSubmitting(false)
+    setSubmissionError(undefined)
+  }, [props.request, submissionError])
+
   if (submitting) {
     const status = (
       <div className="brief-input brief-input--status" role="status">
         <span className="brief-input__spinner" aria-hidden="true" />
-        Submitting answers…
+        {submissionError === 'indeterminate'
+          ? 'Checking whether answers were received…'
+          : 'Submitting answers…'}
       </div>
     )
     return composer ? createPortal(status, composer) : status
@@ -76,10 +88,14 @@ export function UserInput(props: {
           return
         }
         setSubmitting(true)
-        setSubmissionError(false)
-        const retry = () => {
+        setSubmissionError(undefined)
+        const retry = (error: unknown) => {
+          if (isIndeterminateRequestError(error)) {
+            setSubmissionError('indeterminate')
+            return
+          }
           setSubmitting(false)
-          setSubmissionError(true)
+          setSubmissionError('definite')
         }
         try {
           void Promise.resolve(
@@ -89,8 +105,8 @@ export function UserInput(props: {
               ),
             ),
           ).catch(retry)
-        } catch {
-          retry()
+        } catch (error) {
+          retry(error)
         }
       }}
     >
@@ -151,7 +167,7 @@ export function UserInput(props: {
       </div>
 
       <footer className="brief-input__footer">
-        {submissionError ? (
+        {submissionError === 'definite' ? (
           <span role="alert">Could not submit. Try again.</span>
         ) : (
           <span>
