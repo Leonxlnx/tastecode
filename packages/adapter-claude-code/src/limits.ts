@@ -1,4 +1,4 @@
-import { readFile, rename, writeFile } from 'node:fs/promises'
+import { readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -39,6 +39,12 @@ function credentialsPath(): string {
   return join(configDir || join(homedir(), '.claude'), '.credentials.json')
 }
 
+function object(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
 function clampPercent(value: unknown): number | undefined {
   const numeric = typeof value === 'string' && value.trim() ? Number(value) : value
   if (typeof numeric !== 'number' || !Number.isFinite(numeric)) return undefined
@@ -68,6 +74,8 @@ export function mapClaudeUsage(body: unknown): ProviderLimit[] {
     ...windowRow('Session', record['five_hour']),
     ...windowRow('Weekly', record['seven_day']),
     ...windowRow('Sonnet weekly', record['seven_day_sonnet']),
+    ...windowRow('Opus weekly', record['seven_day_opus']),
+    ...windowRow('OAuth apps weekly', record['seven_day_oauth_apps']),
   ]
   // Newer responses carry per-model weekly windows in `limits[]` instead.
   if (Array.isArray(record['limits'])) {
@@ -97,18 +105,39 @@ async function readOauth(): Promise<
   let text: string
   try {
     text = await readFile(credentialsPath(), 'utf8')
-  } catch {
-    return undefined
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw new Error('Claude credentials could not be read.')
   }
+  let parsed: unknown
   try {
-    const raw = JSON.parse(text) as Record<string, unknown>
-    const oauth = raw['claudeAiOauth'] as ClaudeOauth | undefined
-    if (!oauth || typeof oauth.accessToken !== 'string' || !oauth.accessToken.trim())
-      return undefined
-    return { oauth, raw }
+    parsed = JSON.parse(text)
   } catch {
-    return undefined
+    throw new Error('Claude credentials could not be parsed.')
   }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('Claude credentials could not be parsed.')
+  }
+  const raw = parsed as Record<string, unknown>
+  const candidate = raw['claudeAiOauth']
+  if (candidate === undefined) return undefined
+  if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
+    throw new Error('Claude credentials could not be parsed.')
+  }
+  const oauth = candidate as ClaudeOauth
+  if (typeof oauth.accessToken !== 'string' || !oauth.accessToken.trim()) {
+    throw new Error('Claude credentials could not be parsed.')
+  }
+  if (oauth.refreshToken !== undefined && typeof oauth.refreshToken !== 'string') {
+    throw new Error('Claude credentials could not be parsed.')
+  }
+  if (
+    oauth.expiresAt !== undefined &&
+    (typeof oauth.expiresAt !== 'number' || !Number.isFinite(oauth.expiresAt))
+  ) {
+    throw new Error('Claude credentials could not be parsed.')
+  }
+  return { oauth, raw }
 }
 
 async function refreshAccessToken(
@@ -116,53 +145,129 @@ async function refreshAccessToken(
   raw: Record<string, unknown>,
 ): Promise<string | undefined> {
   if (!oauth.refreshToken?.trim()) return undefined
-  const response = await fetch(REFRESH_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'refresh_token',
-      refresh_token: oauth.refreshToken,
-      client_id: CLIENT_ID,
-      scope:
-        'user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload',
-    }),
-    signal: AbortSignal.timeout(15_000),
-  })
-  if (!response.ok) return undefined
-  const body = (await response.json()) as {
-    access_token?: string
-    refresh_token?: string
-    expires_in?: number
+  let response: Response
+  try {
+    response = await fetch(REFRESH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'refresh_token',
+        refresh_token: oauth.refreshToken,
+        client_id: CLIENT_ID,
+        scope:
+          'user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload',
+      }),
+      signal: AbortSignal.timeout(15_000),
+    })
+  } catch {
+    throw new Error('Claude credential refresh request failed.')
   }
-  if (typeof body.access_token !== 'string' || !body.access_token.trim()) return undefined
+  if (!response.ok) {
+    throw new Error(`Claude credential refresh failed (HTTP ${response.status})`)
+  }
+  let body: Record<string, unknown> | undefined
+  try {
+    body = object(await response.json())
+  } catch {
+    throw new Error('Claude credential refresh response was invalid.')
+  }
+  const accessToken = body?.['access_token']
+  const refreshToken = body?.['refresh_token']
+  const expiresIn = body?.['expires_in']
+  if (
+    typeof accessToken !== 'string' ||
+    !accessToken.trim() ||
+    (refreshToken !== undefined && typeof refreshToken !== 'string') ||
+    (expiresIn !== undefined && (typeof expiresIn !== 'number' || !Number.isFinite(expiresIn)))
+  ) {
+    throw new Error('Claude credential refresh response was invalid.')
+  }
   const next: ClaudeOauth = {
     ...oauth,
-    accessToken: body.access_token,
-    ...(body.refresh_token?.trim() ? { refreshToken: body.refresh_token } : {}),
+    accessToken,
+    ...(typeof refreshToken === 'string' && refreshToken.trim() ? { refreshToken } : {}),
   }
   delete next.expiresAt
-  if (Number.isFinite(body.expires_in) && (body.expires_in ?? 0) > 0) {
-    next.expiresAt = Date.now() + (body.expires_in as number) * 1000
+  if (typeof expiresIn === 'number' && expiresIn > 0) {
+    next.expiresAt = Date.now() + expiresIn * 1000
   }
   // The refresh token rotates: losing the new one signs the CLI out, so the
   // write must land (atomically) before the new access token is used.
   const path = credentialsPath()
   const temp = `${path}.tmp-${process.pid}`
-  await writeFile(temp, JSON.stringify({ ...raw, claudeAiOauth: next }, null, 2), 'utf8')
-  await rename(temp, path)
-  return body.access_token
+  try {
+    await writeFile(temp, JSON.stringify({ ...raw, claudeAiOauth: next }, null, 2), 'utf8')
+    await rename(temp, path)
+  } catch {
+    await rm(temp, { force: true }).catch(() => undefined)
+    throw new Error('Claude credentials could not be updated.')
+  }
+  return accessToken
 }
 
-export async function claudeLimits(): Promise<ProviderLimit[]> {
+export type ClaudeLimitSource =
+  { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
+
+const CLAUDE_USAGE_WINDOWS = [
+  'five_hour',
+  'seven_day',
+  'seven_day_sonnet',
+  'seven_day_opus',
+  'seven_day_oauth_apps',
+] as const
+
+function isUsageWindow(value: unknown): boolean {
+  if (value === null) return true
+  const window = object(value)
+  if (!window || clampPercent(window['utilization']) === undefined) return false
+  const reset = window['resets_at']
+  return reset === undefined || reset === null || parseResetsAt(reset) !== undefined
+}
+
+function isClaudeUsageBody(value: unknown): value is Record<string, unknown> {
+  const body = object(value)
+  if (!body) return false
+  let known = false
+  for (const key of CLAUDE_USAGE_WINDOWS) {
+    if (!Object.hasOwn(body, key)) continue
+    known = true
+    if (!isUsageWindow(body[key])) return false
+  }
+  if (Object.hasOwn(body, 'limits')) {
+    known = true
+    const limits = body['limits']
+    if (
+      limits !== null &&
+      (!Array.isArray(limits) ||
+        !limits.every((entry) => {
+          const limit = object(entry)
+          return Boolean(
+            limit &&
+            typeof limit['kind'] === 'string' &&
+            clampPercent(limit['percent']) !== undefined,
+          )
+        }))
+    )
+      return false
+  }
+  if (Object.hasOwn(body, 'extra_usage')) {
+    known = true
+    if (body['extra_usage'] !== null && !object(body['extra_usage'])) return false
+  }
+  return known
+}
+
+export async function claudeLimitSource(): Promise<ClaudeLimitSource> {
+  const stored = await readOauth()
+  if (!stored) return { status: 'unavailable' }
+  let token = stored.oauth.accessToken
+  const expiresAt = stored.oauth.expiresAt
+  if (typeof expiresAt === 'number' && expiresAt - Date.now() <= REFRESH_MARGIN_MS) {
+    token = (await refreshAccessToken(stored.oauth, stored.raw)) ?? token
+  }
+  let response: Response
   try {
-    const stored = await readOauth()
-    if (!stored) return []
-    let token = stored.oauth.accessToken
-    const expiresAt = stored.oauth.expiresAt
-    if (typeof expiresAt === 'number' && expiresAt - Date.now() <= REFRESH_MARGIN_MS) {
-      token = (await refreshAccessToken(stored.oauth, stored.raw)) ?? token
-    }
-    const response = await fetch(USAGE_URL, {
+    response = await fetch(USAGE_URL, {
       headers: {
         Authorization: `Bearer ${token.trim()}`,
         Accept: 'application/json',
@@ -172,9 +277,22 @@ export async function claudeLimits(): Promise<ProviderLimit[]> {
       },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     })
-    if (!response.ok) return []
-    return mapClaudeUsage(await response.json())
   } catch {
-    return []
+    throw new Error('Claude usage request failed.')
   }
+  if (!response.ok) throw new Error(`Claude usage request failed (HTTP ${response.status})`)
+  let body: unknown
+  try {
+    body = await response.json()
+  } catch {
+    throw new Error('Claude usage response was invalid.')
+  }
+  if (!isClaudeUsageBody(body)) throw new Error('Claude usage response was invalid.')
+  return { status: 'ready', limits: mapClaudeUsage(body) }
+}
+
+/** Compatibility view while the orchestrator migrates to the richer source state. */
+export async function claudeLimits(): Promise<ProviderLimit[]> {
+  const source = await claudeLimitSource()
+  return source.status === 'ready' ? source.limits : []
 }

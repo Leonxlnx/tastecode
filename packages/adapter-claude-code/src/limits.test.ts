@@ -1,8 +1,8 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { claudeLimits, mapClaudeUsage } from './limits.js'
+import { claudeLimitSource, claudeLimits, mapClaudeUsage } from './limits.js'
 
 let configDir: string | undefined
 
@@ -64,19 +64,135 @@ describe('mapClaudeUsage', () => {
     ])
   })
 
+  it('maps every recognized legacy weekly window, including valid zero usage', () => {
+    expect(
+      mapClaudeUsage({
+        seven_day_opus: { utilization: 0 },
+        seven_day_oauth_apps: { utilization: 25 },
+      }),
+    ).toEqual([
+      { label: 'Opus weekly', usedPercent: 0 },
+      { label: 'OAuth apps weekly', usedPercent: 25 },
+    ])
+  })
+
   it('returns nothing for junk bodies', () => {
     expect(mapClaudeUsage(undefined)).toEqual([])
     expect(mapClaudeUsage('nope')).toEqual([])
     expect(mapClaudeUsage({})).toEqual([])
   })
 
-  it('ignores malformed credentials without making a request', async () => {
+  it('marks an absent credential unavailable without making a request', async () => {
+    configDir = await mkdtemp(join(tmpdir(), 'harness-claude-limits-'))
+    vi.stubEnv('CLAUDE_CONFIG_DIR', configDir)
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(claudeLimitSource()).resolves.toEqual({ status: 'unavailable' })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('surfaces malformed or unreadable credentials without exposing their path', async () => {
     await credentials('{not-json')
     const fetch = vi.fn()
     vi.stubGlobal('fetch', fetch)
 
-    await expect(claudeLimits()).resolves.toEqual([])
+    await expect(claudeLimitSource()).rejects.toThrow('Claude credentials could not be parsed.')
     expect(fetch).not.toHaveBeenCalled()
+
+    if (configDir) await rm(configDir, { recursive: true, force: true })
+    configDir = await mkdtemp(join(tmpdir(), 'harness-claude-limits-'))
+    vi.stubEnv('CLAUDE_CONFIG_DIR', configDir)
+    await mkdir(join(configDir, '.credentials.json'))
+    await expect(claudeLimitSource()).rejects.toThrow('Claude credentials could not be read.')
+  })
+
+  it('does not treat a present but invalid OAuth record as unconfigured', async () => {
+    await credentials({ claudeAiOauth: { accessToken: ' ' } })
+    vi.stubGlobal('fetch', vi.fn())
+
+    await expect(claudeLimitSource()).rejects.toThrow('Claude credentials could not be parsed.')
+  })
+
+  it('sanitizes invalid optional OAuth fields before attempting refresh', async () => {
+    await credentials({
+      claudeAiOauth: {
+        accessToken: 'test-access',
+        refreshToken: 42,
+        expiresAt: 0,
+      },
+    })
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(claudeLimitSource()).rejects.toThrow('Claude credentials could not be parsed.')
+    expect(fetch).not.toHaveBeenCalled()
+
+    if (configDir) await rm(configDir, { recursive: true, force: true })
+    await credentials({ claudeAiOauth: { accessToken: 'test-access', expiresAt: 'soon' } })
+    await expect(claudeLimitSource()).rejects.toThrow('Claude credentials could not be parsed.')
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('does not collapse a failed usage response into an empty result', async () => {
+    await credentials({
+      claudeAiOauth: {
+        accessToken: 'test-access',
+        expiresAt: Date.now() + 60_000,
+      },
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 503 })))
+
+    await expect(claudeLimits()).rejects.toThrow('Claude usage request failed (HTTP 503)')
+  })
+
+  it('rejects malformed successful responses but accepts known empty windows', async () => {
+    await credentials({
+      claudeAiOauth: {
+        accessToken: 'test-access',
+        expiresAt: Date.now() + 60_000,
+      },
+    })
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ new_shape: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ five_hour: 'broken' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ five_hour: {} }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ limits: {} }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ limits: ['broken'] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ five_hour: null }), { status: 200 }))
+    vi.stubGlobal('fetch', fetch)
+
+    for (let index = 0; index < 5; index += 1) {
+      await expect(claudeLimitSource()).rejects.toThrow('Claude usage response was invalid.')
+    }
+    await expect(claudeLimitSource()).resolves.toEqual({ status: 'ready', limits: [] })
+  })
+
+  it('sanitizes invalid refresh response fields', async () => {
+    await credentials({
+      claudeAiOauth: {
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
+        expiresAt: 0,
+      },
+    })
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('null', { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access_token: 'new-access', refresh_token: 42 }), {
+          status: 200,
+        }),
+      )
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(claudeLimitSource()).rejects.toThrow(
+      'Claude credential refresh response was invalid.',
+    )
+    await expect(claudeLimitSource()).rejects.toThrow(
+      'Claude credential refresh response was invalid.',
+    )
   })
 
   it('merge-saves a rotated refresh token and clears stale expiry metadata', async () => {
