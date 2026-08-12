@@ -12,6 +12,7 @@ describe('thread reply spacing', () => {
     const proseLeading = css.match(
       /\.reply > \.md :is\(p, ul, ol, blockquote\) \{(?<body>[\s\S]*?)\n\}/,
     )?.groups?.['body']
+    const codeLeading = css.match(/\.reply > \.md pre \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
     const proseSpacing = css.match(
       /\.reply > \.md p,\n\.reply > \.md ul,\n\.reply > \.md ol \{(?<body>[\s\S]*?)\n\}/,
     )?.groups?.['body']
@@ -24,6 +25,7 @@ describe('thread reply spacing', () => {
     expect(responseMarkdown).toContain('font-size: var(--t-md)')
     expect(responseMarkdown).toContain('line-height: 1.52')
     expect(proseLeading).toContain('line-height: 1.45')
+    expect(codeLeading).toContain('line-height: 1.52')
     expect(proseSpacing).toContain('margin-bottom: 6px')
     expect(listItem).toContain('margin-block: 0')
     expect(code).toContain('font-size: var(--t-sm)')

@@ -6180,6 +6180,10 @@
   line-height: 1.45;
 }
 
+.reply > .md pre {
+  line-height: 1.52;
+}
+
 .reply > .md p,
 .reply > .md ul,
 .reply > .md ol {
