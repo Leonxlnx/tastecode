@@ -267,6 +267,33 @@ describe('completed activity disclosure', () => {
     expect(screen.getByText('Building the website')).toBeTruthy()
   })
 
+  it('renders sequential image inspections clearly after replay', () => {
+    const { container } = renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Review the layouts' }),
+      turnItem('image-1', 2, { type: 'tool_call', text: 'image view\ndesktop.png' }),
+      turnItem('image-2', 3, { type: 'tool_call', text: 'image view\nmobile.png' }),
+      turnItem('image-3', 4, {
+        type: 'tool_call',
+        status: 'failed',
+        text: 'image view\nbroken.png',
+      }),
+      turnItem('answer-1', 5, {
+        role: 'assistant',
+        phase: 'final_answer',
+        text: 'Reviewed.',
+      }),
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
+    expect(screen.getAllByText('Viewed image')).toHaveLength(2)
+    expect(screen.getByText('Could not view image')).toBeTruthy()
+    expect(screen.getByText('desktop.png')).toBeTruthy()
+    expect(screen.getByText('mobile.png')).toBeTruthy()
+    expect(screen.getByText('broken.png')).toBeTruthy()
+    expect(screen.queryByText('[imageView]')).toBeNull()
+    expect(container.querySelectorAll('.lucide-images')).toHaveLength(3)
+  })
+
   it('does not repeat identical file path and output details', () => {
     renderCompleted([
       turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),

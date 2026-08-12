@@ -685,6 +685,7 @@ const Row = memo(function Row({
  */
 function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
   const [expanded, setExpanded] = useState(false)
+  const detail = imageViewDetail(item) ?? item.text
 
   return (
     <div className={`aux aux--${item.type} ${live ? 'aux--live' : ''}`} data-expanded={expanded}>
@@ -710,10 +711,10 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
         ) : null}
       </button>
       {/* Design markers have no output worth expanding — their text is the slug. */}
-      {item.text && !(item.type === 'tool_call' && designPhaseLabel(toolText(item))) ? (
+      {detail && !(item.type === 'tool_call' && designPhaseLabel(toolText(item))) ? (
         <div className="aux__reveal" data-open={expanded} aria-hidden={!expanded} inert={!expanded}>
           <div className="aux__reveal-clip">
-            <pre className="aux__out">{item.text}</pre>
+            <pre className="aux__out">{detail}</pre>
           </div>
         </div>
       ) : null}
@@ -806,6 +807,8 @@ function isVisibleWorkedItem(item: Item): boolean {
 
 function activityDetail(item: Item): string | undefined {
   if (item.type === 'tool_call' && designPhaseLabel(toolText(item))) return undefined
+  const image = imageViewDetail(item)
+  if (image !== undefined) return image
   const summary = summarise(item)
   const details = item.type === 'file_change' ? [item.path, item.text] : [item.text]
   const unique = details.filter(
@@ -1007,6 +1010,10 @@ function summariseLive(item: Item): string {
       const text = toolText(item)
       const designPhase = designPhaseLabel(text)
       if (designPhase) return designPhase
+      if (isImageView(item)) {
+        if (item.status === 'failed') return 'Could not view image'
+        return ongoing ? 'Viewing image' : 'Viewed image'
+      }
       if (text.includes('image')) return ongoing ? 'Viewing an image' : 'Viewed an image'
       if (text.match(/read|open|file/)) return ongoing ? 'Reading files' : 'Read files'
       if (text.includes('search')) return ongoing ? 'Searching' : 'Searched'
@@ -1046,7 +1053,15 @@ function summarise(item: Item): string {
     case 'tool_call':
       // Design phase markers carry an internal slug; the reader gets the
       // same human label the working rail used while the phase ran.
-      return designPhaseLabel(toolText(item)) ?? item.text ?? 'Tool call'
+      return (
+        designPhaseLabel(toolText(item)) ??
+        (isImageView(item)
+          ? item.status === 'failed'
+            ? 'Could not view image'
+            : 'Viewed image'
+          : item.text) ??
+        'Tool call'
+      )
     case 'plan':
       return 'Plan'
     case 'error':
@@ -1054,6 +1069,16 @@ function summarise(item: Item): string {
     default:
       return item.type
   }
+}
+
+function isImageView(item: Item): boolean {
+  return item.type === 'tool_call' && item.text?.split('\n', 1)[0]?.trim() === 'image view'
+}
+
+function imageViewDetail(item: Item): string | undefined {
+  if (!isImageView(item)) return undefined
+  const detail = item.text?.split('\n').slice(1).join('\n').trim()
+  return detail || undefined
 }
 
 /** A phase that retried produces one marker per provider turn; the reader
