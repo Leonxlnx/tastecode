@@ -106,6 +106,33 @@ describe('account limits', () => {
     }
   })
 
+  it('renders contract-valid reset boundaries honestly', () => {
+    render(
+      limits({
+        status: 'ready',
+        provider: 'codex',
+        summary: {
+          ...summary(),
+          limitSource: {
+            provider: 'codex',
+            status: 'ready',
+            limits: [
+              { label: 'Epoch', usedPercent: 0, resetsAt: 0 },
+              { label: 'Far future', usedPercent: 0, resetsAt: Number.MAX_SAFE_INTEGER },
+            ],
+          },
+        },
+      }),
+    )
+
+    const epoch = screen.getByText('Epoch').closest('.account-menu__limit')
+    const farFuture = screen.getByText('Far future').closest('.account-menu__limit')
+    expect(epoch).not.toBeNull()
+    expect(farFuture).not.toBeNull()
+    expect(within(epoch as HTMLElement).getByText(/^Resets /)).toBeTruthy()
+    expect(within(farFuture as HTMLElement).getByText('Reset time unavailable.')).toBeTruthy()
+  })
+
   it('preserves usable values through a failed refresh and retries', () => {
     const onRetry = vi.fn()
     const view = render(

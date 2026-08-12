@@ -108,8 +108,8 @@ function LimitSource(props: {
                 />
               </div>
             ) : null}
-            {limit.resetsAt ? (
-              <span className="account-menu__limit-reset">Resets {resetLabel(limit.resetsAt)}</span>
+            {limit.resetsAt !== undefined ? (
+              <span className="account-menu__limit-reset">{resetLabel(limit.resetsAt)}</span>
             ) : null}
           </div>
         ))
@@ -134,11 +134,13 @@ function remaining(limit: Limit): number {
 /** A reset within the week reads as weekday and time; further out, as a date. */
 function resetLabel(at: number): string {
   const date = new Date(at)
+  if (Number.isNaN(date.getTime())) return 'Reset time unavailable.'
   const withinWeek = at - Date.now() < 6 * 86_400_000
-  return date.toLocaleString(
+  const formatted = date.toLocaleString(
     undefined,
     withinWeek
       ? { weekday: 'short', hour: '2-digit', minute: '2-digit' }
       : { month: 'short', day: 'numeric' },
   )
+  return `Resets ${formatted}`
 }
