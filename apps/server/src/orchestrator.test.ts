@@ -1340,6 +1340,147 @@ describe('persisted threads', () => {
     }
   })
 
+  it('stops before Preview after one failed exact-file correction', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-resume-'))
+    const store = new Store(':memory:')
+    const request =
+      'Create exactly index.html, styles.css, and app.js in the current directory; do not create other files.'
+    store.addProject(workspace)
+    store.addThread({
+      id: 'persisted-exact-build',
+      projectPath: workspace,
+      provider: 'codex',
+      title: 'Exact build',
+    })
+    writeDesignBrief(workspace, {
+      originalRequest: request,
+      subject: 'Studio',
+      pageType: 'Landing page',
+      scope: 'Single page',
+      primaryGoal: 'Generate enquiries',
+      audience: 'Prospective clients',
+      offer: 'Design services',
+      primaryAction: 'Start a project',
+      requiredContent: [],
+      constraints: [request],
+      brandInputs: [],
+      creativeControl: 'Agent-led',
+      explicitAnswers: [],
+      assumptions: [],
+      unresolved: [],
+    })
+    writeFileSync(
+      path.join(workspace, '.taste', 'brand.json'),
+      JSON.stringify({
+        version: 1,
+        creativeDirection: { summary: 'Editorial', keywords: [], avoid: [] },
+        colorPalette: [{ name: 'Ink', value: '#111111', usage: 'Text' }],
+        typefaces: [{ family: 'Arial', source: 'system', roles: ['body'], weights: [400] }],
+        interfaceDirection: 'Editorial grid',
+        imageDirection: { summary: 'None', subjects: [], treatment: 'None', avoid: [] },
+        motionDirection: { summary: 'Minimal', principles: [], avoid: [] },
+        voice: { summary: 'Direct', avoid: [] },
+      }),
+    )
+    writeFileSync(
+      path.join(workspace, '.taste', 'page.json'),
+      JSON.stringify({
+        version: 1,
+        page: { title: 'Studio', route: '/', description: 'Studio services' },
+        navigation: [],
+        sections: [
+          {
+            id: 'hero',
+            purpose: 'Introduce the offer',
+            copy: { heading: 'Studio', body: [], callsToAction: [] },
+            layout: 'Single column',
+            componentNeeds: [],
+            assetNeeds: [],
+          },
+        ],
+        responsive: [],
+        interactions: [],
+        acceptanceCriteria: [],
+      }),
+    )
+    writeFileSync(
+      path.join(workspace, '.taste', 'assets.json'),
+      JSON.stringify({ version: 1, assets: [] }),
+    )
+    for (const file of ['index.html', 'styles.css', 'app.js', 'preview-server.js', 'extra.json']) {
+      writeFileSync(path.join(workspace, file), file)
+    }
+    store.setDesignRun('persisted-exact-build', {
+      originalRequest: request,
+      options: {},
+      phase: 'build',
+      askedQuestions: false,
+      finalAsked: false,
+      explicitAnswers: [],
+    })
+
+    const { orchestrator, sessions, received, capturePreview } = harness(undefined, store)
+    const queuedPrompt = 'Queue this until design finishes.'
+    const report = JSON.stringify({
+      status: 'complete',
+      summary: 'Implemented the page.',
+      files: ['index.html', 'styles.css', 'app.js'],
+      checks: [],
+    })
+    try {
+      await orchestrator.submitTurn('persisted-exact-build', queuedPrompt)
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
+      await vi.waitFor(() =>
+        expect(
+          received.some(
+            ({ event }) => event.type === 'item.started' && event.item.text === 'design:build',
+          ),
+        ).toBe(true),
+      )
+
+      sessions[0]?.turnIds.push('correction-turn')
+      sessions[0]?.emit(message(report, 's1-turn'))
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+      expect(sessions[0]?.sent[1]).toContain('Make one bounded correction')
+      expect(store.designRun('persisted-exact-build')).toMatchObject({
+        phase: 'build',
+        correcting: true,
+      })
+      expect(capturePreview).not.toHaveBeenCalled()
+
+      await vi.waitFor(() =>
+        expect(
+          received.some(
+            ({ event }) => event.type === 'item.started' && event.item.turnId === 'correction-turn',
+          ),
+        ).toBe(true),
+      )
+      sessions[0]?.emit(message(report, 'correction-turn'))
+      sessions[0]?.emit({
+        type: 'turn.completed',
+        turnId: 'correction-turn',
+        status: 'completed',
+      })
+      await vi.waitFor(() => expect(store.designRun('persisted-exact-build')).toBeUndefined())
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
+      expect(sessions[0]?.sent[2]).toBe(queuedPrompt)
+      expect(capturePreview).not.toHaveBeenCalled()
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'thread.error' && event.message.includes('unexpected files'),
+        ),
+      ).toBe(true)
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
   it('resumes a stored Codex thread once and preserves concurrent prompt order', async () => {
     const store = new Store(':memory:')
     store.addProject('/repo')

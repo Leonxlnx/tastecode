@@ -1,5 +1,8 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { designBuildPrompt, parseBuildPhaseOutput } from './build-phase.js'
+import { designBuildPrompt, parseBuildPhaseOutput, validateExactBuildFiles } from './build-phase.js'
 
 const artifacts = [
   {
@@ -68,5 +71,50 @@ describe('build phase', () => {
         }),
       ),
     ).toMatchObject({ status: 'complete', files: ['src/App.tsx'] })
+  })
+
+  it('rejects workspace extras when the brief requires an exact file set', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-files-'))
+    const brief = {
+      ...artifacts[0],
+      originalRequest:
+        'Create exactly index.html, styles.css, and app.js in the current directory; do not create other files.',
+    }
+    try {
+      for (const file of [
+        'index.html',
+        'styles.css',
+        'app.js',
+        'preview-server.js',
+        'extra.json',
+      ]) {
+        writeFileSync(path.join(workspace, file), file)
+      }
+
+      expect(designBuildPrompt(brief, ...artifacts.slice(1))).toContain(
+        'exactly index.html, styles.css, and app.js',
+      )
+      expect(() => validateExactBuildFiles(workspace, brief)).toThrow(
+        'unexpected files: extra.json, preview-server.js',
+      )
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('does not constrain briefs without an exact file requirement', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-open-files-'))
+    try {
+      writeFileSync(path.join(workspace, 'anything.txt'), 'kept')
+      expect(() => validateExactBuildFiles(workspace, artifacts[0])).not.toThrow()
+      expect(() =>
+        validateExactBuildFiles(workspace, {
+          ...artifacts[0],
+          constraints: ['Use exactly v1.0 syntax.'],
+        }),
+      ).not.toThrow()
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
   })
 })

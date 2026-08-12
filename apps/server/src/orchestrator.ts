@@ -14,11 +14,13 @@ import {
 import { cursorAccount, signOutCursor, startCursorLogin } from '@harness/adapter-cursor'
 import {
   DESIGN_BRIEF_ATTACHMENT,
+  ExactBuildFilesError,
   FINAL_BRIEFING_QUESTION,
   designAssetPrompt,
   designBrandPrompt,
   designBriefingContinuation,
   designBriefingPrompt,
+  designBuildCorrectionPrompt,
   designBuildPrompt,
   designPagePrompt,
   designPhaseCorrectionPrompt,
@@ -38,6 +40,7 @@ import {
   readBrandSystem,
   readDesignBrief,
   readPageBlueprint,
+  validateExactBuildFiles,
   writeAssetManifest,
   writeBrandSystem,
   writeDesignBrief,
@@ -2470,8 +2473,9 @@ export class Orchestrator {
     }
     if (flow.phase === 'build') {
       const output = parseBuildPhaseOutput(text)
-      flow.correcting = false
       if (output.status === 'failed') throw new Error(output.error)
+      validateExactBuildFiles(flow.workspacePath, readDesignBrief(flow.workspacePath))
+      flow.correcting = false
       flow.phase = 'preview'
       flow.pendingPrompt = designPreviewPrompt()
       this.#saveDesignFlow(threadId)
@@ -2631,9 +2635,11 @@ export class Orchestrator {
   #queueDesignCorrection(threadId: string, flow: DesignFlow, error: unknown): string | undefined {
     if (flow.correcting) return undefined
     flow.correcting = true
-    const prompt = designPhaseCorrectionPrompt(
-      error instanceof Error ? error.message : String(error),
-    )
+    const detail = error instanceof Error ? error.message : String(error)
+    const prompt =
+      flow.phase === 'build' && error instanceof ExactBuildFilesError
+        ? designBuildCorrectionPrompt(detail)
+        : designPhaseCorrectionPrompt(detail)
     flow.pendingPrompt = prompt
     this.#saveDesignFlow(threadId)
     return prompt
