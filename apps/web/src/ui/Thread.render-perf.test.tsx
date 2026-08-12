@@ -239,7 +239,11 @@ describe('streamed thread renders', () => {
       'Working',
     )
     expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
+    expect(rendered.container.querySelector('[data-index="2"]')?.className).toContain(
+      'is-suppressed',
+    )
     expect(rendered.queryByRole('button', { name: 'Ran a command' })).toBeNull()
+    expect(rendered.queryByRole('button', { name: 'pnpm test' })).toBeNull()
     expect(markdownRender).toHaveBeenLastCalledWith({ text: narration.text, streaming: true })
   })
 

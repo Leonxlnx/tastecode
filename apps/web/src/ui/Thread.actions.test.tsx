@@ -336,11 +336,18 @@ describe('completed activity disclosure', () => {
     expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
       'Viewing image',
     )
+    expect(rendered.container.querySelector('[data-index="0"]')?.className).toContain(
+      'is-suppressed',
+    )
     expect(screen.queryByRole('button', { name: 'Viewing image' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Image inspection interrupted' })).toBeNull()
     expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
 
     rendered.rerender(view(completedImage))
     expect(rendered.container.querySelector('.activity--working')).toBe(rail)
+    expect(rendered.container.querySelector('[data-index="0"]')?.className).not.toContain(
+      'is-suppressed',
+    )
     expect(screen.getByRole('button', { name: 'Viewed image' })).toBeTruthy()
     expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
       'Working',
