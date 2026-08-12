@@ -804,7 +804,7 @@ function ComposerComponent(props: {
                         : 'Provider unavailable'}
                   </span>
                   {props.sendAvailability !== 'loading' ? (
-                    <button type="button" onClick={props.onSetupProvider}>
+                    <button className="ghost" type="button" onClick={props.onSetupProvider}>
                       Set up a provider
                     </button>
                   ) : null}
