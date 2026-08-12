@@ -3717,6 +3717,15 @@ describe('reopening a session', () => {
     expect(JSON.parse(localStorage.getItem('harness.modelBySource') ?? '{}')).toMatchObject({
       'acp:kimi': { modelKey: 'acp:kimi:model-x', effort: 'high' },
     })
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    const composer = screen.getByPlaceholderText('Do anything')
+    const sendButton = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
+    fireEvent.change(composer, { target: { value: 'Start on the beta source' } })
+    await waitFor(() => expect(sendButton.disabled).toBe(false))
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    const betaStart = expect.objectContaining({ provider: 'codex' })
+    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('thread.start', betaStart))
   })
 
   it('does not display a fallback from another provider after hiding the session source', async () => {

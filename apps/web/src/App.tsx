@@ -526,27 +526,16 @@ export function App() {
     selectableModels.find((choice) => choice.key === modelId) ??
     selectableModels[0] ??
     selectableImplicitChoice
-  const sendAvailability = useMemo(
-    () =>
-      resolveSendAvailability({
-        catalog: catalogAvailability,
-        serverBoundSession: Boolean(
-          activeSession && activeSession.provider === provider && !implicitChoice,
-        ),
-        activeProvider: activeSession?.provider,
-        selectedChoice: selectedModelChoice,
-        providerStatuses,
-        accountCheck,
-      }),
-    [
-      catalogAvailability,
-      activeSession,
-      implicitChoice,
-      selectedModelChoice,
-      providerStatuses,
-      accountCheck,
-    ],
-  )
+  const sendAvailability = resolveSendAvailability({
+    catalog: catalogAvailability,
+    serverBoundSession: Boolean(
+      activeSession && activeSession.provider === provider && !implicitChoice,
+    ),
+    activeProvider: activeSession?.provider,
+    selectedChoice: selectedModelChoice,
+    providerStatuses,
+    accountCheck,
+  })
   // One effective setup drives both the picker and requests. State can briefly
   // contain values from storage or the model that was just hidden; resolving
   // in render prevents that transition from leaking into an immediate send.
@@ -1764,8 +1753,9 @@ export function App() {
       activeIdRef.current = undefined
       setActiveId(undefined)
       setThread(emptyThread)
+      if (!PUBLIC_BETA_PROVIDER_IDS.has(provider)) setCatalogRequest((current) => current + 1)
     },
-    [projects, transport, refreshProjects],
+    [projects, transport, refreshProjects, provider],
   )
 
   const updateQueue = useCallback(
