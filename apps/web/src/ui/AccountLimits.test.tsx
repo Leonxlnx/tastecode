@@ -45,35 +45,43 @@ describe('account limits', () => {
     expect(screen.getByText('No plan limits reported.')).toBeTruthy()
   })
 
-  it('labels multiple sources and keeps unavailable separate from ready values', () => {
+  it('labels each source and keeps unavailable separate from ready values', () => {
     const state: AccountLimitsState = {
       status: 'ready',
       provider: 'codex',
       summary: {
         ...summary(),
-        limitSources: [
-          {
-            provider: 'codex',
-            status: 'ready',
-            limits: [
-              { label: 'Weekly', usedPercent: 85 },
-              { label: 'Credits', usedPercent: 0, valueLabel: '$12.40' },
-            ],
-          },
-          { provider: 'grok', status: 'unavailable' },
-        ],
+        limitSource: {
+          provider: 'codex',
+          status: 'ready',
+          limits: [
+            { label: 'Weekly', usedPercent: 85 },
+            { label: 'Credits', usedPercent: 0, valueLabel: '$12.40' },
+          ],
+        },
       },
     }
-    render(<AccountLimits state={state} onRetry={() => {}} />)
+    const view = render(<AccountLimits state={state} onRetry={() => {}} />)
 
     const codex = screen.getByRole('region', { name: 'Codex' })
-    const grok = screen.getByRole('region', { name: 'Grok' })
     expect(within(codex).getByText('15% left')).toBeTruthy()
     expect(within(codex).getByText('$12.40')).toBeTruthy()
-    expect(within(grok).getByText(/aren’t available/)).toBeTruthy()
     const bar = within(codex).getByRole('progressbar', { name: 'Codex Weekly left' })
     expect(bar.getAttribute('aria-valuenow')).toBe('15')
     expect((bar.firstElementChild as HTMLElement).style.width).toBe('15%')
+
+    view.rerender(
+      <AccountLimits
+        state={{
+          status: 'ready',
+          provider: 'grok',
+          summary: { ...summary(), limitSource: { provider: 'grok', status: 'unavailable' } },
+        }}
+        onRetry={() => {}}
+      />,
+    )
+    const grok = screen.getByRole('region', { name: 'Grok' })
+    expect(within(grok).getByText(/aren’t available/)).toBeTruthy()
   })
 
   it('preserves usable values through a failed refresh and retries', () => {
