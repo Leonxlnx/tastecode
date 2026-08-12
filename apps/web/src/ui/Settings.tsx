@@ -14,6 +14,7 @@ import type {
   Account,
   ConnectionAddress,
   ConnectionsStatus,
+  DataOf,
   ModelConnection,
   ModelConnectionPreset,
   ModelTransport,
@@ -497,6 +498,9 @@ export function ProviderSettings(props: {
   const sequence = useRef(0)
   const statusRequests = useRef<ProviderMap<{ id: number; transport: Transport }>>({})
   const operations = useRef<ProviderMap<AuthOperation>>({})
+  const earlyEvents = useRef<
+    ProviderMap<Map<string | null, { operationId: number; event: DataOf<'auth.event'> }>>
+  >({})
   const currentTransport = useRef(props.transport)
   currentTransport.current = props.transport
 
@@ -514,6 +518,8 @@ export function ProviderSettings(props: {
 
   const beginOperation = (provider: ProviderId, kind: AuthOperation['kind']) => {
     const operation = { id: ++sequence.current, kind, transport: props.transport }
+    delete statusRequests.current[provider]
+    delete earlyEvents.current[provider]
     updateOperation(provider, operation)
     setAuthErrors((current) => ({ ...current, [provider]: undefined }))
     return operation
@@ -563,6 +569,18 @@ export function ProviderSettings(props: {
     .map((status) => status.id)
   const authProviderKey = authProviderIds.join('|')
 
+  const completeLogin = useCallback(
+    (event: DataOf<'auth.event'>) => {
+      updateOperation(event.provider)
+      setAuthErrors((current) => ({
+        ...current,
+        [event.provider]: event.success ? undefined : (event.error ?? 'Sign-in was cancelled.'),
+      }))
+      if (event.success) void refreshAccount(event.provider, true)
+    },
+    [refreshAccount, updateOperation],
+  )
+
   useEffect(() => {
     for (const provider of authProviderIds) {
       void refreshAccount(provider)
@@ -570,23 +588,18 @@ export function ProviderSettings(props: {
     const unsubscribe = props.transport.on('auth.event', (event) => {
       if (event.agent) return
       const operation = operations.current[event.provider]
-      if (
-        operation?.kind !== 'sign-in' ||
-        operation.transport !== props.transport ||
-        operation.loginId !== event.loginId
-      ) {
+      if (!operation) {
+        if (event.success) void refreshAccount(event.provider, true)
         return
       }
-      updateOperation(event.provider)
-      if (event.success) {
-        setAuthErrors((current) => ({ ...current, [event.provider]: undefined }))
-        void refreshAccount(event.provider, true)
-      } else {
-        setAuthErrors((current) => ({
-          ...current,
-          [event.provider]: event.error ?? 'Sign-in was cancelled.',
-        }))
+      if (operation.kind !== 'sign-in' || operation.transport !== props.transport) return
+      if (operation.loginId === undefined) {
+        const events = earlyEvents.current[event.provider] ?? new Map()
+        events.set(event.loginId, { operationId: operation.id, event })
+        earlyEvents.current[event.provider] = events
+        return
       }
+      if (operation.loginId === event.loginId) completeLogin(event)
     })
 
     return () => {
@@ -595,7 +608,7 @@ export function ProviderSettings(props: {
         delete statusRequests.current[provider]
       }
     }
-  }, [props.transport, authProviderKey, refreshAccount, updateOperation])
+  }, [props.transport, authProviderKey, completeLogin, refreshAccount])
 
   useEffect(() => {
     operations.current = {}
@@ -608,6 +621,12 @@ export function ProviderSettings(props: {
     try {
       const result = await props.transport.request('auth.startLogin', { provider })
       if (!operationIsCurrent(provider, operation)) return
+      const early = earlyEvents.current[provider]?.get(result.loginId)
+      delete earlyEvents.current[provider]
+      if (early?.operationId === operation.id && early.event.loginId === result.loginId) {
+        completeLogin(early.event)
+        return
+      }
       updateOperation(provider, { ...operation, loginId: result.loginId })
       if (result.authUrl) window.open(result.authUrl, '_blank', 'noopener,noreferrer')
     } catch (cause) {
