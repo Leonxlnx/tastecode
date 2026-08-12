@@ -338,6 +338,31 @@ describe('design preview runner', () => {
 
     expect(() => assertRunsWorkspaceCode(workspace, workspace, plan)).not.toThrow()
   })
+
+  it('runs a package script even when its name collides with a package-manager command', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(path.join(workspace, 'preview.mjs'), previewServerSource(port, 'local script'))
+    writeFileSync(
+      path.join(workspace, 'package.json'),
+      JSON.stringify({ scripts: { exec: 'node preview.mjs' } }),
+    )
+    const plan = parsePreviewPlan({
+      version: 1,
+      command: 'pnpm',
+      args: ['exec'],
+      cwd: '.',
+      url: `http://127.0.0.1:${port}`,
+      viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+    })
+
+    const preview = await startDesignPreview(workspace, plan, 5_000)
+    previews.push(preview)
+    await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe(
+      'local script',
+    )
+  })
 })
 
 function freePort(): Promise<number> {
