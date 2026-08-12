@@ -296,6 +296,8 @@ export function App() {
     const stored = readSetting(SETUP_KEY)
     return PROVIDER_IDS.find((id) => id === stored) ?? 'codex'
   })
+  const providerRef = useRef(provider)
+  providerRef.current = provider
   const [acpAgent, setAcpAgent] = useState<string | undefined>(
     () => readSetting(AGENT_KEY) ?? undefined,
   )
@@ -937,7 +939,7 @@ export function App() {
           void transport
             .request('thread.history', { threadId, afterSeq: Number.MAX_SAFE_INTEGER })
             .catch(() => undefined)
-          refreshUsage(provider)
+          refreshUsage(providerRef.current)
         }
       }
     })
