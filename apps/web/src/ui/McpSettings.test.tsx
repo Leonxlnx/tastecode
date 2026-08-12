@@ -92,6 +92,43 @@ describe('MCP settings', () => {
     })
   })
 
+  it('keeps rendering when a live server has no startup status', async () => {
+    const transport = client(async () => ({
+      capabilities: {
+        inventory: true,
+        add: false,
+        update: false,
+        remove: false,
+        reload: false,
+        startOAuth: false,
+        cancelOAuth: false,
+      },
+      servers: [
+        {
+          id: 'legacy-server',
+          scope: 'global',
+          enabled: true,
+          auth: { status: 'not_required' },
+          tools: [],
+          resources: [],
+          resourceTemplates: [],
+        },
+      ],
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect(await screen.findByText('legacy-server')).toBeTruthy()
+    expect(screen.getByText('status unavailable')).toBeTruthy()
+  })
+
   it('shows no controls for unsupported providers', async () => {
     const transport = client(async () => ({
       capabilities: {

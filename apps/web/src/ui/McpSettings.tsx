@@ -399,6 +399,7 @@ function ServerRow(props: {
   onEdit: () => void
   onRemove: () => void
 }) {
+  const startup = props.server.startup
   const needsOAuth =
     props.capabilities.startOAuth &&
     props.server.auth.status === 'sign_in_required' &&
@@ -417,13 +418,15 @@ function ServerRow(props: {
         <div className="mcp-row__heading">
           <h2>{props.server.displayName ?? props.server.id}</h2>
           <span>{props.server.scope}</span>
-          <span>{props.server.enabled ? props.server.startup.state : 'disabled'}</span>
+          <span>
+            {props.server.enabled ? (startup?.state ?? 'status unavailable') : 'disabled'}
+          </span>
         </div>
         <p className="mcp-row__transport">{transportLabel(props.server.transport)}</p>
-        {props.server.startup.state === 'failed' ? (
+        {startup?.state === 'failed' ? (
           <p className="mcp-row__failure" role="alert">
             <AlertTriangle size={13} aria-hidden />
-            {props.server.startup.message}
+            {startup.message}
           </p>
         ) : null}
         <details className="mcp-row__details">
