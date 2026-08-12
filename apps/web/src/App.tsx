@@ -288,7 +288,6 @@ export function App() {
   )
   const readUsage = useCallback(() => usageController.snapshot(), [usageController])
   const usageState = useSyncExternalStore(subscribeUsage, readUsage, readUsage)
-  const usageSummary = usageState?.summary
   const refreshUsage = useCallback(() => usageController.refresh(), [usageController])
   const [provider, setProvider] = useState<ProviderId>(() => {
     const stored = readSetting(SETUP_KEY)

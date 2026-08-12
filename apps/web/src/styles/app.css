@@ -333,7 +333,12 @@
   gap: 8px;
   font-size: var(--t-md);
   margin: 0;
-  outline: 0;
+}
+
+.account-menu__usage-head:focus-visible {
+  border-radius: var(--r-sm);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
 }
 
 .account-menu__usage-head svg {
@@ -382,7 +387,14 @@
 }
 
 .account-menu__usage-error button {
+  align-self: center;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-sm);
+  background: var(--chrome-raised);
   color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 3px 7px;
 }
 
 .account-menu__limit {
