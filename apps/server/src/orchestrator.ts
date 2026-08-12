@@ -56,7 +56,7 @@ import {
   type StartOptions,
   type TurnOptions,
 } from './adapters.js'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -108,6 +108,7 @@ import { ModelConnectionStore } from './model-connections.js'
 import { TerminalManager } from './terminal.js'
 import { installLocalSkill } from './skill-install.js'
 import { startDesignPreview, type RunningPreview } from './design-preview-runner.js'
+import { assertPublicWorkspaceFile, existingWorkspacePath } from './api-workspace-paths.js'
 
 type UserSubmission = { id: string; text: string; createdAt: number; queueId?: string }
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions; clientSubmissionId?: string }
@@ -255,7 +256,6 @@ function isRecoverablePreviewError(error: unknown): boolean {
     code === 'ENOENT' ||
     code === 'EADDRINUSE' ||
     /preview port \d+ is already (?:being started|in use)/i.test(message) ||
-    message === 'Harness static preview ownership check failed' ||
     /^static preview /i.test(message)
   )
 }
@@ -2577,6 +2577,11 @@ export class Orchestrator {
     flow: DesignFlow,
     plan: ReturnType<typeof parsePreviewPhaseOutput>,
   ): Promise<void> {
+    if (plan.kind === 'static') {
+      const workspace = realpathSync(flow.workspacePath)
+      const cwd = existingWorkspacePath(workspace, plan.cwd, true)
+      assertPublicWorkspaceFile(existingWorkspacePath(cwd, plan.entry, false))
+    }
     const preview = await startDesignPreview(flow.workspacePath, plan)
     if (this.#designFlows.get(threadId) !== flow) {
       await preview

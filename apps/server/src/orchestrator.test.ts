@@ -774,7 +774,7 @@ describe('provider-neutral design briefing', () => {
     })
     const result = harness(undefined, store)
     result.capturePreview.mockResolvedValueOnce(undefined)
-    previewStarts.failures.push(error)
+    if (error) previewStarts.failures.push(error)
     const queued = await result.orchestrator.submitTurn('preview-recovery', 'Continue afterward.')
     if (queued.queued)
       result.orchestrator.deleteQueuedTurn('preview-recovery', queued.queuedTurn.id)
@@ -1226,7 +1226,7 @@ describe('provider-neutral design briefing', () => {
       plan: commandPreviewPlan,
     },
     {
-      failure: new Error('Harness static preview ownership check failed'),
+      failure: undefined,
       name: 'missing static entry',
       plan: staticPreviewPlan,
     },
@@ -1249,50 +1249,59 @@ describe('provider-neutral design briefing', () => {
       name: 'static semantic validation',
       plan: staticPreviewPlan,
     },
-  ])('corrects one recoverable $name failure and retries Preview', async ({ failure, plan }) => {
-    const { orchestrator, sessions, received, store, workspace, artifacts } =
-      await previewRecoveryHarness(failure)
-    const startCount = previewStarts.count
-    try {
-      sessions[0]?.emit(message(JSON.stringify(plan), 's1-turn'))
-      await vi.waitFor(() =>
-        expect(store.designRun('preview-recovery')).toMatchObject({
-          originalRequest: 'Build a site.',
-          options: { effort: 'high' },
-          phase: 'preview',
-          correcting: true,
-        }),
-      )
-      expect(sessions[0]?.sent).toHaveLength(1)
-      expect(artifacts.map(([file]) => readFileSync(file, 'utf8'))).toEqual(
-        artifacts.map(([, contents]) => contents),
-      )
-      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
-      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
-      expect(sessions[0]?.sent[1]).toContain('previous Design Mode response failed validation')
+  ])(
+    'corrects one recoverable $name failure and retries Preview',
+    async ({ failure, name, plan }) => {
+      const { orchestrator, sessions, received, store, workspace, artifacts } =
+        await previewRecoveryHarness(failure)
+      const startCount = previewStarts.count
+      try {
+        if (plan.kind === 'static' && name !== 'missing static entry') {
+          writeFileSync(path.join(workspace, plan.entry), '<h1>Preview</h1>')
+        }
+        sessions[0]?.emit(message(JSON.stringify(plan), 's1-turn'))
+        await vi.waitFor(() =>
+          expect(store.designRun('preview-recovery')).toMatchObject({
+            originalRequest: 'Build a site.',
+            options: { effort: 'high' },
+            phase: 'preview',
+            correcting: true,
+          }),
+        )
+        expect(sessions[0]?.sent).toHaveLength(1)
+        expect(artifacts.map(([file]) => readFileSync(file, 'utf8'))).toEqual(
+          artifacts.map(([, contents]) => contents),
+        )
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+        expect(sessions[0]?.sent[1]).toContain('previous Design Mode response failed validation')
 
-      sessions[0]?.emit(message(JSON.stringify(plan), 's1-turn'))
-      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        if (name === 'missing static entry') {
+          writeFileSync(path.join(workspace, plan.entry), '<h1>Preview</h1>')
+        }
+        sessions[0]?.emit(message(JSON.stringify(plan), 's1-turn'))
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
 
-      await vi.waitFor(() =>
-        expect(
-          received.some(
-            ({ event }) =>
-              event.type === 'item.completed' && event.item.text?.startsWith('Website built.'),
-          ),
-        ).toBe(true),
-      )
-      expect(previewStarts.count).toBe(startCount + 2)
-      expect(sessions[0]?.sent).toHaveLength(2)
-      expect(store.designRun('preview-recovery')).toBeUndefined()
-      expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
-    } finally {
-      previewStarts.failures.length = 0
-      await orchestrator.disposeAll()
-      store.close()
-      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
-    }
-  })
+        await vi.waitFor(() =>
+          expect(
+            received.some(
+              ({ event }) =>
+                event.type === 'item.completed' && event.item.text?.startsWith('Website built.'),
+            ),
+          ).toBe(true),
+        )
+        expect(previewStarts.count).toBe(startCount + (failure ? 2 : 1))
+        expect(sessions[0]?.sent).toHaveLength(2)
+        expect(store.designRun('preview-recovery')).toBeUndefined()
+        expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+      } finally {
+        previewStarts.failures.length = 0
+        await orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+      }
+    },
+  )
 
   it('fails after the bounded Preview correction also fails', async () => {
     const failure = new Error('preview port 5173 is already in use; choose another port')
@@ -1325,30 +1334,43 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  it.each(['preview command argument is unsafe', 'path escapes the workspace'])(
-    'keeps the Preview security violation fatal: %s',
-    async (detail) => {
-      const { orchestrator, sessions, received, store, workspace } = await previewRecoveryHarness(
-        new Error(detail),
-      )
-      try {
-        sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
-        await vi.waitFor(() => expect(store.designRun('preview-recovery')).toBeUndefined())
-        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
-        expect(sessions[0]?.sent).toHaveLength(1)
-        expect(
-          received.some(
-            ({ event }) => event.type === 'thread.error' && event.message.includes(detail),
-          ),
-        ).toBe(true)
-      } finally {
-        previewStarts.failures.length = 0
-        await orchestrator.disposeAll()
-        store.close()
-        rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
-      }
+  it.each([
+    {
+      detail: 'preview command argument is unsafe',
+      failure: new Error('preview command argument is unsafe'),
+      plan: commandPreviewPlan,
     },
-  )
+    {
+      detail: 'path escapes the workspace',
+      failure: new Error('path escapes the workspace'),
+      plan: commandPreviewPlan,
+    },
+    {
+      detail: 'credential files are not available',
+      failure: undefined,
+      plan: { ...staticPreviewPlan, entry: '.env' },
+    },
+  ])('keeps the Preview security violation fatal: $detail', async ({ detail, failure, plan }) => {
+    const { orchestrator, sessions, received, store, workspace } =
+      await previewRecoveryHarness(failure)
+    try {
+      if (plan.kind === 'static') writeFileSync(path.join(workspace, plan.entry), 'not public')
+      sessions[0]?.emit(message(JSON.stringify(plan), 's1-turn'))
+      await vi.waitFor(() => expect(store.designRun('preview-recovery')).toBeUndefined())
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      expect(sessions[0]?.sent).toHaveLength(1)
+      expect(
+        received.some(
+          ({ event }) => event.type === 'thread.error' && event.message.includes(detail),
+        ),
+      ).toBe(true)
+    } finally {
+      previewStarts.failures.length = 0
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
 
   it('accepts final structured output after provider commentary', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-commentary-'))
