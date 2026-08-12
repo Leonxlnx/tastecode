@@ -2436,7 +2436,6 @@ export function App() {
       setRollbackOpen(false)
       setRollbackInspection(undefined)
     } catch (error) {
-      void loadHistory(activeId).catch(() => undefined)
       setNotice(error instanceof Error ? error.message : String(error))
     } finally {
       setRollbackRestoring(false)
@@ -2457,7 +2456,6 @@ export function App() {
       setUndoRestore(undefined)
       setNotice('Restore undone.')
     } catch (error) {
-      void loadHistory(undoRestore.threadId).catch(() => undefined)
       setNotice(error instanceof Error ? error.message : String(error))
     }
   }, [transport, undoRestore, activePath, loadHistory, refreshCheckpoints])
