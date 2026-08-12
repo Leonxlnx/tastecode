@@ -445,7 +445,7 @@ function openSettings() {
     return
   }
   fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-  fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
+  fireEvent.click(screen.getByRole('button', { name: /Settings/ }))
 }
 
 function cachedCodexChoice(): ModelChoice {
@@ -1685,7 +1685,7 @@ describe('new chats', () => {
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Account' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Profile' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }))
 
     expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Profile' }).getAttribute('aria-current')).toBe(
