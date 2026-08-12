@@ -2480,9 +2480,9 @@ export class Orchestrator {
     if (flow.phase === 'preview') {
       const plan = parsePreviewPhaseOutput(text)
       flow.correcting = false
-      void this.#startDesignPreview(threadId, turnId, flow, plan).catch((error: unknown) =>
-        this.#failDesignFlow(threadId, error),
-      )
+      void this.#startDesignPreview(threadId, turnId, flow, plan).catch((error: unknown) => {
+        if (this.#designFlows.get(threadId) === flow) this.#failDesignFlow(threadId, error)
+      })
       return
     }
     if (flow.phase === 'review') {
@@ -2511,9 +2511,9 @@ export class Orchestrator {
       const output = parseRepairPhaseOutput(text)
       flow.correcting = false
       if (output.status === 'failed') throw new Error(output.summary)
-      void this.#captureDesignReview(threadId, turnId, flow).catch((error: unknown) =>
-        this.#failDesignFlow(threadId, error),
-      )
+      void this.#captureDesignReview(threadId, turnId, flow).catch((error: unknown) => {
+        if (this.#designFlows.get(threadId) === flow) this.#failDesignFlow(threadId, error)
+      })
       return
     }
     throw new Error(`unexpected design phase ${flow.phase}`)
@@ -2544,7 +2544,11 @@ export class Orchestrator {
   ): Promise<void> {
     const preview = await startDesignPreview(flow.workspacePath, plan)
     if (this.#designFlows.get(threadId) !== flow) {
-      await preview.stop()
+      await preview
+        .stop()
+        .catch((error: unknown) =>
+          this.#onLog(`[design] stale preview stop failed: ${errorMessage(error)}`),
+        )
       return
     }
     this.#designPreviews.set(threadId, preview)
@@ -2571,7 +2575,11 @@ export class Orchestrator {
     if (!this.#designPreviews.has(threadId)) {
       const preview = await startDesignPreview(flow.workspacePath, flow.previewPlan)
       if (this.#designFlows.get(threadId) !== flow) {
-        await preview.stop()
+        await preview
+          .stop()
+          .catch((error: unknown) =>
+            this.#onLog(`[design] stale preview stop failed: ${errorMessage(error)}`),
+          )
         return
       }
       this.#designPreviews.set(threadId, preview)
