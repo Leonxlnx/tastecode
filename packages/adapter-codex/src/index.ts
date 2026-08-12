@@ -1,4 +1,9 @@
-export { CodexAdapter, CODEX_CAPABILITIES, type StartOptions } from './adapter.js'
+export {
+  CodexAdapter,
+  CODEX_CAPABILITIES,
+  type CodexLimitSource,
+  type StartOptions,
+} from './adapter.js'
 export {
   CodexVoiceTranscriber,
   VoiceTranscriptionError,

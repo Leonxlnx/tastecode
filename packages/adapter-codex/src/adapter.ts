@@ -130,6 +130,9 @@ export type ProviderLimit = {
   valueLabel?: string | undefined
 }
 
+export type CodexLimitSource =
+  { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
+
 /**
  * Our three user-facing modes onto Codex's approval policy and sandbox.
  *
@@ -220,6 +223,94 @@ type CodexAccount =
   | { type: 'apiKey' }
   | { type: 'chatgpt'; email: string | null; planType: string }
   | { type: 'other' }
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+function limitAccount(response: unknown): CodexAccount | null {
+  const envelope = record(response)
+  if (!envelope || !Object.hasOwn(envelope, 'account')) {
+    throw new Error('Codex account response was invalid.')
+  }
+  if (envelope.account === null) return null
+  const account = record(envelope.account)
+  if (!account || typeof account.type !== 'string' || account.type.length === 0) {
+    throw new Error('Codex account response was invalid.')
+  }
+  if (account.type === 'apiKey') return { type: 'apiKey' }
+  if (account.type !== 'chatgpt') return { type: 'other' }
+  if (
+    typeof account.planType !== 'string' ||
+    (account.email !== null && typeof account.email !== 'string')
+  ) {
+    throw new Error('Codex account response was invalid.')
+  }
+  return { type: 'chatgpt', email: account.email, planType: account.planType }
+}
+
+function nullable(value: unknown, type: 'string' | 'number'): boolean {
+  return value === null || typeof value === type
+}
+
+function rateWindow(value: unknown): boolean {
+  const window = record(value)
+  return Boolean(
+    window &&
+    typeof window.usedPercent === 'number' &&
+    nullable(window.windowDurationMins, 'number') &&
+    nullable(window.resetsAt, 'number'),
+  )
+}
+
+function creditsSnapshot(value: unknown): boolean {
+  const credits = record(value)
+  return Boolean(
+    credits &&
+    typeof credits.hasCredits === 'boolean' &&
+    typeof credits.unlimited === 'boolean' &&
+    nullable(credits.balance, 'string'),
+  )
+}
+
+function rateLimitSnapshot(value: unknown): value is RateLimitSnapshot {
+  const snapshot = record(value)
+  return Boolean(
+    snapshot &&
+    nullable(snapshot.limitId, 'string') &&
+    nullable(snapshot.limitName, 'string') &&
+    (snapshot.primary === null || rateWindow(snapshot.primary)) &&
+    (snapshot.secondary === null || rateWindow(snapshot.secondary)) &&
+    (snapshot.credits === null || creditsSnapshot(snapshot.credits)) &&
+    (snapshot.individualLimit === null || record(snapshot.individualLimit)) &&
+    nullable(snapshot.planType, 'string') &&
+    nullable(snapshot.rateLimitReachedType, 'string'),
+  )
+}
+
+function rateLimitResponse(value: unknown): GetAccountRateLimitsResponse {
+  const response = record(value)
+  const buckets = response && response.rateLimitsByLimitId
+  const bucketRecord = record(buckets)
+  const resets = response && response.rateLimitResetCredits
+  const validBuckets =
+    buckets === null ||
+    Boolean(bucketRecord && Object.values(bucketRecord).every((entry) => rateLimitSnapshot(entry)))
+  const reset = record(resets)
+  const validResets =
+    resets === null ||
+    Boolean(
+      reset &&
+      (typeof reset.availableCount === 'number' || typeof reset.availableCount === 'string') &&
+      (reset.credits === undefined || reset.credits === null || Array.isArray(reset.credits)),
+    )
+  if (!response || !rateLimitSnapshot(response.rateLimits) || !validBuckets || !validResets) {
+    throw new Error('Codex rate-limit response was invalid.')
+  }
+  return response as GetAccountRateLimitsResponse
+}
 
 /** The vendor's plan ids are not display strings. */
 function planLabel(plan: string): string {
@@ -376,14 +467,18 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     }
   }
 
-  /** Subscription headroom as reported by Codex itself. */
+  /** Subscription availability and headroom, decided inside the adapter. */
+  async rateLimitSource(): Promise<CodexLimitSource> {
+    const account = limitAccount(await this.#call<unknown>('account/read', {}))
+    if (account?.type !== 'chatgpt') return { status: 'unavailable' }
+    const response = rateLimitResponse(await this.#call<unknown>('account/rateLimits/read', {}))
+    return { status: 'ready', limits: mapCodexRateLimits(response) }
+  }
+
+  /** Compatibility view while the orchestrator migrates to the richer source state. */
   async rateLimits(): Promise<ProviderLimit[]> {
-    try {
-      const response = await this.#call<GetAccountRateLimitsResponse>('account/rateLimits/read', {})
-      return mapCodexRateLimits(response)
-    } catch {
-      return []
-    }
+    const source = await this.rateLimitSource()
+    return source.status === 'ready' ? source.limits : []
   }
 
   /**
