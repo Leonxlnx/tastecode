@@ -76,6 +76,7 @@ import {
  */
 
 const CLIENT_NAME = 'personal-harness'
+const CONTROL_READ_TIMEOUT_MS = 10_000
 
 /** Provider state Harness either does not expose or already derives from shared events. */
 export function isIgnorableCodexNotification(method: string): boolean {
@@ -527,9 +528,17 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
     rpc.onServerRequest((method, params, respond) => this.#onServerRequest(method, params, respond))
 
-    await rpc.request('initialize', {
-      clientInfo: { name: CLIENT_NAME, title: 'Personal Harness', version: '0.0.0' },
-    })
+    try {
+      await rpc.request(
+        'initialize',
+        { clientInfo: { name: CLIENT_NAME, title: 'Personal Harness', version: '0.0.0' } },
+        { timeoutMs: CONTROL_READ_TIMEOUT_MS },
+      )
+    } catch (error) {
+      rpc.dispose()
+      this.#rpc = undefined
+      throw error
+    }
     rpc.notify('initialized', {})
     this.#started = true
   }
@@ -565,9 +574,13 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
   /** Subscription availability and headroom, decided inside the adapter. */
   async rateLimitSource(): Promise<CodexLimitSource> {
-    const account = limitAccount(await this.#call<unknown>('account/read', {}))
+    const account = limitAccount(
+      await this.#call<unknown>('account/read', {}, CONTROL_READ_TIMEOUT_MS),
+    )
     if (account?.type !== 'chatgpt') return { status: 'unavailable' }
-    const response = rateLimitResponse(await this.#call<unknown>('account/rateLimits/read', {}))
+    const response = rateLimitResponse(
+      await this.#call<unknown>('account/rateLimits/read', {}, CONTROL_READ_TIMEOUT_MS),
+    )
     return { status: 'ready', limits: mapCodexRateLimits(response) }
   }
 
@@ -910,9 +923,9 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.removeAllListeners()
   }
 
-  #call<T>(method: string, params: unknown): Promise<T> {
+  #call<T>(method: string, params: unknown, timeoutMs?: number): Promise<T> {
     if (!this.#rpc) throw new Error('adapter not started')
-    return this.#rpc.request<T>(method, params)
+    return this.#rpc.request<T>(method, params, timeoutMs === undefined ? {} : { timeoutMs })
   }
 
   /**

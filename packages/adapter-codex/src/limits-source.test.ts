@@ -5,9 +5,11 @@ const fake = vi.hoisted(() => ({
   account: null as unknown,
   accountResponse: undefined as unknown,
   calls: [] as string[],
+  disposals: 0,
   failure: undefined as string | undefined,
   notification: undefined as ((method: string, params: unknown) => void) | undefined,
   rateLimitsResponse: undefined as unknown,
+  requests: [] as Array<{ method: string; timeoutMs?: number }>,
 }))
 
 vi.mock('@harness/proc', () => ({
@@ -19,10 +21,13 @@ vi.mock('@harness/proc', () => ({
     }
     onServerRequest(): void {}
     notify(): void {}
-    dispose(): void {}
+    dispose(): void {
+      fake.disposals += 1
+    }
 
-    request(method: string): Promise<unknown> {
+    request(method: string, _params: unknown, options?: { timeoutMs?: number }): Promise<unknown> {
       fake.calls.push(method)
+      fake.requests.push({ method, timeoutMs: options?.timeoutMs })
       if (method === fake.failure) return Promise.reject(new Error(`${method} failed`))
       if (method === 'account/read') {
         return Promise.resolve(fake.accountResponse ?? { account: fake.account })
@@ -56,9 +61,11 @@ beforeEach(() => {
   fake.account = null
   fake.accountResponse = undefined
   fake.calls = []
+  fake.disposals = 0
   fake.failure = undefined
   fake.notification = undefined
   fake.rateLimitsResponse = undefined
+  fake.requests = []
 })
 
 const capturedRateLimitUpdate = {
@@ -75,6 +82,15 @@ const capturedRateLimitUpdate = {
 } satisfies AccountRateLimitsUpdatedNotification
 
 describe('Codex rate-limit source', () => {
+  it('bounds initialization and disposes a failed transport', async () => {
+    fake.failure = 'initialize'
+    const adapter = new CodexAdapter()
+
+    await expect(adapter.start()).rejects.toThrow('initialize failed')
+    expect(fake.requests[0]).toEqual({ method: 'initialize', timeoutMs: 10_000 })
+    expect(fake.disposals).toBe(1)
+  })
+
   it('maps only the exact provider update to a quiet usage-change event', async () => {
     const adapter = new CodexAdapter()
     const changed = vi.fn()
@@ -130,6 +146,10 @@ describe('Codex rate-limit source', () => {
 
     await expect(adapter.rateLimitSource()).resolves.toEqual({ status: 'ready', limits: [] })
     expect(fake.calls).toContain('account/rateLimits/read')
+    expect(fake.requests.filter(({ method }) => method.includes('account/'))).toEqual([
+      { method: 'account/read', timeoutMs: 10_000 },
+      { method: 'account/rateLimits/read', timeoutMs: 10_000 },
+    ])
     adapter.dispose()
   })
 
