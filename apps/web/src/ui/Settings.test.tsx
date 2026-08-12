@@ -19,7 +19,13 @@ vi.mock('./InstallTerminal.js', () => ({
   ),
 }))
 
-function renderAppearanceSettings(onClose = () => {}) {
+function renderSettings(
+  options: {
+    initialSection?: 'appearance' | 'data'
+    onClose?: () => void
+    onReset?: () => void
+  } = {},
+) {
   const transport = {
     request: vi.fn(),
     on: vi.fn(() => () => {}),
@@ -60,9 +66,9 @@ function renderAppearanceSettings(onClose = () => {}) {
       macOSFontSmoothing={true}
       onMacOSFontSmoothingChange={() => {}}
       onAccountChange={() => {}}
-      initialSection="appearance"
-      onReset={() => {}}
-      onClose={onClose}
+      initialSection={options.initialSection ?? 'appearance'}
+      onReset={options.onReset ?? (() => {})}
+      onClose={options.onClose ?? (() => {})}
     />,
   )
 }
@@ -79,7 +85,7 @@ afterEach(() => {
 
 describe('settings viewport layout', () => {
   it('keeps both desktop panes scrollable inside short windows', () => {
-    const { container } = renderAppearanceSettings()
+    const { container } = renderSettings()
     const settings = container.querySelector('.settings')
 
     expect(settings?.querySelector(':scope > .settings__sidebar')).toBeTruthy()
@@ -89,7 +95,7 @@ describe('settings viewport layout', () => {
 
 describe('model picker layout setting', () => {
   it('reflects changes from the shared layout preference', () => {
-    renderAppearanceSettings()
+    renderSettings()
     const toggle = screen.getByRole('switch', { name: 'Provider rail layout' })
     expect(toggle.getAttribute('aria-checked')).toBe('false')
 
@@ -101,7 +107,7 @@ describe('model picker layout setting', () => {
 
 describe('settings dialog keyboard behavior', () => {
   it('contains forward and reverse Tab navigation inside the dialog', () => {
-    renderAppearanceSettings()
+    renderSettings()
     const dialog = screen.getByRole('dialog', { name: 'Settings' })
     const first = screen.getByRole('button', { name: 'Back to app' })
     const last = screen.getByRole('button', { name: 'Lavender' })
@@ -133,7 +139,7 @@ describe('settings dialog keyboard behavior', () => {
     const opener = screen.getByRole('button', { name: 'Open settings' })
     opener.focus()
     const onClose = vi.fn()
-    const settingsView = renderAppearanceSettings(onClose)
+    const settingsView = renderSettings({ onClose })
 
     close()
     expect(onClose).toHaveBeenCalledOnce()
@@ -144,7 +150,7 @@ describe('settings dialog keyboard behavior', () => {
 
   it('leaves Escape to a nested control that handles it', () => {
     const onClose = vi.fn()
-    renderAppearanceSettings(onClose)
+    renderSettings({ onClose })
     const nestedControl = screen.getByRole('button', { name: 'Lavender' })
     nestedControl.addEventListener('keydown', (event) => event.preventDefault())
 
@@ -153,6 +159,53 @@ describe('settings dialog keyboard behavior', () => {
 
     expect(onClose).not.toHaveBeenCalled()
     expect(document.activeElement).toBe(nestedControl)
+  })
+})
+
+describe('settings reset confirmation', () => {
+  it('explains the exact local scope and keeps cancel, Escape, and focus safe', () => {
+    const onReset = vi.fn()
+    renderSettings({ initialSection: 'data', onReset })
+
+    expect(
+      screen.getByText(
+        'Reset only clears this renderer\u2019s preferences. It does not delete projects, workspaces, files, chat history, or provider credentials.',
+      ),
+    ).toBeTruthy()
+    const reset = screen.getByRole('button', { name: 'Reset app preferences' })
+    expect(reset.classList.contains('is-danger')).toBe(true)
+
+    reset.focus()
+    fireEvent.click(reset)
+    const confirmation = screen.getByRole('alertdialog', { name: 'Reset app preferences?' })
+    const cancel = screen.getByRole('button', { name: 'Cancel' })
+    const confirm = screen.getByRole('button', { name: 'Reset and reload' })
+    expect(document.activeElement).toBe(cancel)
+    expect(confirmation.textContent).toContain(
+      'Projects, workspaces, files, chat history, and provider credentials are not deleted.',
+    )
+
+    fireEvent.keyDown(cancel, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(confirm)
+    fireEvent.keyDown(confirm, { key: 'Tab' })
+    expect(document.activeElement).toBe(cancel)
+    confirmation.focus()
+    fireEvent.keyDown(confirmation, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(confirm)
+    fireEvent.keyDown(confirmation, { key: 'Escape' })
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy()
+    expect(document.activeElement).toBe(reset)
+    expect(onReset).not.toHaveBeenCalled()
+
+    fireEvent.click(reset)
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(document.activeElement).toBe(reset)
+    expect(onReset).not.toHaveBeenCalled()
+
+    fireEvent.click(reset)
+    fireEvent.click(screen.getByRole('button', { name: 'Reset and reload' }))
+    expect(onReset).toHaveBeenCalledOnce()
   })
 })
 

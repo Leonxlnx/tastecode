@@ -9,8 +9,10 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
+import { createPortal } from 'react-dom'
 import type {
   Account,
   ConnectionAddress,
@@ -1613,17 +1615,118 @@ function ThemePicker(props: {
 }
 
 function DataSettings(props: { projectCount: number; onReset: () => void }) {
+  const [confirming, setConfirming] = useState(false)
   const projectLabel = `${props.projectCount} ${props.projectCount === 1 ? 'project' : 'projects'} on this machine`
 
   return (
     <SettingsPanel title="Data">
-      <SettingsRow title={projectLabel}>
-        <button className="settings__action" type="button" onClick={props.onReset}>
+      <SettingsRow
+        title={projectLabel}
+        note="Reset only clears this renderer’s preferences. It does not delete projects, workspaces, files, chat history, or provider credentials."
+      >
+        <button
+          className="settings__action is-danger"
+          type="button"
+          onClick={() => setConfirming(true)}
+        >
           <RotateCcw size={13} aria-hidden />
-          <span>Reset app</span>
+          <span>Reset app preferences</span>
         </button>
       </SettingsRow>
+      {confirming ? (
+        <ResetConfirmation
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => {
+            setConfirming(false)
+            props.onReset()
+          }}
+        />
+      ) : null}
     </SettingsPanel>
+  )
+}
+
+function ResetConfirmation(props: { onCancel: () => void; onConfirm: () => void }) {
+  const panel = useRef<HTMLDivElement>(null)
+  const titleId = useId()
+  const descriptionId = useId()
+
+  useEffect(() => {
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    panel.current?.querySelector<HTMLButtonElement>('[data-reset-cancel]')?.focus()
+    return () => {
+      if (previousFocus?.isConnected) previousFocus.focus()
+    }
+  }, [])
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      props.onCancel()
+      return
+    }
+    if (event.key !== 'Tab' || event.defaultPrevented || !panel.current) return
+    const focusable = Array.from(
+      panel.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+    ).filter((element) => !element.hasAttribute('disabled'))
+    if (focusable.length === 0) return
+    const current = focusable.indexOf(document.activeElement as HTMLElement)
+    const next =
+      current < 0
+        ? event.shiftKey
+          ? focusable.length - 1
+          : 0
+        : event.shiftKey
+          ? (current - 1 + focusable.length) % focusable.length
+          : (current + 1) % focusable.length
+    event.preventDefault()
+    focusable[next]?.focus()
+  }
+
+  return createPortal(
+    <div className="sheet" role="presentation">
+      <button
+        className="sheet__scrim"
+        type="button"
+        tabIndex={-1}
+        aria-label="Cancel reset"
+        onClick={props.onCancel}
+      />
+      <div
+        className="sheet__panel checkout-discard"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        ref={panel}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+      >
+        <header className="sheet__head">
+          <h2 className="sheet__title" id={titleId}>
+            Reset app preferences?
+          </h2>
+        </header>
+        <section className="sheet__section">
+          <p className="checkout-discard__copy" id={descriptionId}>
+            This clears renderer-local preferences, including appearance, model choices, hidden
+            models, layout, and recent UI selections, then reloads Personal Harness. Projects,
+            workspaces, files, chat history, and provider credentials are not deleted.
+          </p>
+          <div className="checkout-discard__actions">
+            <button className="ghost" type="button" data-reset-cancel onClick={props.onCancel}>
+              Cancel
+            </button>
+            <button className="btn btn--danger" type="button" onClick={props.onConfirm}>
+              Reset and reload
+            </button>
+          </div>
+        </section>
+      </div>
+    </div>,
+    document.body,
   )
 }
 

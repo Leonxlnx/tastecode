@@ -1559,6 +1559,23 @@ describe('new chats', () => {
     })
   })
 
+  it('clears renderer preferences and reloads only after reset confirmation', () => {
+    localStorage.setItem('harness.theme', 'dark')
+    localStorage.setItem('harness.hiddenModels', '["codex:gpt-5.6-mini"]')
+    const reload = vi.spyOn(window.location, 'reload').mockImplementation(() => undefined)
+    render(<App />)
+
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Data' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Reset app preferences' }))
+    expect(localStorage.getItem('harness.theme')).toBe('dark')
+    expect(reload).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset and reload' }))
+    expect(localStorage.length).toBe(0)
+    expect(reload).toHaveBeenCalledOnce()
+  })
+
   it('opens the account Profile shortcut directly in the top settings category', async () => {
     render(<App />)
 
