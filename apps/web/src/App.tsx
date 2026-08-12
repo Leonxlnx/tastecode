@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react'
 import type { CSSProperties } from 'react'
 import { LoaderCircle } from 'lucide-react'
@@ -56,6 +57,7 @@ import { serverBaseUrl, serverUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
 import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-recorder.js'
+import { UsageSummaryController } from './usage-summary-state.js'
 import {
   agentMark,
   choicesFor,
@@ -276,6 +278,18 @@ function latestSequence(
 export function App() {
   const [connectionUrl, setConnectionUrl] = useState(() => serverUrl(SERVER_BASE_URL))
   const transport = useMemo(() => new Transport(connectionUrl), [connectionUrl])
+  const usageController = useMemo(
+    () => new UsageSummaryController((params) => transport.request('usage.summary', params)),
+    [transport],
+  )
+  const subscribeUsage = useCallback(
+    (listener: () => void) => usageController.subscribe(listener),
+    [usageController],
+  )
+  const readUsage = useCallback(() => usageController.snapshot(), [usageController])
+  const usageState = useSyncExternalStore(subscribeUsage, readUsage, readUsage)
+  const usageSummary = usageState?.summary
+  const refreshUsage = useCallback(() => usageController.refresh(), [usageController])
   const [provider, setProvider] = useState<ProviderId>(() => {
     const stored = readSetting(SETUP_KEY)
     return PROVIDER_IDS.find((id) => id === stored) ?? 'codex'
@@ -301,7 +315,6 @@ export function App() {
   const [loadingThreadId, setLoadingThreadId] = useState<string | undefined>()
   /** A fresh array every streamed frame would defeat any memo below it. */
   const reviewList = useMemo(() => Object.values(thread.reviews), [thread.reviews])
-  const [usageSummary, setUsageSummary] = useState<ResultOf<'usage.summary'> | undefined>()
   // Every live session keeps reducing events while it is off screen. A ref is
   // intentional: streamed deltas for a background session should not rerender
   // the active thread, while selecting it still gets the latest state at once.
@@ -922,12 +935,7 @@ export function App() {
           void transport
             .request('thread.history', { threadId, afterSeq: Number.MAX_SAFE_INTEGER })
             .catch(() => undefined)
-          void transport
-            .request('usage.summary', { threadId })
-            .then((summary) => {
-              if (threadId === activeIdRef.current) setUsageSummary(summary)
-            })
-            .catch(() => undefined)
+          refreshUsage()
         }
       }
     })
@@ -957,6 +965,9 @@ export function App() {
       )
     })
     const offSidebarSettings = transport.on('sidebar.settings', acceptSidebarSettings)
+    const offUsageChanged = transport.on('usage.changed', ({ provider }) => {
+      usageController.changed(provider)
+    })
     const offSequenceGap = transport.onSequenceGap(() => resync.current())
     // Held back briefly: a clean reconnect takes ~500ms, and a banner that
     // appears and vanishes in that time is noise, not information.
@@ -1001,6 +1012,7 @@ export function App() {
       offQueue()
       offLifecycle()
       offSidebarSettings()
+      offUsageChanged()
       offSequenceGap()
       offState()
       transport.close()
@@ -1015,7 +1027,11 @@ export function App() {
     releaseDirectStart,
     clearWorkspaceThread,
     refreshWorkspaceAfterCompletion,
+    refreshUsage,
+    usageController,
   ])
+
+  useEffect(() => () => usageController.dispose(), [usageController])
 
   useEffect(() => {
     let cancelled = false
@@ -1565,14 +1581,7 @@ export function App() {
       }
       refreshWorkspaceAfterCompletion(path)
     })
-    if (activeId && !activeId.startsWith('pending:')) {
-      void transport
-        .request('usage.summary', { threadId: activeId })
-        .then((summary) => {
-          if (activeIdRef.current === activeId) setUsageSummary(summary)
-        })
-        .catch(() => undefined)
-    }
+    if (activeId && !activeId.startsWith('pending:')) refreshUsage()
     const sourceRevision = sidebarSettingsSourceRevision.current
     void transport
       .request('sidebar.settings', {})
@@ -1629,19 +1638,8 @@ export function App() {
   const usageThreadId = activeId && !activeId.startsWith('pending:') ? activeId : undefined
 
   useEffect(() => {
-    let cancelled = false
-    void transport
-      .request('usage.summary', usageThreadId ? { threadId: usageThreadId } : { provider })
-      .then((summary) => {
-        if (!cancelled) setUsageSummary(summary)
-      })
-      .catch(() => {
-        if (!cancelled) setUsageSummary(undefined)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [transport, usageThreadId, provider])
+    usageController.select({ provider, ...(usageThreadId ? { threadId: usageThreadId } : {}) })
+  }, [usageController, usageThreadId, provider])
 
   // First load, plus the one-time handover from localStorage. Anything found
   // there is given to the server and the key removed, so it happens once.
