@@ -3,6 +3,7 @@ import {
   type DragEvent,
   type KeyboardEvent,
   type PointerEvent,
+  type ReactNode,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -12,7 +13,6 @@ import {
 import type {
   Account,
   ProviderId,
-  ResultOf,
   ThreadInboxStatus,
   ThreadLifecycle,
 } from '@harness/contracts'
@@ -22,7 +22,6 @@ import {
   Folder,
   FolderOpen,
   FolderPen,
-  Gauge,
   GitPullRequest,
   PanelLeftClose,
   Pencil,
@@ -38,6 +37,7 @@ import { isDesktop, revealPath } from '../bridge.js'
 import { sessionSourcePresentation } from '../provider-presentation.js'
 import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
+import { AccountLimits, type AccountLimitsState } from './AccountLimits.js'
 import { InboxSidebar, type InboxActions } from './InboxSidebar.js'
 import { SourceIdentity } from './SourceIdentity.js'
 
@@ -109,7 +109,8 @@ function SidebarComponent(props: {
   activeSessionId: string | undefined
   account: Account | undefined
   providerName: string
-  usageSummary?: ResultOf<'usage.summary'> | undefined
+  usageState?: AccountLimitsState | undefined
+  onRetryUsage?: (() => void) | undefined
   mode?: 'classic' | 'inbox'
   inbox?: InboxActions | undefined
   collapsed: boolean
@@ -277,7 +278,6 @@ function SidebarComponent(props: {
   }, [edgeRevealed, props.collapsed, props.width])
   const [scope, setScope] = useState('')
   const inbox = props.mode === 'inbox' && props.inbox !== undefined
-  const limits = props.usageSummary?.limits ?? []
 
   const closeOnNarrowViewport = () => {
     if (globalThis.matchMedia?.('(max-width: 700px)').matches) props.onClose()
@@ -519,6 +519,8 @@ function SidebarComponent(props: {
             drop="up"
             label="Account"
             panelClassName="menu--settings"
+            panelRole="dialog"
+            panelLabel="Account and plan limits"
             trigger={() => (
               <span className="account">
                 <span className="account__avatar">
@@ -530,72 +532,32 @@ function SidebarComponent(props: {
           >
             {(close) => (
               <>
-                <div className="account-menu__usage">
-                  <div className="account-menu__usage-head">
-                    <Gauge size={14} aria-hidden />
-                    <span>Limits</span>
-                  </div>
-                  {limits.length > 0 ? (
-                    limits.map((limit) => (
-                      <div className="account-menu__limit" key={limit.label}>
-                        <div className="account-menu__limit-row">
-                          <span className="account-menu__limit-label">{limit.label}</span>
-                          <span>
-                            {limit.valueLabel ?? `${Math.round(100 - limit.usedPercent)}% left`}
-                          </span>
-                        </div>
-                        {limit.valueLabel === undefined ? (
-                          <div
-                            className="account-menu__limit-bar"
-                            role="progressbar"
-                            aria-label={`${limit.label} left`}
-                            aria-valuenow={Math.round(100 - limit.usedPercent)}
-                            aria-valuemin={0}
-                            aria-valuemax={100}
-                          >
-                            <span
-                              style={{
-                                width: `${Math.min(100, Math.max(0, 100 - limit.usedPercent))}%`,
-                                background:
-                                  Math.round(100 - limit.usedPercent) <= 15
-                                    ? 'var(--error)'
-                                    : 'white',
-                              }}
-                            />
-                          </div>
-                        ) : null}
-                        {limit.resetsAt ? (
-                          <span className="account-menu__limit-reset">
-                            Resets {resetLabel(limit.resetsAt)}
-                          </span>
-                        ) : null}
-                      </div>
-                    ))
-                  ) : (
-                    <span className="account-menu__usage-note">
-                      {props.providerName} reports no limits
-                    </span>
-                  )}
-                </div>
-                <MenuItem
-                  title="Profile"
-                  icon={<UserRound size={14} aria-hidden />}
+                {props.usageState ? (
+                  <AccountLimits state={props.usageState} onRetry={props.onRetryUsage ?? noop} />
+                ) : null}
+                <button
+                  type="button"
+                  className="menu__item"
                   onClick={() => {
                     props.onOpenSettings('profile')
                     closeOnNarrowViewport()
                     close()
                   }}
-                />
-                <MenuItem
-                  title="Settings"
-                  icon={<Settings size={14} aria-hidden />}
-                  shortcutAria={shortcutAria(SHORTCUTS.settings)}
+                >
+                  <DialogAction icon={<UserRound size={14} aria-hidden />} title="Profile" />
+                </button>
+                <button
+                  type="button"
+                  className="menu__item"
+                  aria-keyshortcuts={shortcutAria(SHORTCUTS.settings)}
                   onClick={() => {
                     props.onOpenSettings()
                     closeOnNarrowViewport()
                     close()
                   }}
-                />
+                >
+                  <DialogAction icon={<Settings size={14} aria-hidden />} title="Settings" />
+                </button>
               </>
             )}
           </Menu>
@@ -1280,17 +1242,18 @@ function basename(path: string): string {
   return parts[parts.length - 1] ?? path
 }
 
-/** A reset within the week reads as weekday and time; further out, as a date. */
-function resetLabel(at: number): string {
-  const date = new Date(at)
-  const withinWeek = at - Date.now() < 6 * 86_400_000
-  return date.toLocaleString(
-    undefined,
-    withinWeek
-      ? { weekday: 'short', hour: '2-digit', minute: '2-digit' }
-      : { month: 'short', day: 'numeric' },
+function DialogAction(props: { icon: ReactNode; title: string }) {
+  return (
+    <span className="menu__name">
+      <span className="menu__label">
+        {props.icon}
+        <span>{props.title}</span>
+      </span>
+    </span>
   )
 }
+
+function noop() {}
 
 function initial(account: Account | undefined, fallback: string): string {
   const source = account?.email ?? fallback

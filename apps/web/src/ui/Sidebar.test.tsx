@@ -99,6 +99,7 @@ describe('Sidebar chat actions', () => {
     const limitBar = screen.getByRole('progressbar', { name: 'Codex 7 days left' })
     expect(limitBar.getAttribute('aria-valuenow')).toBe('15')
     expect((limitBar.firstElementChild as HTMLElement).style.width).toBe('15%')
+    expect(document.activeElement?.textContent).toContain('Plan limits')
 
     expect(screen.queryAllByRole('menuitem')).toHaveLength(0)
     const accountActions = screen.getAllByRole('button').filter((button) =>
@@ -107,6 +108,10 @@ describe('Sidebar chat actions', () => {
     for (const item of accountActions) expect(item.querySelector('svg')).not.toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Profile' }))
     expect(onOpenSettings).toHaveBeenCalledWith('profile')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Account' }))
 
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     fireEvent.click(screen.getByRole('button', { name: /Settings/ }))

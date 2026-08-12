@@ -294,6 +294,10 @@ export function App() {
     const stored = readSetting(SETUP_KEY)
     return PROVIDER_IDS.find((id) => id === stored) ?? 'codex'
   })
+  const sidebarUsageState = useMemo(
+    () => usageState ?? ({ status: 'loading', provider } as const),
+    [usageState, provider],
+  )
   const [acpAgent, setAcpAgent] = useState<string | undefined>(
     () => readSetting(AGENT_KEY) ?? undefined,
   )
@@ -3326,7 +3330,8 @@ export function App() {
           activeSessionId={surface === 'chat' ? activeId : undefined}
           pullRequestsActive={surface === 'pull-requests'}
           providerName={providerName(provider, acpAgentName)}
-          usageSummary={usageSummary}
+          usageState={sidebarUsageState}
+          onRetryUsage={refreshUsage}
           mode={sidebarSettings.mode}
           inbox={sidebarInbox}
           collapsed={collapsed}

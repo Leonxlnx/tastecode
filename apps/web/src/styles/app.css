@@ -332,6 +332,8 @@
   align-items: center;
   gap: 8px;
   font-size: var(--t-md);
+  margin: 0;
+  outline: 0;
 }
 
 .account-menu__usage-head svg {
@@ -340,7 +342,47 @@
 }
 
 .account-menu__usage-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
   color: var(--text-3);
+}
+
+.account-menu__source {
+  display: grid;
+  gap: 7px;
+}
+
+.account-menu__source h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--t-sm);
+}
+
+.account-menu__usage-error {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 7px;
+  color: var(--error);
+}
+
+.account-menu__usage-error span,
+.account-menu__usage-error small {
+  display: block;
+}
+
+.account-menu__usage-error small {
+  margin-top: 2px;
+  color: var(--text-3);
+}
+
+.account-menu__usage-error button {
+  color: inherit;
 }
 
 .account-menu__limit {
@@ -371,6 +413,10 @@
   height: 100%;
   border-radius: inherit;
   background: var(--running);
+}
+
+.account-menu__limit-bar > span[data-low] {
+  background: var(--error);
 }
 
 .account-menu__limit-reset {
