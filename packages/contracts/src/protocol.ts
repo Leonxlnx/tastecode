@@ -554,6 +554,30 @@ export const UsageHistoryResultSchema = z.object({
 })
 export type UsageHistoryResult = z.infer<typeof UsageHistoryResultSchema>
 
+export const ProviderLimitSchema = z.object({
+  label: z.string(),
+  usedPercent: z.number().min(0).max(100),
+  /** Unix time in milliseconds. */
+  resetsAt: z.number().optional(),
+  /** Non-percent rows (credit balances, reset counts) render this text instead of a bar. */
+  valueLabel: z.string().optional(),
+})
+export type ProviderLimit = z.infer<typeof ProviderLimitSchema>
+
+export const ProviderLimitSourceSchema = z.discriminatedUnion('status', [
+  z.object({
+    provider: ProviderIdSchema,
+    status: z.literal('ready'),
+    /** A successful source can honestly report no plan limits. */
+    limits: z.array(ProviderLimitSchema),
+  }),
+  z.object({
+    provider: ProviderIdSchema,
+    status: z.literal('unavailable'),
+  }),
+])
+export type ProviderLimitSource = z.infer<typeof ProviderLimitSourceSchema>
+
 /**
  * Method table. Adding a method means adding it here first — this object is the
  * single source of truth that the server routes against and the client calls.
@@ -1143,16 +1167,12 @@ export const methods = {
         inputIncludesCached: true,
       }),
       /** Provider-reported subscription windows. Empty when unavailable. */
-      limits: z.array(
-        z.object({
-          label: z.string(),
-          usedPercent: z.number().min(0).max(100),
-          /** Unix time in milliseconds. */
-          resetsAt: z.number().optional(),
-          /** Non-percent rows (credit balances, reset counts) render this text instead of a bar. */
-          valueLabel: z.string().optional(),
-        }),
-      ),
+      limits: z.array(ProviderLimitSchema),
+      /**
+       * Provider-neutral source state. Optional for one compatibility window;
+       * current servers always send it while older servers keep `limits` useful.
+       */
+      limitSources: z.array(ProviderLimitSourceSchema).optional(),
     }),
   },
   /**
@@ -1391,6 +1411,10 @@ export const channels = {
   'skills.changed': z.object({
     provider: ProviderIdSchema,
     projectPath: z.string().min(1),
+  }),
+  /** A provider reported that its subscription usage or limits changed. */
+  'usage.changed': z.object({
+    provider: ProviderIdSchema,
   }),
   'thread.event': z.object({
     threadId: z.string(),
