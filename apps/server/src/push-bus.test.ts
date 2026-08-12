@@ -54,7 +54,7 @@ describe('PushBus', () => {
     expect(sequences(second)).toEqual([1])
   })
 
-  it('broadcasts provider-neutral usage changes without provider payloads', () => {
+  it('broadcasts provider-neutral usage changes without provider-specific payloads', () => {
     const bus = new PushBus()
     const client = socket()
     bus.add(client)

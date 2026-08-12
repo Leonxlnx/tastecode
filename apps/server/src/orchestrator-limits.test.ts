@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ProviderId } from '@harness/contracts'
+import { ProviderIdSchema } from '@harness/contracts'
 import { Store } from './store.js'
 
 const sources = vi.hoisted(() => ({
@@ -69,21 +69,33 @@ describe('provider limit sources', () => {
     await instance.disposeAll()
   })
 
-  it.each(['api', 'cursor', 'acp'] satisfies ProviderId[])(
-    'marks %s unavailable without querying a subscription source',
-    async (provider) => {
-      const instance = orchestrator()
+  it('preserves a supported provider unavailable state', async () => {
+    sources.claude.mockResolvedValue({ status: 'unavailable' })
+    const instance = orchestrator()
 
-      await expect(instance.usageLimitSource(provider)).resolves.toEqual({
-        provider,
-        status: 'unavailable',
-      })
-      expect(sources.codex).not.toHaveBeenCalled()
-      expect(sources.claude).not.toHaveBeenCalled()
-      expect(sources.grok).not.toHaveBeenCalled()
-      await instance.disposeAll()
-    },
-  )
+    await expect(instance.usageLimitSource('claude-code')).resolves.toEqual({
+      provider: 'claude-code',
+      status: 'unavailable',
+    })
+    await instance.disposeAll()
+  })
+
+  it.each(
+    ProviderIdSchema.options.filter(
+      (provider) => !['codex', 'claude-code', 'grok'].includes(provider),
+    ),
+  )('marks %s unavailable without querying a subscription source', async (provider) => {
+    const instance = orchestrator()
+
+    await expect(instance.usageLimitSource(provider)).resolves.toEqual({
+      provider,
+      status: 'unavailable',
+    })
+    expect(sources.codex).not.toHaveBeenCalled()
+    expect(sources.claude).not.toHaveBeenCalled()
+    expect(sources.grok).not.toHaveBeenCalled()
+    await instance.disposeAll()
+  })
 
   it('propagates a real provider failure', async () => {
     sources.grok.mockRejectedValue(new Error('Grok billing request failed.'))
