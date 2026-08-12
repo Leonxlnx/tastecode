@@ -1131,7 +1131,7 @@ describe('provider-neutral design briefing', () => {
 
       sessions[0]?.turnIds.push('final-note-turn', 'motion-turn', 'brand-turn')
       orchestrator.respondToUserInput(thread.id, finalRequest.request.id, {
-        final_note: ['Keep the page motion-free.'],
+        final_note: ["No, that's everything — except keep it motion-free."],
       })
       await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
       sessions[0]?.emit(

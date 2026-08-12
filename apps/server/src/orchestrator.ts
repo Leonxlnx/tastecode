@@ -1707,8 +1707,8 @@ export class Orchestrator {
 
       const noMoreDetails =
         designInput.final &&
-        (answers[FINAL_BRIEFING_QUESTION.id] ?? []).some((answer) =>
-          answer.startsWith("No, that's everything"),
+        (answers[FINAL_BRIEFING_QUESTION.id] ?? []).includes(
+          FINAL_BRIEFING_QUESTION.options[0]!.label,
         )
       if (!noMoreDetails) {
         flow.explicitAnswers.push(
