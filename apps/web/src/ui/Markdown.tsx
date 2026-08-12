@@ -281,6 +281,8 @@ function applyLiveMarkdown(
     if (operation.type === 'leaf.open') {
       const span = document.createElement('span')
       span.dataset.liveMarkdownLeaf = ''
+      span.style.display = 'inline'
+      span.style.minHeight = '0'
       parent.append(span)
       dom.leaves.set(operation.id, span)
       continue

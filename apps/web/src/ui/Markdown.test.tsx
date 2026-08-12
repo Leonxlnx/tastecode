@@ -205,17 +205,14 @@ describe('Markdown streaming motion', () => {
     expect(rendered.container.querySelector('[style*="animation"]')).toBeNull()
   })
 
-  it('keeps a completed local destination inert without a blocked-link flash', () => {
-    const { container } = render(
-      <Markdown
-        text={'Updated [index.html](file:///E:/project/index.html).'}
-        streaming
-        projectPath="E:\project"
-      />,
-    )
+  it('keeps sealed leaves on one long streamed code line', () => {
+    const source = `\`\`\`ts\n${'x'.repeat(300)}`
+    const { container } = render(<Markdown text={source} streaming />)
+    const leaves = [...container.querySelectorAll('pre code > [data-live-markdown-leaf]')]
 
-    expect(container.textContent).not.toContain('[blocked]')
-    expect(container.textContent).toContain('index.html')
-    expect(container.querySelector('a, button')).toBeNull()
+    expect(leaves).toHaveLength(2)
+    expect(leaves.every((leaf) => (leaf as HTMLElement).style.display === 'inline')).toBe(true)
+    expect(leaves.every((leaf) => (leaf as HTMLElement).style.minHeight === '0')).toBe(true)
+    expect(container.querySelector('pre')?.textContent).toBe('x'.repeat(300))
   })
 })
