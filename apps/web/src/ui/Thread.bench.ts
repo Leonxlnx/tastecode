@@ -14,6 +14,7 @@ import { createThreadProjector, findTurns, presentTurns } from './turns.js'
 
 const OPTIONS = { time: 1_200, warmupTime: 300 }
 const FAST_OPTIONS = { iterations: 1_000_000, time: 0, warmupIterations: 100_000, warmupTime: 0 }
+const ITEM_COUNTS = [1_000, 10_000] as const
 const transcript = makeFixtureThread(1_000)
 
 const liveItem: Item = {
@@ -55,51 +56,90 @@ const deltas: ItemDeltaEvent[] = Array.from({ length: 500 }, () => ({
   textDelta: 'x',
 }))
 
-const replayEntries: Array<{ seq: number; event: DomainEvent }> = []
-for (let itemIndex = 0; itemIndex < 1_000; itemIndex += 1) {
-  const id = `history-${itemIndex}`
-  replayEntries.push({
-    seq: replayEntries.length + 1,
-    event: {
-      type: 'item.started',
-      item: {
-        id,
-        turnId: `turn-${itemIndex}`,
-        type: 'message',
-        role: 'assistant',
-        status: 'started',
-        text: '',
-        createdAt: itemIndex,
-      },
-    },
-  })
-  for (let deltaIndex = 0; deltaIndex < 50; deltaIndex += 1) {
-    replayEntries.push({
-      seq: replayEntries.length + 1,
+function makeReplayEntries(itemCount: number): Array<{ seq: number; event: DomainEvent }> {
+  const entries: Array<{ seq: number; event: DomainEvent }> = []
+  for (let itemIndex = 0; itemIndex < itemCount; itemIndex += 1) {
+    const id = `history-${itemIndex}`
+    entries.push({
+      seq: entries.length + 1,
       event: {
-        type: 'item.delta',
-        turnId: `turn-${itemIndex}`,
-        itemId: id,
-        textDelta: 'x',
+        type: 'item.started',
+        item: {
+          id,
+          turnId: `turn-${itemIndex}`,
+          type: 'message',
+          role: 'assistant',
+          status: 'started',
+          text: '',
+          createdAt: itemIndex,
+        },
+      },
+    })
+    for (let deltaIndex = 0; deltaIndex < 50; deltaIndex += 1) {
+      entries.push({
+        seq: entries.length + 1,
+        event: {
+          type: 'item.delta',
+          turnId: `turn-${itemIndex}`,
+          itemId: id,
+          textDelta: 'x',
+        },
+      })
+    }
+    entries.push({
+      seq: entries.length + 1,
+      event: {
+        type: 'item.completed',
+        item: {
+          id,
+          turnId: `turn-${itemIndex}`,
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          text: 'x'.repeat(50),
+          createdAt: itemIndex,
+        },
       },
     })
   }
-  replayEntries.push({
-    seq: replayEntries.length + 1,
-    event: {
-      type: 'item.completed',
-      item: {
-        id,
-        turnId: `turn-${itemIndex}`,
-        type: 'message',
-        role: 'assistant',
-        status: 'completed',
-        text: 'x'.repeat(50),
-        createdAt: itemIndex,
-      },
-    },
-  })
+  return entries
 }
+
+const replayEntries = new Map(ITEM_COUNTS.map((count) => [count, makeReplayEntries(count)]))
+
+const activityFrames = new Map(
+  ITEM_COUNTS.map((count) => {
+    const history = makeFixtureThread(count)
+    const command: Item = {
+      id: `command-${count}`,
+      turnId: `live-${count}`,
+      type: 'command',
+      status: 'started',
+      command: 'pnpm test',
+      text: '',
+      createdAt: 0,
+    }
+    const tool: Item = {
+      id: `tool-${count}`,
+      turnId: command.turnId,
+      type: 'tool_call',
+      status: 'started',
+      text: 'search',
+      createdAt: 0,
+    }
+    const state: ThreadState = {
+      ...emptyThread,
+      items: [...history, command, tool],
+      running: true,
+      activeTurn: { id: command.turnId, startedAt: 0 },
+    }
+    const frame: ItemDeltaEvent[] = [
+      { type: 'item.delta', turnId: command.turnId, itemId: command.id, textDelta: 'output' },
+      { type: 'item.delta', turnId: tool.turnId, itemId: tool.id, textDelta: ' result' },
+    ]
+    return [count, { state, frame }] as const
+  }),
+)
 
 describe('long-thread hot paths', () => {
   bench(
@@ -149,12 +189,24 @@ describe('long-thread hot paths', () => {
     OPTIONS,
   )
 
-  bench(
-    'replays 52,000 persisted events into a 1,000-item thread',
-    () => {
-      const state = reduceEventLog(emptyThread, replayEntries)
-      if (state.items.length !== 1_000) throw new Error('invalid replay')
-    },
-    OPTIONS,
-  )
+  for (const count of ITEM_COUNTS) {
+    bench(
+      `folds command and tool deltas into a ${count.toLocaleString()}-item history`,
+      () => {
+        const fixture = activityFrames.get(count)!
+        const state = reduceDeltas(fixture.state, fixture.frame)
+        if (!state.items.at(-1)?.text?.endsWith(' result')) throw new Error('invalid activity fold')
+      },
+      OPTIONS,
+    )
+
+    bench(
+      `replays ${(count * 52).toLocaleString()} persisted events into a ${count.toLocaleString()}-item thread`,
+      () => {
+        const state = reduceEventLog(emptyThread, replayEntries.get(count)!)
+        if (state.items.length !== count) throw new Error('invalid replay')
+      },
+      OPTIONS,
+    )
+  }
 })
