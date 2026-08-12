@@ -8774,6 +8774,14 @@
   max-height: min(246px, 42dvh);
 }
 
+.model-selector__flat-head {
+  position: sticky;
+  z-index: 2;
+  top: -6px;
+  padding: 6px 4px 4px;
+  background: var(--model-picker-bg);
+}
+
 .model-selector__models--flat .model-selector__group + .model-selector__group {
   margin-top: 4px;
   border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);

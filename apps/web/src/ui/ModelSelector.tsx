@@ -12,6 +12,7 @@ import { Check, ChevronDown, Zap } from 'lucide-react'
 import {
   filterModelChoicesByQuery,
   resolveReasoningEffort,
+  sourceKey,
   type ModelChoice,
 } from '../model-catalog.js'
 import { DitherSlider } from './dither-kit/DitherSlider.js'
@@ -102,7 +103,11 @@ type ModelGroup = {
 }
 
 function modelSourceKey(entry: ModelChoice): string {
-  return `${entry.provider}:${entry.connectionId ?? ''}:${entry.sourceName}`
+  return sourceKey({
+    provider: entry.provider,
+    connectionId: entry.connectionId,
+    agentId: entry.agent?.id,
+  })
 }
 
 /** One section per source, in catalog order, so a provider's name renders once. */
@@ -166,15 +171,23 @@ function ProviderModelList(props: {
     groups.find((group) => group.key === activeGroupKey) ??
     groups.find((group) => group.key === selectedGroupKey) ??
     groups[0]
-  const filteredEntries = activeGroup
-    ? filterModelChoicesByQuery(activeGroup.entries, deferredQuery)
-    : []
+  const searching = deferredQuery.trim().length > 0
+  const filteredGroups = searching
+    ? groupModelsBySource(filterModelChoicesByQuery(props.models, deferredQuery))
+    : groups
+  const visibleGroup =
+    filteredGroups.find((group) => group.key === activeGroup?.key) ??
+    filteredGroups[0] ??
+    activeGroup
+  const filteredEntries = searching
+    ? (filteredGroups.find((group) => group.key === visibleGroup?.key)?.entries ?? [])
+    : (visibleGroup?.entries ?? [])
 
   return (
     <div className="model-selector__catalog">
       <div className="model-selector__providers" role="group" aria-label="Providers">
         {groups.map((group) => {
-          const active = group.key === activeGroup?.key
+          const active = group.key === visibleGroup?.key
           return (
             <button
               key={group.key}
@@ -183,7 +196,10 @@ function ProviderModelList(props: {
               aria-label={`Show ${group.name} models`}
               aria-pressed={active}
               title={group.name}
-              onClick={() => setActiveGroupKey(group.key)}
+              onClick={() => {
+                setActiveGroupKey(group.key)
+                setQuery('')
+              }}
             >
               <ProviderIcon mark={group.mark} size={18} />
             </button>
@@ -192,19 +208,18 @@ function ProviderModelList(props: {
       </div>
 
       <div
-        key={activeGroup?.key}
         className="model-selector__models"
         role="group"
-        aria-label={activeGroup ? `${activeGroup.name} models` : 'Models'}
+        aria-label={visibleGroup ? `${visibleGroup.name} models` : 'Models'}
       >
-        {activeGroup ? (
+        {visibleGroup ? (
           <section className="model-selector__group">
             <div className="model-selector__group-head">
-              <p className="model-selector__group-title">{activeGroup.name}</p>
+              <p className="model-selector__group-title">{visibleGroup.name}</p>
               <ModelSearchField
                 className="model-selector__search"
                 value={query}
-                label={`Search ${activeGroup.name} models`}
+                label="Search models"
                 autoFocus
                 onChange={setQuery}
               />
@@ -245,13 +260,26 @@ function FlatModelList(props: {
   selectedChoice: ModelChoice | undefined
   onModelSelect: (choice: ModelChoice) => void
 }) {
+  const [query, setQuery] = useState('')
+  const deferredQuery = useDeferredValue(query)
+  const groups = groupModelsBySource(filterModelChoicesByQuery(props.models, deferredQuery))
+
   return (
     <div
       className="model-selector__models model-selector__models--flat"
       role="group"
       aria-label="Models"
     >
-      {groupModelsBySource(props.models).map((group) => (
+      <div className="model-selector__flat-head">
+        <ModelSearchField
+          className="model-selector__search"
+          value={query}
+          label="Search models"
+          autoFocus
+          onChange={setQuery}
+        />
+      </div>
+      {groups.map((group) => (
         <section className="model-selector__group" key={group.key}>
           <p className="model-selector__group-title">
             <ProviderIcon mark={group.mark} size={13} />
@@ -275,6 +303,11 @@ function FlatModelList(props: {
           })}
         </section>
       ))}
+      {groups.length === 0 ? (
+        <p className="model-selector__empty" role="status">
+          No matching models.
+        </p>
+      ) : null}
     </div>
   )
 }

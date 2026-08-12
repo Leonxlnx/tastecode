@@ -285,6 +285,27 @@ describe('ModelSelector', () => {
 
     expect(screen.queryByRole('group', { name: 'Providers' })).toBeNull()
     expect(document.querySelector('.model-selector__models--flat')).toBeTruthy()
+    expect(screen.getByRole('searchbox', { name: 'Search models' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
+  })
+
+  it('searches every flat-list source without changing the selected model', () => {
+    const claude = {
+      ...MODELS[0]!,
+      key: 'claude-code:sonnet',
+      provider: 'claude-code' as const,
+      sourceName: 'Claude Code',
+      mark: 'anthropic' as const,
+      model: { ...MODELS[0]!.model, id: 'sonnet', displayName: 'Sonnet 5' },
+    }
+    const { onModelChange } = renderSelector({ models: [...MODELS, claude] })
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    const search = screen.getByRole('searchbox', { name: 'Search models' })
+
+    fireEvent.change(search, { target: { value: 'claude sonnet' } })
+    expect(screen.getByRole('button', { name: 'Use Sonnet 5 through Claude Code' })).toBeTruthy()
+    expect(onModelChange).not.toHaveBeenCalled()
+    fireEvent.keyDown(search, { key: 'Escape' })
     expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
   })
 
@@ -337,7 +358,30 @@ describe('ModelSelector', () => {
     expect(onModelChange).not.toHaveBeenCalled()
   })
 
-  it('searches the active provider without changing the selected model', () => {
+  it('keeps ACP sources distinct by stable agent identity', () => {
+    const acpModels: ModelChoice[] = ['gemini', 'qwen'].map((agentId) => ({
+      ...MODELS[0]!,
+      key: `acp:${agentId}:default`,
+      provider: 'acp',
+      sourceName: 'Workspace agent',
+      mark: 'acp',
+      agent: { id: agentId, name: 'Workspace agent' },
+      model: {
+        ...MODELS[0]!.model,
+        id: 'default',
+        displayName: `${agentId} default`,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    }))
+
+    expect(groupModelsBySource(acpModels).map((group) => group.key)).toEqual([
+      'acp:gemini',
+      'acp:qwen',
+    ])
+  })
+
+  it('searches every rail source without changing the selected model', () => {
     localStorage.setItem('harness.modelPickerLayout', 'rail')
     const claudeModel: ModelChoice = {
       key: 'claude-code:sonnet',
@@ -356,7 +400,7 @@ describe('ModelSelector', () => {
     const { onModelChange } = renderSelector({ models: [...MODELS, claudeModel] })
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
 
-    const search = screen.getByRole('searchbox', { name: 'Search Codex models' })
+    const search = screen.getByRole('searchbox', { name: 'Search models' })
     fireEvent.change(search, { target: { value: 'mini' } })
 
     expect(screen.queryByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeNull()
@@ -364,11 +408,12 @@ describe('ModelSelector', () => {
     expect(onModelChange).not.toHaveBeenCalled()
 
     fireEvent.change(search, { target: { value: 'sonnet' } })
-    expect(screen.getByRole('status').textContent).toBe('No matching models.')
-    fireEvent.click(screen.getByRole('button', { name: 'Show Claude Code models' }))
     expect(screen.getByRole('button', { name: 'Use Sonnet 5 through Claude Code' })).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Show Claude Code models' }).getAttribute('aria-pressed'),
+    ).toBe('true')
 
-    const claudeSearch = screen.getByRole('searchbox', { name: 'Search Claude Code models' })
+    const claudeSearch = screen.getByRole('searchbox', { name: 'Search models' })
     fireEvent.keyDown(claudeSearch, { key: 'Escape' })
     expect((claudeSearch as HTMLInputElement).value).toBe('')
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
