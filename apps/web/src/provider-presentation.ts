@@ -28,6 +28,7 @@ const PROVIDERS = {
   cursor: { label: 'Cursor', mark: 'cursor' },
   opencode: { label: 'OpenCode', mark: 'opencode' },
   antigravity: { label: 'Antigravity', mark: 'antigravity' },
+  pi: { label: 'Pi', mark: 'pi' },
   acp: { label: 'ACP', mark: 'acp' },
   api: { label: 'API connection', mark: 'custom' },
 } as const satisfies Record<ProviderId, ProviderPresentation>

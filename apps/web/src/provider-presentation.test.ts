@@ -16,6 +16,7 @@ describe('provider presentation', () => {
     ['cursor', 'Cursor', 'cursor'],
     ['opencode', 'OpenCode', 'opencode'],
     ['antigravity', 'Antigravity', 'antigravity'],
+    ['pi', 'Pi', 'pi'],
     ['acp', 'ACP', 'acp'],
     ['api', 'API connection', 'custom'],
   ] as const)('presents %s consistently', (provider, label, mark) => {
