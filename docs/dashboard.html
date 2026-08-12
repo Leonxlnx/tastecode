@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-12 main c0a88bd3</span>
+        <span class="meta">2026-08-12 main 122c30cb</span>
       </div>
     </div>
 
@@ -399,8 +399,9 @@
                 <span
                   >Sessions and git
                   <span class="d"
-                    >projects, parallel sessions, worktrees, desktop recovery, usage
-                    accounting</span
+                    >projects, parallel sessions, worktrees, desktop recovery, usage accounting;
+                    Codex cumulative thread totals never masquerade as current-context occupancy,
+                    including on historical replay</span
                   >
                 </span>
               </li>
@@ -624,7 +625,9 @@
                     package-manager previews stay in the selected workspace, and build reports must
                     match the exact changed-file set; rendered preview audits require exactly one h1
                     and mobile interaction targets of at least 44 by 44 CSS pixels before visual
-                    review can pass</span
+                    review can pass; successful previews remain reachable until their owning thread
+                    closes or starts a replacement, and a completed queued Design turn stays idle
+                    even when its provider start promise resolves late</span
                   >
                 </span>
               </li>

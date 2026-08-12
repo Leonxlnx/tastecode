@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-12 c0a88bd3</span>
+        <span class="meta">2026-08-12 122c30cb</span>
       </div>
     </div>
 
@@ -742,7 +742,12 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Context window usage shown beside the picker</span
+                >Context window usage shown beside the picker only when the source supplies a
+                compatible current-context numerator
+                <span class="d"
+                  >Codex cumulative thread accounting stays available without producing a false
+                  full-context ring, including when legacy history replays</span
+                ></span
               ></label
             >
           </li>
@@ -780,7 +785,9 @@
                   bounded before-and-after tree; Harness-owned static previews reject occupied ports
                   and clean up child trees; rendered Chromium audits require exactly one h1 and at
                   least 44 by 44 CSS-pixel mobile interaction targets, and model review cannot erase
-                  those findings</span
+                  those findings; a successful preview remains reachable until thread close or a
+                  replacement Design run, with process and port release awaited before cleanup;
+                  completed queued phases remain idle when their provider promise settles late</span
                 ></span
               ></label
             >
