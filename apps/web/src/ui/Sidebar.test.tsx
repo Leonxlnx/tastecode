@@ -31,7 +31,10 @@ describe('Sidebar chat actions', () => {
         activeSessionId={undefined}
         account={{ signedIn: true, email: 'private@example.com', plan: 'Pro' }}
         providerName="Codex"
-        usageSummary={{
+        usageState={{
+          status: 'ready',
+          provider: 'codex',
+          summary: {
           session: {
             inputTokens: 800,
             cachedInputTokens: 0,
@@ -46,8 +49,15 @@ describe('Sidebar chat actions', () => {
             reasoningTokens: 0,
             totalTokens: 5_000,
           },
-          limits: [{ label: '7 days', usedPercent: 85 }],
+            limits: [{ label: '7 days', usedPercent: 85 }],
+            limitSource: {
+              provider: 'codex',
+              status: 'ready',
+              limits: [{ label: '7 days', usedPercent: 85 }],
+            },
+          },
         }}
+        onRetryUsage={vi.fn()}
         mode="inbox"
         inbox={{
           onSettle: vi.fn(),
@@ -82,21 +92,24 @@ describe('Sidebar chat actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
     expect(onAddProject).toHaveBeenCalledOnce()
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    expect(screen.getByText('Limits')).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: 'Account and plan limits' })).toBeTruthy()
+    expect(screen.getByText('Plan limits')).toBeTruthy()
     expect(screen.getByText('7 days')).toBeTruthy()
     expect(screen.getByText('15% left')).toBeTruthy()
-    const limitBar = screen.getByRole('progressbar', { name: '7 days left' })
+    const limitBar = screen.getByRole('progressbar', { name: 'Codex 7 days left' })
     expect(limitBar.getAttribute('aria-valuenow')).toBe('15')
     expect((limitBar.firstElementChild as HTMLElement).style.width).toBe('15%')
 
-    const accountItems = screen.getAllByRole('menuitem')
-    expect(accountItems.map((item) => item.textContent)).toEqual(['Profile', 'Settings'])
-    for (const item of accountItems) expect(item.querySelector('svg')).not.toBeNull()
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Profile' }))
+    expect(screen.queryAllByRole('menuitem')).toHaveLength(0)
+    const accountActions = screen.getAllByRole('button').filter((button) =>
+      ['Profile', 'Settings'].includes(button.textContent ?? ''),
+    )
+    for (const item of accountActions) expect(item.querySelector('svg')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }))
     expect(onOpenSettings).toHaveBeenCalledWith('profile')
 
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }))
     expect(onOpenSettings).toHaveBeenCalledTimes(2)
     expect(onOpenSettings).toHaveBeenLastCalledWith()
   })
