@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-12 122c30cb</span>
+        <span class="meta">2026-08-12 a9fe6588</span>
       </div>
     </div>
 
@@ -273,7 +273,8 @@
               ><input type="checkbox" /><span
                 >Live model list from the provider
                 <span class="d"
-                  >GPT-5.6 Sol, Terra, Luna, GPT-5.5, 5.4, 5.4-Mini, 5.3-Codex-Spark</span
+                  >first-run visibility favors GPT-5.6 Sol, Terra, Luna, and 5.3-Codex-Spark;
+                  previously saved visibility remains authoritative</span
                 ></span
               ></label
             >
@@ -480,7 +481,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Full turn streaming with reasoning items, file changes, and commands</span
+                >Full turn streaming with reasoning items, file changes, and commands
+                <span class="d">the bounded live catalog exposes Grok 4.6 and 4.5</span></span
               ></label
             >
           </li>
@@ -584,7 +586,8 @@
                 >One fixed setup and account row grammar
                 <span class="d"
                   >Codex, Claude Code, and Grok keep mark, identity, status, issue, and actions in
-                  stable slots across loading, ready, setup, busy, and failure states;
+                  stable slots across loading, ready, setup, busy, and failure states; primary and
+                  secondary actions share the fixed right edge on desktop and narrow layouts;
                   <a href="./screenshots/provider-settings-desktop.png">desktop</a> and
                   <a href="./screenshots/provider-settings-390.png">390 px</a> evidence</span
                 ></span
@@ -648,10 +651,11 @@
                 <span class="d"
                   >adapters own ready, unavailable, and error truth; the server returns one
                   authoritative source with an exact legacy flatten, while change notifications
-                  carry only the provider id; the account dialog keeps every installed source
-                  separate, distinguishes loading, successful-empty, unavailable, and failure,
-                  retains usable values during failed refreshes, and routes Retry to the correct
-                  provider with dialog focus entry and return</span
+                  carry only the provider id; installed sources prefetch in the background through
+                  bounded provider reads, so the account dialog opens cached values without a fresh
+                  request, keeps every source separate, distinguishes loading, successful-empty,
+                  unavailable, and failure, retains usable values during failed refreshes, and
+                  routes Retry to the correct provider with dialog focus entry and return</span
                 ></span
               ></label
             >
@@ -691,8 +695,9 @@
             <label
               ><input type="checkbox" /><span
                 >Model picker grouped by stable source identity with provider logos; flat and rail
-                layouts share full-catalog search, keyboard behavior, and selection
-                preservation</span
+                layouts share full-catalog search, keyboard behavior, and selection preservation;
+                first-run visibility favors current Codex and Claude families while saved visibility
+                and future unknown models remain authoritative</span
               ></label
             >
           </li>
@@ -727,8 +732,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Add custom model ids the provider accepts but does not list, using the shared
-                accessible provider picker in Settings</span
+                >Stored custom model ids remain selectable and are still sent unchanged
+                <span class="d">new custom-model management is parked in beta Settings</span></span
               ></label
             >
           </li>
@@ -808,7 +813,8 @@
                 <span class="d"
                   >the visible live tail applies each versioned suffix once through the bounded
                   incremental parser; full Markdown and syntax highlighting run from the exact
-                  source at completion</span
+                  source at completion; assistant prose uses denser type and spacing without
+                  changing prompts, headings, or code</span
                 ></span
               ></label
             >
@@ -984,7 +990,8 @@
                 >Add project by folder, multiple projects at once
                 <span class="d"
                   >project loading and failures remain explicit; Retry and the no-project action use
-                  the existing folder picker;
+                  the existing folder picker; selecting an empty project opens No chats with the
+                  composer still available;
                   <a href="./screenshots/empty-project.png">production evidence</a></span
                 ></span
               ></label
@@ -1160,7 +1167,10 @@
             <label
               ><input type="checkbox" /><span
                 >Account popup exactly as wide as its button
-                <span class="d">limit windows, Profile, then Settings</span></span
+                <span class="d"
+                  >lifted clear of the sidebar divider with matching corner radius; prefetched limit
+                  windows, Profile, then Settings</span
+                ></span
               ></label
             >
           </li>
@@ -1220,7 +1230,10 @@
             <label
               ><input type="checkbox" /><span
                 >MCP servers: add, enable and disable, inspect, per-project scope
-                <span class="d">project and transport scoped across reconnects</span></span
+                <span class="d"
+                  >project and transport scoped across reconnects; the heading reports provider
+                  capability instead of implying project availability</span
+                ></span
               ></label
             >
           </li>
@@ -1243,7 +1256,10 @@
             <label
               ><input type="checkbox" /><span
                 >Agent Skills: browse, enable per project, progressive loading
-                <span class="d">stale refreshes cannot replace confirmed project state</span></span
+                <span class="d"
+                  >stale refreshes cannot replace confirmed project state; the heading reports
+                  provider capability instead of the active project name</span
+                ></span
               ></label
             >
           </li>
@@ -1302,7 +1318,10 @@
             <label
               ><input type="checkbox" /><span
                 >Sidebar translucency in four steps
-                <span class="d">Off, Subtle, Medium, Strong, default Medium</span></span
+                <span class="d"
+                  >Off, Subtle, Medium, Strong, default Medium; previews use flat tones without
+                  decorative gradients</span
+                ></span
               ></label
             >
           </li>
@@ -1345,8 +1364,8 @@
               ><input type="checkbox" /><span
                 >Twelve sections
                 <span class="d"
-                  >Profile, Providers, Models, MCP, Skills, Workflows, Mobile access, Usage,
-                  Appearance, Data, Debug, About</span
+                  >General, Profile, and Appearance first, then Providers, Models, MCP, Skills,
+                  Workflows, Mobile access, Usage, Data &amp; privacy, Debug, About</span
                 ></span
               ></label
             >
@@ -1354,8 +1373,9 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Profile: local identity, lifetime stats, streaks, token heatmap with per-day
-                provider breakdowns, and model insights</span
+                >Profile: renderer-local display name and validated PNG, JPEG, or WebP avatar plus
+                lifetime stats, streaks, token heatmap with per-day provider breakdowns, and model
+                insights</span
               ></label
             >
           </li>
@@ -1367,7 +1387,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Models: per-source and per-model visibility toggles for the picker</span
+                >Models: polished full-catalog search and per-source or per-model visibility toggles
+                <span class="d"
+                  >first-run defaults wait for complete installed-provider discovery; stored custom
+                  entries remain usable while creation controls are parked</span
+                ></span
               ></label
             >
           </li>
@@ -1376,7 +1400,8 @@
               ><input type="checkbox" /><span
                 >Data: project count and confirmed renderer-preference reset
                 <span class="d"
-                  >projects, workspaces, files, history, and provider credentials remain untouched;
+                  >roomier action layout also applies to Debug; projects, workspaces, files,
+                  history, and provider credentials remain untouched;
                   <a href="./screenshots/reset-preferences-confirm.png"
                     >production evidence</a
                   ></span
