@@ -157,6 +157,7 @@ export type StartOptions = {
 }
 
 export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>
+type Spawn = typeof spawnCli
 
 export type ProviderLimit = {
   label: string
@@ -466,6 +467,7 @@ export type CodexAdapterEvents = {
 }
 
 export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
+  readonly #spawn: Spawn
   #rpc: StdioJsonRpc | undefined
   #voice = new CodexVoiceTranscriber(<T>(method: string, params: unknown) =>
     this.#call<T>(method, params),
@@ -498,9 +500,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     options: {
       mcpServers?: McpServerConfig[]
       mcpCredentials?: Record<string, string>
+      spawn?: Spawn
     } = {},
   ) {
     super()
+    this.#spawn = options.spawn ?? spawnCli
     const prepared = prepareMcpConfig(options.mcpServers ?? [], options.mcpCredentials ?? {})
     this.#mcpServers = prepared.servers
     this.#mcpEnvironment = prepared.environment
@@ -517,9 +521,13 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     // Structured questions are gated in Codex's default collaboration mode.
     // Enable the native tool at process startup so every advertised user-input
     // capability is real rather than a request the model can never make.
-    const child = spawnCli('codex', ['app-server', '--enable', 'default_mode_request_user_input'], {
-      env: this.#mcpEnvironment,
-    })
+    const child = this.#spawn(
+      'codex',
+      ['app-server', '--enable', 'default_mode_request_user_input'],
+      {
+        env: this.#mcpEnvironment,
+      },
+    )
     const rpc = new StdioJsonRpc(child)
     this.#rpc = rpc
 

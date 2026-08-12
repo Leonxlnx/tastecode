@@ -47,9 +47,23 @@ export type AcpStartOptions = {
   model?: string | undefined
 }
 
+export type AcpLaunchOptions = {
+  name: string
+  command: string
+  args?: string[]
+  spawn?: typeof spawnCli
+}
+
+type AcpLaunchSpec = Pick<
+  AcpAgentSpec,
+  'id' | 'name' | 'command' | 'args' | 'supportedVersion' | 'modelArg' | 'modelConfigId'
+>
+
 export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
-  #spec: AcpAgentSpec
+  #spec: AcpLaunchSpec
+  readonly #spawn: typeof spawnCli
   #rpc: StdioJsonRpc | undefined
+  #initialize: InitializeResult | undefined
   #sessionId: string | undefined
   #model: string | undefined
   #streamer: Streamer | undefined
@@ -70,8 +84,18 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   /** The options the agent offered, kept until the user answers. */
   #optionsById = new Map<string, PermissionOption[]>()
 
-  constructor(agentId: string) {
+  constructor(agentId: string, launch?: AcpLaunchOptions) {
     super()
+    this.#spawn = launch?.spawn ?? spawnCli
+    if (launch) {
+      this.#spec = {
+        id: agentId,
+        name: launch.name,
+        command: launch.command,
+        args: launch.args ?? [],
+      }
+      return
+    }
     const spec = findAgentSpec(agentId)
     if (!spec) throw new Error(`unknown ACP agent "${agentId}"`)
     this.#spec = spec
@@ -226,9 +250,27 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     return discoverAgentModels(this.#spec.id)
   }
 
+  /** Complete the ACP initialize handshake without creating a paid session. */
+  async verifyCompatibility(workspacePath: string): Promise<{
+    protocolVersion?: number
+    agentName?: string
+    agentVersion?: string
+  }> {
+    await this.#connect(workspacePath, undefined)
+    const initialize = this.#initialize
+    return {
+      ...(initialize?.protocolVersion === undefined
+        ? {}
+        : { protocolVersion: initialize.protocolVersion }),
+      ...(initialize?.agentInfo?.name ? { agentName: initialize.agentInfo.name } : {}),
+      ...(initialize?.agentInfo?.version ? { agentVersion: initialize.agentInfo.version } : {}),
+    }
+  }
+
   dispose(): void {
     this.#rpc?.dispose()
     this.#rpc = undefined
+    this.#initialize = undefined
     this.#sessionId = undefined
     this.#model = undefined
     this.#loadSession = false
@@ -243,7 +285,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     // A second connect (retry after a failed resume, say) must not orphan the
     // agent process the first one spawned.
     this.#rpc?.dispose()
-    const child = spawnCli(this.#spec.command, args, { cwd: workspacePath })
+    const child = this.#spawn(this.#spec.command, args, { cwd: workspacePath })
     const rpc = new StdioJsonRpc(child, this.#spec.name)
     this.#rpc = rpc
     rpc.onStderr((text) => this.emit('log', text.trimEnd()))
@@ -254,6 +296,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
       clientInfo: { name: 'personal-harness', version: '0.0.0' },
     })
+    this.#initialize = init
     if (init.protocolVersion !== undefined && init.protocolVersion !== PROTOCOL_VERSION) {
       this.emit(
         'log',

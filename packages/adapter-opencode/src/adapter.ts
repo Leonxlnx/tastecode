@@ -25,6 +25,7 @@ export const OPENCODE_CAPABILITIES: Capabilities = {
 
 type Events = { event: [DomainEvent]; log: [string] }
 type OpenCodeProtocol = 'v1' | 'v2'
+type Spawn = typeof spawnCli
 
 export type OpenCodeStartOptions = {
   model?: string | undefined
@@ -136,6 +137,7 @@ export function openCodeMcpConfig(
 }
 
 export class OpenCodeAdapter extends EventEmitter<Events> {
+  readonly #spawn: Spawn
   readonly #configuredBaseUrl: string | undefined
   readonly #mcpServers: McpServerConfig[]
   readonly #mcpCredentials: Record<string, string>
@@ -166,9 +168,11 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       baseUrl?: string
       mcpServers?: McpServerConfig[]
       mcpCredentials?: Record<string, string>
+      spawn?: Spawn
     } = {},
   ) {
     super()
+    this.#spawn = options.spawn ?? spawnCli
     this.#configuredBaseUrl = options.baseUrl
     this.#mcpServers = options.mcpServers ?? []
     this.#mcpCredentials = options.mcpCredentials ?? {}
@@ -190,7 +194,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
         this.#mcpServers.length > 0
           ? { mcp: openCodeMcpConfig(this.#mcpServers, this.#mcpCredentials) }
           : {}
-      const server = await launchOpenCodeServer(config)
+      const server = await launchOpenCodeServer(config, this.#spawn)
       this.#server = server
       this.#baseUrl = server.url
       this.#authorization = server.authorization
@@ -798,7 +802,10 @@ function openCodeV2Model(
   }
 }
 
-async function launchOpenCodeServer(config: Record<string, unknown>): Promise<{
+async function launchOpenCodeServer(
+  config: Record<string, unknown>,
+  spawn: Spawn = spawnCli,
+): Promise<{
   url: string
   authorization: string
   close(): void
@@ -809,7 +816,7 @@ async function launchOpenCodeServer(config: Record<string, unknown>): Promise<{
   const password = randomUUID()
   const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`
   return new Promise((resolve, reject) => {
-    const child = spawnCli('opencode', ['serve', '--hostname=127.0.0.1', '--port=0'], {
+    const child = spawn('opencode', ['serve', '--hostname=127.0.0.1', '--port=0'], {
       env: {
         OPENCODE_SERVER_USERNAME: username,
         OPENCODE_SERVER_PASSWORD: password,
