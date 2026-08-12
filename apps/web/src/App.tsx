@@ -1278,6 +1278,7 @@ export function App() {
 
   const loadHistory = useCallback(
     async (threadId: string, afterSeq?: number) => {
+      if (afterSeq === undefined) durableSequences.current.delete(threadId)
       // Live pushes landing during this round trip are buffered (see the
       // thread.event handler) and re-applied on top of the fetched history —
       // overwriting the cache blindly used to silently drop them.
@@ -2415,6 +2416,7 @@ export function App() {
     if (!activeId || !rollbackInspection) return
     setRollbackRestoring(true)
     try {
+      durableSequences.current.delete(activeId)
       const { undo } = await transport.request('thread.restore', {
         threadId: activeId,
         checkpointId: rollbackInspection.checkpoint.id,
@@ -2436,6 +2438,7 @@ export function App() {
   const reverseRestore = useCallback(async () => {
     if (!undoRestore) return
     try {
+      durableSequences.current.delete(undoRestore.threadId)
       await transport.request('thread.undoRestore', {
         threadId: undoRestore.threadId,
         undo: undoRestore.token,

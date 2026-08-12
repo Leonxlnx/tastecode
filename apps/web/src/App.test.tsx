@@ -1440,6 +1440,17 @@ describe('new chats', () => {
         ],
       },
     ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let historyReads = 0
+    let releaseRestoreHistory: (() => void) | undefined
+    const restoreHistory = new Promise<{ events: never[]; running: false }>((resolve) => {
+      releaseRestoreHistory = () => resolve({ events: [], running: false })
+    })
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.history' && ++historyReads === 2) return restoreHistory
+      return request(method, params)
+    })
 
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: /^Parser work,/ }))
@@ -1456,6 +1467,16 @@ describe('new chats', () => {
         checkpointId: 7,
       })
     })
+    await waitFor(() => expect(historyReads).toBe(2))
+    act(() => {
+      for (const listener of transport.stateListeners) listener('reconnecting')
+      for (const listener of transport.stateListeners) listener('open')
+    })
+    await waitFor(() => expect(historyReads).toBe(3))
+    expect(
+      transport.request.mock.calls.filter(([method]) => method === 'thread.history').at(-1)?.[1],
+    ).toEqual({ threadId: 'thread-rollback' })
+    await act(async () => releaseRestoreHistory?.())
     fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.undoRestore', {
@@ -1468,6 +1489,7 @@ describe('new chats', () => {
         .filter(([method]) => method === 'thread.history')
         .map(([, params]) => params),
     ).toEqual([
+      { threadId: 'thread-rollback' },
       { threadId: 'thread-rollback' },
       { threadId: 'thread-rollback' },
       { threadId: 'thread-rollback' },
