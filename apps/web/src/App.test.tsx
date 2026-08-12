@@ -1941,6 +1941,7 @@ describe('new chats', () => {
   it('clears renderer preferences and reloads only after reset confirmation', () => {
     localStorage.setItem('harness.theme', 'dark')
     localStorage.setItem('harness.hiddenModels', '["codex:gpt-5.6-mini"]')
+    localStorage.setItem('harness.profile.displayName', 'Leon')
     const reload = vi.spyOn(window.location, 'reload').mockImplementation(() => undefined)
     render(<App />)
 
