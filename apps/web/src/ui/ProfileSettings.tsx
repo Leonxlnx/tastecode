@@ -44,6 +44,7 @@ export function ProfileSettings(props: {
   const [requestVersion, setRequestVersion] = useState(0)
   const forceRefresh = useRef(false)
   const [imageError, setImageError] = useState<string>()
+  const imageRequest = useRef(0)
 
   const changeIdentity = (updates: Partial<ProfileIdentityPreferences>) => {
     props.onIdentityChange?.({ displayName: '', ...props.identity, ...updates })
@@ -51,11 +52,15 @@ export function ProfileSettings(props: {
 
   const chooseImage = async (file: File | undefined) => {
     if (!file) return
+    const request = ++imageRequest.current
     setImageError(undefined)
     try {
-      changeIdentity({ avatarDataUrl: await readProfileImage(file) })
+      const avatarDataUrl = await readProfileImage(file)
+      if (request === imageRequest.current) changeIdentity({ avatarDataUrl })
     } catch (requestError) {
-      setImageError(requestError instanceof Error ? requestError.message : String(requestError))
+      if (request === imageRequest.current) {
+        setImageError(requestError instanceof Error ? requestError.message : String(requestError))
+      }
     }
   }
 
@@ -221,6 +226,7 @@ export function ProfileSettings(props: {
                 className="settings__action profile-identity__remove-photo"
                 type="button"
                 onClick={() => {
+                  imageRequest.current += 1
                   setImageError(undefined)
                   changeIdentity({ avatarDataUrl: undefined })
                 }}
