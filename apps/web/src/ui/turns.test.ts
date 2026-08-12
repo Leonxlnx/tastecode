@@ -104,6 +104,25 @@ describe('turn boundaries', () => {
     expect(presentTurns(items).get('t1')?.complete).toBe(false)
   })
 
+  it('only compacts repeated settled reasoning when no answer exists', () => {
+    const reasoning = (id: string, status: Item['status'] = 'completed'): Item => ({
+      ...item(id, 't1'),
+      type: 'reasoning',
+      status,
+    })
+
+    expect(presentTurns([reasoning('one')]).get('t1')?.complete).toBe(false)
+    expect(presentTurns([reasoning('one'), reasoning('two', 'started')]).get('t1')?.complete).toBe(
+      false,
+    )
+    expect(
+      presentTurns([
+        reasoning('one'),
+        { ...item('command', 't1'), type: 'command', command: 'pnpm test' },
+      ]).get('t1')?.complete,
+    ).toBe(false)
+  })
+
   it('keeps chronological activity groups between assistant narration rows', () => {
     const items: Item[] = [
       { ...item('user', 't1'), role: 'user', text: 'Fix it.' },
