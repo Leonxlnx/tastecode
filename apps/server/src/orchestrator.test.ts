@@ -1226,10 +1226,22 @@ describe('provider-neutral design briefing', () => {
       plan: commandPreviewPlan,
     },
     {
-      failure: Object.assign(new Error('ENOENT: no such file or directory, realpath index.html'), {
+      failure: new Error('Harness static preview ownership check failed'),
+      name: 'missing static entry',
+      plan: staticPreviewPlan,
+    },
+    {
+      failure: Object.assign(new Error('ENOENT: no such file or directory, realpath app.mjs'), {
         code: 'ENOENT',
       }),
-      name: 'missing entry',
+      name: 'missing command entry',
+      plan: commandPreviewPlan,
+    },
+    {
+      failure: Object.assign(new Error('listen EADDRINUSE: address already in use'), {
+        code: 'EADDRINUSE',
+      }),
+      name: 'occupied static port',
       plan: staticPreviewPlan,
     },
     {

@@ -253,7 +253,9 @@ function isRecoverablePreviewError(error: unknown): boolean {
   const message = errorMessage(error)
   return (
     code === 'ENOENT' ||
+    code === 'EADDRINUSE' ||
     /preview port \d+ is already (?:being started|in use)/i.test(message) ||
+    message === 'Harness static preview ownership check failed' ||
     /^static preview /i.test(message)
   )
 }
