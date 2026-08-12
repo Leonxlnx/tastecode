@@ -3437,7 +3437,7 @@
   height: 6px;
   flex: none;
   background: var(--text-3);
-  border-radius: 50%;
+  border-radius: var(--r-circle);
   content: '';
 }
 
