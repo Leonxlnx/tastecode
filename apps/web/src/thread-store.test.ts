@@ -20,6 +20,23 @@ const item = (over: Partial<Item> = {}): Item => ({
   ...over,
 })
 
+function itemWithTrackedId(
+  id: string,
+  status: Item['status'],
+  type: Item['type'],
+  onIdRead: () => void,
+): Item {
+  const value = item({ id, status, type, text: status === 'completed' ? 'output' : '' })
+  Object.defineProperty(value, 'id', {
+    enumerable: true,
+    get() {
+      onIdRead()
+      return id
+    },
+  })
+  return value
+}
+
 const apply = (events: DomainEvent[]) => events.reduce(reduce, emptyThread)
 
 afterEach(() => vi.unstubAllGlobals())
@@ -328,17 +345,9 @@ describe('thread reducer', () => {
   it.each([1_000, 10_000])('keeps completed replay item reads linear at %i items', (count) => {
     const readBudget = count * 12
     let idReads = 0
-    const trackedItem = (id: string, status: Item['status'], type: Item['type']): Item => {
-      const value = item({ id, status, type, text: status === 'completed' ? 'output' : '' })
-      Object.defineProperty(value, 'id', {
-        enumerable: true,
-        get() {
-          idReads += 1
-          if (idReads > readBudget) throw new Error('replay item-read budget exceeded')
-          return id
-        },
-      })
-      return value
+    const readId = () => {
+      idReads += 1
+      if (idReads > readBudget) throw new Error('replay item-read budget exceeded')
     }
     const entries: Array<{ seq: number; event: DomainEvent }> = []
 
@@ -348,7 +357,7 @@ describe('thread reducer', () => {
       entries.push(
         {
           seq: entries.length + 1,
-          event: { type: 'item.started', item: trackedItem(id, 'started', type) },
+          event: { type: 'item.started', item: itemWithTrackedId(id, 'started', type, readId) },
         },
         {
           seq: entries.length + 2,
@@ -356,7 +365,7 @@ describe('thread reducer', () => {
         },
         {
           seq: entries.length + 3,
-          event: { type: 'item.completed', item: trackedItem(id, 'completed', type) },
+          event: { type: 'item.completed', item: itemWithTrackedId(id, 'completed', type, readId) },
         },
       )
     }
@@ -364,6 +373,45 @@ describe('thread reducer', () => {
     const state = reduceEventLog(emptyThread, entries)
 
     expect(state.items).toHaveLength(count)
+    expect(idReads).toBeLessThanOrEqual(readBudget)
+  })
+
+  it.each([1_000, 10_000])('keeps error-interleaved replay reads linear at %i items', (count) => {
+    const readBudget = count * 12
+    let errorId = 0
+    vi.stubGlobal('crypto', { randomUUID: () => `replay-error-${errorId++}` })
+    let idReads = 0
+    const readId = () => {
+      idReads += 1
+      if (idReads > readBudget) throw new Error('error replay item-read budget exceeded')
+    }
+    const entries: Array<{ seq: number; event: DomainEvent }> = []
+
+    for (let index = 0; index < count; index += 1) {
+      const id = `failed-${index}`
+      entries.push(
+        {
+          seq: entries.length + 1,
+          event: {
+            type: 'item.completed',
+            item: itemWithTrackedId(id, 'failed', 'command', readId),
+          },
+        },
+        {
+          seq: entries.length + 2,
+          event: { type: 'thread.error', threadId: 'th1', message: 'Provider disconnected' },
+        },
+      )
+    }
+
+    const state = reduceEventLog(emptyThread, entries)
+
+    expect(state.items).toHaveLength(count * 2)
+    expect(state.items[1]).toMatchObject({
+      type: 'error',
+      status: 'completed',
+      text: 'Provider disconnected',
+    })
     expect(idReads).toBeLessThanOrEqual(readBudget)
   })
 
@@ -415,28 +463,6 @@ describe('thread reducer', () => {
     expect(state.items).not.toBe(started.items)
     expect(started.items[0]?.text).toBe('')
     expect(state.items[0]?.text).toBe('local live')
-  })
-
-  it('keeps indexed replay exact when an error row interrupts item events', () => {
-    vi.stubGlobal('crypto', { randomUUID: () => 'replay-error' })
-    const now = vi.spyOn(Date, 'now').mockReturnValue(100)
-    const events: DomainEvent[] = [
-      { type: 'item.started', item: item({ id: 'before-error', text: '' }) },
-      { type: 'item.delta', turnId: 't1', itemId: 'before-error', textDelta: 'partial' },
-      { type: 'thread.error', threadId: 'th1', message: 'Disconnected' },
-      { type: 'item.started', item: item({ id: 'after-error', text: '' }) },
-      { type: 'item.delta', turnId: 't1', itemId: 'after-error', textDelta: 'recovered' },
-      { type: 'item.completed', item: item({ id: 'after-error', status: 'completed' }) },
-    ]
-
-    const sequential = events.reduce(reduce, emptyThread)
-    const replayed = reduceEventLog(
-      emptyThread,
-      events.map((event, index) => ({ seq: index + 1, event })),
-    )
-
-    expect(replayed).toEqual(sequential)
-    now.mockRestore()
   })
 
   it('tracks whether a turn is running', () => {

@@ -71,6 +71,28 @@ export function createOptimisticMessageId(): string {
   return localId(OPTIMISTIC_PREFIX)
 }
 
+function createThreadErrorItem(message: string): Item {
+  return {
+    id: localId('error:'),
+    turnId: '',
+    type: 'error',
+    status: 'completed',
+    text: message,
+    createdAt: Date.now(),
+  }
+}
+
+function settleThreadError(state: ThreadState, items: Item[]): ThreadState {
+  return {
+    ...state,
+    running: false,
+    activeTurn: undefined,
+    approvals: [],
+    userInputs: [],
+    items,
+  }
+}
+
 export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
   switch (event.type) {
     case 'turn.started':
@@ -210,24 +232,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
     }
 
     case 'thread.error':
-      return {
-        ...state,
-        running: false,
-        activeTurn: undefined,
-        approvals: [],
-        userInputs: [],
-        items: [
-          ...state.items,
-          {
-            id: localId('error:'),
-            turnId: '',
-            type: 'error',
-            status: 'completed',
-            text: event.message,
-            createdAt: Date.now(),
-          },
-        ],
-      }
+      return settleThreadError(state, [...state.items, createThreadErrorItem(event.message)])
 
     default:
       return state
@@ -295,12 +300,17 @@ class ReplayItems {
     }
   }
 
+  append(item: Item): void {
+    const itemId = item.id
+    if (!this.#indexById.has(itemId)) this.#indexById.set(itemId, this.items.length)
+    this.items.push(item)
+  }
+
   start(item: Item): void {
     const itemId = item.id
     const existingIndex = this.#indexById.get(itemId)
     if (existingIndex === undefined) {
-      this.#indexById.set(itemId, this.items.length)
-      this.items.push(item)
+      this.append(item)
       return
     }
 
@@ -317,8 +327,7 @@ class ReplayItems {
     const itemId = item.id
     const existingIndex = this.#indexById.get(itemId)
     if (existingIndex === undefined) {
-      this.#indexById.set(itemId, this.items.length)
-      this.items.push(item)
+      this.append(item)
       return
     }
 
@@ -338,8 +347,7 @@ class ReplayItems {
       const textDelta = chunks.length === 1 ? chunks[0]! : chunks.join('')
       const index = this.#indexById.get(itemId)
       if (index === undefined) {
-        this.#indexById.set(itemId, this.items.length)
-        this.items.push({
+        this.append({
           id: itemId,
           turnId: activeTurnId ?? '',
           type: 'message',
@@ -403,12 +411,14 @@ export function reduceEventLog(
       mutableItems().complete(entry.event.item)
       continue
     }
+    if (entry.event.type === 'thread.error') {
+      const items = mutableItems()
+      items.append(createThreadErrorItem(entry.event.message))
+      next = settleThreadError(next, items.items)
+      continue
+    }
 
-    const previousItems = next.items
     next = reduce(next, entry.event)
-    // thread.error is the only remaining event that appends an item. Re-index
-    // lazily only if another stored item event follows it.
-    if (next.items !== previousItems) replayItems = undefined
   }
   flushDeltas()
   return next
