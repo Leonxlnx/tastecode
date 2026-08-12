@@ -8582,6 +8582,14 @@
   border-top: 1px solid var(--menu-line);
 }
 
+.model-selector__controls.is-fast-only {
+  height: auto;
+}
+
+.model-selector__controls.is-fast-only .model-selector__fast-row {
+  margin-left: auto;
+}
+
 .model-selector__controls-head {
   display: flex;
   align-items: center;

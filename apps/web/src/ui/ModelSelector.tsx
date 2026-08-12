@@ -576,44 +576,50 @@ export function ModelSelector(props: ModelSelectorProps) {
             />
           )}
 
-          <div className="model-selector__controls">
-            <div className="model-selector__controls-head">
-              <span className="model-selector__effort-title">
-                Effort: <span>{displayedEffortLabel}</span>
-              </span>
-              {fastTier ? (
-                <div className="model-selector__fast-row">
-                  <button
-                    type="button"
-                    className={`model-selector__fast${fastEnabled ? ' is-on' : ''}`}
-                    aria-label={fastEnabled ? 'Disable fast mode' : 'Enable fast mode'}
-                    aria-pressed={fastEnabled}
-                    onClick={() =>
-                      props.onServiceTierChange(
-                        fastEnabled ? getFastModeOffValue(model) : fastTier.id,
-                      )
-                    }
-                  >
-                    <span className="model-selector__fast-icon" aria-hidden>
-                      <Zap size={15} />
-                    </span>
-                  </button>
-                </div>
+          {effortOptions.length > 0 || fastTier ? (
+            <div
+              className={`model-selector__controls${effortOptions.length === 0 ? ' is-fast-only' : ''}`}
+            >
+              <div className="model-selector__controls-head">
+                {effortOptions.length > 0 ? (
+                  <span className="model-selector__effort-title">
+                    Effort: <span>{displayedEffortLabel}</span>
+                  </span>
+                ) : null}
+                {fastTier ? (
+                  <div className="model-selector__fast-row">
+                    <button
+                      type="button"
+                      className={`model-selector__fast${fastEnabled ? ' is-on' : ''}`}
+                      aria-label={fastEnabled ? 'Disable fast mode' : 'Enable fast mode'}
+                      aria-pressed={fastEnabled}
+                      onClick={() =>
+                        props.onServiceTierChange(
+                          fastEnabled ? getFastModeOffValue(model) : fastTier.id,
+                        )
+                      }
+                    >
+                      <span className="model-selector__fast-icon" aria-hidden>
+                        <Zap size={15} />
+                      </span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+
+              {effortOptions.length > 0 ? (
+                <DitherChoiceRow
+                  label="Effort"
+                  ariaLabel="Reasoning effort"
+                  optionLabels={effortLabels}
+                  selectedIndex={selectedEffortIndex}
+                  disabled={props.disabled || effortOptions.length <= 1}
+                  onPreviewIndex={setPreviewEffortIndex}
+                  onCommitIndex={commitEffortIndex}
+                />
               ) : null}
             </div>
-
-            {effortOptions.length > 0 ? (
-              <DitherChoiceRow
-                label="Effort"
-                ariaLabel="Reasoning effort"
-                optionLabels={effortLabels}
-                selectedIndex={selectedEffortIndex}
-                disabled={props.disabled || effortOptions.length <= 1}
-                onPreviewIndex={setPreviewEffortIndex}
-                onCommitIndex={commitEffortIndex}
-              />
-            ) : null}
-          </div>
+          ) : null}
         </div>
       )}
     </Menu>

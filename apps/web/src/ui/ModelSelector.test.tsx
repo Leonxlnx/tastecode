@@ -309,6 +309,41 @@ describe('ModelSelector', () => {
     expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
   })
 
+  it('omits controls when the selected model declares none', () => {
+    const plain = {
+      ...MODELS[0]!,
+      key: 'grok:plain',
+      provider: 'grok' as const,
+      sourceName: 'Grok',
+      mark: 'grok' as const,
+      model: { ...MODELS[0]!.model, reasoningEfforts: [], serviceTiers: [] },
+    }
+    renderSelector({ models: [plain], modelId: plain.key, effort: undefined })
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+
+    expect(document.querySelector('.model-selector__controls')).toBeNull()
+    expect(screen.queryByRole('slider', { name: 'Reasoning effort' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Enable fast mode' })).toBeNull()
+  })
+
+  it('renders only a compact Fast control when effort is unsupported', () => {
+    const fastOnly = {
+      ...MODELS[1]!,
+      model: { ...MODELS[1]!.model, reasoningEfforts: [] },
+    }
+    renderSelector({
+      models: [fastOnly],
+      modelId: fastOnly.key,
+      effort: undefined,
+      serviceTier: 'fast',
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+
+    expect(document.querySelector('.model-selector__controls.is-fast-only')).toBeTruthy()
+    expect(screen.queryByRole('slider', { name: 'Reasoning effort' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Disable fast mode' })).toBeTruthy()
+  })
+
   it('filters the model list through a provider logo rail', () => {
     localStorage.setItem('harness.modelPickerLayout', 'rail')
     const claudeModel: ModelChoice = {
