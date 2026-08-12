@@ -18,12 +18,13 @@ export const PREVIEW_DOM_AUDIT_SCRIPT = `(() => {
     '[role="switch"]',
     '[role="tab"]',
     '[role="treeitem"]',
-    '[tabindex]',
+    '[tabindex]:not([tabindex="-1"])',
     '[contenteditable]:not([contenteditable="false"])',
   ].join(',')
 
   const selectorFor = (element) => {
-    if (element.id) return ('#' + CSS.escape(element.id)).slice(0, 512)
+    const idSelector = element.id ? '#' + CSS.escape(element.id) : ''
+    if (idSelector.length > 0 && idSelector.length <= 512) return idSelector
     const tag = element.localName || 'unknown'
     const siblings = element.parentElement
       ? Array.from(element.parentElement.children).filter(candidate => candidate.localName === tag)
