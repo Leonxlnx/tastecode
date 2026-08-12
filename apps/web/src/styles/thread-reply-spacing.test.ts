@@ -8,6 +8,10 @@ describe('thread reply spacing', () => {
   it('keeps assistant prose compact without shrinking prompts or code', () => {
     const thread = css.match(/\.thread \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
     const reply = css.match(/\.reply \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
+    const responseMarkdown = css.match(/\.reply > \.md \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
+    const proseLeading = css.match(
+      /\.reply > \.md :is\(p, ul, ol, blockquote\) \{(?<body>[\s\S]*?)\n\}/,
+    )?.groups?.['body']
     const proseSpacing = css.match(
       /\.reply > \.md p,\n\.reply > \.md ul,\n\.reply > \.md ol \{(?<body>[\s\S]*?)\n\}/,
     )?.groups?.['body']
@@ -15,8 +19,11 @@ describe('thread reply spacing', () => {
     const code = css.match(/\.md pre \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
 
     expect(thread).toContain('font-size: var(--t-lg)')
-    expect(reply).toContain('font-size: var(--t-md)')
-    expect(reply).toContain('line-height: 1.45')
+    expect(reply).not.toContain('font-size')
+    expect(reply).not.toContain('line-height')
+    expect(responseMarkdown).toContain('font-size: var(--t-md)')
+    expect(responseMarkdown).toContain('line-height: 1.52')
+    expect(proseLeading).toContain('line-height: 1.45')
     expect(proseSpacing).toContain('margin-bottom: 6px')
     expect(listItem).toContain('margin-block: 0')
     expect(code).toContain('font-size: var(--t-sm)')

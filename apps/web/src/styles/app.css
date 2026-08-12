@@ -6167,13 +6167,17 @@
 
 .reply {
   color: var(--response-text);
-  font-size: var(--t-md);
-  line-height: 1.45;
   position: relative;
 }
 
 .reply > .md {
+  font-size: var(--t-md);
+  line-height: 1.52;
   max-width: 72ch;
+}
+
+.reply > .md :is(p, ul, ol, blockquote) {
+  line-height: 1.45;
 }
 
 .reply > .md p,
