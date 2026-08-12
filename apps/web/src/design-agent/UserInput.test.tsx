@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { UserInput } from './UserInput.js'
 
@@ -137,5 +137,22 @@ describe('briefing questions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
 
     expect(onSubmit).toHaveBeenCalledWith({ palette: ['Deep green with warm ivory'] })
+  })
+
+  it('restores the questions when answer submission fails', async () => {
+    const onSubmit = vi.fn().mockRejectedValue(new Error('disconnected'))
+    render(
+      <UserInput
+        request={{ ...request, questions: [request.questions[0]!] }}
+        onSubmit={onSubmit}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('radio', { name: /Decide for me/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Try again'))
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
+    expect(onSubmit).toHaveBeenCalledTimes(2)
   })
 })

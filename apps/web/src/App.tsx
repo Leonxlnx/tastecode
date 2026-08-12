@@ -2676,8 +2676,10 @@ export function App() {
   const answerUserInput = useCallback(
     (requestId: string, answers: Record<string, string[]>) => {
       const threadId = activeIdRef.current
-      if (!threadId) return
-      void transport.request('thread.respondToUserInput', { threadId, requestId, answers })
+      if (!threadId) return Promise.reject(new Error('No active session'))
+      return transport
+        .request('thread.respondToUserInput', { threadId, requestId, answers })
+        .then(() => undefined)
     },
     [transport],
   )

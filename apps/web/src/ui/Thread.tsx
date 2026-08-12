@@ -82,7 +82,7 @@ export function Thread(props: {
   onEditMessage?: ((text: string) => void) | undefined
   onRevertCheckpoint?: ((checkpoint: Checkpoint) => void) | undefined
   onDecide: (id: string, decision: ApprovalDecision) => void
-  onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void
+  onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
 }) {
   const scroller = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<ScrollMode>('follow-end')

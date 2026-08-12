@@ -5,11 +5,12 @@ import './user-input.css'
 
 export function UserInput(props: {
   request: UserInputRequest
-  onSubmit: (answers: Record<string, string[]>) => void
+  onSubmit: (answers: Record<string, string[]>) => void | Promise<void>
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [step, setStep] = useState(0)
   const [submitting, setSubmitting] = useState(false)
+  const [submissionError, setSubmissionError] = useState(false)
   const lastWheelAt = useRef(0)
   const question = props.request.questions[step]
   const answer = question ? answers[question.id]?.trim() : undefined
@@ -75,11 +76,22 @@ export function UserInput(props: {
           return
         }
         setSubmitting(true)
-        props.onSubmit(
-          Object.fromEntries(
-            Object.entries(answers).map(([questionId, value]) => [questionId, [value.trim()]]),
-          ),
-        )
+        setSubmissionError(false)
+        const retry = () => {
+          setSubmitting(false)
+          setSubmissionError(true)
+        }
+        try {
+          void Promise.resolve(
+            props.onSubmit(
+              Object.fromEntries(
+                Object.entries(answers).map(([questionId, value]) => [questionId, [value.trim()]]),
+              ),
+            ),
+          ).catch(retry)
+        } catch {
+          retry()
+        }
       }}
     >
       <div className="brief-input__stage" aria-live="polite">
@@ -139,9 +151,13 @@ export function UserInput(props: {
       </div>
 
       <footer className="brief-input__footer">
-        <span>
-          Question {step + 1} of {props.request.questions.length}
-        </span>
+        {submissionError ? (
+          <span role="alert">Could not submit. Try again.</span>
+        ) : (
+          <span>
+            Question {step + 1} of {props.request.questions.length}
+          </span>
+        )}
         <div className="brief-input__actions">
           {step > 0 ? (
             <button className="brief-input__back" type="button" onClick={goBack}>
