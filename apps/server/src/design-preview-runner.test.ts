@@ -53,13 +53,14 @@ describe('design preview runner', () => {
     expect(existsSync(marker)).toBe(false)
   })
 
-  it('starts a local argv command, waits for HTTP, and stops its process tree', async () => {
+  it('starts the expected workspace preview, waits for HTTP, and stops it', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
     workspaces.push(workspace)
     const port = await freePort()
+    const expected = `workspace:${path.basename(workspace)}`
     writeFileSync(
       path.join(workspace, 'preview.mjs'),
-      `import { createServer } from 'node:http'\ncreateServer((_request, response) => response.end('ready')).listen(${port}, '127.0.0.1')\n`,
+      `import { createServer } from 'node:http'\ncreateServer((_request, response) => response.end(${JSON.stringify(expected)})).listen(${port}, '127.0.0.1')\n`,
     )
     const plan = parsePreviewPlan({
       version: 1,
@@ -72,11 +73,68 @@ describe('design preview runner', () => {
 
     const preview = await startDesignPreview(workspace, plan, 5_000)
     previews.push(preview)
-    await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe('ready')
+    await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe(expected)
     await preview.stop()
     previews.pop()
     await expect(fetch(preview.url, { signal: AbortSignal.timeout(500) })).rejects.toThrow()
   })
+
+  it('reports a child that exits before opening its port', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(
+      path.join(workspace, 'preview.mjs'),
+      `process.stderr.write('intentional preview exit\\n')\nprocess.exit(23)\n`,
+    )
+
+    await expect(startDesignPreview(workspace, plan(port), 5_000)).rejects.toThrow(
+      /preview exited before it was ready[\s\S]*intentional preview exit/,
+    )
+  })
+
+  it('releases the child and port when readiness times out', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(
+      path.join(workspace, 'preview.mjs'),
+      `import { createServer } from 'node:http'\ncreateServer((_request, response) => { response.statusCode = 503; response.end('not ready') }).listen(${port}, '127.0.0.1')\n`,
+    )
+
+    await expect(startDesignPreview(workspace, plan(port), 250)).rejects.toThrow(
+      'preview did not become ready',
+    )
+    const reservation = createServer()
+    await listen(reservation, port)
+    await close(reservation)
+  })
+
+  it.skipIf(process.platform !== 'win32')(
+    'stops the complete Windows preview process tree',
+    async () => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+      workspaces.push(workspace)
+      const port = await freePort()
+      writeFileSync(
+        path.join(workspace, 'child.mjs'),
+        `import { createServer } from 'node:http'\ncreateServer((_request, response) => response.end('descendant')).listen(${port}, '127.0.0.1')\n`,
+      )
+      writeFileSync(
+        path.join(workspace, 'preview.mjs'),
+        `import { spawn } from 'node:child_process'\nspawn(process.execPath, ['child.mjs'], { stdio: 'inherit' })\nsetInterval(() => {}, 60_000)\n`,
+      )
+
+      const preview = await startDesignPreview(workspace, plan(port), 5_000)
+      previews.push(preview)
+      await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe(
+        'descendant',
+      )
+      await preview.stop()
+      previews.pop()
+      await expect(fetch(preview.url, { signal: AbortSignal.timeout(500) })).rejects.toThrow()
+    },
+  )
 
   it('rejects command arguments that could escape through a Windows shim', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
@@ -149,10 +207,21 @@ function freePort(): Promise<number> {
   })
 }
 
-function listen(server: ReturnType<typeof createServer>): Promise<void> {
+function plan(port: number) {
+  return parsePreviewPlan({
+    version: 1,
+    command: 'node',
+    args: ['preview.mjs'],
+    cwd: '.',
+    url: `http://127.0.0.1:${port}`,
+    viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+  })
+}
+
+function listen(server: ReturnType<typeof createServer>, port = 0): Promise<void> {
   return new Promise((resolve, reject) => {
     server.on('error', reject)
-    server.listen(0, '127.0.0.1', resolve)
+    server.listen(port, '127.0.0.1', resolve)
   })
 }
 
