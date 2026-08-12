@@ -141,6 +141,8 @@ export interface AgentSession {
       error: string | null
     }) => void,
   ): void
+  /** Provider-owned subscription usage changed; the server should refetch. */
+  onUsageChanged?(listener: () => void): void
   respondToApproval(approvalId: string, decision: ApprovalDecision): void
   respondToUserInput?(requestId: string, answers: Record<string, string[]>): void
   /**

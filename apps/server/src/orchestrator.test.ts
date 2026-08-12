@@ -73,6 +73,7 @@ class FakeSession implements AgentSession {
   turnIds: string[] = []
   sendError: Error | undefined
   eventDuringSend: DomainEvent | undefined
+  emitUsageChanged: () => void = () => {}
   afterEventBarrier: Promise<void> | undefined
   steerBarriers: Promise<void>[] = []
   /** Resolves the pending sendTurn, letting a test hold one open. */
@@ -129,6 +130,10 @@ class FakeSession implements AgentSession {
       for (const l of this.#listeners) l(event)
     }
   }
+
+  onUsageChanged(listener: () => void): void {
+    this.emitUsageChanged = listener
+  }
 }
 
 function harness(worktreeRoot?: string, store = new Store(':memory:')) {
@@ -137,6 +142,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
   const lifecycles: Array<{ threadId: string; lifecycle: ThreadLifecycle }> = []
   const logs: string[] = []
   const queueChanges: Array<{ threadId: string; itemIds: string[] }> = []
+  const usageChanges: ProviderId[] = []
   const queueNotificationError: { current?: Error } = {}
 
   /** Where each session was actually told to run. */
@@ -204,6 +210,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     onLifecycle: (threadId, lifecycle) => lifecycles.push({ threadId, lifecycle }),
     onLog: (line) => logs.push(line),
     onLogin: () => {},
+    onUsageChanged: (provider) => usageChanges.push(provider),
     mcpConfig: new McpConfigStore(
       path.join(mkdtempSync(path.join(os.tmpdir(), 'harness-mcp-')), 'mcp.json'),
     ),
@@ -220,6 +227,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     lifecycles,
     logs,
     queueChanges,
+    usageChanges,
     queueNotificationError,
     orchestrator,
     startedIn,
@@ -230,6 +238,17 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     capturePreview,
   }
 }
+
+describe('provider usage changes', () => {
+  it('forwards a live session signal with its provider identity', async () => {
+    const { orchestrator, sessions, usageChanges } = harness()
+    await orchestrator.startThread('codex', process.cwd())
+
+    sessions[0]?.emitUsageChanged()
+
+    expect(usageChanges).toEqual(['codex'])
+  })
+})
 
 const message = (text: string, turnId = 't1'): DomainEvent => ({
   type: 'item.completed',
