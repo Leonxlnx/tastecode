@@ -2,13 +2,66 @@ import { randomUUID } from 'node:crypto'
 import { spawn, type IPty } from 'node-pty'
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 10_000
+const DEFAULT_OUTPUT_BATCH_DELAY_MS = 4
+const DEFAULT_OUTPUT_BATCH_SIZE = 64 * 1024
 type SpawnPty = typeof spawn
 
 type TerminalEntry = {
   threadId: string
   process: IPty
   output: { dispose(): void }
+  outputBuffer: TerminalOutputBuffer
   exited: Promise<void>
+}
+
+/**
+ * Coalesce a burst of native PTY chunks into frame-sized renderer updates.
+ * node-pty can emit thousands of tiny chunks during command output; forwarding
+ * each one as its own JSON/WebSocket message costs far more than parsing the
+ * same bytes in xterm. Interactive output still flushes within four
+ * milliseconds, while sustained output flushes at 64 KiB to keep memory and
+ * latency bounded.
+ */
+export class TerminalOutputBuffer {
+  #chunks: string[] = []
+  #length = 0
+  #timer: ReturnType<typeof setTimeout> | undefined
+  #disposed = false
+
+  constructor(
+    private readonly emit: (data: string) => void,
+    private readonly delayMs = DEFAULT_OUTPUT_BATCH_DELAY_MS,
+    private readonly maximumSize = DEFAULT_OUTPUT_BATCH_SIZE,
+  ) {}
+
+  push(data: string): void {
+    if (this.#disposed || data.length === 0) return
+    this.#chunks.push(data)
+    this.#length += data.length
+    if (this.#length >= this.maximumSize) {
+      this.flush()
+      return
+    }
+    this.#timer ??= setTimeout(() => this.flush(), this.delayMs)
+  }
+
+  flush(): void {
+    if (this.#timer) clearTimeout(this.#timer)
+    this.#timer = undefined
+    if (this.#length === 0 || this.#disposed) return
+    const data = this.#chunks.join('')
+    this.#chunks = []
+    this.#length = 0
+    this.emit(data)
+  }
+
+  dispose(): void {
+    if (this.#timer) clearTimeout(this.#timer)
+    this.#timer = undefined
+    this.#chunks = []
+    this.#length = 0
+    this.#disposed = true
+  }
 }
 
 export class TerminalManager {
@@ -69,18 +122,23 @@ export class TerminalManager {
       cols: columns,
       rows,
       cwd,
-      env: globalThis.process.env,
+      env: terminalEnvironment(),
     })
-    const output = process.onData((data) => this.#onOutput(terminalId, data))
+    const outputBuffer = new TerminalOutputBuffer((data) => this.#onOutput(terminalId, data))
+    const output = process.onData((data) => outputBuffer.push(data))
     let resolveExited: () => void = () => {}
     const exited = new Promise<void>((resolve) => {
       resolveExited = resolve
     })
-    const entry = { threadId: key, process, output, exited }
+    const entry = { threadId: key, process, output, outputBuffer, exited }
     this.#byId.set(terminalId, entry)
     this.#byThread.set(key, terminalId)
 
     process.onExit(({ exitCode }) => {
+      // Preserve the last prompt or command output before publishing the exit.
+      // Explicit close disposes the buffer first because that pane is gone.
+      outputBuffer.flush()
+      output.dispose()
       if (this.#byId.get(terminalId) === entry) {
         this.#byId.delete(terminalId)
         this.#byThread.delete(key)
@@ -118,6 +176,7 @@ export class TerminalManager {
     // node-pty flushes buffered output after kill(); the client tore this
     // pane down, so those late chunks must not be broadcast for its id.
     entry.output.dispose()
+    entry.outputBuffer.dispose()
     const closing = this.#boundedExit(terminalId, entry.exited)
     this.#closingById.set(terminalId, closing)
     const threadClosings = this.#closingByThread.get(entry.threadId) ?? new Set<Promise<void>>()
@@ -211,4 +270,15 @@ export function platformShell(
 ): string {
   if (platform === 'win32') return environment['ComSpec'] ?? environment['COMSPEC'] ?? 'cmd.exe'
   return environment['SHELL'] ?? '/bin/sh'
+}
+
+export function terminalEnvironment(
+  environment: NodeJS.ProcessEnv = globalThis.process.env,
+): NodeJS.ProcessEnv {
+  return {
+    ...environment,
+    TERM: 'xterm-256color',
+    COLORTERM: 'truecolor',
+    TERM_PROGRAM: 'Harness',
+  }
 }

@@ -2,8 +2,13 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { IPty } from 'node-pty'
-import { describe, expect, it } from 'vitest'
-import { platformShell, TerminalManager } from './terminal.js'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  platformShell,
+  terminalEnvironment,
+  TerminalManager,
+  TerminalOutputBuffer,
+} from './terminal.js'
 
 describe('TerminalManager', () => {
   it('selects a native shell without imposing a POSIX model', () => {
@@ -12,6 +17,56 @@ describe('TerminalManager', () => {
     )
     expect(platformShell('darwin', { SHELL: '/bin/zsh' })).toBe('/bin/zsh')
     expect(platformShell('linux', {})).toBe('/bin/sh')
+  })
+
+  it('advertises true color without dropping the native process environment', () => {
+    expect(terminalEnvironment({ PATH: '/system/bin', CUSTOM: 'kept' })).toEqual({
+      PATH: '/system/bin',
+      CUSTOM: 'kept',
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      TERM_PROGRAM: 'Harness',
+    })
+  })
+
+  it('batches high-volume PTY output without changing its byte order', () => {
+    const emitted: string[] = []
+    const buffer = new TerminalOutputBuffer((data) => emitted.push(data), 4, 64 * 1024)
+
+    for (let index = 0; index < 1024; index += 1) buffer.push('x'.repeat(1024))
+
+    expect(emitted).toHaveLength(16)
+    expect(emitted.join('')).toBe('x'.repeat(1024 * 1024))
+    buffer.dispose()
+  })
+
+  it('keeps interactive output latency bounded and flushes before exit', async () => {
+    vi.useFakeTimers()
+    try {
+      const events: string[] = []
+      const pty = controlledPty()
+      const manager = new TerminalManager(
+        {
+          onOutput: (_terminalId, data) => events.push(`output:${data}`),
+          onExit: (_terminalId, exitCode) => events.push(`exit:${String(exitCode)}`),
+        },
+        { spawnPty: () => pty },
+      )
+      manager.open('thread-buffered', os.tmpdir(), 80, 24)
+
+      pty.emitData('prompt')
+      expect(events).toEqual([])
+      await vi.advanceTimersByTimeAsync(3)
+      expect(events).toEqual([])
+      await vi.advanceTimersByTimeAsync(1)
+      expect(events).toEqual(['output:prompt'])
+
+      pty.emitData('last line')
+      pty.emitExit(0)
+      expect(events).toEqual(['output:prompt', 'output:last line', 'exit:0'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('bounds shutdown when a PTY never reports its exit', async () => {
@@ -209,8 +264,10 @@ function removeTemporaryDirectory(directory: string): void {
 }
 
 function controlledPty(options: { kill?: () => void } = {}): IPty & {
+  emitData(data: string): void
   emitExit(exitCode: number): void
 } {
+  let onData: (data: string) => void = () => {}
   let onExit: (event: { exitCode: number; signal?: number }) => void = () => {}
   return {
     pid: 1,
@@ -218,7 +275,10 @@ function controlledPty(options: { kill?: () => void } = {}): IPty & {
     rows: 24,
     process: 'fake',
     handleFlowControl: false,
-    onData: () => ({ dispose: () => {} }),
+    onData: (listener) => {
+      onData = listener
+      return { dispose: () => {} }
+    },
     onExit: (listener) => {
       onExit = listener
       return { dispose: () => {} }
@@ -229,6 +289,7 @@ function controlledPty(options: { kill?: () => void } = {}): IPty & {
     kill: () => options.kill?.(),
     pause: () => {},
     resume: () => {},
+    emitData: (data) => onData(data),
     emitExit: (exitCode) => onExit({ exitCode }),
   }
 }
