@@ -57,7 +57,7 @@ import { serverBaseUrl, serverUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
 import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-recorder.js'
-import { UsageSummaryController } from './usage-summary-state.js'
+import { UsageLimitsController } from './usage-limits-state.js'
 import {
   agentMark,
   choicesFor,
@@ -279,7 +279,7 @@ export function App() {
   const [connectionUrl, setConnectionUrl] = useState(() => serverUrl(SERVER_BASE_URL))
   const transport = useMemo(() => new Transport(connectionUrl), [connectionUrl])
   const usageController = useMemo(
-    () => new UsageSummaryController((params) => transport.request('usage.summary', params)),
+    () => new UsageLimitsController((params) => transport.request('usage.summary', params)),
     [transport],
   )
   const subscribeUsage = useCallback(
@@ -288,15 +288,14 @@ export function App() {
   )
   const readUsage = useCallback(() => usageController.snapshot(), [usageController])
   const usageState = useSyncExternalStore(subscribeUsage, readUsage, readUsage)
-  const refreshUsage = useCallback(() => usageController.refresh(), [usageController])
+  const refreshUsage = useCallback(
+    (requestedProvider?: ProviderId) => usageController.refresh(requestedProvider),
+    [usageController],
+  )
   const [provider, setProvider] = useState<ProviderId>(() => {
     const stored = readSetting(SETUP_KEY)
     return PROVIDER_IDS.find((id) => id === stored) ?? 'codex'
   })
-  const sidebarUsageState = useMemo(
-    () => usageState ?? ({ status: 'loading', provider } as const),
-    [usageState, provider],
-  )
   const [acpAgent, setAcpAgent] = useState<string | undefined>(
     () => readSetting(AGENT_KEY) ?? undefined,
   )
@@ -938,7 +937,7 @@ export function App() {
           void transport
             .request('thread.history', { threadId, afterSeq: Number.MAX_SAFE_INTEGER })
             .catch(() => undefined)
-          refreshUsage()
+          refreshUsage(provider)
         }
       }
     })
@@ -1639,10 +1638,24 @@ export function App() {
   }, [activeId, thread.running, refreshCheckpoints])
 
   const usageThreadId = activeId && !activeId.startsWith('pending:') ? activeId : undefined
+  const usageProviders = useMemo(
+    () => [
+      provider,
+      ...providerStatuses
+        .filter((status) => status.installed && status.id !== provider)
+        .map((status) => status.id),
+    ],
+    [provider, providerStatuses],
+  )
 
   useLayoutEffect(() => {
-    usageController.select({ provider, ...(usageThreadId ? { threadId: usageThreadId } : {}) })
-  }, [usageController, usageThreadId, provider])
+    usageController.select(
+      usageProviders.map((sourceProvider) => ({
+        provider: sourceProvider,
+        ...(sourceProvider === provider && usageThreadId ? { threadId: usageThreadId } : {}),
+      })),
+    )
+  }, [usageController, usageThreadId, provider, usageProviders])
 
   // First load, plus the one-time handover from localStorage. Anything found
   // there is given to the server and the key removed, so it happens once.
@@ -3334,7 +3347,7 @@ export function App() {
           activeSessionId={surface === 'chat' ? activeId : undefined}
           pullRequestsActive={surface === 'pull-requests'}
           providerName={providerName(provider, acpAgentName)}
-          usageState={sidebarUsageState}
+          usageStates={usageState}
           onRetryUsage={refreshUsage}
           mode={sidebarSettings.mode}
           inbox={sidebarInbox}

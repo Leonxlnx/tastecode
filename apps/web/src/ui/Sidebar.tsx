@@ -104,8 +104,8 @@ function SidebarComponent(props: {
   activeSessionId: string | undefined
   account: Account | undefined
   providerName: string
-  usageState?: AccountLimitsState | undefined
-  onRetryUsage?: (() => void) | undefined
+  usageStates?: AccountLimitsState[] | undefined
+  onRetryUsage?: ((provider: ProviderId) => void) | undefined
   mode?: 'classic' | 'inbox'
   inbox?: InboxActions | undefined
   collapsed: boolean
@@ -527,8 +527,8 @@ function SidebarComponent(props: {
           >
             {(close) => (
               <>
-                {props.usageState ? (
-                  <AccountLimits state={props.usageState} onRetry={props.onRetryUsage ?? noop} />
+                {props.usageStates ? (
+                  <AccountLimits states={props.usageStates} onRetry={props.onRetryUsage ?? noop} />
                 ) : null}
                 <button
                   type="button"
