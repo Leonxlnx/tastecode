@@ -4,7 +4,10 @@ import type { ResultOf } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AccountLimits, type AccountLimitsState } from './AccountLimits.js'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
 
 const summary = (limits: ResultOf<'usage.summary'>['limits'] = []): ResultOf<'usage.summary'> => ({
   session: {
@@ -107,6 +110,7 @@ describe('account limits', () => {
   })
 
   it('renders contract-valid reset boundaries honestly', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.UTC(2026, 0, 1))
     render(
       limits({
         status: 'ready',
@@ -129,7 +133,7 @@ describe('account limits', () => {
     const farFuture = screen.getByText('Far future').closest('.account-menu__limit')
     expect(epoch).not.toBeNull()
     expect(farFuture).not.toBeNull()
-    expect(within(epoch as HTMLElement).getByText(/^Resets /)).toBeTruthy()
+    expect(within(epoch as HTMLElement).getByText(/^Resets .*19(?:69|70)$/)).toBeTruthy()
     expect(within(farFuture as HTMLElement).getByText('Reset time unavailable.')).toBeTruthy()
   })
 
