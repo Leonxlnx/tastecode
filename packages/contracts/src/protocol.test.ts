@@ -594,13 +594,55 @@ describe('protocol envelopes', () => {
     ).toThrow()
     expect(() => parse([], { provider: 'unknown', status: 'unavailable' })).toThrow()
     expect(() => parse([], { provider: 'grok', status: 'stale' })).toThrow()
-    expect(() =>
-      parse([{ label: '', usedPercent: 101, resetsAt: -1 }], {
-        provider: 'grok',
-        status: 'ready',
-        limits: [{ label: '', usedPercent: 101, resetsAt: -1 }],
-      }),
-    ).toThrow()
+  })
+
+  it('proves each provider limit field boundary independently', () => {
+    const usage = {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    }
+    const baseline = { label: 'L', usedPercent: 50, resetsAt: 1, valueLabel: 'V' }
+    const parse = (overrides: Partial<typeof baseline>) => {
+      const limit = { ...baseline, ...overrides }
+      return methods['usage.summary'].result.parse({
+        session: usage,
+        today: usage,
+        limits: [limit],
+        limitSource: { provider: 'grok', status: 'ready', limits: [limit] },
+      })
+    }
+
+    const valid: Array<[string, Partial<typeof baseline>]> = [
+      ['label minimum', { label: 'x' }],
+      ['label maximum', { label: 'x'.repeat(120) }],
+      ['value label minimum', { valueLabel: 'x' }],
+      ['value label maximum', { valueLabel: 'x'.repeat(160) }],
+      ['percent minimum', { usedPercent: 0 }],
+      ['percent maximum', { usedPercent: 100 }],
+      ['reset minimum', { resetsAt: 0 }],
+      ['reset maximum safe integer', { resetsAt: Number.MAX_SAFE_INTEGER }],
+    ]
+    for (const [boundary, override] of valid) {
+      expect(parse(override), boundary).toBeDefined()
+    }
+
+    const invalid: Array<[string, Partial<typeof baseline>]> = [
+      ['label below minimum', { label: '' }],
+      ['label above maximum', { label: 'x'.repeat(121) }],
+      ['value label below minimum', { valueLabel: '' }],
+      ['value label above maximum', { valueLabel: 'x'.repeat(161) }],
+      ['percent below minimum', { usedPercent: -0.01 }],
+      ['percent above maximum', { usedPercent: 100.01 }],
+      ['reset below minimum', { resetsAt: -1 }],
+      ['reset non-integer', { resetsAt: 0.5 }],
+      ['reset above maximum safe integer', { resetsAt: Number.MAX_SAFE_INTEGER + 1 }],
+    ]
+    for (const [boundary, override] of invalid) {
+      expect(() => parse(override), boundary).toThrow()
+    }
   })
 
   it('validates versioned diff review and stale snapshot errors', () => {
