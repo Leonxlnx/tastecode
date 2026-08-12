@@ -5,11 +5,13 @@ import type { ItemGuardianApprovalReviewStartedNotification } from './generated/
 import type { RemoteControlStatusChangedNotification } from './generated/v2/RemoteControlStatusChangedNotification'
 import type { ThreadStatusChangedNotification } from './generated/v2/ThreadStatusChangedNotification'
 import type { WarningNotification } from './generated/v2/WarningNotification'
+import type { ErrorNotification } from './generated/v2/ErrorNotification'
 import {
   CODEX_APPROVAL,
   CODEX_CAPABILITIES,
   CodexAdapter,
   formatCodexWarning,
+  mapCodexError,
   isIgnorableCodexNotification,
   mapAutoApprovalReview,
   mapUserInputRequest,
@@ -66,6 +68,17 @@ const capturedWarning = {
     'Under-development features enabled: default_mode_request_user_input. Under-development features are incomplete and may behave unpredictably.',
 } satisfies WarningNotification
 
+const capturedError = {
+  threadId: 'captured-thread',
+  turnId: 'captured-turn',
+  willRetry: false,
+  error: {
+    message: 'Failed to parse server response',
+    codexErrorInfo: 'internalServerError',
+    additionalDetails: null,
+  },
+} satisfies ErrorNotification
+
 describe('Codex notifications', () => {
   it('does not collapse a failed account read into signed out', async () => {
     await expect(new CodexAdapter().account()).rejects.toThrow('adapter not started')
@@ -84,6 +97,15 @@ describe('Codex notifications', () => {
 
   it('preserves the captured Codex warning text', () => {
     expect(formatCodexWarning(capturedWarning)).toBe(`Codex warning: ${capturedWarning.message}`)
+  })
+
+  it('surfaces a terminal turn error but leaves retries to Codex', () => {
+    expect(mapCodexError(capturedError)).toEqual({
+      type: 'thread.error',
+      threadId: 'captured-thread',
+      message: 'Failed to parse server response',
+    })
+    expect(mapCodexError({ ...capturedError, willRetry: true })).toBeUndefined()
   })
 })
 

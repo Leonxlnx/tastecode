@@ -1251,13 +1251,26 @@ describe('provider-neutral design briefing', () => {
 
   it('clears a failed provider run so later prompts are not trapped behind it', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-error-'))
-    const { orchestrator, sessions, store } = harness()
+    const { orchestrator, sessions, received, store } = harness()
     try {
       const thread = await orchestrator.startThread('codex', workspace)
       await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
       sessions[0]?.emit({ type: 'thread.error', threadId: thread.id, message: 'provider failed' })
 
       expect(store.designRun(thread.id)).toBeUndefined()
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'item.completed' &&
+            event.item.text === 'design:brief' &&
+            event.item.status === 'failed',
+        ),
+      ).toBe(true)
+      expect(
+        received.some(
+          ({ event }) => event.type === 'thread.error' && event.message === 'provider failed',
+        ),
+      ).toBe(true)
       await expect(orchestrator.submitTurn(thread.id, 'Continue normally.')).resolves.toMatchObject(
         {
           queued: false,

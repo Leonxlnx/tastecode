@@ -2220,6 +2220,8 @@ export class Orchestrator {
       return
     }
     if (event.type === 'thread.error' && this.#designFlows.has(threadId)) {
+      const turnId = this.#activeTurnIds.get(threadId)
+      if (turnId) this.#completeDesignActivity(threadId, turnId, 'failed')
       this.#clearDesignFlow(threadId)
       this.#record(threadId, event)
       void this.#drainQueue(threadId)

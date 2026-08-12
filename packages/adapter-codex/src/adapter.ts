@@ -28,6 +28,7 @@ import type { ItemStartedNotification } from './generated/v2/ItemStartedNotifica
 import type { ThreadStartedNotification } from './generated/v2/ThreadStartedNotification'
 import type { ThreadTokenUsageUpdatedNotification } from './generated/v2/ThreadTokenUsageUpdatedNotification'
 import type { WarningNotification } from './generated/v2/WarningNotification'
+import type { ErrorNotification } from './generated/v2/ErrorNotification'
 import type { TurnPlanUpdatedNotification } from './generated/v2/TurnPlanUpdatedNotification'
 import type { ThreadStartResponse } from './generated/v2/ThreadStartResponse'
 import type { ThreadResumeResponse } from './generated/v2/ThreadResumeResponse'
@@ -79,6 +80,15 @@ export function isIgnorableCodexNotification(method: string): boolean {
 
 export function formatCodexWarning(notification: WarningNotification): string {
   return `Codex warning: ${notification.message}`
+}
+
+export function mapCodexError(notification: ErrorNotification): DomainEvent | undefined {
+  if (notification.willRetry) return undefined
+  return {
+    type: 'thread.error',
+    threadId: notification.threadId,
+    message: notification.error.message,
+  }
 }
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'])
@@ -1053,6 +1063,14 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       case 'warning':
         this.emit('log', formatCodexWarning(params as WarningNotification))
         return
+
+      case 'error': {
+        const p = params as ErrorNotification
+        const event = mapCodexError(p)
+        if (event) emit(event)
+        else this.emit('log', `Codex retrying after error: ${p.error.message}`)
+        return
+      }
 
       case 'mcpServer/startupStatus/updated': {
         const p = params as McpServerStatusUpdatedNotification
