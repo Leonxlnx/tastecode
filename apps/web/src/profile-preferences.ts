@@ -12,17 +12,27 @@ const IMAGE_TYPES = new Set(PROFILE_IMAGE_ACCEPT.split(','))
 const DATA_URL = /^data:image\/(?:png|jpeg|webp);base64,/u
 
 export function readProfileIdentityPreferences(): ProfileIdentityPreferences {
-  const displayName = read(DISPLAY_NAME_KEY)?.trim().slice(0, 64) ?? ''
-  const avatarDataUrl = read(AVATAR_KEY)
-  return {
-    displayName,
-    ...(avatarDataUrl && DATA_URL.test(avatarDataUrl) ? { avatarDataUrl } : {}),
+  try {
+    const displayName = localStorage.getItem(DISPLAY_NAME_KEY)?.trim().slice(0, 64) ?? ''
+    const avatarDataUrl = localStorage.getItem(AVATAR_KEY) ?? undefined
+    return {
+      displayName,
+      ...(avatarDataUrl && DATA_URL.test(avatarDataUrl) ? { avatarDataUrl } : {}),
+    }
+  } catch {
+    return { displayName: '' }
   }
 }
 
 export function writeProfileIdentityPreferences(identity: ProfileIdentityPreferences): void {
-  write(DISPLAY_NAME_KEY, identity.displayName.trim().slice(0, 64))
-  write(AVATAR_KEY, identity.avatarDataUrl)
+  try {
+    localStorage.setItem(DISPLAY_NAME_KEY, identity.displayName.trim().slice(0, 64))
+    identity.avatarDataUrl
+      ? localStorage.setItem(AVATAR_KEY, identity.avatarDataUrl)
+      : localStorage.removeItem(AVATAR_KEY)
+  } catch {
+    // The current session can still use the preference when storage is unavailable.
+  }
 }
 
 export async function readProfileImage(file: File): Promise<string> {
@@ -71,20 +81,4 @@ async function hasExpectedSignature(file: File): Promise<boolean> {
     String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' &&
     String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP'
   )
-}
-
-function read(key: string): string | undefined {
-  try {
-    return localStorage.getItem(key) ?? undefined
-  } catch {
-    return undefined
-  }
-}
-
-function write(key: string, value: string | undefined): void {
-  try {
-    value ? localStorage.setItem(key, value) : localStorage.removeItem(key)
-  } catch {
-    // The current session can still use the preference when storage is unavailable.
-  }
 }
