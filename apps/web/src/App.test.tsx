@@ -568,6 +568,94 @@ describe('web client', () => {
     )
   })
 
+  it('waits for every installed beta catalog before saving defaults', async () => {
+    serverProviders = [
+      ...serverProviders,
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        installed: true,
+        auth: 'authenticated',
+        capabilities: {
+          steer: false,
+          fork: false,
+          interrupt: true,
+          reasoningItems: true,
+          approvals: false,
+          images: false,
+        },
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'models.list') return request(method, params)
+      if ((params as { provider: string }).provider === 'claude-code') {
+        return Promise.reject(new Error('Claude catalog unavailable'))
+      }
+      return Promise.resolve({
+        models: [
+          {
+            id: 'gpt-5.5',
+            displayName: 'GPT-5.5',
+            isDefault: true,
+            reasoningEfforts: [],
+            serviceTiers: [],
+          },
+        ],
+      })
+    })
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', {
+        provider: 'claude-code',
+      }),
+    )
+    expect(localStorage.getItem('harness.hiddenModels')).toBeNull()
+  })
+
+  it('keeps a visibility edit made while live discovery is pending', async () => {
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice()]),
+    )
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseModels!: (value: unknown) => void
+    const models = new Promise((resolve) => {
+      releaseModels = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list' ? models : request(method, params),
+    )
+
+    render(<App />)
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Models' }))
+    fireEvent.click(screen.getByRole('switch', { name: 'Show GPT-5.6 Sol' }))
+
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.6-sol"]'),
+    )
+    releaseModels({
+      models: [
+        cachedCodexChoice().model,
+        {
+          id: 'gpt-5.5',
+          displayName: 'GPT-5.5',
+          isDefault: false,
+          reasoningEfforts: [],
+          serviceTiers: [],
+        },
+      ],
+    })
+
+    await waitFor(() => expect(screen.getByText('GPT-5.5')).toBeTruthy())
+    expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.6-sol"]')
+  })
+
   it('never replaces a saved model-visibility choice with curated defaults', async () => {
     const saved = '["codex:gpt-5.6-sol"]'
     localStorage.setItem('harness.hiddenModels', saved)
@@ -881,7 +969,7 @@ describe('web client', () => {
     })
   })
 
-  it('keeps a custom bootstrap out of the recovered server catalog cache', async () => {
+  it('does not turn a custom bootstrap into a server cache on failed discovery', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
@@ -898,9 +986,7 @@ describe('web client', () => {
 
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' })
-      const cache = localStorage.getItem('harness.modelCatalog.v1')
-      expect(cache).not.toBeNull()
-      expect(cache).not.toContain('private-model')
+      expect(localStorage.getItem('harness.modelCatalog.v1')).toBeNull()
     })
   })
 

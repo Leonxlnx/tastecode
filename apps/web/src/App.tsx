@@ -1093,15 +1093,19 @@ export function App() {
           .map(async (entry) => {
             try {
               const result = await transport.request('models.list', { provider: entry.id })
-              return choicesFor(
-                {
-                  provider: entry.id,
-                  sourceName: entry.displayName,
-                  mark: providerMark(entry.id),
-                },
-                result.models,
-                false,
-              )
+              return {
+                provider: entry.id,
+                discovered: true,
+                models: choicesFor(
+                  {
+                    provider: entry.id,
+                    sourceName: entry.displayName,
+                    mark: providerMark(entry.id),
+                  },
+                  result.models,
+                  false,
+                ),
+              }
             } catch {
               const source = sourceKey({ provider: entry.id })
               const preserved = catalogModelsRef.current.filter(
@@ -1110,7 +1114,7 @@ export function App() {
               for (const choice of preserved) {
                 if (unvalidatedModelKeys.has(choice.key)) unknownKeys.add(choice.key)
               }
-              return preserved
+              return { provider: entry.id, discovered: false, models: preserved }
             }
           }),
       )
@@ -1120,22 +1124,26 @@ export function App() {
       // server lists. ACP-agent and API-connection catalogs are parked, not
       // deleted — they return with their rosters after the beta.
       if (cancelled) return
-      const catalog = direct.flat()
+      const catalog = direct.flatMap((entry) => entry.models)
+      const publicCatalogReady = direct.every(
+        (entry) => !PUBLIC_BETA_PROVIDER_IDS.has(entry.provider) || entry.discovered,
+      )
       setAcpAgents(agentsResult?.agents ?? [])
       setModelConnections(connections)
       setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
       // A synthetic cache-miss entry has no tier metadata. Do not persist it
       // as an authoritative snapshot after a transient discovery failure.
-      if (unknownKeys.size === 0) {
+      if (unknownKeys.size === 0 && direct.every((entry) => entry.discovered)) {
         writeSetting(MODEL_CATALOG_KEY, serializeModelCatalogCache(catalog))
       }
       const stored = readSetting(MODEL_KEY)
       // A hidden model cannot remain the internal selection. Otherwise the
       // picker shows no such choice while a turn can still silently use it.
       let hidden = hiddenModelsRef.current
-      if (!modelVisibilityInitialized.current && catalog.length > 0) {
+      if (!modelVisibilityInitialized.current && publicCatalogReady && catalog.length > 0) {
         hidden = new Set(
           catalog
+            .filter((choice) => PUBLIC_BETA_PROVIDER_IDS.has(choice.provider))
             .filter((choice) => !modelVisibleByDefault(choice.model))
             .map((choice) => choice.key),
         )
@@ -3214,6 +3222,9 @@ export function App() {
     location.reload()
   }, [])
   const changeModelVisibility = useCallback((key: string, visible: boolean) => {
+    // A click is an explicit preference even if live discovery is still
+    // replacing a cached catalog. Never let late first-run defaults erase it.
+    modelVisibilityInitialized.current = true
     setHiddenModels((current) => {
       const next = new Set(current)
       if (visible) next.delete(key)
