@@ -5,6 +5,18 @@ import type { BrandSystem } from './brand.js'
 import type { PageBlueprint } from './page.js'
 
 const SEVERITIES = ['blocking', 'major', 'minor'] as const
+const RAW_TEXT_ELEMENTS = new Set([
+  'iframe',
+  'noembed',
+  'noframes',
+  'noscript',
+  'plaintext',
+  'script',
+  'style',
+  'textarea',
+  'title',
+  'xmp',
+])
 export type ReviewSeverity = (typeof SEVERITIES)[number]
 
 export interface ReviewScreenshot {
@@ -31,6 +43,13 @@ export interface RepairPhaseOutput {
   summary: string
   files: string[]
   checks: string[]
+}
+
+export function assertSinglePageHeading(html: string): void {
+  const count = countPageHeadings(html)
+  if (count !== 1) {
+    throw new Error(`static preview must contain exactly one <h1>; found ${count}`)
+  }
 }
 
 export function designReviewPrompt(
@@ -156,4 +175,65 @@ function member<T extends string>(value: unknown, values: readonly T[], field: s
 
 function reviewPath(workspacePath: string): string {
   return path.join(workspacePath, '.taste', 'review.json')
+}
+
+function countPageHeadings(html: string): number {
+  let count = 0
+  let position = 0
+  let templateDepth = 0
+  const lower = html.toLowerCase()
+
+  while (position < html.length) {
+    const start = html.indexOf('<', position)
+    if (start === -1) break
+    if (html.startsWith('<!--', start)) {
+      const end = html.indexOf('-->', start + 4)
+      position = end === -1 ? html.length : end + 3
+      continue
+    }
+
+    const tag = /^<\/?([a-z][a-z0-9:-]*)\b/i.exec(html.slice(start))
+    if (!tag) {
+      position = start + 1
+      continue
+    }
+    const end = tagEnd(html, start + tag[0].length)
+    if (end === -1) break
+    const name = tag[1]!.toLowerCase()
+    const closing = html[start + 1] === '/'
+
+    if (name === 'template') {
+      templateDepth = closing ? Math.max(0, templateDepth - 1) : templateDepth + 1
+    } else if (name === 'h1' && !closing && templateDepth === 0) count += 1
+
+    if (!closing && RAW_TEXT_ELEMENTS.has(name)) {
+      const close = rawTextClose(lower, name, end + 1)
+      position = close === -1 ? html.length : close
+    } else {
+      position = end + 1
+    }
+  }
+  return count
+}
+
+function tagEnd(html: string, from: number): number {
+  let quote: string | undefined
+  for (let index = from; index < html.length; index += 1) {
+    const character = html[index]!
+    if (quote) {
+      if (character === quote) quote = undefined
+    } else if (character === '"' || character === "'") quote = character
+    else if (character === '>') return index
+  }
+  return -1
+}
+
+function rawTextClose(html: string, tag: string, from: number): number {
+  let position = from
+  while ((position = html.indexOf(`</${tag}`, position)) !== -1) {
+    const boundary = html[position + tag.length + 2]
+    if (boundary === '>' || boundary === undefined || /\s/.test(boundary)) return position
+    position += tag.length + 2
+  }
+  return -1
 }

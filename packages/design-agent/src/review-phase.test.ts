@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  assertSinglePageHeading,
   designRepairPrompt,
   parseRepairPhaseOutput,
   parseReviewPhaseOutput,
@@ -33,6 +34,25 @@ const review = {
 }
 
 describe('review and repair phases', () => {
+  it('requires exactly one rendered page heading in static HTML', () => {
+    expect(() => assertSinglePageHeading('<main><h2>Grid health</h2></main>')).toThrow(
+      'exactly one <h1>; found 0',
+    )
+    expect(() => assertSinglePageHeading('<h1>Grid health</h1><h1>Events</h1>')).toThrow(
+      'exactly one <h1>; found 2',
+    )
+    expect(() =>
+      assertSinglePageHeading(`
+        <!-- <h1>Comment</h1> -->
+        <script>const example = '<h1>Script</h1>'</script>
+        <textarea><h1>Example source</h1></textarea>
+        <template><h1>Template</h1></template>
+        </template>
+        <h1 data-label=">">Grid health</h1>
+      `),
+    ).not.toThrow()
+  })
+
   it('persists the validated final review artifact', () => {
     workspace = mkdtempSync(path.join(os.tmpdir(), 'taste-review-'))
     const result = {

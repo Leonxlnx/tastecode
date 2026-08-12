@@ -37,6 +37,7 @@ export {
 } from './run.js'
 export { designBuildPrompt, parseBuildPhaseOutput, type BuildPhaseOutput } from './build-phase.js'
 export {
+  assertSinglePageHeading,
   designRepairPrompt,
   designReviewPrompt,
   parseRepairPhaseOutput,

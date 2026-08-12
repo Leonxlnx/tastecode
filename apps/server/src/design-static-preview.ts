@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import path from 'node:path'
-import type { PreviewPlan } from '@harness/design-agent'
+import { assertSinglePageHeading, type PreviewPlan } from '@harness/design-agent'
 import { assertPublicWorkspaceFile, existingWorkspacePath } from './api-workspace-paths.js'
 
 type StaticPlan = Extract<PreviewPlan, { kind: 'static' }>
@@ -29,6 +29,9 @@ const CONTENT_TYPES = new Map([
 
 export async function startStaticDesignPreview(root: string, plan: StaticPlan) {
   const previewUrl = new URL(plan.url)
+  assertSinglePageHeading(
+    readFileSync(requestFile(root, plan.entry, previewUrl.pathname, previewUrl.pathname), 'utf8'),
+  )
   const previewId = randomUUID()
   const server = createServer((request, response) => {
     response.setHeader('x-harness-preview-id', previewId)
