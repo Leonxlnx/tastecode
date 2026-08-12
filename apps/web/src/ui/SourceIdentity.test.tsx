@@ -22,10 +22,7 @@ describe('SourceIdentity', () => {
 
   it('uses a fixed compact mark slot without changing the accessible source label', () => {
     render(
-      <SourceIdentity
-        presentation={{ label: 'Gemini CLI', mark: 'gemini' }}
-        density="compact"
-      />,
+      <SourceIdentity presentation={{ label: 'Gemini CLI', mark: 'gemini' }} density="compact" />,
     )
 
     const identity = screen.getByText('Gemini CLI').closest('.source-identity')
