@@ -77,13 +77,15 @@ export function validateExactBuildFiles(
   const actualSet = new Set(actual)
   const baselineSet = new Set(baseline)
   const missing = expected.filter((file) => !actualSet.has(file))
+  const removed = baseline.filter((file) => !actualSet.has(file))
   const unexpected = actual.filter((file) => !expectedSet.has(file) && !baselineSet.has(file))
-  if (missing.length === 0 && unexpected.length === 0) return
+  if (missing.length === 0 && removed.length === 0 && unexpected.length === 0) return
 
   throw new ExactBuildFilesError(
     [
       'exact build file requirement failed',
       missing.length ? `missing files: ${missing.join(', ')}` : '',
+      removed.length ? `restore pre-existing files: ${removed.join(', ')}` : '',
       unexpected.length ? `unexpected files: ${unexpected.join(', ')}` : '',
     ]
       .filter(Boolean)

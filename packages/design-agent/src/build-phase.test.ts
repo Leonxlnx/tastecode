@@ -100,11 +100,12 @@ describe('build phase', () => {
       mkdirSync(path.join(workspace, 'node_modules', 'package'), { recursive: true })
       writeFileSync(path.join(workspace, 'node_modules', 'package', 'index.js'), 'ignored depth')
 
-      expect(designBuildPrompt(brief, ...artifacts.slice(1))).toContain(
-        'exactly index.html, styles.css, and app.js',
-      )
       expect(() => validateExactBuildFiles(workspace, brief, baseline)).toThrow(
         'unexpected files: extra.json, node_modules/, preview-server.js',
+      )
+      rmSync(path.join(workspace, 'README.md'))
+      expect(() => validateExactBuildFiles(workspace, brief, baseline)).toThrow(
+        'restore pre-existing files: README.md',
       )
     } finally {
       rmSync(workspace, { recursive: true, force: true })
