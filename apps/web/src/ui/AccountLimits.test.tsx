@@ -82,11 +82,24 @@ describe('account limits', () => {
     )
     const grok = screen.getByRole('region', { name: 'Grok' })
     expect(within(grok).getByText(/aren’t available/)).toBeTruthy()
+
+    for (const emptySummary of [
+      { ...summary(), limitSource: { provider: 'grok', status: 'unavailable' } as const },
+      summary(),
+    ]) {
+      view.rerender(
+        <AccountLimits
+          state={{ status: 'error', provider: 'grok', message: 'Offline', summary: emptySummary }}
+          onRetry={() => {}}
+        />,
+      )
+      expect(screen.getByRole('alert').textContent).not.toContain('Last known values')
+    }
   })
 
   it('preserves usable values through a failed refresh and retries', () => {
     const onRetry = vi.fn()
-    render(
+    const view = render(
       <AccountLimits
         state={{
           status: 'error',
@@ -103,5 +116,13 @@ describe('account limits', () => {
     expect(screen.getByRole('alert').textContent).toContain('Temporary connection failure')
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(onRetry).toHaveBeenCalledOnce()
+
+    view.rerender(
+      <AccountLimits
+        state={{ status: 'loading', provider: 'claude-code', summary: summary() }}
+        onRetry={onRetry}
+      />,
+    )
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Plan limits' }))
   })
 })

@@ -16,10 +16,17 @@ export type AccountLimitsState =
 export function AccountLimits(props: { state: AccountLimitsState; onRetry: () => void }) {
   const headingId = useId()
   const heading = useRef<HTMLHeadingElement>(null)
+  const previousStatus = useRef<AccountLimitsState['status'] | undefined>(undefined)
   const source = limitSource(props.state)
   const hasSource = source !== undefined
+  const hasUsableValues = source?.status === 'ready' && source.limits.length > 0
 
-  useLayoutEffect(() => heading.current?.focus(), [])
+  useLayoutEffect(() => {
+    if (previousStatus.current === undefined || previousStatus.current === 'error') {
+      heading.current?.focus()
+    }
+    previousStatus.current = props.state.status
+  }, [props.state.status])
 
   return (
     <section
@@ -45,7 +52,7 @@ export function AccountLimits(props: { state: AccountLimitsState; onRetry: () =>
         <div className="account-menu__usage-error" role="alert">
           <CircleAlert size={13} aria-hidden />
           <span>
-            {hasSource
+            {hasUsableValues
               ? 'Couldn’t refresh plan limits. Last known values are still shown.'
               : 'Plan limits couldn’t be loaded.'}
             <small>{props.state.message}</small>
