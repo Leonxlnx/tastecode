@@ -63,6 +63,25 @@ describe('control adapter startup', () => {
     await orchestrator.disposeAll()
   })
 
+  it('ignores a control signal after disposal', async () => {
+    const changed = vi.fn()
+    const orchestrator = new Orchestrator(new Store(':memory:'), {
+      onEvent: () => {},
+      onLog: () => {},
+      onLogin: () => {},
+      onUsageChanged: changed,
+    })
+    const started = orchestrator.listModels('codex')
+    await vi.waitFor(() => expect(control.releases).toHaveLength(1))
+    control.releases[0]?.()
+    await started
+
+    await orchestrator.disposeAll()
+    control.usageChanged?.()
+
+    expect(changed).not.toHaveBeenCalled()
+  })
+
   it('shares one startup across concurrent settings requests', async () => {
     const orchestrator = new Orchestrator(new Store(':memory:'), {
       onEvent: () => {},

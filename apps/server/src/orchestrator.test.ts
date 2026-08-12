@@ -248,6 +248,17 @@ describe('provider usage changes', () => {
 
     expect(usageChanges).toEqual(['codex'])
   })
+
+  it('ignores a signal from a closed session', async () => {
+    const { orchestrator, sessions, usageChanges } = harness()
+    const thread = await orchestrator.startThread('codex', process.cwd())
+    const session = sessions[0]
+
+    orchestrator.close(thread.id)
+    session?.emitUsageChanged()
+
+    expect(usageChanges).toEqual([])
+  })
 })
 
 const message = (text: string, turnId = 't1'): DomainEvent => ({

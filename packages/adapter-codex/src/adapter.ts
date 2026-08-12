@@ -802,6 +802,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#approvals.clear()
     this.#userInputs.clear()
     this.#mcpLogins.clear()
+    this.removeAllListeners()
   }
 
   #call<T>(method: string, params: unknown): Promise<T> {

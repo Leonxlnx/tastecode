@@ -94,6 +94,18 @@ describe('Codex rate-limit source', () => {
     adapter.dispose()
   })
 
+  it('ignores a buffered usage update after disposal', async () => {
+    const adapter = new CodexAdapter()
+    const changed = vi.fn()
+    adapter.onUsageChanged(changed)
+    await adapter.start()
+
+    adapter.dispose()
+    fake.notification?.('account/rateLimits/updated', capturedRateLimitUpdate)
+
+    expect(changed).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['signed out', null],
     ['API key', { type: 'apiKey' }],

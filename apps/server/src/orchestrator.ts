@@ -464,7 +464,9 @@ export class Orchestrator {
     const adapter = new CodexAdapter()
     adapter.on('log', (line) => this.#onLog(line))
     adapter.on('login', (result) => this.#onLogin('codex', result))
-    adapter.onUsageChanged(() => this.#onUsageChanged('codex'))
+    adapter.onUsageChanged(() => {
+      if (this.#control === adapter) this.#onUsageChanged('codex')
+    })
     adapter.on('skillsChanged', () => {
       for (const projectPath of this.#watchedSkillProjects) {
         this.#onSkillsChanged('codex', projectPath)
@@ -2711,7 +2713,11 @@ export class Orchestrator {
     this.#threads.get(thread.id)?.session.dispose()
     this.#threads.set(thread.id, { thread, session, ...(worktree ? { worktree } : {}) })
     session.onMcpOAuth?.((result) => this.#onMcpOAuth(thread.provider, projectPath, result))
-    session.onUsageChanged?.(() => this.#onUsageChanged(thread.provider))
+    session.onUsageChanged?.(() => {
+      if (this.#threads.get(thread.id)?.session === session) {
+        this.#onUsageChanged(thread.provider)
+      }
+    })
     session.on('event', (event) => this.#handleSessionEvent(thread.id, event))
   }
 }
