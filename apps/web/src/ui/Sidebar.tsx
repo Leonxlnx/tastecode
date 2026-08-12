@@ -35,7 +35,7 @@ import {
   X,
 } from 'lucide-react'
 import { isDesktop, revealPath } from '../bridge.js'
-import { agentPresentation, providerPresentation } from '../provider-presentation.js'
+import { sessionSourcePresentation } from '../provider-presentation.js'
 import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
 import { InboxSidebar, type InboxActions } from './InboxSidebar.js'
@@ -1078,11 +1078,7 @@ function SessionRow(props: {
         <span className="sess__title">{props.session.title}</span>
         <SourceIdentity
           className="sess__source"
-          presentation={
-            props.session.provider === 'acp' && props.session.agent
-              ? agentPresentation(props.session.agent)
-              : providerPresentation(props.session.provider)
-          }
+          presentation={sessionSourcePresentation(props.session.provider, props.session.agent)}
           density="compact"
         />
         <SessionStatus status={props.session.status} />

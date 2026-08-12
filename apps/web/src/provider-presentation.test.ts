@@ -4,6 +4,7 @@ import {
   agentPresentation,
   connectionMark,
   providerPresentation,
+  sessionSourcePresentation,
   sourcePresentation,
 } from './provider-presentation.js'
 
@@ -57,6 +58,17 @@ describe('provider presentation', () => {
     expect(sourcePresentation({ provider: 'api', sourceName: '  ' })).toEqual({
       label: 'API connection',
       mark: 'custom',
+    })
+  })
+
+  it('resolves recovered session sources without leaking ACP transport identity', () => {
+    expect(sessionSourcePresentation('acp', 'gemini')).toEqual({
+      label: 'Gemini CLI',
+      mark: 'gemini',
+    })
+    expect(sessionSourcePresentation('claude-code')).toEqual({
+      label: 'Claude Code',
+      mark: 'anthropic',
     })
   })
 })

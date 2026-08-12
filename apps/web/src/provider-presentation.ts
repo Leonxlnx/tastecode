@@ -85,3 +85,10 @@ export function agentPresentation(
     mark: known?.mark ?? agentMark(agentId),
   })
 }
+
+export function sessionSourcePresentation(
+  provider: ProviderId,
+  agentId?: string | undefined,
+): ProviderPresentation {
+  return provider === 'acp' && agentId ? agentPresentation(agentId) : providerPresentation(provider)
+}
