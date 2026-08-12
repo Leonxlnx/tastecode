@@ -20,7 +20,35 @@ describe('preview plan', () => {
     expect(prompt).toContain('Preview Setup phase')
     expect(prompt).toContain('127.0.0.1')
     expect(prompt).toContain('Do not install dependencies')
+    expect(prompt).toContain('Harness serves static projects itself')
+    expect(prompt).not.toContain('write one small static file server')
     expect(parsePreviewPhaseOutput(JSON.stringify(plan))).toMatchObject({ command: 'pnpm' })
+  })
+
+  it('normalizes a Harness-owned static preview plan', () => {
+    expect(
+      parsePreviewPlan({
+        version: 1,
+        kind: 'static',
+        entry: 'index.html',
+        cwd: '.',
+        url: 'http://127.0.0.1:4173/site/',
+        viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+      }),
+    ).toMatchObject({ kind: 'static', entry: 'index.html', url: 'http://127.0.0.1:4173/site/' })
+  })
+
+  it('keeps a static entry inside its preview root', () => {
+    expect(() =>
+      parsePreviewPlan({
+        version: 1,
+        kind: 'static',
+        entry: '../secret.html',
+        cwd: '.',
+        url: 'http://127.0.0.1:4173/',
+        viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+      }),
+    ).toThrow('must stay inside the workspace')
   })
 
   it('normalizes a shell-free local preview plan', () => {

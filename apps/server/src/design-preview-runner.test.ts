@@ -1,7 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { createServer } from 'node:http'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -81,6 +81,33 @@ describe('design preview runner', () => {
     await expect(preview.stop()).resolves.toBeUndefined()
     previews.pop()
     await expect(fetch(preview.url, { signal: AbortSignal.timeout(500) })).rejects.toThrow()
+  })
+
+  it('serves an exact-file static project with a Harness-owned response', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(path.join(workspace, 'index.html'), '<link rel="stylesheet" href="styles.css">')
+    writeFileSync(path.join(workspace, 'styles.css'), 'body { color: tomato; }')
+    writeFileSync(path.join(workspace, 'app.js'), 'document.body.dataset.ready = "true"')
+    const staticPlan = parsePreviewPlan({
+      version: 1,
+      kind: 'static',
+      entry: 'index.html',
+      cwd: '.',
+      url: `http://127.0.0.1:${port}/site/`,
+      viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+    })
+
+    const preview = await startDesignPreview(workspace, staticPlan)
+    previews.push(preview)
+    const response = await fetch(preview.url)
+    expect(response.headers.get('x-harness-preview-id')).toMatch(/^[0-9a-f-]{36}$/)
+    await expect(response.text()).resolves.toContain('styles.css')
+    await expect(fetch(new URL('styles.css', preview.url)).then((value) => value.text())).resolves.toBe(
+      'body { color: tomato; }',
+    )
+    expect(readdirSync(workspace).sort()).toEqual(['app.js', 'index.html', 'styles.css'])
   })
 
   it('does not accept a concurrent preview serving the same port', async () => {
