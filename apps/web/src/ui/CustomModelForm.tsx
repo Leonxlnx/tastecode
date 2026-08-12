@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from 'react'
-import { Plus, X } from 'lucide-react'
+import { ChevronDown, Plus, X } from 'lucide-react'
 import type { ProviderId } from '@harness/contracts'
-import { type CustomModelInput } from '../model-catalog.js'
+import { providerMark, type CustomModelInput } from '../model-catalog.js'
+import { Menu, MenuItem } from './Menu.js'
+import { ProviderIcon } from './ProviderIcon.js'
 
 /**
  * One-line entry point for a model id the provider accepts but does not list.
@@ -22,6 +24,7 @@ export function CustomModelForm(props: {
   const [modelId, setModelId] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState<string>()
+  const selectedProvider = props.providers.find((entry) => entry.id === provider)
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -39,19 +42,40 @@ export function CustomModelForm(props: {
   return (
     <form className="custom-model-form" onSubmit={submit}>
       {props.fixedProvider ? null : (
-        <label className="custom-model-form__field">
+        <div className="custom-model-form__field">
           <span className="custom-model-form__label">Provider</span>
-          <select
-            value={provider}
-            onChange={(event) => setProvider(event.target.value as ProviderId)}
+          <Menu
+            align="left"
+            drop="down"
+            label={`Provider, ${selectedProvider?.name ?? 'Choose provider'}`}
+            triggerClassName="custom-model-form__provider-trigger"
+            panelClassName="custom-model-form__provider-menu"
+            trigger={(open) => (
+              <span className="custom-model-form__provider-value">
+                {selectedProvider ? (
+                  <ProviderIcon mark={providerMark(selectedProvider.id)} size={14} />
+                ) : null}
+                <span>{selectedProvider?.name ?? 'Choose provider'}</span>
+                <ChevronDown className={open ? 'is-open' : ''} size={14} aria-hidden />
+              </span>
+            )}
           >
-            {props.providers.map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {entry.name}
-              </option>
-            ))}
-          </select>
-        </label>
+            {(close) =>
+              props.providers.map((entry) => (
+                <MenuItem
+                  key={entry.id}
+                  title={entry.name}
+                  active={entry.id === provider}
+                  icon={<ProviderIcon mark={providerMark(entry.id)} size={14} />}
+                  onClick={() => {
+                    setProvider(entry.id)
+                    close()
+                  }}
+                />
+              ))
+            }
+          </Menu>
+        </div>
       )}
       <label
         className={`custom-model-form__field${props.fixedProvider ? ' custom-model-form__field--wide' : ''}`}

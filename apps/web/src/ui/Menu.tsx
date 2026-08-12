@@ -346,6 +346,7 @@ export function Menu(props: {
   return (
     <div className="menuwrap" ref={wrap}>
       <button
+        type="button"
         ref={trigger}
         id={triggerId}
         className={`menutrigger${props.triggerClassName ? ` ${props.triggerClassName}` : ''}`}
