@@ -1624,6 +1624,7 @@ function DataSettings(props: { projectCount: number; onReset: () => void }) {
       <SettingsRow
         title={projectLabel}
         note="Reset only clears this renderer’s preferences. It does not delete projects, workspaces, files, chat history, or provider credentials."
+        className="settings__row--roomy"
       >
         <button
           className="settings__action is-danger"
@@ -1752,6 +1753,7 @@ export function DebugSettings(props: { transport: Transport }) {
       <SettingsRow
         title="Usage history index"
         note="Clears the generated cache and reparses every local provider history. Sessions and Harness data are not deleted."
+        className="settings__row--roomy"
       >
         {state === 'started' ? <StateLabel state="checking" detail="Scan started" live /> : null}
         {state === 'error' && error ? (

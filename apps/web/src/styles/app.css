@@ -2704,6 +2704,21 @@
   border-top: 1px solid var(--line);
 }
 
+.settings__row--roomy {
+  min-height: 76px;
+  gap: 24px;
+  padding-block: 12px;
+}
+
+.settings__row--roomy .settings__row-copy {
+  flex: 1;
+}
+
+.settings__row--roomy .settings__row-control {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 /* The sign-in flow as a card: code chip, browser hint, one live line. The
    terminal stays available behind "Details" but never leads. */
 .signin-card {
@@ -9995,19 +10010,11 @@
   background: var(--bg);
 }
 
-/* Glass previews: an accent glow behind a rail-colored pane whose opacity
-   drops with each step, so the four stops read as what they do. */
+/* Glass strength is a material choice, not an accent palette. Keep each
+   sample one tone so it cannot be mistaken for a color gradient. */
 .appearance-choice__swatch[data-glass-preview] {
-  background-image:
-    linear-gradient(
-      var(--glass-preview-pane, var(--bg-rail-tint)),
-      var(--glass-preview-pane, var(--bg-rail-tint))
-    ),
-    radial-gradient(
-      120% 130% at 18% 0%,
-      color-mix(in srgb, var(--attention) 55%, transparent),
-      color-mix(in srgb, var(--effort) 40%, transparent)
-    );
+  background: var(--glass-preview-pane, var(--bg-rail-tint));
+  border-color: var(--line-strong);
 }
 
 .appearance-choice__swatch[data-glass-preview='0'] {
@@ -10015,15 +10022,15 @@
 }
 
 .appearance-choice__swatch[data-glass-preview='20'] {
-  --glass-preview-pane: color-mix(in srgb, var(--bg-rail-tint) 80%, transparent);
+  --glass-preview-pane: color-mix(in srgb, var(--bg-rail-tint) 80%, var(--surface-3));
 }
 
 .appearance-choice__swatch[data-glass-preview='35'] {
-  --glass-preview-pane: color-mix(in srgb, var(--bg-rail-tint) 62%, transparent);
+  --glass-preview-pane: color-mix(in srgb, var(--bg-rail-tint) 62%, var(--surface-3));
 }
 
 .appearance-choice__swatch[data-glass-preview='50'] {
-  --glass-preview-pane: color-mix(in srgb, var(--bg-rail-tint) 45%, transparent);
+  --glass-preview-pane: color-mix(in srgb, var(--bg-rail-tint) 45%, var(--surface-3));
 }
 
 .appearance-choice__swatch[data-backdrop-preview='default'] {
