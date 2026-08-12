@@ -10,6 +10,11 @@ describe('Claude Code authentication', () => {
     await expect(claudeAccount()).rejects.toThrow('claude auth status exited with code 1')
   })
 
+  it('accepts the logged-out JSON that Claude emits with exit code one', async () => {
+    vi.mocked(runCli).mockResolvedValue({ code: 1, stdout: '{"loggedIn":false}' })
+    await expect(claudeAccount()).resolves.toEqual({ signedIn: false })
+  })
+
   it('maps the CLI status without retaining vendor-only account fields', () => {
     expect(
       parseClaudeAccount(
