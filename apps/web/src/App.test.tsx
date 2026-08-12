@@ -4004,15 +4004,15 @@ describe('reopening a session', () => {
     })
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Foreground' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Foreground,/ }))
     expect(await screen.findByText('Cached base')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Background' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
     await waitFor(() =>
       expect(screen.getByTestId('thread').textContent).not.toContain('Cached base'),
     )
     transport.request.mockClear()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Foreground' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Foreground,/ }))
 
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
@@ -4084,7 +4084,7 @@ describe('reopening a session', () => {
     })
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
