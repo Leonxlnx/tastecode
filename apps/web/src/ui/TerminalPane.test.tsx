@@ -3,7 +3,7 @@ import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConnectionState, Transport } from '../transport.js'
-import { TerminalPane } from './TerminalPane.js'
+import { TerminalPane, terminalCopyShortcut } from './TerminalPane.js'
 
 const xterm = vi.hoisted(() => ({
   instances: [] as Array<{
@@ -12,7 +12,22 @@ const xterm = vi.hoisted(() => ({
     selected: boolean
     write: ReturnType<typeof vi.fn>
     clear: ReturnType<typeof vi.fn>
+    clearTextureAtlas: ReturnType<typeof vi.fn>
+    options: Record<string, unknown>
+    unicode: { activeVersion: string }
   }>,
+}))
+
+const haptics = vi.hoisted(() => ({
+  performAppHaptic: vi.fn(),
+  prepareAppHaptics: vi.fn(),
+}))
+
+vi.mock('../haptics.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../haptics.js')>()),
+  appHapticsEnabled: () => true,
+  performAppHaptic: haptics.performAppHaptic,
+  prepareAppHaptics: haptics.prepareAppHaptics,
 }))
 
 vi.mock('@xterm/addon-fit', () => ({
@@ -21,16 +36,32 @@ vi.mock('@xterm/addon-fit', () => ({
   },
 }))
 
+vi.mock('@xterm/addon-unicode11', () => ({
+  Unicode11Addon: class {},
+}))
+
+vi.mock('@xterm/addon-webgl', () => ({
+  WebglAddon: class {
+    onContextLoss() {}
+    dispose() {}
+  },
+}))
+
+vi.mock('@xterm/addon-image', () => ({ ImageAddon: class {} }))
+vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }))
+
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     cols = 80
     rows = 24
-    options = {}
+    options: Record<string, unknown>
     data: ((data: string) => void) | undefined
     selectionChanged: (() => void) | undefined
     selected = false
     write = vi.fn()
     clear = vi.fn()
+    clearTextureAtlas = vi.fn()
+    unicode = { activeVersion: '6' }
     loadAddon() {}
     open() {}
     focus() {}
@@ -50,13 +81,20 @@ vi.mock('@xterm/xterm', () => ({
       this.selectionChanged = callback
       return { dispose() {} }
     }
-    constructor() {
+    constructor(options: Record<string, unknown> = {}) {
+      this.options = options
       xterm.instances.push(this)
     }
   },
 }))
 
 beforeEach(() => {
+  haptics.performAppHaptic.mockClear()
+  haptics.prepareAppHaptics.mockClear()
+  document.documentElement.style.setProperty(
+    '--font-terminal',
+    "'JetBrainsMono Nerd Font Mono', monospace",
+  )
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -69,6 +107,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  document.documentElement.style.removeProperty('--font-terminal')
   vi.unstubAllGlobals()
   vi.clearAllMocks()
 })
@@ -173,13 +212,122 @@ describe('TerminalPane', () => {
     )
 
     const handle = screen.getByRole('separator', { name: 'Resize terminal' })
+    fireEvent.pointerEnter(handle)
     fireEvent.pointerDown(handle, { clientY: 260, pointerId: 9 })
     fireEvent.pointerMove(window, { clientY: 220, pointerId: 9 })
+    expect(haptics.prepareAppHaptics).toHaveBeenCalled()
+    expect(haptics.performAppHaptic).toHaveBeenCalledWith('alignment')
     fireEvent.blur(window)
 
     expect(onHeightChange).toHaveBeenCalledWith(300)
     fireEvent.pointerMove(window, { clientY: 180, pointerId: 9 })
     expect(onHeightChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps workspace terminal status and focus framing out of the visible surface', async () => {
+    const harness = fakeTransport()
+    const { container } = render(
+      <TerminalPane
+        transport={harness.transport}
+        threadId="thread-workspace"
+        theme="dark"
+        mode="workspace"
+      />,
+    )
+
+    await waitFor(() =>
+      expect(harness.request).toHaveBeenCalledWith('terminal.open', {
+        threadId: 'thread-workspace',
+        columns: 80,
+        rows: 24,
+      }),
+    )
+
+    expect(container.querySelector('.terminal-pane__header')).toBeNull()
+    expect(container.querySelector('.terminal-pane__status')).toBeNull()
+    expect(screen.getByText('Connected').classList.contains('visually-hidden')).toBe(true)
+    expect(container.querySelector('.terminal-pane__viewport')).toBeTruthy()
+    expect(xterm.instances.at(-1)?.options).toMatchObject({
+      cursorStyle: 'block',
+      drawBoldTextInBrightColors: false,
+      fontFamily: expect.stringContaining('JetBrainsMono Nerd Font Mono'),
+      fontSize: 17,
+      fontWeight: 400,
+      fontWeightBold: 700,
+      lineHeight: 1,
+      minimumContrastRatio: 1.5,
+      rescaleOverlappingGlyphs: true,
+      scrollback: 10_000,
+      theme: {
+        background: '#0d0d0d',
+        foreground: '#d8dee9',
+        red: '#cc6566',
+        blue: '#82a2be',
+      },
+    })
+    expect(xterm.instances.at(-1)?.unicode.activeVersion).toBe('11')
+  })
+
+  it('closes a workspace terminal tab when its shell exits', async () => {
+    const harness = fakeTransport()
+    const onClose = vi.fn()
+    render(
+      <TerminalPane
+        transport={harness.transport}
+        threadId="thread-workspace-exit"
+        theme="dark"
+        mode="workspace"
+        onClose={onClose}
+      />,
+    )
+
+    await waitFor(() =>
+      expect(harness.request).toHaveBeenCalledWith('terminal.open', {
+        threadId: 'thread-workspace-exit',
+        columns: 80,
+        rows: 24,
+      }),
+    )
+
+    act(() => harness.emit('terminal.exit', { terminalId: 'terminal-1', exitCode: 0 }))
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('opens a project terminal before a chat exists', async () => {
+    const harness = fakeTransport()
+    render(
+      <TerminalPane
+        transport={harness.transport}
+        projectPath="/workspace/current-project"
+        theme="dark"
+        mode="workspace"
+      />,
+    )
+
+    await waitFor(() =>
+      expect(harness.request).toHaveBeenCalledWith('terminal.open', {
+        projectPath: '/workspace/current-project',
+        columns: 80,
+        rows: 24,
+      }),
+    )
+  })
+
+  it('uses native copy chords without stealing interrupt on Windows and Linux', () => {
+    const key = (overrides: Partial<KeyboardEvent> = {}) => ({
+      altKey: false,
+      ctrlKey: false,
+      key: 'c',
+      metaKey: false,
+      shiftKey: false,
+      type: 'keydown',
+      ...overrides,
+    })
+
+    expect(terminalCopyShortcut(key({ metaKey: true }), true, true)).toBe(true)
+    expect(terminalCopyShortcut(key({ ctrlKey: true, shiftKey: true }), true, false)).toBe(true)
+    expect(terminalCopyShortcut(key({ ctrlKey: true }), true, false)).toBe(false)
+    expect(terminalCopyShortcut(key({ ctrlKey: true, shiftKey: true }), false, false)).toBe(false)
   })
 })
 

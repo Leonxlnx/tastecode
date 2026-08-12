@@ -1,12 +1,21 @@
+import '@fontsource-variable/jetbrains-mono'
 import { FitAddon } from '@xterm/addon-fit'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { Copy, RotateCcw, X } from 'lucide-react'
-import { memo, useLayoutEffect, useRef, useState, type PointerEvent } from 'react'
+import { memo, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
+import { isMacOS, writeClipboardText } from '../bridge.js'
+import {
+  appHapticsEnabled,
+  performAppHaptic,
+  prepareAppHaptics,
+  ResizeHaptics,
+} from '../haptics.js'
 import type { Transport, ConnectionState } from '../transport.js'
 
 const MIN_HEIGHT = 160
-const owners = new Map<string, symbol>()
+const owners = new Map<string, Set<symbol>>()
 
 type TerminalStatus =
   | { state: 'connecting' }
@@ -15,51 +24,119 @@ type TerminalStatus =
   | { state: 'exited'; exitCode: number | null }
   | { state: 'error'; message: string }
 
-export const TerminalPane = memo(function TerminalPane(props: {
+type TerminalPaneProps = {
   transport: Transport
-  threadId: string
-  height: number
+  height?: number
   theme: 'light' | 'dark'
-  onHeightChange: (height: number) => void
-  onClose: () => void
-}) {
+  mode?: 'inline' | 'workspace'
+  active?: boolean
+  onHeightChange?: (height: number) => void
+  onClose?: () => void
+} & ({ threadId: string; projectPath?: never } | { threadId?: never; projectPath: string })
+
+export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps) {
   const host = useRef<HTMLDivElement>(null)
   const terminal = useRef<Terminal>(null)
   const reconnect = useRef<() => void>(() => {})
+  const refit = useRef<() => void>(() => {})
   const resizeCleanup = useRef<() => void>(() => {})
-  const heightRef = useRef(props.height)
-  const [height, setHeight] = useState(props.height)
+  const onClose = useRef(props.onClose)
+  const workspace = props.mode === 'workspace'
+  const active = props.active !== false
+  const activeRef = useRef(active)
+  const heightRef = useRef(props.height ?? MIN_HEIGHT)
+  const [height, setHeight] = useState(props.height ?? MIN_HEIGHT)
   const [status, setStatus] = useState<TerminalStatus>({ state: 'connecting' })
   const [hasSelection, setHasSelection] = useState(false)
+  const target = useMemo(() => terminalTarget(props), [props.projectPath, props.threadId])
+  onClose.current = props.onClose
+  activeRef.current = active
   heightRef.current = height
 
   useLayoutEffect(() => {
     const container = host.current
     if (!container) return
-    const owner = Symbol(props.threadId)
-    owners.set(props.threadId, owner)
+    const owner = Symbol(target.ownerKey)
+    const targetOwners = owners.get(target.ownerKey) ?? new Set<symbol>()
+    targetOwners.add(owner)
+    owners.set(target.ownerKey, targetOwners)
 
+    const macOS = isMacOS()
+    const windows = navigator.platform.startsWith('Win')
     const instance = new Terminal({
+      allowProposedApi: true,
       cursorBlink: true,
-      fontFamily: terminalFont(),
-      fontSize: 12.5,
-      lineHeight: 1.25,
+      cursorStyle: 'block',
+      cursorInactiveStyle: 'outline',
+      customGlyphs: true,
+      drawBoldTextInBrightColors: !workspace,
+      fontFamily: terminalFont(workspace ? 'workspace' : 'app'),
+      fontSize: workspace ? 17 : 12.5,
+      fontWeight: workspace ? 400 : 'normal',
+      fontWeightBold: workspace ? 700 : 'bold',
+      letterSpacing: 0,
+      lineHeight: workspace ? 1 : 1.25,
+      macOptionIsMeta: workspace && macOS,
+      minimumContrastRatio: workspace ? 1.5 : 1,
+      rescaleOverlappingGlyphs: true,
       screenReaderMode: true,
-      scrollback: 5_000,
-      theme: terminalTheme(),
+      scrollback: 10_000,
+      theme: terminalTheme(workspace ? 'workspace' : 'app'),
+      ...(windows ? { windowsPty: { backend: 'conpty' as const } } : {}),
     })
     const fit = new FitAddon()
     instance.loadAddon(fit)
+    const unicode = new Unicode11Addon()
+    instance.loadAddon(unicode)
+    instance.unicode.activeVersion = '11'
     instance.open(container)
     terminal.current = instance
+    let disposed = false
+
+    // Start the renderer import independently so image protocol parsing and
+    // link detection can never delay GPU rendering. Context loss degrades to
+    // xterm's DOM renderer instead of taking the shell down.
+    void import('@xterm/addon-webgl')
+      .then(({ WebglAddon }) => {
+        if (disposed) return
+        try {
+          const webgl = new WebglAddon()
+          instance.loadAddon(webgl)
+          webgl.onContextLoss(() => webgl.dispose())
+        } catch (error) {
+          console.warn('[terminal] WebGL unavailable; using DOM renderer', error)
+        }
+      })
+      .catch((error: unknown) => {
+        console.warn('[terminal] WebGL addon unavailable; using DOM renderer', error)
+      })
+
+    void Promise.all([import('@xterm/addon-image'), import('@xterm/addon-web-links')])
+      .then(([{ ImageAddon }, { WebLinksAddon }]) => {
+        if (disposed) return
+        const images = new ImageAddon({
+          pixelLimit: 16_777_216,
+          storageLimit: 96,
+          sixelSizeLimit: 25_000_000,
+          iipSizeLimit: 20_000_000,
+        })
+        const links = new WebLinksAddon((_event, uri) => {
+          window.open(uri, '_blank', 'noopener,noreferrer')
+        })
+        instance.loadAddon(images)
+        instance.loadAddon(links)
+      })
+      .catch((error: unknown) => {
+        console.warn('[terminal] image or link addon unavailable', error)
+      })
 
     let terminalId: string | undefined
     let opening = false
-    let disposed = false
     let resizeFrame: number | undefined
     const earlyOutput = new Map<string, string[]>()
 
     const sendSize = () => {
+      if (!activeRef.current || container.clientWidth < 1 || container.clientHeight < 1) return
       fit.fit()
       if (!terminalId || props.transport.state !== 'open') return
       void props.transport
@@ -78,22 +155,36 @@ export const TerminalPane = memo(function TerminalPane(props: {
         sendSize()
       })
     }
+    refit.current = scheduleFit
+
+    // Fontsource makes JetBrains Mono deterministic on every desktop OS. A
+    // late webfont swap changes cell metrics, so refit once the font settles
+    // and invalidate the GPU atlas before drawing more output.
+    const fontsReady = document.fonts?.ready
+    if (fontsReady) {
+      void fontsReady.then(() => {
+        if (disposed) return
+        instance.options.fontFamily = terminalFont(workspace ? 'workspace' : 'app')
+        instance.clearTextureAtlas()
+        scheduleFit()
+      })
+    }
 
     const open = () => {
       if (opening || disposed || props.transport.state !== 'open') return
       opening = true
       setStatus({ state: 'connecting' })
-      fit.fit()
+      if (activeRef.current && container.clientWidth > 0 && container.clientHeight > 0) fit.fit()
       void props.transport
         .request('terminal.open', {
-          threadId: props.threadId,
+          ...target.request,
           columns: instance.cols,
           rows: instance.rows,
         })
         .then(({ terminalId: openedId }) => {
           opening = false
           if (disposed) {
-            if (!owners.has(props.threadId)) {
+            if (!owners.has(target.ownerKey)) {
               void props.transport
                 .request('terminal.close', { terminalId: openedId })
                 .catch(() => undefined)
@@ -147,6 +238,10 @@ export const TerminalPane = memo(function TerminalPane(props: {
       if (event.terminalId !== terminalId) return
       terminalId = undefined
       earlyOutput.clear()
+      if (workspace) {
+        onClose.current?.()
+        return
+      }
       setStatus({ state: 'exited', exitCode: event.exitCode })
     })
     const input = instance.onData((data) => {
@@ -155,8 +250,9 @@ export const TerminalPane = memo(function TerminalPane(props: {
     })
     const selection = instance.onSelectionChange(() => setHasSelection(instance.hasSelection()))
     instance.attachCustomKeyEventHandler((event) => {
-      const copy = event.key.toLowerCase() === 'c' && (event.metaKey || event.ctrlKey)
-      return !(copy && instance.hasSelection())
+      if (!terminalCopyShortcut(event, instance.hasSelection(), macOS)) return true
+      copyTerminalSelection(instance)
+      return false
     })
 
     const observer = new ResizeObserver(scheduleFit)
@@ -168,36 +264,63 @@ export const TerminalPane = memo(function TerminalPane(props: {
       disposed = true
       resizeCleanup.current()
       if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
+      refit.current = () => {}
       observer.disconnect()
       input.dispose()
       selection.dispose()
       offState()
       offOutput()
       offExit()
-      if (owners.get(props.threadId) === owner) {
-        owners.delete(props.threadId)
-      }
-      if (terminalId && !owners.has(props.threadId)) {
+      const remainingOwners = owners.get(target.ownerKey)
+      remainingOwners?.delete(owner)
+      if (remainingOwners?.size === 0) owners.delete(target.ownerKey)
+      if (terminalId && !owners.has(target.ownerKey)) {
         void props.transport.request('terminal.close', { terminalId }).catch(() => undefined)
       }
       terminal.current = null
       instance.dispose()
     }
-  }, [props.threadId, props.transport])
+  }, [props.transport, target, workspace])
 
   useLayoutEffect(() => {
-    if (terminal.current) terminal.current.options.theme = terminalTheme()
-  }, [props.theme])
+    if (active) refit.current()
+  }, [active])
+
+  useLayoutEffect(() => {
+    if (terminal.current) {
+      terminal.current.options.theme = terminalTheme(workspace ? 'workspace' : 'app')
+    }
+  }, [props.theme, workspace])
 
   const beginResize = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault()
+    prepareAppHaptics()
     resizeCleanup.current()
     const startY = event.clientY
     const startHeight = heightRef.current
+    const maximum = Math.max(MIN_HEIGHT, Math.floor(window.innerHeight * 0.72))
+    const haptics = appHapticsEnabled()
+      ? new ResizeHaptics({
+          startValue: startHeight,
+          startTime: event.timeStamp,
+          minValue: MIN_HEIGHT,
+          maxValue: maximum,
+        })
+      : undefined
+    let currentHeight = startHeight
     let active = true
     const move = (next: globalThis.PointerEvent) => {
-      const maximum = Math.max(MIN_HEIGHT, Math.floor(window.innerHeight * 0.72))
-      setHeight(Math.min(maximum, Math.max(MIN_HEIGHT, startHeight + startY - next.clientY)))
+      const rawHeight = startHeight + startY - next.clientY
+      const nextHeight = Math.min(maximum, Math.max(MIN_HEIGHT, rawHeight))
+      const feedback = haptics?.sample({
+        rawValue: rawHeight,
+        value: nextHeight,
+        tracking: nextHeight !== currentHeight,
+        time: next.timeStamp,
+      })
+      currentHeight = nextHeight
+      setHeight(nextHeight)
+      if (feedback) performAppHaptic(feedback)
     }
     const cleanup = (commit: boolean) => {
       if (!active) return
@@ -207,7 +330,7 @@ export const TerminalPane = memo(function TerminalPane(props: {
       window.removeEventListener('pointercancel', finish)
       window.removeEventListener('blur', finish)
       resizeCleanup.current = () => {}
-      if (commit) props.onHeightChange(heightRef.current)
+      if (commit) props.onHeightChange?.(heightRef.current)
     }
     const finish = () => cleanup(true)
     resizeCleanup.current = () => cleanup(false)
@@ -218,49 +341,74 @@ export const TerminalPane = memo(function TerminalPane(props: {
   }
 
   return (
-    <section className="terminal-pane" style={{ height }} aria-label="Session terminal">
-      <div
-        className="terminal-pane__resize"
-        role="separator"
-        aria-label="Resize terminal"
-        aria-orientation="horizontal"
-        onPointerDown={beginResize}
-      />
-      <header className="terminal-pane__header">
-        <span className="terminal-pane__title">Terminal</span>
-        <span className={`terminal-pane__status is-${status.state}`} aria-live="polite">
+    <section
+      className={`terminal-pane${workspace ? ' terminal-pane--workspace' : ''}`}
+      style={workspace ? undefined : { height }}
+      aria-label="Session terminal"
+    >
+      {!workspace ? (
+        <div
+          className="terminal-pane__resize"
+          role="separator"
+          aria-label="Resize terminal"
+          aria-orientation="horizontal"
+          onPointerEnter={prepareAppHaptics}
+          onPointerDown={beginResize}
+        />
+      ) : null}
+      {workspace ? (
+        <span className="visually-hidden" aria-live="polite">
           {statusText(status)}
         </span>
-        <div className="terminal-pane__actions">
-          {status.state === 'exited' || status.state === 'error' ? (
+      ) : (
+        <header className="terminal-pane__header">
+          <span className="terminal-pane__title">Terminal</span>
+          <span className={`terminal-pane__status is-${status.state}`} aria-live="polite">
+            {statusText(status)}
+          </span>
+          <div className="terminal-pane__actions">
+            {status.state === 'exited' || status.state === 'error' ? (
+              <button
+                className="icon-btn"
+                title="Restart terminal"
+                onClick={() => reconnect.current()}
+              >
+                <RotateCcw size={13} aria-hidden />
+              </button>
+            ) : null}
             <button
               className="icon-btn"
-              title="Restart terminal"
-              onClick={() => reconnect.current()}
+              title="Copy selection"
+              disabled={!hasSelection}
+              onClick={() => terminal.current && copyTerminalSelection(terminal.current)}
             >
-              <RotateCcw size={13} aria-hidden />
+              <Copy size={13} aria-hidden />
             </button>
-          ) : null}
-          <button
-            className="icon-btn"
-            title="Copy selection"
-            disabled={!hasSelection}
-            onClick={() => {
-              const text = terminal.current?.getSelection()
-              if (text) void navigator.clipboard?.writeText(text)
-            }}
-          >
-            <Copy size={13} aria-hidden />
-          </button>
-          <button className="icon-btn" title="Close terminal" onClick={props.onClose}>
-            <X size={14} aria-hidden />
-          </button>
-        </div>
-      </header>
+            {props.onClose ? (
+              <button className="icon-btn" title="Close terminal" onClick={props.onClose}>
+                <X size={14} aria-hidden />
+              </button>
+            ) : null}
+          </div>
+        </header>
+      )}
       <div ref={host} className="terminal-pane__viewport" />
     </section>
   )
 })
+
+function terminalTarget(props: TerminalPaneProps): {
+  ownerKey: string
+  request: { threadId: string } | { projectPath: string }
+} {
+  if (props.threadId !== undefined) {
+    return { ownerKey: `thread:${props.threadId}`, request: { threadId: props.threadId } }
+  }
+  return {
+    ownerKey: `project:${props.projectPath}`,
+    request: { projectPath: props.projectPath },
+  }
+}
 
 function statusText(status: TerminalStatus): string {
   if (status.state === 'open') return 'Connected'
@@ -270,14 +418,42 @@ function statusText(status: TerminalStatus): string {
   return status.exitCode === null ? 'Exited' : `Exited (${status.exitCode})`
 }
 
-export function terminalFont(): string {
-  return getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim()
+export function terminalCopyShortcut(
+  event: Pick<KeyboardEvent, 'altKey' | 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey' | 'type'>,
+  hasSelection: boolean,
+  macOS = isMacOS(),
+): boolean {
+  if (!hasSelection || event.type !== 'keydown' || event.key.toLowerCase() !== 'c') return false
+  if (event.altKey) return false
+  if (macOS) return event.metaKey && !event.ctrlKey
+  return event.ctrlKey && event.shiftKey && !event.metaKey
 }
 
-export function terminalTheme(): ITheme {
+export function copyTerminalSelection(instance: Terminal): void {
+  const text = instance.getSelection()
+  if (!text) return
+  void writeClipboardText(text).catch((error: unknown) => {
+    console.warn('[terminal] clipboard write failed', error)
+  })
+}
+
+type TerminalProfile = 'app' | 'workspace'
+
+export function terminalFont(profile: TerminalProfile = 'app'): string {
+  const property = profile === 'workspace' ? '--font-terminal' : '--font-mono'
+  return getComputedStyle(document.documentElement).getPropertyValue(property).trim()
+}
+
+export function terminalTheme(profile: TerminalProfile = 'app'): ITheme {
   const style = getComputedStyle(document.documentElement)
   const token = (name: string) => style.getPropertyValue(name).trim()
   const dark = document.documentElement.dataset['theme'] !== 'light'
+  if (profile === 'workspace') {
+    const theme = dark ? GHOSTTY_DARK_THEME : GHOSTTY_LIGHT_THEME
+    const background =
+      token('--terminal-workspace-bg') || theme.background || (dark ? '#0d0d0d' : '#eff1f5')
+    return { ...theme, background, cursorAccent: background }
+  }
   return {
     background: token('--bg'),
     foreground: token('--text'),
@@ -289,6 +465,58 @@ export function terminalTheme(): ITheme {
     // harsh pure-RGB defaults that clash with every accent.
     ...(dark ? DARK_ANSI : LIGHT_ANSI),
   }
+}
+
+const GHOSTTY_DARK_THEME: ITheme = {
+  background: '#0d0d0d',
+  foreground: '#d8dee9',
+  cursor: '#d8dee9',
+  cursorAccent: '#0d0d0d',
+  selectionBackground: '#3b4048',
+  selectionForeground: '#f2f4f8',
+  selectionInactiveBackground: '#2b2f35',
+  black: '#1d1f21',
+  red: '#cc6566',
+  green: '#b6bd68',
+  yellow: '#f0c674',
+  blue: '#82a2be',
+  magenta: '#b294bb',
+  cyan: '#8abeb7',
+  white: '#c4c8c6',
+  brightBlack: '#777777',
+  brightRed: '#d54e53',
+  brightGreen: '#b9ca4b',
+  brightYellow: '#e7c547',
+  brightBlue: '#7aa6da',
+  brightMagenta: '#c397d8',
+  brightCyan: '#70c0b1',
+  brightWhite: '#ffffff',
+}
+
+const GHOSTTY_LIGHT_THEME: ITheme = {
+  background: '#eff1f5',
+  foreground: '#4c4f69',
+  cursor: '#4c4f69',
+  cursorAccent: '#eff1f5',
+  selectionBackground: '#acb0be',
+  selectionForeground: '#4c4f69',
+  selectionInactiveBackground: '#ccd0da',
+  black: '#5c5f77',
+  red: '#d20f39',
+  green: '#40a02b',
+  yellow: '#df8e1d',
+  blue: '#1e66f5',
+  magenta: '#ea76cb',
+  cyan: '#179299',
+  white: '#acb0be',
+  brightBlack: '#6c6f85',
+  brightRed: '#de293e',
+  brightGreen: '#49af3d',
+  brightYellow: '#eea02d',
+  brightBlue: '#456eff',
+  brightMagenta: '#fe85d8',
+  brightCyan: '#2d9fa8',
+  brightWhite: '#bcc0cc',
 }
 
 const DARK_ANSI = {

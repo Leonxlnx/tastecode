@@ -2,9 +2,15 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { memo, useLayoutEffect, useRef } from 'react'
+import { isMacOS } from '../bridge.js'
 import { installState, subscribeInstalls } from '../provider-install.js'
 import type { Transport } from '../transport.js'
-import { terminalFont, terminalTheme } from './TerminalPane.js'
+import {
+  copyTerminalSelection,
+  terminalCopyShortcut,
+  terminalFont,
+  terminalTheme,
+} from './TerminalPane.js'
 
 /**
  * A terminal attached to an install already running on the server. Unlike
@@ -78,8 +84,9 @@ export const InstallTerminal = memo(function InstallTerminal(props: {
         .catch(() => undefined)
     })
     instance.attachCustomKeyEventHandler((event) => {
-      const copy = event.key.toLowerCase() === 'c' && (event.metaKey || event.ctrlKey)
-      return !(copy && instance.hasSelection())
+      if (!terminalCopyShortcut(event, instance.hasSelection(), isMacOS())) return true
+      copyTerminalSelection(instance)
+      return false
     })
 
     const observer = new ResizeObserver(sendSize)
