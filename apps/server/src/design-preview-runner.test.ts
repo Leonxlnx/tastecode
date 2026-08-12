@@ -88,7 +88,10 @@ describe('design preview runner', () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
     workspaces.push(workspace)
     const port = await freePort()
-    writeFileSync(path.join(workspace, 'index.html'), '<link rel="stylesheet" href="styles.css">')
+    writeFileSync(
+      path.join(workspace, 'index.html'),
+      '<link rel="stylesheet" href="styles.css"><h1>Preview</h1>',
+    )
     writeFileSync(path.join(workspace, 'styles.css'), 'body { color: tomato; }')
     writeFileSync(path.join(workspace, 'app.js'), 'document.body.dataset.ready = "true"')
     const staticPlan = parsePreviewPlan({
