@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-12 5597acf0</span>
+        <span class="meta">2026-08-12 c0a88bd3</span>
       </div>
     </div>
 
@@ -297,7 +297,11 @@
             <label
               ><input type="checkbox" /><span
                 >Approval cards answered mid-turn, auto-review mode, agent questions back to the
-                user</span
+                user
+                <span class="d"
+                  >permission-profile requests show the requested access and answer with Codex's
+                  grant-and-scope wire shape; Stop uses the original thread and turn IDs</span
+                ></span
               ></label
             >
           </li>
@@ -434,6 +438,16 @@
             <label
               ><input type="checkbox" /><span
                 >Sign in through its own CLI in the guided card</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Approval replies remain visible and retryable until OpenCode confirms them
+                <span class="d"
+                  >failed auto and manual replies cannot strand an inert permission card</span
+                ></span
               ></label
             >
           </li>
@@ -762,13 +776,17 @@
                 >Design mode entry point in the prompt bar
                 <span class="d"
                   >ambiguous briefs ask material questions plus one final note; stale and
-                  interrupted phases stay isolated; terminal provider errors end briefing activity,
-                  remain visible, and cannot idle a newer turn; recoverable preview startup retries
-                  once; package-manager selectors cannot escape the selected workspace; exact-file
-                  build reports are checked against the bounded before-and-after tree; Harness-owned
-                  static previews reject occupied ports and clean up child trees; rendered Chromium
-                  audits require exactly one h1 and at least 44 by 44 CSS-pixel mobile interaction
-                  targets, and model review cannot erase those findings</span
+                  interrupted phases stay isolated; answer submission shows definite retry and
+                  indeterminate reconciliation states instead of spinning forever; real provider
+                  startup events immediately own the Design phase, while a 30-second start-only
+                  watchdog fails silent starts visibly without timing out running work; terminal
+                  provider errors end briefing activity, remain visible, and cannot idle a newer
+                  turn; recoverable preview startup retries once; package-manager selectors cannot
+                  escape the selected workspace; exact-file build reports are checked against the
+                  bounded before-and-after tree; Harness-owned static previews reject occupied ports
+                  and clean up child trees; rendered Chromium audits require exactly one h1 and at
+                  least 44 by 44 CSS-pixel mobile interaction targets, and model review cannot erase
+                  those findings</span
                 ></span
               ></label
             >
@@ -846,7 +864,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Collapse and expand per item, reasoning collapsed by default</span
+                >Collapse and expand per item, reasoning collapsed by default
+                <span class="d"
+                  >repeated settled reasoning-only histories with no answer compact to one Worked
+                  disclosure; live and single reasoning items stay unchanged</span
+                ></span
               ></label
             >
           </li>
