@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-12 main 342d8041</span>
+        <span class="meta">2026-08-12 main b69c29c0</span>
       </div>
     </div>
 
@@ -319,7 +319,7 @@
             <small>design, provider UX, performance</small>
           </div>
           <div class="kpi">
-            <b>8</b>
+            <b>6</b>
             <span>items open before release</span>
             <small>two of them are human decisions</small>
           </div>
@@ -334,7 +334,7 @@
         </p>
         <div class="lanes">
           <div class="lane l-done">
-            <header>Ready <span class="count">23</span></header>
+            <header>Ready <span class="count">24</span></header>
             <ul>
               <li>
                 <i class="tick">✓</i>
@@ -406,6 +406,18 @@
                   <span class="d"
                     >unfinished work settles to a failed terminal state, stale approvals disappear,
                     and the transcript explains how to continue</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Actionable empty and error states
+                  <span class="d"
+                    >project loading failures offer Retry, the first-project prompt opens the folder
+                    picker, and a true zero-turn thread explains how to send without blocking the
+                    composer; <a href="./screenshots/empty-project.png">project</a> and
+                    <a href="./screenshots/empty-thread.png">thread</a> evidence</span
                   >
                 </span>
               </li>
@@ -535,9 +547,12 @@
                   >Settings
                   <span class="d"
                     >fixed provider rows, masked emails, limits in the popup, short-window
-                    scrolling, and contained keyboard focus;
+                    scrolling, contained keyboard focus, and a confirmed renderer-preference reset
+                    that preserves projects, files, history, and credentials;
                     <a href="./screenshots/provider-settings-desktop.png">desktop</a> and
-                    <a href="./screenshots/provider-settings-390.png">390 px</a> evidence</span
+                    <a href="./screenshots/provider-settings-390.png">390 px</a> provider evidence,
+                    plus
+                    <a href="./screenshots/reset-preferences-confirm.png">reset dialog</a></span
                   >
                 </span>
               </li>
@@ -584,7 +599,7 @@
                     >session source identity, attachment gating, provider-owned limit states, the
                     neutral usage-change signal, and authoritative server summaries are consistent;
                     #608 renderer refresh and Settings wiring, remaining setup/status UX (#593,
-                    #595, #603), and empty states (#15) remain</span
+                    #595, #603) remain</span
                   >
                 </span>
               </li>
