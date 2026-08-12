@@ -5604,10 +5604,6 @@
   padding-bottom: 0;
 }
 
-.thread__row.is-live-activity {
-  padding-bottom: 10px;
-}
-
 /* The working rail overlays this padding; see --working-rail-h. */
 .thread__row.is-rail-anchor {
   padding-top: var(--working-rail-h);

@@ -330,7 +330,7 @@ export function Thread(props: {
               return (
                 <div
                   key={row.key}
-                  className={`thread__row${suppressed ? ' is-suppressed' : ''}${liveActivity ? ' is-live-activity' : ''}${enteringItemIds.has(item.id) ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
+                  className={`thread__row${suppressed ? ' is-suppressed' : ''}${enteringItemIds.has(item.id) ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
                   data-index={row.index}
                   ref={virtualizer.measureElement}
                   style={{ transform: `translateY(${row.start}px)` }}

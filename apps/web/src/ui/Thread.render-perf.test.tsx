@@ -213,6 +213,12 @@ describe('streamed thread renders', () => {
       'Running a command',
     )
     expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
+    expect(rendered.container.querySelector('[data-index="2"]')?.className).toContain(
+      'is-suppressed',
+    )
+    expect(rendered.container.querySelector('[data-index="2"]')?.className).not.toContain(
+      'is-live-activity',
+    )
 
     rendered.rerender(view([user, opening, { ...command, text: 'Tests passed.' }]))
     expect(rendered.container.querySelector('.activity--working')).toBe(rail)
