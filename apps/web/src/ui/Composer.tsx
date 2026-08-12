@@ -144,8 +144,9 @@ function ComposerComponent(props: {
   isolate: boolean
   designMode: boolean
   focusRequest: number
-  draftRequest?: { text: string; request: number } | undefined
+  draftRequest?: { text: string; attachments?: string[]; request: number } | undefined
   onDraftChange?: ((text: string) => void) | undefined
+  onAttachmentsChange?: ((attachments: string[]) => void) | undefined
   queuedTurns: QueuedTurn[]
   canSteerQueue: boolean
   onModelChange: (id: string) => void
@@ -292,7 +293,12 @@ function ComposerComponent(props: {
   }
 
   useEffect(() => {
-    if (props.draftRequest) setValue(props.draftRequest.text)
+    if (!props.draftRequest) return
+    setValue(props.draftRequest.text)
+    if (props.draftRequest.attachments !== undefined) {
+      clearAttachments()
+      addFiles(props.draftRequest.attachments)
+    }
   }, [props.draftRequest?.request])
 
   const addFiles = (paths: string[]) => {
@@ -371,6 +377,10 @@ function ComposerComponent(props: {
     for (const attachment of attachments) releasePreview(attachment.previewUrl)
     setAttachments([])
   }
+
+  useEffect(() => {
+    props.onAttachmentsChange?.(attachments.flatMap((attachment) => attachment.path ?? []))
+  }, [attachments, props.onAttachmentsChange])
 
   const sendContent = (content: string, submission: RunningSubmission = 'queue') => {
     const trimmed = content.trim()

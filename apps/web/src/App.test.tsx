@@ -2833,6 +2833,7 @@ describe('live sessions', () => {
       const composer = screen.getByPlaceholderText('Do anything')
       const draft = () => (composer as HTMLTextAreaElement).value
       if (kind === 'queue') await (reconnect(), waitFor(() => expect(resyncs).toHaveLength(1)))
+      dropFile(composer, '/work/retry.png')
       fireEvent.change(composer, { target: { value: 'Submit exactly once' } })
       fireEvent.keyDown(composer, { key: 'Enter' })
       // prettier-ignore
@@ -2854,6 +2855,7 @@ describe('live sessions', () => {
       } else {
         // prettier-ignore
         expect([within(screen.getByTestId('thread')).queryByText('Submit exactly once'), kind === 'turn' ? screen.queryByText('Working') : null, draft()]).toEqual([null, null, 'Submit exactly once'])
+        expect(screen.getByRole('button', { name: 'Remove retry.png' })).toBeTruthy()
       }
       if (kind !== 'queue') return
       expect(screen.queryByLabelText('Queued prompts')).toBeNull()
@@ -2876,7 +2878,10 @@ describe('live sessions', () => {
         name: 'project',
         pinned: false,
         createdAt: 0,
-        sessions: [{ id: 'thread-1', title: 'Old chat', running: false }],
+        sessions: [
+          { id: 'thread-1', title: 'Old chat', running: false },
+          { id: 'thread-2', title: 'Background', running: false },
+        ],
       },
     ]
     const request = transport.request.getMockImplementation()
@@ -2892,6 +2897,7 @@ describe('live sessions', () => {
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: /^Old chat,/ }))
     const composer = screen.getByPlaceholderText('Do anything')
+    dropFile(composer, '/work/reference.png')
     fireEvent.change(composer, { target: { value: 'Keep this if restore wins' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
 
@@ -2906,11 +2912,17 @@ describe('live sessions', () => {
     await waitFor(() => {
       expect(screen.getByTestId('thread').textContent).not.toContain('Keep this if restore wins')
       expect((composer as HTMLTextAreaElement).value).toBe('Keep this if restore wins')
+      expect(screen.getByRole('button', { name: 'Remove reference.png' })).toBeTruthy()
     })
     expect(screen.queryByText('Working')).toBeNull()
     expect(screen.getByRole('alert').textContent).toContain(
       'cannot start a turn while restoring a checkpoint',
     )
+    fireEvent.click(screen.getByRole('button', { name: 'Remove reference.png' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Old chat,/ }))
+    expect((composer as HTMLTextAreaElement).value).toBe('Keep this if restore wins')
+    expect(screen.queryByRole('button', { name: 'Remove reference.png' })).toBeNull()
   })
 
   it('queues Enter submissions while the active session is running', async () => {
@@ -3575,6 +3587,12 @@ describe('live sessions', () => {
     expect(screen.getByRole('button', { name: 'First session, Codex' })).toBeTruthy()
   })
 })
+
+function dropFile(composer: HTMLElement, path: string) {
+  const file = new File(['test'], path.split('/').at(-1) ?? 'attachment')
+  Object.defineProperty(file, 'path', { value: path })
+  fireEvent.drop(composer.closest('.composer__box')!, { dataTransfer: { files: [file] } })
+}
 
 function emitThreadEvent(threadId: string, event: DomainEvent) {
   act(() => {

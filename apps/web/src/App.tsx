@@ -169,9 +169,9 @@ type CustomModel = {
   displayName: string
 }
 
-type PendingSubmission = {
+type RecoverableDraft = { text: string; attachments: string[] }
+type PendingSubmission = RecoverableDraft & {
   id: string
-  text: string
   createdAt: number
   kind: 'turn' | 'queue' | 'steer'
   accepted: boolean
@@ -295,7 +295,7 @@ export function App() {
   // the active thread, while selecting it still gets the latest state at once.
   const threadStates = useRef(new Map<string, ThreadState>())
   const pendingSubmissions = useRef(new Map<string, Map<string, PendingSubmission>>())
-  const rejectedDrafts = useRef(new Map<string, string>())
+  const rejectedDrafts = useRef(new Map<string, RecoverableDraft>())
   const rejectedDraftOwner = useRef<string | undefined>(undefined)
   const injectedDraftTransition = useRef(false)
   /** Live events parked while a history fetch for the thread is in flight. */
@@ -408,7 +408,9 @@ export function App() {
     request: number
   }>()
   const [composerFocusRequest, setComposerFocusRequest] = useState(0)
-  const [composerDraft, setComposerDraft] = useState<{ text: string; request: number }>()
+  const [composerDraft, setComposerDraft] = useState<
+    { text: string; attachments?: string[]; request: number } | undefined
+  >()
   const [threadRevealRequest, setThreadRevealRequest] = useState(0)
   const [notice, setNotice] = useState<string | undefined>()
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([])
@@ -652,13 +654,16 @@ export function App() {
 
   const activeIdRef = useRef(activeId)
   activeIdRef.current = activeId
-  const restoreRejectedDraft = useCallback((threadId: string, text: string) => {
+  const restoreRejectedDraft = useCallback((threadId: string, rejected: RecoverableDraft) => {
     const current = rejectedDrafts.current.get(threadId)
-    const draft = current ? `${current}\n\n${text}` : text
+    const draft = {
+      text: current ? `${current.text}\n\n${rejected.text}` : rejected.text,
+      attachments: [...new Set([...(current?.attachments ?? []), ...rejected.attachments])],
+    }
     rejectedDrafts.current.set(threadId, draft)
     if (threadId === activeIdRef.current) {
       rejectedDraftOwner.current = threadId
-      setComposerDraft((request) => ({ text: draft, request: (request?.request ?? 0) + 1 }))
+      setComposerDraft((request) => ({ ...draft, request: (request?.request ?? 0) + 1 }))
     }
   }, [])
   useEffect(() => {
@@ -669,11 +674,21 @@ export function App() {
     const draft = activeId ? rejectedDrafts.current.get(activeId) : undefined
     if (draft === undefined && rejectedDraftOwner.current === undefined) return
     rejectedDraftOwner.current = draft === undefined ? undefined : activeId
-    setComposerDraft((current) => ({ text: draft ?? '', request: (current?.request ?? 0) + 1 }))
+    setComposerDraft((current) => ({
+      text: draft?.text ?? '',
+      attachments: draft?.attachments ?? [],
+      request: (current?.request ?? 0) + 1,
+    }))
   }, [activeId])
   const updateRejectedDraft = useCallback((text: string) => {
     const owner = rejectedDraftOwner.current
-    if (owner) rejectedDrafts.current.set(owner, text)
+    const draft = owner ? rejectedDrafts.current.get(owner) : undefined
+    if (owner && draft) rejectedDrafts.current.set(owner, { ...draft, text })
+  }, [])
+  const updateRejectedAttachments = useCallback((attachments: string[]) => {
+    const owner = rejectedDraftOwner.current
+    const draft = owner ? rejectedDrafts.current.get(owner) : undefined
+    if (owner && draft) rejectedDrafts.current.set(owner, { ...draft, attachments })
   }, [])
   const projectsRef = useRef(projects)
   projectsRef.current = projects
@@ -721,7 +736,7 @@ export function App() {
       if (pending.size === 0) pendingSubmissions.current.delete(threadId)
       threadStates.current.set(threadId, next)
       if (threadId === activeIdRef.current) setThread(next)
-      for (const submission of rejected) restoreRejectedDraft(threadId, submission.text)
+      for (const submission of rejected) restoreRejectedDraft(threadId, submission)
     },
     [restoreRejectedDraft],
   )
@@ -1733,7 +1748,11 @@ export function App() {
       if (draft !== undefined) {
         rejectedDraftOwner.current = undefined
         injectedDraftTransition.current = activeIdRef.current !== undefined
-        setComposerDraft((current) => ({ text: draft, request: (current?.request ?? 0) + 1 }))
+        setComposerDraft((current) => ({
+          text: draft,
+          attachments: [],
+          request: (current?.request ?? 0) + 1,
+        }))
       }
       // A session nobody typed into is bookkeeping, not history. Pressing "new
       // session" twice should not leave a trail of empty ones.
@@ -1789,7 +1808,11 @@ export function App() {
       // early bail below must put the words back — a toast is no substitute
       // for the paragraph someone just typed.
       const restoreDraft = () =>
-        setComposerDraft((current) => ({ text, request: (current?.request ?? 0) + 1 }))
+        setComposerDraft((current) => ({
+          text,
+          attachments,
+          request: (current?.request ?? 0) + 1,
+        }))
       if (sendAvailability !== 'ready') {
         restoreDraft()
         return
@@ -1924,6 +1947,7 @@ export function App() {
       const pendingSubmission: PendingSubmission = {
         id: optimisticItemId,
         text,
+        attachments,
         createdAt: optimisticCreatedAt,
         kind: wasRunning ? (steering ? 'steer' : 'queue') : 'turn',
         accepted: false,
@@ -2036,7 +2060,7 @@ export function App() {
             threadStates.current.set(threadId, next)
             if (threadId === activeIdRef.current) setThread(next)
           }
-          restoreRejectedDraft(threadId, text)
+          restoreRejectedDraft(threadId, { text, attachments })
         } else if (steering) {
           const current = threadStates.current.get(threadId)
           if (current) {
@@ -3081,6 +3105,7 @@ export function App() {
                   focusRequest={composerFocusRequest}
                   draftRequest={composerDraft}
                   onDraftChange={updateRejectedDraft}
+                  onAttachmentsChange={updateRejectedAttachments}
                   queuedTurns={queuedTurns}
                   canSteerQueue={canSteerQueue}
                   onModelChange={selectModel}
