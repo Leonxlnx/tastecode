@@ -186,7 +186,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       return { ...state, plan: event.steps }
 
     case 'usage.updated':
-      return { ...state, usage: event.usage }
+      return { ...state, usage: withoutIncompatibleContextWindow(event.usage) }
 
     case 'diff.updated':
       return { ...state, diff: event.diff }
@@ -250,6 +250,20 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
     default:
       return state
   }
+}
+
+function withoutIncompatibleContextWindow(usage: Usage): Usage {
+  const hasAccountingBreakdown =
+    usage.inputTokens !== 0 ||
+    usage.cachedInputTokens !== 0 ||
+    usage.outputTokens !== 0 ||
+    usage.reasoningTokens !== 0
+  if (usage.contextWindow === undefined || usage.cumulative !== true || !hasAccountingBreakdown)
+    return usage
+
+  // Cumulative category totals measure accounting, not current context.
+  const { contextWindow: _contextWindow, ...accounting } = usage
+  return accounting
 }
 
 /**

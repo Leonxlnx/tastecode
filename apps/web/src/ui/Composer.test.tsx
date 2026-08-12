@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { emptyThread, reduce } from '../thread-store.js'
 import { Composer } from './Composer.js'
 
 const bridge = vi.hoisted(() => ({
@@ -425,6 +426,26 @@ describe('Composer context usage', () => {
 
     expect(screen.getByRole('img', { name: /context tokens used \(15%\)/ })).toBeTruthy()
     expect(screen.getByRole('tooltip').textContent).toContain('15% context used')
+  })
+
+  it('does not render a false ring restored from cumulative accounting', () => {
+    const restored = reduce(emptyThread, {
+      type: 'usage.updated',
+      usage: {
+        inputTokens: 570_000,
+        cachedInputTokens: 490_000,
+        outputTokens: 25_000,
+        reasoningTokens: 6_152,
+        totalTokens: 601_152,
+        cumulative: true,
+        inputIncludesCached: true,
+        contextWindow: 258_400,
+      },
+    })
+
+    renderComposer(vi.fn(), { usage: restored.usage })
+
+    expect(screen.queryByRole('img', { name: /context tokens used/ })).toBeNull()
   })
 })
 

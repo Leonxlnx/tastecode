@@ -248,6 +248,55 @@ describe('thread reducer', () => {
     expect(presentTurns(replayed.items, replayed.turnTiming).get('t1')?.elapsedMs).toBe(3_000)
   })
 
+  it('drops an incompatible context window from replayed cumulative accounting', () => {
+    const replayed = reduceEventLog(emptyThread, [
+      {
+        seq: 1,
+        event: {
+          type: 'usage.updated',
+          usage: {
+            inputTokens: 570_000,
+            cachedInputTokens: 490_000,
+            outputTokens: 25_000,
+            reasoningTokens: 6_152,
+            totalTokens: 601_152,
+            cumulative: true,
+            inputIncludesCached: true,
+            contextWindow: 258_400,
+          },
+        },
+      },
+    ])
+
+    expect(replayed.usage).toEqual({
+      inputTokens: 570_000,
+      cachedInputTokens: 490_000,
+      outputTokens: 25_000,
+      reasoningTokens: 6_152,
+      totalTokens: 601_152,
+      cumulative: true,
+      inputIncludesCached: true,
+    })
+  })
+
+  it('preserves a cumulative context-only usage frame', () => {
+    const usage = {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 53_000,
+      cumulative: true,
+      contextWindow: 200_000,
+      costUsd: 0.045,
+    }
+    const replayed = reduceEventLog(emptyThread, [
+      { seq: 1, event: { type: 'usage.updated', usage } },
+    ])
+
+    expect(replayed.usage).toEqual(usage)
+  })
+
   it('rebuilds a whole conversation from a stored event log', () => {
     // What reopening a session does: the server hands back everything that
     // happened, and replaying it has to produce the same thread the user left.
