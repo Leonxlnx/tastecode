@@ -60,6 +60,8 @@ describe('prompt progress lifecycle', () => {
     const run = runPromptProgress(scenario)
 
     expect(run.canonicalPrompt).toBe(run.optimisticPrompt)
+    expect(run.startedPrompt).toBe(run.optimisticPrompt)
+    expect(run.deltaPrompt).toBe(run.optimisticPrompt)
     expect(run.canonicalRail).toBe(run.optimisticRail)
     expect(run.startedRail).toBe(run.optimisticRail)
     expect(run.deltaRail).toBe(run.optimisticRail)

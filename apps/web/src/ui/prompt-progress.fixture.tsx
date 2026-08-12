@@ -67,7 +67,9 @@ export type PromptProgressRun = {
   optimisticRail: Element
   canonicalPrompt: Element
   canonicalRail: Element
+  startedPrompt: Element
   startedRail: Element
+  deltaPrompt: Element
   deltaRail: Element
   finalState: ThreadState
 }
@@ -81,10 +83,7 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
     CREATED_AT,
   )
   const rendered = render(view(state))
-  const optimisticPrompt = required(
-    rendered.container.querySelector('.said__text'),
-    'optimistic prompt',
-  )
+  const optimisticPrompt = promptNode(rendered)
   const optimisticRail = oneWorkingRail(rendered)
 
   state = reduce(state, {
@@ -109,10 +108,7 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
     },
   })
   rendered.rerender(view(state))
-  const canonicalPrompt = required(
-    rendered.container.querySelector('.said__text'),
-    'canonical prompt',
-  )
+  const canonicalPrompt = promptNode(rendered)
   const canonicalRail = oneWorkingRail(rendered)
 
   state = reduce(state, {
@@ -128,6 +124,7 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
     },
   })
   rendered.rerender(view(state))
+  const startedPrompt = promptNode(rendered)
   const startedRail = oneWorkingRail(rendered)
 
   const textDeltas = LIVE_DELTAS.get(scenario.liveCharacters)
@@ -142,6 +139,7 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
     { type: 'item.delta', turnId: TURN_ID, itemId: ANSWER_ID, textDelta: textDeltas[1] },
   ])
   rendered.rerender(view(state))
+  const deltaPrompt = promptNode(rendered)
 
   return {
     rendered,
@@ -149,10 +147,19 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
     optimisticRail,
     canonicalPrompt,
     canonicalRail,
+    startedPrompt,
     startedRail,
+    deltaPrompt,
     deltaRail: oneWorkingRail(rendered),
     finalState: state,
   }
+}
+
+function promptNode(rendered: RenderResult): Element {
+  const prompt = [...rendered.container.querySelectorAll('.said__text')].find(
+    (node) => node.textContent === PROMPT,
+  )
+  return required(prompt, 'submitted prompt')
 }
 
 function oneWorkingRail(rendered: RenderResult): Element {
