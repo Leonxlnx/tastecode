@@ -6,6 +6,7 @@ import path from 'node:path'
 import type { PreviewPlan } from '@harness/design-agent'
 import { spawnCli } from '@harness/proc'
 import { existingWorkspacePath } from './api-workspace-paths.js'
+import { startStaticDesignPreview } from './design-static-preview.js'
 import { safeCommandEnvironment } from './safe-command-environment.js'
 
 /**
@@ -31,12 +32,15 @@ export async function startDesignPreview(
   plan: PreviewPlan,
   timeoutMs = 30_000,
 ): Promise<RunningPreview> {
+  const workspace = realpathSync(workspacePath)
+  const cwd = existingWorkspacePath(workspace, plan.cwd, true)
+  if (plan.kind === 'static') {
+    return startStaticDesignPreview(cwd, plan)
+  }
   if (!COMMANDS.has(plan.command)) throw new Error('preview command is not allowed')
   if (plan.args.some((arg) => UNSAFE_ARG.test(arg))) {
     throw new Error('preview command argument is unsafe')
   }
-  const workspace = realpathSync(workspacePath)
-  const cwd = existingWorkspacePath(workspace, plan.cwd, true)
   assertRunsWorkspaceCode(workspace, cwd, plan)
   const releaseStart = claimPreviewStart(plan.url)
   let child: ChildProcessWithoutNullStreams | undefined
@@ -124,7 +128,11 @@ function previewPortAvailable(url: string): Promise<boolean> {
  * pointing Design Mode at the project; a package name resolved off the
  * network is not.
  */
-export function assertRunsWorkspaceCode(workspace: string, cwd: string, plan: PreviewPlan): void {
+export function assertRunsWorkspaceCode(
+  workspace: string,
+  cwd: string,
+  plan: Extract<PreviewPlan, { kind: 'command' }>,
+): void {
   if (plan.command === 'node') {
     const entries = plan.args.filter((arg) => !arg.startsWith('-'))
     if (entries.length === 0) throw new Error('preview command must name a script in the workspace')

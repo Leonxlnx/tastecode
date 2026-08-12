@@ -104,10 +104,14 @@ describe('design preview runner', () => {
     const response = await fetch(preview.url)
     expect(response.headers.get('x-harness-preview-id')).toMatch(/^[0-9a-f-]{36}$/)
     await expect(response.text()).resolves.toContain('styles.css')
-    await expect(fetch(new URL('styles.css', preview.url)).then((value) => value.text())).resolves.toBe(
-      'body { color: tomato; }',
-    )
+    await expect(
+      fetch(new URL('styles.css', preview.url)).then((value) => value.text()),
+    ).resolves.toBe('body { color: tomato; }')
     expect(readdirSync(workspace).sort()).toEqual(['app.js', 'index.html', 'styles.css'])
+    writeFileSync(path.join(workspace, '.env'), 'SECRET=not-for-preview')
+    await expect(fetch(new URL('.env', preview.url)).then((value) => value.status)).resolves.toBe(
+      404,
+    )
   })
 
   it('does not accept a concurrent preview serving the same port', async () => {
