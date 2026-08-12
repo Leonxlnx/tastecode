@@ -3609,6 +3609,24 @@ function emitThreadEvent(threadId: string, event: DomainEvent, seq?: number) {
   })
 }
 
+function completedHistoryEvent(seq: number, id: string, text: string) {
+  return {
+    seq,
+    event: {
+      type: 'item.completed' as const,
+      item: {
+        id,
+        turnId: 'turn-1',
+        type: 'message' as const,
+        role: 'assistant' as const,
+        status: 'completed' as const,
+        text,
+        createdAt: seq,
+      },
+    },
+  }
+}
+
 function emitQueue(
   threadId: string,
   items: Array<{ id: string; text: string; attachments: string[]; createdAt: number }>,
@@ -3875,29 +3893,17 @@ describe('reopening a session', () => {
   it('catches up only the missing durable suffix when the transport detects a push gap', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    const historyEvent = (seq: number, id: string, text: string) => ({
-      seq,
-      event: {
-        type: 'item.completed' as const,
-        item: {
-          id,
-          turnId: 'turn-1',
-          type: 'message' as const,
-          role: 'assistant' as const,
-          status: 'completed' as const,
-          text,
-          createdAt: seq,
-        },
-      },
-    })
     let historyRead = 0
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'thread.history') {
         historyRead += 1
         return Promise.resolve(
           historyRead === 1
-            ? { events: [historyEvent(7, 'base', 'Durable base')], running: false }
-            : { events: [historyEvent(9, 'suffix', 'Missing suffix')], running: false },
+            ? { events: [completedHistoryEvent(7, 'base', 'Durable base')], running: false }
+            : {
+                events: [completedHistoryEvent(9, 'suffix', 'Missing suffix')],
+                running: false,
+              },
         )
       }
       return request(method, params)
@@ -3952,6 +3958,59 @@ describe('reopening a session', () => {
     expect(text).toContain('Durable base')
     expect(text).toContain('Durable live event')
     expect(text).toContain('Missing suffix')
+  })
+
+  it('applies a cached background session suffix when it is reopened', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-1', title: 'Foreground', running: false },
+          { id: 'thread-2', title: 'Background', running: false },
+        ],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let foregroundReads = 0
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'thread.history') return request(method, params)
+      const { threadId } = params as { threadId: string }
+      if (threadId !== 'thread-1') return Promise.resolve({ events: [], running: false })
+      foregroundReads += 1
+      return Promise.resolve({
+        events: [
+          foregroundReads === 1
+            ? completedHistoryEvent(4, 'base', 'Cached base')
+            : completedHistoryEvent(5, 'suffix', 'Background suffix'),
+        ],
+        running: false,
+      })
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Foreground' }))
+    expect(await screen.findByText('Cached base')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Background' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('thread').textContent).not.toContain('Cached base'),
+    )
+    transport.request.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Foreground' }))
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'thread-1',
+        afterSeq: 4,
+      }),
+    )
+    const text = screen.getByTestId('thread').textContent
+    expect(text).toContain('Cached base')
+    expect(text).toContain('Background suffix')
   })
 
   it('does not advance past a deferred delta and ignores duplicate durable pushes', async () => {

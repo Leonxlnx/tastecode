@@ -2334,19 +2334,12 @@ export function App() {
           resync.current()
           return
         }
-        if (durableSequences.current.has(id)) {
-          // Mark-as-read only; a complete cache stays current from live events.
-          void transport
-            .request('thread.history', { threadId: id, afterSeq: Number.MAX_SAFE_INTEGER })
-            .catch(() => undefined)
-          return
-        }
       } else {
         setThread(emptyThread)
       }
 
       try {
-        await loadHistory(id)
+        await loadHistory(id, cached ? durableSequences.current.get(id) : undefined)
       } catch (error) {
         setNotice(error instanceof Error ? error.message : String(error))
       }
