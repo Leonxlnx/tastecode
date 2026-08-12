@@ -18,6 +18,7 @@ import {
   type WebContents,
 } from 'electron'
 import {
+  PreviewDomAuditSchema,
   PreviewCaptureRequestSchema,
   type PreviewCaptureRequest,
   type PreviewCaptureResult,
@@ -28,6 +29,7 @@ import { allowsMicrophoneRequest } from './media-permissions.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
+import { PREVIEW_DOM_AUDIT_SCRIPT } from './preview-dom-audit.js'
 import { ServerSupervisor } from './server-supervisor.js'
 import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
@@ -390,12 +392,20 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
       seen.add(key)
       preview.setContentSize(viewport.width, viewport.height)
       await Promise.race([preview.webContents.executeJavaScript(CAPTURE_SETTLE_SCRIPT), deadline])
+      const domAudit = PreviewDomAuditSchema.parse(
+        await Promise.race([
+          preview.webContents.executeJavaScriptInIsolatedWorld(1001, [
+            { code: PREVIEW_DOM_AUDIT_SCRIPT },
+          ]),
+          deadline,
+        ]),
+      )
       const destination = path.join(directory, `${key}.png`)
       await writeFile(destination, (await preview.webContents.capturePage()).toPNG(), {
         flag: 'wx',
         mode: 0o600,
       })
-      screenshots.push({ path: destination, ...viewport })
+      screenshots.push({ path: destination, ...viewport, domAudit })
     }
     return { status: 'completed', requestId: request.requestId, screenshots }
   } catch (error) {
