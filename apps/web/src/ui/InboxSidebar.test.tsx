@@ -232,7 +232,9 @@ describe('InboxSidebar', () => {
     render(<InboxSidebar {...props([{ path: '/alpha', sessions }])} />)
 
     for (const label of ['Claude Code', 'Grok', 'Gemini CLI', 'API connection']) {
-      expect(screen.getByText(label)).toBeTruthy()
+      const identity = screen.getByText(label).closest('.source-identity')
+      expect(identity?.classList.contains('source-identity--compact')).toBe(true)
+      expect(identity?.querySelector('svg')).toBeTruthy()
     }
   })
 })

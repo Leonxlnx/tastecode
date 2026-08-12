@@ -4560,6 +4560,45 @@
   border-color: color-mix(in oklab, var(--attention) 35%, var(--chrome-border));
 }
 
+.source-identity {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 5px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.source-identity__mark {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.source-identity--compact {
+  gap: 3px;
+}
+
+.source-identity--compact .source-identity__mark {
+  width: 13px;
+  height: 13px;
+}
+
+.source-identity__label,
+.source-identity__qualifier {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.source-identity__qualifier {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-3);
+}
+
 .inbox-card__main {
   display: flex;
   flex-direction: column;
@@ -5015,6 +5054,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sess__source {
+  max-width: 84px;
+  flex: none;
+  color: var(--text-3);
+  font-size: 10.5px;
 }
 
 .sess__actions {

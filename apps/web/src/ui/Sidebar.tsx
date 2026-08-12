@@ -35,9 +35,11 @@ import {
   X,
 } from 'lucide-react'
 import { isDesktop, revealPath } from '../bridge.js'
+import { agentPresentation, providerPresentation } from '../provider-presentation.js'
 import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
 import { InboxSidebar, type InboxActions } from './InboxSidebar.js'
+import { SourceIdentity } from './SourceIdentity.js'
 
 /**
  * The rail. Collapsible, searchable, and everything in it can be renamed.
@@ -1074,6 +1076,15 @@ function SessionRow(props: {
         title={sessionLabel(props.session)}
       >
         <span className="sess__title">{props.session.title}</span>
+        <SourceIdentity
+          className="sess__source"
+          presentation={
+            props.session.provider === 'acp' && props.session.agent
+              ? agentPresentation(props.session.agent)
+              : providerPresentation(props.session.provider)
+          }
+          density="compact"
+        />
         <SessionStatus status={props.session.status} />
       </button>
 

@@ -25,9 +25,14 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { agentPresentation, providerDisplayName } from '../provider-presentation.js'
+import {
+  agentPresentation,
+  providerPresentation,
+  type ProviderPresentation,
+} from '../provider-presentation.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { Project, Session } from './Sidebar.js'
+import { SourceIdentity } from './SourceIdentity.js'
 
 type Entry = { project: Project; session: Session }
 
@@ -470,7 +475,7 @@ function ActiveRow(
             <span>Default checkout</span>
           )}
           <span aria-hidden>·</span>
-          <span>{providerName(props.session)}</span>
+          <SourceIdentity presentation={sessionSource(props.session)} density="compact" />
           {props.session.pinned ? (
             <>
               <span aria-hidden>·</span>
@@ -965,11 +970,15 @@ function relativeTime(at: number, now: number): string {
   return `${Math.round(hours / 24)}d ago`
 }
 
-function providerName(session: Session): string {
+function sessionSource(session: Session): ProviderPresentation {
   if (session.provider === 'acp' && session.agent) {
-    return agentPresentation(session.agent).label
+    return agentPresentation(session.agent)
   }
-  return providerDisplayName(session.provider)
+  return providerPresentation(session.provider)
+}
+
+function providerName(session: Session): string {
+  return sessionSource(session).label
 }
 
 function projectName(project: Project): string {

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { Sidebar } from './Sidebar.js'
 
 vi.mock('../bridge.js', async (importOriginal) => ({
@@ -136,6 +136,11 @@ describe('Sidebar chat actions', () => {
         onOpenSettings={vi.fn()}
       />,
     )
+
+    const chat = screen.getByText('Polish the sidebar').closest('button')!
+    const identity = within(chat).getByText('Codex').closest('.source-identity')
+    expect(identity?.classList.contains('source-identity--compact')).toBe(true)
+    expect(identity?.querySelector('svg')).toBeTruthy()
 
     const rename = screen.getByRole('button', { name: 'Rename Polish the sidebar' })
     const archive = screen.getByRole('button', { name: 'Archive Polish the sidebar' })
