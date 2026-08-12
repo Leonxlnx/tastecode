@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { readFileSync, realpathSync } from 'node:fs'
+import { createServer } from 'node:net'
 import path from 'node:path'
 import type { PreviewPlan } from '@harness/design-agent'
 import { spawnCli } from '@harness/proc'
@@ -36,6 +37,7 @@ export async function startDesignPreview(
   const workspace = realpathSync(workspacePath)
   const cwd = existingWorkspacePath(workspace, plan.cwd, true)
   assertRunsWorkspaceCode(workspace, cwd, plan)
+  await assertPreviewPortAvailable(plan.url)
   const child = spawnCli(plan.command, plan.args, {
     cwd,
     replaceEnv: true,
@@ -65,6 +67,27 @@ export async function startDesignPreview(
     output: () => output,
     stop: () => stopProcess(child),
   }
+}
+
+async function assertPreviewPortAvailable(url: string): Promise<void> {
+  const port = Number(new URL(url).port)
+  await new Promise<void>((resolve, reject) => {
+    const reservation = createServer()
+    reservation.once('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'EADDRINUSE') {
+        reject(
+          new Error(
+            `preview port ${port} is already in use; choose another http://127.0.0.1 port and retry`,
+          ),
+        )
+        return
+      }
+      reject(error)
+    })
+    reservation.listen({ host: '127.0.0.1', port, exclusive: true }, () => {
+      reservation.close((error) => (error ? reject(error) : resolve()))
+    })
+  })
 }
 
 /**

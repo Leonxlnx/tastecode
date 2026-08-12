@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -17,6 +17,42 @@ afterEach(async () => {
 })
 
 describe('design preview runner', () => {
+  it('refuses an occupied port before starting workspace code', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const marker = path.join(workspace, 'spawned.txt')
+    const occupied = createServer((_request, response) => response.end('unrelated preview'))
+    await listen(occupied)
+    const address = occupied.address()
+    if (!address || typeof address === 'string') throw new Error('missing test port')
+    writeFileSync(
+      path.join(workspace, 'preview.mjs'),
+      `import { createServer } from 'node:http'\nimport { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'started')\ncreateServer((_request, response) => response.end('expected preview')).listen(${address.port}, '127.0.0.1')\n`,
+    )
+    const plan = parsePreviewPlan({
+      version: 1,
+      command: 'node',
+      args: ['preview.mjs'],
+      cwd: '.',
+      url: `http://127.0.0.1:${address.port}`,
+      viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+    })
+
+    let accepted: RunningPreview | undefined
+    let failure: unknown
+    try {
+      accepted = await startDesignPreview(workspace, plan, 5_000)
+    } catch (error) {
+      failure = error
+    } finally {
+      await accepted?.stop()
+      await close(occupied)
+    }
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toContain(`preview port ${address.port} is already in use`)
+    expect(existsSync(marker)).toBe(false)
+  })
+
   it('starts a local argv command, waits for HTTP, and stops its process tree', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
     workspaces.push(workspace)
@@ -110,5 +146,18 @@ function freePort(): Promise<number> {
       if (!address || typeof address === 'string') return reject(new Error('missing test port'))
       server.close((error) => (error ? reject(error) : resolve(address.port)))
     })
+  })
+}
+
+function listen(server: ReturnType<typeof createServer>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.on('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+}
+
+function close(server: ReturnType<typeof createServer>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()))
   })
 }
