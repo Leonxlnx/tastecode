@@ -1125,9 +1125,14 @@ export function App() {
       // deleted — they return with their rosters after the beta.
       if (cancelled) return
       const catalog = direct.flatMap((entry) => entry.models)
-      const publicCatalogReady = direct.every(
-        (entry) => !PUBLIC_BETA_PROVIDER_IDS.has(entry.provider) || entry.discovered,
+      const publicDiscoveries = direct.filter((entry) =>
+        PUBLIC_BETA_PROVIDER_IDS.has(entry.provider),
       )
+      const publicCatalog = catalog.filter((choice) =>
+        PUBLIC_BETA_PROVIDER_IDS.has(choice.provider),
+      )
+      const publicCatalogReady =
+        publicDiscoveries.length > 0 && publicDiscoveries.every((entry) => entry.discovered)
       setAcpAgents(agentsResult?.agents ?? [])
       setModelConnections(connections)
       setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
@@ -1140,10 +1145,9 @@ export function App() {
       // A hidden model cannot remain the internal selection. Otherwise the
       // picker shows no such choice while a turn can still silently use it.
       let hidden = hiddenModelsRef.current
-      if (!modelVisibilityInitialized.current && publicCatalogReady && catalog.length > 0) {
+      if (!modelVisibilityInitialized.current && publicCatalogReady && publicCatalog.length > 0) {
         hidden = new Set(
-          catalog
-            .filter((choice) => PUBLIC_BETA_PROVIDER_IDS.has(choice.provider))
+          publicCatalog
             .filter((choice) => !modelVisibleByDefault(choice.model))
             .map((choice) => choice.key),
         )
