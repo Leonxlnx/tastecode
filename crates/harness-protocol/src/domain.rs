@@ -1636,8 +1636,8 @@ mod tests {
                 "interactiveTargetViolations": [{
                     "selector": "#theme",
                     "label": "Theme",
-                    "width": 32,
-                    "height": 32
+                    "width": 32.5,
+                    "height": 32.25
                 }]
             }
         });
