@@ -48,6 +48,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import type { Transport } from '../../transport.js'
+import { AppSelect } from '../AppSelect.js'
 import { Markdown } from '../Markdown.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { PullRequestFiles } from './PullRequestFiles.js'
@@ -1953,16 +1954,18 @@ function PullRequestComposer(props: {
       />
       <div className="pr-composer-foot">
         {canReview ? (
-          <select
+          <AppSelect
             className="pr-composer-mode"
+            ariaLabel="Submission type"
             value={mode}
-            onChange={(event) => setMode(event.target.value as typeof mode)}
-            aria-label="Submission type"
-          >
-            <option value="comment">Comment</option>
-            <option value="approve">Approve</option>
-            <option value="request_changes">Request changes</option>
-          </select>
+            onChange={setMode}
+            drop="up"
+            options={[
+              { value: 'comment', label: 'Comment' },
+              { value: 'approve', label: 'Approve' },
+              { value: 'request_changes', label: 'Request changes' },
+            ]}
+          />
         ) : null}
         <button
           type="button"

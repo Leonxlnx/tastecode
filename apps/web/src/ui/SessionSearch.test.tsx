@@ -94,11 +94,13 @@ describe('cross-session search', () => {
       />,
     )
 
+    fireEvent.click(screen.getByRole('combobox', { name: 'Project' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Harness' }))
+    fireEvent.click(screen.getByRole('combobox', { name: 'Agent' }))
     expect(screen.getByRole('option', { name: 'Codex' })).toBeTruthy()
     expect(screen.getByRole('option', { name: 'Grok' })).toBeTruthy()
     expect(screen.queryByRole('option', { name: 'Cursor' })).toBeNull()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'D:\\repo' } })
-    fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'codex' } })
+    fireEvent.click(screen.getByRole('option', { name: 'Codex' }))
     const search = screen.getByLabelText('Search every chat')
     fireEvent.change(search, { target: { value: 'regres' } })
 
@@ -199,6 +201,60 @@ describe('cross-session search', () => {
       })
       await Promise.resolve()
     })
+    expect(screen.getByRole('option', { name: /Second result/ })).toBeTruthy()
+  })
+
+  it('keeps settled message results visible while the next query loads', async () => {
+    vi.useFakeTimers()
+    let resolveRefresh:
+      ((value: { results: SessionSearchResult[]; nextCursor: null }) => void) | undefined
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({ results: [RESULT], nextCursor: null })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve
+          }),
+      )
+    render(
+      <SessionSearch
+        transport={{ request } as unknown as Transport}
+        projects={PROJECTS}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+
+    const search = screen.getByLabelText('Search every chat')
+    fireEvent.change(search, { target: { value: 'regres' } })
+    await act(async () => {
+      vi.advanceTimersByTime(80)
+      await Promise.resolve()
+    })
+    expect(screen.getByText('Messages and output')).toBeTruthy()
+    expect(screen.getByRole('option', { name: /Fix regression/ })).toBeTruthy()
+
+    fireEvent.change(search, { target: { value: 'second' } })
+    expect(screen.getByText('Messages and output')).toBeTruthy()
+    expect(screen.getByRole('option', { name: /Fix regression/ })).toBeTruthy()
+    await act(async () => vi.advanceTimersByTime(80))
+    expect(screen.getByText('Messages and output')).toBeTruthy()
+
+    await act(async () => {
+      resolveRefresh?.({
+        results: [
+          {
+            ...RESULT,
+            threadTitle: 'Second result',
+            snippet: [{ text: 'second', highlighted: true }],
+          },
+        ],
+        nextCursor: null,
+      })
+      await Promise.resolve()
+    })
+    expect(screen.queryByRole('option', { name: /Fix regression/ })).toBeNull()
     expect(screen.getByRole('option', { name: /Second result/ })).toBeTruthy()
   })
 

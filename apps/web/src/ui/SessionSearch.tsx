@@ -9,6 +9,7 @@ import {
 } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
 import { SourceIdentity } from './SourceIdentity.js'
+import { AppSelect } from './AppSelect.js'
 
 const SEARCH_DEBOUNCE_MS = 80
 const MAX_TITLE_RESULTS = 6
@@ -23,6 +24,7 @@ const PROVIDERS: ProviderId[] = [
   'cursor',
   'opencode',
   'antigravity',
+  'pi',
   'acp',
   'api',
 ]
@@ -174,11 +176,11 @@ function SessionSearchComponent(props: {
 
   useEffect(() => {
     const current = ++revision.current
-    setResults([])
     setNextCursor(null)
     setError(undefined)
     setLoadingMore(false)
     if (!term || !searchable) {
+      setResults([])
       setSearching(false)
       return
     }
@@ -329,28 +331,33 @@ function SessionSearchComponent(props: {
         <div className="session-search__filters">
           <label>
             <span>Project</span>
-            <select value={projectPath} onChange={(event) => setProjectPath(event.target.value)}>
-              <option value="">All projects</option>
-              {props.projects.map((project) => (
-                <option key={project.path} value={project.path}>
-                  {project.name ?? basename(project.path)}
-                </option>
-              ))}
-            </select>
+            <AppSelect
+              ariaLabel="Project"
+              value={projectPath}
+              onChange={setProjectPath}
+              options={[
+                { value: '', label: 'All projects' },
+                ...props.projects.map((project) => ({
+                  value: project.path,
+                  label: project.name ?? basename(project.path),
+                })),
+              ]}
+            />
           </label>
           <label>
             <span>Agent</span>
-            <select
+            <AppSelect
+              ariaLabel="Agent"
               value={provider}
-              onChange={(event) => setProvider(event.target.value as ProviderId | '')}
-            >
-              <option value="">All agents</option>
-              {availableProviders.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {entry.label}
-                </option>
-              ))}
-            </select>
+              onChange={setProvider}
+              options={[
+                { value: '', label: 'All agents' },
+                ...availableProviders.map((entry) => ({
+                  value: entry.id,
+                  label: entry.label,
+                })),
+              ]}
+            />
           </label>
         </div>
         <div

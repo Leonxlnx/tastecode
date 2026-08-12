@@ -177,7 +177,7 @@
   color: var(--text-3);
 }
 
-.pr-status-filter {
+.pr-list-filter {
   justify-content: center;
   height: 34px;
   padding: 0 9px;
@@ -188,20 +188,62 @@
   color: var(--text-3);
 }
 
-.pr-status-filter > span {
+.pr-list-filter > span {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   white-space: nowrap;
 }
 
-.pr-status-filter:is(:hover, :focus-visible),
-.pr-status-filter.is-active {
+.pr-list-filter:is(:hover, :focus-visible),
+.pr-list-filter.is-active {
   color: var(--text);
 }
 
-.pr-status-filter.is-active svg {
+.pr-list-filter.is-active svg {
   color: var(--attention);
+}
+
+.pr-filter-menu {
+  width: min(270px, calc(100vw - 16px));
+  min-width: min(270px, calc(100vw - 16px));
+  max-height: min(390px, calc(100vh - 16px));
+  padding: 7px;
+}
+
+.pr-filter-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  padding: 1px 4px 5px 9px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.pr-filter-menu-head strong {
+  font-weight: 520;
+}
+
+.pr-filter-menu-head button {
+  padding: 4px 6px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+}
+
+.pr-filter-menu-head button:is(:hover, :focus-visible):not(:disabled) {
+  background: var(--menu-hover);
+  color: var(--text);
+  outline: 0;
+}
+
+.pr-filter-menu-head button:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .pr-list-scroll,
@@ -1596,30 +1638,30 @@
 }
 
 .pr-composer-mode {
-  min-height: 34px;
+  flex: none;
   margin-right: auto;
-  padding: 0 30px 0 11px;
-  background:
-    var(--select-chevron) no-repeat right 10px center / 14px,
-    var(--composer-action-bg);
+}
+
+.pr-composer-mode .app-select__trigger {
+  width: auto;
+  min-height: 34px;
+  padding: 0 9px 0 11px;
+  background: var(--composer-action-bg);
   border: 1px solid var(--composer-action-border);
   border-radius: var(--r-xl);
   box-shadow: var(--composer-action-shadow);
   color: var(--text-2);
   font: inherit;
   font-size: var(--t-sm);
-  appearance: none;
-  cursor: pointer;
   transition:
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out);
 }
 
-.pr-composer-mode:is(:hover, :focus-visible) {
-  background:
-    var(--select-chevron) no-repeat right 10px center / 14px,
-    var(--composer-action-bg-hover);
+.pr-composer-mode .app-select__trigger:is(:hover, :focus-visible),
+.pr-composer-mode.is-open .app-select__trigger {
+  background: var(--composer-action-bg-hover);
   border-color: var(--composer-action-border-hover);
   box-shadow: var(--composer-action-shadow-hover);
   color: var(--text);

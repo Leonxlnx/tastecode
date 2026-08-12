@@ -5,6 +5,7 @@ import type {
   PullRequestListResult,
 } from '@harness/contracts'
 import {
+  ChevronLeft,
   CircleAlert,
   GitMerge,
   GitPullRequest,
@@ -22,6 +23,26 @@ import './pull-requests.css'
 
 type PullRequestFilter = 'all' | 'reviewing' | 'authored'
 type PullRequestStatusFilter = 'all' | 'open' | 'draft' | 'merged' | 'closed'
+type PullRequestReviewFilter = 'all' | 'required' | 'approved' | 'changes-requested' | 'none'
+type PullRequestMergeFilter = 'all' | 'ready' | 'conflicts' | 'blocked' | 'behind'
+type PullRequestFilterCategory = 'status' | 'review' | 'merge' | 'repository' | 'author' | 'base'
+type PullRequestFilters = {
+  status: PullRequestStatusFilter
+  review: PullRequestReviewFilter
+  merge: PullRequestMergeFilter
+  repository: string | undefined
+  author: string | undefined
+  base: string | undefined
+}
+
+const DEFAULT_PULL_REQUEST_FILTERS: PullRequestFilters = {
+  status: 'all',
+  review: 'all',
+  merge: 'all',
+  repository: undefined,
+  author: undefined,
+  base: undefined,
+}
 const LIST_REVALIDATE_AFTER_MS = 30_000
 
 export function PullRequestsView(props: {
@@ -33,7 +54,7 @@ export function PullRequestsView(props: {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [filter, setFilter] = useState<PullRequestFilter>('all')
-  const [statusFilter, setStatusFilter] = useState<PullRequestStatusFilter>('all')
+  const [filters, setFilters] = useState<PullRequestFilters>(DEFAULT_PULL_REQUEST_FILTERS)
   const [query, setQuery] = useState('')
   const [selectedKey, setSelectedKey] = useState<string>()
   const request = useRef(0)
@@ -88,17 +109,19 @@ export function PullRequestsView(props: {
   const visible = useMemo(
     () =>
       relationshipItems.filter((item) => {
-        if (!statusMatches(item, statusFilter)) return false
+        if (!matchesPullRequestFilters(item, filters)) return false
         if (!normalizedQuery) return true
         return [
           item.title,
           item.repository,
+          item.author.login,
           item.headRefName,
+          item.baseRefName,
           String(item.number),
           listStateLabel(item),
         ].some((value) => value.toLowerCase().includes(normalizedQuery))
       }),
-    [normalizedQuery, relationshipItems, statusFilter],
+    [filters, normalizedQuery, relationshipItems],
   )
 
   useEffect(() => {
@@ -123,27 +146,20 @@ export function PullRequestsView(props: {
 
   const selected = visible.find((item) => pullRequestKey(item) === selectedKey)
   const counts = useMemo(() => {
-    const statusItems = (result?.items ?? []).filter((item) => statusMatches(item, statusFilter))
+    const filteredItems = (result?.items ?? []).filter((item) =>
+      matchesPullRequestFilters(item, filters),
+    )
     return {
-      all: statusItems.length,
-      reviewing: statusItems.filter(
+      all: filteredItems.length,
+      reviewing: filteredItems.filter(
         (item) => item.relationship === 'reviewing' || item.relationship === 'both',
       ).length,
-      authored: statusItems.filter(
+      authored: filteredItems.filter(
         (item) => item.relationship === 'authored' || item.relationship === 'both',
       ).length,
     }
-  }, [result?.items, statusFilter])
-  const statusCounts = useMemo(
-    () => ({
-      all: relationshipItems.length,
-      open: relationshipItems.filter((item) => statusMatches(item, 'open')).length,
-      draft: relationshipItems.filter((item) => statusMatches(item, 'draft')).length,
-      merged: relationshipItems.filter((item) => statusMatches(item, 'merged')).length,
-      closed: relationshipItems.filter((item) => statusMatches(item, 'closed')).length,
-    }),
-    [relationshipItems],
-  )
+  }, [filters, result?.items])
+  const activeFilterCount = countActivePullRequestFilters(filters)
 
   return (
     <section className="pr-workspace" aria-label="Pull requests">
@@ -192,10 +208,10 @@ export function PullRequestsView(props: {
                 aria-label="Search pull requests"
               />
             </label>
-            <StatusFilterMenu
-              value={statusFilter}
-              counts={statusCounts}
-              onChange={setStatusFilter}
+            <PullRequestFilterMenu
+              value={filters}
+              items={relationshipItems}
+              onChange={setFilters}
             />
           </div>
         </header>
@@ -226,22 +242,18 @@ export function PullRequestsView(props: {
             <ListMessage
               icon={<Inbox size={19} aria-hidden />}
               title={
-                normalizedQuery
+                normalizedQuery || activeFilterCount > 0
                   ? 'No matching pull requests'
-                  : statusFilter === 'all'
-                    ? 'No pull requests'
-                    : `No ${statusFilterLabel(statusFilter).toLowerCase()} pull requests`
+                  : 'No pull requests'
               }
               detail={
                 normalizedQuery
-                  ? 'Try a title, repository, status, or pull-request number.'
-                  : filter === 'reviewing'
-                    ? statusFilter === 'open'
+                  ? 'Try a title, repository, author, branch, status, or pull-request number.'
+                  : activeFilterCount > 0
+                    ? 'Clear or change one of the active filters.'
+                    : filter === 'reviewing'
                       ? 'Nothing is waiting for your review.'
-                      : 'No pull requests in this state requested or received your review.'
-                    : statusFilter === 'all'
-                      ? 'Authored, review-requested, and reviewed pull requests will appear here.'
-                      : `No ${statusFilterLabel(statusFilter).toLowerCase()} pull requests are in this view.`
+                      : 'Authored, review-requested, and reviewed pull requests will appear here.'
               }
             />
           ) : (
@@ -354,50 +366,94 @@ function PullRequestGroup(props: {
   )
 }
 
-function StatusFilterMenu(props: {
-  value: PullRequestStatusFilter
-  counts: Record<PullRequestStatusFilter, number>
-  onChange: (value: PullRequestStatusFilter) => void
+function PullRequestFilterMenu(props: {
+  value: PullRequestFilters
+  items: PullRequestListItem[]
+  onChange: (value: PullRequestFilters) => void
 }) {
-  const options: Array<{
-    value: PullRequestStatusFilter
-    icon: ReactNode
-  }> = [
-    { value: 'all', icon: <ListFilter size={13} aria-hidden /> },
-    { value: 'open', icon: <GitPullRequest size={13} aria-hidden /> },
-    { value: 'draft', icon: <GitPullRequestDraft size={13} aria-hidden /> },
-    { value: 'merged', icon: <GitMerge size={13} aria-hidden /> },
-    { value: 'closed', icon: <GitPullRequestClosed size={13} aria-hidden /> },
+  const [category, setCategory] = useState<PullRequestFilterCategory>()
+  const activeCount = countActivePullRequestFilters(props.value)
+  const categories: Array<{ value: PullRequestFilterCategory; label: string }> = [
+    { value: 'status', label: 'State' },
+    { value: 'review', label: 'Review' },
+    { value: 'merge', label: 'Merge status' },
+    { value: 'repository', label: 'Repository' },
+    { value: 'author', label: 'Author' },
+    { value: 'base', label: 'Base branch' },
   ]
+  const selectedCategory = categories.find((entry) => entry.value === category)
+  const options = selectedCategory
+    ? pullRequestFilterOptions(selectedCategory.value, props.items, props.value)
+    : []
 
   return (
     <Menu
       align="right"
       drop="down"
-      label={`Filter by status: ${statusFilterLabel(props.value)}`}
-      triggerClassName={`pr-status-filter${props.value === 'all' ? '' : ' is-active'}`}
+      label={`Filter pull requests: ${activeCount === 0 ? 'no active filters' : `${activeCount} active ${activeCount === 1 ? 'filter' : 'filters'}`}`}
+      triggerClassName={`pr-list-filter${activeCount === 0 ? '' : ' is-active'}`}
+      panelLabel="Pull request filters"
+      panelClassName="pr-filter-menu"
       trigger={() => (
         <span>
           <ListFilter size={13} aria-hidden />
-          {statusFilterLabel(props.value)}
+          {activeCount === 0 ? 'Filters' : `${activeCount} active`}
         </span>
       )}
     >
-      {(close) =>
-        options.map((option) => (
-          <MenuItem
-            key={option.value}
-            title={statusFilterLabel(option.value)}
-            detail={`${props.counts[option.value].toLocaleString()} pull requests`}
-            icon={option.icon}
-            active={props.value === option.value}
-            onClick={() => {
-              props.onChange(option.value)
-              close()
-            }}
-          />
-        ))
-      }
+      {() => (
+        <>
+          {selectedCategory ? (
+            <>
+              <MenuItem
+                title="All filters"
+                detail={selectedCategory.label}
+                icon={<ChevronLeft size={13} aria-hidden />}
+                onClick={() => setCategory(undefined)}
+              />
+              <div className="menu__rule" />
+              {options.map((option) => (
+                <MenuItem
+                  key={option.key}
+                  title={option.label}
+                  detail={`${option.count.toLocaleString()} pull requests`}
+                  active={option.selected}
+                  onClick={() => {
+                    props.onChange(option.next)
+                    setCategory(undefined)
+                  }}
+                />
+              ))}
+            </>
+          ) : (
+            <>
+              <div className="pr-filter-menu-head">
+                <strong>Filter by</strong>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={activeCount === 0}
+                  onClick={() => props.onChange(DEFAULT_PULL_REQUEST_FILTERS)}
+                >
+                  Clear all
+                </button>
+              </div>
+              {categories.map((entry) => {
+                const selection = pullRequestFilterSelectionLabel(entry.value, props.value)
+                return (
+                  <MenuItem
+                    key={entry.value}
+                    title={entry.label}
+                    detail={selection}
+                    active={pullRequestFilterCategoryIsActive(entry.value, props.value)}
+                    onClick={() => setCategory(entry.value)}
+                  />
+                )
+              })}
+            </>
+          )}
+        </>
+      )}
     </Menu>
   )
 }
@@ -488,6 +544,185 @@ function listStateLabel(item: PullRequestListItem): string {
   return 'Open'
 }
 
+function matchesPullRequestFilters(
+  item: PullRequestListItem,
+  filters: PullRequestFilters,
+): boolean {
+  if (!statusMatches(item, filters.status)) return false
+  if (!reviewMatches(item, filters.review)) return false
+  if (!mergeMatches(item, filters.merge)) return false
+  if (filters.repository && item.repository !== filters.repository) return false
+  if (filters.author && item.author.login !== filters.author) return false
+  return !filters.base || item.baseRefName === filters.base
+}
+
+function reviewMatches(item: PullRequestListItem, filter: PullRequestReviewFilter): boolean {
+  if (filter === 'all') return true
+  if (filter === 'required') return item.reviewDecision === 'REVIEW_REQUIRED'
+  if (filter === 'approved') return item.reviewDecision === 'APPROVED'
+  if (filter === 'changes-requested') return item.reviewDecision === 'CHANGES_REQUESTED'
+  return item.reviewDecision === undefined
+}
+
+function mergeMatches(item: PullRequestListItem, filter: PullRequestMergeFilter): boolean {
+  if (filter === 'all') return true
+  if (filter === 'ready') return item.mergeStateStatus === 'CLEAN'
+  if (filter === 'conflicts') return item.mergeStateStatus === 'DIRTY'
+  if (filter === 'blocked') return item.mergeStateStatus === 'BLOCKED'
+  return item.mergeStateStatus === 'BEHIND'
+}
+
+function countActivePullRequestFilters(filters: PullRequestFilters): number {
+  return [
+    filters.status !== 'all',
+    filters.review !== 'all',
+    filters.merge !== 'all',
+    filters.repository !== undefined,
+    filters.author !== undefined,
+    filters.base !== undefined,
+  ].filter(Boolean).length
+}
+
+function pullRequestFilterSelectionLabel(
+  category: PullRequestFilterCategory,
+  filters: PullRequestFilters,
+): string {
+  if (category === 'status') return statusFilterLabel(filters.status)
+  if (category === 'review') return reviewFilterLabel(filters.review)
+  if (category === 'merge') return mergeFilterLabel(filters.merge)
+  if (category === 'repository') return filters.repository ?? 'All repositories'
+  if (category === 'author') return filters.author ? `@${filters.author}` : 'Anyone'
+  return filters.base ?? 'All branches'
+}
+
+function pullRequestFilterCategoryIsActive(
+  category: PullRequestFilterCategory,
+  filters: PullRequestFilters,
+): boolean {
+  if (category === 'status') return filters.status !== 'all'
+  if (category === 'review') return filters.review !== 'all'
+  if (category === 'merge') return filters.merge !== 'all'
+  if (category === 'repository') return filters.repository !== undefined
+  if (category === 'author') return filters.author !== undefined
+  return filters.base !== undefined
+}
+
+type PullRequestFilterOption = {
+  key: string
+  label: string
+  count: number
+  selected: boolean
+  next: PullRequestFilters
+}
+
+function pullRequestFilterOptions(
+  category: PullRequestFilterCategory,
+  items: PullRequestListItem[],
+  filters: PullRequestFilters,
+): PullRequestFilterOption[] {
+  if (category === 'status') {
+    return (
+      [
+        ['all', 'All states'],
+        ['open', 'Open'],
+        ['draft', 'Drafts'],
+        ['merged', 'Merged'],
+        ['closed', 'Closed'],
+      ] as const
+    ).map(([value, label]) =>
+      pullRequestFilterOption(items, label, value, filters.status === value, {
+        ...filters,
+        status: value,
+      }),
+    )
+  }
+  if (category === 'review') {
+    return (
+      [
+        ['all', 'Any review'],
+        ['required', 'Review required'],
+        ['approved', 'Approved'],
+        ['changes-requested', 'Changes requested'],
+        ['none', 'No decision'],
+      ] as const
+    ).map(([value, label]) =>
+      pullRequestFilterOption(items, label, value, filters.review === value, {
+        ...filters,
+        review: value,
+      }),
+    )
+  }
+  if (category === 'merge') {
+    return (
+      [
+        ['all', 'Any merge status'],
+        ['ready', 'Ready to merge'],
+        ['conflicts', 'Conflicts'],
+        ['blocked', 'Blocked'],
+        ['behind', 'Behind base'],
+      ] as const
+    ).map(([value, label]) =>
+      pullRequestFilterOption(items, label, value, filters.merge === value, {
+        ...filters,
+        merge: value,
+      }),
+    )
+  }
+  if (category === 'repository') {
+    return [undefined, ...uniqueSorted(items.map((item) => item.repository))].map((value) =>
+      pullRequestFilterOption(
+        items,
+        value ?? 'All repositories',
+        `repository:${value ?? 'all'}`,
+        filters.repository === value,
+        { ...filters, repository: value },
+      ),
+    )
+  }
+  if (category === 'author') {
+    return [undefined, ...uniqueSorted(items.map((item) => item.author.login))].map((value) =>
+      pullRequestFilterOption(
+        items,
+        value ? `@${value}` : 'Anyone',
+        `author:${value ?? 'all'}`,
+        filters.author === value,
+        { ...filters, author: value },
+      ),
+    )
+  }
+  return [undefined, ...uniqueSorted(items.map((item) => item.baseRefName))].map((value) =>
+    pullRequestFilterOption(
+      items,
+      value ?? 'All branches',
+      `base:${value ?? 'all'}`,
+      filters.base === value,
+      { ...filters, base: value },
+    ),
+  )
+}
+
+function pullRequestFilterOption(
+  items: PullRequestListItem[],
+  label: string,
+  key: string,
+  selected: boolean,
+  next: PullRequestFilters,
+): PullRequestFilterOption {
+  return {
+    key,
+    label,
+    selected,
+    next,
+    count: items.filter((item) => matchesPullRequestFilters(item, next)).length,
+  }
+}
+
+function uniqueSorted(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.length > 0))].sort((left, right) =>
+    left.localeCompare(right, undefined, { sensitivity: 'base' }),
+  )
+}
+
 function statusMatches(item: PullRequestListItem, filter: PullRequestStatusFilter): boolean {
   if (filter === 'all') return true
   if (filter === 'draft') return item.isDraft
@@ -500,6 +735,22 @@ function statusFilterLabel(filter: PullRequestStatusFilter): string {
   if (filter === 'all') return 'All states'
   if (filter === 'draft') return 'Drafts'
   return capitalize(filter)
+}
+
+function reviewFilterLabel(filter: PullRequestReviewFilter): string {
+  if (filter === 'all') return 'Any review'
+  if (filter === 'required') return 'Review required'
+  if (filter === 'changes-requested') return 'Changes requested'
+  if (filter === 'none') return 'No decision'
+  return 'Approved'
+}
+
+function mergeFilterLabel(filter: PullRequestMergeFilter): string {
+  if (filter === 'all') return 'Any merge status'
+  if (filter === 'ready') return 'Ready to merge'
+  if (filter === 'conflicts') return 'Conflicts'
+  if (filter === 'behind') return 'Behind base'
+  return 'Blocked'
 }
 
 function formatCount(value: number): string {

@@ -27,6 +27,8 @@ const result: PullRequestListResult = {
       commentsCount: 2,
       headRefName: 'feature/authored',
       baseRefName: 'main',
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'CLEAN',
       relationship: 'authored',
     },
     {
@@ -43,7 +45,9 @@ const result: PullRequestListResult = {
       deletions: 1,
       commentsCount: 0,
       headRefName: 'feature/review',
-      baseRefName: 'main',
+      baseRefName: 'develop',
+      reviewDecision: 'REVIEW_REQUIRED',
+      mergeStateStatus: 'BLOCKED',
       relationship: 'reviewing',
     },
     {
@@ -61,6 +65,7 @@ const result: PullRequestListResult = {
       commentsCount: 1,
       headRefName: 'feature/draft',
       baseRefName: 'main',
+      mergeStateStatus: 'DIRTY',
       relationship: 'authored',
     },
     {
@@ -78,6 +83,7 @@ const result: PullRequestListResult = {
       commentsCount: 3,
       headRefName: 'feature/merged',
       baseRefName: 'main',
+      reviewDecision: 'APPROVED',
       relationship: 'authored',
     },
   ],
@@ -125,17 +131,55 @@ describe('PullRequestsView', () => {
     render(<PullRequestsView transport={transport} onOpenChat={vi.fn()} />)
     expect(await screen.findByText('Closed draft change')).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Filter by status: All states' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Filter pull requests: no active filters' }))
+    expect(screen.getByRole('menu', { name: 'Pull request filters' })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: /Review Any review/ })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: /Merge status Any merge status/ })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: /Repository All repositories/ })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('menuitem', { name: /State All states/ }))
     fireEvent.click(screen.getByRole('menuitem', { name: /Drafts/ }))
     expect(screen.getByText('Closed draft change')).toBeTruthy()
     expect(screen.getByText('Closed draft')).toBeTruthy()
     expect(screen.queryByText('Authored change')).toBeNull()
     expect(screen.getByRole('tab', { name: 'All 1' })).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Filter by status: Drafts' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /State Drafts/ }))
     fireEvent.click(screen.getByRole('menuitem', { name: /Merged/ }))
     expect(screen.getByText('Merged change')).toBeTruthy()
     expect(screen.queryByText('Closed draft change')).toBeNull()
+    expect(request.mock.calls.filter(([method]) => method === 'pullRequests.list')).toHaveLength(1)
+  })
+
+  it('combines review and repository filters and clears them together', async () => {
+    const never = new Promise<never>(() => undefined)
+    const request = vi.fn((method: string) =>
+      method === 'pullRequests.list' ? Promise.resolve(result) : never,
+    )
+    const transport = { request } as unknown as Transport
+
+    render(<PullRequestsView transport={transport} onOpenChat={vi.fn()} />)
+    expect(await screen.findByText('Needs my review')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Filter pull requests: no active filters' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Review Any review/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Review required/ }))
+    expect(screen.getByText('Needs my review')).toBeTruthy()
+    expect(screen.queryByText('Authored change')).toBeNull()
+
+    fireEvent.click(screen.getByRole('menuitem', { name: /Repository All repositories/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /friend\/project/ }))
+    expect(
+      screen.getByRole('button', { name: 'Filter pull requests: 2 active filters' }),
+    ).toBeTruthy()
+    expect(screen.getByText('Needs my review')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Clear all' }))
+    expect(
+      screen.getByRole('button', { name: 'Filter pull requests: no active filters' }),
+    ).toBeTruthy()
+    expect(screen.getByText('Authored change')).toBeTruthy()
+    expect(screen.getByText('Closed draft change')).toBeTruthy()
     expect(request.mock.calls.filter(([method]) => method === 'pullRequests.list')).toHaveLength(1)
   })
 })
