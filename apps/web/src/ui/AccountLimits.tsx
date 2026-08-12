@@ -1,4 +1,4 @@
-import { useId } from 'react'
+import { useId, useLayoutEffect, useRef } from 'react'
 import type { ProviderId, ResultOf } from '@harness/contracts'
 import { CircleAlert, Gauge, RefreshCw } from 'lucide-react'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
@@ -19,8 +19,11 @@ export type AccountLimitsState =
 
 export function AccountLimits(props: { state: AccountLimitsState; onRetry: () => void }) {
   const headingId = useId()
+  const heading = useRef<HTMLHeadingElement>(null)
   const sources = limitSources(props.state)
   const hasSources = sources.length > 0
+
+  useLayoutEffect(() => heading.current?.focus(), [])
 
   return (
     <section
@@ -28,10 +31,10 @@ export function AccountLimits(props: { state: AccountLimitsState; onRetry: () =>
       aria-labelledby={headingId}
       aria-busy={props.state.status === 'loading'}
     >
-      <div className="account-menu__usage-head" id={headingId} tabIndex={-1}>
+      <h2 ref={heading} className="account-menu__usage-head" id={headingId} tabIndex={-1}>
         <Gauge size={14} aria-hidden />
         <span>Plan limits</span>
-      </div>
+      </h2>
 
       {hasSources
         ? sources.map((source) => <LimitSource key={source.provider} source={source} />)
