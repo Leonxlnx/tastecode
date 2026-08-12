@@ -24,4 +24,13 @@ describe('sidebar theme CSS', () => {
       /:root\[data-theme='light'\]\[data-glass='on'\]\[data-shell='desktop'\] \.shell__body \{\s*background: var\(--bg-rail-tint\);\s*\}/s,
     )
   })
+
+  it('reserves touch-row actions without obscuring compact source identity', () => {
+    expect(appCss).toMatch(
+      /@media \(max-width: 700px\) \{[\s\S]*?\.sessrow \.sess \{[^}]*padding-right: 56px/s,
+    )
+    expect(appCss).toMatch(
+      /@media \(max-width: 700px\) \{[\s\S]*?\.sess__source \{[^}]*max-width: 68px/s,
+    )
+  })
 })
