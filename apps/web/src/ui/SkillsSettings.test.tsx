@@ -62,7 +62,8 @@ describe('Agent Skills settings', () => {
     )
 
     expect(await screen.findByText('Design Taste')).toBeTruthy()
-    expect(screen.getByText('Codex · Agent Skills supported')).toBeTruthy()
+    expect(screen.getByText('Codex · Agent Skills inventory available')).toBeTruthy()
+    expect(screen.getByRole('status').getAttribute('aria-live')).toBe('polite')
     expect(screen.queryByText('Available in Project')).toBeNull()
     expect(screen.getByText('Project')).toBeTruthy()
     expect(screen.getByText(/screenshots/)).toBeTruthy()
@@ -102,7 +103,7 @@ describe('Agent Skills settings', () => {
     )
 
     expect(await screen.findByText(/does not expose Agent Skills/)).toBeTruthy()
-    expect(screen.getByText('Claude Code · Agent Skills unavailable')).toBeTruthy()
+    expect(screen.getByText('Claude Code · Agent Skills inventory unavailable')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Install from folder' })).toBeNull()
     expect(screen.queryByRole('switch')).toBeNull()
   })
@@ -122,6 +123,7 @@ describe('Agent Skills settings', () => {
     )
 
     expect((await screen.findByRole('alert')).textContent).toContain('Skill discovery failed')
+    expect(screen.getByText('Codex · Agent Skills status unavailable')).toBeTruthy()
     expect(screen.queryByText('Discovering skills…')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
@@ -250,6 +252,7 @@ describe('Agent Skills settings', () => {
         projectName="Beta"
       />,
     )
+    expect(screen.getByText('Checking Codex Agent Skills support…')).toBeTruthy()
     const beta = await screen.findByRole('switch', { name: 'Disable Beta Skill' })
     expect((beta as HTMLButtonElement).disabled).toBe(false)
 

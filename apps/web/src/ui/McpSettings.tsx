@@ -22,6 +22,7 @@ type PendingOAuth = {
   loginId: string | undefined
   completion?: OAuthCompletion
 }
+type Context = { transport: Transport; provider: ProviderId; projectPath: string | undefined }
 
 export function McpSettings(props: {
   transport: Transport
@@ -36,6 +37,8 @@ export function McpSettings(props: {
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
+  const inventoryContext = useRef<Context | undefined>(undefined)
+  const errorContext = useRef<Context | undefined>(undefined)
   const pendingOAuth = useRef<PendingOAuth | undefined>(undefined)
   const activeContext = useRef({
     transport: props.transport,
@@ -64,6 +67,11 @@ export function McpSettings(props: {
 
   const refresh = useCallback(async () => {
     if (!props.projectPath || !isCurrentContext()) return
+    const context = {
+      transport: props.transport,
+      provider: props.provider,
+      projectPath: props.projectPath,
+    }
     const generation = ++refreshGeneration.current
     setLoading(true)
     try {
@@ -72,10 +80,13 @@ export function McpSettings(props: {
         projectPath: props.projectPath,
       })
       if (refreshGeneration.current !== generation || !isCurrentContext()) return
+      inventoryContext.current = context
+      errorContext.current = undefined
       setInventory(inventory)
       setError(undefined)
     } catch (cause) {
       if (refreshGeneration.current !== generation || !isCurrentContext()) return
+      errorContext.current = context
       setError(message(cause))
     } finally {
       if (refreshGeneration.current === generation && isCurrentContext()) setLoading(false)
@@ -100,6 +111,8 @@ export function McpSettings(props: {
 
   useEffect(() => {
     setInventory(undefined)
+    inventoryContext.current = undefined
+    errorContext.current = undefined
     setError(undefined)
     // "Server added." must not survive into an unrelated project's panel.
     setNotice(undefined)
@@ -275,20 +288,28 @@ export function McpSettings(props: {
     }
   }
 
+  const contextMatches = (context: Context | undefined) =>
+    context?.transport === props.transport &&
+    context.provider === props.provider &&
+    context.projectPath === props.projectPath
+  const currentInventory = contextMatches(inventoryContext.current) ? inventory : undefined
+  const currentError = currentInventory || contextMatches(errorContext.current) ? error : undefined
   const providerStatus = !props.projectPath
     ? 'Select a project to check MCP support.'
-    : !inventory
-      ? `Checking ${props.providerName} MCP support…`
-      : `${props.providerName} · MCP ${inventory.capabilities.inventory ? 'supported' : 'unavailable'}`
+    : currentError && !currentInventory
+      ? `${props.providerName} · MCP inventory status unavailable`
+      : !currentInventory
+        ? `Checking ${props.providerName} MCP support…`
+        : `${props.providerName} · MCP inventory ${currentInventory.capabilities.inventory ? 'available' : 'unavailable'}`
   const status = !props.projectPath
     ? 'Select a project in the sidebar first.'
     : loading && !inventory
       ? 'Loading MCP servers…'
-      : !inventory
+      : !currentInventory
         ? undefined
-        : !inventory.capabilities.inventory
+        : !currentInventory.capabilities.inventory
           ? `${props.providerName} does not expose MCP servers here yet.`
-          : inventory.servers.length === 0
+          : currentInventory.servers.length === 0
             ? 'No MCP servers are configured for this project.'
             : undefined
 
@@ -299,9 +320,11 @@ export function McpSettings(props: {
           <h1 className="settings__title" id="settings-mcp">
             MCP servers
           </h1>
-          <p>{providerStatus}</p>
+          <p role="status" aria-live="polite" aria-atomic="true">
+            {providerStatus}
+          </p>
         </div>
-        {props.projectPath && inventory?.capabilities.add ? (
+        {props.projectPath && currentInventory?.capabilities.add ? (
           <button
             className="settings__action"
             type="button"
@@ -321,9 +344,9 @@ export function McpSettings(props: {
         ) : null}
       </header>
 
-      {error ? (
+      {currentError ? (
         <p className="mcp-settings__message is-error" role="alert">
-          {error}{' '}
+          {currentError}{' '}
           <button className="settings__action" type="button" onClick={() => void refresh()}>
             Retry
           </button>
@@ -340,13 +363,13 @@ export function McpSettings(props: {
           onSubmit={(event) => void save(event)}
         />
       ) : null}
-      {inventory?.capabilities.inventory && inventory.servers.length ? (
+      {currentInventory?.capabilities.inventory && currentInventory.servers.length ? (
         <div className="settings__group">
-          {inventory.servers.map((server) => (
+          {currentInventory.servers.map((server) => (
             <ServerRow
               key={server.id}
               server={server}
-              capabilities={inventory.capabilities}
+              capabilities={currentInventory.capabilities}
               busy={busy === server.id}
               onSignIn={() => void signIn(server)}
               onToggle={() => toggle(server)}

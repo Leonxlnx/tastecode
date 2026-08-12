@@ -70,7 +70,8 @@ describe('MCP settings', () => {
     )
 
     expect(await screen.findByText('Developer Docs')).toBeTruthy()
-    expect(screen.getByText('Codex · MCP supported')).toBeTruthy()
+    expect(screen.getByText('Codex · MCP inventory available')).toBeTruthy()
+    expect(screen.getByRole('status').getAttribute('aria-live')).toBe('polite')
     expect(screen.queryByText('Available in Project')).toBeNull()
     expect(screen.getByText('OAuth token expired')).toBeTruthy()
     fireEvent.click(screen.getByText(/1 tools/))
@@ -115,8 +116,35 @@ describe('MCP settings', () => {
     )
 
     expect(await screen.findByText(/does not expose MCP servers/)).toBeTruthy()
-    expect(screen.getByText('Claude Code · MCP unavailable')).toBeTruthy()
+    expect(screen.getByText('Claude Code · MCP inventory unavailable')).toBeTruthy()
     expect(screen.queryAllByRole('button')).toHaveLength(0)
+  })
+
+  it('reports inventory separately when configuration remains available', async () => {
+    const transport = client(async () => ({
+      capabilities: {
+        inventory: false,
+        add: true,
+        update: true,
+        remove: true,
+        reload: false,
+        startOAuth: false,
+        cancelOAuth: false,
+      },
+      servers: [],
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="opencode"
+        providerName="OpenCode"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect(await screen.findByText('OpenCode · MCP inventory unavailable')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Add server' })).toBeTruthy()
   })
 
   it('replaces the loading state with a retryable error', async () => {
@@ -134,6 +162,7 @@ describe('MCP settings', () => {
     )
 
     expect((await screen.findByRole('alert')).textContent).toContain('Codex did not respond')
+    expect(screen.getByText('Codex · MCP inventory status unavailable')).toBeTruthy()
     expect(screen.queryByText('Loading MCP servers…')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
@@ -510,6 +539,7 @@ describe('MCP settings', () => {
         projectName="Beta"
       />,
     )
+    expect(screen.getByText('Checking Codex MCP support…')).toBeTruthy()
     expect(await screen.findByText('beta')).toBeTruthy()
 
     await act(async () => finishChange?.())
