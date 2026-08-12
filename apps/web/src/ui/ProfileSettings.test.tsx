@@ -21,13 +21,13 @@ describe('profile settings', () => {
       />,
     )
 
-    expect(screen.getByText('Loading your profile')).toBeTruthy()
-    await screen.findByRole('heading', { name: 'Profile' })
+    expect(screen.getByRole('heading', { name: 'Profile' })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: 'Display name' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Blue Emi' })).toBeTruthy()
     expect(document.querySelector('.profile-identity__avatar')?.textContent).toBe('BE')
     expect(screen.getByText('@blue.emi')).toBeTruthy()
     expect(screen.getByText('Pro')).toBeTruthy()
-    expect(screen.getByText('1.2M')).toBeTruthy()
+    expect(await screen.findByText('1.2M')).toBeTruthy()
     expect(screen.getByText('7', { selector: '.profile-stats dd' })).toBeTruthy()
     expect(screen.getAllByText('3 days')).toHaveLength(2)
     expect(screen.getByText('75%')).toBeTruthy()
@@ -79,8 +79,8 @@ describe('profile settings', () => {
 
     render(<ProfileSettings transport={transport} account={undefined} providerName="Claude Code" />)
 
-    expect(await screen.findByRole('heading', { name: 'Profile could not be loaded' })).toBeTruthy()
-    expect(screen.getByText('History unavailable')).toBeTruthy()
+    expect((await screen.findByRole('alert')).textContent).toContain('History unavailable')
+    expect(screen.getByRole('textbox', { name: 'Display name' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
     await waitFor(() => expect(request).toHaveBeenCalledTimes(2))
   })
@@ -131,6 +131,24 @@ describe('profile settings', () => {
 
     const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
     fireEvent.change(input, {
+      target: {
+        files: [
+          new File(
+            [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+            'avatar.png',
+            {
+              type: 'image/png',
+            },
+          ),
+        ],
+      },
+    })
+    await waitFor(() =>
+      expect(onIdentityChange).toHaveBeenLastCalledWith({
+        avatarDataUrl: expect.stringMatching(/^data:image\/png;base64,/u),
+      }),
+    )
+    fireEvent.change(input, {
       target: { files: [new File(['nope'], 'avatar.png', { type: 'image/png' })] },
     })
     expect((await screen.findByRole('alert')).textContent).toContain('not a valid image')
@@ -149,10 +167,32 @@ describe('profile settings', () => {
       avatarDataUrl,
     )
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
-    expect(onIdentityChange).toHaveBeenLastCalledWith({
-      displayName: 'Leon',
-      avatarDataUrl: undefined,
+    expect(onIdentityChange).toHaveBeenLastCalledWith({ avatarDataUrl: undefined })
+  })
+
+  it('ignores an image read that finishes after the profile closes', async () => {
+    let finishRead: (value: ArrayBuffer) => void = () => {}
+    const file = new File(['avatar'], 'avatar.png', { type: 'image/png' })
+    vi.spyOn(file, 'slice').mockReturnValue({
+      arrayBuffer: () => new Promise((resolve) => (finishRead = resolve)),
+    } as Blob)
+    const onIdentityChange = vi.fn()
+    const view = render(
+      <ProfileSettings
+        transport={{ request: vi.fn(async () => historyResult()) } as unknown as Transport}
+        account={undefined}
+        providerName="Codex"
+        identity={{ displayName: 'Leon' }}
+        onIdentityChange={onIdentityChange}
+      />,
+    )
+    fireEvent.change(document.querySelector('input[type="file"]')!, {
+      target: { files: [file] },
     })
+    view.unmount()
+    finishRead(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).buffer)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(onIdentityChange).not.toHaveBeenCalled()
   })
 })
 

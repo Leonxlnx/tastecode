@@ -176,7 +176,7 @@ function SettingsComponent(props: {
   projectName: string | undefined
   account: Account | undefined
   profileIdentity?: ProfileIdentityPreferences | undefined
-  onProfileIdentityChange?: ((identity: ProfileIdentityPreferences) => void) | undefined
+  onProfileIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
   providerStatuses: ProviderStatus[]
   acpAgents: ResultOf<'acp.agents'>['agents']
   modelConnections: ModelConnection[]
