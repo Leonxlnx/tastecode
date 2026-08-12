@@ -10,6 +10,8 @@ allowBuilds:
   electron: true
   # Builds the official PTY native binding for this platform.
   node-pty: true
+minimumReleaseAgeExclude:
+  - electron@43.4.0
 patchedDependencies:
   # @pierre/diffs keeps the gutter "+" pinned to the last commented line because
   # it never clears the selection after a gutter-utility click. See the patch.
