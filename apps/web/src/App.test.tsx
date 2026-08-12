@@ -2876,6 +2876,8 @@ describe('live sessions', () => {
       fireEvent.keyDown(composer, { key: 'Enter' })
       // prettier-ignore
       const submissionId = (transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')?.[1] as { clientSubmissionId: string }).clientSubmissionId
+      // prettier-ignore
+      const accepted = { seq: 2, event: { type: 'item.completed', item: { id: submissionId, turnId: 'turn-1', type: 'message', role: 'user', status: 'completed', text: 'Submit exactly once', createdAt: 1 } } } as const
       await act(async () => rejectSend(new IndeterminateRequestError('socket lost')))
       if (kind === 'queue') await act(async () => resyncs[0]?.({ events: [started], running: true }))
       else reconnect()
@@ -2884,10 +2886,9 @@ describe('live sessions', () => {
       expect([kind === 'queue' ? screen.queryByLabelText('Queued prompts')?.textContent : screen.getByTestId('thread').textContent, draft()]).toEqual([expect.stringContaining('Submit exactly once'), ''])
       if (kind === 'turn' && outcome === 'accepted') emitThreadEvent('thread-1', started.event)
       // prettier-ignore
-      await act(async () => resyncs.at(-1)?.({ events: outcome === 'rejected' && kind === 'turn' ? [started] : [], running: kind === 'queue' }))
+      await act(async () => resyncs.at(-1)?.({ events: outcome === 'rejected' && kind === 'turn' ? [started] : outcome === 'accepted' && kind === 'queue' ? [accepted] : [], running: kind === 'queue' }))
       if (outcome === 'accepted') {
-        // prettier-ignore
-        emitThreadEvent('thread-1', { type: 'item.completed', item: { id: submissionId, turnId: 'turn-1', type: 'message', role: 'user', status: 'completed', text: 'Submit exactly once', createdAt: 1 } })
+        emitThreadEvent('thread-1', accepted.event)
         // prettier-ignore
         expect([draft(), screen.getByText('Submit exactly once').dataset.itemId]).toEqual(['', submissionId])
       } else {
