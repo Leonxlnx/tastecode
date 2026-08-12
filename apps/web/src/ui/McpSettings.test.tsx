@@ -92,7 +92,7 @@ describe('MCP settings', () => {
     })
   })
 
-  it('keeps rendering when a live server has no startup status', async () => {
+  it('keeps rendering when a legacy live server has no auth or startup status', async () => {
     const transport = client(async () => ({
       capabilities: {
         inventory: true,
@@ -108,7 +108,6 @@ describe('MCP settings', () => {
           id: 'legacy-server',
           scope: 'global',
           enabled: true,
-          auth: { status: 'not_required' },
           tools: [],
           resources: [],
           resourceTemplates: [],

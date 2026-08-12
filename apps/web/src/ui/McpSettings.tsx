@@ -399,11 +399,10 @@ function ServerRow(props: {
   onEdit: () => void
   onRemove: () => void
 }) {
+  const auth = props.server.auth
   const startup = props.server.startup
   const needsOAuth =
-    props.capabilities.startOAuth &&
-    props.server.auth.status === 'sign_in_required' &&
-    props.server.auth.method === 'oauth'
+    props.capabilities.startOAuth && auth?.status === 'sign_in_required' && auth.method === 'oauth'
   const canToggle =
     props.capabilities.remove &&
     ((!props.server.enabled && props.server.scope === 'project') ||
