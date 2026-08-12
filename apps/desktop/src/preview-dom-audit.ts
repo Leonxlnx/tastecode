@@ -9,10 +9,17 @@ export const PREVIEW_DOM_AUDIT_SCRIPT = `(() => {
     '[role="button"]',
     '[role="link"]',
     '[role="checkbox"]',
+    '[role="gridcell"]',
+    '[role="menuitem"]',
+    '[role="menuitemcheckbox"]',
+    '[role="menuitemradio"]',
+    '[role="option"]',
     '[role="radio"]',
     '[role="switch"]',
     '[role="tab"]',
-    '[tabindex]:not([tabindex="-1"])',
+    '[role="treeitem"]',
+    '[tabindex]',
+    '[contenteditable]:not([contenteditable="false"])',
   ].join(',')
 
   const selectorFor = (element) => {
@@ -25,12 +32,21 @@ export const PREVIEW_DOM_AUDIT_SCRIPT = `(() => {
   }
 
   const labelFor = (element) => {
-    const label = element.getAttribute('aria-label')
-      || element.getAttribute('title')
+    const labelledBy = (element.getAttribute('aria-labelledby') || '')
+      .split(/\\s+/)
+      .map(id => document.getElementById(id)?.textContent || '')
+      .join(' ')
+    const associatedLabels = Array.from(element.labels || [])
+      .map(label => label.textContent || '')
+      .join(' ')
+    const label = labelledBy
+      || element.getAttribute('aria-label')
+      || associatedLabels
       || element.textContent
+      || element.getAttribute('title')
       || element.getAttribute('name')
       || ''
-    return label.replace(/\s+/g, ' ').trim().slice(0, 200)
+    return label.replace(/\\s+/g, ' ').trim().slice(0, 200)
   }
 
   const violations = []
@@ -39,6 +55,8 @@ export const PREVIEW_DOM_AUDIT_SCRIPT = `(() => {
     const style = getComputedStyle(element)
     if (
       element.matches(':disabled, [aria-disabled="true"], [aria-hidden="true"]')
+      || (typeof element.checkVisibility === 'function'
+        && !element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))
       || style.display === 'none'
       || style.visibility === 'hidden'
       || style.visibility === 'collapse'
@@ -46,7 +64,8 @@ export const PREVIEW_DOM_AUDIT_SCRIPT = `(() => {
     ) continue
     const rect = element.getBoundingClientRect()
     if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) continue
-    if (rect.right < 0 || rect.left > innerWidth) continue
+    if (rect.width <= 0 || rect.height <= 0) continue
+    if (rect.right <= 0 || rect.left >= innerWidth || rect.bottom <= 0 || rect.top >= innerHeight) continue
     if (rect.width >= 44 && rect.height >= 44) continue
     violations.push({
       selector: selectorFor(element),
