@@ -284,6 +284,11 @@ function SidebarComponent(props: {
     closeOnNarrowViewport()
   }
 
+  const selectProject = (path: string) => {
+    props.onSelectProject?.(path)
+    closeOnNarrowViewport()
+  }
+
   const newSession = (projectPath?: string, chooseProject?: boolean) => {
     props.onNewSession(projectPath, chooseProject)
     closeOnNarrowViewport()
@@ -502,6 +507,7 @@ function SidebarComponent(props: {
                     project={project}
                     forceOpen={false}
                     onNewSession={(path) => newSession(path)}
+                    onSelectProject={selectProject}
                     onSelectSession={selectSession}
                   />
                 ))

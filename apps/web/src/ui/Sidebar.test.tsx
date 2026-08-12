@@ -23,6 +23,10 @@ const session = (id: string, title: string) => ({
 describe('Sidebar chat actions', () => {
   it('selects an empty project and shows its empty chat state', () => {
     const onSelectProject = vi.fn()
+    const onClose = vi.fn()
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query) => ({ matches: query === '(max-width: 700px)' }) as MediaQueryList,
+    )
     render(
       <Sidebar
         projects={[{ path: '/work/empty', name: 'Empty project', sessions: [] }]}
@@ -33,7 +37,7 @@ describe('Sidebar chat actions', () => {
         collapsed={false}
         width={248}
         onWidthChange={vi.fn()}
-        onClose={vi.fn()}
+        onClose={onClose}
         onAddProject={vi.fn()}
         onNewSession={vi.fn()}
         onSelectProject={onSelectProject}
@@ -53,6 +57,7 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByText('No chats')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Empty project' }))
     expect(onSelectProject).toHaveBeenCalledWith('/work/empty')
+    expect(onClose).toHaveBeenCalledOnce()
     expect(screen.getByText('No chats')).toBeTruthy()
   })
 
