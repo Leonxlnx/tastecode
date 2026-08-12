@@ -1143,6 +1143,51 @@ describe('new chats', () => {
     )
   })
 
+  it('refreshes the current source after switching providers and completing a turn', async () => {
+    serverProviders = [
+      ...serverProviders,
+      { id: 'claude-code', displayName: 'Claude Code', installed: true, auth: 'authenticated' },
+    ]
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          {
+            id: 'claude-thread',
+            title: 'Claude thread',
+            provider: 'claude-code',
+            createdAt: 0,
+            running: false,
+          },
+        ],
+      },
+    ]
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Claude thread, Claude Code' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        threadId: 'claude-thread',
+      }),
+    )
+    transport.request.mockClear()
+
+    emitThreadEvent(
+      'claude-thread',
+      { type: 'turn.completed', turnId: 'claude-turn', status: 'completed' },
+      1,
+    )
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        threadId: 'claude-thread',
+      }),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', { provider: 'codex' })
+  })
+
   it('shows consecutive prompts while the new session is still starting', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
