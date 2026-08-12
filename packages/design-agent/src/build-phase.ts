@@ -60,7 +60,7 @@ export function validateExactBuildFiles(workspacePath: string, brief: DesignBrie
   const expected = exactBuildFiles(brief)
   if (!expected) return
 
-  const actual = workspaceFiles(workspacePath)
+  const actual = workspaceFiles(workspacePath, expected)
   const expectedSet = new Set(expected)
   const actualSet = new Set(actual)
   const missing = expected.filter((file) => !actualSet.has(file))
@@ -144,13 +144,21 @@ function normalizeFile(file: string): string | undefined {
     : normalized
 }
 
-function workspaceFiles(workspacePath: string): string[] {
+function workspaceFiles(workspacePath: string, expected: string[]): string[] {
   const files: string[] = []
+  const expectedDirectories = new Set(
+    expected.flatMap((file) => {
+      const parts = file.split('/')
+      return parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join('/'))
+    }),
+  )
   const walk = (directory: string, prefix = ''): void => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       if (!prefix && (entry.name === '.git' || entry.name === '.taste')) continue
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name
-      if (entry.isDirectory()) walk(path.join(directory, entry.name), relative)
+      if (entry.isDirectory() && expectedDirectories.has(relative)) {
+        walk(path.join(directory, entry.name), relative)
+      } else if (entry.isDirectory()) files.push(`${relative}/`)
       else files.push(relative)
     }
   }

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -90,12 +90,14 @@ describe('build phase', () => {
       ]) {
         writeFileSync(path.join(workspace, file), file)
       }
+      mkdirSync(path.join(workspace, 'node_modules', 'package'), { recursive: true })
+      writeFileSync(path.join(workspace, 'node_modules', 'package', 'index.js'), 'ignored depth')
 
       expect(designBuildPrompt(brief, ...artifacts.slice(1))).toContain(
         'exactly index.html, styles.css, and app.js',
       )
       expect(() => validateExactBuildFiles(workspace, brief)).toThrow(
-        'unexpected files: extra.json, preview-server.js',
+        'unexpected files: extra.json, node_modules/, preview-server.js',
       )
     } finally {
       rmSync(workspace, { recursive: true, force: true })
