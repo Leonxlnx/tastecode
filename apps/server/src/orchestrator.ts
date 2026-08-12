@@ -1181,7 +1181,10 @@ export class Orchestrator {
       this.#activeTurns.add(threadId)
       this.#activeTurnIds.set(threadId, event.turn.id)
     }
-    if (event.type === 'turn.completed' || event.type === 'thread.error') {
+    if (
+      event.type === 'thread.error' ||
+      (event.type === 'turn.completed' && this.#activeTurnIds.get(threadId) === event.turnId)
+    ) {
       this.#activeTurns.delete(threadId)
       const activeTurnId =
         event.type === 'turn.completed' ? event.turnId : this.#activeTurnIds.get(threadId)

@@ -1254,7 +1254,11 @@ describe('provider-neutral design briefing', () => {
     const { orchestrator, sessions, received, store } = harness()
     try {
       const thread = await orchestrator.startThread('codex', workspace)
+      sessions[0]?.turnIds.push('design-turn', 'queued-turn')
       await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      await expect(orchestrator.submitTurn(thread.id, 'Continue normally.')).resolves.toMatchObject(
+        { queued: true },
+      )
       sessions[0]?.emit({ type: 'thread.error', threadId: thread.id, message: 'provider failed' })
 
       expect(store.designRun(thread.id)).toBeUndefined()
@@ -1271,11 +1275,14 @@ describe('provider-neutral design briefing', () => {
           ({ event }) => event.type === 'thread.error' && event.message === 'provider failed',
         ),
       ).toBe(true)
-      await expect(orchestrator.submitTurn(thread.id, 'Continue normally.')).resolves.toMatchObject(
-        {
-          queued: false,
-        },
-      )
+      await vi.waitFor(() => expect(sessions[0]?.sent.at(-1)).toBe('Continue normally.'))
+
+      // Codex follows a terminal error with completion for the failed turn.
+      // That stale completion must not release the new turn behind it.
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 'design-turn', status: 'failed' })
+      await expect(orchestrator.submitTurn(thread.id, 'After the retry.')).resolves.toMatchObject({
+        queued: true,
+      })
       expect(sessions[0]?.sent.at(-1)).toBe('Continue normally.')
     } finally {
       await orchestrator.disposeAll()
