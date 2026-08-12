@@ -45,10 +45,8 @@ import {
   Network,
   Palette,
   PanelLeft,
-  Plus,
   RotateCcw,
   Smartphone,
-  Trash2,
   UserRound,
 } from 'lucide-react'
 import {
@@ -89,7 +87,6 @@ import { McpSettings } from './McpSettings.js'
 import { Menu, MenuItem } from './Menu.js'
 import { ModelSearchField } from './ModelSearchField.js'
 import { groupModelsBySource } from './ModelSelector.js'
-import { CustomModelForm } from './CustomModelForm.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { ProviderRow, type ProviderAction } from './ProviderRow.js'
@@ -829,14 +826,10 @@ function ModelSettings(props: {
   models: ModelChoice[]
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
-  providers: { id: ProviderId; name: string }[]
-  onCustomModelAdd: (input: CustomModelInput) => void
-  onCustomModelRemove: (key: string) => void
 }) {
-  // Custom models get their own management section below; the provider
-  // groups above only ever hold what the engines themselves enumerated.
+  // Existing stored custom choices remain usable in the composer, but raw
+  // provider-id editing is intentionally absent from beta settings.
   const catalogModels = props.models.filter((choice) => !isCustomModelChoice(choice))
-  const customModels = props.models.filter(isCustomModelChoice)
   const sources = groupModelsBySource(catalogModels)
   const visibleModelCount = catalogModels.filter(
     (choice) => !props.hiddenModels.has(choice.key),
@@ -861,8 +854,6 @@ function ModelSettings(props: {
               choices={group.entries}
               hiddenModels={props.hiddenModels}
               onModelVisibilityChange={props.onModelVisibilityChange}
-              providers={props.providers}
-              onCustomModelAdd={props.onCustomModelAdd}
             />
           ))}
         </div>
@@ -872,65 +863,7 @@ function ModelSettings(props: {
           <p>No models are available from your connected providers yet.</p>
         </div>
       )}
-
-      <CustomModelsSection
-        models={customModels}
-        providers={props.providers}
-        onCustomModelAdd={props.onCustomModelAdd}
-        onCustomModelRemove={props.onCustomModelRemove}
-      />
     </SettingsPanel>
-  )
-}
-
-function CustomModelsSection(props: {
-  models: ModelChoice[]
-  providers: { id: ProviderId; name: string }[]
-  onCustomModelAdd: (input: CustomModelInput) => void
-  onCustomModelRemove: (key: string) => void
-}) {
-  return (
-    <section className="model-settings__custom" aria-label="Custom models">
-      <header className="model-settings__custom-head">
-        <h3>Custom models</h3>
-        <CountBadge
-          value={props.models.length}
-          label={`${props.models.length} custom ${props.models.length === 1 ? 'model' : 'models'}`}
-        />
-      </header>
-      {props.models.length > 0 ? (
-        <ul className="model-settings__custom-list">
-          {props.models.map((choice) => (
-            <li key={choice.key} className="model-settings__custom-row">
-              <SourceIdentity
-                presentation={{ label: choice.sourceName, mark: choice.mark }}
-                density="compact"
-              />
-              <span className="model-settings__custom-name">{choice.model.displayName}</span>
-              <code className="model-settings__custom-id">{choice.model.id}</code>
-              <button
-                type="button"
-                className="model-settings__custom-remove"
-                aria-label={`Remove ${choice.model.displayName}`}
-                onClick={() => props.onCustomModelRemove(choice.key)}
-              >
-                <Trash2 size={14} aria-hidden />
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="model-settings__custom-empty">
-          Add a model id your provider accepts but does not list here — for example a Chinese model
-          running through Codex.
-        </p>
-      )}
-      <CustomModelForm
-        providers={props.providers}
-        defaultProvider={props.models[0]?.provider ?? props.providers[0]?.id}
-        onAdd={props.onCustomModelAdd}
-      />
-    </section>
   )
 }
 
@@ -939,18 +872,13 @@ function ModelVisibilityGroup(props: {
   choices: ModelChoice[]
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
-  providers: { id: ProviderId; name: string }[]
-  onCustomModelAdd: (input: CustomModelInput) => void
 }) {
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
-  const [addingCustom, setAddingCustom] = useState(false)
   const visibleCount = props.choices.filter((choice) => !props.hiddenModels.has(choice.key)).length
   const allVisible = visibleCount === props.choices.length
   const mixedVisibility = visibleCount > 0 && !allVisible
   const filteredChoices = filterModelChoicesByQuery(props.choices, deferredQuery)
-  const provider = props.choices[0]?.provider
-  const canAddCustom = provider !== undefined && provider !== 'acp' && provider !== 'api'
 
   return (
     <section className="model-visibility" aria-label={props.source}>
@@ -1018,30 +946,6 @@ function ModelVisibilityGroup(props: {
             No matching models.
           </p>
         )}
-        {canAddCustom ? (
-          <div className="model-visibility__custom">
-            {addingCustom ? (
-              <CustomModelForm
-                fixedProvider={provider}
-                providers={props.providers}
-                onAdd={(input) => {
-                  props.onCustomModelAdd(input)
-                  setAddingCustom(false)
-                }}
-                onCancel={() => setAddingCustom(false)}
-              />
-            ) : (
-              <button
-                type="button"
-                className="model-visibility__custom-add"
-                onClick={() => setAddingCustom(true)}
-              >
-                <Plus size={14} aria-hidden />
-                <span>Add custom model</span>
-              </button>
-            )}
-          </div>
-        ) : null}
       </div>
     </section>
   )

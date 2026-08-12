@@ -641,7 +641,7 @@ describe('model settings', () => {
     expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
   })
 
-  it('lists custom models in their own section and reports add/remove', () => {
+  it('omits stored custom-model management from beta settings', () => {
     const custom = customModelChoice(
       { provider: 'codex', modelId: 'qwen-max', displayName: 'Qwen Max' },
       'Codex',
@@ -696,34 +696,14 @@ describe('model settings', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
 
-    const section = screen.getByRole('region', { name: 'Custom models' })
-    expect(within(section).getByLabelText('1 custom model').className).toBe('count-badge')
-    expect(within(section).getByText('Qwen Max')).toBeTruthy()
-    expect(within(section).getByText('qwen-max')).toBeTruthy()
-    const row = within(section).getByText('Qwen Max').closest('li')
-    if (!row) throw new Error('custom model row missing')
-    expect(within(row).getByText('Codex')).toBeTruthy()
-    expect(row.querySelector('.source-identity')?.getAttribute('title')).toBe('Codex')
-
-    // The custom entry does not leak into a provider visibility group.
+    expect(screen.queryByRole('region', { name: 'Custom models' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Add custom model' })).toBeNull()
     expect(screen.queryByRole('switch', { name: 'Show Qwen Max' })).toBeNull()
-
-    fireEvent.click(within(section).getByRole('button', { name: 'Remove Qwen Max' }))
-    expect(onCustomModelRemove).toHaveBeenCalledWith(custom.key)
-
-    fireEvent.change(screen.getByLabelText('Model id'), { target: { value: 'deepseek-v3' } })
-    fireEvent.change(screen.getByLabelText('Display name'), {
-      target: { value: 'DeepSeek V3' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Add model' }))
-    expect(onCustomModelAdd).toHaveBeenCalledWith({
-      provider: 'codex',
-      modelId: 'deepseek-v3',
-      displayName: 'DeepSeek V3',
-    })
+    expect(onCustomModelAdd).not.toHaveBeenCalled()
+    expect(onCustomModelRemove).not.toHaveBeenCalled()
   })
 
-  it('adds a custom model from the bottom of a provider list', () => {
+  it('does not offer raw custom ids from a provider list', () => {
     const models: ModelChoice[] = [
       {
         key: 'opencode:ling',
@@ -791,23 +771,8 @@ describe('model settings', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
     const group = screen.getByRole('region', { name: 'OpenCode' })
-    fireEvent.click(within(group).getByRole('button', { name: 'Add custom model' }))
-
-    // Pinned to the group's engine: no provider select, id + name only.
-    expect(within(group).queryByLabelText('Provider')).toBeNull()
-    fireEvent.change(within(group).getByLabelText('Model id'), {
-      target: { value: 'qwen-max' },
-    })
-    fireEvent.change(within(group).getByLabelText('Display name'), {
-      target: { value: 'Qwen Max' },
-    })
-    fireEvent.click(within(group).getByRole('button', { name: 'Add model' }))
-
-    expect(onCustomModelAdd).toHaveBeenCalledWith({
-      provider: 'opencode',
-      modelId: 'qwen-max',
-      displayName: 'Qwen Max',
-    })
+    expect(within(group).queryByRole('button', { name: 'Add custom model' })).toBeNull()
+    expect(onCustomModelAdd).not.toHaveBeenCalled()
   })
 })
 
