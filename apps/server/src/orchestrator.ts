@@ -758,12 +758,6 @@ export class Orchestrator {
       : { provider, status: 'unavailable' }
   }
 
-  /** Compatibility view while the server route migrates to the authoritative source. */
-  async usageLimits(provider: ProviderId): Promise<ProviderLimit[]> {
-    const source = await this.usageLimitSource(provider)
-    return source.status === 'ready' ? source.limits : []
-  }
-
   async startLogin(provider: ProviderId): Promise<{ loginId: string; authUrl?: string }> {
     if (provider === 'codex') return (await this.#controlAdapter()).startLogin()
     const start =
