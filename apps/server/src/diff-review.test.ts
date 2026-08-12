@@ -5,6 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   readSessionDiff,
+  readWorkspaceDiff,
   reviewDiffFile,
   reviewDiffHunk,
   StaleDiffSnapshotError,
@@ -44,6 +45,21 @@ afterEach(() => {
 })
 
 describe('structured diff review', () => {
+  it('reads staged, unstaged and untracked work without a session review scope', async () => {
+    writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'unstaged work' }))
+    writeFileSync(path.join(repo, 'staged.txt'), 'staged work\n')
+    git('add', 'staged.txt')
+    writeFileSync(path.join(repo, 'untracked.txt'), 'untracked work\n')
+
+    const diff = await readWorkspaceDiff(repo)
+
+    expect(diff.threadId).toMatch(/^workspace-/)
+    expect(diff.files.map((file) => file.path)).toEqual(['file.txt', 'staged.txt', 'untracked.txt'])
+    expect(diff.files.find((file) => file.path === 'untracked.txt')).toMatchObject({
+      status: 'added',
+    })
+  })
+
   it('parses separate hunks and remembers accepted work', async () => {
     writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'accepted change', 18: 'later change' }))
 
