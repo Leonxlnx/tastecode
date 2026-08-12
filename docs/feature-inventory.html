@@ -611,6 +611,18 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Custom protocol-compatible harness executables
+                <span class="d"
+                  >separate model-picker source, desktop-safe PATH resolution, fixed argv without
+                  shell parsing, optional cwd/environment, protocol-aware verification, bounded
+                  startup, explicit stability and secret warning; includes Pi RPC</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Guided sign-in card
                 <span class="d"
                   >browser opens itself, device code as copy chip, live status line, terminal only
@@ -639,7 +651,8 @@
                 >Honest rows for what does not exist
                 <span class="d"
                   >canonical source names and marks across the picker, inbox, search, Profile, and
-                  Usage; Gemini CLI and Qwen retired</span
+                  Usage; Pi only through an explicit custom RPC harness, Gemini CLI and Qwen
+                  retired</span
                 ></span
               ></label
             >
@@ -681,6 +694,14 @@
             <label
               ><input type="checkbox" /><span
                 >Queued prompts are editable and reorderable before they fire</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Skills and MCP servers searchable from $ or @ with keyboard navigation and selected
+                resource chips</span
               ></label
             >
           </li>
@@ -943,6 +964,18 @@
           </li>
           <li>
             <label
+              ><input type="checkbox" /><span
+                >Dedicated Review workspace with exact old and new line numbers
+                <span class="d"
+                  >current checkout against HEAD, including staged, unstaged and untracked files;
+                  structured hunks, collapsed unchanged ranges, changed-file tree and live
+                  filtering</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
               ><input type="checkbox" /><span>Per-hunk and per-file accept or reject</span></label
             >
           </li>
@@ -1062,7 +1095,8 @@
                 >Pull-request library for authored, review-requested, and reviewed PRs across every
                 state for the signed-in GitHub account
                 <span class="d"
-                  >open, draft, merged, and closed filters with search and cached lazy loading</span
+                  >composable state, review, merge, repository, author, and base-branch filters with
+                  search and cached lazy loading</span
                 ></span
               ></label
             >
@@ -1103,6 +1137,31 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Resizable right-side workspace with persistent tool tabs
+                <span class="d"
+                  >Review, image-capable terminal, sandboxed browser previews, lazy file tree and side
+                  chat; New chat terminals use the selected project's current checkout, while active
+                  chats use their exact session checkout; smoothly expands across the full chat
+                  pane</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Ephemeral Side chat seeded from the active conversation
+                <span class="d"
+                  >Codex-compatible /side and /btw commands, hidden point-in-time parent context,
+                  independent streaming, approvals and structured input across every provider;
+                  closing it disposes the provider session and erases its temporary transcript</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Two versions switchable in Settings
                 <span class="d">V1 Classic and V2 Inbox with auto-settle after N days</span></span
               ></label
@@ -1132,8 +1191,9 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Drag the edge to resize <span class="d">148 to 420 px</span>, drag past the minimum
-                to collapse</span
+                >Drag the edge to resize <span class="d">240 to 420 px</span>, with
+                velocity-adaptive macOS detents only while the rail tracks the pointer; drag past
+                the minimum to collapse with a distinct stop</span
               ></label
             >
           </li>
@@ -1343,6 +1403,14 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >macOS trackpad haptics for sidebar, workspace and terminal resizing, reasoning
+                effort stops, and chat drag placement, with one global toggle</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Design tokens throughout, no raw values downstream
                 <span class="d"
                   >rounded controls stay unchanged while cards and panels scale up around them</span
@@ -1492,8 +1560,25 @@
               ><input type="checkbox" /><span
                 >Real PTY terminal sessions server-side
                 <span class="d"
-                  >installs, sign-ins, session terminals; shutdown waits for native PTY exit before
-                  worktree cleanup, including Windows ConPTY</span
+                  >installs, sign-ins, session and registered-project terminals; shutdown waits for
+                  native PTY exit before worktree cleanup, including Windows ConPTY; bounded 4 ms /
+                  64 KiB output batching, true-color capability negotiation, Unicode 11 cell widths,
+                  deterministic JetBrains Mono metrics, and immediate WebGL rendering with SIXEL and
+                  inline image protocol support</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Sandboxed in-app browser previews through Electron &lt;webview&gt; guests
+                <span class="d"
+                  >dedicated persistent site session, HTTP and HTTPS only, denied permissions,
+                  sandboxing with Node disabled, back and forward history, and new-window navigation
+                  retained inside the guest; the DOM-owned host follows workspace layout, with 1280 ×
+                  800, 768 × 1024 and 390 × 844 presets scaled to fit without stretching, plus an
+                  explicit system-browser handoff</span
                 ></span
               ></label
             >
