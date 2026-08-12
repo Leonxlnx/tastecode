@@ -48,7 +48,7 @@ describe('review and repair phases', () => {
         <textarea><h1>Example source</h1></textarea>
         <template><h1>Template</h1></template>
         </template>
-        <h1 data-label=">">Grid health</h1>
+        <H1 class='page-title' data-label=">">Grid health</H1>
       `),
     ).not.toThrow()
   })
