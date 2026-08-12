@@ -331,7 +331,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  margin: 0;
   font-size: var(--t-md);
+  font-weight: 500;
 }
 
 .account-menu__usage-head svg {

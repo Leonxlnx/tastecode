@@ -30,6 +30,7 @@ describe('account limits', () => {
       <AccountLimits state={{ status: 'loading', provider: 'codex' }} onRetry={() => {}} />,
     )
     expect(screen.getByRole('status').textContent).toContain('Checking plan limits')
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Plan limits' }))
     expect(screen.getByRole('region', { name: 'Plan limits' }).getAttribute('aria-busy')).toBe(
       'true',
     )
