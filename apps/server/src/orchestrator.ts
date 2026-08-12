@@ -2340,7 +2340,7 @@ export class Orchestrator {
       })
       return
     }
-    if (flow.askedQuestions && !flow.finalAsked) {
+    if (!flow.finalAsked) {
       flow.pendingBrief = output.brief
       flow.finalAsked = true
       this.#saveDesignFlow(threadId)

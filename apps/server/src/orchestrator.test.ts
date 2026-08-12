@@ -1082,6 +1082,68 @@ describe('provider-neutral design briefing', () => {
     },
   )
 
+  it('asks the final note once before locking an initially complete brief', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-complete-'))
+    const { orchestrator, sessions, received, store } = harness()
+    try {
+      const request =
+        'Create a calm one-page Acme payroll landing page for small agencies with a Start free trial CTA, pricing, security, responsive behavior, and WCAG 2.2 AA support.'
+      const thread = await orchestrator.startThread('codex', workspace)
+      await orchestrator.sendTurn(thread.id, request, [DESIGN_BRIEF_ATTACHMENT])
+      sessions[0]?.emit(
+        message(
+          JSON.stringify({
+            status: 'complete',
+            message: 'Brief complete.',
+            questions: [],
+            brief: {
+              originalRequest: request,
+              subject: 'Acme payroll',
+              pageType: 'Landing page',
+              scope: 'One responsive page',
+              primaryGoal: 'Start free trials',
+              audience: 'Small agencies',
+              offer: 'Payroll software',
+              primaryAction: 'Start free trial',
+              requiredContent: ['Pricing', 'Security'],
+              constraints: ['WCAG 2.2 AA'],
+              brandInputs: ['Calm'],
+              creativeControl: 'Agent-led',
+              explicitAnswers: [],
+              assumptions: [],
+              unresolved: [],
+            },
+          }),
+          's1-turn',
+        ),
+      )
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+
+      const finalRequests = () =>
+        received.filter(
+          ({ event }) =>
+            event.type === 'user_input.requested' &&
+            event.request.questions.some(({ id }) => id === 'final_note'),
+        )
+      await vi.waitFor(() => expect(finalRequests()).toHaveLength(1))
+      const finalRequest = finalRequests()[0]?.event
+      if (finalRequest?.type !== 'user_input.requested') throw new Error('missing final note')
+      expect(finalRequest.request.questions[0]).toMatchObject({
+        question: "Before I finalize your brief, is there anything else you'd like me to know?",
+        options: [{ label: "No, that's everything" }],
+      })
+
+      orchestrator.respondToUserInput(thread.id, finalRequest.request.id, {
+        final_note: ["No, that's everything"],
+      })
+      await vi.waitFor(() => expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand' }))
+      expect(finalRequests()).toHaveLength(1)
+    } finally {
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
   it('clears a failed provider run so later prompts are not trapped behind it', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-error-'))
     const { orchestrator, sessions, store } = harness()
