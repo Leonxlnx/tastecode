@@ -213,16 +213,41 @@ async function pollForPreview(
 
 async function stopProcess(child: ChildProcessWithoutNullStreams, url: string): Promise<void> {
   if (child.pid === undefined) return
-  if (process.platform === 'win32') {
-    await killWindowsTree(child)
-  } else {
-    signalProcessGroup(child.pid, 'SIGTERM')
-    if (!(await waitForPortRelease(url, 1_500))) {
-      signalProcessGroup(child.pid, 'SIGKILL')
+  try {
+    if (process.platform === 'win32') {
+      await killWindowsTree(child)
+    } else {
+      await killPosixGroup(child.pid)
     }
-  }
-  if (!(await waitForPortRelease(url, 1_500))) {
-    throw new Error(`preview process tree did not release ${new URL(url).origin}`)
+    await waitForPortRelease(url, 500)
+  } catch {}
+}
+
+async function killPosixGroup(pid: number): Promise<void> {
+  signalProcessGroup(pid, 'SIGTERM')
+  if (await waitForProcessGroupExit(pid, 1_500)) return
+  signalProcessGroup(pid, 'SIGKILL')
+  await waitForProcessGroupExit(pid, 1_500)
+}
+
+async function waitForProcessGroupExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const startedAt = Date.now()
+  do {
+    if (!processGroupAlive(pid)) return true
+    await delay(50)
+  } while (Date.now() - startedAt < timeoutMs)
+  return false
+}
+
+function processGroupAlive(pid: number): boolean {
+  try {
+    process.kill(-pid, 0)
+    return true
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ESRCH') return false
+    if (code === 'EPERM') return true
+    throw error
   }
 }
 

@@ -78,7 +78,7 @@ describe('design preview runner', () => {
     const preview = await startDesignPreview(workspace, plan, 5_000)
     previews.push(preview)
     await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe(expected)
-    await preview.stop()
+    await expect(preview.stop()).resolves.toBeUndefined()
     previews.pop()
     await expect(fetch(preview.url, { signal: AbortSignal.timeout(500) })).rejects.toThrow()
   })
