@@ -128,6 +128,8 @@ export function presentTurns(
       earliest: number
       latest: number
       hasRunningActivity: boolean
+      activityCount: number
+      onlyReasoning: boolean
       design: boolean
     }
   >()
@@ -141,6 +143,8 @@ export function presentTurns(
       earliest: item.createdAt,
       latest: item.createdAt,
       hasRunningActivity: false,
+      activityCount: 0,
+      onlyReasoning: true,
       design: false,
     }
 
@@ -153,6 +157,8 @@ export function presentTurns(
     }
 
     if (isActivity(item)) {
+      draft.activityCount += 1
+      draft.onlyReasoning &&= item.type === 'reasoning'
       const lastGroup = draft.activityGroups.at(-1)
       if (lastGroup?.lastIndex === index - 1) {
         lastGroup.entries.push({ item, index })
@@ -194,7 +200,9 @@ export function presentTurns(
             timing?.startedAt !== undefined && timing.completedAt !== undefined
               ? Math.max(0, timing.completedAt - timing.startedAt)
               : Math.max(0, draft.latest - draft.earliest),
-          complete: finalAnswer !== undefined && !draft.hasRunningActivity,
+          complete:
+            !draft.hasRunningActivity &&
+            (finalAnswer !== undefined || (draft.activityCount > 1 && draft.onlyReasoning)),
           design: draft.design,
         },
       ]

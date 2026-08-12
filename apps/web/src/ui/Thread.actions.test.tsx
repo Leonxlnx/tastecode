@@ -193,6 +193,20 @@ describe('empty thread', () => {
 })
 
 describe('completed activity disclosure', () => {
+  it('collapses a settled turn that ended without an assistant answer', () => {
+    const items: Item[] = [
+      turnItem('prompt-1', 1, { role: 'user', text: 'Build a website' }),
+      ...Array.from({ length: 4 }, (_, index) =>
+        turnItem(`reasoning-${index}`, 1_001 + index * 1_000, { type: 'reasoning' }),
+      ),
+    ]
+
+    renderCompleted(items)
+
+    expect(screen.getByRole('button', { name: 'Worked for 4s' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Thinking' })).toBeNull()
+  })
+
   it('keeps the content mounted while toggling the animated reveal state', () => {
     const items: Item[] = [
       {
