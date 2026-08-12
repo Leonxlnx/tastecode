@@ -2928,7 +2928,7 @@
     grid-template-areas:
       'mark identity issue'
       'status status status'
-      'secondary primary primary';
+      'primary primary secondary';
     grid-template-columns: 20px minmax(0, 1fr) 86px;
     row-gap: 8px;
   }
@@ -2952,21 +2952,25 @@
   }
 
   .provider-row__primary {
-    grid-area: primary;
+    grid-area: secondary;
     justify-content: flex-end;
   }
 
   .provider-row__secondary {
-    grid-area: secondary;
-  }
-
-  .provider-row__primary:empty + .provider-row__secondary {
     grid-area: primary;
     justify-content: flex-end;
   }
 
+  .provider-row__primary:empty + .provider-row__secondary {
+    grid-area: secondary;
+  }
+
   .provider-row__primary .settings__action {
     width: 136px;
+  }
+
+  .provider-row__secondary .settings__action {
+    width: auto;
   }
 }
 

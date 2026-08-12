@@ -26,7 +26,7 @@ describe('settings viewport CSS', () => {
       /\.provider-row__primary \{[^}]*grid-column: 6;[^}]*\}[\s\S]*?\.provider-row__primary:empty \+ \.provider-row__secondary \{[^}]*grid-column: 6;/s,
     )
     expect(appCss).toMatch(
-      /@container \(max-width: 514px\) \{[\s\S]*?\.provider-row__primary:empty \+ \.provider-row__secondary \{[^}]*grid-area: primary;[^}]*justify-content: flex-end;/s,
+      /@container \(max-width: 514px\) \{[\s\S]*?\.provider-row__primary \{[^}]*grid-area: secondary;[^}]*\}[\s\S]*?\.provider-row__secondary \{[^}]*grid-area: primary;[^}]*justify-content: flex-end;[^}]*\}[\s\S]*?\.provider-row__primary:empty \+ \.provider-row__secondary \{[^}]*grid-area: secondary;/s,
     )
   })
 })
