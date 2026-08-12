@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AccountRateLimitsUpdatedNotification } from './generated/v2/AccountRateLimitsUpdatedNotification.js'
 
 const fake = vi.hoisted(() => ({
   account: null as unknown,
   accountResponse: undefined as unknown,
   calls: [] as string[],
   failure: undefined as string | undefined,
+  notification: undefined as ((method: string, params: unknown) => void) | undefined,
   rateLimitsResponse: undefined as unknown,
 }))
 
@@ -12,7 +14,9 @@ vi.mock('@harness/proc', () => ({
   spawnCli: vi.fn(() => ({ pid: 1 })),
   StdioJsonRpc: class {
     onStderr(): void {}
-    onNotification(): void {}
+    onNotification(listener: (method: string, params: unknown) => void): void {
+      fake.notification = listener
+    }
     onServerRequest(): void {}
     notify(): void {}
     dispose(): void {}
@@ -53,10 +57,43 @@ beforeEach(() => {
   fake.accountResponse = undefined
   fake.calls = []
   fake.failure = undefined
+  fake.notification = undefined
   fake.rateLimitsResponse = undefined
 })
 
+const capturedRateLimitUpdate = {
+  rateLimits: {
+    limitId: 'codex',
+    limitName: null,
+    primary: null,
+    secondary: null,
+    credits: null,
+    individualLimit: null,
+    planType: null,
+    rateLimitReachedType: null,
+  },
+} satisfies AccountRateLimitsUpdatedNotification
+
 describe('Codex rate-limit source', () => {
+  it('maps only the exact provider update to a quiet usage-change event', async () => {
+    const adapter = new CodexAdapter()
+    const changed = vi.fn()
+    const logged = vi.fn()
+    adapter.on('usageChanged', changed)
+    adapter.on('log', logged)
+    await adapter.start()
+
+    fake.notification?.('account/rateLimits/updated', capturedRateLimitUpdate)
+
+    expect(changed).toHaveBeenCalledTimes(1)
+    expect(logged).not.toHaveBeenCalled()
+
+    fake.notification?.('account/rateLimits/updated-v2', capturedRateLimitUpdate)
+    expect(changed).toHaveBeenCalledTimes(1)
+    expect(logged).toHaveBeenCalledWith('unmapped notification: account/rateLimits/updated-v2')
+    adapter.dispose()
+  })
+
   it.each([
     ['signed out', null],
     ['API key', { type: 'apiKey' }],

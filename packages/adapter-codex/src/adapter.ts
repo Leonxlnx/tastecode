@@ -372,6 +372,8 @@ export type CodexAdapterEvents = {
   mcpOAuth: [{ serverId: string; loginId: string; success: boolean; error: string | null }]
   mcpChanged: [{ threadId?: string }]
   skillsChanged: []
+  /** Provider-owned subscription usage changed; consumers should refetch. */
+  usageChanged: []
 }
 
 export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
@@ -479,6 +481,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   async rateLimits(): Promise<ProviderLimit[]> {
     const source = await this.rateLimitSource()
     return source.status === 'ready' ? source.limits : []
+  }
+
+  onUsageChanged(listener: () => void): void {
+    this.on('usageChanged', listener)
   }
 
   /**
@@ -1038,6 +1044,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         this.emit('login', p)
         return
       }
+
+      case 'account/rateLimits/updated':
+        this.emit('usageChanged')
+        return
 
       case 'warning':
         this.emit('log', formatCodexWarning(params as WarningNotification))
