@@ -2519,6 +2519,7 @@ export function App() {
 
   const selectProject = useCallback(
     (path: string) => {
+      setSurface('chat')
       if (path === activePath) return
       setActivePath(path)
       activeIdRef.current = undefined
@@ -3362,6 +3363,7 @@ export function App() {
           onWidthChange={resizeSidebar}
           onAddProject={addSidebarProject}
           onNewSession={startSidebarSession}
+          onSelectProject={selectProject}
           onSelectSession={selectSidebarSession}
           onRenameProject={renameSidebarProject}
           onRemoveProject={removeSidebarProject}

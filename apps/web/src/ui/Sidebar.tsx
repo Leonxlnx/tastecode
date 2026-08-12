@@ -114,6 +114,7 @@ function SidebarComponent(props: {
   onWidthChange: (width: number) => void
   onAddProject: () => void
   onNewSession: (projectPath?: string, chooseProject?: boolean) => void
+  onSelectProject?: ((path: string) => void) | undefined
   onSelectSession: (id: string) => void
   onRenameProject: (path: string, name: string) => void
   onRemoveProject: (path: string) => void
@@ -741,6 +742,7 @@ function ProjectRow(props: {
   activeSessionId: string | undefined
   forceOpen: boolean
   onNewSession: (path: string) => void
+  onSelectProject?: ((path: string) => void) | undefined
   onSelectSession: (id: string) => void
   onRenameProject: (path: string, name: string) => void
   onRemoveProject: (path: string) => void
@@ -806,9 +808,15 @@ function ProjectRow(props: {
               ref={contextMenuTarget}
               className="proj__toggle"
               onClick={() => {
+                if (count === 0) {
+                  props.onSelectProject?.(props.project.path)
+                  setOpen(true)
+                  return
+                }
                 if (expanded) setShowAllSessions(false)
                 setOpen(!expanded)
               }}
+              aria-expanded={expanded}
               title={props.project.path}
             >
               <Folder className="proj__mark" size={12} aria-hidden />
@@ -919,8 +927,9 @@ function ProjectRow(props: {
           the drawer's real height. The old per-row cap was double the actual
           row height, which spent half the duration moving nothing — the main
           reason the sidebar read as sluggish. */}
-      <div className="proj__drawer" data-open={expanded && count > 0}>
+      <div className="proj__drawer" data-open={expanded}>
         <ul className="proj__sessions">
+          {count === 0 ? <li className="rail__hint">No chats</li> : null}
           {visibleSessions.map((session) => (
             <SessionRow
               key={session.id}

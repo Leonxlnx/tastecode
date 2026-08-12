@@ -21,6 +21,41 @@ const session = (id: string, title: string) => ({
 })
 
 describe('Sidebar chat actions', () => {
+  it('selects an empty project and shows its empty chat state', () => {
+    const onSelectProject = vi.fn()
+    render(
+      <Sidebar
+        projects={[{ path: '/work/empty', name: 'Empty project', sessions: [] }]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectProject={onSelectProject}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('No chats')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Empty project' }))
+    expect(onSelectProject).toHaveBeenCalledWith('/work/empty')
+    expect(screen.getByText('No chats')).toBeTruthy()
+  })
+
   it('uses the classic account footer in the inbox sidebar', () => {
     const onAddProject = vi.fn()
     const onOpenSettings = vi.fn()
