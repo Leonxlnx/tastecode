@@ -555,12 +555,12 @@ export const UsageHistoryResultSchema = z.object({
 export type UsageHistoryResult = z.infer<typeof UsageHistoryResultSchema>
 
 export const ProviderLimitSchema = z.object({
-  label: z.string(),
+  label: z.string().min(1).max(120),
   usedPercent: z.number().min(0).max(100),
   /** Unix time in milliseconds. */
-  resetsAt: z.number().optional(),
+  resetsAt: z.number().int().nonnegative().optional(),
   /** Non-percent rows (credit balances, reset counts) render this text instead of a bar. */
-  valueLabel: z.string().optional(),
+  valueLabel: z.string().min(1).max(160).optional(),
 })
 export type ProviderLimit = z.infer<typeof ProviderLimitSchema>
 
@@ -577,6 +577,40 @@ export const ProviderLimitSourceSchema = z.discriminatedUnion('status', [
   }),
 ])
 export type ProviderLimitSource = z.infer<typeof ProviderLimitSourceSchema>
+
+const UsageSummaryResultSchema = z
+  .object({
+    session: UsageSchema.omit({
+      contextWindow: true,
+      model: true,
+      cumulative: true,
+      inputIncludesCached: true,
+    }),
+    today: UsageSchema.omit({
+      contextWindow: true,
+      model: true,
+      cumulative: true,
+      inputIncludesCached: true,
+    }),
+    /** Flattened compatibility view for clients predating `limitSource`. */
+    limits: z.array(ProviderLimitSchema),
+    /**
+     * Authoritative provider-neutral source state. Optional for one old-server
+     * compatibility window; current servers always send it.
+     */
+    limitSource: ProviderLimitSourceSchema.optional(),
+  })
+  .superRefine((summary, context) => {
+    if (!summary.limitSource) return
+    const expected = summary.limitSource.status === 'ready' ? summary.limitSource.limits : []
+    if (JSON.stringify(summary.limits) !== JSON.stringify(expected)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['limits'],
+        message: 'limits must exactly mirror the authoritative limitSource',
+      })
+    }
+  })
 
 /**
  * Method table. Adding a method means adding it here first — this object is the
@@ -1153,27 +1187,7 @@ export const methods = {
   /** Persistent token totals, with money only when the provider reports it. */
   'usage.summary': {
     params: z.union([z.object({ threadId: z.string() }), z.object({ provider: ProviderIdSchema })]),
-    result: z.object({
-      session: UsageSchema.omit({
-        contextWindow: true,
-        model: true,
-        cumulative: true,
-        inputIncludesCached: true,
-      }),
-      today: UsageSchema.omit({
-        contextWindow: true,
-        model: true,
-        cumulative: true,
-        inputIncludesCached: true,
-      }),
-      /** Provider-reported subscription windows. Empty when unavailable. */
-      limits: z.array(ProviderLimitSchema),
-      /**
-       * Provider-neutral source state. Optional for one compatibility window;
-       * current servers always send it while older servers keep `limits` useful.
-       */
-      limitSources: z.array(ProviderLimitSourceSchema).optional(),
-    }),
+    result: UsageSummaryResultSchema,
   },
   /**
    * Local, model-attributed usage history. Dollar values are API-equivalent

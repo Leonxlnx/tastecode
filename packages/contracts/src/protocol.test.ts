@@ -532,30 +532,75 @@ describe('protocol envelopes', () => {
         costUsd: 0.04,
       },
       limits: [{ label: '5 hours', usedPercent: 25, resetsAt: 1_800_000 }],
-      limitSources: [
-        {
-          provider: 'codex',
-          status: 'ready',
-          limits: [{ label: '5 hours', usedPercent: 25, resetsAt: 1_800_000 }],
-        },
-        { provider: 'api', status: 'unavailable' },
-      ],
+      limitSource: {
+        provider: 'codex',
+        status: 'ready',
+        limits: [{ label: '5 hours', usedPercent: 25, resetsAt: 1_800_000 }],
+      },
     })
 
     expect(result.session.costUsd).toBeUndefined()
     expect(result.today.costUsd).toBe(0.04)
     expect(result.limits[0]?.usedPercent).toBe(25)
-    expect(result.limitSources).toEqual([
-      {
-        provider: 'codex',
-        status: 'ready',
-        limits: [{ label: '5 hours', usedPercent: 25, resetsAt: 1_800_000 }],
-      },
-      { provider: 'api', status: 'unavailable' },
-    ])
+    expect(result.limitSource).toEqual({
+      provider: 'codex',
+      status: 'ready',
+      limits: [{ label: '5 hours', usedPercent: 25, resetsAt: 1_800_000 }],
+    })
     expect(channels['usage.changed'].parse({ provider: 'codex' })).toEqual({
       provider: 'codex',
     })
+  })
+
+  it('keeps one authoritative provider limit source with a legacy fallback', () => {
+    const usage = {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    }
+    const parse = (limits: unknown[], limitSource?: unknown) =>
+      methods['usage.summary'].result.parse({
+        session: usage,
+        today: usage,
+        limits,
+        ...(limitSource === undefined ? {} : { limitSource }),
+      })
+
+    expect(parse([]).limitSource).toBeUndefined()
+    expect(parse([], { provider: 'grok', status: 'ready', limits: [] }).limitSource).toEqual({
+      provider: 'grok',
+      status: 'ready',
+      limits: [],
+    })
+    expect(parse([], { provider: 'api', status: 'unavailable' }).limitSource).toEqual({
+      provider: 'api',
+      status: 'unavailable',
+    })
+
+    expect(() =>
+      parse([{ label: 'Weekly', usedPercent: 10 }], {
+        provider: 'grok',
+        status: 'unavailable',
+      }),
+    ).toThrow()
+    expect(() =>
+      parse([], {
+        provider: 'grok',
+        status: 'ready',
+        limits: [{ label: 'Weekly', usedPercent: 10 }],
+      }),
+    ).toThrow()
+    expect(() => parse([], { provider: 'unknown', status: 'unavailable' })).toThrow()
+    expect(() => parse([], { provider: 'grok', status: 'stale' })).toThrow()
+    expect(() =>
+      parse([{ label: '', usedPercent: 101, resetsAt: -1 }], {
+        provider: 'grok',
+        status: 'ready',
+        limits: [{ label: '', usedPercent: 101, resetsAt: -1 }],
+      }),
+    ).toThrow()
   })
 
   it('validates versioned diff review and stale snapshot errors', () => {
