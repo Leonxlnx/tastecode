@@ -118,23 +118,6 @@ import { assertPublicWorkspaceFile, existingWorkspacePath } from './api-workspac
 type UserSubmission = { id: string; text: string; createdAt: number; queueId?: string }
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions; clientSubmissionId?: string }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
-
-const CONTROL_LIMIT_TIMEOUT_MS = 5_000
-
-class ControlLimitTimeoutError extends Error {}
-
-function boundedControlLimit<T>(promise: Promise<T>): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new ControlLimitTimeoutError('Codex plan limits did not answer in time.')),
-        CONTROL_LIMIT_TIMEOUT_MS,
-      )
-    }),
-  ]).finally(() => clearTimeout(timer))
-}
 type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
 type AdapterLimitSource = { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
 const userTurnKey = (threadId: string, turnId: string) => JSON.stringify([threadId, turnId])
@@ -794,7 +777,7 @@ export class Orchestrator {
 
   async usageLimitSource(provider: ProviderId): Promise<ProviderLimitSource> {
     const readers: Partial<Record<ProviderId, () => Promise<AdapterLimitSource>>> = {
-      codex: () => this.#codexLimitSource(),
+      codex: async () => (await this.#controlAdapter()).rateLimitSource(),
       'claude-code': claudeLimitSource,
       grok: grokLimitSource,
     }
@@ -802,20 +785,6 @@ export class Orchestrator {
     return source.status === 'ready'
       ? { provider, status: 'ready', limits: source.limits }
       : { provider, status: 'unavailable' }
-  }
-
-  async #codexLimitSource(): Promise<AdapterLimitSource> {
-    const adapter = await this.#controlAdapter()
-    try {
-      return await boundedControlLimit(adapter.rateLimitSource())
-    } catch (error) {
-      if (!(error instanceof ControlLimitTimeoutError)) throw error
-      if (this.#control === adapter) {
-        this.#control = undefined
-        adapter.dispose()
-      }
-      return boundedControlLimit((await this.#controlAdapter()).rateLimitSource())
-    }
   }
 
   async startLogin(provider: ProviderId): Promise<{ loginId: string; authUrl?: string }> {
