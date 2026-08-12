@@ -10,7 +10,7 @@ export function existingWorkspacePath(
 ): string {
   const target = contained(workspace, relativePath)
   const real = realpathSync(target)
-  assertContained(workspace, real)
+  assertContained(realpathSync(workspace), real)
   const stats = statSync(real)
   if (directory ? !stats.isDirectory() : !stats.isFile()) {
     throw new Error(directory ? 'path must be a directory' : 'path must be a file')
@@ -20,7 +20,8 @@ export function existingWorkspacePath(
 
 export function writableWorkspacePath(workspace: string, relativePath: string): string {
   const target = contained(workspace, relativePath)
-  if (existsSync(target)) assertContained(workspace, realpathSync(target))
+  const realWorkspace = realpathSync(workspace)
+  if (existsSync(target)) assertContained(realWorkspace, realpathSync(target))
   let ancestor = path.dirname(target)
   while (!existsSync(ancestor)) {
     const parent = path.dirname(ancestor)
@@ -30,7 +31,7 @@ export function writableWorkspacePath(workspace: string, relativePath: string): 
     if (parent === ancestor) throw new Error('workspace is unavailable')
     ancestor = parent
   }
-  assertContained(workspace, realpathSync(ancestor))
+  assertContained(realWorkspace, realpathSync(ancestor))
   return target
 }
 
