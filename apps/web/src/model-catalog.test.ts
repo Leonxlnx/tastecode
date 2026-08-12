@@ -7,6 +7,7 @@ import {
   customModelKey,
   filterModelChoicesByQuery,
   isCustomModelChoice,
+  modelVisibleByDefault,
   providerDisplayName,
   resolveReasoningEffort,
 } from './model-catalog.js'
@@ -136,6 +137,29 @@ describe('model catalog', () => {
     expect(filterModelChoicesByQuery(choices, 'OPUS openrouter')).toEqual([choices[0]])
     expect(filterModelChoicesByQuery(choices, 'qwen3.8-max')).toEqual([choices[1]])
     expect(filterModelChoicesByQuery(choices, '  ')).toBe(choices)
+  })
+
+  it.each([
+    ['gpt-5.6-sol', true],
+    ['gpt-5.6-terra', true],
+    ['gpt-5.6-luna', true],
+    ['gpt-5.3-codex-spark', true],
+    ['gpt-5.5', false],
+    ['gpt-5.4', false],
+    ['gpt-5.4-mini', false],
+    ['fable', true],
+    ['opus', true],
+    ['sonnet', true],
+    ['claude-opus-4-8', true],
+    ['haiku', false],
+    ['claude-opus-4-7', false],
+    ['claude-opus-4-6', false],
+    ['claude-sonnet-4-6', false],
+    ['grok-4.5', true],
+    ['grok-4.6', true],
+    ['provider-model-added-tomorrow', true],
+  ])('defaults %s visibility to %s', (id, visible) => {
+    expect(modelVisibleByDefault({ ...model, id })).toBe(visible)
   })
 
   it('keeps an effort that the next model supports', () => {

@@ -66,6 +66,7 @@ import {
   customModelKey,
   isCustomModelChoice,
   modelChoiceKey,
+  modelVisibleByDefault,
   providerDisplayName,
   providerMark,
   resolveReasoningEffort,
@@ -386,6 +387,7 @@ export function App() {
       return new Set()
     }
   })
+  const modelVisibilityInitialized = useRef(readSetting(HIDDEN_MODELS_KEY) !== null)
   // Read via ref inside the catalog effect so toggling visibility does not
   // refetch every provider's model list.
   const hiddenModelsRef = useRef(hiddenModels)
@@ -1130,7 +1132,17 @@ export function App() {
       const stored = readSetting(MODEL_KEY)
       // A hidden model cannot remain the internal selection. Otherwise the
       // picker shows no such choice while a turn can still silently use it.
-      const hidden = hiddenModelsRef.current
+      let hidden = hiddenModelsRef.current
+      if (!modelVisibilityInitialized.current && catalog.length > 0) {
+        hidden = new Set(
+          catalog
+            .filter((choice) => !modelVisibleByDefault(choice.model))
+            .map((choice) => choice.key),
+        )
+        modelVisibilityInitialized.current = true
+        hiddenModelsRef.current = hidden
+        setHiddenModels(hidden)
+      }
       const customPool = customModelsRef.current
         .filter((entry) => PUBLIC_BETA_PROVIDER_IDS.has(entry.provider))
         .map((entry) =>
@@ -1702,6 +1714,7 @@ export function App() {
   }, [modelId])
 
   useEffect(() => {
+    if (!modelVisibilityInitialized.current) return
     writeSetting(HIDDEN_MODELS_KEY, JSON.stringify([...hiddenModels]))
   }, [hiddenModels])
 

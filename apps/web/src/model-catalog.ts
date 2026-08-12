@@ -43,6 +43,15 @@ export function filterModelChoicesByQuery(choices: ModelChoice[], query: string)
   })
 }
 
+/** Curate the first-run picker without overriding a user's saved toggles.
+ * Unknown models stay visible: vendors can add models at any time, so only
+ * generations explicitly superseded in the current beta roster start hidden. */
+export function modelVisibleByDefault(model: Model): boolean {
+  const id = model.id.toLowerCase()
+  if (/^gpt-5\.(?:4|5)(?:$|-)/.test(id)) return false
+  return !['haiku', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6'].includes(id)
+}
+
 const REASONING_EFFORT_RANKS = new Map([
   ['none', 0],
   ['minimal', 1],
