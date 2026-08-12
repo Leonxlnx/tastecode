@@ -17,6 +17,7 @@ import { safeCommandEnvironment } from './safe-command-environment.js'
 const COMMANDS = new Set(['bun', 'node', 'npm', 'pnpm', 'yarn'])
 const UNSAFE_ARG = /[&|<>^%!"\r\n()]/
 const MAX_OUTPUT_BYTES = 100_000
+const startingPreviewPorts = new Set<number>()
 
 export type RunningPreview = {
   url: string
@@ -37,55 +38,77 @@ export async function startDesignPreview(
   const workspace = realpathSync(workspacePath)
   const cwd = existingWorkspacePath(workspace, plan.cwd, true)
   assertRunsWorkspaceCode(workspace, cwd, plan)
-  await assertPreviewPortAvailable(plan.url)
-  const child = spawnCli(plan.command, plan.args, {
-    cwd,
-    replaceEnv: true,
-    env: safeCommandEnvironment(workspace),
-  })
-  child.stdin.end()
-
+  const releaseStart = claimPreviewStart(plan.url)
+  let child: ChildProcessWithoutNullStreams | undefined
   let output = ''
-  const append = (chunk: string) => {
-    output = `${output}${chunk}`.slice(-MAX_OUTPUT_BYTES)
-  }
-  child.stdout.setEncoding('utf8')
-  child.stderr.setEncoding('utf8')
-  child.stdout.on('data', append)
-  child.stderr.on('data', append)
-
   try {
-    await waitForPreview(child, plan.url, timeoutMs, () => output)
+    await assertPreviewPortAvailable(plan.url)
+    const environment = safeCommandEnvironment(workspace)
+    child =
+      process.platform === 'win32'
+        ? spawnCli(plan.command, plan.args, { cwd, replaceEnv: true, env: environment })
+        : spawn(plan.command, plan.args, {
+            cwd,
+            env: environment,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            detached: true,
+          })
+    const childFailure = watchPreviewChild(child)
+    child.stdin.end()
+    const append = (chunk: string) => {
+      output = `${output}${chunk}`.slice(-MAX_OUTPUT_BYTES)
+    }
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', append)
+    child.stderr.on('data', append)
+    await waitForPreview(child, plan.url, timeoutMs, () => output, childFailure)
   } catch (error) {
-    await stopProcess(child)
+    if (child) await stopProcess(child, plan.url)
     throw error
+  } finally {
+    releaseStart()
   }
 
   return {
     url: plan.url,
     viewports: plan.viewports,
     output: () => output,
-    stop: () => stopProcess(child),
+    stop: () => stopProcess(child, plan.url),
   }
+}
+
+function claimPreviewStart(url: string): () => void {
+  const port = Number(new URL(url).port)
+  if (startingPreviewPorts.has(port)) {
+    throw new Error(`preview port ${port} is already being started`)
+  }
+  startingPreviewPorts.add(port)
+  return () => startingPreviewPorts.delete(port)
 }
 
 async function assertPreviewPortAvailable(url: string): Promise<void> {
   const port = Number(new URL(url).port)
-  await new Promise<void>((resolve, reject) => {
+  if (!(await previewPortAvailable(url))) {
+    throw new Error(
+      `preview port ${port} is already in use; choose another http://127.0.0.1 port and retry`,
+    )
+  }
+}
+
+function previewPortAvailable(url: string): Promise<boolean> {
+  const port = Number(new URL(url).port)
+  return new Promise<boolean>((resolve, reject) => {
     const reservation = createServer()
     reservation.once('error', (error: NodeJS.ErrnoException) => {
       if (error.code === 'EADDRINUSE') {
-        reject(
-          new Error(
-            `preview port ${port} is already in use; choose another http://127.0.0.1 port and retry`,
-          ),
-        )
+        resolve(false)
         return
       }
       reject(error)
     })
     reservation.listen({ host: '127.0.0.1', port, exclusive: true }, () => {
-      reservation.close((error) => (error ? reject(error) : resolve()))
+      reservation.close((error) => (error ? reject(error) : resolve(true)))
     })
   })
 }
@@ -141,7 +164,23 @@ function packageScripts(cwd: string): Set<string> {
   }
 }
 
-async function waitForPreview(
+export async function waitForPreview(
+  child: ChildProcessWithoutNullStreams,
+  url: string,
+  timeoutMs: number,
+  output: () => string,
+  childFailure: Promise<never>,
+): Promise<void> {
+  await Promise.race([pollForPreview(child, url, timeoutMs, output), childFailure])
+}
+
+export function watchPreviewChild(child: ChildProcessWithoutNullStreams): Promise<never> {
+  return new Promise<never>((_resolve, reject) => {
+    child.once('error', (error) => reject(new Error(`preview failed to start: ${error.message}`)))
+  })
+}
+
+async function pollForPreview(
   child: ChildProcessWithoutNullStreams,
   url: string,
   timeoutMs: number,
@@ -154,21 +193,40 @@ async function waitForPreview(
     }
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(500) })
-      if (response.ok) return
-    } catch {
+      if (response.ok) {
+        // A losing child can remain alive briefly while its wrapper unwinds.
+        // Do not let another process's response win that race.
+        await delay(100)
+        if (child.exitCode === null) return
+        throw new Error(`preview exited before it was ready\n${output()}`)
+      }
+    } catch (error) {
+      if (child.exitCode !== null) {
+        throw new Error(`preview exited before it was ready\n${output()}`, { cause: error })
+      }
       // The server is still starting.
     }
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    await delay(100)
   }
   throw new Error(`preview did not become ready within ${timeoutMs}ms\n${output()}`)
 }
 
-function stopProcess(child: ChildProcessWithoutNullStreams): Promise<void> {
-  if (child.exitCode !== null || child.pid === undefined) return Promise.resolve()
-  if (process.platform !== 'win32') {
-    child.kill('SIGTERM')
-    return Promise.resolve()
+async function stopProcess(child: ChildProcessWithoutNullStreams, url: string): Promise<void> {
+  if (child.pid === undefined) return
+  if (process.platform === 'win32') {
+    await killWindowsTree(child)
+  } else {
+    signalProcessGroup(child.pid, 'SIGTERM')
+    if (!(await waitForPortRelease(url, 1_500))) {
+      signalProcessGroup(child.pid, 'SIGKILL')
+    }
   }
+  if (!(await waitForPortRelease(url, 1_500))) {
+    throw new Error(`preview process tree did not release ${new URL(url).origin}`)
+  }
+}
+
+function killWindowsTree(child: ChildProcessWithoutNullStreams): Promise<void> {
   return new Promise((resolve) => {
     const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], {
       stdio: 'ignore',
@@ -180,4 +238,25 @@ function stopProcess(child: ChildProcessWithoutNullStreams): Promise<void> {
     })
     killer.on('exit', () => resolve())
   })
+}
+
+function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+  }
+}
+
+async function waitForPortRelease(url: string, timeoutMs: number): Promise<boolean> {
+  const startedAt = Date.now()
+  do {
+    if (await previewPortAvailable(url)) return true
+    await delay(50)
+  } while (Date.now() - startedAt < timeoutMs)
+  return false
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
