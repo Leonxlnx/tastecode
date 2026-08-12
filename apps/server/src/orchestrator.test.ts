@@ -1,5 +1,13 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -23,13 +31,19 @@ import { presentTurns } from '../../web/src/ui/turns.js'
 
 /** Counts stops, so tests can prove the dev server does not outlive its flow. */
 const previewStops = vi.hoisted(() => ({ count: 0 }))
-const previewStarts = vi.hoisted(() => ({ count: 0, barriers: [] as Promise<void>[] }))
+const previewStarts = vi.hoisted(() => ({
+  count: 0,
+  barriers: [] as Promise<void>[],
+  failures: [] as unknown[],
+}))
 
 vi.mock('./design-preview-runner.js', () => ({
   startDesignPreview: vi.fn(
     async (_workspace: string, plan: { url: string; viewports: unknown[] }) => {
       previewStarts.count += 1
       await previewStarts.barriers.shift()
+      const failure = previewStarts.failures.shift()
+      if (failure) throw failure
       return {
         url: plan.url,
         viewports: plan.viewports,
@@ -732,6 +746,60 @@ describe('durable user submissions', () => {
 })
 
 describe('provider-neutral design briefing', () => {
+  async function previewRecoveryHarness(error: unknown) {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-preview-recovery-'))
+    const taste = path.join(workspace, '.taste')
+    mkdirSync(taste)
+    const artifacts = ['brand.json', 'page.json', 'build.txt'].map((name) => {
+      const file = path.join(taste, name)
+      writeFileSync(file, `${name}:approved`)
+      return [file, readFileSync(file, 'utf8')] as const
+    })
+    const store = new Store(':memory:')
+    store.addProject(workspace)
+    store.addThread({
+      id: 'preview-recovery',
+      projectPath: workspace,
+      provider: 'codex',
+      title: 'Preview recovery',
+    })
+    store.setDesignRun('preview-recovery', {
+      originalRequest: 'Build a site.',
+      options: { effort: 'high' },
+      phase: 'preview',
+      pendingPrompt: 'Preview Setup phase',
+      askedQuestions: false,
+      finalAsked: false,
+      explicitAnswers: [],
+    })
+    const result = harness(undefined, store)
+    result.capturePreview.mockResolvedValueOnce(undefined)
+    previewStarts.failures.push(error)
+    const queued = await result.orchestrator.submitTurn('preview-recovery', 'Continue afterward.')
+    if (queued.queued) result.orchestrator.deleteQueuedTurn('preview-recovery', queued.queuedTurn.id)
+    await vi.waitFor(() => expect(result.sessions[0]?.sent).toHaveLength(1))
+    return { ...result, workspace, artifacts }
+  }
+
+  const commandPreviewPlan = {
+    version: 1,
+    kind: 'command',
+    command: 'pnpm',
+    args: ['dev', '--host', '127.0.0.1'],
+    cwd: '.',
+    url: 'http://127.0.0.1:5173',
+    viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+  }
+
+  const staticPreviewPlan = {
+    version: 1,
+    kind: 'static',
+    entry: 'index.html',
+    cwd: '.',
+    url: 'http://127.0.0.1:4173/',
+    viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+  }
+
   it.each(ProviderIdSchema.options)(
     'runs the same adaptive question loop with %s',
     async (provider) => {
@@ -1148,6 +1216,122 @@ describe('provider-neutral design briefing', () => {
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
+
+  it.each([
+    {
+      failure: new Error('preview port 5173 is already in use; choose another port'),
+      name: 'occupied port',
+      plan: commandPreviewPlan,
+    },
+    {
+      failure: Object.assign(new Error('ENOENT: no such file or directory, realpath index.html'), {
+        code: 'ENOENT',
+      }),
+      name: 'missing entry',
+      plan: staticPreviewPlan,
+    },
+    {
+      failure: new Error('static preview must contain exactly one <h1>; found 0'),
+      name: 'static semantic validation',
+      plan: staticPreviewPlan,
+    },
+  ])('corrects one recoverable $name failure and retries Preview', async ({ failure, plan }) => {
+    const { orchestrator, sessions, received, store, workspace, artifacts } =
+      await previewRecoveryHarness(failure)
+    const startCount = previewStarts.count
+    try {
+      sessions[0]?.emit(message(JSON.stringify(plan), 's1-turn'))
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+      expect(sessions[0]?.sent[1]).toContain('previous Design Mode response failed validation')
+      expect(store.designRun('preview-recovery')).toMatchObject({
+        originalRequest: 'Build a site.',
+        options: { effort: 'high' },
+        phase: 'preview',
+        correcting: true,
+      })
+      expect(artifacts.map(([file]) => readFileSync(file, 'utf8'))).toEqual(
+        artifacts.map(([, contents]) => contents),
+      )
+
+      sessions[0]?.emit(message(JSON.stringify(plan), 's1-turn'))
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+
+      await vi.waitFor(() =>
+        expect(
+          received.some(
+            ({ event }) =>
+              event.type === 'item.completed' && event.item.text?.startsWith('Website built.'),
+          ),
+        ).toBe(true),
+      )
+      expect(previewStarts.count).toBe(startCount + 2)
+      expect(sessions[0]?.sent).toHaveLength(2)
+      expect(store.designRun('preview-recovery')).toBeUndefined()
+      expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+    } finally {
+      previewStarts.failures.length = 0
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('fails after the bounded Preview correction also fails', async () => {
+    const failure = new Error('preview port 5173 is already in use; choose another port')
+    const { orchestrator, sessions, received, store, workspace } =
+      await previewRecoveryHarness(failure)
+    previewStarts.failures.push(failure)
+    try {
+      sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+
+      sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+
+      await vi.waitFor(() => expect(store.designRun('preview-recovery')).toBeUndefined())
+      expect(sessions[0]?.sent).toHaveLength(2)
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'thread.error' && event.message.includes('preview port 5173'),
+        ),
+      ).toBe(true)
+    } finally {
+      previewStarts.failures.length = 0
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it.each(['preview command argument is unsafe', 'path escapes the workspace'])(
+    'keeps the Preview security violation fatal: %s',
+    async (detail) => {
+      const { orchestrator, sessions, received, store, workspace } = await previewRecoveryHarness(
+        new Error(detail),
+      )
+      try {
+        sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+
+        await vi.waitFor(() => expect(store.designRun('preview-recovery')).toBeUndefined())
+        expect(sessions[0]?.sent).toHaveLength(1)
+        expect(
+          received.some(
+            ({ event }) => event.type === 'thread.error' && event.message.includes(detail),
+          ),
+        ).toBe(true)
+      } finally {
+        previewStarts.failures.length = 0
+        await orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+      }
+    },
+  )
 
   it('accepts final structured output after provider commentary', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-commentary-'))
