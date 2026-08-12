@@ -180,11 +180,7 @@ type PendingSubmission = {
 }
 
 type CatalogAvailability = 'loading' | 'ready' | 'failed'
-type AccountCheck = {
-  provider: ProviderId
-  state: 'loading' | 'ready' | 'failed'
-  account?: Account | undefined
-}
+type AccountCheck = { provider: ProviderId; state: CatalogAvailability; account?: Account }
 
 function resolveSendAvailability(input: {
   catalog: CatalogAvailability
@@ -390,10 +386,8 @@ export function App() {
   const [workspace, setWorkspace] = useState<WorkspaceInfo | undefined>()
   const [branches, setBranches] = useState<string[]>([])
   const [account, setAccount] = useState<Account | undefined>()
-  const [accountCheck, setAccountCheck] = useState<AccountCheck>({
-    provider,
-    state: 'loading',
-  })
+  const [accountCheck, setAccountCheck] = useState<AccountCheck>({ provider, state: 'loading' })
+  const accountRequestRevision = useRef(0)
   const [voiceAvailable, setVoiceAvailable] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
@@ -1142,17 +1136,18 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false
+    const revision = ++accountRequestRevision.current
     setAccount(undefined)
     setAccountCheck({ provider, state: 'loading' })
     void transport
       .request('auth.status', { provider })
       .then((nextAccount) => {
-        if (cancelled) return
+        if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(nextAccount)
         setAccountCheck({ provider, state: 'ready', account: nextAccount })
       })
       .catch(() => {
-        if (cancelled) return
+        if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(undefined)
         setAccountCheck({ provider, state: 'failed' })
       })
@@ -2102,6 +2097,7 @@ export function App() {
   const handleAccountChange = useCallback(
     (changedProvider: ProviderId, changedAccount: Account) => {
       if (changedProvider === provider) {
+        accountRequestRevision.current += 1
         setAccount(changedAccount)
         setAccountCheck({ provider: changedProvider, state: 'ready', account: changedAccount })
       }

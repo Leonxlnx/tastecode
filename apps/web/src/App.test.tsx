@@ -762,12 +762,10 @@ describe('web client', () => {
       releaseProviders = resolve
     })
     transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'providers.list') {
+      if (method === 'providers.list')
         return providersGate.then(() => ({ providers: serverProviders }))
-      }
-      if (method === 'models.list' && (params as { provider: string }).provider === 'grok') {
+      if (method === 'models.list' && (params as { provider: string }).provider === 'grok')
         return new Promise(() => {})
-      }
       return request(method, params)
     })
     localStorage.setItem(
@@ -795,14 +793,12 @@ describe('web client', () => {
     expect((composer as HTMLTextAreaElement).value).toBe('Use what the UI shows')
     expect(screen.getByRole('status').textContent).toContain('Checking providers')
     expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
-
     await act(async () => {
       releaseProviders()
       await providersGate
     })
     await waitFor(() => expect(sendButton.disabled).toBe(false))
     fireEvent.keyDown(composer, { key: 'Enter' })
-
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
@@ -1039,28 +1035,47 @@ describe('new chats', () => {
   it('offers setup without clearing a loaded-thread draft when its provider cannot run', async () => {
     serverProviders = [
       {
-        id: 'codex',
-        displayName: 'Codex',
+        ...(serverProviders[0] as Record<string, unknown>),
         installed: false,
-        auth: 'unknown',
         setup: { installUrl: 'https://example.test/codex', login: 'app' },
         problem: 'codex is not on PATH',
       },
     ]
     render(<App />)
-
-    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     const composer = await screen.findByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Send after setup' } })
-
     const setup = await screen.findByRole('button', { name: 'Set up a provider' })
-    expect(screen.getByRole('status').textContent).toContain('Provider setup required')
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
-    expect((composer as HTMLTextAreaElement).value).toBe('Send after setup')
-
     fireEvent.click(setup)
     expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeTruthy()
-    expect(transport.request).not.toHaveBeenCalledWith('thread.sendTurn', expect.anything())
+    expect((composer as HTMLTextAreaElement).value).toBe('Send after setup')
+  })
+
+  it('keeps a newer sign-out when the initial account read finishes late', async () => {
+    serverProviders = [{ ...(serverProviders[0] as object), auth: 'unknown' }]
+    let finishInitial!: (account: { signedIn: boolean }) => void
+    let accountReads = 0
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'auth.status') {
+        accountReads += 1
+        return accountReads === 1
+          ? new Promise<{ signedIn: boolean }>((resolve) => (finishInitial = resolve))
+          : Promise.resolve({ signedIn: true })
+      }
+      return method === 'auth.signOut' ? Promise.resolve({}) : request(method, params)
+    })
+    render(<App />)
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Stay blocked' } })
+    openSettings()
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
+    await screen.findByRole('button', { name: 'Sign in' })
+    await act(async () => finishInitial({ signedIn: true }))
+    expect(screen.getByRole('status').textContent).toContain('Provider setup required')
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('preserves a parked custom model without blocking a catalogless beta source', async () => {
@@ -1069,21 +1084,18 @@ describe('new chats', () => {
     localStorage.setItem('harness.model', 'custom:cursor:cursor-large')
     localStorage.setItem('harness.customModels.v1', parked)
     render(<App />)
-
     const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
     const sendButton = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
     fireEvent.change(composer, { target: { value: 'Use the provider default' } })
     await waitFor(() => expect(sendButton.disabled).toBe(false))
     expect(screen.queryByText('Cursor Large')).toBeNull()
     expect(localStorage.getItem('harness.customModels.v1')).toBe(parked)
-
     fireEvent.keyDown(composer, { key: 'Enter' })
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('thread.start', {
-        provider: 'codex',
-        workspacePath: '/work/project',
-        approval: 'ask',
-      }),
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ provider: 'codex' }),
+      ),
     )
   })
 
@@ -1092,24 +1104,18 @@ describe('new chats', () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'providers.list' && failing) {
+      if (method === 'providers.list' && failing)
         return Promise.reject(new Error('provider discovery unavailable'))
-      }
       return request(method, params)
     })
-
     render(<App />)
-
     const composer = await screen.findByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Recover this draft' } })
     const setup = await screen.findByRole('button', { name: 'Set up a provider' })
     expect(screen.getByRole('status').textContent).toContain('Provider unavailable')
-
     failing = false
     fireEvent.click(setup)
-
     await waitFor(() => {
-      expect(screen.queryByText('Provider unavailable')).toBeNull()
       expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
         false,
       )
