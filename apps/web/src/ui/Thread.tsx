@@ -79,6 +79,7 @@ export function Thread(props: {
   userInputs: UserInputRequest[]
   reviews: ApprovalReview[]
   checkpoints?: Checkpoint[] | undefined
+  keyboardActive?: boolean | undefined
   onEditMessage?: ((text: string) => void) | undefined
   onRevertCheckpoint?: ((checkpoint: Checkpoint) => void) | undefined
   onDecide: (id: string, decision: ApprovalDecision) => void
@@ -207,6 +208,7 @@ export function Thread(props: {
   // Ctrl+F cannot work with a virtualised list — the match may not be in the
   // DOM — so the app owns find instead of the browser.
   useEffect(() => {
+    if (props.keyboardActive === false) return
     const onKey = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target)) return
       // Plain Ctrl+F only — Ctrl+Shift+F belongs to the global chat search,
@@ -224,7 +226,7 @@ export function Thread(props: {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [props.keyboardActive])
 
   const jumpTo = useCallback(
     (index: number) => {
@@ -256,6 +258,7 @@ export function Thread(props: {
   // Alt+Up/Down moves a turn at a time. Scrolling by pixel through a long
   // session to find where an exchange began is the slow way to do it.
   useEffect(() => {
+    if (props.keyboardActive === false) return
     const onKey = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target)) return
       if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
@@ -273,7 +276,7 @@ export function Thread(props: {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [turns, virtualizer])
+  }, [props.keyboardActive, turns, virtualizer])
 
   const rows = virtualizer.getVirtualItems()
 
@@ -709,6 +712,17 @@ const Row = memo(function Row({
     )
   }
 
+  // A thread-level failure is a statement, not an operational row: the alert
+  // and the reason, without the disclosure affordance tool calls get.
+  if (item.type === 'error') {
+    return (
+      <div className="turn-error">
+        <CircleAlert className="turn-error__glyph" size={13} aria-hidden />
+        <p className="turn-error__text">{item.text}</p>
+      </div>
+    )
+  }
+
   return <AuxDisclosure item={item} live={live} />
 })
 
@@ -1026,8 +1040,6 @@ function glyph(item: Item) {
       return <Wrench size={13} />
     case 'plan':
       return <ListChecks size={13} />
-    case 'error':
-      return <CircleAlert size={13} />
     default:
       return <CircleQuestionMark size={13} />
   }
@@ -1103,8 +1115,6 @@ function summarise(item: Item): string {
       )
     case 'plan':
       return 'Plan'
-    case 'error':
-      return item.text ?? 'Error'
     default:
       return item.type
   }

@@ -300,6 +300,8 @@ beforeEach(() => {
     switch (method) {
       case 'providers.list':
         return Promise.resolve({ providers: serverProviders })
+      case 'harnesses.list':
+        return Promise.resolve({ harnesses: [] })
       case 'models.list':
         return Promise.resolve({ models: [] })
       case 'workspace.info':
@@ -767,6 +769,125 @@ describe('web client', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('auth.status', { provider: 'codex' })
     })
+  })
+
+  it('routes /side with an inline prompt into an ephemeral Side chat', async () => {
+    localStorage.setItem('harness.models.cache', serializeModelCatalogCache([cachedCodexChoice()]))
+    const fallback = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (
+        method === 'thread.history' &&
+        (params as { threadId?: string }).threadId === 'untouched-thread'
+      ) {
+        return Promise.resolve({
+          events: [
+            {
+              seq: 1,
+              event: {
+                type: 'item.completed',
+                item: {
+                  id: 'main-user',
+                  turnId: 'main-turn',
+                  type: 'message',
+                  role: 'user',
+                  status: 'completed',
+                  text: 'Fix the build',
+                  createdAt: 1,
+                },
+              },
+            },
+          ],
+          running: false,
+        })
+      }
+      if (method === 'sideChat.start') return Promise.resolve({ threadId: 'side-1' })
+      if (method === 'thread.history' && (params as { threadId?: string }).threadId === 'side-1') {
+        return Promise.resolve({ events: [], running: false })
+      }
+      return fallback(method, params)
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: '/side why did it fail?' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'sideChat.start',
+        expect.objectContaining({ parentThreadId: 'untouched-thread' }),
+      ),
+    )
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.sendTurn',
+        expect.objectContaining({ threadId: 'side-1', text: 'why did it fail?' }),
+      ),
+    )
+    expect(screen.getAllByText('Side chat')).toHaveLength(2)
+  })
+
+  it('discovers a custom Pi source and binds new sessions to its harness id', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'harnesses.list') {
+        return Promise.resolve({
+          harnesses: [
+            {
+              id: 'deepseek-pi',
+              displayName: 'DeepSeek Pi',
+              provider: 'pi',
+              command: 'deepseek-pi',
+              args: [],
+            },
+          ],
+        })
+      }
+      if (method === 'models.list' && (params as { agent?: string }).agent === 'deepseek-pi') {
+        return Promise.resolve({
+          models: [
+            {
+              id: 'openrouter/deepseek-v3.2',
+              displayName: 'DeepSeek V3.2',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'high',
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', {
+        provider: 'pi',
+        agent: 'deepseek-pi',
+      }),
+    )
+    expect(
+      (await screen.findByRole('button', { name: 'Model and reasoning' })).textContent,
+    ).toContain('DeepSeek V3.2')
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Use my Pi fork' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({
+          provider: 'pi',
+          agent: 'deepseek-pi',
+          model: 'openrouter/deepseek-v3.2',
+          effort: 'high',
+        }),
+      ),
+    )
   })
 
   it('opens the pull-request workspace from the sidebar', async () => {
@@ -1495,6 +1616,40 @@ describe('new chats', () => {
     act(() => { for (const listener of transport.sequenceGapListeners) listener(2, 4) })
     // prettier-ignore
     await waitFor(() => expect(transport.request).toHaveBeenCalledWith('thread.history', { threadId: 'thread-1', afterSeq: 1 }))
+  })
+
+  it('carries Stop through new-session creation and interrupts the first turn', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'thread.start') await startGate
+      return request(method, params)
+    })
+
+    render(<App />)
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Stop this immediately' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+
+    expect(await screen.findByRole('button', { name: 'Stopping…' })).toBeTruthy()
+    expect(transport.request).not.toHaveBeenCalledWith('thread.interrupt', expect.anything())
+
+    await act(async () => releaseStart?.())
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.interrupt', {
+        threadId: 'thread-1',
+      })
+    })
+    const methods = transport.request.mock.calls.map(([method]) => method)
+    expect(methods.indexOf('thread.sendTurn')).toBeLessThan(methods.indexOf('thread.interrupt'))
   })
 
   it('keeps a draft and asks for a project when sending without one', async () => {
@@ -3143,9 +3298,8 @@ describe('inbox lifecycle', () => {
     ]
 
     render(<App />)
-    fireEvent.change(await screen.findByRole('combobox', { name: 'Sidebar project filter' }), {
-      target: { value: '/work/beta' },
-    })
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Sidebar project filter' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Beta' }))
     fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
 
     const picker = screen.getByRole('dialog', { name: 'Choose a project for the new thread' })
@@ -3362,6 +3516,9 @@ describe('live sessions', () => {
     expect(screen.getByText('Working')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
     const startedAt = screen.getByTestId('thread').getAttribute('data-started-at')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    expect(transport.request).toHaveBeenCalledWith('thread.interrupt', { threadId: 'thread-1' })
 
     await act(async () => resolveHistory({ events: [], running: false }))
     expect(screen.getByTestId('thread').textContent).toContain('Continue immediately')

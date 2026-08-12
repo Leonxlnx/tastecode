@@ -1,9 +1,8 @@
 import { useState, type FormEvent } from 'react'
-import { ChevronDown, Plus, X } from 'lucide-react'
+import { Plus, X } from 'lucide-react'
 import type { ProviderId } from '@harness/contracts'
-import { providerMark, type CustomModelInput } from '../model-catalog.js'
-import { Menu, MenuItem } from './Menu.js'
-import { ProviderIcon } from './ProviderIcon.js'
+import type { CustomModelInput } from '../model-catalog.js'
+import { AppSelect } from './AppSelect.js'
 
 /**
  * One-line entry point for a model id the provider accepts but does not list.
@@ -24,8 +23,6 @@ export function CustomModelForm(props: {
   const [modelId, setModelId] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState<string>()
-  const selectedProvider = props.providers.find((entry) => entry.id === provider)
-
   const submit = (event: FormEvent) => {
     event.preventDefault()
     const id = modelId.trim()
@@ -44,38 +41,15 @@ export function CustomModelForm(props: {
       {props.fixedProvider ? null : (
         <div className="custom-model-form__field">
           <span className="custom-model-form__label">Provider</span>
-          <Menu
-            align="left"
-            drop="down"
-            label={`Provider, ${selectedProvider?.name ?? 'Choose provider'}`}
-            triggerClassName="custom-model-form__provider-trigger"
-            panelClassName="custom-model-form__provider-menu"
-            trigger={(open) => (
-              <span className="custom-model-form__provider-value">
-                {selectedProvider ? (
-                  <ProviderIcon mark={providerMark(selectedProvider.id)} size={14} />
-                ) : null}
-                <span>{selectedProvider?.name ?? 'Choose provider'}</span>
-                <ChevronDown className={open ? 'is-open' : ''} size={14} aria-hidden />
-              </span>
-            )}
-          >
-            {(close) =>
-              props.providers.map((entry) => (
-                <MenuItem
-                  key={entry.id}
-                  title={entry.name}
-                  active={entry.id === provider}
-                  checked={entry.id === provider}
-                  icon={<ProviderIcon mark={providerMark(entry.id)} size={14} />}
-                  onClick={() => {
-                    setProvider(entry.id)
-                    close()
-                  }}
-                />
-              ))
-            }
-          </Menu>
+          <AppSelect
+            ariaLabel="Provider"
+            value={provider}
+            onChange={setProvider}
+            options={props.providers.map((entry) => ({
+              value: entry.id,
+              label: entry.name,
+            }))}
+          />
         </div>
       )}
       <label

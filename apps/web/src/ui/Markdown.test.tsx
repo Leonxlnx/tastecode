@@ -59,6 +59,7 @@ describe('Markdown inline references', () => {
     ]) {
       expect(container.querySelector(`[data-file-icon="${kind}"]`)).toBeTruthy()
     }
+    expect(screen.getByText('README.md').querySelector('.lucide-file-text')).toBeTruthy()
   })
 
   it('keeps linked local files out of the external-link warning flow', () => {

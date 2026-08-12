@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react'
 import type { Account, ProviderId, ThreadInboxStatus, ThreadLifecycle } from '@harness/contracts'
 import {
@@ -29,6 +30,14 @@ import {
   X,
 } from 'lucide-react'
 import { isDesktop, revealPath } from '../bridge.js'
+import {
+  appHapticsSupported,
+  performAppHaptic,
+  prepareAppHaptics,
+  readAppHaptics,
+  ResizeHaptics,
+  subscribeAppHaptics,
+} from '../haptics.js'
 import { sessionSourcePresentation } from '../provider-presentation.js'
 import { profileInitials, type ProfileIdentityPreferences } from '../profile-preferences.js'
 import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
@@ -606,8 +615,21 @@ function RailResizeHandle(props: {
   onResizingChange: (active: boolean) => void
   onCollapse: (releaseX: number) => void
 }) {
+  const hapticsPreference = useSyncExternalStore(
+    subscribeAppHaptics,
+    readAppHaptics,
+    readAppHaptics,
+  )
+  const hapticsEnabled = appHapticsSupported() && hapticsPreference
   const drag = useRef<
-    { startX: number; width: number; current: number; folded: boolean } | undefined
+    | {
+        startX: number
+        width: number
+        current: number
+        folded: boolean
+        haptics: ResizeHaptics | undefined
+      }
+    | undefined
   >(undefined)
 
   /** Set while a fold or unfold is playing out, so tracking does not cut the
@@ -686,7 +708,11 @@ function RailResizeHandle(props: {
       aria-valuemax={MAX_RAIL_WIDTH}
       aria-valuenow={props.width}
       onKeyDown={resizeWithKeyboard}
+      onPointerEnter={() => {
+        if (hapticsEnabled) prepareAppHaptics()
+      }}
       onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
+        if (hapticsEnabled) prepareAppHaptics()
         event.currentTarget.setPointerCapture?.(event.pointerId)
         setResizing(event.currentTarget, true)
         props.onResizingChange(true)
@@ -695,6 +721,14 @@ function RailResizeHandle(props: {
           width: props.width,
           current: props.width,
           folded: false,
+          haptics: hapticsEnabled
+            ? new ResizeHaptics({
+                startValue: props.width,
+                startTime: event.timeStamp,
+                minValue: MIN_RAIL_WIDTH,
+                maxValue: MAX_RAIL_WIDTH,
+              })
+            : undefined,
         }
       }}
       onPointerMove={(event: PointerEvent<HTMLButtonElement>) => {
@@ -705,9 +739,22 @@ function RailResizeHandle(props: {
         // folded makes the collapse real. Both the fold and the unfold run
         // with the transition on; ordinary tracking keeps it off.
         const folded = props.foldable && raw <= COLLAPSE_WIDTH
-        if (folded !== drag.current.folded) {
+        const next = clampRailWidth(raw)
+        const tracking = !folded && settling.current === undefined && next !== drag.current.current
+        const feedback = drag.current.haptics?.sample({
+          rawValue: raw,
+          value: next,
+          tracking,
+          time: event.timeStamp,
+        })
+        const foldChanged = folded !== drag.current.folded
+        if (foldChanged) performAppHaptic('generic')
+        else if (feedback) performAppHaptic(feedback)
+        if (foldChanged) {
           drag.current.folded = folded
-          if (!folded) drag.current.current = clampRailWidth(raw)
+          if (!folded) {
+            drag.current.current = next
+          }
           setResizing(event.currentTarget, false)
           holdTransition()
           preview(event.currentTarget, folded ? 0 : drag.current.current)
@@ -718,7 +765,6 @@ function RailResizeHandle(props: {
         // eases into the cursor rather than snapping out of a half-played
         // animation. Once it has settled, tracking is 1:1 again.
         if (settling.current === undefined) setResizing(event.currentTarget, true)
-        const next = clampRailWidth(raw)
         drag.current.current = next
         preview(event.currentTarget, next)
       }}
@@ -783,6 +829,7 @@ function ProjectRow(props: {
     id: string
     position: DropPosition
   }>()
+  const dropTargetRef = useRef<{ id: string; position: DropPosition } | undefined>(undefined)
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
   const expanded = open || props.forceOpen
   const count = props.project.sessions.length
@@ -795,6 +842,7 @@ function ProjectRow(props: {
   const endDrag = () => {
     setDraggedSessionId(undefined)
     setDropTarget(undefined)
+    dropTargetRef.current = undefined
   }
 
   const dragOverSession = (event: DragEvent<HTMLLIElement>, targetId: string) => {
@@ -802,8 +850,14 @@ function ProjectRow(props: {
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
     const bounds = event.currentTarget.getBoundingClientRect()
-    const position = event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
-    setDropTarget({ id: targetId, position })
+    const position: DropPosition =
+      event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
+    const current = dropTargetRef.current
+    if (current?.id === targetId && current.position === position) return
+    const next = { id: targetId, position }
+    dropTargetRef.current = next
+    setDropTarget(next)
+    performAppHaptic('alignment')
   }
 
   return (
@@ -960,6 +1014,7 @@ function ProjectRow(props: {
               dragging={session.id === draggedSessionId}
               dropPosition={dropTarget?.id === session.id ? dropTarget.position : undefined}
               onDragStart={(event) => {
+                prepareAppHaptics()
                 event.dataTransfer.effectAllowed = 'move'
                 event.dataTransfer.setData('text/plain', session.id)
                 setDraggedSessionId(session.id)

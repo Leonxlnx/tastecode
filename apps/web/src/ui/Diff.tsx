@@ -43,7 +43,7 @@ export function Diff({
     <section className={`diff ${reviewing ? 'is-reviewing' : ''}`} aria-label="Edited files">
       <div className="diff__head">
         <span className="diff__icon" aria-hidden>
-          <FileDiff size={20} strokeWidth={1.8} />
+          <FileDiff size={16} strokeWidth={2} />
         </span>
         <span className="diff__copy">
           <span className="diff__title">

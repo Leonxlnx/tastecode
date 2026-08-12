@@ -346,8 +346,7 @@ describe('thread reducer', () => {
       {
         type: 'thread.error',
         threadId: 'th1',
-        message:
-          'This turn stopped when Personal Harness restarted. Review any partial changes, then send a new message to continue.',
+        message: 'Turn interrupted: Personal Harness restarted. Send a new message to continue.',
       },
     ])
 
@@ -358,7 +357,7 @@ describe('thread reducer', () => {
       expect.objectContaining({
         type: 'error',
         status: 'completed',
-        text: expect.stringContaining('send a new message to continue'),
+        text: 'Turn interrupted: Personal Harness restarted. Send a new message to continue.',
       }),
     ])
   })

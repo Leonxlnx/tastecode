@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentProps } from 'react'
+import type { Transport } from '../transport.js'
 import { Composer, insertTranscriptAtCursor } from './Composer.js'
 
 const recorder = vi.hoisted(() => ({
@@ -117,6 +118,8 @@ describe('insertTranscriptAtCursor', () => {
 function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}) {
   return render(
     <Composer
+      transport={voiceTransport()}
+      provider="codex"
       projects={[{ path: '/work/harness', name: 'Harness', sessions: [] }]}
       projectPath="/work/harness"
       projectName="Harness"
@@ -161,4 +164,13 @@ function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>>
       {...overrides}
     />,
   )
+}
+
+function voiceTransport(): Transport {
+  return {
+    state: 'open',
+    request: vi.fn(),
+    on: vi.fn(() => () => undefined),
+    onState: vi.fn(() => () => undefined),
+  } as unknown as Transport
 }

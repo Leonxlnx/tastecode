@@ -3,12 +3,28 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { Sidebar } from './Sidebar.js'
 
+const haptics = vi.hoisted(() => ({
+  performAppHaptic: vi.fn(),
+  prepareAppHaptics: vi.fn(),
+}))
+
 vi.mock('../bridge.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../bridge.js')>()),
   isMacOS: () => true,
 }))
 
-afterEach(cleanup)
+vi.mock('../haptics.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../haptics.js')>()),
+  appHapticsSupported: () => true,
+  performAppHaptic: haptics.performAppHaptic,
+  prepareAppHaptics: haptics.prepareAppHaptics,
+}))
+
+afterEach(() => {
+  cleanup()
+  haptics.performAppHaptic.mockClear()
+  haptics.prepareAppHaptics.mockClear()
+})
 
 const session = (id: string, title: string) => ({
   id,
@@ -433,7 +449,11 @@ describe('Sidebar chat actions', () => {
 
     fireEvent.dragStart(source, { dataTransfer })
     fireEvent.dragOver(target, { clientY: 80, dataTransfer })
+    fireEvent.dragOver(target, { clientY: 80, dataTransfer })
     expect(target.dataset.dropPosition).toBe('after')
+    expect(haptics.prepareAppHaptics).toHaveBeenCalledOnce()
+    expect(haptics.performAppHaptic).toHaveBeenCalledOnce()
+    expect(haptics.performAppHaptic).toHaveBeenCalledWith('alignment')
     fireEvent.drop(target, { clientY: 80, dataTransfer })
 
     expect(onReorderSession).toHaveBeenCalledWith('/work/harness', 'thread-1', 'thread-2', 'after')

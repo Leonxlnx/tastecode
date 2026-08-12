@@ -7,6 +7,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from 'react'
+import { performAppHaptic, prepareAppHaptics } from '../haptics.js'
 import { readModelPickerLayout, subscribeModelPickerLayout } from '../model-picker-layout.js'
 import { Check, ChevronDown, Zap } from 'lucide-react'
 import {
@@ -388,9 +389,11 @@ function DitherChoiceRow(props: {
       stopCount: props.optionLabels.length,
     })
     if (pointerIndexRef.current !== nextIndex) {
+      const previousIndex = pointerIndexRef.current ?? displayIndex
       pointerIndexRef.current = nextIndex
       setPointerIndex(nextIndex)
       props.onPreviewIndex(nextIndex)
+      if (nextIndex !== previousIndex) performAppHaptic('alignment')
     }
   }
 
@@ -433,11 +436,15 @@ function DitherChoiceRow(props: {
         event.preventDefault()
         event.stopPropagation()
       }}
+      onPointerEnter={() => {
+        if (!props.disabled) prepareAppHaptics()
+      }}
       onKeyDown={handleKeyDown}
       onPointerDown={(event) => {
         if (props.disabled) return
         event.preventDefault()
         event.stopPropagation()
+        prepareAppHaptics()
         setPointerCaptureSafe(event.currentTarget, event.pointerId)
         previewFromPointer(event)
       }}

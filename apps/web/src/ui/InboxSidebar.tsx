@@ -25,7 +25,12 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { sessionSourcePresentation } from '../provider-presentation.js'
+import {
+  agentPresentation,
+  providerDisplayName,
+  sessionSourcePresentation,
+} from '../provider-presentation.js'
+import { AppSelect } from './AppSelect.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { Project, Session } from './Sidebar.js'
 import { SourceIdentity } from './SourceIdentity.js'
@@ -222,18 +227,18 @@ export function InboxSidebar(props: {
         <div className="inbox-toolbar__projects">
           <label className="inbox__scope">
             <span className="visually-hidden">Project filter</span>
-            <select
-              aria-label="Sidebar project filter"
+            <AppSelect
+              ariaLabel="Sidebar project filter"
               value={props.scope}
-              onChange={(event) => props.onScopeChange(event.currentTarget.value)}
-            >
-              <option value="">All projects</option>
-              {props.projects.map((project) => (
-                <option value={project.path} key={project.path}>
-                  {projectName(project)}
-                </option>
-              ))}
-            </select>
+              onChange={props.onScopeChange}
+              options={[
+                { value: '', label: 'All projects' },
+                ...props.projects.map((project) => ({
+                  value: project.path,
+                  label: projectName(project),
+                })),
+              ]}
+            />
           </label>
           <button className="inbox-toolbar__add" type="button" onClick={props.onAddProject}>
             <FolderPlus size={13} aria-hidden />

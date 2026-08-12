@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { emptyThread, reduce } from '../thread-store.js'
+import type { Transport } from '../transport.js'
 import { Composer } from './Composer.js'
 
 const bridge = vi.hoisted(() => ({
@@ -192,6 +193,23 @@ describe('Composer attachment source switching', () => {
   })
 })
 
+describe('Composer send handoff', () => {
+  it('switches directly to Stop without starting a looping send animation', () => {
+    const onSend = vi.fn()
+    const view = renderComposer(onSend)
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: 'Ship this' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    view.rerenderComposer({ running: true })
+
+    expect(onSend).toHaveBeenCalledWith('Ship this', [])
+    const stop = screen.getByRole('button', { name: 'Stop' })
+    expect(stop.querySelector('.lucide-loader-circle')).toBeNull()
+    expect(stop.closest('.composer__send-beam')?.hasAttribute('data-active')).toBe(false)
+  })
+})
+
 describe('Composer queue', () => {
   it('changes Stop to Queue when a running session has a draft and Enter queues it', () => {
     const onSend = vi.fn()
@@ -207,7 +225,8 @@ describe('Composer queue', () => {
     expect(onSend).toHaveBeenCalledWith('Do this next', [])
     expect(onInterrupt).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Stop' })).toBe(action)
-    expect(action.classList.contains('is-sending')).toBe(true)
+    fireEvent.click(action)
+    expect(onInterrupt).toHaveBeenCalledOnce()
   })
 
   it('steers a running session with Ctrl+Enter', () => {
@@ -289,6 +308,68 @@ describe('Composer prompts', () => {
     fireEvent.keyDown(composer, { key: 'Enter' })
 
     expect(onSend).toHaveBeenCalledWith('/review', [])
+  })
+
+  it('opens skills and MCP servers from dollar and selects the active row with Tab', async () => {
+    const onSend = vi.fn()
+    const transport = populatedResourceTransport()
+    renderComposer(onSend, { transport })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: '$', selectionStart: 1 } })
+
+    const list = await screen.findByRole('listbox', { name: 'Skills and MCP servers' })
+    const skill = screen.getByRole('option', { name: /Airtable CLI/ })
+    const mcp = screen.getByRole('option', { name: /Official Docs/ })
+    expect(list).toBeTruthy()
+    expect(skill.getAttribute('aria-selected')).toBe('true')
+
+    fireEvent.keyDown(composer, { key: 'ArrowDown' })
+    await waitFor(() => expect(mcp.getAttribute('aria-selected')).toBe('true'))
+    fireEvent.keyDown(composer, { key: 'Tab' })
+
+    expect(screen.queryByRole('listbox', { name: 'Skills and MCP servers' })).toBeNull()
+    expect(screen.getByText('Official Docs').closest('.chip--resource')).toBeTruthy()
+    expect((composer as HTMLTextAreaElement).value).toBe('')
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('@officialDocs', [])
+  })
+
+  it('opens the combined picker from at, filters it, and highlights a clicked skill as a chip', async () => {
+    const onSend = vi.fn()
+    renderComposer(onSend, { transport: populatedResourceTransport() })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: '@air', selectionStart: 4 } })
+
+    const skill = await screen.findByRole('option', { name: /Airtable CLI/ })
+    expect(screen.queryByRole('option', { name: /Official Docs/ })).toBeNull()
+    fireEvent.click(skill)
+
+    const chip = screen.getByText('Airtable CLI').closest('.chip--resource')
+    expect(chip?.classList.contains('chip--resource')).toBe(true)
+    expect(chip?.querySelector('svg')).toBeTruthy()
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('$airtable-cli', [])
+  })
+
+  it('closes the resource picker before Escape interrupts a running turn', async () => {
+    const onInterrupt = vi.fn()
+    renderComposer(vi.fn(), {
+      running: true,
+      onInterrupt,
+      transport: populatedResourceTransport(),
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: '$', selectionStart: 1 } })
+    await screen.findByRole('listbox', { name: 'Skills and MCP servers' })
+
+    fireEvent.keyDown(composer, { key: 'Escape' })
+    expect(onInterrupt).not.toHaveBeenCalled()
+    expect(screen.queryByRole('listbox', { name: 'Skills and MCP servers' })).toBeNull()
+
+    fireEvent.keyDown(composer, { key: 'Escape' })
+    expect(onInterrupt).toHaveBeenCalledOnce()
   })
 })
 
@@ -477,8 +558,11 @@ function renderComposer(
   overrides: Partial<Parameters<typeof Composer>[0]> = {},
 ) {
   let currentOverrides = overrides
+  const transport = overrides.transport ?? createResourceTransport()
   const composer = () => (
     <Composer
+      transport={transport}
+      provider="codex"
       projects={[{ path: '/work/harness', name: 'Harness', sessions: [] }]}
       projectPath="/work/harness"
       projectName="Harness"
@@ -529,5 +613,90 @@ function renderComposer(
       currentOverrides = { ...currentOverrides, ...next }
       view.rerender(composer())
     },
+  })
+}
+
+function createResourceTransport(
+  request: (method: string, params: unknown) => Promise<unknown> = async (method) => {
+    if (method === 'skills.list') {
+      return {
+        capabilities: { inventory: true, configure: true, install: true },
+        skills: [],
+        errors: [],
+      }
+    }
+    if (method === 'mcp.list') {
+      return {
+        capabilities: {
+          inventory: true,
+          add: true,
+          update: true,
+          remove: true,
+          reload: true,
+          startOAuth: true,
+          cancelOAuth: true,
+        },
+        servers: [],
+      }
+    }
+    throw new Error(`Unexpected request: ${method}`)
+  },
+): Transport {
+  return {
+    state: 'open',
+    request: vi.fn(request),
+    on: vi.fn(() => () => undefined),
+    onState: vi.fn(() => () => undefined),
+  } as unknown as Transport
+}
+
+function populatedResourceTransport(): Transport {
+  return createResourceTransport(async (method) => {
+    if (method === 'skills.list') {
+      return {
+        capabilities: { inventory: true, configure: true, install: true },
+        skills: [
+          {
+            id: '/skills/airtable-cli/SKILL.md',
+            name: 'airtable-cli',
+            displayName: 'Airtable CLI',
+            description: 'Inspect Airtable bases, schemas, and records',
+            source: { type: 'folder', path: '/skills/airtable-cli/SKILL.md' },
+            scope: 'user',
+            enabled: true,
+            dependencyErrors: [],
+          },
+        ],
+        errors: [],
+      }
+    }
+    if (method === 'mcp.list') {
+      return {
+        capabilities: {
+          inventory: true,
+          add: true,
+          update: true,
+          remove: true,
+          reload: true,
+          startOAuth: true,
+          cancelOAuth: true,
+        },
+        servers: [
+          {
+            id: 'officialDocs',
+            displayName: 'Official Docs',
+            description: 'Search official product documentation',
+            scope: 'global',
+            enabled: true,
+            auth: { status: 'not_required' },
+            startup: { state: 'ready' },
+            tools: [],
+            resources: [],
+            resourceTemplates: [],
+          },
+        ],
+      }
+    }
+    throw new Error(`Unexpected request: ${method}`)
   })
 }

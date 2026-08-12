@@ -74,6 +74,12 @@ import {
   type ModelChoice,
 } from './model-catalog.js'
 import { parseModelCatalogCache, serializeModelCatalogCache } from './model-catalog-cache.js'
+import { parseSideChatCommand } from './side-chat-command.js'
+import type {
+  SideChatParentStatus,
+  SideChatPromptRequest,
+  SideChatStartOptions,
+} from './ui/workspace/WorkspaceSideChat.js'
 import {
   readProfileIdentityPreferences,
   writeProfileIdentityPreferences,
@@ -113,14 +119,15 @@ const PROVIDER_IDS = [
   'cursor',
   'opencode',
   'antigravity',
+  'pi',
   'acp',
   'api',
 ] as const satisfies readonly ProviderId[]
 const PUBLIC_BETA_PROVIDER_IDS = new Set<ProviderId>(['codex', 'claude-code', 'grok'])
 /** Engines a custom model can be attached to — ACP agents and API
  *  connections carry their own roster concepts and stay out of this list. */
-const DIRECT_PROVIDER_IDS = PROVIDER_IDS.filter((id) => id !== 'acp' && id !== 'api')
-/** Which ACP agent was chosen. Meaningless unless the provider is `acp`. */
+const DIRECT_PROVIDER_IDS = PROVIDER_IDS.filter((id) => id !== 'acp' && id !== 'api' && id !== 'pi')
+/** Which named agent or custom harness source was chosen. */
 const AGENT_KEY = 'harness.acpAgent'
 const AGENT_NAME_KEY = 'harness.acpAgentName'
 const PROJECTS_KEY = 'harness.projects'
@@ -142,6 +149,7 @@ const MACOS_FONT_SMOOTHING_KEY = 'harness.macosFontSmoothing'
 const TERMINAL_OPEN_KEY = 'harness.terminal.open'
 const TERMINAL_HEIGHT_KEY = 'harness.terminal.height'
 const RAIL_WIDTH_KEY = 'harness.rail.width'
+const WORKSPACE_PANEL_WIDTH_KEY = 'harness.workspacePanel.width'
 const DEFAULT_SIDEBAR_SETTINGS: SidebarSettings = { mode: 'inbox', autoSettleDays: 3 }
 const TerminalPane = lazy(() =>
   import('./ui/TerminalPane.js').then((module) => ({ default: module.TerminalPane })),
@@ -149,6 +157,11 @@ const TerminalPane = lazy(() =>
 const PullRequestsView = lazy(() =>
   import('./ui/pull-requests/PullRequestsView.js').then((module) => ({
     default: module.PullRequestsView,
+  })),
+)
+const WorkspacePanel = lazy(() =>
+  import('./ui/workspace/WorkspacePanel.js').then((module) => ({
+    default: module.WorkspacePanel,
   })),
 )
 
@@ -210,6 +223,8 @@ function resolveSendAvailability(input: {
       ? 'setup-required'
       : 'unavailable'
   }
+
+  if (input.selectedChoice?.agent && input.selectedChoice.provider !== 'acp') return 'ready'
 
   const status = input.providerStatuses.find((entry) => entry.id === provider)
   if (!status) return 'unavailable'
@@ -374,6 +389,7 @@ export function App() {
       }
     | undefined
   >(undefined)
+  const pendingInterruptThreadIds = useRef(new Set<string>())
   const [queuedTurns, setQueuedTurns] = useState<QueuedTurn[]>([])
   const [canSteerQueue, setCanSteerQueue] = useState(false)
   const [customModels, setCustomModels] = useState<CustomModel[]>(readCustomModels)
@@ -399,6 +415,7 @@ export function App() {
     })
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([])
   const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
+  const [customHarnessIds, setCustomHarnessIds] = useState<Set<string>>(() => new Set())
   const [modelConnections, setModelConnections] = useState<ModelConnection[]>([])
   const [catalogRequest, setCatalogRequest] = useState(0)
   const [catalogAvailability, setCatalogAvailability] = useState<CatalogAvailability>('loading')
@@ -507,6 +524,10 @@ export function App() {
   )
   const [terminalOpen, setTerminalOpen] = useState(() => readSetting(TERMINAL_OPEN_KEY) === 'true')
   const [terminalHeight, setTerminalHeight] = useState(readTerminalHeight)
+  const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false)
+  const [workspacePanelExpanded, setWorkspacePanelExpanded] = useState(false)
+  const [workspacePanelWidth, setWorkspacePanelWidth] = useState(readWorkspacePanelWidth)
+  const [sideChatPromptRequest, setSideChatPromptRequest] = useState<SideChatPromptRequest>()
   /** The live catalog with user-defined models appended. Everything below
    *  reads this merged list; the cache only ever stores the server catalog. */
   const models = useMemo(
@@ -514,8 +535,13 @@ export function App() {
     [catalogModels, customModels],
   )
   const rosterModels = useMemo(
-    () => models.filter((choice) => PUBLIC_BETA_PROVIDER_IDS.has(choice.provider)),
-    [models],
+    () =>
+      models.filter(
+        (choice) =>
+          PUBLIC_BETA_PROVIDER_IDS.has(choice.provider) ||
+          (choice.agent ? customHarnessIds.has(choice.agent.id) : false),
+      ),
+    [models, customHarnessIds],
   )
   const catalogModelsRef = useRef(catalogModels)
   catalogModelsRef.current = catalogModels
@@ -530,15 +556,13 @@ export function App() {
   // (including effects that write settings) a new dependency each frame.
   const implicitChoice = useMemo(
     () =>
-      provider !== 'api'
+      provider !== 'api' && (provider !== 'pi' || acpAgent)
         ? choicesFor(
             {
               provider,
               sourceName: providerName(provider, acpAgentName),
               mark: provider === 'acp' && acpAgent ? agentMark(acpAgent) : providerMark(provider),
-              ...(provider === 'acp' && acpAgent
-                ? { agent: { id: acpAgent, name: acpAgentName ?? acpAgent } }
-                : {}),
+              ...(acpAgent ? { agent: { id: acpAgent, name: acpAgentName ?? acpAgent } } : {}),
             },
             [],
             true,
@@ -712,6 +736,14 @@ export function App() {
   useEffect(() => {
     writeSetting(TERMINAL_HEIGHT_KEY, String(terminalHeight))
   }, [terminalHeight])
+
+  useEffect(() => {
+    const timeout = window.setTimeout(
+      () => writeSetting(WORKSPACE_PANEL_WIDTH_KEY, String(workspacePanelWidth)),
+      120,
+    )
+    return () => window.clearTimeout(timeout)
+  }, [workspacePanelWidth])
 
   const activeIdRef = useRef(activeId)
   activeIdRef.current = activeId
@@ -1093,6 +1125,7 @@ export function App() {
       const auxiliaryCatalog = Promise.all([
         transport.request('connections.list', {}).catch(() => ({ connections: [] })),
         transport.request('acp.agents', {}).catch(() => ({ agents: [] })),
+        transport.request('harnesses.list', {}).catch(() => ({ harnesses: [] })),
       ])
       const providersResult = await transport.request('providers.list', {})
       const providers = providersResult?.providers ?? []
@@ -1116,7 +1149,7 @@ export function App() {
         }
       }
       const unknownKeys = new Set<string>()
-      const direct = await Promise.all(
+      const directPromise = Promise.all(
         providers
           .filter((entry) => entry.installed && entry.id !== 'acp' && entry.id !== 'api')
           .map(async (entry) => {
@@ -1149,19 +1182,49 @@ export function App() {
             }
           }),
       )
-      const [connectionsResult, agentsResult] = await auxiliaryCatalog
+      const [connectionsResult, agentsResult, harnessesResult] = await auxiliaryCatalog
       const connections = connectionsResult?.connections ?? []
+      const harnesses = harnessesResult?.harnesses ?? []
+      setCustomHarnessIds(new Set(harnesses.map((harness) => harness.id)))
+      const customSourcesPromise = Promise.all(
+        harnesses.map(async (harness) => {
+          const input = {
+            provider: harness.provider,
+            sourceName: harness.displayName,
+            mark: providerMark(harness.provider),
+            agent: { id: harness.id, name: harness.displayName },
+          }
+          try {
+            const result = await transport.request('models.list', {
+              provider: harness.provider,
+              agent: harness.id,
+            })
+            return choicesFor(input, result.models, true)
+          } catch {
+            const source = sourceKey({ provider: harness.provider, agentId: harness.id })
+            const preserved = catalogModelsRef.current.filter(
+              (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+            )
+            if (preserved.length > 0) return preserved
+            const fallback = choicesFor(input, [], true)
+            for (const choice of fallback) unknownKeys.add(choice.key)
+            return fallback
+          }
+        }),
+      )
+      const [direct, customSources] = await Promise.all([directPromise, customSourcesPromise])
       // Public beta scope: the picker holds only the three direct plans the
-      // server lists. ACP-agent and API-connection catalogs are parked, not
-      // deleted — they return with their rosters after the beta.
+      // server lists. Explicit custom harnesses remain eligible because the
+      // user configured those sources directly; parked built-ins stay hidden.
       if (cancelled) return
-      const catalog = direct.flatMap((entry) => entry.models)
+      const directCatalog = direct.flatMap((entry) => entry.models)
       const publicDiscoveries = direct.filter((entry) =>
         PUBLIC_BETA_PROVIDER_IDS.has(entry.provider),
       )
-      const publicCatalog = catalog.filter((choice) =>
+      const publicCatalog = directCatalog.filter((choice) =>
         PUBLIC_BETA_PROVIDER_IDS.has(choice.provider),
       )
+      const catalog = [...publicCatalog, ...customSources.flat()]
       const publicCatalogReady =
         publicDiscoveries.length > 0 && publicDiscoveries.every((entry) => entry.discovered)
       setAcpAgents(agentsResult?.agents ?? [])
@@ -1297,7 +1360,7 @@ export function App() {
   }, [transport, catalogRequest])
 
   useEffect(() => {
-    if (!isDesktop || !canCaptureVoice()) {
+    if (!isDesktop || !canCaptureVoice() || selectedModelChoice?.agent) {
       setVoiceAvailable(false)
       return
     }
@@ -1313,7 +1376,7 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [transport, provider, account?.signedIn])
+  }, [transport, provider, account?.signedIn, selectedModelChoice?.agent])
 
   useEffect(() => {
     let cancelled = false
@@ -1359,9 +1422,20 @@ export function App() {
     let cancelled = false
     const revision = ++accountRequestRevision.current
     setAccount(undefined)
+    if (selectedModelChoice?.agent && provider !== 'acp') {
+      setAccountCheck({ provider, state: 'ready', account: { signedIn: true } })
+      return () => {
+        cancelled = true
+      }
+    }
     setAccountCheck({ provider, state: 'loading' })
     void transport
-      .request('auth.status', { provider })
+      .request('auth.status', {
+        provider,
+        ...(provider === 'acp' && (selectedModelChoice?.agent?.id ?? acpAgent)
+          ? { agent: selectedModelChoice?.agent?.id ?? acpAgent }
+          : {}),
+      })
       .then((nextAccount) => {
         if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(nextAccount)
@@ -1375,7 +1449,7 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [transport, provider])
+  }, [transport, provider, acpAgent, selectedModelChoice?.agent])
 
   const refreshProjects = useCallback(async () => {
     const { projects: list } = await transport.request('projects.list', {})
@@ -2128,6 +2202,17 @@ export function App() {
     [],
   )
 
+  const requestInterrupt = useCallback(
+    (threadId: string) => {
+      setStoppingThreadId(threadId)
+      void transport.request('thread.interrupt', { threadId }).catch((error) => {
+        setStoppingThreadId((current) => (current === threadId ? undefined : current))
+        setNotice(error instanceof Error ? error.message : String(error))
+      })
+    },
+    [transport],
+  )
+
   const send = useCallback(
     async (text: string, attachments: string[] = [], submission: 'queue' | 'steer' = 'queue') => {
       // The composer clears itself the moment it hands the text over. Every
@@ -2139,6 +2224,29 @@ export function App() {
           attachments,
           request: (current?.request ?? 0) + 1,
         }))
+      const sideChatCommand = parseSideChatCommand(text)
+      if (sideChatCommand) {
+        if (!activeId || activeId.startsWith('pending:')) {
+          restoreDraft()
+          setNotice('Start the main chat before opening a side chat.')
+          return
+        }
+        const parent = threadStates.current.get(activeId)
+        if (!parent?.items.some((item) => item.type === 'message' && item.role === 'user')) {
+          restoreDraft()
+          setNotice('Send a message in the main chat before opening a side chat.')
+          return
+        }
+        setNotice(undefined)
+        setWorkspacePanelOpen(true)
+        setSideChatPromptRequest((current) => ({
+          parentThreadId: activeId,
+          text: sideChatCommand.prompt,
+          attachments,
+          request: (current?.request ?? 0) + 1,
+        }))
+        return
+      }
       if (sendAvailability !== 'ready') {
         restoreDraft()
         return
@@ -2170,6 +2278,7 @@ export function App() {
       const optimisticItemId = createOptimisticMessageId()
       const optimisticCreatedAt = Date.now()
       let titledOnCreate = false
+      let interruptRequested = false
       if (!threadId) {
         if (!activePath) {
           restoreDraft()
@@ -2221,8 +2330,10 @@ export function App() {
         const promise = createSession(activePath, provisionalId, titleFrom(text))
         pendingSession.current = { id: provisionalId, promise, title: titleFrom(text) }
         threadId = await promise
+        interruptRequested = pendingInterruptThreadIds.current.delete(provisionalId)
         if (pendingSession.current?.id === provisionalId) pendingSession.current = undefined
         if (!threadId) {
+          setStoppingThreadId((current) => (current === provisionalId ? undefined : current))
           const current = threadStates.current.get(provisionalId)
           if (current !== undefined && current.activeTurn?.id === optimisticTurnId) {
             const next: ThreadState = { ...current, running: false, activeTurn: undefined }
@@ -2234,6 +2345,7 @@ export function App() {
           return
         }
         workspaceStartId = threadId
+        if (interruptRequested) setStoppingThreadId(threadId)
         optimisticAdded = true
         titledOnCreate = true
       } else if (pendingSession.current?.id === threadId) {
@@ -2338,7 +2450,7 @@ export function App() {
       let turnAccepted = false
       let queuedActionId: string | undefined
       try {
-        const result = await transport.request('thread.sendTurn', {
+        const turnRequest = transport.request('thread.sendTurn', {
           threadId,
           text,
           clientSubmissionId: optimisticItemId,
@@ -2347,6 +2459,11 @@ export function App() {
           ...(turnChoice && selectedEffort ? { effort: selectedEffort } : {}),
           ...(turnChoice && selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
         })
+        // A new chat can be stopped while thread.start is still resolving.
+        // Preserve that intent, put sendTurn on the wire first, then interrupt
+        // the canonical thread; the server latches interrupts during startup.
+        if (interruptRequested) requestInterrupt(threadId)
+        const result = await turnRequest
         turnAccepted = true
         const current = threadStates.current.get(threadId) ?? emptyThread
         const pending = pendingSubmissions.current.get(threadId)?.get(optimisticItemId)
@@ -2445,6 +2562,7 @@ export function App() {
       selectedEffort,
       selectedServiceTier,
       updateQueue,
+      requestInterrupt,
       designMode,
       holdWorkspaceStart,
       releaseWorkspaceStart,
@@ -2457,18 +2575,14 @@ export function App() {
   )
 
   const interrupt = useCallback(() => {
-    // A provisional id means the thread is still being created server-side;
-    // interrupting it would only produce an error nobody can act on.
-    if (!activeId || activeId.startsWith('pending:')) return
-    // Some providers take a second or two to unwind. Without an acknowledged
-    // state the button looks inert, so people press it repeatedly and
-    // conclude that stopping does not work.
-    setStoppingThreadId(activeId)
-    transport.request('thread.interrupt', { threadId: activeId }).catch((error) => {
-      setStoppingThreadId((current) => (current === activeId ? undefined : current))
-      setNotice(error instanceof Error ? error.message : String(error))
-    })
-  }, [transport, activeId])
+    if (!activeId) return
+    if (activeId.startsWith('pending:')) {
+      pendingInterruptThreadIds.current.add(activeId)
+      setStoppingThreadId(activeId)
+      return
+    }
+    requestInterrupt(activeId)
+  }, [activeId, requestInterrupt])
 
   // The turn ending — however it ended — clears the pending state. Switching
   // sessions does too: the badge belongs to the thread, not to the composer.
@@ -3235,11 +3349,51 @@ export function App() {
   }, [])
   const toggleTerminal = useCallback(() => setTerminalOpen((open) => !open), [])
   const closeTerminal = useCallback(() => setTerminalOpen(false), [])
+  const openWorkspacePanel = useCallback(() => setWorkspacePanelOpen(true), [])
+  const closeWorkspacePanel = useCallback(() => {
+    setWorkspacePanelOpen(false)
+    setWorkspacePanelExpanded(false)
+  }, [])
+  const toggleWorkspacePanel = useCallback(() => {
+    setWorkspacePanelOpen((open) => {
+      if (open) setWorkspacePanelExpanded(false)
+      return !open
+    })
+  }, [])
+  const toggleWorkspacePanelExpanded = useCallback(
+    () => setWorkspacePanelExpanded((expanded) => !expanded),
+    [],
+  )
 
   const active = useMemo(() => findSession(projects, activeId), [projects, activeId])
   const activeProject = useMemo(
     () => projects.find((project) => project.path === activePath),
     [projects, activePath],
+  )
+  const sideChatParentStatus: SideChatParentStatus =
+    thread.approvals.length > 0
+      ? 'approval'
+      : thread.userInputs.length > 0
+        ? 'input'
+        : thread.running
+          ? 'working'
+          : thread.items.at(-1)?.type === 'error'
+            ? 'failed'
+            : 'idle'
+  const sideChatStartOptions = useMemo<SideChatStartOptions>(
+    () => ({
+      ...(selectedModelChoice?.model.id ? { model: selectedModelChoice.model.id } : {}),
+      ...(selectedEffort ? { effort: selectedEffort } : {}),
+      ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+      approval: approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval,
+    }),
+    [
+      selectedModelChoice?.model.id,
+      selectedEffort,
+      selectedServiceTier,
+      approval,
+      autoReviewSupported,
+    ],
   )
   const searching = activeTurnIsSearching(
     thread.items,
@@ -3357,7 +3511,14 @@ export function App() {
       className={`shell ${collapsed ? 'is-narrow' : ''}`}
       style={{ '--rail-w': `${railWidth}px` } as CSSProperties}
     >
-      <TitleBar collapsed={collapsed} onToggleRail={toggleRail} />
+      <TitleBar
+        collapsed={collapsed}
+        workspacePanelOpen={workspacePanelOpen}
+        workspacePanelExpanded={workspacePanelExpanded}
+        onToggleRail={toggleRail}
+        onToggleWorkspacePanel={toggleWorkspacePanel}
+        onToggleWorkspacePanelExpanded={toggleWorkspacePanelExpanded}
+      />
       {isDesktop ? <ZoomHud /> : null}
 
       <div className="shell__body">
@@ -3394,128 +3555,159 @@ export function App() {
           onOpenSettings={openSettings}
         />
 
-        <main className="stage">
-          {surface === 'pull-requests' ? (
-            <Suspense fallback={null}>
-              <PullRequestsView transport={transport} onOpenChat={openPullRequestChat} />
-            </Suspense>
-          ) : (
-            <>
-              <StageHeader
-                title={active?.session.title}
-                checkpointCount={thread.running ? 0 : checkpoints.length}
-                worktreeBranch={active?.session.worktreeBranch}
-                terminalOpen={terminalOpen}
-                onOpenRollback={openRollback}
-                onToggleTerminal={toggleTerminal}
-              />
-
-              <div
-                className={`stage__body${activeId ? '' : ' is-new-session'}${active && terminalOpen ? ' has-terminal' : ''}`}
-              >
-                {activeId ? (
-                  <Thread
-                    items={thread.items}
-                    loading={loadingThreadId === activeId}
-                    liveItems={thread.liveItems}
-                    itemVersion={thread.itemVersion}
-                    liveStart={thread.liveStart}
-                    projectPath={activePath}
-                    running={thread.running}
-                    searching={searching}
-                    activeTurn={thread.activeTurn}
-                    turnTiming={thread.turnTiming}
-                    plan={thread.plan}
-                    diff={thread.diff}
-                    threadId={activeId}
-                    transport={transport}
-                    searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
-                    revealRequest={threadRevealRequest}
-                    approvals={thread.approvals}
-                    userInputs={thread.userInputs}
-                    reviews={reviewList}
-                    checkpoints={thread.running ? EMPTY_CHECKPOINTS : checkpoints}
-                    onDecide={decideApproval}
-                    onAnswerUserInput={answerUserInput}
-                    onEditMessage={editMessage}
-                    onRevertCheckpoint={revertCheckpoint}
-                  />
-                ) : (
-                  <Empty
-                    projects={projects}
-                    activePath={activePath}
-                    status={projectsStatus}
-                    onAddProject={addSidebarProject}
-                    onRetry={retryProjects}
-                  />
-                )}
-
-                {active && terminalOpen ? (
-                  <Suspense fallback={null}>
-                    <TerminalPane
-                      key={activeId}
-                      transport={transport}
-                      threadId={active.session.id}
-                      height={terminalHeight}
-                      theme={theme}
-                      onHeightChange={setTerminalHeight}
-                      onClose={closeTerminal}
-                    />
-                  </Suspense>
-                ) : null}
-
-                <Composer
-                  projects={projects}
-                  projectPath={activePath}
-                  projectName={activeProject ? displayName(activeProject) : undefined}
-                  branch={active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]}
-                  branches={branches}
-                  models={selectableModels}
-                  modelsLoaded={modelsLoaded}
-                  modelId={selectedModelChoice?.key}
-                  effort={selectedEffort}
-                  serviceTier={selectedServiceTier}
-                  usage={thread.usage}
-                  approval={approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval}
-                  autoReviewSupported={autoReviewSupported}
-                  attachmentsSupported={attachmentsSupported}
-                  voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
-                  disabled={false}
-                  sendAvailability={sendAvailability}
-                  running={thread.running}
-                  newSession={!activeId}
-                  isolate={active?.session.worktreeBranch ? true : isolateSession}
-                  designMode={designMode}
-                  focusRequest={composerFocusRequest}
-                  draftRequest={composerDraft}
-                  onDraftChange={updateRejectedDraft}
-                  onAttachmentsChange={updateRejectedAttachments}
-                  queuedTurns={queuedTurns}
-                  canSteerQueue={canSteerQueue}
-                  onModelChange={selectModel}
-                  onEffortChange={setEffort}
-                  onServiceTierChange={setServiceTier}
-                  onApprovalChange={changeApproval}
-                  onIsolateChange={setIsolateSession}
-                  onDesignModeChange={setDesignMode}
-                  onTranscribeVoice={transcribeVoice}
-                  onCancelVoice={cancelVoice}
-                  onProjectChange={selectProject}
-                  onBranchChange={changeBranch}
-                  onProjectRequired={requireProject}
-                  onSetupProvider={openProviderSetup}
-                  onSend={sendTurn}
-                  onSteer={steerTurn}
-                  onInterrupt={interrupt}
-                  stopping={stopping}
-                  onDeleteQueuedTurn={deleteQueuedTurn}
-                  onMoveQueuedTurn={moveQueuedTurn}
-                  onSteerQueuedTurn={steerQueuedTurn}
+        <div
+          className={`workspace-layout${workspacePanelOpen ? ' is-panel-open' : ''}${workspacePanelExpanded ? ' is-panel-expanded' : ''}`}
+          style={{ '--workspace-panel-w': `${workspacePanelWidth}px` } as CSSProperties}
+        >
+          <main className="stage">
+            {surface === 'pull-requests' ? (
+              <Suspense fallback={null}>
+                <PullRequestsView transport={transport} onOpenChat={openPullRequestChat} />
+              </Suspense>
+            ) : (
+              <>
+                <StageHeader
+                  title={active?.session.title}
+                  checkpointCount={thread.running ? 0 : checkpoints.length}
+                  worktreeBranch={active?.session.worktreeBranch}
+                  terminalOpen={terminalOpen}
+                  onOpenRollback={openRollback}
+                  onToggleTerminal={toggleTerminal}
                 />
-              </div>
-            </>
-          )}
-        </main>
+
+                <div
+                  className={`stage__body${activeId ? '' : ' is-new-session'}${active && terminalOpen ? ' has-terminal' : ''}`}
+                >
+                  {activeId ? (
+                    <Thread
+                      items={thread.items}
+                      loading={loadingThreadId === activeId}
+                      liveItems={thread.liveItems}
+                      itemVersion={thread.itemVersion}
+                      liveStart={thread.liveStart}
+                      projectPath={activePath}
+                      running={thread.running}
+                      searching={searching}
+                      activeTurn={thread.activeTurn}
+                      turnTiming={thread.turnTiming}
+                      plan={thread.plan}
+                      diff={thread.diff}
+                      threadId={activeId}
+                      transport={transport}
+                      searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
+                      revealRequest={threadRevealRequest}
+                      approvals={thread.approvals}
+                      userInputs={thread.userInputs}
+                      reviews={reviewList}
+                      checkpoints={thread.running ? EMPTY_CHECKPOINTS : checkpoints}
+                      onDecide={decideApproval}
+                      onAnswerUserInput={answerUserInput}
+                      onEditMessage={editMessage}
+                      onRevertCheckpoint={revertCheckpoint}
+                    />
+                  ) : (
+                    <Empty
+                      projects={projects}
+                      activePath={activePath}
+                      status={projectsStatus}
+                      onAddProject={addSidebarProject}
+                      onRetry={retryProjects}
+                    />
+                  )}
+
+                  {active && terminalOpen ? (
+                    <Suspense fallback={null}>
+                      <TerminalPane
+                        key={activeId}
+                        transport={transport}
+                        threadId={active.session.id}
+                        height={terminalHeight}
+                        theme={theme}
+                        onHeightChange={setTerminalHeight}
+                        onClose={closeTerminal}
+                      />
+                    </Suspense>
+                  ) : null}
+
+                  <Composer
+                    transport={transport}
+                    provider={provider}
+                    projects={projects}
+                    projectPath={activePath}
+                    projectName={activeProject ? displayName(activeProject) : undefined}
+                    branch={active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]}
+                    branches={branches}
+                    models={selectableModels}
+                    modelsLoaded={modelsLoaded}
+                    modelId={selectedModelChoice?.key}
+                    effort={selectedEffort}
+                    serviceTier={selectedServiceTier}
+                    usage={thread.usage}
+                    approval={approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval}
+                    autoReviewSupported={autoReviewSupported}
+                    attachmentsSupported={attachmentsSupported}
+                    voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
+                    disabled={false}
+                    sendAvailability={sendAvailability}
+                    running={thread.running}
+                    newSession={!activeId}
+                    isolate={active?.session.worktreeBranch ? true : isolateSession}
+                    designMode={designMode}
+                    focusRequest={composerFocusRequest}
+                    draftRequest={composerDraft}
+                    onDraftChange={updateRejectedDraft}
+                    onAttachmentsChange={updateRejectedAttachments}
+                    queuedTurns={queuedTurns}
+                    canSteerQueue={canSteerQueue}
+                    onModelChange={selectModel}
+                    onEffortChange={setEffort}
+                    onServiceTierChange={setServiceTier}
+                    onApprovalChange={changeApproval}
+                    onIsolateChange={setIsolateSession}
+                    onDesignModeChange={setDesignMode}
+                    onTranscribeVoice={transcribeVoice}
+                    onCancelVoice={cancelVoice}
+                    onProjectChange={selectProject}
+                    onBranchChange={changeBranch}
+                    onProjectRequired={requireProject}
+                    onSetupProvider={openProviderSetup}
+                    onSend={sendTurn}
+                    onSteer={steerTurn}
+                    onInterrupt={interrupt}
+                    stopping={stopping}
+                    onDeleteQueuedTurn={deleteQueuedTurn}
+                    onMoveQueuedTurn={moveQueuedTurn}
+                    onSteerQueuedTurn={steerQueuedTurn}
+                  />
+                </div>
+              </>
+            )}
+          </main>
+
+          <Suspense fallback={null}>
+            <WorkspacePanel
+              open={workspacePanelOpen}
+              expanded={workspacePanelExpanded}
+              width={workspacePanelWidth}
+              transport={transport}
+              threadId={activeId}
+              projectPath={activePath}
+              projectName={activeProject ? displayName(activeProject) : undefined}
+              branch={active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]}
+              theme={theme}
+              sideChatParentStatus={sideChatParentStatus}
+              sideChatStartOptions={sideChatStartOptions}
+              sideChatPromptRequest={sideChatPromptRequest}
+              nativeSurfacesVisible={
+                !settingsOpen && paletteScope === null && !rollbackOpen && !checkoutDelete
+              }
+              onOpen={openWorkspacePanel}
+              onClose={closeWorkspacePanel}
+              onExpandedChange={setWorkspacePanelExpanded}
+              onWidthChange={setWorkspacePanelWidth}
+            />
+          </Suspense>
+        </div>
       </div>
 
       {settingsOpen ? (
@@ -3552,6 +3744,7 @@ export function App() {
           showMacOSFontSmoothing={macOS}
           macOSFontSmoothing={macOSFontSmoothing}
           onMacOSFontSmoothingChange={setMacOSFontSmoothing}
+          showMacOSHaptics={isDesktop && macOS}
           onAccountChange={handleAccountChange}
           onReset={resetSettings}
           onClose={closeSettings}
@@ -3697,10 +3890,11 @@ function Empty(props: {
   )
 }
 
-function providerName(id: ProviderId, acpAgentName?: string): string {
+function providerName(id: ProviderId, sourceName?: string): string {
+  if (sourceName) return sourceName
   // ACP is how we talk to the agent, not who the agent is. Showing "ACP" would
   // name our plumbing instead of the thing the user chose.
-  if (id === 'acp') return acpAgentName ?? 'ACP agent'
+  if (id === 'acp') return 'ACP agent'
   return providerDisplayName(id)
 }
 
@@ -3850,6 +4044,12 @@ function readTerminalHeight(): number {
   return Math.min(height, Math.max(160, Math.floor(window.innerHeight * 0.72)))
 }
 
+function readWorkspacePanelWidth(): number {
+  const stored = Number(readSetting(WORKSPACE_PANEL_WIDTH_KEY))
+  if (!Number.isFinite(stored) || stored < 360) return 520
+  return Math.min(stored, Math.max(360, Math.floor(window.innerWidth * 0.78)))
+}
+
 function displayName(project: Project): string {
   return project.name ?? basename(project.path)
 }
@@ -3972,8 +4172,14 @@ function readStoredModelChoice(customModels: CustomModel[] = []): ModelChoice | 
       providerMark(custom.provider),
     )
   }
-  const agentId = provider === 'acp' ? (readSetting(AGENT_KEY) ?? undefined) : undefined
-  if (provider === 'acp' && !agentId) return undefined
+  const storedAgentId = provider !== 'api' ? (readSetting(AGENT_KEY) ?? undefined) : undefined
+  const agentId =
+    provider === 'acp' || provider === 'pi'
+      ? storedAgentId
+      : storedAgentId && storedKey.startsWith(`${provider}:${storedAgentId}:`)
+        ? storedAgentId
+        : undefined
+  if ((provider === 'acp' || provider === 'pi') && !agentId) return undefined
   const agentName = agentId ? (readSetting(AGENT_NAME_KEY) ?? agentId) : undefined
   const separator = storedKey.lastIndexOf(':')
   const storedSource = separator > 0 ? storedKey.slice(0, separator) : undefined

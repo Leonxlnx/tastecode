@@ -43,3 +43,33 @@ describe('clipboard bridge', () => {
     expect(writeClipboardText).toHaveBeenCalledWith('harness://pair?payload=test-ticket')
   })
 })
+
+describe('haptic bridge', () => {
+  it('sends only the named native feedback pattern', async () => {
+    const prepareHaptics = vi.fn()
+    const performHaptic = vi.fn()
+    ;(globalThis as { harness?: unknown }).harness = {
+      isDesktop: true,
+      prepareHaptics,
+      performHaptic,
+    }
+    const bridge = await import('./bridge.js')
+
+    bridge.prepareNativeHaptics()
+    bridge.performNativeHaptic('alignment')
+
+    expect(prepareHaptics).toHaveBeenCalledOnce()
+    expect(performHaptic).toHaveBeenCalledWith('alignment')
+  })
+})
+
+describe('external URL bridge', () => {
+  it('delegates system-browser links to the desktop shell', async () => {
+    const openExternal = vi.fn().mockResolvedValue(undefined)
+    ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, openExternal }
+    const bridge = await import('./bridge.js')
+
+    await expect(bridge.openExternalUrl('https://example.com/')).resolves.toBeUndefined()
+    expect(openExternal).toHaveBeenCalledWith('https://example.com/')
+  })
+})

@@ -66,10 +66,11 @@ export function parseModelCatalogCache(raw: string | null): ModelChoice[] | unde
     if (connectionId === null) return undefined
     const agent = parseAgent(candidate.agent)
     if (agent === null) return undefined
-    if (
-      (provider.data === 'api') !== Boolean(connectionId) ||
-      (provider.data === 'acp') !== Boolean(agent)
-    ) {
+    const connectionShapeValid =
+      provider.data === 'api' ? Boolean(connectionId) && !agent : !connectionId
+    const sourceShapeValid =
+      provider.data === 'acp' || provider.data === 'pi' ? Boolean(agent) : true
+    if (!connectionShapeValid || !sourceShapeValid) {
       return undefined
     }
 

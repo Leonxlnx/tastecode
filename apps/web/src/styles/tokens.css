@@ -160,6 +160,11 @@
 
   --font-ui: 'Geist Variable', 'Segoe UI Variable Text', system-ui, sans-serif;
   --font-mono: 'Geist Mono Variable', 'Cascadia Code', ui-monospace, monospace;
+  --font-terminal:
+    'JetBrainsMono Nerd Font Mono', 'JetBrains Mono Variable', 'JetBrains Mono',
+    'CaskaydiaCove Nerd Font Mono', 'Cascadia Mono', 'Cascadia Code', 'Geist Mono Variable',
+    'Symbols Nerd Font Mono', ui-monospace, monospace;
+  --terminal-workspace-bg: #0d0d0d;
 
   --t-xs: 11.5px;
   --t-sm: 12.5px;
@@ -275,6 +280,7 @@
   --on-danger: #fefefe;
 
   --bg: #fdfdfd;
+  --terminal-workspace-bg: #eff1f5;
   --bg-rail: var(--chrome-raised);
   /* The rail itself may be a gradient; the glass tint must stay a solid. */
   --bg-rail-tint: #fcfcfc;

@@ -89,9 +89,8 @@ describe('InboxSidebar', () => {
       [...container.querySelectorAll('.inbox-card__title')].map((node) => node.textContent),
     ).toEqual(['New Alpha', 'Beta approval', 'Older Alpha'])
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'Sidebar project filter' }), {
-      target: { value: '/alpha' },
-    })
+    fireEvent.click(screen.getByRole('combobox', { name: 'Sidebar project filter' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Alpha' }))
     expect(onScopeChange).toHaveBeenCalledWith('/alpha')
 
     rerender(<InboxSidebar {...props(projects)} scope="/alpha" />)

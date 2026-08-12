@@ -539,6 +539,43 @@ describe('collapsed row disclosure', () => {
   })
 })
 
+describe('thread error surface', () => {
+  it('states the failure as text instead of a collapsible tool row', () => {
+    const items: Item[] = [
+      {
+        id: 'error-1',
+        turnId: 'turn-1',
+        type: 'error',
+        status: 'completed',
+        text: 'Turn interrupted: Personal Harness restarted. Send a new message to continue.',
+        createdAt: 1,
+      },
+    ]
+    const { container } = render(
+      <Thread
+        items={items}
+        running={false}
+        activeTurn={undefined}
+        plan={[]}
+        diff={undefined}
+        approvals={[]}
+        userInputs={[]}
+        reviews={[]}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+
+    // A thread-level failure is a statement: the alert and the reason, not an
+    // operational row with a disclosure affordance.
+    expect(container.querySelector('.turn-error__text')?.textContent).toBe(
+      'Turn interrupted: Personal Harness restarted. Send a new message to continue.',
+    )
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(container.querySelector('.aux')).toBeNull()
+  })
+})
+
 describe('thread message actions', () => {
   it('copies the user prompt through the platform bridge', async () => {
     render(

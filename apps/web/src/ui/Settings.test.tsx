@@ -5,6 +5,7 @@ import type { Account, ConnectionsStatus, ProviderId, ResultOf } from '@harness/
 import { customModelChoice, type ModelChoice } from '../model-catalog.js'
 import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker-layout.js'
 import { resetInstalls } from '../provider-install.js'
+import { HAPTICS_KEY, writeAppHaptics } from '../haptics.js'
 import type { Transport } from '../transport.js'
 import { formatDeviceNote, ProviderSettings, Settings } from './Settings.js'
 
@@ -25,6 +26,7 @@ function renderSettings(
     onClose?: () => void
     onReset?: () => void
     transport?: Transport
+    showMacOSHaptics?: boolean
   } = {},
 ) {
   const transport =
@@ -65,12 +67,17 @@ function renderSettings(
       showMacOSFontSmoothing={false}
       macOSFontSmoothing={true}
       onMacOSFontSmoothingChange={() => {}}
+      showMacOSHaptics={options.showMacOSHaptics ?? false}
       onAccountChange={() => {}}
       initialSection={options.initialSection ?? 'appearance'}
       onReset={options.onReset ?? (() => {})}
       onClose={options.onClose ?? (() => {})}
     />,
   )
+}
+
+function renderAppearanceSettings(showMacOSHaptics = false) {
+  return renderSettings({ showMacOSHaptics })
 }
 
 afterEach(() => {
@@ -80,6 +87,8 @@ afterEach(() => {
   resetInstalls()
   writeModelPickerLayout('list')
   localStorage.removeItem(MODEL_PICKER_LAYOUT_KEY)
+  writeAppHaptics(true)
+  localStorage.removeItem(HAPTICS_KEY)
   Reflect.deleteProperty(navigator, 'clipboard')
 })
 
@@ -293,7 +302,8 @@ function renderProviders(
 ) {
   let listener: ((event: unknown) => void) | undefined
   const transport = {
-    request,
+    request: (method: string, params: { provider?: ProviderId }) =>
+      method === 'harnesses.list' ? { harnesses: [] } : request(method, params),
     on: (_channel: string, next: (event: unknown) => void) => {
       listener = next
       return () => {}
@@ -514,6 +524,24 @@ function mobileAccessSettings(transport: Transport) {
 function renderMobileAccess(transport: Transport) {
   return render(mobileAccessSettings(transport))
 }
+
+describe('app haptic setting', () => {
+  it('shows only on supported desktop Macs and persists the toggle', () => {
+    const unsupported = renderAppearanceSettings()
+    expect(screen.queryByRole('switch', { name: 'Trackpad haptics' })).toBeNull()
+    unsupported.unmount()
+
+    writeAppHaptics(false)
+    renderAppearanceSettings(true)
+    const toggle = screen.getByRole('switch', { name: 'Trackpad haptics' })
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+
+    fireEvent.click(toggle)
+
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    expect(localStorage.getItem(HAPTICS_KEY)).toBe('true')
+  })
+})
 
 describe('paired device timestamps', () => {
   it.each([
@@ -1014,6 +1042,141 @@ describe('mobile access settings', () => {
 })
 
 describe('provider settings', () => {
+  it('adds and removes local custom harness commands with an instability warning', async () => {
+    let harnesses = [
+      {
+        id: 'existing-pi',
+        displayName: 'Existing Pi',
+        provider: 'pi' as const,
+        command: 'existing-pi',
+        args: [] as string[],
+      },
+    ]
+    const transport = {
+      request: vi.fn(async (method: string, params: Record<string, unknown>) => {
+        if (method === 'harnesses.list') return { harnesses }
+        if (method === 'harnesses.upsert') {
+          harnesses = [...harnesses, params as (typeof harnesses)[number]]
+          return { harness: params }
+        }
+        if (method === 'harnesses.verify') {
+          return {
+            verification: {
+              status: 'ready',
+              summary: `${(params.harness as { displayName: string }).displayName} is compatible`,
+              checkedAt: 1,
+              resolvedCommand: '/Users/me/.local/bin/deepseek-pi',
+              checks: [
+                {
+                  label: 'Pi RPC',
+                  status: 'passed',
+                  detail: 'RPC handshake completed; found 1 model(s).',
+                },
+              ],
+            },
+          }
+        }
+        if (method === 'harnesses.remove') {
+          harnesses = harnesses.filter((entry) => entry.id !== params.harnessId)
+          return {}
+        }
+        throw new Error(`unexpected ${method}`)
+      }),
+      on: vi.fn(() => () => {}),
+    } as unknown as Transport
+    const onConnectionsChanged = vi.fn()
+
+    render(
+      <Settings
+        provider="codex"
+        providerName="Codex"
+        transport={transport}
+        projectPath={undefined}
+        projectName={undefined}
+        account={undefined}
+        providerStatuses={[]}
+        acpAgents={[]}
+        modelConnections={[]}
+        models={[]}
+        hiddenModels={new Set()}
+        onModelVisibilityChange={() => {}}
+        onConnectionsChanged={onConnectionsChanged}
+        projectCount={0}
+        sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
+        onSidebarSettingsChange={() => {}}
+        themePreference="system"
+        onThemePreferenceChange={() => {}}
+        fontPreference="geist"
+        onFontPreferenceChange={() => {}}
+        accentPreference="neutral"
+        onAccentPreferenceChange={() => {}}
+        backdropPreference="default"
+        onBackdropPreferenceChange={() => {}}
+        sidebarGlass={0}
+        onSidebarGlassChange={() => {}}
+        showMacOSFontSmoothing={false}
+        macOSFontSmoothing={true}
+        onMacOSFontSmoothingChange={() => {}}
+        onAccountChange={() => {}}
+        onReset={() => {}}
+        onClose={() => {}}
+      />,
+    )
+
+    expect(screen.getByText(/cannot guarantee their stability/i)).toBeTruthy()
+    await waitFor(() => expect(screen.getByText('Existing Pi')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: 'Add custom harness' }))
+    fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'DeepSeek Pi' } })
+    fireEvent.change(screen.getByLabelText('Compatible protocol'), {
+      target: { value: 'pi' },
+    })
+    fireEvent.change(screen.getByLabelText('Executable name or path'), {
+      target: { value: 'deepseek-pi' },
+    })
+    fireEvent.change(screen.getByLabelText('Fixed arguments, one per line'), {
+      target: { value: '--openrouter\nprofile with spaces' },
+    })
+    fireEvent.change(screen.getByLabelText('Launch directory (optional)'), {
+      target: { value: '~/Developer/pi-deepseek' },
+    })
+    fireEvent.change(screen.getByLabelText(/Environment, one NAME=value/), {
+      target: { value: 'PI_CODING_AGENT_DIR=/Users/me/.pi-deepseek' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add harness' }))
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'harnesses.upsert',
+        expect.objectContaining({
+          displayName: 'DeepSeek Pi',
+          provider: 'pi',
+          command: 'deepseek-pi',
+          args: ['--openrouter', 'profile with spaces'],
+          workingDirectory: '~/Developer/pi-deepseek',
+          environment: { PI_CODING_AGENT_DIR: '/Users/me/.pi-deepseek' },
+        }),
+      ),
+    )
+    await waitFor(() => expect(screen.getByText('DeepSeek Pi')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/DeepSeek Pi is compatible/)).toBeTruthy())
+    expect(transport.request).toHaveBeenCalledWith(
+      'harnesses.verify',
+      expect.objectContaining({
+        harness: expect.objectContaining({ displayName: 'DeepSeek Pi', provider: 'pi' }),
+      }),
+    )
+    expect(onConnectionsChanged).toHaveBeenCalledTimes(1)
+
+    const existingRow = screen.getByText('Existing Pi').closest<HTMLElement>('.settings__row')
+    if (!existingRow) throw new Error('custom harness row missing')
+    fireEvent.click(within(existingRow).getByRole('button', { name: 'Remove' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('harnesses.remove', {
+        harnessId: 'existing-pi',
+      }),
+    )
+  })
+
   it('shows one account action per provider and runs that provider flow', async () => {
     const accounts: Record<string, Account> = {
       codex: { signedIn: true, email: 'private@example.com', plan: 'pro' },

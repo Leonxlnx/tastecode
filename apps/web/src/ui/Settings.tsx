@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
@@ -17,6 +18,8 @@ import type {
   Account,
   ConnectionAddress,
   ConnectionsStatus,
+  CustomHarness,
+  CustomHarnessVerification,
   DataOf,
   ModelConnection,
   ModelConnectionPreset,
@@ -45,8 +48,10 @@ import {
   Network,
   Palette,
   PanelLeft,
+  Plus,
   RotateCcw,
   Smartphone,
+  Trash2,
   UserRound,
 } from 'lucide-react'
 import {
@@ -82,6 +87,13 @@ import {
   subscribeModelPickerLayout,
   writeModelPickerLayout,
 } from '../model-picker-layout.js'
+import {
+  performAppHaptic,
+  prepareAppHaptics,
+  readAppHaptics,
+  subscribeAppHaptics,
+  writeAppHaptics,
+} from '../haptics.js'
 import { McpSettings } from './McpSettings.js'
 import { Menu, MenuItem } from './Menu.js'
 import { ModelSearchField } from './ModelSearchField.js'
@@ -196,6 +208,7 @@ function SettingsComponent(props: {
   showMacOSFontSmoothing: boolean
   macOSFontSmoothing: boolean
   onMacOSFontSmoothingChange: (enabled: boolean) => void
+  showMacOSHaptics?: boolean | undefined
   onAccountChange: (provider: ProviderId, account: Account) => void
   initialSection?: SettingsSection | undefined
   onReset: () => void
@@ -507,6 +520,7 @@ export function ProviderSettings(props: {
   provider: ProviderId
   account: Account | undefined
   providerStatuses: ProviderStatus[]
+  projectPath?: string | undefined
   transport: Transport
   onConnectionsChanged: () => void
   onAccountChange: (provider: ProviderId, account: Account) => void
@@ -556,6 +570,24 @@ export function ProviderSettings(props: {
     setAuthErrors((current) => ({ ...current, [provider]: undefined }))
     return operation
   }
+
+  const [harnesses, setHarnesses] = useState<CustomHarness[]>([])
+  const [addingHarness, setAddingHarness] = useState(false)
+  const [harnessBusy, setHarnessBusy] = useState<{
+    id: string
+    action: 'adding' | 'verifying' | 'removing'
+  }>()
+  const [harnessError, setHarnessError] = useState<string>()
+  const [harnessVerifications, setHarnessVerifications] = useState<
+    Record<string, CustomHarnessVerification>
+  >({})
+
+  const refreshHarnesses = useCallback(async () => {
+    const result = await props.transport.request('harnesses.list', {})
+    // Older test/mobile transports may answer an unknown additive method with
+    // an empty object during a rolling client/server update.
+    setHarnesses(result?.harnesses ?? [])
+  }, [props.transport])
 
   const refreshAccount = useCallback(
     async (provider: ProviderId, forceLoading = false) => {
@@ -614,6 +646,9 @@ export function ProviderSettings(props: {
   )
 
   useEffect(() => {
+    void refreshHarnesses().catch((cause) =>
+      setHarnessError(cause instanceof Error ? cause.message : String(cause)),
+    )
     for (const provider of authProviderIds) {
       void refreshAccount(provider)
     }
@@ -640,13 +675,70 @@ export function ProviderSettings(props: {
         delete statusRequests.current[provider]
       }
     }
-  }, [props.transport, authProviderKey, completeLogin, refreshAccount])
+  }, [props.transport, authProviderKey, completeLogin, refreshAccount, refreshHarnesses])
 
   useEffect(() => {
     operations.current = {}
     setAuthOperations({})
     setAuthErrors({})
   }, [props.transport])
+
+  const addHarness = async (harness: CustomHarness) => {
+    setHarnessBusy({ id: harness.id, action: 'adding' })
+    setHarnessError(undefined)
+    try {
+      const { harness: saved } = await props.transport.request('harnesses.upsert', harness)
+      await refreshHarnesses()
+      setAddingHarness(false)
+      props.onConnectionsChanged()
+      setHarnessBusy({ id: harness.id, action: 'verifying' })
+      const { verification } = await props.transport.request('harnesses.verify', {
+        harness: saved,
+        ...(props.projectPath ? { workspacePath: props.projectPath } : {}),
+      })
+      setHarnessVerifications((current) => ({ ...current, [saved.id]: verification }))
+    } catch (cause) {
+      setHarnessError(cause instanceof Error ? cause.message : String(cause))
+      throw cause
+    } finally {
+      setHarnessBusy(undefined)
+    }
+  }
+
+  const verifyHarness = async (harness: CustomHarness) => {
+    setHarnessBusy({ id: harness.id, action: 'verifying' })
+    setHarnessError(undefined)
+    try {
+      const { verification } = await props.transport.request('harnesses.verify', {
+        harness,
+        ...(props.projectPath ? { workspacePath: props.projectPath } : {}),
+      })
+      setHarnessVerifications((current) => ({ ...current, [harness.id]: verification }))
+    } catch (cause) {
+      setHarnessError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setHarnessBusy(undefined)
+    }
+  }
+
+  const removeHarness = async (harness: CustomHarness) => {
+    setHarnessBusy({ id: harness.id, action: 'removing' })
+    setHarnessError(undefined)
+    try {
+      await props.transport.request('harnesses.remove', { harnessId: harness.id })
+      await refreshHarnesses()
+      setHarnessVerifications((current) => {
+        const next = { ...current }
+        delete next[harness.id]
+        return next
+      })
+      props.onConnectionsChanged()
+    } catch (cause) {
+      setHarnessError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setHarnessBusy(undefined)
+    }
+  }
 
   const signIn = async (provider: ProviderId) => {
     const operation = beginOperation(provider, 'sign-in')
@@ -818,7 +910,236 @@ export function ProviderSettings(props: {
       {direct
         .filter((status) => !['codex', 'claude-code', 'grok'].includes(status.id))
         .map(renderProviderRow)}
+      <h2 className="settings__group-title settings__group-title--inside">Custom harnesses</h2>
+      <p className="settings__group-note settings__group-note--top">
+        Run a fork or modified CLI through a protocol Harness already supports. Custom servers can
+        error or stop working after an update, and Harness cannot guarantee their stability.
+        Commands, arguments, and environment settings are stored locally, so never put API keys or
+        tokens here.
+      </p>
+      {harnesses.map((harness) => {
+        const verification = harnessVerifications[harness.id]
+        const failed = verification?.checks.find((check) => check.status === 'failed')
+        const warning = verification?.checks.find((check) => check.status === 'warning')
+        const detail = failed?.detail ?? warning?.detail
+        const busy = harnessBusy?.id === harness.id
+        return (
+          <SettingsRow
+            key={harness.id}
+            className={`custom-harness-row${verification ? ` is-${verification.status}` : ''}`}
+            title={harness.displayName}
+            note={`${customHarnessProviderLabel(harness.provider)} · ${harness.command} · ${
+              verification
+                ? `${verification.summary}${detail ? ` — ${detail}` : ''}`
+                : 'Not verified yet'
+            }`}
+          >
+            <div className="provider-settings__actions">
+              <ProviderIcon mark={providerMark(harness.provider)} size={17} />
+              <button
+                className="settings__action"
+                type="button"
+                disabled={busy}
+                onClick={() => void verifyHarness(harness)}
+              >
+                <Check size={13} aria-hidden />
+                {busy && harnessBusy.action === 'verifying' ? 'Verifying…' : 'Verify'}
+              </button>
+              <button
+                className="settings__action is-danger"
+                type="button"
+                disabled={busy}
+                onClick={() => void removeHarness(harness)}
+              >
+                <Trash2 size={13} aria-hidden />
+                {busy && harnessBusy.action === 'removing' ? 'Removing…' : 'Remove'}
+              </button>
+            </div>
+          </SettingsRow>
+        )
+      })}
+      {harnessError ? (
+        <p className="provider-form__error provider-form__wide" role="alert">
+          {harnessError}
+        </p>
+      ) : null}
+      {addingHarness ? (
+        <CustomHarnessForm
+          busy={harnessBusy !== undefined}
+          onAdd={addHarness}
+          onCancel={() => setAddingHarness(false)}
+        />
+      ) : (
+        <button
+          className="provider-settings__add"
+          type="button"
+          onClick={() => setAddingHarness(true)}
+        >
+          <Plus size={14} aria-hidden />
+          <span>Add custom harness</span>
+        </button>
+      )}
     </SettingsPanel>
+  )
+}
+
+const CUSTOM_HARNESS_PROVIDERS: Array<{
+  id: CustomHarness['provider']
+  label: string
+}> = [
+  { id: 'codex', label: 'Codex app-server' },
+  { id: 'claude-code', label: 'Claude Code stream JSON' },
+  { id: 'grok', label: 'Grok stream JSON' },
+  { id: 'cursor', label: 'Cursor stream JSON' },
+  { id: 'opencode', label: 'OpenCode server' },
+  { id: 'antigravity', label: 'Antigravity stream JSON' },
+  { id: 'pi', label: 'Pi RPC' },
+  { id: 'acp', label: 'ACP' },
+]
+
+function customHarnessProviderLabel(provider: CustomHarness['provider']): string {
+  return CUSTOM_HARNESS_PROVIDERS.find((entry) => entry.id === provider)?.label ?? provider
+}
+
+function CustomHarnessForm(props: {
+  busy: boolean
+  onAdd: (harness: CustomHarness) => Promise<void>
+  onCancel: () => void
+}) {
+  const [displayName, setDisplayName] = useState('')
+  const [provider, setProvider] = useState<CustomHarness['provider']>('pi')
+  const [command, setCommand] = useState('')
+  const [args, setArgs] = useState('')
+  const [workingDirectory, setWorkingDirectory] = useState('')
+  const [environment, setEnvironment] = useState('')
+  const [error, setError] = useState<string>()
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    const name = displayName.trim()
+    const executable = command.trim()
+    if (!name || !executable) {
+      setError('Enter a display name and an executable command or path.')
+      return
+    }
+    setError(undefined)
+    try {
+      const environmentEntries: Record<string, string> = {}
+      for (const line of environment.split(/\r?\n/)) {
+        if (!line.trim()) continue
+        const separator = line.indexOf('=')
+        const key = separator < 0 ? '' : line.slice(0, separator).trim()
+        if (!key) {
+          setError('Environment entries use NAME=value, one per line.')
+          return
+        }
+        environmentEntries[key] = line.slice(separator + 1)
+      }
+      await props.onAdd({
+        id: `custom-${crypto.randomUUID()}`,
+        displayName: name,
+        provider,
+        command: executable,
+        args: args
+          .split(/\r?\n/)
+          .map((argument) => argument.trim())
+          .filter(Boolean),
+        ...(workingDirectory.trim() ? { workingDirectory: workingDirectory.trim() } : {}),
+        ...(Object.keys(environmentEntries).length > 0 ? { environment: environmentEntries } : {}),
+      })
+    } catch {
+      // The parent keeps the server error visible above the form.
+    }
+  }
+
+  return (
+    <form className="provider-form custom-harness-form" onSubmit={(event) => void submit(event)}>
+      <label>
+        Display name
+        <input
+          value={displayName}
+          placeholder="DeepSeek Pi"
+          autoComplete="off"
+          onChange={(event) => setDisplayName(event.currentTarget.value)}
+        />
+      </label>
+      <label>
+        Compatible protocol
+        <select
+          value={provider}
+          onChange={(event) => setProvider(event.currentTarget.value as CustomHarness['provider'])}
+        >
+          {CUSTOM_HARNESS_PROVIDERS.map((entry) => (
+            <option key={entry.id} value={entry.id}>
+              {entry.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="provider-form__wide">
+        Executable name or path
+        <input
+          value={command}
+          placeholder="deepseek-pi"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => setCommand(event.currentTarget.value)}
+        />
+      </label>
+      <label className="provider-form__wide">
+        Fixed arguments, one per line
+        <textarea
+          value={args}
+          placeholder="--profile\nwork"
+          spellCheck={false}
+          onChange={(event) => setArgs(event.currentTarget.value)}
+        />
+      </label>
+      <label className="provider-form__wide">
+        Launch directory (optional)
+        <input
+          value={workingDirectory}
+          placeholder="~/Developer/my-harness-fork"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => setWorkingDirectory(event.currentTarget.value)}
+        />
+      </label>
+      <label className="provider-form__wide">
+        Environment, one NAME=value per line (optional)
+        <textarea
+          value={environment}
+          placeholder="PI_CODING_AGENT_DIR=/Users/me/.pi-custom"
+          spellCheck={false}
+          onChange={(event) => setEnvironment(event.currentTarget.value)}
+        />
+      </label>
+      <p className="custom-harness-form__note provider-form__wide">
+        Harness checks common desktop paths including <code>~/.local/bin</code>. Shell-only aliases
+        are not resolved; use an executable shim or an absolute path. Protocol flags such as Pi’s{' '}
+        <code>--mode rpc</code> are appended automatically. A custom launch directory receives the
+        active project in <code>HARNESS_WORKSPACE_PATH</code>.
+      </p>
+      {error ? (
+        <p className="provider-form__error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="provider-form__actions">
+        <button
+          className="settings__action"
+          type="button"
+          disabled={props.busy}
+          onClick={props.onCancel}
+        >
+          Cancel
+        </button>
+        <button className="settings__action" type="submit" disabled={props.busy}>
+          <Plus size={13} aria-hidden />
+          {props.busy ? 'Adding…' : 'Add harness'}
+        </button>
+      </div>
+    </form>
   )
 }
 
@@ -1331,6 +1652,7 @@ function AppearanceSettings(props: {
   showMacOSFontSmoothing: boolean
   macOSFontSmoothing: boolean
   onMacOSFontSmoothingChange: (enabled: boolean) => void
+  showMacOSHaptics?: boolean | undefined
 }) {
   return (
     <SettingsPanel title="Appearance" groupClassName="settings__group--plain">
@@ -1412,6 +1734,7 @@ function AppearanceSettings(props: {
           })}
         </fieldset>
       </div>
+      {props.showMacOSHaptics ? <SidebarHapticsSetting /> : null}
       <div className="appearance__text">
         <h2 className="settings__group-title">Accent palette</h2>
         <fieldset
@@ -1456,6 +1779,39 @@ function AppearanceSettings(props: {
         </div>
       ) : null}
     </SettingsPanel>
+  )
+}
+
+function SidebarHapticsSetting() {
+  const enabled = useSyncExternalStore(subscribeAppHaptics, readAppHaptics, readAppHaptics)
+  return (
+    <div className="appearance__text">
+      <h2 className="settings__group-title">Interaction</h2>
+      <div className="settings__group">
+        <SettingsRow
+          title="Trackpad haptics"
+          note="Feel responsive detents while resizing, choosing effort, and placing dragged chats."
+        >
+          <button
+            className={`switch${enabled ? ' is-on' : ''}`}
+            type="button"
+            role="switch"
+            aria-label="Trackpad haptics"
+            aria-checked={enabled}
+            onClick={() => {
+              const next = !enabled
+              writeAppHaptics(next)
+              if (next) {
+                prepareAppHaptics()
+                performAppHaptic('generic')
+              }
+            }}
+          >
+            <span className="switch__thumb" />
+          </button>
+        </SettingsRow>
+      </div>
+    </div>
   )
 }
 

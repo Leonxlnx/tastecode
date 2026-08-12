@@ -104,6 +104,23 @@ describe('model catalog', () => {
     expect(api).toMatchObject({ sourceName: 'Work OpenRouter', mark: 'openrouter' })
   })
 
+  it('keeps a custom executable distinct from its stock provider source', () => {
+    const custom = choicesFor(
+      {
+        provider: 'codex',
+        sourceName: 'Work Codex fork',
+        mark: 'openai',
+        agent: { id: 'work-codex', name: 'Work Codex fork' },
+      },
+      [model],
+    )[0]
+    const stock = choicesFor({ provider: 'codex', sourceName: 'Codex', mark: 'openai' }, [model])[0]
+
+    expect(custom).toMatchObject({ sourceName: 'Work Codex fork' })
+    expect(custom?.key).toBe('codex:work-codex:shared-model')
+    expect(custom?.key).not.toBe(stock?.key)
+  })
+
   it.each([
     ['gemini', 'gemini'],
     ['kimi', 'kimi'],

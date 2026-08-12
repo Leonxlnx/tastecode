@@ -23,7 +23,9 @@ describe('radius system', () => {
     expect(tokensCss).toContain('--r-popup-item: var(--r-lg);')
 
     expect(appCss).toMatch(/\.rail__search \{[^}]*border-radius: var\(--r-md\)/s)
-    expect(appCss).toMatch(/\.session-search__filters select \{[^}]*border-radius: var\(--r-xl\)/s)
+    expect(appCss).toMatch(
+      /\.session-search__filters \.app-select__trigger \{[^}]*border-radius: var\(--r-xl\)/s,
+    )
     expect(appCss).toMatch(/\.inbox-card \{[^}]*border-radius: var\(--r-card\)/s)
     expect(appCss).toMatch(/\.command-palette__panel \{[^}]*border-radius: var\(--r-dialog\)/s)
     expect(appCss).toMatch(/\.composer__box \{[^}]*border-radius: var\(--r-2xl\)/s)

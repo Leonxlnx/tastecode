@@ -5,6 +5,13 @@ import type { Model } from '@harness/contracts'
 import { useState, type ReactNode } from 'react'
 import type { ModelChoice } from '../model-catalog.js'
 
+const haptics = vi.hoisted(() => ({
+  performAppHaptic: vi.fn(),
+  prepareAppHaptics: vi.fn(),
+}))
+
+vi.mock('../haptics.js', () => haptics)
+
 vi.mock('./Menu.js', () => ({
   Menu(props: {
     trigger: (open: boolean) => ReactNode
@@ -109,6 +116,8 @@ function renderSelector(overrides: RenderOverrides = {}) {
 }
 
 beforeEach(() => {
+  haptics.performAppHaptic.mockClear()
+  haptics.prepareAppHaptics.mockClear()
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback: FrameRequestCallback) => {
     callback(0)
     return 1
@@ -228,7 +237,9 @@ describe('ModelSelector', () => {
       toJSON: () => ({}),
     })
 
+    fireEvent.pointerEnter(slider)
     fireEvent.pointerDown(slider, { clientX: 110, pointerId: 4 })
+    fireEvent.pointerMove(slider, { clientX: 350, pointerId: 4 })
     fireEvent.pointerMove(slider, { clientX: 350, pointerId: 4 })
     expect(slider.getAttribute('aria-valuetext')).toBe('Extra High')
     expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
@@ -238,6 +249,10 @@ describe('ModelSelector', () => {
     expect(slider.querySelectorAll('canvas')).toHaveLength(2)
     expect(slider.querySelectorAll('.model-selector__slider-stop')).toHaveLength(4)
     expect(slider.querySelector('.model-selector__slider-thumb')).toBeNull()
+    expect(haptics.prepareAppHaptics).toHaveBeenCalled()
+    expect(haptics.performAppHaptic).toHaveBeenCalledTimes(2)
+    expect(haptics.performAppHaptic).toHaveBeenNthCalledWith(1, 'alignment')
+    expect(haptics.performAppHaptic).toHaveBeenNthCalledWith(2, 'alignment')
 
     fireEvent.pointerUp(slider, { clientX: 350, pointerId: 4 })
     expect(onEffortChange).toHaveBeenCalledWith('xhigh')

@@ -15,7 +15,10 @@ type Bridge = {
   writeClipboardText?: (text: string) => Promise<void>
   setZoom: (action: ZoomAction) => Promise<void>
   setTheme: (preference: AppThemePreference) => Promise<void>
+  prepareHaptics?: () => void
+  performHaptic?: (pattern: NativeHapticPattern) => void
   capturePreview: (request: PreviewCaptureRequest) => Promise<PreviewCaptureResult>
+  openExternal: (url: string) => Promise<void>
   onZoomChange: (listener: (factor: number) => void) => () => void
   isDesktop: true
 }
@@ -23,6 +26,7 @@ type Bridge = {
 export type ZoomAction = 'in' | 'out' | 'reset'
 export type AppTheme = 'light' | 'dark'
 export type AppThemePreference = AppTheme | 'system'
+export type NativeHapticPattern = 'alignment' | 'generic'
 
 const bridge = (globalThis as { harness?: Bridge }).harness
 
@@ -77,6 +81,14 @@ export function setDesktopTheme(preference: AppThemePreference): Promise<void> {
   return bridge?.setTheme(preference) ?? Promise.resolve()
 }
 
+export function prepareNativeHaptics(): void {
+  bridge?.prepareHaptics?.()
+}
+
+export function performNativeHaptic(pattern: NativeHapticPattern): void {
+  bridge?.performHaptic?.(pattern)
+}
+
 export function onAppZoomChange(listener: (factor: number) => void): () => void {
   return bridge?.onZoomChange(listener) ?? (() => undefined)
 }
@@ -96,5 +108,10 @@ export async function capturePreview(
       error: error instanceof Error ? error.message : String(error),
     }
   }
+}
+
+export function openExternalUrl(url: string): Promise<void> {
+  if (!url) return Promise.resolve()
+  return bridge?.openExternal(url) ?? Promise.resolve()
 }
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'

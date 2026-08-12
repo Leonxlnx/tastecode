@@ -132,7 +132,7 @@ export function sourceKey(input: {
   agentId?: string | undefined
 }): string {
   if (input.connectionId) return `api:${input.connectionId}`
-  if (input.agentId) return `acp:${input.agentId}`
+  if (input.agentId) return `${input.provider}:${input.agentId}`
   return input.provider
 }
 
@@ -197,7 +197,12 @@ export function choicesFor(
   models: Model[],
   fallback = true,
 ): ModelChoice[] {
-  const presentation = sourcePresentation(input)
+  // An agent identity on a direct provider means this is a user-owned
+  // executable, whose chosen name is the source identity. Stock provider
+  // discovery remains canonical even if a transport reports another label.
+  const presentation = input.agent
+    ? { label: input.sourceName.trim(), mark: input.mark }
+    : sourcePresentation(input)
   const source = sourceKey({
     provider: input.provider,
     connectionId: input.connectionId,
