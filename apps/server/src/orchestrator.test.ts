@@ -2793,6 +2793,31 @@ describe('queued turns', () => {
     expect(orchestrator.queue(thread.id).items).toEqual([])
   })
 
+  it('stays idle when a queued turn completes before sendTurn returns', async () => {
+    const { sessions, orchestrator, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds.push('first-turn', 'queued-turn')
+      await orchestrator.submitTurn(thread.id, 'first')
+      await orchestrator.submitTurn(thread.id, 'queued')
+      session.release = () => {}
+
+      session.emit({ type: 'turn.completed', turnId: 'first-turn', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toEqual(['first', 'queued']))
+      session.emit(turnStarted(thread.id, 'queued-turn'))
+      session.emit({ type: 'turn.completed', turnId: 'queued-turn', status: 'completed' })
+      session.emit(message('Website built.', 'queued-turn'))
+      session.release?.()
+
+      await vi.waitFor(() => expect(orchestrator.queue(thread.id).items).toEqual([]))
+      await vi.waitFor(() => expect(orchestrator.isTurnRunning(thread.id)).toBe(false))
+      expect(reduceEventLog(emptyThread, store.history(thread.id)).running).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
   it('can remove a queued prompt or steer it into the running turn', async () => {
     const { sessions, orchestrator } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')

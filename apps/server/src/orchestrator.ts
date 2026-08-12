@@ -1540,7 +1540,7 @@ export class Orchestrator {
     this.#notifyQueue(threadId)
     const generation = this.#panicGeneration
     try {
-      await this.sendTurn(
+      const turnId = await this.sendTurn(
         threadId,
         next.text,
         next.attachments,
@@ -1564,7 +1564,7 @@ export class Orchestrator {
       if (!next.clientSubmissionId && !this.#store.completeQueuedTurn(threadId, next.id)) return
       if (!this.#threads.has(threadId) || this.#store.thread(threadId)?.closedAt !== undefined)
         return
-      this.#activeTurns.add(threadId)
+      if (this.#activeTurnIds.get(threadId) === turnId) this.#activeTurns.add(threadId)
     } catch {
       if (!this.#threads.has(threadId)) return
       // After a panic the queue was emptied on purpose; putting the grabbed
