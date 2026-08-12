@@ -1091,22 +1091,7 @@ export function App() {
         providers
           .filter((entry) => entry.installed && entry.id !== 'acp' && entry.id !== 'api')
           .map(async (entry) => {
-            try {
-              const result = await transport.request('models.list', { provider: entry.id })
-              return {
-                provider: entry.id,
-                discovered: true,
-                models: choicesFor(
-                  {
-                    provider: entry.id,
-                    sourceName: entry.displayName,
-                    mark: providerMark(entry.id),
-                  },
-                  result.models,
-                  false,
-                ),
-              }
-            } catch {
+            const preserveCatalog = () => {
               const source = sourceKey({ provider: entry.id })
               const preserved = catalogModelsRef.current.filter(
                 (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
@@ -1115,6 +1100,23 @@ export function App() {
                 if (unvalidatedModelKeys.has(choice.key)) unknownKeys.add(choice.key)
               }
               return { provider: entry.id, discovered: false, models: preserved }
+            }
+            try {
+              const result = await transport.request('models.list', { provider: entry.id })
+              const models = choicesFor(
+                {
+                  provider: entry.id,
+                  sourceName: entry.displayName,
+                  mark: providerMark(entry.id),
+                },
+                result.models,
+                false,
+              )
+              return models.length > 0
+                ? { provider: entry.id, discovered: true, models }
+                : preserveCatalog()
+            } catch {
+              return preserveCatalog()
             }
           }),
       )

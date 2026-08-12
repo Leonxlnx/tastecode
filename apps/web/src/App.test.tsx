@@ -568,53 +568,58 @@ describe('web client', () => {
     )
   })
 
-  it('waits for every installed beta catalog before saving defaults', async () => {
-    serverProviders = [
-      ...serverProviders,
-      {
-        id: 'claude-code',
-        displayName: 'Claude Code',
-        installed: true,
-        auth: 'authenticated',
-        capabilities: {
-          steer: false,
-          fork: false,
-          interrupt: true,
-          reasoningItems: true,
-          approvals: false,
-          images: false,
-        },
-      },
-    ]
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method !== 'models.list') return request(method, params)
-      if ((params as { provider: string }).provider === 'claude-code') {
-        return Promise.reject(new Error('Claude catalog unavailable'))
-      }
-      return Promise.resolve({
-        models: [
-          {
-            id: 'gpt-5.5',
-            displayName: 'GPT-5.5',
-            isDefault: true,
-            reasoningEfforts: [],
-            serviceTiers: [],
+  it.each(['failed', 'empty'] as const)(
+    'waits for every installed beta catalog when one is %s',
+    async (claudeCatalog) => {
+      serverProviders = [
+        ...serverProviders,
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          installed: true,
+          auth: 'authenticated',
+          capabilities: {
+            steer: false,
+            fork: false,
+            interrupt: true,
+            reasoningItems: true,
+            approvals: false,
+            images: false,
           },
-        ],
+        },
+      ]
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method !== 'models.list') return request(method, params)
+        if ((params as { provider: string }).provider === 'claude-code') {
+          return claudeCatalog === 'failed'
+            ? Promise.reject(new Error('Claude catalog unavailable'))
+            : Promise.resolve({ models: [] })
+        }
+        return Promise.resolve({
+          models: [
+            {
+              id: 'gpt-5.5',
+              displayName: 'GPT-5.5',
+              isDefault: true,
+              reasoningEfforts: [],
+              serviceTiers: [],
+            },
+          ],
+        })
       })
-    })
 
-    render(<App />)
+      render(<App />)
 
-    await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('models.list', {
-        provider: 'claude-code',
-      }),
-    )
-    expect(localStorage.getItem('harness.hiddenModels')).toBeNull()
-  })
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith('models.list', {
+          provider: 'claude-code',
+        }),
+      )
+      expect(localStorage.getItem('harness.hiddenModels')).toBeNull()
+    },
+  )
 
   it('keeps a visibility edit made while live discovery is pending', async () => {
     localStorage.setItem(
