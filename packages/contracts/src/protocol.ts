@@ -169,7 +169,30 @@ export const PreviewViewportSchema = z.object({
 })
 export type PreviewViewport = z.infer<typeof PreviewViewportSchema>
 
-export const PreviewScreenshotSchema = PreviewViewportSchema.extend({ path: z.string().min(1) })
+export const PreviewInteractiveTargetViolationSchema = z
+  .object({
+    selector: z.string().min(1).max(512),
+    label: z.string().max(200),
+    width: z.number().finite().nonnegative().max(3_840),
+    height: z.number().finite().nonnegative().max(2_160),
+  })
+  .refine(({ width, height }) => width < 44 || height < 44, {
+    message: 'interactive target violations must be smaller than 44 CSS px',
+  })
+export type PreviewInteractiveTargetViolation = z.infer<
+  typeof PreviewInteractiveTargetViolationSchema
+>
+
+export const PreviewDomAuditSchema = z.object({
+  h1Count: z.number().int().nonnegative().max(10_000),
+  interactiveTargetViolations: z.array(PreviewInteractiveTargetViolationSchema).max(200),
+})
+export type PreviewDomAudit = z.infer<typeof PreviewDomAuditSchema>
+
+export const PreviewScreenshotSchema = PreviewViewportSchema.extend({
+  path: z.string().min(1),
+  domAudit: PreviewDomAuditSchema.optional(),
+})
 export type PreviewScreenshot = z.infer<typeof PreviewScreenshotSchema>
 
 export const PreviewCaptureRequestSchema = z.object({

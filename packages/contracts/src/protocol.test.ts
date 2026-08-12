@@ -237,13 +237,47 @@ describe('protocol envelopes', () => {
         viewports: [{ width: 10_000, height: 900 }],
       }),
     ).toThrow()
-    expect(
+    const legacyResult = {
+      status: 'completed' as const,
+      requestId: request.requestId,
+      screenshots: [{ path: 'C:\\tmp\\desktop.png', width: 1_440, height: 900 }],
+    }
+    expect(PreviewCaptureResultSchema.parse(legacyResult)).toEqual(legacyResult)
+
+    const auditedResult = {
+      ...legacyResult,
+      screenshots: [
+        {
+          path: 'C:\\tmp\\mobile.png',
+          width: 390,
+          height: 844,
+          domAudit: {
+            h1Count: 0,
+            interactiveTargetViolations: [
+              { selector: '#theme', label: 'Theme', width: 32.5, height: 32 },
+              { selector: 'a:nth-of-type(2)', label: '', width: 80, height: 20 },
+            ],
+          },
+        },
+      ],
+    }
+    expect(PreviewCaptureResultSchema.parse(auditedResult)).toEqual(auditedResult)
+    expect(() =>
       PreviewCaptureResultSchema.parse({
-        status: 'completed',
-        requestId: request.requestId,
-        screenshots: [{ path: 'C:\\tmp\\desktop.png', width: 1_440, height: 900 }],
-      }).status,
-    ).toBe('completed')
+        ...auditedResult,
+        screenshots: [
+          {
+            ...auditedResult.screenshots[0],
+            domAudit: {
+              h1Count: 1,
+              interactiveTargetViolations: [
+                { selector: '#large', label: 'Large control', width: 44, height: 44 },
+              ],
+            },
+          },
+        ],
+      }),
+    ).toThrow()
   })
 
   it('validates params for every declared method', () => {
