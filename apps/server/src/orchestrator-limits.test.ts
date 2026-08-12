@@ -6,6 +6,7 @@ const sources = vi.hoisted(() => ({
   codex: vi.fn(),
   claude: vi.fn(),
   grok: vi.fn(),
+  disposed: 0,
 }))
 
 vi.mock('@harness/adapter-codex', async (importOriginal) => {
@@ -15,7 +16,9 @@ vi.mock('@harness/adapter-codex', async (importOriginal) => {
     CodexAdapter: class {
       on(): void {}
       onUsageChanged(): void {}
-      dispose(): void {}
+      dispose(): void {
+        sources.disposed += 1
+      }
       async start(): Promise<void> {}
       rateLimitSource(): Promise<unknown> {
         return sources.codex()
@@ -47,6 +50,7 @@ beforeEach(() => {
   sources.codex.mockReset()
   sources.claude.mockReset()
   sources.grok.mockReset()
+  sources.disposed = 0
 })
 
 describe('provider limit sources', () => {
@@ -103,5 +107,27 @@ describe('provider limit sources', () => {
 
     await expect(instance.usageLimitSource('grok')).rejects.toThrow('Grok billing request failed.')
     await instance.disposeAll()
+  })
+
+  it('restarts a wedged Codex control connection before returning limits', async () => {
+    vi.useFakeTimers()
+    sources.codex.mockReturnValueOnce(new Promise(() => {})).mockResolvedValueOnce({
+      status: 'ready',
+      limits: [{ label: 'Weekly', usedPercent: 17 }],
+    })
+    const instance = orchestrator()
+
+    const result = instance.usageLimitSource('codex')
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    await expect(result).resolves.toEqual({
+      provider: 'codex',
+      status: 'ready',
+      limits: [{ label: 'Weekly', usedPercent: 17 }],
+    })
+    expect(sources.codex).toHaveBeenCalledTimes(2)
+    expect(sources.disposed).toBe(1)
+    await instance.disposeAll()
+    vi.useRealTimers()
   })
 })
