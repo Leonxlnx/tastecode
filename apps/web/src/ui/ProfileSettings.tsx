@@ -36,7 +36,7 @@ export function ProfileSettings(props: {
   account: Account | undefined
   providerName: string
   identity?: ProfileIdentityPreferences | undefined
-  onIdentityChange?: ((identity: ProfileIdentityPreferences) => void) | undefined
+  onIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
 }) {
   const [data, setData] = useState<ResultOf<'usage.history'>>()
   const [loading, setLoading] = useState(true)
@@ -46,23 +46,21 @@ export function ProfileSettings(props: {
   const [imageError, setImageError] = useState<string>()
   const imageRequest = useRef(0)
 
-  const changeIdentity = (updates: Partial<ProfileIdentityPreferences>) => {
-    props.onIdentityChange?.({ displayName: '', ...props.identity, ...updates })
-  }
-
   const chooseImage = async (file: File | undefined) => {
     if (!file) return
     const request = ++imageRequest.current
     setImageError(undefined)
     try {
       const avatarDataUrl = await readProfileImage(file)
-      if (request === imageRequest.current) changeIdentity({ avatarDataUrl })
+      if (request === imageRequest.current) props.onIdentityChange?.({ avatarDataUrl })
     } catch (requestError) {
       if (request === imageRequest.current) {
         setImageError(requestError instanceof Error ? requestError.message : String(requestError))
       }
     }
   }
+
+  useEffect(() => () => void (imageRequest.current += 1), [])
 
   useEffect(() => {
     let active = true
@@ -104,31 +102,97 @@ export function ProfileSettings(props: {
     setRequestVersion((version) => version + 1)
   }, [])
 
-  if (!data && loading) {
-    return (
-      <section className="profile-page profile-page--loading" aria-live="polite">
-        <div className="profile-page__loading-mark" aria-hidden />
-        <h1>Loading your profile</h1>
-        <p>Reading the local activity index.</p>
-      </section>
-    )
-  }
+  const identity = profileIdentity(props.account, props.providerName, props.identity?.displayName)
+  const identityEditor = (
+    <section className="profile-identity" aria-label="Profile identity">
+      <div className="profile-identity__avatar" aria-hidden>
+        {props.identity?.avatarDataUrl ? (
+          <img src={props.identity.avatarDataUrl} alt="" />
+        ) : (
+          identity.initials
+        )}
+      </div>
+      <h2>{identity.name}</h2>
+      <div className="profile-identity__meta">
+        <span>{identity.handle}</span>
+        {props.account?.plan ? (
+          <span className="profile-identity__plan">{props.account.plan}</span>
+        ) : null}
+      </div>
+      <div className="profile-identity__editor">
+        <label className="profile-identity__field">
+          <span>Display name</span>
+          <input
+            type="text"
+            maxLength={64}
+            value={props.identity?.displayName ?? ''}
+            placeholder={identity.name}
+            onChange={(event) => props.onIdentityChange?.({ displayName: event.target.value })}
+          />
+        </label>
+        <div className="profile-identity__photo-actions">
+          <label className="settings__action profile-identity__photo">
+            <ImagePlus size={14} aria-hidden />
+            <span>{props.identity?.avatarDataUrl ? 'Change photo' : 'Add photo'}</span>
+            <input
+              className="visually-hidden"
+              type="file"
+              accept={PROFILE_IMAGE_ACCEPT}
+              onChange={(event) => {
+                void chooseImage(event.target.files?.[0])
+                event.target.value = ''
+              }}
+            />
+          </label>
+          {props.identity?.avatarDataUrl ? (
+            <button
+              className="settings__action profile-identity__remove-photo"
+              type="button"
+              onClick={() => {
+                imageRequest.current += 1
+                setImageError(undefined)
+                props.onIdentityChange?.({ avatarDataUrl: undefined })
+              }}
+            >
+              <Trash2 size={14} aria-hidden />
+              <span>Remove</span>
+            </button>
+          ) : null}
+        </div>
+        <p className="profile-identity__photo-note">PNG, JPEG, or WebP · 1 MB maximum</p>
+        {imageError ? (
+          <p className="profile-identity__photo-error" role="alert">
+            {imageError}
+          </p>
+        ) : null}
+      </div>
+    </section>
+  )
 
   if (!data) {
     return (
-      <section className="profile-page profile-page--error" role="alert">
-        <CircleAlert size={20} aria-hidden />
-        <h1>Profile could not be loaded</h1>
-        <p>{error ?? 'The local activity index could not be read.'}</p>
-        <button type="button" onClick={refresh}>
-          Try again
-        </button>
+      <section className="profile-page" aria-labelledby="profile-title">
+        <header className="profile-page__header">
+          <h1 id="profile-title">Profile</h1>
+        </header>
+        {identityEditor}
+        <div
+          className={`profile-page__notice${loading ? ' profile-page__notice--scan' : ''}`}
+          role={loading ? 'status' : 'alert'}
+        >
+          {loading ? <RefreshCw size={14} aria-hidden /> : <CircleAlert size={14} aria-hidden />}
+          <span>{loading ? 'Reading the local activity index.' : error}</span>
+          {!loading ? (
+            <button className="settings__action" type="button" onClick={refresh}>
+              Try again
+            </button>
+          ) : null}
+        </div>
       </section>
     )
   }
 
   const scanning = data.scan.status === 'scanning'
-  const identity = profileIdentity(props.account, props.providerName, props.identity?.displayName)
   const streaks = streakSummary(data.daily)
   const peakTokens = data.daily.reduce((peak, day) => Math.max(peak, day.totals.processedTokens), 0)
   const topProvider = data.providers.toSorted(
@@ -181,69 +245,7 @@ export function ProfileSettings(props: {
         </div>
       ) : null}
 
-      <section className="profile-identity" aria-label="Profile identity">
-        <div className="profile-identity__avatar" aria-hidden>
-          {props.identity?.avatarDataUrl ? (
-            <img src={props.identity.avatarDataUrl} alt="" />
-          ) : (
-            identity.initials
-          )}
-        </div>
-        <h2>{identity.name}</h2>
-        <div className="profile-identity__meta">
-          <span>{identity.handle}</span>
-          {props.account?.plan ? (
-            <span className="profile-identity__plan">{props.account.plan}</span>
-          ) : null}
-        </div>
-        <div className="profile-identity__editor">
-          <label className="profile-identity__field">
-            <span>Display name</span>
-            <input
-              type="text"
-              maxLength={64}
-              value={props.identity?.displayName ?? ''}
-              placeholder={identity.name}
-              onChange={(event) => changeIdentity({ displayName: event.target.value })}
-            />
-          </label>
-          <div className="profile-identity__photo-actions">
-            <label className="settings__action profile-identity__photo">
-              <ImagePlus size={14} aria-hidden />
-              <span>{props.identity?.avatarDataUrl ? 'Change photo' : 'Add photo'}</span>
-              <input
-                className="visually-hidden"
-                type="file"
-                accept={PROFILE_IMAGE_ACCEPT}
-                onChange={(event) => {
-                  void chooseImage(event.target.files?.[0])
-                  event.target.value = ''
-                }}
-              />
-            </label>
-            {props.identity?.avatarDataUrl ? (
-              <button
-                className="settings__action profile-identity__remove-photo"
-                type="button"
-                onClick={() => {
-                  imageRequest.current += 1
-                  setImageError(undefined)
-                  changeIdentity({ avatarDataUrl: undefined })
-                }}
-              >
-                <Trash2 size={14} aria-hidden />
-                <span>Remove</span>
-              </button>
-            ) : null}
-          </div>
-          <p className="profile-identity__photo-note">PNG, JPEG, or WebP · 1 MB maximum</p>
-          {imageError ? (
-            <p className="profile-identity__photo-error" role="alert">
-              {imageError}
-            </p>
-          ) : null}
-        </div>
-      </section>
+      {identityEditor}
 
       <dl className="profile-stats" aria-label="Lifetime activity">
         <ProfileStat value={formatTokens(data.totals.processedTokens)} label="Lifetime tokens" />

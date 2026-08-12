@@ -428,9 +428,12 @@ export function App() {
   const [workspaceRefreshRevision, setWorkspaceRefreshRevision] = useState(0)
   const [account, setAccount] = useState<Account | undefined>()
   const [profileIdentity, setProfileIdentity] = useState(readProfileIdentityPreferences)
-  const updateProfileIdentity = useCallback((next: ProfileIdentityPreferences) => {
-    setProfileIdentity(next)
-    writeProfileIdentityPreferences(next)
+  const updateProfileIdentity = useCallback((updates: Partial<ProfileIdentityPreferences>) => {
+    setProfileIdentity((current) => {
+      const next = { ...current, ...updates }
+      writeProfileIdentityPreferences(next)
+      return next
+    })
   }, [])
   const [accountCheck, setAccountCheck] = useState<AccountCheck>({ provider, state: 'loading' })
   const accountRequestRevision = useRef(0)
