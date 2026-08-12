@@ -2889,7 +2889,7 @@
   grid-column: 5;
 }
 
-.provider-row__primary:empty + .provider-row__secondary {
+.provider-row__secondary:has(+ .provider-row__primary:empty) {
   grid-column: 6;
 }
 
@@ -2928,8 +2928,8 @@
     grid-template-areas:
       'mark identity issue'
       'status status status'
-      'primary primary secondary';
-    grid-template-columns: 20px minmax(0, 1fr) 86px;
+      'secondary secondary primary';
+    grid-template-columns: 20px minmax(0, 1fr) 136px;
     row-gap: 8px;
   }
 
@@ -2952,17 +2952,17 @@
   }
 
   .provider-row__primary {
-    grid-area: secondary;
-    justify-content: flex-end;
-  }
-
-  .provider-row__secondary {
     grid-area: primary;
     justify-content: flex-end;
   }
 
-  .provider-row__primary:empty + .provider-row__secondary {
+  .provider-row__secondary {
     grid-area: secondary;
+    justify-content: flex-end;
+  }
+
+  .provider-row__secondary:has(+ .provider-row__primary:empty) {
+    grid-area: primary;
   }
 
   .provider-row__primary .settings__action {

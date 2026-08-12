@@ -44,11 +44,11 @@ export function ProviderRow(props: {
       <div className="provider-row__issue">
         {props.issue ? <ProviderRowIssue {...props.issue} /> : null}
       </div>
-      <div className="provider-row__primary">
-        <ProviderRowAction action={props.primary} tone="primary" />
-      </div>
       <div className="provider-row__secondary">
         <ProviderRowAction action={props.secondary} tone="secondary" />
+      </div>
+      <div className="provider-row__primary">
+        <ProviderRowAction action={props.primary} tone="primary" />
       </div>
     </div>
   )

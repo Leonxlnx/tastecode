@@ -28,8 +28,8 @@ describe('provider row grammar', () => {
       'provider-row__identity',
       'provider-row__status',
       'provider-row__issue',
-      'provider-row__primary',
       'provider-row__secondary',
+      'provider-row__primary',
     ])
     expect(row.querySelector('.provider-row__mark svg')?.getAttribute('width')).toBe('18')
     expect(within(row).getByText('codex-cli 1.4.0')).toBeTruthy()
@@ -60,5 +60,20 @@ describe('provider row grammar', () => {
       />,
     )
     expect(screen.getByRole('button', { name: 'Sign out' }).className).toContain('is-quiet')
+  })
+
+  it('keeps secondary actions before primary actions in focus order', () => {
+    render(
+      <ProviderRow
+        provider={{ id: 'grok', displayName: 'Grok', installed: true, auth: 'unknown' }}
+        status="Installing…"
+        primary={{ label: 'Install' }}
+        secondary={{ label: 'Details' }}
+      />,
+    )
+    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual([
+      'Details',
+      'Install',
+    ])
   })
 })
