@@ -35,20 +35,20 @@ describe('Sidebar chat actions', () => {
           status: 'ready',
           provider: 'codex',
           summary: {
-          session: {
-            inputTokens: 800,
-            cachedInputTokens: 0,
-            outputTokens: 200,
-            reasoningTokens: 0,
-            totalTokens: 1_000,
-          },
-          today: {
-            inputTokens: 4_000,
-            cachedInputTokens: 0,
-            outputTokens: 1_000,
-            reasoningTokens: 0,
-            totalTokens: 5_000,
-          },
+            session: {
+              inputTokens: 800,
+              cachedInputTokens: 0,
+              outputTokens: 200,
+              reasoningTokens: 0,
+              totalTokens: 1_000,
+            },
+            today: {
+              inputTokens: 4_000,
+              cachedInputTokens: 0,
+              outputTokens: 1_000,
+              reasoningTokens: 0,
+              totalTokens: 5_000,
+            },
             limits: [{ label: '7 days', usedPercent: 85 }],
             limitSource: {
               provider: 'codex',
@@ -102,9 +102,9 @@ describe('Sidebar chat actions', () => {
     expect(document.activeElement?.textContent).toContain('Plan limits')
 
     expect(screen.queryAllByRole('menuitem')).toHaveLength(0)
-    const accountActions = screen.getAllByRole('button').filter((button) =>
-      ['Profile', 'Settings'].includes(button.textContent ?? ''),
-    )
+    const accountActions = screen
+      .getAllByRole('button')
+      .filter((button) => ['Profile', 'Settings'].includes(button.textContent ?? ''))
     for (const item of accountActions) expect(item.querySelector('svg')).not.toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Profile' }))
     expect(onOpenSettings).toHaveBeenCalledWith('profile')

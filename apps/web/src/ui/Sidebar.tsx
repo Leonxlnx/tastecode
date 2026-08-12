@@ -10,12 +10,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import type {
-  Account,
-  ProviderId,
-  ThreadInboxStatus,
-  ThreadLifecycle,
-} from '@harness/contracts'
+import type { Account, ProviderId, ThreadInboxStatus, ThreadLifecycle } from '@harness/contracts'
 import {
   Archive,
   Ellipsis,
