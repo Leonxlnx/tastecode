@@ -1081,6 +1081,26 @@ describe('web client', () => {
   })
 })
 describe('new chats', () => {
+  it('keeps installed provider limit sources separate in the account overview', async () => {
+    serverProviders = [
+      ...serverProviders,
+      { id: 'claude-code', displayName: 'Claude Code', installed: true, auth: 'authenticated' },
+      { id: 'grok', displayName: 'Grok', installed: false, auth: 'unknown' },
+    ]
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' })
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'claude-code' })
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', { provider: 'grok' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    expect(await screen.findByRole('region', { name: 'Codex' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'Claude Code' })).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Grok' })).toBeNull()
+  })
+
   it('refreshes usage once for active-provider change bursts', async () => {
     render(<App />)
     await waitFor(() =>

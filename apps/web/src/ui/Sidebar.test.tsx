@@ -31,32 +31,34 @@ describe('Sidebar chat actions', () => {
         activeSessionId={undefined}
         account={{ signedIn: true, email: 'private@example.com', plan: 'Pro' }}
         providerName="Codex"
-        usageState={{
-          status: 'ready',
-          provider: 'codex',
-          summary: {
-            session: {
-              inputTokens: 800,
-              cachedInputTokens: 0,
-              outputTokens: 200,
-              reasoningTokens: 0,
-              totalTokens: 1_000,
-            },
-            today: {
-              inputTokens: 4_000,
-              cachedInputTokens: 0,
-              outputTokens: 1_000,
-              reasoningTokens: 0,
-              totalTokens: 5_000,
-            },
-            limits: [{ label: '7 days', usedPercent: 85 }],
-            limitSource: {
-              provider: 'codex',
-              status: 'ready',
+        usageStates={[
+          {
+            status: 'ready',
+            provider: 'codex',
+            summary: {
+              session: {
+                inputTokens: 800,
+                cachedInputTokens: 0,
+                outputTokens: 200,
+                reasoningTokens: 0,
+                totalTokens: 1_000,
+              },
+              today: {
+                inputTokens: 4_000,
+                cachedInputTokens: 0,
+                outputTokens: 1_000,
+                reasoningTokens: 0,
+                totalTokens: 5_000,
+              },
               limits: [{ label: '7 days', usedPercent: 85 }],
+              limitSource: {
+                provider: 'codex',
+                status: 'ready',
+                limits: [{ label: '7 days', usedPercent: 85 }],
+              },
             },
           },
-        }}
+        ]}
         onRetryUsage={vi.fn()}
         mode="inbox"
         inbox={{
