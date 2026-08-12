@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b",
-    "dev": "tsx watch src/main.ts",
+    "dev": "tsc -b && tsx watch src/main.ts",
     "start": "node dist/main.js",
     "test": "vitest run --passWithNoTests --testTimeout=20000"
   },
