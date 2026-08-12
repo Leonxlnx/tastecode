@@ -1429,7 +1429,7 @@ describe('new chats', () => {
     expect(screen.getByText('Pinned')).toBeTruthy()
   })
 
-  it('shows changed files before restoring and offers undo afterwards', async () => {
+  it('recovers an indeterminate restore and offers undo after retry', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -1450,12 +1450,16 @@ describe('new chats', () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     let historyReads = 0
-    let releaseRestoreHistory: (() => void) | undefined
-    const restoreHistory = new Promise<{ events: never[]; running: false }>((resolve) => {
-      releaseRestoreHistory = () => resolve({ events: [], running: false })
+    let restoreRequests = 0
+    let rejectRestore: (() => void) | undefined
+    let resolveReconnect!: (value: unknown) => void
+    const reconnectHistory = new Promise<unknown>((resolve) => (resolveReconnect = resolve))
+    const firstRestore = new Promise<never>((_, reject) => {
+      rejectRestore = () => reject(new IndeterminateRequestError('restore response lost'))
     })
     transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'thread.history' && ++historyReads === 2) return restoreHistory
+      if (method === 'thread.history' && ++historyReads === 2) return reconnectHistory
+      if (method === 'thread.restore' && restoreRequests++ === 0) return firstRestore
       return request(method, params)
     })
 
@@ -1474,16 +1478,15 @@ describe('new chats', () => {
         checkpointId: 7,
       })
     })
-    await waitFor(() => expect(historyReads).toBe(2))
     act(() => {
       for (const listener of transport.stateListeners) listener('reconnecting')
       for (const listener of transport.stateListeners) listener('open')
     })
+    await waitFor(() => expect(historyReads).toBe(2))
+    await act(async () => resolveReconnect({ events: [], running: false }))
+    await act(async () => rejectRestore?.())
     await waitFor(() => expect(historyReads).toBe(3))
-    expect(
-      transport.request.mock.calls.filter(([method]) => method === 'thread.history').at(-1)?.[1],
-    ).toEqual({ threadId: 'thread-rollback' })
-    await act(async () => releaseRestoreHistory?.())
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore checkpoint' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.undoRestore', {
@@ -1496,6 +1499,7 @@ describe('new chats', () => {
         .filter(([method]) => method === 'thread.history')
         .map(([, params]) => params),
     ).toEqual([
+      { threadId: 'thread-rollback' },
       { threadId: 'thread-rollback' },
       { threadId: 'thread-rollback' },
       { threadId: 'thread-rollback' },
