@@ -98,8 +98,20 @@ describe('settings viewport layout', () => {
   it('names the foundational preference categories truthfully', () => {
     renderSettings()
 
+    const categories = screen.getByRole('navigation', { name: 'Settings categories' })
+    expect(
+      within(categories)
+        .getAllByRole('button')
+        .slice(0, 3)
+        .map((button) => button.textContent),
+    ).toEqual(['General', 'Profile', 'Appearance'])
+
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
     expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
+    expect(screen.getByRole('switch', { name: 'Provider rail layout' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
+    expect(screen.queryByRole('switch', { name: 'Provider rail layout' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Data & privacy' }))
     expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy()
@@ -153,6 +165,7 @@ describe('about status grammar', () => {
 describe('model picker layout setting', () => {
   it('reflects changes from the shared layout preference', () => {
     renderSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
     const toggle = screen.getByRole('switch', { name: 'Provider rail layout' })
     expect(toggle.getAttribute('aria-checked')).toBe('false')
 
@@ -602,7 +615,7 @@ describe('model settings', () => {
     )
 
     const categories = screen.getByRole('navigation', { name: 'Settings categories' })
-    expect(within(categories).getAllByRole('button')[0]?.textContent).toBe('Profile')
+    expect(within(categories).getAllByRole('button')[0]?.textContent).toBe('General')
 
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
     const search = screen.getByRole('searchbox', { name: 'Search OpenCode models' })

@@ -271,10 +271,22 @@ function SettingsComponent(props: {
         <p className="settings__nav-label">Settings</p>
         <nav className="settings__nav" aria-label="Settings categories">
           <SettingsNavItem
+            active={section === 'workflows'}
+            icon={<PanelLeft size={15} aria-hidden />}
+            label="General"
+            onClick={() => setSection('workflows')}
+          />
+          <SettingsNavItem
             active={section === 'profile'}
             icon={<CircleUserRound size={15} aria-hidden />}
             label="Profile"
             onClick={() => setSection('profile')}
+          />
+          <SettingsNavItem
+            active={section === 'appearance'}
+            icon={<Palette size={15} aria-hidden />}
+            label="Appearance"
+            onClick={() => setSection('appearance')}
           />
           <SettingsNavItem
             active={section === 'providers'}
@@ -301,12 +313,6 @@ function SettingsComponent(props: {
             onClick={() => setSection('skills')}
           />
           <SettingsNavItem
-            active={section === 'workflows'}
-            icon={<PanelLeft size={15} aria-hidden />}
-            label="General"
-            onClick={() => setSection('workflows')}
-          />
-          <SettingsNavItem
             active={section === 'mobile'}
             icon={<Smartphone size={15} aria-hidden />}
             label="Mobile access"
@@ -317,12 +323,6 @@ function SettingsComponent(props: {
             icon={<BarChart3 size={15} aria-hidden />}
             label="Usage"
             onClick={() => setSection('usage')}
-          />
-          <SettingsNavItem
-            active={section === 'appearance'}
-            icon={<Palette size={15} aria-hidden />}
-            label="Appearance"
-            onClick={() => setSection('appearance')}
           />
           <SettingsNavItem
             active={section === 'data'}
@@ -432,6 +432,12 @@ function WorkflowSettings(props: {
             <span className="switch__thumb" />
           </button>
         </div>
+      </SettingsRow>
+      <SettingsRow
+        title="Model picker"
+        note="Show providers in a compact rail instead of a single list."
+      >
+        <ModelPickerLayoutToggle />
       </SettingsRow>
     </SettingsPanel>
   )
@@ -1502,7 +1508,6 @@ function AppearanceSettings(props: {
           })}
         </fieldset>
       </div>
-      <ModelPickerLayoutSetting />
       <div className="appearance__text">
         <h2 className="settings__group-title">Accent palette</h2>
         <fieldset
@@ -1552,30 +1557,20 @@ function AppearanceSettings(props: {
 
 /** Self-contained: Settings and the open picker subscribe to the same layout
  *  preference, including its in-memory fallback when storage is unavailable. */
-function ModelPickerLayoutSetting() {
+function ModelPickerLayoutToggle() {
   const layout = useSyncExternalStore(subscribeModelPickerLayout, readModelPickerLayout)
   const railOn = layout === 'rail'
   return (
-    <div className="appearance__text">
-      <h2 className="settings__group-title">Model picker</h2>
-      <div className="settings__group">
-        <SettingsRow title="Provider rail layout">
-          <button
-            className={`switch${railOn ? ' is-on' : ''}`}
-            type="button"
-            role="switch"
-            aria-label="Provider rail layout"
-            aria-checked={railOn}
-            onClick={() => {
-              const next = railOn ? 'list' : 'rail'
-              writeModelPickerLayout(next)
-            }}
-          >
-            <span className="switch__thumb" />
-          </button>
-        </SettingsRow>
-      </div>
-    </div>
+    <button
+      className={`switch${railOn ? ' is-on' : ''}`}
+      type="button"
+      role="switch"
+      aria-label="Provider rail layout"
+      aria-checked={railOn}
+      onClick={() => writeModelPickerLayout(railOn ? 'list' : 'rail')}
+    >
+      <span className="switch__thumb" />
+    </button>
   )
 }
 
