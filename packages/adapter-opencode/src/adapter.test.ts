@@ -196,6 +196,41 @@ describe('OpenCode adapter', () => {
     adapter.dispose()
   })
 
+  it('keeps a permission retryable when the reply request fails', async () => {
+    const mock = await serveOpenCodeV2(1)
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    const requested: string[] = []
+    const resolved: string[] = []
+    const logs: string[] = []
+    adapter.on('event', (event) => {
+      if (event.type === 'approval.requested') requested.push(event.request.id)
+      if (event.type === 'approval.resolved') resolved.push(event.id)
+    })
+    adapter.on('log', (message) => logs.push(message))
+    await adapter.resumeThread('opencode-session-v2', 'C:\\repo')
+
+    mock.broadcast({
+      type: 'permission.asked',
+      data: {
+        id: 'permission-retry',
+        sessionID: 'session-v2',
+        action: 'bash',
+        resources: ['pnpm test'],
+      },
+    })
+    await expect.poll(() => requested).toEqual(['permission-retry'])
+
+    adapter.respondToApproval('permission-retry', 'approve')
+    adapter.respondToApproval('permission-retry', 'approve')
+    await expect.poll(() => logs).toContain('OpenCode permission response failed')
+    expect(mock.requests.filter(isPermissionReply)).toHaveLength(1)
+    adapter.respondToApproval('permission-retry', 'approve')
+
+    await expect.poll(() => mock.requests.filter(isPermissionReply)).toHaveLength(2)
+    await expect.poll(() => resolved).toEqual(['permission-retry'])
+    adapter.dispose()
+  })
+
   it('reads model-specific variants from both OpenCode catalog shapes', () => {
     expect(
       openCodeReasoningEfforts({
@@ -434,7 +469,7 @@ async function serveOpenCode(): Promise<{
   }
 }
 
-async function serveOpenCodeV2(): Promise<{
+async function serveOpenCodeV2(failedPermissionReplies = 0): Promise<{
   baseUrl: string
   requests: RequestRecord[]
   broadcast(event: unknown): void
@@ -524,6 +559,10 @@ async function serveOpenCodeV2(): Promise<{
       return response.end()
     }
     if (request.method === 'POST' && request.url?.includes('/permission/')) {
+      if (failedPermissionReplies-- > 0) {
+        response.writeHead(503)
+        return response.end()
+      }
       response.writeHead(204)
       return response.end()
     }
@@ -547,6 +586,10 @@ async function serveOpenCodeV2(): Promise<{
         : new Promise((resolve) => waiters.push({ url, resolve }))
     },
   }
+}
+
+function isPermissionReply(request: RequestRecord): boolean {
+  return request.method === 'POST' && request.url.includes('/permission/')
 }
 
 async function requestBody(request: IncomingMessage): Promise<unknown> {

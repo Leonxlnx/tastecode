@@ -154,6 +154,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   #eventController: AbortController | undefined
   #approval: ApprovalMode = 'ask'
   #pendingApprovals = new Set<string>()
+  #replyingApprovals = new Set<string>()
   #model: string | undefined
   #effort: string | undefined
   #instructions: string | undefined
@@ -348,31 +349,34 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   }
 
   respondToApproval(approvalId: string, decision: ApprovalDecision): void {
-    if (!this.#sessionId || !this.#pendingApprovals.has(approvalId)) return
-    this.#pendingApprovals.delete(approvalId)
+    if (
+      !this.#sessionId ||
+      !this.#pendingApprovals.has(approvalId) ||
+      this.#replyingApprovals.has(approvalId) ||
+      (this.#protocol !== 'v2' && !this.#client)
+    )
+      return
     const response =
       decision === 'approve-session' ? 'always' : decision === 'approve' ? 'once' : 'reject'
-    if (this.#protocol === 'v2') {
-      void this.#v2Request(
-        `/api/session/${encodeURIComponent(this.#sessionId)}/permission/${encodeURIComponent(approvalId)}/reply`,
-        { method: 'POST', body: JSON.stringify({ reply: response }) },
-      )
-        .then(() => this.emit('event', { type: 'approval.resolved', id: approvalId }))
-        .catch(() => this.emit('log', 'OpenCode permission response failed'))
-      if (decision === 'abort') {
-        void this.interrupt(this.#threadId!).catch(() => this.emit('log', 'OpenCode abort failed'))
-      }
-      return
-    }
-    if (!this.#client) return
-    void this.#client
-      .postSessionIdPermissionsPermissionId({
-        path: { id: this.#sessionId, permissionID: approvalId },
-        body: { response },
-        throwOnError: true,
+    const reply =
+      this.#protocol === 'v2'
+        ? this.#v2Request(
+            `/api/session/${encodeURIComponent(this.#sessionId)}/permission/${encodeURIComponent(approvalId)}/reply`,
+            { method: 'POST', body: JSON.stringify({ reply: response }) },
+          )
+        : this.#client!.postSessionIdPermissionsPermissionId({
+            path: { id: this.#sessionId, permissionID: approvalId },
+            body: { response },
+            throwOnError: true,
+          })
+    this.#replyingApprovals.add(approvalId)
+    void reply
+      .then(() => {
+        if (this.#pendingApprovals.delete(approvalId))
+          this.emit('event', { type: 'approval.resolved', id: approvalId })
       })
-      .then(() => this.emit('event', { type: 'approval.resolved', id: approvalId }))
       .catch(() => this.emit('log', 'OpenCode permission response failed'))
+      .finally(() => this.#replyingApprovals.delete(approvalId))
     if (decision === 'abort') {
       // The abort call can reject (server down, restarting); without a catch
       // that rejection escapes respondToApproval and kills the process.
@@ -429,6 +433,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#effort = undefined
     this.#instructionsPending = false
     this.#pendingApprovals.clear()
+    this.#replyingApprovals.clear()
   }
 
   #newClient(directory?: string): OpencodeClient {
