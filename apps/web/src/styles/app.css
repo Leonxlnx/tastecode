@@ -1409,7 +1409,6 @@
 .usage-chart__controls,
 .usage-chart__legend,
 .usage-provider__heading,
-.usage-provider__heading > span,
 .usage-breakdown > header,
 .usage-breakdown__name,
 .usage-page__notice,
@@ -1587,11 +1586,6 @@
   gap: 12px;
   color: var(--text);
   font-size: var(--t-md);
-}
-
-.usage-provider__heading > span {
-  gap: 9px;
-  min-width: 0;
 }
 
 .usage-provider__heading svg,

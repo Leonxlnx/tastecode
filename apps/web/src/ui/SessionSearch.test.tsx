@@ -228,6 +228,7 @@ describe('cross-session search', () => {
       const identity = option.querySelector('.source-identity')
       expect(identity?.getAttribute('title')).toBe('Gemini CLI')
       expect(identity?.querySelector('svg')?.getAttribute('width')).toBe('11')
+      expect(identity?.querySelector('path')?.getAttribute('d')).toContain('M11.04 19.32')
     }
   })
 

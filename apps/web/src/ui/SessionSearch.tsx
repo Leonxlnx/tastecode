@@ -46,7 +46,7 @@ type DisplaySearchResult = {
   threadId: string
   threadTitle: string
   provider: ProviderId
-  sourceName?: string | undefined
+  source?: ProviderPresentation | undefined
   createdAt: number
   turnId: string | undefined
   titleParts: SearchSnippetPart[]
@@ -87,16 +87,16 @@ function SessionSearchComponent(props: {
     }))
   }, [props.projects])
 
-  const sourceNames = useMemo(() => {
-    const names = new Map<string, string>()
+  const sources = useMemo(() => {
+    const presentations = new Map<string, ProviderPresentation>()
     for (const project of props.projects) {
       for (const session of project.sessions) {
         if (session.provider === 'acp' && session.agent) {
-          names.set(`${project.path}\0${session.id}`, agentPresentation(session.agent).label)
+          presentations.set(`${project.path}\0${session.id}`, agentPresentation(session.agent))
         }
       }
     }
-    return names
+    return presentations
   }, [props.projects])
 
   const titleResults = useMemo<DisplaySearchResult[]>(() => {
@@ -125,7 +125,7 @@ function SessionSearchComponent(props: {
           threadId: session.id,
           threadTitle: session.title,
           provider: session.provider,
-          sourceName: sourceNames.get(`${project.path}\0${session.id}`),
+          source: sources.get(`${project.path}\0${session.id}`),
           createdAt: session.createdAt,
           turnId: undefined,
           titleParts: highlightText(session.title, terms),
@@ -139,7 +139,7 @@ function SessionSearchComponent(props: {
       .sort((left, right) => left.rank - right.rank || right.createdAt - left.createdAt)
       .slice(0, MAX_TITLE_RESULTS)
       .map(({ rank: _rank, ...result }) => result)
-  }, [projectPath, props.projects, provider, searchable, sourceNames, terms])
+  }, [projectPath, props.projects, provider, searchable, sources, terms])
 
   const displayResults = useMemo<DisplaySearchResult[]>(() => {
     const legacyOccurrences = new Map<string, number>()
@@ -152,14 +152,14 @@ function SessionSearchComponent(props: {
         threadId: result.threadId,
         threadTitle: result.threadTitle,
         provider: result.provider,
-        sourceName: sourceNames.get(`${result.projectPath}\0${result.threadId}`),
+        source: sources.get(`${result.projectPath}\0${result.threadId}`),
         createdAt: result.createdAt,
         turnId: result.turnId,
         titleParts: [{ text: result.threadTitle, highlighted: false }],
         snippet: result.snippet,
       })),
     ]
-  }, [results, sourceNames, titleResults])
+  }, [results, sources, titleResults])
   const selected = useMemo(() => {
     if (displayResults.length === 0) return -1
     const index = displayResults.findIndex((result) => result.key === selectedKey)
@@ -497,9 +497,9 @@ function contentResultKey(
 }
 
 function resultSourcePresentation(result: DisplaySearchResult): ProviderPresentation {
+  if (result.source) return result.source
   return sourcePresentation({
     provider: result.provider,
-    sourceName: result.sourceName,
   })
 }
 
