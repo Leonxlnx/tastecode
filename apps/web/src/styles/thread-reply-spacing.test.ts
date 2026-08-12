@@ -17,7 +17,7 @@ describe('thread reply spacing', () => {
       /\.reply > \.md p,\n\.reply > \.md ul,\n\.reply > \.md ol \{(?<body>[\s\S]*?)\n\}/,
     )?.groups?.['body']
     const listItem = css.match(/\.reply > \.md li \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
-    const code = css.match(/\.md pre \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
+    const code = css.match(/^\.md pre \{(?<body>[\s\S]*?)\n\}/m)?.groups?.['body']
 
     expect(thread).toContain('font-size: var(--t-lg)')
     expect(reply).not.toContain('font-size')
