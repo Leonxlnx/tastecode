@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-12 6716c9f3</span>
+        <span class="meta">2026-08-12 a6c4f6a2</span>
       </div>
     </div>
 
@@ -924,7 +924,9 @@
                   terminal state with an actionable transcript error; resumed threads retain shared
                   reply guidance; server-owned start and completion timestamps keep live and
                   replayed elapsed time identical; accepted prompts persist with exact submission
-                  identity across queue, steer, reconnect, and restart</span
+                  identity across queue, steer, reconnect, and restart; reconnects, push gaps, and
+                  cached reopens fetch only the missing durable event suffix, while checkpoint
+                  restore and undo reload an atomic file-and-transcript state</span
                 ></span
               ></label
             >

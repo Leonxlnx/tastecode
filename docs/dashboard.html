@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-12 main 6716c9f3</span>
+        <span class="meta">2026-08-12 main a6c4f6a2</span>
       </div>
     </div>
 
@@ -334,7 +334,7 @@
         </p>
         <div class="lanes">
           <div class="lane l-done">
-            <header>Ready <span class="count">22</span></header>
+            <header>Ready <span class="count">23</span></header>
             <ul>
               <li>
                 <i class="tick">✓</i>
@@ -445,6 +445,16 @@
                   <span class="d"
                     >queued prompts survive restart; accepted, rejected, and indeterminate sends
                     converge once without duplicate rows or cross-thread draft leaks</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Incremental durable-history catch-up
+                  <span class="d"
+                    >reconnects, push gaps, and cached reopens fetch only the missing event suffix;
+                    checkpoint restore and undo keep files, transcript, and cursor atomic</span
                   >
                 </span>
               </li>
@@ -573,8 +583,9 @@
                 <span
                   >Long-thread and first-progress performance
                   <span class="d"
-                    >bounded parsing and stable virtual-row identity are on main; visible live-tail
-                    integration and status work remain in #598 and #604</span
+                    >bounded parsing, stable virtual-row identity, and durable suffix catch-up are
+                    on main; visible live-tail integration and status work remain in #598 and
+                    #604</span
                   >
                 </span>
               </li>
