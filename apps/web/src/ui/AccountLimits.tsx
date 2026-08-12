@@ -80,8 +80,8 @@ function LimitSource(props: { source: ProviderLimitSource }) {
       ) : props.source.limits.length === 0 ? (
         <p className="account-menu__usage-note">No plan limits reported.</p>
       ) : (
-        props.source.limits.map((limit) => (
-          <div className="account-menu__limit" key={limit.label}>
+        props.source.limits.map((limit, index) => (
+          <div className="account-menu__limit" key={`${limit.label}:${index}`}>
             <div className="account-menu__limit-row">
               <span className="account-menu__limit-label">{limit.label}</span>
               <span>{limit.valueLabel ?? `${remaining(limit)}% left`}</span>
