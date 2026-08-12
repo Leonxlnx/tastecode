@@ -1,4 +1,6 @@
-import { spawnCli, StdioJsonRpc } from '@harness/proc'
+import { spawn } from 'node:child_process'
+import { StdioJsonRpc } from '@harness/proc'
+import { grokCommand } from './adapter.js'
 
 /**
  * Weekly credit pool through Grok Build's own ACP extension. The provider
@@ -48,7 +50,10 @@ function bounded<T>(promise: Promise<T>): Promise<T> {
 }
 
 async function readGrokBilling(): Promise<unknown> {
-  const child = spawnCli('grok', ['agent', '--no-leader', 'stdio'])
+  const child = spawn(grokCommand(), ['agent', '--no-leader', 'stdio'], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+  })
   const rpc = new StdioJsonRpc(child, 'grok billing')
   try {
     await bounded(
