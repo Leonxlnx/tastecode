@@ -133,12 +133,13 @@ describe('build phase', () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-dotfile-'))
     try {
       writeFileSync(path.join(workspace, '.nojekyll'), '')
+      writeFileSync(path.join(workspace, 'extra.json'), '')
       expect(() =>
         validateExactBuildFiles(workspace, {
           ...artifacts[0],
           constraints: ['Create exactly .nojekyll.'],
         }),
-      ).not.toThrow()
+      ).toThrow('unexpected files: extra.json')
     } finally {
       rmSync(workspace, { recursive: true, force: true })
     }

@@ -134,8 +134,8 @@ function exactBuildFiles(brief: DesignBrief): string[] | undefined {
   ]
   for (const source of sources) {
     const markers = [
-      /\b(?:create|deliver|write)\s+exactly\s+(?=[\s"'`(]*\.?[\w@-]+\.[\w-]+)/gi,
-      /\b(?:only\s+(?:create|deliver|write)|(?:create|deliver|write)\s+only)\s+(?=[\s"'`(]*\.?[\w@-]+\.[\w-]+)/gi,
+      /\b(?:create|deliver|write)\s+exactly\s+(?=[\s"'`(]*(?:\.[\w@-]+|[\w@-]+\.[\w-]+))/gi,
+      /\b(?:only\s+(?:create|deliver|write)|(?:create|deliver|write)\s+only)\s+(?=[\s"'`(]*(?:\.[\w@-]+|[\w@-]+\.[\w-]+))/gi,
       /\bexactly\s+(?:these\s+)?(?:files?|deliverables?)\s*:?\s*/gi,
       /\b(?:files?|deliverables?)\s+(?:must\s+)?be\s+exactly\s*:?\s*/gi,
       /\b(?:create|deliver|write)\s+(?:these\s+)?(?:\d+|three)\s+files?\s*:?\s*/gi,
@@ -148,7 +148,7 @@ function exactBuildFiles(brief: DesignBrief): string[] | undefined {
       const clause = boundary < 0 ? rest : rest.slice(0, boundary)
       const files = [
         ...clause.matchAll(
-          /(?:^|[\s"'`(])((?:[\w@.-]+[\\/])*\.?[\w@-]+\.[\w-]+)(?=$|[\s"'`,;:).])/g,
+          /(?:^|[\s"'`(])((?:[\w@.-]+[\\/])*(?:\.[\w@-]+|[\w@-]+\.[\w-]+))(?=$|[\s"'`,;:).])/g,
         ),
       ]
         .map((result) => normalizeFile(result[1]!))
