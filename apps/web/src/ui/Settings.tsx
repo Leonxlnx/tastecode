@@ -468,80 +468,187 @@ const CONNECTION_PRESETS: Record<
   },
 }
 
-function ProviderSettings(props: {
+type ProviderMap<T> = Partial<Record<ProviderId, T>>
+
+export function ProviderSettings(props: {
   provider: ProviderId
-  providerName: string
   account: Account | undefined
   providerStatuses: ProviderStatus[]
   transport: Transport
   onConnectionsChanged: () => void
   onAccountChange: (provider: ProviderId, account: Account) => void
 }) {
-  const [accounts, setAccounts] = useState<Partial<Record<ProviderId, Account>>>({})
-  const [authBusy, setAuthBusy] = useState<ProviderId>()
-  const [authError, setAuthError] = useState<string>()
+  type AuthReadState =
+    | { phase: 'loading' }
+    | { phase: 'ready'; account: Account }
+    | { phase: 'error'; message: string }
+  type AuthOperation = {
+    id: number
+    kind: 'sign-in' | 'sign-out'
+    transport: Transport
+    loginId?: string
+  }
+
+  const [authStates, setAuthStates] = useState<ProviderMap<AuthReadState>>(() =>
+    props.account ? { [props.provider]: { phase: 'ready', account: props.account } } : {},
+  )
+  const [authOperations, setAuthOperations] = useState<ProviderMap<AuthOperation>>({})
+  const [authErrors, setAuthErrors] = useState<ProviderMap<string>>({})
+  const sequence = useRef(0)
+  const statusRequests = useRef<ProviderMap<{ id: number; transport: Transport }>>({})
+  const operations = useRef<ProviderMap<AuthOperation>>({})
+  const currentTransport = useRef(props.transport)
+  currentTransport.current = props.transport
+
+  const updateOperation = useCallback((provider: ProviderId, operation?: AuthOperation) => {
+    operations.current = { ...operations.current, [provider]: operation }
+    setAuthOperations(operations.current)
+  }, [])
+
+  const operationIsCurrent = useCallback(
+    (provider: ProviderId, operation: AuthOperation) =>
+      operations.current[provider]?.id === operation.id &&
+      currentTransport.current === operation.transport,
+    [],
+  )
+
+  const beginOperation = (provider: ProviderId, kind: AuthOperation['kind']) => {
+    const operation = { id: ++sequence.current, kind, transport: props.transport }
+    updateOperation(provider, operation)
+    setAuthErrors((current) => ({ ...current, [provider]: undefined }))
+    return operation
+  }
 
   const refreshAccount = useCallback(
-    async (provider: ProviderId) => {
-      const account = await props.transport.request('auth.status', { provider })
-      setAccounts((current) => ({ ...current, [provider]: account }))
-      props.onAccountChange(provider, account)
+    async (provider: ProviderId, forceLoading = false) => {
+      const request = { id: ++sequence.current, transport: props.transport }
+      statusRequests.current = { ...statusRequests.current, [provider]: request }
+      setAuthStates((current) =>
+        !forceLoading && current[provider]?.phase === 'ready'
+          ? current
+          : { ...current, [provider]: { phase: 'loading' } },
+      )
+      try {
+        const account = await props.transport.request('auth.status', { provider })
+        if (
+          statusRequests.current[provider] !== request ||
+          currentTransport.current !== request.transport
+        )
+          return
+        setAuthStates((current) => ({
+          ...current,
+          [provider]: { phase: 'ready', account },
+        }))
+        props.onAccountChange(provider, account)
+      } catch (cause) {
+        if (
+          statusRequests.current[provider] !== request ||
+          currentTransport.current !== request.transport
+        )
+          return
+        setAuthStates((current) => ({
+          ...current,
+          [provider]: {
+            phase: 'error',
+            message: cause instanceof Error ? cause.message : String(cause),
+          },
+        }))
+      }
     },
     [props.transport, props.onAccountChange],
   )
 
+  const authProviderIds = props.providerStatuses
+    .filter((status) => status.installed && status.id !== 'acp')
+    .map((status) => status.id)
+  const authProviderKey = authProviderIds.join('|')
+
   useEffect(() => {
-    for (const status of props.providerStatuses) {
-      if (status.installed && status.id !== 'acp') {
-        void refreshAccount(status.id).catch(() =>
-          setAccounts((current) => ({ ...current, [status.id]: { signedIn: false } })),
-        )
-      }
+    for (const provider of authProviderIds) {
+      void refreshAccount(provider)
     }
-    return props.transport.on('auth.event', (event) => {
+    const unsubscribe = props.transport.on('auth.event', (event) => {
       if (event.agent) return
-      setAuthBusy((current) => (current === event.provider ? undefined : current))
+      const operation = operations.current[event.provider]
+      if (
+        operation?.kind !== 'sign-in' ||
+        operation.transport !== props.transport ||
+        operation.loginId !== event.loginId
+      ) {
+        return
+      }
+      updateOperation(event.provider)
       if (event.success) {
-        setAuthError(undefined)
-        void refreshAccount(event.provider).catch((cause) =>
-          setAuthError(cause instanceof Error ? cause.message : String(cause)),
-        )
+        setAuthErrors((current) => ({ ...current, [event.provider]: undefined }))
+        void refreshAccount(event.provider, true)
       } else {
-        setAuthError(event.error ?? 'Sign-in was cancelled.')
+        setAuthErrors((current) => ({
+          ...current,
+          [event.provider]: event.error ?? 'Sign-in was cancelled.',
+        }))
       }
     })
-  }, [props.transport, props.providerStatuses, refreshAccount])
+
+    return () => {
+      unsubscribe()
+      for (const provider of authProviderIds) {
+        delete statusRequests.current[provider]
+      }
+    }
+  }, [props.transport, authProviderKey, refreshAccount, updateOperation])
+
+  useEffect(() => {
+    operations.current = {}
+    setAuthOperations({})
+    setAuthErrors({})
+  }, [props.transport])
 
   const signIn = async (provider: ProviderId) => {
-    setAuthBusy(provider)
-    setAuthError(undefined)
+    const operation = beginOperation(provider, 'sign-in')
     try {
       const result = await props.transport.request('auth.startLogin', { provider })
+      if (!operationIsCurrent(provider, operation)) return
+      updateOperation(provider, { ...operation, loginId: result.loginId })
       if (result.authUrl) window.open(result.authUrl, '_blank', 'noopener,noreferrer')
     } catch (cause) {
-      setAuthBusy(undefined)
-      setAuthError(cause instanceof Error ? cause.message : String(cause))
+      if (!operationIsCurrent(provider, operation)) return
+      updateOperation(provider)
+      setAuthErrors((current) => ({
+        ...current,
+        [provider]: cause instanceof Error ? cause.message : String(cause),
+      }))
     }
   }
 
   const signOut = async (provider: ProviderId) => {
-    setAuthBusy(provider)
-    setAuthError(undefined)
+    const operation = beginOperation(provider, 'sign-out')
     try {
       await props.transport.request('auth.signOut', { provider })
+      if (!operationIsCurrent(provider, operation)) return
       const account = { signedIn: false }
-      setAccounts((current) => ({ ...current, [provider]: account }))
+      setAuthStates((current) => ({
+        ...current,
+        [provider]: { phase: 'ready', account },
+      }))
       props.onAccountChange(provider, account)
+      updateOperation(provider)
     } catch (cause) {
-      setAuthError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setAuthBusy(undefined)
+      if (!operationIsCurrent(provider, operation)) return
+      updateOperation(provider)
+      setAuthErrors((current) => ({
+        ...current,
+        [provider]: cause instanceof Error ? cause.message : String(cause),
+      }))
     }
   }
 
   const renderProviderRow = (status: ProviderStatus) => {
-    const account =
-      accounts[status.id] ?? (status.id === props.provider ? props.account : undefined)
+    const authState =
+      authStates[status.id] ??
+      (status.id === props.provider && props.account
+        ? { phase: 'ready' as const, account: props.account }
+        : { phase: 'loading' as const })
+    const account = authState.phase === 'ready' ? authState.account : undefined
     if (!status.installed && !account?.signedIn) {
       return (
         <InstallableRow
@@ -556,6 +663,30 @@ function ProviderSettings(props: {
         />
       )
     }
+    if (authState.phase !== 'ready') {
+      return (
+        <SettingsRow key={status.id} title={status.displayName}>
+          <div className="provider-settings__actions">
+            <span
+              className="settings__status"
+              role={authState.phase === 'error' ? 'alert' : 'status'}
+            >
+              {authState.phase === 'error' ? authState.message : 'Checking account…'}
+            </span>
+            <ProviderIcon mark={providerMark(status.id)} size={17} />
+            {authState.phase === 'error' ? (
+              <button
+                className="settings__action"
+                type="button"
+                onClick={() => void refreshAccount(status.id, true)}
+              >
+                Retry
+              </button>
+            ) : null}
+          </div>
+        </SettingsRow>
+      )
+    }
     if (!account?.signedIn && status.setup?.login === 'provider') {
       return (
         <CliSignInRow
@@ -564,7 +695,7 @@ function ProviderSettings(props: {
           icon={<ProviderIcon mark={providerMark(status.id)} size={17} />}
           target={{ provider: status.id }}
           transport={props.transport}
-          onSignedIn={() => void refreshAccount(status.id).catch(() => undefined)}
+          onSignedIn={() => void refreshAccount(status.id, true)}
         />
       )
     }
@@ -581,30 +712,33 @@ function ProviderSettings(props: {
     ) : (
       'Not signed in'
     )
-    const busy = authBusy === status.id
+    const operation = authOperations[status.id]
+    const authError = authErrors[status.id]
     return (
       <SettingsRow key={status.id} title={status.displayName}>
         <div className="provider-settings__actions">
-          <span className="settings__status">{accountStatus}</span>
+          <span className="settings__status" role={authError ? 'alert' : undefined}>
+            {authError ?? accountStatus}
+          </span>
           <ProviderIcon mark={providerMark(status.id)} size={17} />
           {account?.signedIn ? (
             <button
               className="settings__action"
               type="button"
-              disabled={busy}
+              disabled={operation !== undefined}
               onClick={() => void signOut(status.id)}
             >
               <LogOut size={13} aria-hidden />
-              {busy ? 'Signing out…' : 'Sign out'}
+              {operation?.kind === 'sign-out' ? 'Signing out…' : 'Sign out'}
             </button>
           ) : (
             <button
               className="settings__action"
               type="button"
-              disabled={busy}
+              disabled={operation !== undefined}
               onClick={() => void signIn(status.id)}
             >
-              {busy ? 'Signing in…' : 'Sign in'}
+              {operation?.kind === 'sign-in' ? 'Signing in…' : 'Sign in'}
             </button>
           )}
         </div>
@@ -620,11 +754,6 @@ function ProviderSettings(props: {
 
   return (
     <SettingsPanel title="Providers">
-      {authError ? (
-        <p className="provider-form__error" role="alert">
-          {authError}
-        </p>
-      ) : null}
       {byId('codex').map(renderProviderRow)}
       {byId('claude-code').map(renderProviderRow)}
       {byId('grok').map(renderProviderRow)}
