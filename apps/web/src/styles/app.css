@@ -337,7 +337,7 @@
 
 .account-menu__usage-head:focus-visible {
   border-radius: var(--r-sm);
-  outline: 2px solid var(--focus-ring);
+  outline: 2px solid var(--text-2);
   outline-offset: 3px;
 }
 
