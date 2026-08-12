@@ -565,7 +565,8 @@ class StreamedItem {
 }
 
 /**
- * Parse `grok models`. Captured shape (grok 0.1.219):
+ * Parse `grok models`. Grok 1.0 marks the default with `*` and the remaining
+ * available models with `-`; 0.1 used `*` for every row.
  *
  *   You are not authenticated.
  *
@@ -584,7 +585,7 @@ export function parseGrokModels(output: string): Model[] {
       continue
     }
     if (!reading || !line) continue
-    const match = line.match(/^\*\s*(\S+)(\s+\(default\))?/)
+    const match = line.match(/^[*-]\s*(\S+)(\s+\(default\))?/)
     if (!match) continue
     const id = match[1]!
     const details = GROK_MODEL_DETAILS[id]

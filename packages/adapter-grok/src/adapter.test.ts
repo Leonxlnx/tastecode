@@ -325,6 +325,30 @@ describe('Grok adapter', () => {
     })
   })
 
+  it('keeps secondary models from the Grok 1.0 listing', () => {
+    expect(
+      parseGrokModels(
+        'Default model: grok-4.6\nAvailable models:\n  * grok-4.6 (default)\n  - grok-4.5',
+      ),
+    ).toEqual([
+      {
+        id: 'grok-4.6',
+        displayName: 'Grok 4.6',
+        isDefault: true,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+      {
+        id: 'grok-4.5',
+        displayName: 'Grok 4.5',
+        isDefault: false,
+        reasoningEfforts: ['low', 'medium', 'high'],
+        defaultReasoningEffort: 'high',
+        serviceTiers: [],
+      },
+    ])
+  })
+
   it('does not guess reasoning levels for models without model-specific metadata', () => {
     const models = parseGrokModels('Available models:\n  * grok-future (default)')
     expect(models).toEqual([
