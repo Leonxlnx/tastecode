@@ -578,6 +578,7 @@ class StreamedItem {
 export function parseGrokModels(output: string): Model[] {
   const models: Model[] = []
   let reading = false
+  let foundModel = false
   for (const rawLine of output.split(/\r\n|\n|\r/)) {
     const line = rawLine.trim()
     if (/^Available models:/i.test(line)) {
@@ -586,7 +587,11 @@ export function parseGrokModels(output: string): Model[] {
     }
     if (!reading || !line) continue
     const match = line.match(/^[*-]\s*(\S+)(\s+\(default\))?/)
-    if (!match) continue
+    if (!match) {
+      if (foundModel) break
+      continue
+    }
+    foundModel = true
     const id = match[1]!
     const details = GROK_MODEL_DETAILS[id]
     models.push({
