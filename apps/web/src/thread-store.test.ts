@@ -513,46 +513,50 @@ describe('thread reducer', () => {
 })
 
 describe('overnight regression pins', () => {
-  it.each([100, 1_000, 10_000])(
-    'keeps active-tail delta reads bounded at %i completed items',
-    (count) => {
-      let reads = 0
-      const history = Array.from({ length: count }, (_, index) =>
-        item({ id: `history-${index}`, status: 'completed', text: 'done' }),
-      )
-      const live = item({ id: 'live', turnId: 'active', text: '' })
-      const items = new Proxy([...history, live], {
-        get(target, property, receiver) {
-          if (typeof property === 'string' && /^\d+$/.test(property)) reads += 1
-          return Reflect.get(target, property, receiver)
-        },
-      })
-      const state = {
-        ...emptyThread,
-        items,
-        running: true,
-        activeTurn: { id: 'active', startedAt: 0 },
-        liveStart: count,
-      }
+  it.each(
+    ([100, 1_000, 10_000] as const).flatMap((count) =>
+      (['message', 'reasoning', 'command', 'tool_call', 'file_change'] as const).map((type) => ({
+        count,
+        type,
+      })),
+    ),
+  )('keeps $type delta reads bounded at $count completed items', ({ count, type }) => {
+    let reads = 0
+    const history = Array.from({ length: count }, (_, index) =>
+      item({ id: `history-${index}`, status: 'completed', text: 'done' }),
+    )
+    const live = item({ id: 'live', turnId: 'active', type, text: '' })
+    const items = new Proxy([...history, live], {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && /^\d+$/.test(property)) reads += 1
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const state = {
+      ...emptyThread,
+      items,
+      running: true,
+      activeTurn: { id: 'active', startedAt: 0 },
+      liveStart: count,
+    }
 
-      const next = reduceDeltas(state, [
-        { type: 'item.delta', turnId: 'active', itemId: live.id, textDelta: 'x' },
+    const next = reduceDeltas(state, [
+      { type: 'item.delta', turnId: 'active', itemId: live.id, textDelta: 'x' },
+    ])
+
+    expect(next.items).toBe(items)
+    expect(threadItemAt(next.items, next.liveItems, count)?.text).toBe('x')
+    expect(next.liveItems.get(count)?.textUpdate).toEqual({ kind: 'append', text: 'x' })
+    expect(next.liveItems.get(count)?.version).toBe(next.itemVersion)
+    expect(reads).toBeLessThanOrEqual(3)
+    const activeReads = reads
+    for (let frame = 0; frame < 3; frame += 1) {
+      reduceDeltas(next, [
+        { type: 'item.delta', turnId: 'old', itemId: 'history-0', textDelta: ' stale' },
       ])
-
-      expect(next.items).toBe(items)
-      expect(threadItemAt(next.items, next.liveItems, count)?.text).toBe('x')
-      expect(next.liveItems.get(count)?.textUpdate).toEqual({ kind: 'append', text: 'x' })
-      expect(next.liveItems.get(count)?.version).toBe(next.itemVersion)
-      expect(reads).toBeLessThanOrEqual(3)
-      const activeReads = reads
-      for (let frame = 0; frame < 3; frame += 1) {
-        reduceDeltas(next, [
-          { type: 'item.delta', turnId: 'old', itemId: 'history-0', textDelta: ' stale' },
-        ])
-      }
-      expect(reads - activeReads).toBeLessThanOrEqual(3)
-    },
-  )
+    }
+    expect(reads - activeReads).toBeLessThanOrEqual(3)
+  })
 
   it('materializes a completed turn once and never mutates its history objects', () => {
     const history = item({ id: 'history', status: 'completed', text: 'done' })

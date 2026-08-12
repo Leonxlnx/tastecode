@@ -1206,14 +1206,26 @@ describe('new chats', () => {
     render(<App />)
 
     const composer = await screen.findByPlaceholderText('Do anything')
+    let nextPaintReached = false
+    let markNextPaint: FrameRequestCallback | undefined
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      if (callback.name === 'markNextPaint') markNextPaint = callback
+      return 1
+    })
+    window.requestAnimationFrame(function markNextPaint() {
+      nextPaintReached = true
+    })
     fireEvent.change(composer, { target: { value: 'Start immediately' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
 
+    expect(nextPaintReached).toBe(false)
     expect(screen.getByTestId('thread').textContent).toContain('Start immediately')
     expect(screen.getByRole('button', { name: 'Start immediately, Codex, working' })).toBeTruthy()
     expect(screen.getByText('Working')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
     expect(document.querySelector('.stage__body.is-new-session')).toBeNull()
+    act(() => markNextPaint?.(0))
+    expect(nextPaintReached).toBe(true)
     expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' })
     const threadElement = screen.getByTestId('thread')
 

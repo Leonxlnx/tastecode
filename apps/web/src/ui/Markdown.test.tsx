@@ -169,6 +169,15 @@ describe('Markdown streaming motion', () => {
     expect(preserve).toHaveBeenCalledOnce()
   })
 
+  it('keeps a local destination readable and inert while streaming', () => {
+    const text = 'Updated [index.html](file:///E:/project/index.html).'
+    const rendered = render(<Markdown text={text} streaming projectPath="E:\project" />)
+
+    expect(rendered.container.textContent).toContain('index.html')
+    expect(rendered.container.textContent).not.toContain('[blocked]')
+    expect(rendered.container.querySelector('a, button')).toBeNull()
+  })
+
   it('keeps common Markdown styled while appending safely', () => {
     const rendered = render(<Markdown text={'## Title\n\n- one\n\n```ts\nconst a ='} streaming />)
     const heading = rendered.container.querySelector('h2')

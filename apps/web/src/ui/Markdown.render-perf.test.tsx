@@ -69,6 +69,32 @@ describe('streamed Markdown renders', () => {
     },
   )
 
+  it('parses only the suffix appended to a 64 KiB fenced-code tail', () => {
+    const prefix = `\`\`\`ts\n${'x'.repeat(64 * 1024)}`
+    const append = vi.spyOn(LiveMarkdownParser.prototype, 'append')
+    const replace = vi.spyOn(LiveMarkdownParser.prototype, 'replace')
+    const rendered = render(<Markdown text={prefix} streaming />)
+
+    append.mockClear()
+    replace.mockClear()
+    rendered.rerender(
+      <Markdown
+        text={`${prefix}y`}
+        streaming
+        liveUpdate={{ kind: 'append', text: 'y' }}
+        updateVersion={1}
+      />,
+    )
+
+    expect(append).toHaveBeenCalledOnce()
+    expect(append).toHaveBeenCalledWith('y')
+    expect(replace).not.toHaveBeenCalled()
+    expect(streamdownRender).not.toHaveBeenCalled()
+    expect(plainHighlight).not.toHaveBeenCalled()
+    expect(shikiHighlight).not.toHaveBeenCalled()
+    expect(rendered.container.querySelector('pre')?.textContent).toBe('x'.repeat(64 * 1024) + 'y')
+  })
+
   it('applies each version once and resets mismatched reconciliation', () => {
     const append = vi.spyOn(LiveMarkdownParser.prototype, 'append')
     const replace = vi.spyOn(LiveMarkdownParser.prototype, 'replace')
