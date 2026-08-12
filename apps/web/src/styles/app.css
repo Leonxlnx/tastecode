@@ -8464,6 +8464,7 @@
      min-width must yield or the base .menu minimum wins over the match. */
   min-width: 0;
   width: min(var(--menu-trigger-w, calc(var(--rail-w) - 20px)), calc(100vw - 16px));
+  border-radius: var(--r-md);
 }
 
 .menu--sidebar {

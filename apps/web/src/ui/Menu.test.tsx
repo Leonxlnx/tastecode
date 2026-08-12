@@ -84,6 +84,18 @@ describe('Menu', () => {
     expect(screen.getByRole('menu')).toBeTruthy()
   })
 
+  it('honors a larger gap for a raised panel', () => {
+    render(
+      <Menu drop="up" gap={10} label="Account" trigger={() => <span>Account</span>}>
+        {() => <div>Plan limits</div>}
+      </Menu>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+
+    expect(screen.getByRole('menu').style.bottom).toBe('40px')
+  })
+
   it('does not reposition when its own content scrolls', () => {
     let menuWidth = 100
     vi.mocked(Element.prototype.getBoundingClientRect).mockImplementation(function (this: Element) {

@@ -64,6 +64,7 @@ export function Menu(props: {
   children: (close: () => void) => ReactNode
   align?: 'left' | 'right'
   drop?: 'up' | 'down'
+  gap?: number
   disabled?: boolean
   label?: string
   triggerClassName?: string
@@ -192,7 +193,7 @@ export function Menu(props: {
       }
 
       const preferredDrop = props.drop ?? 'up'
-      const gap = contextPoint ? 0 : MENU_GAP
+      const gap = contextPoint ? 0 : (props.gap ?? MENU_GAP)
       const anchorTop = contextPoint?.y ?? triggerBounds?.top ?? 0
       const anchorBottom = contextPoint?.y ?? triggerBounds?.bottom ?? 0
       const spaceAbove = anchorTop - gap - VIEWPORT_GUTTER
@@ -263,7 +264,7 @@ export function Menu(props: {
       document.removeEventListener('scroll', onScroll, true)
       resizeObserver?.disconnect()
     }
-  }, [contextPoint, open, props.align, props.drop])
+  }, [contextPoint, open, props.align, props.drop, props.gap])
 
   const onPanelKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
