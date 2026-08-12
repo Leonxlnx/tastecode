@@ -262,6 +262,17 @@ function modelSource(choice: ModelChoice): string {
   })
 }
 
+function latestSequence(
+  entries: ReadonlyArray<{ seq: number | undefined }>,
+  initial: number,
+): number {
+  let latest = initial
+  for (const entry of entries) {
+    if (entry.seq !== undefined) latest = Math.max(latest, entry.seq)
+  }
+  return latest
+}
+
 export function App() {
   const [connectionUrl, setConnectionUrl] = useState(() => serverUrl(SERVER_BASE_URL))
   const transport = useMemo(() => new Transport(connectionUrl), [connectionUrl])
@@ -294,6 +305,8 @@ export function App() {
   // intentional: streamed deltas for a background session should not rerender
   // the active thread, while selecting it still gets the latest state at once.
   const threadStates = useRef(new Map<string, ThreadState>())
+  /** Highest durable event already reduced into each complete thread cache. */
+  const durableSequences = useRef(new Map<string, number>())
   const pendingSubmissions = useRef(new Map<string, Map<string, PendingSubmission>>())
   const rejectedDrafts = useRef(new Map<string, RecoverableDraft>())
   const rejectedDraftOwner = useRef<string | undefined>(undefined)
@@ -305,7 +318,9 @@ export function App() {
   const historyOwners = useRef(
     new Map<string, Array<{ seq: number | undefined; event: DomainEvent }>>(),
   )
-  const pendingThreadDeltas = useRef(new Map<string, ItemDeltaEvent[]>())
+  const pendingThreadDeltas = useRef(
+    new Map<string, { events: ItemDeltaEvent[]; sequence?: number }>(),
+  )
   const queueStates = useRef(new Map<string, { items: QueuedTurn[]; canSteer: boolean }>())
   const localQueueRevisions = useRef(new Map<string, number>())
   const serverQueueRevisions = useRef(new Map<string, number>())
@@ -757,12 +772,18 @@ export function App() {
     // immediate.
     let liveFlush: number | undefined
     const applyPendingDeltas = (threadId: string) => {
-      const deltas = pendingThreadDeltas.current.get(threadId)
+      const pending = pendingThreadDeltas.current.get(threadId)
       const current = threadStates.current.get(threadId) ?? emptyThread
-      if (!deltas || deltas.length === 0) return current
+      if (!pending || pending.events.length === 0) return current
       pendingThreadDeltas.current.delete(threadId)
-      const next = reduceDeltas(current, deltas)
+      const next = reduceDeltas(current, pending.events)
       threadStates.current.set(threadId, next)
+      if (pending.sequence !== undefined && durableSequences.current.has(threadId)) {
+        durableSequences.current.set(
+          threadId,
+          Math.max(durableSequences.current.get(threadId) ?? 0, pending.sequence),
+        )
+      }
       return next
     }
     const flushLive = () => {
@@ -772,6 +793,21 @@ export function App() {
       if (id) setThread(threadStates.current.get(id) ?? emptyThread)
     }
     const offEvents = transport.on('thread.event', ({ threadId, event, seq }) => {
+      const durableSequence = durableSequences.current.get(threadId)
+      const pendingDeltas = pendingThreadDeltas.current.get(threadId)
+      const pendingSequence = pendingDeltas?.sequence
+      if (
+        seq !== undefined &&
+        durableSequence !== undefined &&
+        seq <= Math.max(durableSequence, pendingSequence ?? durableSequence)
+      ) {
+        return
+      }
+      // Compatibility pushes without a durable position cannot safely extend
+      // a cursor. Keep rendering them, then force the next recovery to reload.
+      if (seq === undefined) {
+        durableSequences.current.delete(threadId)
+      }
       // While a history load is in flight, the fetched state will replace the
       // cache — record the event so it can be replayed on top. Non-deltas
       // apply immediately below; deltas join the same frame batch as rendering.
@@ -779,15 +815,26 @@ export function App() {
         buffer.push({ seq, event })
       }
       if (event.type === 'item.delta') {
-        const pending = pendingThreadDeltas.current.get(threadId)
-        if (pending) pending.push(event)
-        else pendingThreadDeltas.current.set(threadId, [event])
+        if (pendingDeltas) {
+          pendingDeltas.events.push(event)
+          if (seq !== undefined && durableSequence !== undefined) {
+            pendingDeltas.sequence = Math.max(pendingSequence ?? durableSequence, seq)
+          }
+        } else {
+          pendingThreadDeltas.current.set(threadId, {
+            events: [event],
+            ...(seq !== undefined && durableSequence !== undefined ? { sequence: seq } : {}),
+          })
+        }
         liveFlush ??= requestAnimationFrame(flushLive)
         return
       }
 
       const next = reduce(applyPendingDeltas(threadId), event)
       threadStates.current.set(threadId, next)
+      if (seq !== undefined && durableSequence !== undefined) {
+        durableSequences.current.set(threadId, Math.max(durableSequence, seq))
+      }
       if (
         (event.type === 'item.started' || event.type === 'item.completed') &&
         event.item.role === 'user'
@@ -1230,7 +1277,7 @@ export function App() {
   )
 
   const loadHistory = useCallback(
-    async (threadId: string) => {
+    async (threadId: string, afterSeq?: number) => {
       // Live pushes landing during this round trip are buffered (see the
       // thread.event handler) and re-applied on top of the fetched history —
       // overwriting the cache blindly used to silently drop them.
@@ -1239,20 +1286,30 @@ export function App() {
       buffers.add(buffer)
       historyBuffers.current.set(threadId, buffers)
       historyOwners.current.set(threadId, buffer)
+      const base =
+        afterSeq === undefined ? emptyThread : (threadStates.current.get(threadId) ?? emptyThread)
       try {
-        const { events, running } = await transport.request('thread.history', { threadId })
+        const { events, running } = await transport.request(
+          'thread.history',
+          afterSeq === undefined ? { threadId } : { threadId, afterSeq },
+        )
         // A reconnect may have started a fresher request. The older response
         // still owns its live-event buffer, but it must not replace newer
         // durable history after resolving last.
         if (historyOwners.current.get(threadId) !== buffer) return
-        const restored = reduceEventLog(emptyThread, events)
-        const lastSeq = events.at(-1)?.seq ?? 0
+        const restored = reduceEventLog(base, events, afterSeq)
+        const lastSeq = events.at(-1)?.seq ?? afterSeq ?? 0
         const authoritative = {
           ...restored,
           running,
           activeTurn: running ? restored.activeTurn : undefined,
         }
         const live = reduceEventLog(authoritative, buffer, lastSeq)
+        if (buffer.some((entry) => entry.seq === undefined)) {
+          durableSequences.current.delete(threadId)
+        } else {
+          durableSequences.current.set(threadId, latestSequence(buffer, lastSeq))
+        }
         const withLive = preservePendingSubmissions(live, pendingSubmissions.current, threadId)
         // The buffered events above already include any deltas still waiting
         // for a frame, so do not apply that pending batch a second time.
@@ -1262,7 +1319,12 @@ export function App() {
           setProjects((current) => updateSession(current, threadId, markSessionRead))
           setThread(withLive)
         }
-        return live
+        if (afterSeq === undefined) return live
+        // Queue settlement may use an active-turn id as rejection evidence.
+        // Only a boundary returned by this read (or its live buffer) is fresh
+        // authority; the cached prefix must not settle an indeterminate send.
+        const suffix = reduceEventLog(reduceEventLog(emptyThread, events), buffer, lastSeq)
+        return { ...live, activeTurn: suffix.activeTurn }
       } finally {
         buffers.delete(buffer)
         if (buffers.size === 0) historyBuffers.current.delete(threadId)
@@ -1279,7 +1341,7 @@ export function App() {
     const threadIds = new Set(pendingSubmissions.current.keys())
     if (activeId && !activeId.startsWith('pending:')) threadIds.add(activeId)
     const resyncThread = (id: string, retry = true) => {
-      const history = loadHistory(id).catch(() => undefined)
+      const history = loadHistory(id, durableSequences.current.get(id)).catch(() => undefined)
       const localQueueRevision = localQueueRevisions.current.get(id) ?? 0
       const serverQueueRevision = serverQueueRevisions.current.get(id) ?? 0
       void transport
@@ -2272,15 +2334,17 @@ export function App() {
           resync.current()
           return
         }
-        // Mark-as-read only; the cache is kept current by the live event
-        // stream, so don't ask the server to replay the whole log.
-        void transport
-          .request('thread.history', { threadId: id, afterSeq: Number.MAX_SAFE_INTEGER })
-          .catch(() => undefined)
-        return
+        if (durableSequences.current.has(id)) {
+          // Mark-as-read only; a complete cache stays current from live events.
+          void transport
+            .request('thread.history', { threadId: id, afterSeq: Number.MAX_SAFE_INTEGER })
+            .catch(() => undefined)
+          return
+        }
+      } else {
+        setThread(emptyThread)
       }
 
-      setThread(emptyThread)
       try {
         await loadHistory(id)
       } catch (error) {
@@ -2397,6 +2461,8 @@ export function App() {
     async (id: string) => {
       await transport.request('thread.delete', { threadId: id })
       threadStates.current.delete(id)
+      durableSequences.current.delete(id)
+      pendingThreadDeltas.current.delete(id)
       pendingSubmissions.current.delete(id)
       setProjects((current) =>
         current.map((project) => ({
@@ -3394,8 +3460,9 @@ function preservePendingSubmissions(
   if (!thread) return state
   let next = state
   for (const submission of thread.values()) {
-    if (next.items.some((item) => item.id === submission.id && item.turnId !== '')) {
-      thread.delete(submission.id)
+    const existing = next.items.find((item) => item.id === submission.id)
+    if (existing) {
+      if (existing.turnId !== '') thread.delete(submission.id)
       continue
     }
     if (submission.kind === 'queue') continue

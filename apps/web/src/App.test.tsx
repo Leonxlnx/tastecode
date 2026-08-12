@@ -1463,6 +1463,15 @@ describe('new chats', () => {
         undo: 'undo-token',
       })
     })
+    expect(
+      transport.request.mock.calls
+        .filter(([method]) => method === 'thread.history')
+        .map(([, params]) => params),
+    ).toEqual([
+      { threadId: 'thread-rollback' },
+      { threadId: 'thread-rollback' },
+      { threadId: 'thread-rollback' },
+    ])
   })
 
   it('persists the macOS font smoothing setting', async () => {
@@ -3594,9 +3603,9 @@ function dropFile(composer: HTMLElement, path: string) {
   fireEvent.drop(composer.closest('.composer__box')!, { dataTransfer: { files: [file] } })
 }
 
-function emitThreadEvent(threadId: string, event: DomainEvent) {
+function emitThreadEvent(threadId: string, event: DomainEvent, seq?: number) {
   act(() => {
-    transport.listeners.get('thread.event')?.({ threadId, event })
+    transport.listeners.get('thread.event')?.({ threadId, event, seq })
   })
 }
 
@@ -3863,7 +3872,37 @@ describe('reopening a session', () => {
     })
   })
 
-  it('resyncs the active thread when the transport detects a push gap', async () => {
+  it('catches up only the missing durable suffix when the transport detects a push gap', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const historyEvent = (seq: number, id: string, text: string) => ({
+      seq,
+      event: {
+        type: 'item.completed' as const,
+        item: {
+          id,
+          turnId: 'turn-1',
+          type: 'message' as const,
+          role: 'assistant' as const,
+          status: 'completed' as const,
+          text,
+          createdAt: seq,
+        },
+      },
+    })
+    let historyRead = 0
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.history') {
+        historyRead += 1
+        return Promise.resolve(
+          historyRead === 1
+            ? { events: [historyEvent(7, 'base', 'Durable base')], running: false }
+            : { events: [historyEvent(9, 'suffix', 'Missing suffix')], running: false },
+        )
+      }
+      return request(method, params)
+    })
+
     render(<App />)
     await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
     fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
@@ -3872,6 +3911,23 @@ describe('reopening a session', () => {
         threadId: 'untouched-thread',
       })
     })
+    expect(await screen.findByText('Durable base')).toBeTruthy()
+    emitThreadEvent(
+      'untouched-thread',
+      {
+        type: 'item.completed',
+        item: {
+          id: 'live',
+          turnId: 'turn-1',
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          text: 'Durable live event',
+          createdAt: 8,
+        },
+      },
+      8,
+    )
     transport.request.mockClear()
 
     act(() => {
@@ -3881,6 +3937,7 @@ describe('reopening a session', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
+        afterSeq: 8,
       })
       expect(transport.request).toHaveBeenCalledWith('thread.queue', {
         threadId: 'untouched-thread',
@@ -3891,6 +3948,107 @@ describe('reopening a session', () => {
       expect(transport.request).toHaveBeenCalledWith('projects.list', {})
       expect(transport.request).toHaveBeenCalledWith('sidebar.settings', {})
     })
+    const text = screen.getByTestId('thread').textContent
+    expect(text).toContain('Durable base')
+    expect(text).toContain('Durable live event')
+    expect(text).toContain('Missing suffix')
+  })
+
+  it('does not advance past a deferred delta and ignores duplicate durable pushes', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let historyRead = 0
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'thread.history') return request(method, params)
+      historyRead += 1
+      return Promise.resolve(
+        historyRead === 1
+          ? {
+              events: [
+                {
+                  seq: 1,
+                  event: {
+                    type: 'turn.started' as const,
+                    turn: {
+                      id: 'turn-1',
+                      threadId: 'untouched-thread',
+                      status: 'running' as const,
+                      createdAt: 1,
+                    },
+                  },
+                },
+                {
+                  seq: 2,
+                  event: {
+                    type: 'item.started' as const,
+                    item: {
+                      id: 'streaming',
+                      turnId: 'turn-1',
+                      type: 'message' as const,
+                      role: 'assistant' as const,
+                      status: 'started' as const,
+                      text: '',
+                      createdAt: 2,
+                    },
+                  },
+                },
+              ],
+              running: true,
+            }
+          : {
+              events: [
+                {
+                  seq: 3,
+                  event: {
+                    type: 'item.delta' as const,
+                    turnId: 'turn-1',
+                    itemId: 'streaming',
+                    textDelta: 'Once',
+                  },
+                },
+              ],
+              running: true,
+            },
+      )
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'untouched-thread',
+      }),
+    )
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    transport.request.mockClear()
+
+    const delta = {
+      type: 'item.delta' as const,
+      turnId: 'turn-1',
+      itemId: 'streaming',
+      textDelta: 'Once',
+    }
+    emitThreadEvent('untouched-thread', delta, 3)
+    emitThreadEvent('untouched-thread', delta, 3)
+    emitThreadEvent('untouched-thread', { ...delta, textDelta: ' stale' }, 2)
+    act(() => {
+      for (const listener of transport.sequenceGapListeners) listener(4, 6)
+    })
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'untouched-thread',
+        afterSeq: 2,
+      }),
+    )
+    expect(screen.getByText('Once').textContent).toBe('Once')
+    act(() => frames.shift()?.(performance.now()))
+    expect(screen.getByText('Once').textContent).toBe('Once')
+    expect(screen.queryByText(/stale/)).toBeNull()
   })
 
   it('resyncs active server-owned state after reconnecting mid-stream', async () => {
@@ -3912,6 +4070,7 @@ describe('reopening a session', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
+        afterSeq: 0,
       })
       expect(transport.request).toHaveBeenCalledWith('thread.queue', {
         threadId: 'untouched-thread',
