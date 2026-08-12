@@ -325,6 +325,48 @@ describe('thread reducer', () => {
     ])
   })
 
+  it.each([1_000, 10_000])('keeps completed replay item reads linear at %i items', (count) => {
+    const readBudget = count * 12
+    let idReads = 0
+    const trackedItem = (id: string, status: Item['status'], type: Item['type']): Item => {
+      const value = item({ id, status, type, text: status === 'completed' ? 'output' : '' })
+      Object.defineProperty(value, 'id', {
+        enumerable: true,
+        get() {
+          idReads += 1
+          if (idReads > readBudget) throw new Error('replay item-read budget exceeded')
+          return id
+        },
+      })
+      return value
+    }
+    const entries: Array<{ seq: number; event: DomainEvent }> = []
+
+    for (let index = 0; index < count; index += 1) {
+      const id = `history-${index}`
+      const type: Item['type'] = index % 2 === 0 ? 'command' : 'tool_call'
+      entries.push(
+        {
+          seq: entries.length + 1,
+          event: { type: 'item.started', item: trackedItem(id, 'started', type) },
+        },
+        {
+          seq: entries.length + 2,
+          event: { type: 'item.delta', turnId: 't1', itemId: id, textDelta: 'output' },
+        },
+        {
+          seq: entries.length + 3,
+          event: { type: 'item.completed', item: trackedItem(id, 'completed', type) },
+        },
+      )
+    }
+
+    const state = reduceEventLog(emptyThread, entries)
+
+    expect(state.items).toHaveLength(count)
+    expect(idReads).toBeLessThanOrEqual(readBudget)
+  })
+
   it('keeps parallel subagent activity final after replay and stale events', () => {
     const subagent = (id: string, status: Item['status'], text: string): Item =>
       item({ id, type: 'tool_call', role: undefined, status, text })

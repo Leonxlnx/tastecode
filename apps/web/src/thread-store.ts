@@ -278,6 +278,88 @@ export function reduceDeltas(state: ThreadState, deltas: ItemDeltaEvent[]): Thre
 }
 
 /**
+ * Owns the one mutable item array used while rebuilding a persisted log.
+ * Nothing can observe this private copy before reduceEventLog returns, so
+ * indexing and replacing rows here preserves the public immutable state
+ * contract without copying the growing transcript for every stored event.
+ */
+class ReplayItems {
+  readonly items: Item[]
+  readonly #indexById = new Map<string, number>()
+
+  constructor(items: readonly Item[]) {
+    this.items = [...items]
+    for (let index = 0; index < this.items.length; index += 1) {
+      const id = this.items[index]?.id
+      if (id !== undefined && !this.#indexById.has(id)) this.#indexById.set(id, index)
+    }
+  }
+
+  start(item: Item): void {
+    const itemId = item.id
+    const existingIndex = this.#indexById.get(itemId)
+    if (existingIndex === undefined) {
+      this.#indexById.set(itemId, this.items.length)
+      this.items.push(item)
+      return
+    }
+
+    const existing = this.items[existingIndex]
+    const optimistic = existing?.id.startsWith(OPTIMISTIC_PREFIX) && existing.turnId === ''
+    if (!optimistic && existing?.status !== 'started') return
+    this.items[existingIndex] = {
+      ...item,
+      ...(item.text || !existing?.text ? {} : { text: existing.text }),
+    }
+  }
+
+  complete(item: Item): void {
+    const itemId = item.id
+    const existingIndex = this.#indexById.get(itemId)
+    if (existingIndex === undefined) {
+      this.#indexById.set(itemId, this.items.length)
+      this.items.push(item)
+      return
+    }
+
+    const streamed = this.items[existingIndex]?.text
+    this.items[existingIndex] = { ...item, ...(item.text ? {} : { text: streamed }) }
+  }
+
+  appendDeltas(deltas: ItemDeltaEvent[], activeTurnId: string | undefined): void {
+    const chunksByItem = new Map<string, string[]>()
+    for (const event of deltas) {
+      const chunks = chunksByItem.get(event.itemId)
+      if (chunks) chunks.push(event.textDelta)
+      else chunksByItem.set(event.itemId, [event.textDelta])
+    }
+
+    for (const [itemId, chunks] of chunksByItem) {
+      const textDelta = chunks.length === 1 ? chunks[0]! : chunks.join('')
+      const index = this.#indexById.get(itemId)
+      if (index === undefined) {
+        this.#indexById.set(itemId, this.items.length)
+        this.items.push({
+          id: itemId,
+          turnId: activeTurnId ?? '',
+          type: 'message',
+          status: 'started',
+          role: 'assistant',
+          text: textDelta,
+          createdAt: Date.now(),
+        })
+        continue
+      }
+
+      const existing = this.items[index]
+      if (existing?.status === 'started') {
+        this.items[index] = { ...existing, text: (existing.text ?? '') + textDelta }
+      }
+    }
+  }
+}
+
+/**
  * Replays persisted events with the same delta batching used by the live
  * renderer. Long histories contain hundreds of adjacent text chunks per item;
  * folding those one at a time copies the growing transcript once per token.
@@ -290,10 +372,19 @@ export function reduceEventLog(
 ): ThreadState {
   let next = state
   let deltas: ItemDeltaEvent[] = []
+  let replayItems: ReplayItems | undefined
+
+  const mutableItems = () => {
+    if (!replayItems) {
+      replayItems = new ReplayItems(next.items)
+      next = { ...next, items: replayItems.items }
+    }
+    return replayItems
+  }
 
   const flushDeltas = () => {
     if (deltas.length === 0) return
-    next = reduceDeltas(next, deltas)
+    mutableItems().appendDeltas(deltas, next.activeTurn?.id)
     deltas = []
   }
 
@@ -304,7 +395,20 @@ export function reduceEventLog(
       continue
     }
     flushDeltas()
+    if (entry.event.type === 'item.started') {
+      mutableItems().start(entry.event.item)
+      continue
+    }
+    if (entry.event.type === 'item.completed') {
+      mutableItems().complete(entry.event.item)
+      continue
+    }
+
+    const previousItems = next.items
     next = reduce(next, entry.event)
+    // thread.error is the only remaining event that appends an item. Re-index
+    // lazily only if another stored item event follows it.
+    if (next.items !== previousItems) replayItems = undefined
   }
   flushDeltas()
   return next
