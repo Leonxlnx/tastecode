@@ -245,6 +245,19 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function isRecoverablePreviewError(error: unknown): boolean {
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? (error as { code?: unknown }).code
+      : undefined
+  const message = errorMessage(error)
+  return (
+    code === 'ENOENT' ||
+    /preview port \d+ is already (?:being started|in use)/i.test(message) ||
+    /^static preview /i.test(message)
+  )
+}
+
 function unresolvedDesignInput(
   history: Array<{ event: DomainEvent }>,
 ): { id: string; turnId: string; questions: BriefingQuestion[] } | undefined {
@@ -2479,9 +2492,24 @@ export class Orchestrator {
     }
     if (flow.phase === 'preview') {
       const plan = parsePreviewPhaseOutput(text)
-      flow.correcting = false
       void this.#startDesignPreview(threadId, turnId, flow, plan).catch((error: unknown) => {
-        if (this.#designFlows.get(threadId) === flow) this.#failDesignFlow(threadId, error)
+        if (this.#designFlows.get(threadId) !== flow) return
+        if (
+          isRecoverablePreviewError(error) &&
+          this.#queueDesignCorrection(threadId, flow, error)
+        ) {
+          const prompt = flow.pendingPrompt!
+          delete flow.pendingPrompt
+          this.#saveDesignFlow(threadId)
+          void this.#sendDesignTurn(
+            threadId,
+            prompt,
+            this.#designAttachmentsFor(flow),
+            this.#designTurnOptions(flow),
+          ).catch((sendError: unknown) => this.#failDesignFlow(threadId, sendError))
+          return
+        }
+        this.#failDesignFlow(threadId, error)
       })
       return
     }
