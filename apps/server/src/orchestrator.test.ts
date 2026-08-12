@@ -935,6 +935,51 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
+  it('stays idle when a Design turn completes before sendTurn returns', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-fast-complete-'))
+    const { orchestrator, sessions } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      const session = sessions[0]!
+      session.release = () => {}
+      const sending = orchestrator.submitTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      await vi.waitFor(() => expect(session.sent).toHaveLength(1))
+
+      session.emit(turnStarted(thread.id, 'fast-turn'))
+      session.emit({ type: 'turn.completed', turnId: 'fast-turn', status: 'failed' })
+
+      await expect(sending).resolves.toMatchObject({ queued: false, turnId: 'fast-turn' })
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('drains queued work after an error arrives during Design startup', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-start-error-'))
+    const { orchestrator, sessions } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      const session = sessions[0]!
+      session.release = () => {}
+      const sending = orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      await vi.waitFor(() => expect(session.sent).toHaveLength(1))
+      const releaseProvider = session.release
+      session.sendError = new Error('provider start failed')
+      await orchestrator.submitTurn(thread.id, 'Continue normally.')
+
+      session.emit({ type: 'thread.error', threadId: thread.id, message: 'provider failed' })
+      releaseProvider?.()
+
+      await expect(sending).rejects.toThrow('provider start failed')
+      await vi.waitFor(() => expect(session.sent.at(-1)).toBe('Continue normally.'))
+    } finally {
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
   async function previewRecoveryHarness(error: unknown) {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-preview-recovery-'))
     const taste = path.join(workspace, '.taste')

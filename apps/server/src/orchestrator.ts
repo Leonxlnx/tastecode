@@ -980,6 +980,7 @@ export class Orchestrator {
         } catch (error) {
           this.#startingTurns.delete(threadId)
           if (this.#designFlows.has(threadId)) this.#failDesignFlow(threadId, error)
+          else void this.#drainQueue(threadId)
           throw error
         }
         // Ask-first cannot answer a permission prompt on an agent without
@@ -1060,7 +1061,7 @@ export class Orchestrator {
     }
 
     const turnId = await this.sendTurn(threadId, text, attachments, options, submission)
-    this.#activeTurns.add(threadId)
+    if (this.#activeTurnIds.get(threadId) === turnId) this.#activeTurns.add(threadId)
     return { queued: false, turnId }
   }
 
