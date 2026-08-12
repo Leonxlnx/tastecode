@@ -148,6 +148,47 @@ describe('Composer image paste', () => {
     expect(screen.queryByRole('dialog', { name: 'Preview Screenshot.png' })).toBeNull()
     expect(document.activeElement).toBe(open)
   })
+
+  it('rejects an unsupported image before materializing it and preserves the draft', () => {
+    renderComposer(vi.fn(), { attachmentsSupported: false })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    const image = new File(['image bytes'], 'Screenshot.png', { type: 'image/png' })
+    fireEvent.change(composer, { target: { value: 'Keep this draft' } })
+
+    fireEvent.paste(composer, { clipboardData: { files: [image] } })
+
+    expect(bridge.savePastedImage).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Open Screenshot.png' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Attach files' })).toBeNull()
+    expect(screen.getByRole('alert').textContent).toBe(
+      'Attachments aren’t supported by this source.',
+    )
+    expect(composer.value).toBe('Keep this draft')
+  })
+})
+
+describe('Composer attachment source switching', () => {
+  it('keeps existing attachments removable but blocks sending them through an unsupported source', async () => {
+    bridge.pickFiles.mockResolvedValue(['/work/reference.txt'])
+    const onSend = vi.fn()
+    const view = renderComposer(onSend)
+    fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
+    expect(await screen.findByText('reference.txt')).toBeTruthy()
+
+    view.rerenderComposer({ attachmentsSupported: false })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'Keep this with the attachment' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('Keep this with the attachment')
+    expect(screen.getByText('reference.txt')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Remove reference.txt' })).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole('alert').textContent).toBe(
+      'Remove attachments or switch to a source that supports them.',
+    )
+  })
 })
 
 describe('Composer queue', () => {
@@ -429,6 +470,7 @@ function renderComposer(
       serviceTier={undefined}
       approval="ask"
       autoReviewSupported={false}
+      attachmentsSupported
       voiceAvailable={false}
       disabled={false}
       sendAvailability="ready"

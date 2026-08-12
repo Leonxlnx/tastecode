@@ -99,6 +99,8 @@ const COMPOSER_DOCK_ANIMATION_ID = 'harness-composer-dock'
 const COMPOSER_DOCK_MOTION_MS = 320
 const COMPOSER_DOCK_EASING = 'cubic-bezier(0.23, 1, 0.32, 1)'
 const SEND_MOTION_MS = 180
+const ATTACHMENTS_UNSUPPORTED = 'Attachments aren’t supported by this source.'
+const ATTACHMENTS_BLOCK_SEND = 'Remove attachments or switch to a source that supports them.'
 const PASTEABLE_IMAGE_TYPES = new Set([
   'image/png',
   'image/jpeg',
@@ -133,6 +135,7 @@ function ComposerComponent(props: {
   usage?: Usage | undefined
   approval: ApprovalMode
   autoReviewSupported: boolean
+  attachmentsSupported: boolean
   voiceAvailable: boolean
   disabled: boolean
   sendAvailability: SendAvailability
@@ -180,6 +183,7 @@ function ComposerComponent(props: {
   const cancelVoiceRequest = useRef(props.onCancelVoice)
   const sendAvailabilityRef = useRef(props.sendAvailability)
   const textRef = useRef(text)
+  const attachmentsSupportedRef = useRef(props.attachmentsSupported)
   const previewUrls = useRef(new Set<string>())
   const resizeFrame = useRef<number | undefined>(undefined)
   const sendTimer = useRef<number | undefined>(undefined)
@@ -191,8 +195,13 @@ function ComposerComponent(props: {
   const recorder = useVoiceRecorder()
 
   textRef.current = text
+  attachmentsSupportedRef.current = props.attachmentsSupported
   cancelVoiceRequest.current = props.onCancelVoice
   sendAvailabilityRef.current = props.sendAvailability
+
+  useEffect(() => {
+    if (props.attachmentsSupported) setAttachmentError(undefined)
+  }, [props.attachmentsSupported])
 
   useEffect(() => {
     mounted.current = true
@@ -299,6 +308,16 @@ function ComposerComponent(props: {
     })
   }
 
+  const attachFiles = (paths: string[]) => {
+    if (paths.length === 0) return
+    if (!attachmentsSupportedRef.current) {
+      setAttachmentError(ATTACHMENTS_UNSUPPORTED)
+      return
+    }
+    setAttachmentError(undefined)
+    addFiles(paths)
+  }
+
   const addPastedImages = (files: File[]) => {
     setAttachmentError(undefined)
     for (const file of files) {
@@ -360,7 +379,8 @@ function ComposerComponent(props: {
       trimmed === '' ||
       paths.length !== attachments.length ||
       props.disabled ||
-      sendAvailabilityRef.current !== 'ready'
+      sendAvailabilityRef.current !== 'ready' ||
+      (!props.attachmentsSupported && attachments.length > 0)
     )
       return false
     if (!props.projectPath) {
@@ -517,7 +537,10 @@ function ComposerComponent(props: {
     text.trim() === '' ||
     attachments.some((attachment) => !attachment.path) ||
     props.disabled ||
-    props.sendAvailability !== 'ready'
+    props.sendAvailability !== 'ready' ||
+    (!props.attachmentsSupported && attachments.length > 0)
+  const visibleAttachmentError =
+    !props.attachmentsSupported && attachments.length > 0 ? ATTACHMENTS_BLOCK_SEND : attachmentError
 
   return (
     <>
@@ -527,7 +550,7 @@ function ComposerComponent(props: {
           className={`composer__box ${dragging ? 'is-dropping' : ''}`}
           onDragOver={(e) => {
             e.preventDefault()
-            setDragging(true)
+            if (props.attachmentsSupported) setDragging(true)
           }}
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => {
@@ -538,7 +561,7 @@ function ComposerComponent(props: {
             const paths = Array.from(e.dataTransfer.files)
               .map((file) => (file as File & { path?: string }).path)
               .filter((path): path is string => typeof path === 'string' && path !== '')
-            addFiles(paths)
+            attachFiles(paths)
           }}
         >
           {props.newSession ? (
@@ -738,9 +761,9 @@ function ComposerComponent(props: {
                     </span>
                   ),
                 )}
-                {attachmentError ? (
+                {visibleAttachmentError ? (
                   <span className="chip chip--error" role="alert">
-                    {attachmentError}
+                    {visibleAttachmentError}
                   </span>
                 ) : null}
               </div>
@@ -786,7 +809,11 @@ function ComposerComponent(props: {
                       .filter((path): path is string => typeof path === 'string' && path !== '')
                     if (images.length > 0 || paths.length > 0) {
                       e.preventDefault()
-                      addFiles(paths)
+                      if (!props.attachmentsSupported) {
+                        setAttachmentError(ATTACHMENTS_UNSUPPORTED)
+                        return
+                      }
+                      attachFiles(paths)
                       addPastedImages(images)
                     }
                   }}
@@ -812,17 +839,19 @@ function ComposerComponent(props: {
               ) : null}
 
               <div className="tools">
-                <button
-                  type="button"
-                  className="menutrigger composer__add"
-                  disabled={props.disabled}
-                  aria-label="Attach files"
-                  onClick={() => void pickFiles().then(addFiles)}
-                >
-                  <span className="tool tool--icon">
-                    <Plus size={15} aria-hidden />
-                  </span>
-                </button>
+                {props.attachmentsSupported ? (
+                  <button
+                    type="button"
+                    className="menutrigger composer__add"
+                    disabled={props.disabled}
+                    aria-label="Attach files"
+                    onClick={() => void pickFiles().then(attachFiles)}
+                  >
+                    <span className="tool tool--icon">
+                      <Plus size={15} aria-hidden />
+                    </span>
+                  </button>
+                ) : null}
 
                 <Menu
                   label="Permissions"

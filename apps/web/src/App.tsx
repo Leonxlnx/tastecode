@@ -54,6 +54,7 @@ import { TitleBar } from './ui/TitleBar.js'
 import { ZoomHud } from './ui/ZoomHud.js'
 import { serverBaseUrl, serverUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
+import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-recorder.js'
 import {
   agentMark,
@@ -549,6 +550,21 @@ export function App() {
           nextModel: selectedModelChoice.model,
         })
     : undefined
+  const attachmentsSupported = useMemo(
+    () =>
+      sourceSupportsAttachments(
+        selectedModelChoice
+          ? {
+              provider: selectedModelChoice.provider,
+              connectionId: selectedModelChoice.connectionId,
+              agentId: selectedModelChoice.agent?.id,
+            }
+          : { provider, agentId: acpAgent },
+        providerStatuses,
+        modelConnections,
+      ),
+    [selectedModelChoice, provider, acpAgent, providerStatuses, modelConnections],
+  )
 
   // Syntax grammars load in the background from the first frame, so the first
   // code block an agent produces is already coloured.
@@ -3054,6 +3070,7 @@ export function App() {
                   usage={thread.usage}
                   approval={approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval}
                   autoReviewSupported={autoReviewSupported}
+                  attachmentsSupported={attachmentsSupported}
                   voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
                   disabled={false}
                   sendAvailability={sendAvailability}

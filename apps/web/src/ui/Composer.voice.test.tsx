@@ -129,6 +129,7 @@ function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>>
       serviceTier={undefined}
       approval="ask"
       autoReviewSupported={false}
+      attachmentsSupported
       voiceAvailable
       disabled={false}
       sendAvailability="ready"

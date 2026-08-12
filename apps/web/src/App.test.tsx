@@ -910,6 +910,61 @@ describe('web client', () => {
     expect(screen.queryByRole('button', { name: 'Use Automatic through OpenCode' })).toBeNull()
   })
 
+  it('updates attachment availability when the selected source changes', async () => {
+    const unsupported = {
+      steer: false,
+      fork: false,
+      interrupt: true,
+      reasoningItems: true,
+      approvals: false,
+      images: false,
+    }
+    serverProviders = [
+      ...(serverProviders as Array<Record<string, unknown>>),
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        installed: true,
+        auth: 'authenticated',
+        capabilities: unsupported,
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        const provider = (params as { provider: string }).provider
+        return Promise.resolve({
+          models: [
+            {
+              id: provider === 'codex' ? 'gpt-5.6-sol' : 'sonnet',
+              displayName: provider === 'codex' ? 'GPT-5.6 Sol' : 'Sonnet 5',
+              isDefault: true,
+              reasoningEfforts: [],
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.modelPickerLayout', 'rail')
+
+    render(<App />)
+
+    expect(await screen.findByRole('button', { name: 'Attach files' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show Claude Code models' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Use Sonnet 5 through Claude Code' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Attach files' })).toBeNull()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show Codex models' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' }))
+    expect(await screen.findByRole('button', { name: 'Attach files' })).toBeTruthy()
+  })
+
   it('reconnects when a newly opened mobile link changes the access token', async () => {
     window.location.hash = '#access_token=first-token'
     render(<App />)
