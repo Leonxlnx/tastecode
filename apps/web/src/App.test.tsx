@@ -1107,10 +1107,13 @@ describe('new chats', () => {
     })
     expect(transport.request).not.toHaveBeenCalledWith('usage.summary', { provider: 'grok' })
 
+    transport.request.mockClear()
+
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     expect(await screen.findByRole('region', { name: 'Codex' })).toBeTruthy()
     expect(screen.getByRole('region', { name: 'Claude Code' })).toBeTruthy()
     expect(screen.queryByRole('region', { name: 'Grok' })).toBeNull()
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
   })
 
   it('refreshes usage once for active-provider change bursts', async () => {
