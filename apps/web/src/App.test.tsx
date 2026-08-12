@@ -101,13 +101,14 @@ vi.mock('./ui/highlighter.js', () => {
 vi.mock('./ui/Thread.js', () => ({
   Thread: (props: {
     items: { id: string; text?: string }[]
+    liveItems?: ReadonlyMap<number, { item: { id: string; text?: string } }>
     running: boolean
     activeTurn?: { id: string; startedAt: number }
   }) => (
     <div data-testid="thread" data-started-at={props.activeTurn?.startedAt}>
-      {props.items.map((item) => (
-        <span key={item.id} data-item-id={item.id}>
-          {item.text}
+      {props.items.map((base, index) => (
+        <span key={base.id} data-item-id={base.id}>
+          {props.liveItems?.get(index)?.item.text ?? base.text}
         </span>
       ))}
       {props.running && props.activeTurn ? <span>Working</span> : null}
