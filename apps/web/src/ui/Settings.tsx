@@ -302,7 +302,7 @@ function SettingsComponent(props: {
           <SettingsNavItem
             active={section === 'workflows'}
             icon={<PanelLeft size={15} aria-hidden />}
-            label="Workflows"
+            label="General"
             onClick={() => setSection('workflows')}
           />
           <SettingsNavItem
@@ -326,7 +326,7 @@ function SettingsComponent(props: {
           <SettingsNavItem
             active={section === 'data'}
             icon={<Database size={15} aria-hidden />}
-            label="Data"
+            label="Data & privacy"
             onClick={() => setSection('data')}
           />
           <SettingsNavItem
@@ -380,7 +380,7 @@ function WorkflowSettings(props: {
   const autoSettle = props.sidebarSettings.autoSettleDays !== null
 
   return (
-    <SettingsPanel title="Workflows">
+    <SettingsPanel title="General">
       <SettingsRow title="Sidebar version">
         <div className="settings__sidebar-switcher" role="radiogroup" aria-label="Sidebar version">
           <button
@@ -1622,7 +1622,7 @@ function DataSettings(props: { projectCount: number; onReset: () => void }) {
   const projectLabel = `${props.projectCount} ${props.projectCount === 1 ? 'project' : 'projects'} on this machine`
 
   return (
-    <SettingsPanel title="Data">
+    <SettingsPanel title="Data & privacy">
       <SettingsRow
         title={projectLabel}
         note="Reset only clears this renderer’s preferences. It does not delete projects, workspaces, files, chat history, or provider credentials."

@@ -1672,7 +1672,7 @@ describe('new chats', () => {
     render(<App />)
 
     openSettings()
-    fireEvent.click(screen.getByRole('button', { name: 'Data' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Data & privacy' }))
     fireEvent.click(screen.getByRole('button', { name: 'Reset app preferences' }))
     expect(localStorage.getItem('harness.theme')).toBe('dark')
     expect(reload).not.toHaveBeenCalled()
@@ -1701,7 +1701,7 @@ describe('new chats', () => {
     render(<App />)
 
     openSettings()
-    fireEvent.click(screen.getByRole('button', { name: 'Workflows' }))
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
 
     const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
     expect(inbox.getAttribute('aria-checked')).toBe('true')
@@ -1735,7 +1735,7 @@ describe('new chats', () => {
 
     render(<App />)
     openSettings()
-    fireEvent.click(screen.getByRole('button', { name: 'Workflows' }))
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
 
     const classic = screen.getByRole('radio', { name: 'V1 Classic' })
     const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
@@ -1773,7 +1773,7 @@ describe('new chats', () => {
 
     render(<App />)
     openSettings()
-    fireEvent.click(screen.getByRole('button', { name: 'Workflows' }))
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
 
     const classic = screen.getByRole('radio', { name: 'V1 Classic' })
     const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
@@ -1820,7 +1820,7 @@ describe('new chats', () => {
 
     render(<App />)
     openSettings()
-    fireEvent.click(screen.getByRole('button', { name: 'Workflows' }))
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
 
     const classic = screen.getByRole('radio', { name: 'V1 Classic' })
     const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
@@ -1878,7 +1878,7 @@ describe('new chats', () => {
 
     expect(screen.queryByRole('button', { name: /Switch to V[12].*sidebar/ })).toBeNull()
     openSettings()
-    fireEvent.click(screen.getByRole('button', { name: 'Workflows' }))
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
     fireEvent.click(screen.getByRole('radio', { name: 'V2 Inbox' }))
 
     await waitFor(() => {

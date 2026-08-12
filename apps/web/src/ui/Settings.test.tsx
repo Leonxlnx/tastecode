@@ -91,6 +91,16 @@ describe('settings viewport layout', () => {
     expect(settings?.querySelector(':scope > .settings__sidebar')).toBeTruthy()
     expect(settings?.querySelector(':scope > .settings__main')).toBeTruthy()
   })
+
+  it('names the foundational preference categories truthfully', () => {
+    renderSettings()
+
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
+    expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Data & privacy' }))
+    expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy()
+  })
 })
 
 describe('model picker layout setting', () => {
