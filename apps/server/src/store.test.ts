@@ -629,6 +629,10 @@ describe('threads', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('starts new profiles with the classic sidebar and three-day settling', () => {
+    expect(store.sidebarSettings()).toEqual({ mode: 'classic', autoSettleDays: 3 })
+  })
 })
 
 describe('events', () => {

@@ -200,7 +200,7 @@ CREATE TABLE IF NOT EXISTS sidebar_settings (
   auto_settle_days INTEGER CHECK (auto_settle_days BETWEEN 1 AND 90)
 );
 
-INSERT OR IGNORE INTO sidebar_settings (id, mode, auto_settle_days) VALUES (1, 'inbox', 3);
+INSERT OR IGNORE INTO sidebar_settings (id, mode, auto_settle_days) VALUES (1, 'classic', 3);
 
 CREATE TABLE IF NOT EXISTS events (
   seq       INTEGER PRIMARY KEY AUTOINCREMENT,
