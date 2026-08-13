@@ -5578,7 +5578,10 @@
   border-top: 1px solid var(--line);
   border-left: 1px solid var(--line);
   border-top-left-radius: 10px;
-  overflow: hidden;
+  /* StageHeader deliberately rises into the titlebar. Clip the in-flow
+     surface below instead, otherwise the title and workspace controls remain
+     in the accessibility tree while their pixels are cut off here. */
+  overflow: visible;
   container: chat-stage / inline-size;
 }
 
@@ -5592,6 +5595,12 @@
   grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
   min-width: 0;
+  overflow: hidden;
+  border-top-left-radius: inherit;
+}
+
+.stage > .pr-workspace {
+  border-top-left-radius: inherit;
 }
 
 .stage__body.is-new-session {
