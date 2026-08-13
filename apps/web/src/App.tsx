@@ -527,6 +527,7 @@ export function App() {
   const [terminalOpen, setTerminalOpen] = useState(() => readSetting(TERMINAL_OPEN_KEY) === 'true')
   const [terminalHeight, setTerminalHeight] = useState(readTerminalHeight)
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false)
+  const [workspacePanelClosing, setWorkspacePanelClosing] = useState(false)
   const [workspacePanelExpanded, setWorkspacePanelExpanded] = useState(false)
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(readWorkspacePanelWidth)
   const [sideChatPromptRequest, setSideChatPromptRequest] = useState<SideChatPromptRequest>()
@@ -3370,11 +3371,16 @@ export function App() {
   }, [])
   const toggleTerminal = useCallback(() => setTerminalOpen((open) => !open), [])
   const closeTerminal = useCallback(() => setTerminalOpen(false), [])
-  const openWorkspacePanel = useCallback(() => setWorkspacePanelOpen(true), [])
+  const openWorkspacePanel = useCallback(() => {
+    setWorkspacePanelClosing(false)
+    setWorkspacePanelOpen(true)
+  }, [])
   const closeWorkspacePanel = useCallback(() => {
+    setWorkspacePanelClosing(true)
     setWorkspacePanelOpen(false)
     setWorkspacePanelExpanded(false)
   }, [])
+  const finishWorkspacePanelClose = useCallback(() => setWorkspacePanelClosing(false), [])
   const active = useMemo(() => findSession(projects, activeId), [projects, activeId])
   const activeProject = useMemo(
     () => projects.find((project) => project.path === activePath),
@@ -3585,7 +3591,7 @@ export function App() {
                   checkpointCount={thread.running ? 0 : checkpoints.length}
                   worktreeBranch={active?.session.worktreeBranch}
                   terminalOpen={terminalOpen}
-                  workspacePanelOpen={workspacePanelOpen}
+                  workspacePanelOpen={workspacePanelOpen || workspacePanelClosing}
                   onOpenRollback={openRollback}
                   onToggleWorkspace={workspacePanelOpen ? closeWorkspacePanel : openWorkspacePanel}
                   onToggleTerminal={toggleTerminal}
@@ -3726,6 +3732,7 @@ export function App() {
               }
               onOpen={openWorkspacePanel}
               onClose={closeWorkspacePanel}
+              onClosed={finishWorkspacePanelClose}
               onExpandedChange={setWorkspacePanelExpanded}
               onWidthChange={setWorkspacePanelWidth}
             />

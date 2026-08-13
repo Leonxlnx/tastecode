@@ -97,6 +97,7 @@ export function WorkspacePanel(props: {
   nativeSurfacesVisible: boolean
   onOpen: () => void
   onClose: () => void
+  onClosed?: () => void
   onExpandedChange: (expanded: boolean) => void
   onWidthChange: (width: number) => void
 }) {
@@ -180,6 +181,12 @@ export function WorkspacePanel(props: {
     [],
   )
 
+  useEffect(() => {
+    if (!props.open && globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      props.onClosed?.()
+    }
+  }, [props.open, props.onClosed])
+
   const closeTab = useCallback((id: string) => {
     const current = tabsRef.current
     const index = current.findIndex((tab) => tab.id === id)
@@ -258,10 +265,11 @@ export function WorkspacePanel(props: {
         if (
           event.target !== event.currentTarget ||
           event.propertyName !== 'transform' ||
-          props.open ||
-          !clearAfterClose.current
+          props.open
         )
           return
+        props.onClosed?.()
+        if (!clearAfterClose.current) return
         clearAfterClose.current = false
         tabsRef.current = []
         setTabs([])
