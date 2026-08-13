@@ -1030,20 +1030,16 @@ function ComposerComponent(props: {
                 />
               </div>
 
-              {props.sendAvailability !== 'ready' ? (
+              {props.sendAvailability !== 'ready' && props.sendAvailability !== 'loading' ? (
                 <div className="composer__provider-state">
                   <span role="status">
-                    {props.sendAvailability === 'loading'
-                      ? 'Checking providers…'
-                      : props.sendAvailability === 'setup-required'
-                        ? 'Provider setup required'
-                        : 'Provider unavailable'}
+                    {props.sendAvailability === 'setup-required'
+                      ? 'Provider setup required'
+                      : 'Provider unavailable'}
                   </span>
-                  {props.sendAvailability !== 'loading' ? (
-                    <button className="ghost" type="button" onClick={props.onSetupProvider}>
-                      Set up a provider
-                    </button>
-                  ) : null}
+                  <button className="ghost" type="button" onClick={props.onSetupProvider}>
+                    Set up a provider
+                  </button>
                 </div>
               ) : null}
 
