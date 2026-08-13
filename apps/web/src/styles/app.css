@@ -9887,15 +9887,7 @@
 
 /* ---------- empty & notice ---------- */
 
-@container chat-stage (max-width: 480px) {
-  .thread__col {
-    padding-inline: 14px;
-  }
-
-  .composer {
-    padding-inline: 10px;
-  }
-
+@container chat-stage (max-width: 620px) {
   .tools {
     gap: 4px;
     padding-inline: 6px;
@@ -9917,7 +9909,20 @@
   }
 
   .composer__permission .tool > span,
-  .composer__design > span,
+  .composer__design > span {
+    display: none;
+  }
+}
+
+@container chat-stage (max-width: 480px) {
+  .thread__col {
+    padding-inline: 14px;
+  }
+
+  .composer {
+    padding-inline: 10px;
+  }
+
   .composer-resource-picker__description,
   .composer-resource-picker__meta span:last-child {
     display: none;
