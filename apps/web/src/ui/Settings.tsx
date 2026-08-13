@@ -3,7 +3,6 @@ import {
   memo,
   Suspense,
   useCallback,
-  useDeferredValue,
   useEffect,
   useId,
   useRef,
@@ -50,7 +49,6 @@ import {
 import {
   agentMark,
   connectionMark,
-  filterModelChoicesByQuery,
   isCustomModelChoice,
   providerMark,
   type ModelChoice,
@@ -90,7 +88,6 @@ import {
 } from '../haptics.js'
 import { McpSettings } from './McpSettings.js'
 import { Menu, MenuItem } from './Menu.js'
-import { ModelSearchField } from './ModelSearchField.js'
 import { groupModelsBySource } from './ModelSelector.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderIcon } from './ProviderIcon.js'
@@ -863,11 +860,6 @@ function ModelVisibilityGroup(props: {
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
 }) {
-  const [query, setQuery] = useState('')
-  const deferredQuery = useDeferredValue(query)
-  const searching = deferredQuery.trim().length > 0
-  const filteredChoices = filterModelChoicesByQuery(props.choices, deferredQuery)
-
   return (
     <section className="model-visibility" aria-label={props.source}>
       <header className="model-visibility__source">
@@ -876,43 +868,31 @@ function ModelVisibilityGroup(props: {
             <SourceIdentity presentation={{ label: props.source, mark: props.choices[0].mark }} />
           </h3>
         ) : null}
-        <ModelSearchField
-          className="model-visibility__search"
-          value={query}
-          label={`Search ${props.source} models`}
-          onChange={setQuery}
-        />
       </header>
 
       <div className="model-visibility__models">
         <div>
-          {filteredChoices.length > 0 ? (
-            filteredChoices.map((choice) => {
-              const visible = !props.hiddenModels.has(choice.key)
-              return (
-                <SettingsRow
-                  className={`model-visibility__model${visible ? '' : ' is-hidden'}`}
-                  key={choice.key}
-                  title={choice.model.displayName}
+          {props.choices.map((choice) => {
+            const visible = !props.hiddenModels.has(choice.key)
+            return (
+              <SettingsRow
+                className={`model-visibility__model${visible ? '' : ' is-hidden'}`}
+                key={choice.key}
+                title={choice.model.displayName}
+              >
+                <button
+                  className={`switch${visible ? ' is-on' : ''}`}
+                  type="button"
+                  role="switch"
+                  aria-label={`Include ${choice.model.displayName} in model picker`}
+                  aria-checked={visible}
+                  onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
                 >
-                  <button
-                    className={`switch${visible ? ' is-on' : ''}`}
-                    type="button"
-                    role="switch"
-                    aria-label={`Include ${choice.model.displayName} in model picker`}
-                    aria-checked={visible}
-                    onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
-                  >
-                    <span className="switch__thumb" />
-                  </button>
-                </SettingsRow>
-              )
-            })
-          ) : (
-            <p className="model-visibility__empty" role="status">
-              {searching ? 'No matching models.' : 'No models shown.'}
-            </p>
-          )}
+                  <span className="switch__thumb" />
+                </button>
+              </SettingsRow>
+            )
+          })}
         </div>
       </div>
     </section>
