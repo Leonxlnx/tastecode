@@ -86,7 +86,7 @@ describe('page phase', () => {
     expect(prompt).toContain('Never use an em dash')
     expect(prompt).toContain('Omit eyebrow copy by default')
     expect(prompt).toContain(
-      'Use the following beta layout cases as the source material for Hero, Navigation, About, and Feature',
+      'Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, and How It Works',
     )
     expect(prompt).toContain('Place the headline at the bottom left or bottom right')
     expect(prompt).toContain('show a wide dashboard, product preview, interface')
@@ -106,6 +106,12 @@ describe('page phase', () => {
     expect(prompt).toContain('Present roughly two to five features with a timed progress line')
     expect(prompt).toContain('through GSAP, horizontal scroll, or direct dragging')
     expect(prompt).toContain('move in a controlled swirl')
+    expect(prompt).toContain('How It Works overlaps strongly with Feature layouts')
+    expect(prompt).toContain('Draw one horizontal line with numbered steps')
+    expect(prompt).toContain('left and right arrow buttons')
+    expect(prompt).toContain('Place a vertical list of steps on the left')
+    expect(prompt).toContain('Day 1 and Day 2')
+    expect(prompt).toContain('Draw a winding or snake-like line through the center')
   })
 
   it('parses the final response through the page validator', () => {

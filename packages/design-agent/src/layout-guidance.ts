@@ -1,4 +1,4 @@
-export const PAGE_LAYOUT_GUIDANCE = `Use the following beta layout cases as the source material for Hero, Navigation, About, and Feature decisions. Select the case that best fits the content and brand, or lightly combine compatible cases. Keep the described composition recognizable instead of replacing it with an unrelated default layout.
+export const PAGE_LAYOUT_GUIDANCE = `Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, and How It Works decisions. Select the case that best fits the content and brand, or lightly combine compatible cases. Keep the described composition recognizable instead of replacing it with an unrelated default layout.
 
 The layout case is only part of the result. Font choice and scale, brand colors, spacing, button placement and treatment, corner radii, navigation placement, media crop, and motion create much of the final feeling. Resolve all of them from the approved brand direction. Motion must fit the selected style and composition rather than being added as a generic effect.
 
@@ -92,4 +92,18 @@ Large and spatial Feature cases:
 2. Give roughly two thirds of the screen to a group of images or visualizations on the left and use the right side to explain them continuously. Mirror the layout when the design works better in the opposite direction.
 3. Create a more immersive feature section. Place the text in the center, left, or right according to the composition. As the user scrolls, move images, assets, or visualizations through the scene: they may rise from bottom to top, new elements may enter or fall into the viewport, or the elements may move in a controlled swirl. Use GSAP when appropriate. A later OriginKit component may help implement the effect, but it must preserve this selected layout and movement idea.
 
-Feature cards and visualizations remain an open design surface. Their font scale, spacing, radius, surface, image treatment, brand color, hover behavior, and motion must follow the approved style rather than one universal card design.`
+Feature cards and visualizations remain an open design surface. Their font scale, spacing, radius, surface, image treatment, brand color, hover behavior, and motion must follow the approved style rather than one universal card design.
+
+How It Works section scope:
+- How It Works overlaps strongly with Feature layouts. Reuse the relevant Feature grid, card, visualization, immersive, or motion cases when they fit the process.
+- A clear step sequence is the important additional element. Labels such as 1, 2, 3 or Day 1, Day 2 are appropriate here because they express a real order.
+- Use the established heading and description arrangements rather than defining a separate heading system for this section.
+
+How It Works layout cases:
+1. Draw one horizontal line with numbered steps such as 1, 2, and 3. Place a card beneath each step with its description and, when fitting, an image, visualization, or animation.
+2. Arrange the steps as cards that move from left to right through GSAP scrolling or direct dragging. Place clean previous and next controls beneath the sequence using left and right arrow buttons. Each card may combine one description with one visualization. Keep the card design fully open to the approved visual style.
+3. Place a vertical list of steps on the left, running from top to bottom. The labels may use stages such as Day 1 and Day 2. Show the information and visualization for the active step on the right. The sequence may loop through the steps so the user can follow the process visually.
+4. Reuse any compatible Feature layout when it explains the process more clearly than a dedicated step layout.
+5. Draw a winding or snake-like line through the center of the section. Alternate the numbered steps between the left and right sides of the line, giving each step a visualization, additional text, or both.
+
+The sequence, progress line, active state, dragging, arrow controls, looping, and scroll motion must remain understandable and functional. Their visual treatment follows the brand and may use the same open card language as Features.`
