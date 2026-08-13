@@ -483,6 +483,38 @@ describe('completed activity disclosure', () => {
 
     expect(screen.getAllByRole('button', { name: 'Copy response' })).toHaveLength(1)
   })
+
+  it('hides response actions while a later turn is running', () => {
+    render(
+      <Thread
+        items={[
+          turnItem('prompt-1', 1, { role: 'user', text: 'Start designing' }),
+          turnItem('answer-1', 2, {
+            role: 'assistant',
+            phase: 'final_answer',
+            text: 'Got it, thanks.',
+          }),
+          turnItem('work-2', 3, {
+            turnId: 'turn-2',
+            type: 'tool_call',
+            status: 'started',
+            text: 'design:brief',
+          }),
+        ]}
+        running
+        activeTurn={{ id: 'turn-2', startedAt: 3 }}
+        plan={[]}
+        diff={undefined}
+        approvals={[]}
+        userInputs={[]}
+        reviews={[]}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: 'Copy response' })).toBeNull()
+  })
 })
 
 describe('collapsed row disclosure', () => {

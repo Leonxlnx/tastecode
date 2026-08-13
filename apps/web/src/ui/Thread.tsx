@@ -410,7 +410,7 @@ export function Thread(props: {
                     elapsedMs={presentation?.elapsedMs}
                     live={live && !visibleLiveImageResult}
                     responseText={responseLead ? presentation.responseText : undefined}
-                    finalResponse={responseLead}
+                    finalResponse={responseLead && !props.running}
                     settling={settling}
                     showCompletionRail={
                       !live &&
