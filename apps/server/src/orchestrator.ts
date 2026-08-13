@@ -1138,19 +1138,6 @@ export class Orchestrator {
           else void this.#drainQueue(threadId)
           throw error
         }
-        // Ask-first cannot answer a permission prompt on an agent without
-        // interactive approvals, so its Build writes get denied one by one.
-        // Say so up front instead of letting the run die on it.
-        if (
-          this.#threadApprovals.get(threadId) === 'ask' &&
-          !this.#get(threadId).session.capabilities.approvals
-        ) {
-          this.#recordDesignNote(
-            threadId,
-            turnId,
-            'Heads up: this agent cannot ask for permission mid-run, so Ask-first may block its file writes during the build. Auto or Full approval works better for Design mode.',
-          )
-        }
         return turnId
       }
       const turnId = await this.#get(threadId).session.sendTurn(
@@ -1979,10 +1966,19 @@ export class Orchestrator {
     // that window used to hit an idle adapter and disappear, after which the
     // turn started anyway. Wait until the adapter has accepted or rejected
     // the start, then deliver the interrupt against its real active turn.
-    await this.#turnStartBarriers.get(threadId)?.done
-    const entry = this.#threads.get(threadId)
-    if (!entry) return
-    await entry.session.interrupt(threadId)
+    const barrier = this.#turnStartBarriers.get(threadId)?.done
+    void (async () => {
+      await barrier
+      const entry = this.#threads.get(threadId)
+      if (entry) await entry.session.interrupt(threadId)
+    })().catch((error) => {
+      if (!this.isTurnRunning(threadId)) return
+      this.#record(threadId, {
+        type: 'thread.error',
+        threadId,
+        message: `Could not stop the agent: ${errorMessage(error)}`,
+      })
+    })
   }
 
   async panicStop(): Promise<PanicStopResult> {

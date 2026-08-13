@@ -3845,10 +3845,7 @@ describe('live sessions', () => {
     ).toEqual(['First queued', 'Second queued'])
   })
 
-  it('acknowledges Stop instead of looking inert until the turn unwinds', async () => {
-    // Providers can take a second or two to stop. With no acknowledged state
-    // the button looked dead, so people pressed it repeatedly and concluded
-    // that stopping does not work.
+  it('returns the active chat to an idle presentation immediately after Stop', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -3869,9 +3866,9 @@ describe('live sessions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
     expect(transport.request).toHaveBeenCalledWith('thread.interrupt', { threadId: 'thread-1' })
 
-    // Pending: named so, and no longer clickable — one interrupt is enough.
-    const stopping = await screen.findByRole('button', { name: 'Stopping…' })
-    expect((stopping as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy()
+    expect(screen.queryByText('Working')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Stopping…' })).toBeNull()
 
     // The turn actually ending is what clears it.
     emitThreadEvent('thread-1', {
@@ -3879,7 +3876,7 @@ describe('live sessions', () => {
       turnId: 'turn-1',
       status: 'interrupted',
     })
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stopping…' })).toBeNull())
+    expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy()
   })
 
   it('steers the active turn with Ctrl+Enter instead of leaving a queued prompt', async () => {
