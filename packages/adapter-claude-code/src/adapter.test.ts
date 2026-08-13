@@ -1,4 +1,7 @@
 import { EventEmitter } from 'node:events'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
@@ -131,6 +134,39 @@ describe('Claude Code turn invocation', () => {
       type: 'user',
       message: { role: 'user', content: [{ type: 'text', text }] },
     })
+  })
+
+  it('encodes images and keeps other selected files readable by path', () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'harness-claude-attachment-'))
+    try {
+      const image = path.join(directory, 'sample.png')
+      const document = path.join(directory, 'notes.txt')
+      writeFileSync(image, 'image bytes')
+      writeFileSync(document, 'notes')
+
+      expect(JSON.parse(claudeUserMessage('Describe these.', [image, document]))).toEqual({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `Describe these.\n\nAttached file paths:\n- ${JSON.stringify(document)}`,
+            },
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: 'image/png',
+                data: Buffer.from('image bytes').toString('base64'),
+              },
+            },
+          ],
+        },
+      })
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 })
 

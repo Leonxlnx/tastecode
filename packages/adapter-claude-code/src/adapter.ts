@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
@@ -42,7 +42,7 @@ export const CLAUDE_CAPABILITIES: Capabilities = {
   interrupt: true,
   reasoningItems: true,
   approvals: false,
-  images: false,
+  images: true,
 }
 
 /**
@@ -137,11 +137,43 @@ function applyClaudeTurnOptions(
   return merged
 }
 
-/** One stream-json stdin line: how the prompt reaches the CLI, never argv. */
-export function claudeUserMessage(text: string): string {
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  '.gif': 'image/gif',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+}
+
+/** One stream-json stdin line: how the prompt and attachments reach the CLI, never argv. */
+export function claudeUserMessage(text: string, attachments: string[] = []): string {
+  const files = attachments.filter((file) => !IMAGE_MIME_TYPES[path.extname(file).toLowerCase()])
+  const prompt = files.length
+    ? `${text}\n\nAttached file paths:\n${files.map((file) => `- ${JSON.stringify(file)}`).join('\n')}`
+    : text
   return `${JSON.stringify({
     type: 'user',
-    message: { role: 'user', content: [{ type: 'text', text }] },
+    message: {
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        ...attachments.flatMap((file) => {
+          const mediaType = IMAGE_MIME_TYPES[path.extname(file).toLowerCase()]
+          return mediaType
+            ? [
+                {
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: mediaType,
+                    data: readFileSync(file).toString('base64'),
+                  },
+                },
+              ]
+            : []
+        }),
+      ],
+    },
   })}\n`
 }
 
@@ -278,8 +310,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     attachments: string[] = [],
     options: ClaudeTurnOptions = {},
   ): Promise<string> {
-    if (attachments.length) throw new Error('Claude Code attachments are not supported yet')
     this.#options = applyClaudeTurnOptions(this.#options, options)
+    const userMessage = claudeUserMessage(text, attachments)
     if ('model' in options) this.#reportedModel = this.#options.model
     const turnId = `${threadId}-turn-${++this.#turnCounter}`
     const args = claudeTurnArgs(this.#options, this.#sessionId, this.#instructionsFile)
@@ -333,7 +365,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     // A child that dies before reading stdin surfaces EPIPE here; the exit
     // handler already reports that failure, so the write error is only noise.
     child.stdin.on('error', () => undefined)
-    child.stdin.write(claudeUserMessage(text))
+    child.stdin.write(userMessage)
     child.stdin.end()
 
     return turnId

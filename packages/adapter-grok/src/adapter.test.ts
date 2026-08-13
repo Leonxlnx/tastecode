@@ -1,12 +1,16 @@
 import { EventEmitter } from 'node:events'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { PassThrough } from 'node:stream'
+import { pathToFileURL } from 'node:url'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { DomainEvent } from '@harness/contracts'
 import { describe, expect, it } from 'vitest'
 import {
   GROK_CAPABILITIES,
   GrokAdapter,
+  grokPromptJson,
   grokTurnArgs,
   parseGrokAccount,
   parseGrokModels,
@@ -41,6 +45,33 @@ const MODELS_OUTPUT = [
 ].join('\n')
 
 describe('Grok adapter', () => {
+  it('encodes images and files as ACP prompt content blocks', () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-grok-attachment-'))
+    try {
+      const image = path.join(directory, 'sample.webp')
+      const document = path.join(directory, 'notes.txt')
+      writeFileSync(image, 'image bytes')
+      writeFileSync(document, 'notes')
+
+      expect(JSON.parse(grokPromptJson('Describe these.', [image, document]))).toEqual([
+        { type: 'text', text: 'Describe these.' },
+        {
+          type: 'image',
+          data: Buffer.from('image bytes').toString('base64'),
+          mimeType: 'image/webp',
+          uri: pathToFileURL(image).href,
+        },
+        {
+          type: 'resource_link',
+          name: 'notes.txt',
+          uri: pathToFileURL(document).href,
+        },
+      ])
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('maps the captured streaming-json wire format onto domain items', async () => {
     const children: FakeChild[] = []
     let args: string[] = []
