@@ -2126,7 +2126,7 @@ function AccountIdentity(props: { provider: ProviderId; account: Account }) {
           Add email
         </button>
       )}
-      {(email || editing) && props.account.plan ? ' · ' : null}
+      {props.account.plan ? ' · ' : null}
       {props.account.plan}
     </>
   )

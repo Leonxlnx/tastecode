@@ -1258,6 +1258,7 @@ describe('provider settings', () => {
 
     const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
     const grokRow = screen.getByText('Grok').closest<HTMLElement>('.settings__row')
+    expect(claudeRow?.querySelector('.provider-row__status')?.textContent).toBe('Add email · pro')
     if (!claudeRow || !grokRow) throw new Error('provider row missing')
     fireEvent.click(within(claudeRow).getByRole('button', { name: 'Sign out' }))
     await waitFor(() =>
