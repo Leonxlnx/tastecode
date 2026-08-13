@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
@@ -24,8 +24,9 @@ import { toDomainEvents, type ClaudeEvent } from './events.js'
  * `--append-system-prompt-file`.
  *
  * Verified against claude-code 2.1.220; stdin stream-json prompt delivery,
- * `--resume` alongside it, and `--append-system-prompt-file` captured against
- * 2.1.222 on Windows through the real cmd.exe spawn path.
+ * `--resume` alongside it, `--append-system-prompt-file`, and base64 image
+ * content blocks captured against 2.1.222 on Windows through the real cmd.exe
+ * spawn path.
  *
  * As with Codex, this never reads a credential. The binary authenticates
  * itself. See rules/security.md.
@@ -42,7 +43,7 @@ export const CLAUDE_CAPABILITIES: Capabilities = {
   interrupt: true,
   reasoningItems: true,
   approvals: false,
-  images: false,
+  images: true,
 }
 
 /**
@@ -138,11 +139,37 @@ function applyClaudeTurnOptions(
 }
 
 /** One stream-json stdin line: how the prompt reaches the CLI, never argv. */
-export function claudeUserMessage(text: string): string {
+export function claudeUserMessage(text: string, attachments: string[] = []): string {
   return `${JSON.stringify({
     type: 'user',
-    message: { role: 'user', content: [{ type: 'text', text }] },
+    message: {
+      role: 'user',
+      content: [
+        { type: 'text', text },
+        ...attachments.map((attachment) => ({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: imageMediaType(attachment),
+            data: readFileSync(attachment).toString('base64'),
+          },
+        })),
+      ],
+    },
   })}\n`
+}
+
+function imageMediaType(file: string): string {
+  const mediaType = {
+    '.gif': 'image/gif',
+    '.jpeg': 'image/jpeg',
+    '.jpg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+  }[path.extname(file).toLowerCase()]
+  if (!mediaType)
+    throw new Error(`Claude Code does not support attachment type ${path.extname(file)}`)
+  return mediaType
 }
 
 /**
@@ -278,7 +305,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     attachments: string[] = [],
     options: ClaudeTurnOptions = {},
   ): Promise<string> {
-    if (attachments.length) throw new Error('Claude Code attachments are not supported yet')
+    const userMessage = claudeUserMessage(text, attachments)
     this.#options = applyClaudeTurnOptions(this.#options, options)
     if ('model' in options) this.#reportedModel = this.#options.model
     const turnId = `${threadId}-turn-${++this.#turnCounter}`
@@ -333,7 +360,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     // A child that dies before reading stdin surfaces EPIPE here; the exit
     // handler already reports that failure, so the write error is only noise.
     child.stdin.on('error', () => undefined)
-    child.stdin.write(claudeUserMessage(text))
+    child.stdin.write(userMessage)
     child.stdin.end()
 
     return turnId
