@@ -5567,7 +5567,7 @@
 .stage {
   position: relative;
   display: grid;
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
   /* The content pane owns its frame: top and left hairline with a rounded
@@ -5609,49 +5609,66 @@
 }
 
 .stagehead {
-  position: absolute;
-  z-index: 2;
-  bottom: calc(100% - 8px);
-  left: 0;
-  right: calc(
-    max(0px, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw))) + 36px
-  );
   display: flex;
-  align-items: center;
-  gap: 10px;
-  height: var(--titlebar-h);
-  padding: 0 16px;
-  /* Without this the session title and token count push the header wider than
-     the grid column, and the whole app shifts sideways. */
   min-width: 0;
-  /* The titlebar behind this header is the one stable native drag region.
-     Let its hit target pass through instead of stacking a second draggable
-     rectangle whose native gesture can outlive a renderer pointer capture. */
-  pointer-events: none;
+  height: 42px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 14px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
   user-select: none;
-}
-
-.stagehead button {
-  pointer-events: auto;
   -webkit-app-region: no-drag;
 }
 
-@media (min-width: 701px) {
-  .shell.is-narrow .stagehead {
-    /* Padding moved the content but left the draggable hit box over the
-       sidebar toggle. Move the hit box itself so the button stays clickable. */
-    left: calc(max(12px, env(titlebar-area-x, 12px)) + 30px);
-    padding-left: 0;
-  }
+.stagehead__identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 3px;
 }
 
 .stagehead__title {
-  color: var(--text-3);
-  font-size: var(--t-sm);
+  min-width: 0;
   overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-weight: 550;
   text-overflow: ellipsis;
   white-space: nowrap;
-  min-width: 0;
+}
+
+.stagehead__rename {
+  width: min(320px, 45vw);
+  height: 28px;
+  padding: 0 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+}
+
+.stagehead__menu-trigger,
+.stagehead__action {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+}
+
+.stagehead__menu-trigger:is(:hover, :focus-visible),
+.stagehead__action:is(:hover, :focus-visible),
+.stagehead__action.is-open {
+  background: var(--surface-2);
+  color: var(--text);
 }
 
 .stagehead__tools {
@@ -5660,8 +5677,6 @@
   gap: 8px;
   margin-left: auto;
   flex: none;
-  pointer-events: auto;
-  -webkit-app-region: no-drag;
 }
 
 .zoom-hud {
@@ -10191,20 +10206,8 @@
   }
 
   .stagehead {
-    position: static;
-    z-index: auto;
-    height: auto;
     min-height: 44px;
-    padding: 6px 12px;
-    -webkit-app-region: no-drag;
-  }
-
-  .stage {
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-
-  .stagehead__title {
-    display: none;
+    padding-inline: 12px 8px;
   }
 
   .thread__col {

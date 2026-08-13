@@ -3575,12 +3575,19 @@ export function App() {
             ) : (
               <>
                 <StageHeader
+                  sessionId={active?.session.id}
                   title={active?.session.title}
+                  pinned={active?.session.pinned ?? false}
+                  projectPath={active?.project.path}
                   checkpointCount={thread.running ? 0 : checkpoints.length}
                   worktreeBranch={active?.session.worktreeBranch}
                   terminalOpen={terminalOpen}
                   onOpenRollback={openRollback}
+                  onOpenWorkspace={openWorkspacePanel}
                   onToggleTerminal={toggleTerminal}
+                  onRenameSession={renameSidebarSession}
+                  onToggleSessionPin={toggleSidebarSessionPin}
+                  onArchiveSession={deleteSidebarSession}
                 />
 
                 <div

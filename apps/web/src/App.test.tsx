@@ -1929,7 +1929,12 @@ describe('new chats', () => {
         isolate: true,
       })
     })
-    expect(await screen.findAllByText('harness/thread-1')).toHaveLength(1)
+    fireEvent.click(
+      await within(screen.getByRole('main')).findByRole('button', {
+        name: /Options for Work in parallel/,
+      }),
+    )
+    expect(await screen.findByText('harness/thread-1')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Choose project' })).toBeNull()
   })
 
@@ -2113,7 +2118,12 @@ describe('new chats', () => {
 
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: /^Parser work,/ }))
-    fireEvent.click(await screen.findByRole('button', { name: '1 checkpoint' }))
+    fireEvent.click(
+      await within(screen.getByRole('main')).findByRole('button', {
+        name: 'Options for Parser work',
+      }),
+    )
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Checkpoint history (1)' }))
     fireEvent.click(screen.getByRole('button', { name: /Before “Fix the parser”/ }))
 
     expect(await screen.findByText('src/parser.ts')).toBeTruthy()
@@ -4079,7 +4089,7 @@ describe('live sessions', () => {
       },
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open terminal' }))
     await screen.findByTestId('terminal-pane')
     fireEvent.keyDown(window, { key: 'k', metaKey: true })
     const palette = screen.getByRole('dialog', { name: 'Command palette' })
