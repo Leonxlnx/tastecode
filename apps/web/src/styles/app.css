@@ -3004,9 +3004,9 @@
 
 .provider-row {
   display: grid;
-  grid-template-columns: 20px minmax(80px, 1fr) minmax(88px, 0.9fr) 22px 86px 136px;
-  gap: 10px;
-  min-height: 58px;
+  grid-template-columns: 20px minmax(110px, 1fr) minmax(150px, 1.25fr) 22px max-content max-content;
+  gap: 9px;
+  min-height: 52px;
 }
 
 .provider-row__mark,
@@ -3072,7 +3072,10 @@
 
 .provider-row .settings__action {
   justify-content: center;
-  width: 100%;
+  width: auto;
+  min-width: 78px;
+  min-height: 30px;
+  padding: 5px 10px;
   text-decoration: none;
 }
 
@@ -3089,15 +3092,46 @@
   color: var(--on-light);
 }
 
-.provider-row .settings__action:is(.is-secondary, .is-quiet) {
+.provider-row .settings__action.is-secondary {
   background: transparent;
   box-shadow: none;
 }
 
-.provider-row .settings__action.is-quiet {
-  width: auto;
-  margin-left: auto;
-  border-color: transparent;
+.provider-row .settings__action.is-danger:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--error) 9%, transparent);
+  border-color: color-mix(in oklab, var(--error) 35%, var(--chrome-border));
+  color: var(--error);
+}
+
+.provider-row__email-add,
+.provider-row__email-form button {
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+}
+
+.provider-row__email-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.provider-row__email-form input {
+  width: min(150px, 100%);
+  height: 28px;
+  padding: 0 7px;
+  background: var(--bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font: inherit;
 }
 
 @container (max-width: 514px) {
@@ -3106,7 +3140,7 @@
       'mark identity issue'
       'status status status'
       'secondary secondary primary';
-    grid-template-columns: 20px minmax(0, 1fr) 136px;
+    grid-template-columns: 20px minmax(0, 1fr) minmax(88px, max-content);
     row-gap: 8px;
   }
 
@@ -3141,34 +3175,6 @@
   .provider-row__secondary:has(+ .provider-row__primary:empty) {
     grid-area: primary;
   }
-
-  .provider-row__primary .settings__action {
-    width: 136px;
-  }
-
-  .provider-row__secondary .settings__action {
-    width: auto;
-  }
-}
-
-.provider-settings__add {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  padding: 13px 16px;
-  background: none;
-  border: 0;
-  border-top: 1px solid var(--line);
-  color: var(--text-2);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.provider-settings__add:hover {
-  background: var(--chrome-raised);
-  color: var(--text);
 }
 
 .provider-form {
@@ -3223,29 +3229,6 @@
 .provider-form textarea:focus {
   border-color: var(--text-3);
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--text) 8%, transparent);
-}
-
-.custom-harness-form__note {
-  margin: 0;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  line-height: 1.45;
-}
-
-.custom-harness-form__note code {
-  color: var(--text-2);
-}
-
-.custom-harness-row.is-ready .settings__row-note {
-  color: color-mix(in oklab, var(--success) 72%, var(--text-3));
-}
-
-.custom-harness-row.is-warning .settings__row-note {
-  color: color-mix(in oklab, var(--attention) 72%, var(--text-3));
-}
-
-.custom-harness-row.is-error .settings__row-note {
-  color: color-mix(in oklab, var(--error) 78%, var(--text-3));
 }
 
 .provider-form__field .menuwrap {

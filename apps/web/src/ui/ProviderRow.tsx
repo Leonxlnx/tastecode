@@ -60,7 +60,7 @@ function ProviderRowAction(props: {
 }) {
   const action = props.action
   if (!action) return null
-  const className = `settings__action is-${props.tone}${action.danger ? ' is-quiet is-danger' : ''}`
+  const className = `settings__action is-${props.tone}${action.danger ? ' is-danger' : ''}`
   return action.href ? (
     <a className={className} href={action.href} target="_blank" rel="noopener noreferrer">
       {action.label}

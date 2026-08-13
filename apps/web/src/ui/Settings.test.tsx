@@ -89,6 +89,9 @@ afterEach(() => {
   localStorage.removeItem(MODEL_PICKER_LAYOUT_KEY)
   writeAppHaptics(true)
   localStorage.removeItem(HAPTICS_KEY)
+  localStorage.removeItem('harness.providerEmail.codex')
+  localStorage.removeItem('harness.providerEmail.claude-code')
+  localStorage.removeItem('harness.providerEmail.grok')
   Reflect.deleteProperty(navigator, 'clipboard')
 })
 
@@ -302,8 +305,7 @@ function renderProviders(
 ) {
   let listener: ((event: unknown) => void) | undefined
   const transport = {
-    request: (method: string, params: { provider?: ProviderId }) =>
-      method === 'harnesses.list' ? { harnesses: [] } : request(method, params),
+    request: (method: string, params: { provider?: ProviderId }) => request(method, params),
     on: (_channel: string, next: (event: unknown) => void) => {
       listener = next
       return () => {}
@@ -345,7 +347,7 @@ describe('provider authentication states', () => {
     expect(issue.getAttribute('aria-describedby')).toBe(within(row).getByRole('tooltip').id)
     expect(within(row).queryByRole('button', { name: 'Sign in' })).toBeNull()
     fireEvent.click(action(row, 'Retry'))
-    await waitFor(() => within(row).getByText('Signed in'))
+    await waitFor(() => within(row).getByRole('button', { name: 'Add email' }))
     expect(reads).toBe(2)
   })
   it('uses one provider row grammar with honest actions and normalized marks', async () => {
@@ -374,7 +376,9 @@ describe('provider authentication states', () => {
     const codex = providerRow('Codex')
     const claude = providerRow('Claude Code')
     const grok = providerRow('Grok')
-    await waitFor(() => expect(within(codex).getByText('Signed in')).toBeTruthy())
+    await waitFor(() =>
+      expect(within(codex).getByRole('button', { name: 'Add email' })).toBeTruthy(),
+    )
     const columns = (row: HTMLElement) => Array.from(row.children).map((child) => child.className)
     expect(columns(codex)).toEqual(columns(claude))
     expect(columns(claude)).toEqual(columns(grok))
@@ -385,7 +389,10 @@ describe('provider authentication states', () => {
     expect(within(claude).getByRole('button', { name: 'Sign in' }).className).toContain(
       'is-primary',
     )
-    expect(within(codex).getByRole('button', { name: 'Sign out' }).className).toContain('is-quiet')
+    const signOut = within(codex).getByRole('button', { name: 'Sign out' })
+    expect(signOut.className).toContain('is-secondary')
+    expect(signOut.className).toContain('is-danger')
+    expect(signOut.className).not.toContain('is-quiet')
     expect(within(claude).getByRole('tooltip').textContent).toBe('Claude Code should be updated')
     expect(within(grok).getByText('Not installed')).toBeTruthy()
     expect(within(grok).queryByRole('button', { name: 'Problem details' })).toBeNull()
@@ -1042,139 +1049,34 @@ describe('mobile access settings', () => {
 })
 
 describe('provider settings', () => {
-  it('adds and removes local custom harness commands with an instability warning', async () => {
-    let harnesses = [
-      {
-        id: 'existing-pi',
-        displayName: 'Existing Pi',
-        provider: 'pi' as const,
-        command: 'existing-pi',
-        args: [] as string[],
-      },
-    ]
-    const transport = {
-      request: vi.fn(async (method: string, params: Record<string, unknown>) => {
-        if (method === 'harnesses.list') return { harnesses }
-        if (method === 'harnesses.upsert') {
-          harnesses = [...harnesses, params as (typeof harnesses)[number]]
-          return { harness: params }
-        }
-        if (method === 'harnesses.verify') {
-          return {
-            verification: {
-              status: 'ready',
-              summary: `${(params.harness as { displayName: string }).displayName} is compatible`,
-              checkedAt: 1,
-              resolvedCommand: '/Users/me/.local/bin/deepseek-pi',
-              checks: [
-                {
-                  label: 'Pi RPC',
-                  status: 'passed',
-                  detail: 'RPC handshake completed; found 1 model(s).',
-                },
-              ],
-            },
-          }
-        }
-        if (method === 'harnesses.remove') {
-          harnesses = harnesses.filter((entry) => entry.id !== params.harnessId)
-          return {}
-        }
-        throw new Error(`unexpected ${method}`)
-      }),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport
-    const onConnectionsChanged = vi.fn()
+  it('keeps custom harness controls out of the public beta', () => {
+    renderProviders([], () => {
+      throw new Error('unexpected request')
+    })
 
-    render(
-      <Settings
-        provider="codex"
-        providerName="Codex"
-        transport={transport}
-        projectPath={undefined}
-        projectName={undefined}
-        account={undefined}
-        providerStatuses={[]}
-        acpAgents={[]}
-        modelConnections={[]}
-        models={[]}
-        hiddenModels={new Set()}
-        onModelVisibilityChange={() => {}}
-        onConnectionsChanged={onConnectionsChanged}
-        projectCount={0}
-        sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
-        onSidebarSettingsChange={() => {}}
-        themePreference="system"
-        onThemePreferenceChange={() => {}}
-        fontPreference="geist"
-        onFontPreferenceChange={() => {}}
-        accentPreference="neutral"
-        onAccentPreferenceChange={() => {}}
-        backdropPreference="default"
-        onBackdropPreferenceChange={() => {}}
-        sidebarGlass={0}
-        onSidebarGlassChange={() => {}}
-        showMacOSFontSmoothing={false}
-        macOSFontSmoothing={true}
-        onMacOSFontSmoothingChange={() => {}}
-        onAccountChange={() => {}}
-        onReset={() => {}}
-        onClose={() => {}}
-      />,
-    )
+    expect(screen.queryByText('Custom harnesses')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Add custom harness' })).toBeNull()
+  })
 
-    expect(screen.getByText(/cannot guarantee their stability/i)).toBeTruthy()
-    await waitFor(() => expect(screen.getByText('Existing Pi')).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: 'Add custom harness' }))
-    fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'DeepSeek Pi' } })
-    fireEvent.change(screen.getByLabelText('Compatible protocol'), {
-      target: { value: 'pi' },
+  it('stores a provider email locally when its CLI cannot report one', async () => {
+    renderProviders([installedProvider('grok', 'Grok')], (method) => {
+      if (method === 'auth.status') return { signedIn: true }
+      if (method === 'auth.signOut') return {}
+      throw new Error(`unexpected ${method}`)
     })
-    fireEvent.change(screen.getByLabelText('Executable name or path'), {
-      target: { value: 'deepseek-pi' },
-    })
-    fireEvent.change(screen.getByLabelText('Fixed arguments, one per line'), {
-      target: { value: '--openrouter\nprofile with spaces' },
-    })
-    fireEvent.change(screen.getByLabelText('Launch directory (optional)'), {
-      target: { value: '~/Developer/pi-deepseek' },
-    })
-    fireEvent.change(screen.getByLabelText(/Environment, one NAME=value/), {
-      target: { value: 'PI_CODING_AGENT_DIR=/Users/me/.pi-deepseek' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Add harness' }))
 
-    await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith(
-        'harnesses.upsert',
-        expect.objectContaining({
-          displayName: 'DeepSeek Pi',
-          provider: 'pi',
-          command: 'deepseek-pi',
-          args: ['--openrouter', 'profile with spaces'],
-          workingDirectory: '~/Developer/pi-deepseek',
-          environment: { PI_CODING_AGENT_DIR: '/Users/me/.pi-deepseek' },
-        }),
-      ),
-    )
-    await waitFor(() => expect(screen.getByText('DeepSeek Pi')).toBeTruthy())
-    await waitFor(() => expect(screen.getByText(/DeepSeek Pi is compatible/)).toBeTruthy())
-    expect(transport.request).toHaveBeenCalledWith(
-      'harnesses.verify',
-      expect.objectContaining({
-        harness: expect.objectContaining({ displayName: 'DeepSeek Pi', provider: 'pi' }),
-      }),
-    )
-    expect(onConnectionsChanged).toHaveBeenCalledTimes(1)
+    const grok = providerRow('Grok')
+    fireEvent.click(await within(grok).findByRole('button', { name: 'Add email' }))
+    fireEvent.change(within(grok).getByRole('textbox', { name: 'Account email' }), {
+      target: { value: 'grok.user@example.com' },
+    })
+    fireEvent.click(within(grok).getByRole('button', { name: 'Save' }))
 
-    const existingRow = screen.getByText('Existing Pi').closest<HTMLElement>('.settings__row')
-    if (!existingRow) throw new Error('custom harness row missing')
-    fireEvent.click(within(existingRow).getByRole('button', { name: 'Remove' }))
-    await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('harnesses.remove', {
-        harnessId: 'existing-pi',
-      }),
-    )
+    expect(localStorage.getItem('harness.providerEmail.grok')).toBe('grok.user@example.com')
+    expect(within(grok).getByText('g********@example.com')).toBeTruthy()
+
+    fireEvent.click(within(grok).getByRole('button', { name: 'Sign out' }))
+    await waitFor(() => expect(localStorage.getItem('harness.providerEmail.grok')).toBeNull())
   })
 
   it('shows one account action per provider and runs that provider flow', async () => {
