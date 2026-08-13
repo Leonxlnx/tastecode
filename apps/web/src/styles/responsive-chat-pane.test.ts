@@ -11,5 +11,6 @@ describe('responsive chat pane CSS', () => {
     expect(css).toMatch(
       /@container chat-stage \(max-width: 480px\) \{[\s\S]*?\.composer \{[^}]*padding-inline: 10px;[\s\S]*?\.composer__permission \.tool > span,[\s\S]*?display: none;/s,
     )
+    expect(css).toMatch(/\.tools \.composer__design \{[^}]*width: 100%;/s)
   })
 })

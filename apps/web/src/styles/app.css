@@ -10044,6 +10044,10 @@
     padding-inline: 0;
   }
 
+  .tools .composer__design {
+    width: 100%;
+  }
+
   .composer__permission .tool > span,
   .composer__design > span,
   .composer-resource-picker__description,
