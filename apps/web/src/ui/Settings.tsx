@@ -1914,12 +1914,15 @@ function CliSignInRow(props: {
   // parent render, and firing more than once per success is the seed of the
   // refresh loop fixed there.
   const notifiedLogin = useRef(false)
+  const confirmedEmail = signedInEmail(login?.log ?? '')
+  useEffect(() => {
+    if (confirmedEmail) localStorage.setItem(providerEmailKey(props.provider.id), confirmedEmail)
+  }, [confirmedEmail, props.provider.id])
+
   useEffect(() => {
     if (login?.phase === 'succeeded') {
       if (!notifiedLogin.current) {
         notifiedLogin.current = true
-        const email = signedInEmail(login.log)
-        if (email) localStorage.setItem(providerEmailKey(props.provider.id), email)
         clearInstall(key)
         onSignedIn()
       }

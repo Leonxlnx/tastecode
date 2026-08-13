@@ -1528,11 +1528,13 @@ describe('provider settings', () => {
       terminalId: 'term-login-3',
       data: '\u001b[32m✓ Signed in as grok.user@example.com\u001b[0m\r\n',
     })
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.providerEmail.grok')).toBe('grok.user@example.com'),
+    )
     signedIn = true
     emit('terminal.exit', { terminalId: 'term-login-3', exitCode: 0 })
     await waitFor(() => expect(screen.queryByTestId('install-terminal')).toBeNull())
     await waitFor(() => expect(providerRow('Grok').textContent).toContain('grok.user@example.com'))
-    expect(localStorage.getItem('harness.providerEmail.grok')).toBe('grok.user@example.com')
 
     // Beta scope: agent rows never render, even when the server reports one.
     expect(screen.queryByText('Kimi CLI')).toBeNull()
