@@ -2117,6 +2117,9 @@ function AccountIdentity(props: { provider: ProviderId; account: Account }) {
             onChange={(event) => setDraft(event.currentTarget.value)}
           />
           <button type="submit">Save</button>
+          <button type="button" onClick={() => setEditing(false)}>
+            Cancel
+          </button>
         </form>
       ) : (
         <button className="provider-row__email-add" type="button" onClick={() => setEditing(true)}>

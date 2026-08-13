@@ -1067,6 +1067,9 @@ describe('provider settings', () => {
 
     const grok = providerRow('Grok')
     fireEvent.click(await within(grok).findByRole('button', { name: 'Add email' }))
+    fireEvent.click(within(grok).getByRole('button', { name: 'Cancel' }))
+    expect(localStorage.getItem('harness.providerEmail.grok')).toBeNull()
+    fireEvent.click(within(grok).getByRole('button', { name: 'Add email' }))
     fireEvent.change(within(grok).getByRole('textbox', { name: 'Account email' }), {
       target: { value: 'grok.user@example.com' },
     })
