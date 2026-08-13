@@ -26,7 +26,10 @@ describe('settings viewport CSS', () => {
       /\.provider-row__primary \{[^}]*grid-column: 6;[^}]*\}[\s\S]*?\.provider-row__secondary:has\(\+ \.provider-row__primary:empty\) \{[^}]*grid-column: 6;/s,
     )
     expect(appCss).toMatch(
-      /@container \(max-width: 514px\) \{[\s\S]*?grid-template-areas:[^;]*'secondary secondary primary';[^}]*grid-template-columns: 20px minmax\(0, 1fr\) 136px;[\s\S]*?\.provider-row__secondary:has\(\+ \.provider-row__primary:empty\) \{[^}]*grid-area: primary;/s,
+      /@container \(max-width: 514px\) \{[\s\S]*?grid-template-areas:[^;]*'secondary secondary primary';[^}]*grid-template-columns: 20px minmax\(0, 1fr\) minmax\(88px, max-content\);[\s\S]*?\.provider-row__secondary:has\(\+ \.provider-row__primary:empty\) \{[^}]*grid-area: primary;/s,
+    )
+    expect(appCss).toMatch(
+      /\.provider-row \.settings__action \{[^}]*width: auto;[^}]*min-width: 78px;[^}]*min-height: 30px;/s,
     )
   })
 })
