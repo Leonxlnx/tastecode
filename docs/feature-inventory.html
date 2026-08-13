@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-13 0741c8d5</span>
+        <span class="meta">2026-08-13 92dcbb61</span>
       </div>
     </div>
 
@@ -591,9 +591,11 @@
                 >One fixed setup and account row grammar
                 <span class="d"
                   >Codex, Claude Code, and Grok keep mark, identity, status, issue, and actions in
-                  stable slots across loading, ready, setup, busy, and failure states; primary and
-                  secondary actions share the fixed right edge on desktop and narrow layouts; CLI
-                  versions live in the provider-mark tooltip instead of widening account rows;
+                  stable slots across loading, ready, setup, busy, and failure states; empty action
+                  slots do not create a second grid row, keeping signed-in rows at 46 px; primary
+                  and secondary actions share the fixed right edge on desktop and narrow layouts;
+                  CLI versions live in the provider-mark tooltip instead of widening account rows;
+                  <a href="./screenshots/provider-density-after.png">compact evidence</a>,
                   <a href="./screenshots/provider-settings-desktop.png">desktop</a> and
                   <a href="./screenshots/provider-settings-390.png">390 px</a> evidence</span
                 ></span
@@ -1505,11 +1507,13 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Models: active defaults first, with hidden models behind a compact disclosure
+                >Models: compact search-free Settings lists keep every catalog model and individual
+                visibility switch visible
                 <span class="d"
-                  >search still reaches the full catalog; first-run defaults wait for complete
+                  >composer pickers retain full-catalog search; first-run defaults wait for complete
                   installed-provider discovery; stored custom entries remain usable while creation
-                  controls are parked</span
+                  controls are parked;
+                  <a href="./screenshots/model-settings-no-search.png">desktop evidence</a></span
                 ></span
               ></label
             >

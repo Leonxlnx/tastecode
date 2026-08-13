@@ -646,11 +646,10 @@ describe('model settings', () => {
     expect(within(categories).getAllByRole('button')[0]?.textContent).toBe('General')
 
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
-    const search = screen.getByRole('searchbox', { name: 'Search OpenCode models' })
-    const sourceHeading = search.closest('.model-visibility')?.querySelector('.source-identity')
+    const sourceHeading = screen.getByText('OpenCode').closest('.source-identity')
     expect(sourceHeading?.getAttribute('title')).toBe('OpenCode')
     expect(sourceHeading?.querySelector('svg')?.getAttribute('width')).toBe('15')
-    expect(screen.queryByText(/models visible/)).toBeNull()
+    expect(screen.queryByRole('searchbox')).toBeNull()
     expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
     const ling = screen.getByRole('switch', {
       name: 'Include OpenCode Zen · Ling-3.0-tiny Free in model picker',
@@ -662,18 +661,7 @@ describe('model settings', () => {
     expect(qwen.getAttribute('aria-checked')).toBe('true')
     fireEvent.click(ling)
     expect(onModelVisibilityChange).toHaveBeenCalledWith('opencode:ling', true)
-    fireEvent.change(search, { target: { value: 'ling' } })
-    expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
-    fireEvent.change(search, { target: { value: 'qwen 3.8' } })
-
-    expect(screen.queryByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeNull()
     expect(screen.getByText('OpenCode Go · Qwen3.8 Max')).toBeTruthy()
-
-    expect(screen.queryByRole('checkbox', { name: 'Show models from OpenCode' })).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Clear Search OpenCode models' }))
-    expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
-    expect(screen.queryByText(/hidden model/)).toBeNull()
   })
 
   it('omits stored custom-model management from beta settings', () => {
