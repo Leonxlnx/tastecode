@@ -47,7 +47,6 @@ vi.mock('@xterm/addon-webgl', () => ({
   },
 }))
 
-vi.mock('@xterm/addon-image', () => ({ ImageAddon: class {} }))
 vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }))
 
 vi.mock('@xterm/xterm', () => ({
