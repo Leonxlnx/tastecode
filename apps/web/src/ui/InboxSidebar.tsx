@@ -17,6 +17,7 @@ import {
   Ellipsis,
   FolderPlus,
   GitBranch,
+  GitPullRequest,
   Pin,
   PinOff,
   Search,
@@ -24,8 +25,15 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
+import {
+  agentPresentation,
+  providerDisplayName,
+  sessionSourcePresentation,
+} from '../provider-presentation.js'
+import { AppSelect } from './AppSelect.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { Project, Session } from './Sidebar.js'
+import { SourceIdentity } from './SourceIdentity.js'
 
 type Entry = { project: Project; session: Session }
 
@@ -55,6 +63,8 @@ export function InboxSidebar(props: {
   onToggleSessionPin?: (id: string) => void
   onArchiveSession: (id: string) => void
   onArchiveSessions?: ((ids: string[]) => void) | undefined
+  pullRequestsActive?: boolean | undefined
+  onOpenPullRequests?: (() => void) | undefined
 }) {
   const [query, setQuery] = useState('')
   const [snoozedOpen, setSnoozedOpen] = useState(false)
@@ -217,24 +227,35 @@ export function InboxSidebar(props: {
         <div className="inbox-toolbar__projects">
           <label className="inbox__scope">
             <span className="visually-hidden">Project filter</span>
-            <select
-              aria-label="Sidebar project filter"
+            <AppSelect
+              ariaLabel="Sidebar project filter"
               value={props.scope}
-              onChange={(event) => props.onScopeChange(event.currentTarget.value)}
-            >
-              <option value="">All projects</option>
-              {props.projects.map((project) => (
-                <option value={project.path} key={project.path}>
-                  {projectName(project)}
-                </option>
-              ))}
-            </select>
+              onChange={props.onScopeChange}
+              options={[
+                { value: '', label: 'All projects' },
+                ...props.projects.map((project) => ({
+                  value: project.path,
+                  label: projectName(project),
+                })),
+              ]}
+            />
           </label>
           <button className="inbox-toolbar__add" type="button" onClick={props.onAddProject}>
             <FolderPlus size={13} aria-hidden />
             <span>Add Project</span>
           </button>
         </div>
+        {props.onOpenPullRequests ? (
+          <button
+            type="button"
+            className={`inbox-toolbar__pulls${props.pullRequestsActive ? ' is-active' : ''}`}
+            aria-current={props.pullRequestsActive ? 'page' : undefined}
+            onClick={props.onOpenPullRequests}
+          >
+            <GitPullRequest size={14} aria-hidden />
+            <span>Pull requests</span>
+          </button>
+        ) : null}
       </div>
 
       <div className="rail__body inbox__body">
@@ -455,7 +476,10 @@ function ActiveRow(
             <span>Default checkout</span>
           )}
           <span aria-hidden>·</span>
-          <span>{providerName(props.session)}</span>
+          <SourceIdentity
+            presentation={sessionSourcePresentation(props.session.provider, props.session.agent)}
+            density="compact"
+          />
           {props.session.pinned ? (
             <>
               <span aria-hidden>·</span>
@@ -951,12 +975,7 @@ function relativeTime(at: number, now: number): string {
 }
 
 function providerName(session: Session): string {
-  if (session.provider === 'claude-code') return 'Claude Code'
-  if (session.provider === 'acp') return session.agent ?? 'Agent'
-  if (session.provider === 'codex') return 'Codex'
-  if (session.provider === 'opencode') return 'OpenCode'
-  if (session.provider === 'antigravity') return 'Antigravity'
-  return session.provider
+  return sessionSourcePresentation(session.provider, session.agent).label
 }
 
 function projectName(project: Project): string {
@@ -964,7 +983,7 @@ function projectName(project: Project): string {
 }
 
 function rowLabel(project: Project, session: Session, now: number): string {
-  return `${session.title}, ${projectName(project)}, ${statusPresentation(session, now).label}`
+  return `${session.title}, ${projectName(project)}, ${providerName(session)}, ${statusPresentation(session, now).label}`
 }
 
 function threadSummary(project: Project, session: Session, now: number): string {

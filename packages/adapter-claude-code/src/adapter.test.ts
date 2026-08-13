@@ -122,12 +122,14 @@ describe('Claude Code turn invocation', () => {
     )
   })
 
-  it('encodes the prompt as one stream-json user message line', () => {
-    const line = claudeUserMessage('first line\nsecond line')
+  it('encodes long unicode and multiline prompts as one stream-json stdin line', () => {
+    const text = ` Grüße 🧪\n${'x'.repeat(40_000)}`
+    const line = claudeUserMessage(text)
     expect(line.endsWith('\n')).toBe(true)
+    expect(line.slice(0, -1)).not.toMatch(/[\r\n]/)
     expect(JSON.parse(line)).toEqual({
       type: 'user',
-      message: { role: 'user', content: [{ type: 'text', text: 'first line\nsecond line' }] },
+      message: { role: 'user', content: [{ type: 'text', text }] },
     })
   })
 })

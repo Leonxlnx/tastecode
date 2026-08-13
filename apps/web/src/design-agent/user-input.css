@@ -48,7 +48,7 @@
   gap: 9px;
   padding: 7px 10px;
   border: 1px solid color-mix(in srgb, var(--line-strong) 68%, transparent);
-  border-radius: var(--r-md);
+  border-radius: var(--r-popup-item);
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--surface-3) 50%, transparent),
@@ -77,6 +77,16 @@
     );
     color: var(--text);
   }
+}
+
+.brief-input__option:focus-within {
+  border-color: var(--line-strong);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-3) 72%, transparent),
+    color-mix(in srgb, var(--surface-2) 50%, transparent)
+  );
+  color: var(--text);
 }
 
 .brief-input__option:active {
@@ -112,6 +122,7 @@
 
 .brief-input__option--custom {
   position: relative;
+  padding: 4px 4px 4px 10px;
   cursor: text;
 }
 
@@ -119,7 +130,7 @@
 .brief-input__option > .brief-input__custom-preview {
   min-width: 0;
   flex: 1;
-  min-height: 28px;
+  min-height: 32px;
   padding: 5px 8px;
   line-height: 16px;
 }
@@ -243,23 +254,13 @@
   height: 14px;
   border: 2px solid var(--line-strong);
   border-top-color: var(--text);
-  border-radius: 50%;
+  border-radius: var(--r-circle);
   animation: brief-spin 700ms linear infinite;
 }
 
-/* Design briefing owns the working label while its question request is pending. */
-.shell:has(.composer__design.is-active) .activity--working .activity__summary > span:last-child {
-  font-size: 0;
-}
-
-.shell:has(.composer__design.is-active)
-  .activity--working
-  .activity__summary
-  > span:last-child::after {
-  content: 'Preparing questions…';
-  font-size: var(--t-lg);
-}
-
+/* The working rail's own label already names the design phase; replacing the
+   timer with a second copy of it was a relic from when the rail only knew
+   "Working". */
 .shell:has(.composer__design.is-active) .aux--reasoning.aux--live,
 .stage__body:has(.brief-input) .activity--working {
   display: none;

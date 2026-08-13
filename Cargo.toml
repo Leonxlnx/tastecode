@@ -1,0 +1,90 @@
+[workspace]
+resolver = "2"
+members = [
+  "apps/native",
+  "crates/harness-agent",
+  "crates/harness-adapter-acp",
+  "crates/harness-adapter-antigravity",
+  "crates/harness-adapter-api",
+  "crates/harness-adapter-claude-code",
+  "crates/harness-adapter-cursor",
+  "crates/harness-adapter-grok",
+  "crates/harness-adapter-opencode",
+  "crates/harness-client",
+  "crates/harness-credentials",
+  "crates/harness-design-agent",
+  "crates/harness-adapter-codex",
+  "crates/harness-proc",
+  "crates/harness-protocol",
+  "crates/harness-providers",
+  "crates/harness-server",
+  "crates/harness-state",
+  "crates/harness-store",
+  "crates/harness-terminal",
+  "crates/harness-ui",
+  "crates/harness-workspace",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.91.1"
+publish = false
+
+[workspace.dependencies]
+alacritty_terminal = { version = "=0.26.0", default-features = false }
+anyhow = "1.0.100"
+async-channel = "2.5.0"
+base64 = "0.22.1"
+chrono = "0.4.45"
+cpal = "0.18.1"
+dirs = "5.0.1"
+futures = "0.3.31"
+gpui = "=0.2.2"
+gpui-component = { version = "=0.5.1", features = ["tree-sitter-languages"] }
+headless_chrome = { version = "=1.0.22", default-features = false, features = ["offline"] }
+html5ever = "=0.27.0"
+if-addrs = "0.15.0"
+keyring = "4.1.6"
+libc = "0.2.189"
+markdown = "1.0.0"
+markup5ever_rcdom = "=0.3.0"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
+  "NSAccessibility",
+  "NSResponder",
+  "NSView",
+  "NSWindow",
+  "NSWorkspace",
+] }
+portable-pty = "=0.9.0"
+qrcode = { version = "0.14.1", default-features = false }
+raw-window-handle = "0.6.2"
+rusqlite = { version = "=0.39.0", default-features = false, features = ["bundled", "cache"] }
+reqwest = { version = "0.13.4", features = ["blocking", "json"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sha2 = "0.10.9"
+subtle = "2.6.1"
+tempfile = "3.27.0"
+thiserror = "2.0.17"
+tree-sitter-javascript = "0.23.1"
+tree-sitter-typescript = "0.23.2"
+tokio = { version = "1.53.1", features = ["macros", "rt", "time"] }
+tray-icon = { version = "=0.24.2", default-features = false }
+tungstenite = "0.30.0"
+url = "2.5.8"
+unicode-normalization = "0.1"
+uuid = { version = "1.18.1", features = ["serde", "v4"] }
+windows-sys = { version = "=0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.dev]
+debug = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

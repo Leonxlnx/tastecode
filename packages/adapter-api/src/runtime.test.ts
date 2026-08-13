@@ -1,3 +1,4 @@
+import type { DomainEvent } from '@harness/contracts'
 import { describe, expect, it } from 'vitest'
 import { ApiAgentSession, type ApiStreamEvent, type ApiTransport } from './runtime.js'
 
@@ -72,6 +73,90 @@ describe('ApiAgentSession', () => {
     await resumed.waitForTurn(resumedTurn)
   })
 
+  it('keeps shared instructions pending when an empty session is resumed', async () => {
+    const original = new ApiAgentSession({
+      model: 'test-model',
+      instructions: 'Answer plainly.',
+      transport: transport({ type: 'finish', reason: 'stop' }),
+    })
+    original.startThread('C:\\repo', 'connection-1')
+
+    let firstPrompt = ''
+    const resumed = new ApiAgentSession({
+      model: 'test-model',
+      instructions: 'Answer plainly.',
+      transport: async function* ({ messages }) {
+        firstPrompt = messages[0]?.content ?? ''
+        yield { type: 'finish', reason: 'stop' }
+      },
+    })
+    const thread = resumed.resumeThread(original.snapshot())
+    const turn = await resumed.sendTurn(thread.id, 'First after restart')
+    await resumed.waitForTurn(turn)
+
+    expect(firstPrompt).toContain('Answer plainly.')
+    expect(firstPrompt).toContain('First after restart')
+  })
+
+  it('does not repeat shared instructions after a populated session is resumed', async () => {
+    const original = new ApiAgentSession({
+      model: 'test-model',
+      instructions: 'Answer plainly.',
+      transport: transport({ type: 'finish', reason: 'stop' }),
+    })
+    const thread = original.startThread('C:\\repo', 'connection-1')
+    const first = await original.sendTurn(thread.id, 'First')
+    await original.waitForTurn(first)
+
+    let prompts: string[] = []
+    const resumed = new ApiAgentSession({
+      model: 'test-model',
+      instructions: 'Answer plainly.',
+      transport: async function* ({ messages }) {
+        prompts = messages
+          .filter((message) => message.role === 'user')
+          .map((message) => message.content)
+        yield { type: 'finish', reason: 'stop' }
+      },
+    })
+    resumed.resumeThread(original.snapshot())
+    const second = await resumed.sendTurn(thread.id, 'Second after restart')
+    await resumed.waitForTurn(second)
+
+    expect(prompts[0]).toContain('Answer plainly.')
+    expect(prompts[1]).toBe('Second after restart')
+  })
+
+  it('attributes usage to the configured model for persisted history', async () => {
+    const session = new ApiAgentSession({
+      model: 'gpt-5.6-luna',
+      transport: transport(
+        {
+          type: 'usage',
+          usage: {
+            inputTokens: 100,
+            cachedInputTokens: 20,
+            outputTokens: 10,
+            reasoningTokens: 0,
+            totalTokens: 110,
+            inputIncludesCached: true,
+          },
+        },
+        { type: 'finish', reason: 'stop' },
+      ),
+    })
+    const events: unknown[] = []
+    session.on('event', (event) => events.push(event))
+    const thread = session.startThread('C:\\repo', 'connection-1')
+    const turn = await session.sendTurn(thread.id, 'Hi')
+    await session.waitForTurn(turn)
+
+    expect(events).toContainEqual({
+      type: 'usage.updated',
+      usage: expect.objectContaining({ model: 'gpt-5.6-luna', inputTokens: 100 }),
+    })
+  })
+
   it('runs approved tools through the injected Harness executor', async () => {
     let request = 0
     const seenMessages: unknown[] = []
@@ -112,6 +197,48 @@ describe('ApiAgentSession', () => {
         toolCalls: [{ id: 'call-1', name: 'read_file', input: { path: 'README.md' } }],
       },
       { role: 'tool', content: 'hello', toolCallId: 'call-1', isError: false },
+    ])
+  })
+
+  it('classifies assistant text from the transport finish reason', async () => {
+    let request = 0
+    const events: unknown[] = []
+    const session = new ApiAgentSession({
+      model: 'test-model',
+      transport: async function* () {
+        if (request++ === 0) {
+          yield { type: 'text', delta: 'I will inspect it.' }
+          yield {
+            type: 'tool_call',
+            call: { id: 'call-1', name: 'read_file', input: { path: 'README.md' } },
+          }
+          yield { type: 'finish', reason: 'tool_calls' }
+        } else {
+          yield { type: 'text', delta: 'The file is valid.' }
+          yield { type: 'finish', reason: 'stop' }
+        }
+      },
+      executeTool: async () => ({ content: 'contents' }),
+    })
+    session.on('event', (event) => events.push(event))
+
+    const thread = session.startThread('C:\\repo', 'connection-1')
+    const turnId = await session.sendTurn(thread.id, 'Check it')
+    await session.waitForTurn(turnId)
+
+    const completed = events
+      .filter(
+        (event): event is Extract<DomainEvent, { type: 'item.completed' }> =>
+          typeof event === 'object' &&
+          event !== null &&
+          'type' in event &&
+          event.type === 'item.completed',
+      )
+      .map((event) => event.item)
+    expect(completed).toMatchObject([
+      { type: 'message', text: 'I will inspect it.', phase: 'commentary' },
+      { type: 'tool_call', text: 'read_file\ncontents' },
+      { type: 'message', text: 'The file is valid.', phase: 'final_answer' },
     ])
   })
 

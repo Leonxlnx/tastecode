@@ -1,16 +1,19 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { DomainEvent } from '@harness/contracts'
-import type { ComponentProps } from 'react'
+import type { DomainEvent, QueuedTurn, ResultOf } from '@harness/contracts'
+import { StrictMode, type ComponentProps } from 'react'
 import { App } from './App.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
+import type { ModelChoice } from './model-catalog.js'
+import { IndeterminateRequestError } from './transport.js'
 
 const transport = vi.hoisted(() => ({
   request: vi.fn(),
   listeners: new Map<string, (data: unknown) => void>(),
   stateListeners: new Set<(state: string) => void>(),
+  sequenceGapListeners: new Set<(expected: number, received: number) => void>(),
   urls: [] as string[],
   connect: vi.fn(),
   close: vi.fn(),
@@ -18,6 +21,7 @@ const transport = vi.hoisted(() => ({
 }))
 
 const shellRenders = vi.hoisted(() => ({
+  composer: vi.fn(),
   sidebar: vi.fn(),
   stageHeader: vi.fn(),
 }))
@@ -29,7 +33,19 @@ const utilityRenders = vi.hoisted(() => ({
   terminalPane: vi.fn(),
 }))
 
+const appRenders = vi.hoisted(() => vi.fn())
+const threadCallbacks = vi.hoisted(() => ({
+  answerUserInput: undefined as
+    ((id: string, answers: Record<string, string[]>) => void | Promise<void>) | undefined,
+}))
+const pickFolder = vi.hoisted(() => vi.fn())
+
 vi.mock('./transport.js', () => ({
+  IndeterminateRequestError: class IndeterminateRequestError extends Error {
+    override name = 'IndeterminateRequestError'
+  },
+  isIndeterminateRequestError: (error: unknown) =>
+    error instanceof Error && error.name === 'IndeterminateRequestError',
   Transport: class {
     constructor(url: string) {
       transport.urls.push(url)
@@ -55,27 +71,56 @@ vi.mock('./transport.js', () => ({
         transport.stateListeners.delete(listener)
       }
     }
+    onSequenceGap(listener: (expected: number, received: number) => void) {
+      transport.sequenceGapListeners.add(listener)
+      return () => {
+        transport.sequenceGapListeners.delete(listener)
+      }
+    }
     request(method: string, params: unknown) {
       return transport.request(method, params)
     }
   },
 }))
 
-vi.mock('./ui/highlighter.js', () => ({
-  warmHighlighter: () => {},
-}))
+vi.mock('./ui/highlighter.js', () => {
+  const plugin = {
+    type: 'code-highlighter',
+    name: 'test-highlighter',
+    getSupportedLanguages: () => [],
+    getThemes: () => [],
+    supportsLanguage: () => true,
+    highlight: () => ({ tokens: [] }),
+  }
+  return {
+    onHighlighterChange: () => () => {},
+    shikiPlugin: plugin,
+    plainCodePlugin: plugin,
+    warmHighlighter: () => {},
+  }
+})
 
 // App tests exercise session routing, while Thread's own tests cover its
 // virtualized renderer. happy-dom intentionally renders no virtual rows.
 vi.mock('./ui/Thread.js', () => ({
   Thread: (props: {
     items: { id: string; text?: string }[]
+    liveItems?: ReadonlyMap<number, { item: { id: string; text?: string } }>
     running: boolean
-    activeTurn?: { id: string }
+    activeTurn?: { id: string; startedAt: number }
+    onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
   }) => (
-    <div data-testid="thread">
-      {props.items.map((item) => (
-        <span key={item.id}>{item.text}</span>
+    <div
+      data-testid="thread"
+      data-started-at={props.activeTurn?.startedAt}
+      ref={() => {
+        threadCallbacks.answerUserInput = props.onAnswerUserInput
+      }}
+    >
+      {props.items.map((base, index) => (
+        <span key={base.id} data-item-id={base.id}>
+          {props.liveItems?.get(index)?.item.text ?? base.text}
+        </span>
       ))}
       {props.running && props.activeTurn ? <span>Working</span> : null}
     </div>
@@ -90,6 +135,16 @@ vi.mock('./ui/Sidebar.js', async (importOriginal) => {
     return <original.Sidebar {...props} />
   })
   return { ...original, Sidebar }
+})
+
+vi.mock('./ui/Composer.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./ui/Composer.js')>()
+  const { memo } = await import('react')
+  const Composer = memo((props: ComponentProps<typeof original.Composer>) => {
+    shellRenders.composer()
+    return <original.Composer {...props} />
+  })
+  return { ...original, Composer }
 })
 
 vi.mock('./ui/StageHeader.js', async (importOriginal) => {
@@ -144,7 +199,13 @@ vi.mock('./ui/TerminalPane.js', async (importOriginal) => {
 
 vi.mock('./bridge.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./bridge.js')>()),
-  isMacOS: () => true,
+  pickFolder,
+  isMacOS: () => {
+    // App samples the platform once per render, so this catches root work
+    // without adding test-only instrumentation to production code.
+    appRenders()
+    return true
+  },
 }))
 
 vi.mock('./voice-recorder.js', async (importOriginal) => ({
@@ -161,7 +222,26 @@ let serverSidebarSettings: {
   autoSettleDays: number | null
 } = { mode: 'classic', autoSettleDays: 3 }
 
+function contractValidServerProjects(): unknown[] {
+  return serverProjects.map((project) => {
+    if (typeof project !== 'object' || project === null) return project
+    const record = project as Record<string, unknown>
+    if (!Array.isArray(record.sessions)) return project
+    return {
+      ...record,
+      sessions: record.sessions.map((session) =>
+        typeof session === 'object' && session !== null
+          ? { provider: 'codex', createdAt: 0, ...session }
+          : session,
+      ),
+    }
+  })
+}
+
 beforeEach(() => {
+  pickFolder.mockReset().mockResolvedValue(undefined)
+  appRenders.mockClear()
+  shellRenders.composer.mockClear()
   shellRenders.sidebar.mockClear()
   shellRenders.stageHeader.mockClear()
   utilityRenders.commandPalette.mockClear()
@@ -170,7 +250,9 @@ beforeEach(() => {
   utilityRenders.terminalPane.mockClear()
   transport.listeners.clear()
   transport.stateListeners.clear()
+  transport.sequenceGapListeners.clear()
   transport.urls.length = 0
+  threadCallbacks.answerUserInput = undefined
   window.location.hash = ''
   document.documentElement.removeAttribute('data-theme')
   document.documentElement.classList.remove('dark')
@@ -218,6 +300,8 @@ beforeEach(() => {
     switch (method) {
       case 'providers.list':
         return Promise.resolve({ providers: serverProviders })
+      case 'harnesses.list':
+        return Promise.resolve({ harnesses: [] })
       case 'models.list':
         return Promise.resolve({ models: [] })
       case 'workspace.info':
@@ -234,7 +318,7 @@ beforeEach(() => {
       case 'auth.status':
         return Promise.resolve({ signedIn: true })
       case 'projects.list':
-        return Promise.resolve({ projects: serverProjects })
+        return Promise.resolve({ projects: contractValidServerProjects() })
       case 'sidebar.settings':
         return Promise.resolve(serverSidebarSettings)
       case 'sidebar.updateSettings':
@@ -286,6 +370,15 @@ beforeEach(() => {
             totalTokens: 3400,
           },
           limits: [{ label: '5 hours', usedPercent: 25 }],
+        })
+      case 'usage.history':
+        return Promise.resolve(profileHistoryResult())
+      case 'pullRequests.list':
+        return Promise.resolve({
+          account: { available: true, authenticated: true, login: 'Blueemi' },
+          items: [],
+          fetchedAt: Date.now(),
+          truncated: false,
         })
       case 'thread.checkpoints':
         return Promise.resolve({
@@ -367,10 +460,305 @@ function openSettings() {
     return
   }
   fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-  fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
+  fireEvent.click(screen.getByRole('button', { name: /Settings/ }))
 }
 
+function cachedCodexChoice(): ModelChoice {
+  return {
+    key: 'codex:gpt-5.6-sol',
+    provider: 'codex',
+    sourceName: 'Codex',
+    mark: 'openai',
+    model: {
+      id: 'gpt-5.6-sol',
+      displayName: 'GPT-5.6 Sol',
+      isDefault: true,
+      reasoningEfforts: ['low', 'high'],
+      defaultReasoningEffort: 'low',
+      serviceTiers: [],
+    },
+  }
+}
+
+function profileHistoryResult() {
+  const totals = {
+    uncachedInputTokens: 20,
+    cachedInputTokens: 80,
+    cacheWriteInputTokens: 0,
+    outputTokens: 10,
+    reasoningTokens: 0,
+    processedTokens: 110,
+    estimatedCostUsd: 0,
+    cacheSavingsUsd: 0,
+    providerReportedCostUsd: 0,
+    providerReportedTokens: 0,
+    pricedTokens: 0,
+    unpricedTokens: 110,
+  }
+  return {
+    range: 'all' as const,
+    startDate: '2026-08-09',
+    endDate: '2026-08-09',
+    generatedAt: 1,
+    sessionCount: 1,
+    activeDays: 1,
+    totals,
+    providers: [{ provider: 'codex' as const, sessionCount: 1, totals }],
+    models: [
+      {
+        provider: 'codex' as const,
+        model: 'gpt-5.6-sol',
+        sessionCount: 1,
+        pricing: 'unpriced' as const,
+        totals,
+      },
+    ],
+    daily: [
+      {
+        date: '2026-08-09',
+        sessionCount: 1,
+        totals,
+        providers: [{ provider: 'codex' as const, tokens: 110, estimatedCostUsd: 0 }],
+      },
+    ],
+    sources: [{ provider: 'codex' as const, available: true, sessionCount: 1 }],
+    scan: { status: 'idle' as const, filesProcessed: 1, filesTotal: 1 },
+    warnings: [],
+  }
+}
+
+// prettier-ignore
+const workspaceTest = { projectsSnapshot: (running: boolean) => ({ projects: serverProjects.map((entry) => { const project = entry as { sessions: Array<Record<string, unknown>> }; return { ...project, sessions: project.sessions.map((session) => ({ ...session, running })) } }) }), renderWithDeferredProjectProbes: async () => { type Probe = { resolve: (value: { projects: unknown[] }) => void; reject: (reason?: unknown) => void }; const request = transport.request.getMockImplementation()!, probes: Probe[] = []; let capture = false; transport.request.mockImplementation((method: string, params: unknown) => method === 'projects.list' && capture ? new Promise((resolve, reject) => probes.push({ resolve, reject })) : request(method, params)); await openNewSession(); transport.request.mockClear(); capture = true; return probes }, rpcCount: (method: string) => transport.request.mock.calls.filter(([called]) => called === method).length, completeTurn: (threadId: string, turnId: string) => emitThreadEvent(threadId, { type: 'turn.completed', turnId, status: 'completed' }), startTurn: (threadId: string, turnId: string) => emitThreadEvent(threadId, { type: 'turn.started', turn: { id: turnId, threadId, status: 'running', createdAt: 1 } }), submitTurn: (text: string) => { const composer = screen.getByPlaceholderText('Do anything'); fireEvent.change(composer, { target: { value: text } }); fireEvent.keyDown(composer, { key: 'Enter' }) }, waitForWorkspace: (count: number) => waitFor(() => expect(rpcCount('workspace.info')).toBe(count)), waitForInitialWorkspace: () => waitFor(() => expect(transport.request).toHaveBeenCalledWith('workspace.branches', { path: '/work/project' })), openNewSession: async () => { render(<App />); fireEvent.click(await screen.findByRole('button', { name: /^New session,/ })); await waitForInitialWorkspace() }, setConnectionState: (state: string) => { for (const listener of transport.stateListeners) listener(state) }, serverProject: (path: string, name: string, sessions: unknown[] = []) => ({ path, name, sessions }) }
+// prettier-ignore
+const { projectsSnapshot, renderWithDeferredProjectProbes, rpcCount, completeTurn, startTurn, submitTurn, waitForWorkspace, waitForInitialWorkspace, openNewSession, setConnectionState, serverProject } = workspaceTest
 describe('web client', () => {
+  it('persists curated model defaults only after the first catalog arrives', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseModels!: (value: unknown) => void
+    const models = new Promise((resolve) => {
+      releaseModels = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list' ? models : request(method, params),
+    )
+
+    render(<App />)
+    expect(localStorage.getItem('harness.hiddenModels')).toBeNull()
+
+    releaseModels({
+      models: [
+        {
+          id: 'gpt-5.6-sol',
+          displayName: 'GPT-5.6 Sol',
+          isDefault: true,
+          reasoningEfforts: [],
+          serviceTiers: [],
+        },
+        {
+          id: 'gpt-5.5',
+          displayName: 'GPT-5.5',
+          isDefault: false,
+          reasoningEfforts: [],
+          serviceTiers: [],
+        },
+      ],
+    })
+
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.5"]'),
+    )
+  })
+
+  it.each(['failed', 'empty'] as const)(
+    'waits for every installed beta catalog when one is %s',
+    async (claudeCatalog) => {
+      serverProviders = [
+        ...serverProviders,
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          installed: true,
+          auth: 'authenticated',
+          capabilities: {
+            steer: false,
+            fork: false,
+            interrupt: true,
+            reasoningItems: true,
+            approvals: false,
+            images: false,
+          },
+        },
+      ]
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method !== 'models.list') return request(method, params)
+        if ((params as { provider: string }).provider === 'claude-code') {
+          return claudeCatalog === 'failed'
+            ? Promise.reject(new Error('Claude catalog unavailable'))
+            : Promise.resolve({ models: [] })
+        }
+        return Promise.resolve({
+          models: [
+            {
+              id: 'gpt-5.5',
+              displayName: 'GPT-5.5',
+              isDefault: true,
+              reasoningEfforts: [],
+              serviceTiers: [],
+            },
+          ],
+        })
+      })
+
+      render(<App />)
+
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith('models.list', {
+          provider: 'claude-code',
+        }),
+      )
+      expect(localStorage.getItem('harness.hiddenModels')).toBeNull()
+    },
+  )
+
+  it('keeps a visibility edit made while live discovery is pending', async () => {
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice()]),
+    )
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseModels!: (value: unknown) => void
+    const models = new Promise((resolve) => {
+      releaseModels = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list' ? models : request(method, params),
+    )
+
+    render(<App />)
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Models' }))
+    fireEvent.click(screen.getByRole('switch', { name: 'Include GPT-5.6 Sol in model picker' }))
+
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.6-sol"]'),
+    )
+    releaseModels({
+      models: [
+        cachedCodexChoice().model,
+        {
+          id: 'gpt-5.5',
+          displayName: 'GPT-5.5',
+          isDefault: false,
+          reasoningEfforts: [],
+          serviceTiers: [],
+        },
+      ],
+    })
+
+    await waitFor(() => expect(screen.getByText('GPT-5.5')).toBeTruthy())
+    expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.6-sol"]')
+  })
+
+  it('never replaces a saved model-visibility choice with curated defaults', async () => {
+    const saved = '["codex:gpt-5.6-sol"]'
+    localStorage.setItem('harness.hiddenModels', saved)
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list'
+        ? Promise.resolve({
+            models: [
+              {
+                id: 'gpt-5.6-sol',
+                displayName: 'GPT-5.6 Sol',
+                isDefault: true,
+                reasoningEfforts: [],
+                serviceTiers: [],
+              },
+              {
+                id: 'gpt-5.5',
+                displayName: 'GPT-5.5',
+                isDefault: false,
+                reasoningEfforts: [],
+                serviceTiers: [],
+              },
+            ],
+          })
+        : request(method, params),
+    )
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' }),
+    )
+    expect(localStorage.getItem('harness.hiddenModels')).toBe(saved)
+  })
+
+  it('explains project loading failures and retries the request', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let attempts = 0
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'projects.list' && attempts++ === 0) {
+        return Promise.reject(new Error('server unavailable'))
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    expect(screen.getByText('Loading projects…').closest('[role="status"]')).not.toBeNull()
+    const retry = await screen.findByRole('button', { name: 'Retry' })
+    expect(screen.getByRole('heading').textContent).toContain('Projects could not be loaded')
+
+    fireEvent.click(retry)
+
+    expect((await screen.findByRole('heading')).textContent).toContain(
+      'What should we build in project?',
+    )
+    expect(attempts).toBe(2)
+  })
+
+  it('adds the first project from the empty state', async () => {
+    serverProjects = []
+    pickFolder.mockResolvedValue('/work/new-project')
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'projects.add') {
+        serverProjects = [
+          {
+            path: '/work/new-project',
+            name: 'new-project',
+            pinned: false,
+            createdAt: 0,
+            sessions: [],
+          },
+        ]
+        return Promise.resolve({})
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Add project' }))
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('projects.add', {
+        path: '/work/new-project',
+      })
+    })
+    expect((await screen.findByRole('heading')).textContent).toContain(
+      'What should we build in new-project?',
+    )
+  })
+
   it('opens the workspace directly on first launch', async () => {
     localStorage.removeItem('harness.provider')
 
@@ -383,16 +771,253 @@ describe('web client', () => {
     })
   })
 
-  it('restores the selected model immediately on the first cache-enabled launch', () => {
+  it('opens workspace tools from the app surface instead of native window chrome', async () => {
+    render(<App />)
+
+    const launcher = await screen.findByRole('button', { name: 'Show workspace tools' })
+    expect(launcher.closest('.titlebar')).toBeNull()
+    fireEvent.click(launcher)
+    expect(screen.queryByRole('button', { name: 'Show workspace tools' })).toBeNull()
+    const close = await screen.findByRole('button', { name: 'Hide workspace tools' })
+    expect(close.closest('.workspace-panel__controls')).toBeTruthy()
+    fireEvent.click(close)
+    expect(await screen.findByRole('button', { name: 'Show workspace tools' })).toBeTruthy()
+  })
+
+  it('routes /side with an inline prompt into an ephemeral Side chat', async () => {
+    localStorage.setItem('harness.models.cache', serializeModelCatalogCache([cachedCodexChoice()]))
+    const fallback = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (
+        method === 'thread.history' &&
+        (params as { threadId?: string }).threadId === 'untouched-thread'
+      ) {
+        return Promise.resolve({
+          events: [
+            {
+              seq: 1,
+              event: {
+                type: 'item.completed',
+                item: {
+                  id: 'main-user',
+                  turnId: 'main-turn',
+                  type: 'message',
+                  role: 'user',
+                  status: 'completed',
+                  text: 'Fix the build',
+                  createdAt: 1,
+                },
+              },
+            },
+          ],
+          running: false,
+        })
+      }
+      if (method === 'sideChat.start') return Promise.resolve({ threadId: 'side-1' })
+      if (method === 'thread.history' && (params as { threadId?: string }).threadId === 'side-1') {
+        return Promise.resolve({ events: [], running: false })
+      }
+      return fallback(method, params)
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: '/side why did it fail?' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'sideChat.start',
+        expect.objectContaining({ parentThreadId: 'untouched-thread' }),
+      ),
+    )
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.sendTurn',
+        expect.objectContaining({ threadId: 'side-1', text: 'why did it fail?' }),
+      ),
+    )
+    expect(screen.getByRole('tab', { name: 'Temporary chat' })).toBeTruthy()
+    expect(screen.queryByText('From main chat')).toBeNull()
+  })
+
+  it('discovers a custom Pi source and binds new sessions to its harness id', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'providers.list') return new Promise(() => {})
+      if (method === 'harnesses.list') {
+        return Promise.resolve({
+          harnesses: [
+            {
+              id: 'deepseek-pi',
+              displayName: 'DeepSeek Pi',
+              provider: 'pi',
+              command: 'deepseek-pi',
+              args: [],
+            },
+          ],
+        })
+      }
+      if (method === 'models.list' && (params as { agent?: string }).agent === 'deepseek-pi') {
+        return Promise.resolve({
+          models: [
+            {
+              id: 'openrouter/deepseek-v3.2',
+              displayName: 'DeepSeek V3.2',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'high',
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', {
+        provider: 'pi',
+        agent: 'deepseek-pi',
+      }),
+    )
+    expect(
+      (await screen.findByRole('button', { name: 'Model and reasoning' })).textContent,
+    ).toContain('DeepSeek V3.2')
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Use my Pi fork' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({
+          provider: 'pi',
+          agent: 'deepseek-pi',
+          model: 'openrouter/deepseek-v3.2',
+          effort: 'high',
+        }),
+      ),
+    )
+  })
+
+  it('opens the pull-request workspace from the sidebar', async () => {
+    // Resolve the lazy feature chunk before the click; the assertion is about
+    // App routing, while PullRequestsView owns its own loading tests.
+    await import('./ui/pull-requests/PullRequestsView.js')
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('projects.list', {})
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Pull requests' }))
+
+    expect(await screen.findByRole('region', { name: 'Pull requests' })).toBeTruthy()
+    expect(await screen.findByText('No pull requests')).toBeTruthy()
+    expect(transport.request).toHaveBeenCalledWith('pullRequests.list', { refresh: false })
+  })
+
+  it('starts a new chat about a pull request from the Chat button', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const pullRequest = {
+      id: 'PR_1',
+      repository: 'Blueemi/harness',
+      number: 1,
+      title: 'Add the parser',
+      url: 'https://github.com/Blueemi/harness/pull/1',
+      author: { login: 'Blueemi', isBot: false },
+      updatedAt: '2026-08-09T12:00:00Z',
+      isDraft: false,
+      state: 'OPEN',
+      additions: 12,
+      deletions: 3,
+      commentsCount: 0,
+      headRefName: 'feature/parser',
+      baseRefName: 'main',
+      relationship: 'authored',
+      localProjectPath: '/work/project',
+    }
+    const detail = {
+      ...pullRequest,
+      body: '',
+      createdAt: '2026-08-09T11:00:00Z',
+      headRefOid: 'head-oid',
+      baseRefOid: 'base-oid',
+      changedFiles: 1,
+      mergeable: 'MERGEABLE',
+      maintainerCanModify: true,
+      reviewers: [],
+      requestedReviewers: [],
+      assignees: [],
+      labels: [],
+      checks: [],
+      comments: [],
+      reviews: [],
+      reviewThreads: [],
+      reviewThreadsTruncated: false,
+      permissions: { canPush: true, canAdmin: false },
+      mergeMethods: { merge: true, rebase: true, squash: true, deleteBranchOnMerge: false },
+    }
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'pullRequests.list') {
+        return Promise.resolve({
+          account: { available: true, authenticated: true, login: 'Blueemi' },
+          items: [pullRequest],
+          fetchedAt: Date.now(),
+          truncated: false,
+        })
+      }
+      if (method === 'pullRequests.detail') {
+        return Promise.resolve(detail)
+      }
+      if (method === 'thread.sendTurn') return Promise.reject(new Error('rejected'))
+      return request(method, params)
+    })
+
+    await import('./ui/pull-requests/PullRequestsView.js')
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('projects.list', {})
+    })
+    // prettier-ignore
+    const rejected = (fireEvent.click(screen.getByRole('button', { name: /^New session,/ })), await screen.findByPlaceholderText('Do anything'))
+    // prettier-ignore
+    fireEvent.keyDown((fireEvent.change(rejected, { target: { value: 'Rejected draft' } }), rejected), { key: 'Enter' })
+    await waitFor(() => expect((rejected as HTMLTextAreaElement).value).toBe('Rejected draft'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Pull requests' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Chat' }))
+
+    // Back on the chat surface, starting a new session with the PR link drafted.
+    expect(screen.queryByRole('region', { name: 'Pull requests' })).toBeNull()
+    const composer = await screen.findByPlaceholderText('Do anything')
+    await waitFor(() => {
+      expect((composer as HTMLTextAreaElement).value).toBe(
+        'I wanted to work on https://github.com/Blueemi/harness/pull/1 (Add the parser).',
+      )
+    })
+  })
+
+  it('restores the selected model immediately on the first cache-enabled launch', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') return Promise.reject(new Error('provider unavailable'))
       return request(method, params)
     })
     // Older builds persisted a bare model id rather than the source-qualified key.
     localStorage.setItem('harness.model', 'gpt-5.6-sol')
     localStorage.setItem('harness.effort', 'high')
+    localStorage.setItem('harness.serviceTier', 'priority')
+    localStorage.setItem(
+      'harness.modelBySource',
+      JSON.stringify({ codex: { modelKey: 'codex:gpt-5.6-sol', serviceTier: 'priority' } }),
+    )
 
     render(<App />)
 
@@ -402,6 +1027,33 @@ describe('web client', () => {
     expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
       'Effort: High',
     )
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', {
+        provider: 'codex',
+      }),
+    )
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(localStorage.getItem('harness.serviceTier')).toBe('priority')
+    expect(localStorage.getItem('harness.modelCatalog.v1')).toBeNull()
+
+    cleanup()
+    transport.request.mockClear()
+    render(<App />)
+    expect(localStorage.getItem('harness.serviceTier')).toBe('priority')
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('workspace.info', { path: '/work/project' })
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Keep the valid tier' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ provider: 'codex', serviceTier: 'priority' }),
+      )
+    })
   })
 
   it('shows a validated model snapshot while discovery refreshes in the background', () => {
@@ -413,21 +1065,7 @@ describe('web client', () => {
     })
     localStorage.setItem(
       'harness.modelCatalog.v1',
-      serializeModelCatalogCache([
-        {
-          key: 'codex:gpt-5.6-sol',
-          provider: 'codex',
-          sourceName: 'Codex',
-          mark: 'openai',
-          model: {
-            id: 'gpt-5.6-sol',
-            displayName: 'GPT-5.6 Sol',
-            isDefault: true,
-            reasoningEfforts: ['low', 'high'],
-            serviceTiers: [],
-          },
-        },
-      ]),
+      serializeModelCatalogCache([cachedCodexChoice()]),
     )
 
     render(<App />)
@@ -437,42 +1075,142 @@ describe('web client', () => {
     expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
   })
 
-  it('discovers models separately for each installed ACP agent', async () => {
+  it('keeps the cached source when its discovery request fails', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let rejectModels!: (reason?: unknown) => void
+    const failedDiscovery = new Promise<never>((_resolve, reject) => {
+      rejectModels = reject
+    })
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') return failedDiscovery
+      return request(method, params)
+    })
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice()]),
+    )
+    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' })
+    })
+    await act(async () => {
+      rejectModels(new Error('provider unavailable'))
+      await failedDiscovery.catch(() => undefined)
+    })
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('gpt-5.6-sol')
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Sol',
+      )
+    })
+  })
+
+  it('does not turn a custom bootstrap into a server cache on failed discovery', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') return Promise.reject(new Error('provider unavailable'))
+      return request(method, params)
+    })
+    localStorage.setItem('harness.model', 'custom:codex:private-model')
+    localStorage.setItem(
+      'harness.customModels.v1',
+      JSON.stringify([{ provider: 'codex', modelId: 'private-model', displayName: '' }]),
+    )
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' })
+      expect(localStorage.getItem('harness.modelCatalog.v1')).toBeNull()
+    })
+  })
+
+  it('unblocks a verified cached source without waiting on another provider catalog', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    serverProviders = [
+      ...serverProviders,
+      { ...(serverProviders[0] as Record<string, unknown>), id: 'grok', displayName: 'Grok' },
+    ]
+    let releaseProviders!: () => void
+    const providersGate = new Promise<void>((resolve) => {
+      releaseProviders = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'providers.list')
+        return providersGate.then(() => ({ providers: serverProviders }))
+      if (method === 'models.list' && (params as { provider: string }).provider === 'grok')
+        return new Promise(() => {})
+      return request(method, params)
+    })
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice()]),
+    )
+    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.effort', 'ultra')
+    localStorage.setItem('harness.serviceTier', 'priority')
+
+    render(<App />)
+
+    const modelButton = screen.getByRole('button', { name: 'Model and reasoning' })
+    expect(modelButton.textContent).toContain('High')
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('workspace.info', {
+        path: '/work/project',
+      })
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    const sendButton = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
+    fireEvent.change(composer, { target: { value: 'Use what the UI shows' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect((composer as HTMLTextAreaElement).value).toBe('Use what the UI shows')
+    expect(screen.queryByText('Checking providers…')).toBeNull()
+    expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
+    await act(async () => {
+      releaseProviders()
+      await providersGate
+    })
+    await waitFor(() => expect(sendButton.disabled).toBe(false))
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.start', {
+        provider: 'codex',
+        workspacePath: '/work/project',
+        approval: 'ask',
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+      })
+      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
+        threadId: 'thread-1',
+        text: 'Use what the UI shows',
+        clientSubmissionId: expect.stringMatching(/^local:/),
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+      })
+    })
+  })
+
+  it('fetches models for each installed ACP agent', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'acp.agents') {
         return Promise.resolve({
-          agents: [
-            { id: 'gemini', name: 'Gemini CLI', installed: true, verified: true },
-            { id: 'kimi', name: 'Kimi CLI', installed: true, verified: true },
-          ],
-        })
-      }
-      if (method === 'models.list' && (params as { provider?: string }).provider === 'acp') {
-        const agent = (params as { agent: string }).agent
-        return Promise.resolve({
-          models: [
-            {
-              id: `${agent}-model`,
-              displayName: `${agent} model`,
-              isDefault: true,
-              reasoningEfforts: [],
-              serviceTiers: [],
-            },
-          ],
+          agents: [{ id: 'kimi', name: 'Kimi CLI', installed: true, verified: true }],
         })
       }
       return request(method, params)
     })
-
     render(<App />)
 
     await waitFor(() => {
-      expect(transport.request).toHaveBeenCalledWith('models.list', {
-        provider: 'acp',
-        agent: 'gemini',
-      })
       expect(transport.request).toHaveBeenCalledWith('models.list', {
         provider: 'acp',
         agent: 'kimi',
@@ -549,6 +1287,61 @@ describe('web client', () => {
     expect(screen.queryByRole('button', { name: 'Use Automatic through OpenCode' })).toBeNull()
   })
 
+  it('updates attachment availability when the selected source changes', async () => {
+    const unsupported = {
+      steer: false,
+      fork: false,
+      interrupt: true,
+      reasoningItems: true,
+      approvals: false,
+      images: false,
+    }
+    serverProviders = [
+      ...(serverProviders as Array<Record<string, unknown>>),
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        installed: true,
+        auth: 'authenticated',
+        capabilities: unsupported,
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        const provider = (params as { provider: string }).provider
+        return Promise.resolve({
+          models: [
+            {
+              id: provider === 'codex' ? 'gpt-5.6-sol' : 'sonnet',
+              displayName: provider === 'codex' ? 'GPT-5.6 Sol' : 'Sonnet 5',
+              isDefault: true,
+              reasoningEfforts: [],
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.modelPickerLayout', 'rail')
+
+    render(<App />)
+
+    expect(await screen.findByRole('button', { name: 'Attach files' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show Claude Code models' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Use Sonnet 5 through Claude Code' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Attach files' })).toBeNull()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show Codex models' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' }))
+    expect(await screen.findByRole('button', { name: 'Attach files' })).toBeTruthy()
+  })
+
   it('reconnects when a newly opened mobile link changes the access token', async () => {
     window.location.hash = '#access_token=first-token'
     render(<App />)
@@ -598,6 +1391,173 @@ describe('web client', () => {
   })
 })
 describe('new chats', () => {
+  it('prefetches plan limits under StrictMode and reuses them when Account opens', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let firstUsage = true
+    let firstSocketClosed = false
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'usage.summary' && firstUsage) {
+        firstUsage = false
+        if (firstSocketClosed) return Promise.reject(new Error('Connection to server was closed'))
+      }
+      return request(method, params)
+    })
+    transport.close.mockImplementationOnce(() => {
+      firstSocketClosed = true
+    })
+    transport.connect
+      .mockImplementationOnce(() => {})
+      .mockImplementationOnce(() =>
+        window.setTimeout(() => {
+          for (const listener of transport.stateListeners) listener('open')
+        }, 0),
+      )
+
+    render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    )
+
+    expect(transport.close).toHaveBeenCalledTimes(1)
+    await waitFor(() => {
+      expect(
+        transport.request.mock.calls.filter(([method]) => method === 'usage.summary'),
+      ).toHaveLength(2)
+    })
+    transport.request.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    expect(await screen.findByRole('region', { name: 'Codex' })).toBeTruthy()
+    expect(screen.getByText('75% left')).toBeTruthy()
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+  })
+
+  it('cancels trailing plan-limit refreshes after a real unmount', async () => {
+    const view = render(<App />)
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+    )
+    transport.request.mockClear()
+
+    act(() => transport.listeners.get('usage.changed')?.({ provider: 'codex' }))
+    view.unmount()
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 120)))
+
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+  })
+
+  it('keeps installed provider limit sources separate in the account overview', async () => {
+    serverProviders = [
+      ...serverProviders,
+      { id: 'claude-code', displayName: 'Claude Code', installed: true, auth: 'authenticated' },
+      { id: 'grok', displayName: 'Grok', installed: false, auth: 'unknown' },
+    ]
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' })
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'claude-code' })
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', { provider: 'grok' })
+
+    transport.request.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    expect(await screen.findByRole('region', { name: 'Codex' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'Claude Code' })).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Grok' })).toBeNull()
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+  })
+
+  it('refreshes usage once for active-provider change bursts', async () => {
+    render(<App />)
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+    )
+    transport.request.mockClear()
+
+    act(() => transport.listeners.get('usage.changed')?.({ provider: 'grok' }))
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 120)))
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+
+    act(() => {
+      transport.listeners.get('usage.changed')?.({ provider: 'codex' })
+      transport.listeners.get('usage.changed')?.({ provider: 'codex' })
+    })
+    await waitFor(() =>
+      expect(
+        transport.request.mock.calls.filter(([method]) => method === 'usage.summary'),
+      ).toHaveLength(1),
+    )
+  })
+
+  it('refreshes provider usage after reconnecting without a selected thread', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+    )
+    transport.request.mockClear()
+
+    act(() => {
+      workspaceTest.setConnectionState('reconnecting')
+      workspaceTest.setConnectionState('open')
+    })
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+    )
+  })
+
+  it('refreshes the current source after switching providers and completing a turn', async () => {
+    serverProviders = [
+      ...serverProviders,
+      { id: 'claude-code', displayName: 'Claude Code', installed: true, auth: 'authenticated' },
+    ]
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          {
+            id: 'claude-thread',
+            title: 'Claude thread',
+            provider: 'claude-code',
+            createdAt: 0,
+            running: false,
+          },
+        ],
+      },
+    ]
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Claude thread, Claude Code' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        threadId: 'claude-thread',
+      }),
+    )
+    transport.request.mockClear()
+
+    emitThreadEvent(
+      'claude-thread',
+      { type: 'turn.completed', turnId: 'claude-turn', status: 'completed' },
+      1,
+    )
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        threadId: 'claude-thread',
+      }),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', { provider: 'codex' })
+  })
+
   it('shows consecutive prompts while the new session is still starting', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
@@ -616,14 +1576,26 @@ describe('new chats', () => {
     render(<App />)
 
     const composer = await screen.findByPlaceholderText('Do anything')
+    let nextPaintReached = false
+    let markNextPaint: FrameRequestCallback | undefined
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      if (callback.name === 'markNextPaint') markNextPaint = callback
+      return 1
+    })
+    window.requestAnimationFrame(function markNextPaint() {
+      nextPaintReached = true
+    })
     fireEvent.change(composer, { target: { value: 'Start immediately' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
 
+    expect(nextPaintReached).toBe(false)
     expect(screen.getByTestId('thread').textContent).toContain('Start immediately')
-    expect(screen.getByRole('button', { name: 'Start immediately, working' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Start immediately, Codex, working' })).toBeTruthy()
     expect(screen.getByText('Working')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
     expect(document.querySelector('.stage__body.is-new-session')).toBeNull()
+    act(() => markNextPaint?.(0))
+    expect(nextPaintReached).toBe(true)
     expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' })
     const threadElement = screen.getByTestId('thread')
 
@@ -644,16 +1616,54 @@ describe('new chats', () => {
     })
     expect(screen.getByTestId('thread')).toBe(threadElement)
 
-    emitThreadEvent('thread-1', {
-      type: 'turn.completed',
-      turnId: 'turn-1',
-      status: 'completed',
-    })
+    // prettier-ignore
+    emitThreadEvent('thread-1', { type: 'turn.completed', turnId: 'turn-1', status: 'completed' }, 1)
     await waitFor(() =>
       expect(
         transport.request.mock.calls.filter(([method]) => method === 'usage.summary'),
       ).toHaveLength(3),
     )
+    transport.request.mockClear()
+    // prettier-ignore
+    act(() => { for (const listener of transport.sequenceGapListeners) listener(2, 4) })
+    // prettier-ignore
+    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('thread.history', { threadId: 'thread-1', afterSeq: 1 }))
+  })
+
+  it('carries Stop through new-session creation and interrupts the first turn', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'thread.start') await startGate
+      return request(method, params)
+    })
+
+    render(<App />)
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Stop this immediately' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+
+    expect(
+      ((await screen.findByRole('button', { name: 'Send' })) as HTMLButtonElement).disabled,
+    ).toBe(true)
+    expect(transport.request).not.toHaveBeenCalledWith('thread.interrupt', expect.anything())
+
+    await act(async () => releaseStart?.())
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.interrupt', {
+        threadId: 'thread-1',
+      })
+    })
+    const methods = transport.request.mock.calls.map(([method]) => method)
+    expect(methods.indexOf('thread.sendTurn')).toBeLessThan(methods.indexOf('thread.interrupt'))
   })
 
   it('keeps a draft and asks for a project when sending without one', async () => {
@@ -669,6 +1679,107 @@ describe('new chats', () => {
     )
     expect((composer as HTMLTextAreaElement).value).toBe('Start after I choose a project')
     expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
+  })
+
+  it('offers setup without clearing a loaded-thread draft when its provider cannot run', async () => {
+    serverProviders = [
+      {
+        ...(serverProviders[0] as Record<string, unknown>),
+        installed: false,
+        setup: { installUrl: 'https://example.test/codex', login: 'app' },
+        problem: 'codex is not on PATH',
+      },
+    ]
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Send after setup' } })
+    const setup = await screen.findByRole('button', { name: 'Set up a provider' })
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(setup)
+    expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeTruthy()
+    expect((composer as HTMLTextAreaElement).value).toBe('Send after setup')
+  })
+
+  it('keeps a newer sign-out when the initial account read finishes late', async () => {
+    serverProviders = [{ ...(serverProviders[0] as object), auth: 'unknown' }]
+    let finishInitial!: (account: { signedIn: boolean }) => void
+    let accountReads = 0
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'auth.status') {
+        accountReads += 1
+        return accountReads === 1
+          ? new Promise<{ signedIn: boolean }>((resolve) => (finishInitial = resolve))
+          : Promise.resolve({ signedIn: true })
+      }
+      return method === 'auth.signOut' ? Promise.resolve({}) : request(method, params)
+    })
+    render(<App />)
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Stay blocked' } })
+    openSettings()
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
+    await screen.findByRole('button', { name: 'Sign in' })
+    await act(async () => finishInitial({ signedIn: true }))
+    expect(screen.getByRole('status').textContent).toContain('Provider setup required')
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('offers a stored custom model from an enabled nightly provider', async () => {
+    const stored = '[{"provider":"cursor","modelId":"cursor-large","displayName":"Cursor Large"}]'
+    serverProviders = [
+      ...serverProviders,
+      {
+        ...(serverProviders[0] as Record<string, unknown>),
+        id: 'cursor',
+        displayName: 'Cursor',
+      },
+    ]
+    localStorage.setItem('harness.provider', 'cursor')
+    localStorage.setItem('harness.model', 'custom:cursor:cursor-large')
+    localStorage.setItem('harness.customModels.v1', stored)
+    render(<App />)
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    const sendButton = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
+    fireEvent.change(composer, { target: { value: 'Use the provider default' } })
+    await waitFor(() => expect(sendButton.disabled).toBe(false))
+    expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+      'Cursor Large',
+    )
+    expect(localStorage.getItem('harness.customModels.v1')).toBe(stored)
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ provider: 'cursor', model: 'cursor-large' }),
+      ),
+    )
+  })
+
+  it('keeps a draft through provider discovery failure and recovery', async () => {
+    let failing = true
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'providers.list' && failing)
+        return Promise.reject(new Error('provider discovery unavailable'))
+      return request(method, params)
+    })
+    render(<App />)
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Recover this draft' } })
+    const setup = await screen.findByRole('button', { name: 'Set up a provider' })
+    expect(screen.getByRole('status').textContent).toContain('Provider unavailable')
+    failing = false
+    fireEvent.click(setup)
+    await waitFor(() => {
+      expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      )
+    })
+    expect((composer as HTMLTextAreaElement).value).toBe('Recover this draft')
   })
 
   it('moves the composer from the centered new-chat layout after the first prompt', async () => {
@@ -705,6 +1816,35 @@ describe('new chats', () => {
         text: 'Design mode was turned off because this request is not a website design task.',
         createdAt: 1,
       },
+    })
+    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
+      'false',
+    )
+
+    // A finished or failed run releases the toggle too, so a follow-up prompt
+    // is a normal turn instead of restarting the whole design flow.
+    fireEvent.click(screen.getByRole('button', { name: 'Design' }))
+    emitThreadEvent('thread-1', {
+      type: 'item.completed',
+      item: {
+        id: 'design-complete',
+        turnId: 'turn-2',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: 'Website built. Preview ready at http://127.0.0.1:5173/.',
+        createdAt: 2,
+      },
+    })
+    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
+      'false',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Design' }))
+    emitThreadEvent('thread-1', {
+      type: 'thread.error',
+      threadId: 'thread-1',
+      message: 'Design mode failed: preview command is not allowed',
     })
     expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
       'false',
@@ -768,6 +1908,22 @@ describe('new chats', () => {
     expect((composer as HTMLTextAreaElement).value).toBe('')
   })
 
+  it('passes a rejected brief-answer request back through the thread', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.respondToUserInput'
+        ? Promise.reject(new Error('disconnected'))
+        : request(method, params),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+
+    await expect(
+      threadCallbacks.answerUserInput?.('brief-1', { palette: ['Warm'] }),
+    ).rejects.toThrow('disconnected')
+  })
+
   it('starts a new session in an isolated checkout when selected', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
@@ -787,7 +1943,12 @@ describe('new chats', () => {
         isolate: true,
       })
     })
-    expect(await screen.findAllByText('harness/thread-1')).toHaveLength(1)
+    fireEvent.click(
+      await within(screen.getByRole('main')).findByRole('button', {
+        name: /Options for Work in parallel/,
+      }),
+    )
+    expect(await screen.findByText('harness/thread-1')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Choose project' })).toBeNull()
   })
 
@@ -812,6 +1973,55 @@ describe('new chats', () => {
       )
     })
   })
+
+  // prettier-ignore
+  it('starts workspace info and branch reads together', async () => { const request = transport.request.getMockImplementation()!; let resolveInfo!: (value: ResultOf<'workspace.info'>) => void; const info = new Promise<Parameters<typeof resolveInfo>[0]>((resolve) => (resolveInfo = resolve)); transport.request.mockImplementation((method: string, params: unknown) => method === 'workspace.info' ? info : request(method, params)); render(<App />); await waitForInitialWorkspace(); await act(async () => resolveInfo({ branch: 'main', added: 0, removed: 0, dirtyFiles: 0 })) })
+  // prettier-ignore
+  it('refreshes workspace metadata after completion but not on submit', async () => { await openNewSession(); transport.request.mockClear(); submitTurn('Do the work'); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', expect.objectContaining({ threadId: 'untouched-thread', text: 'Do the work' }))); expect(rpcCount('workspace.info')).toBe(0); startTurn('untouched-thread', 'turn-1'); completeTurn('untouched-thread', 'turn-1'); await waitForWorkspace(1) })
+  // prettier-ignore
+  it('coalesces overlapping completion probes before refreshing workspace metadata', async () => { const probes = await renderWithDeferredProjectProbes(); for (const turnId of ['turn-1', 'turn-2', 'turn-3']) completeTurn('untouched-thread', turnId); await waitFor(() => expect(probes).toHaveLength(1)); expect(rpcCount('projects.list')).toBe(1); await act(async () => probes[0]?.resolve(projectsSnapshot(true))); await waitFor(() => expect(probes).toHaveLength(2)); expect(rpcCount('projects.list')).toBe(2); await act(async () => probes[1]?.resolve(projectsSnapshot(false))); await waitForWorkspace(1) })
+  // prettier-ignore
+  it.each(['reject', 'missing', 'started', 'submitted', 'unrelated', 'sole reject', 'rejected before probe', 'rejected after probe', 'rejected after retained idle', 'switched reject'] as const)('settles workspace metadata when the probe sequence ends with %s', async (scenario) => { let rejectSend!: (reason: Error) => void; if (scenario.startsWith('rejected')) { const request = transport.request.getMockImplementation()!; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? new Promise((_, reject) => (rejectSend = reject)) : request(method, params)) } if (scenario === 'switched reject') { serverProjects.push(serverProject('/work/another-project', 'Another Project', [{ id: 'background-thread', title: 'Background', running: false }])); (serverProjects[0] as { sessions: unknown[] }).sessions.push({ id: 'idle-thread', title: 'Idle work', running: false }) } const submitted = scenario === 'submitted' || scenario === 'unrelated'; if (scenario === 'unrelated') (serverProjects[0] as { sessions: unknown[] }).sessions.push({ id: 'background-thread', running: false }); const probes = await renderWithDeferredProjectProbes(); if (scenario === 'switched reject') { startTurn('untouched-thread', 'turn-1'); transport.request.mockClear(); fireEvent.click(screen.getByRole('button', { name: /^Idle work,/ })); expect(rpcCount('workspace.info')).toBe(0) } completeTurn('untouched-thread', 'turn-1'); await waitFor(() => expect(probes).toHaveLength(1)); if (scenario.startsWith('rejected')) { if (scenario === 'rejected after retained idle') { completeTurn('untouched-thread', 'turn-2'); await act(async () => probes[0]?.resolve(projectsSnapshot(false))); await waitFor(() => expect(probes).toHaveLength(2)) } submitTurn('Rejected start'); if (scenario === 'rejected before probe') await act(async () => rejectSend(new Error('no'))); if (scenario !== 'rejected after retained idle') await act(async () => probes[0]?.resolve(projectsSnapshot(false))); else await act(async () => probes[1]?.reject(new Error('trailing failed'))); if (scenario === 'rejected after probe') { await act(async () => rejectSend(new Error('no'))); await waitFor(() => expect(probes).toHaveLength(2)); await act(async () => probes[1]?.resolve(projectsSnapshot(false))) } else if (scenario === 'rejected after retained idle') { await act(async () => rejectSend(new Error('no'))); await waitFor(() => expect(probes).toHaveLength(3)); await act(async () => probes[2]?.resolve(projectsSnapshot(false))) } await waitForWorkspace(1); return } if (scenario === 'sole reject') { await act(async () => probes[0]?.reject(new Error('probe failed'))); await waitFor(() => expect(probes).toHaveLength(2)); await act(async () => probes[1]?.resolve(projectsSnapshot(false))) } else { completeTurn('untouched-thread', 'turn-2'); if (submitted) { submitTurn('Start again'); if (scenario === 'unrelated') { startTurn('background-thread', 'background'); completeTurn('background-thread', 'background') } } await act(async () => probes[0]?.resolve(projectsSnapshot(false))); await waitFor(() => expect(probes).toHaveLength(2)); if (scenario === 'switched reject') { fireEvent.keyDown(window, { key: 'p', metaKey: true }); fireEvent.click(screen.getByRole('option', { name: /^Another Project / })); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('workspace.info', { path: '/work/another-project' })); transport.request.mockClear(); completeTurn('background-thread', 'background'); await act(async () => probes[1]?.reject(new Error('old project failed'))); await waitFor(() => expect(probes).toHaveLength(3)); await act(async () => probes[2]?.reject(new Error('new project failed'))); await waitFor(() => expect(probes).toHaveLength(4)); await act(async () => probes[3]?.resolve(projectsSnapshot(false))); await waitForWorkspace(1); return } if (scenario === 'started') startTurn('untouched-thread', 'turn-3'); await act(async () => scenario === 'missing' ? probes[1]?.resolve({ projects: [] }) : submitted ? probes[1]?.resolve(projectsSnapshot(false)) : probes[1]?.reject(new Error('probe failed'))) } if (scenario === 'started' || submitted) { await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); return } await waitForWorkspace(1) })
+  // prettier-ignore
+  it('abandons an active probe when the transport changes', async () => { const probes = await renderWithDeferredProjectProbes(); completeTurn('untouched-thread', 'turn-1'); await waitFor(() => expect(probes).toHaveLength(1)); await act(async () => { window.location.hash = '#access_token=reconnected'; window.dispatchEvent(new HashChangeEvent('hashchange')) }); await waitFor(() => expect(probes).toHaveLength(2)); await act(async () => probes[0]?.reject(new Error('transport closed'))); expect(probes).toHaveLength(2); await act(async () => probes[1]?.resolve(projectsSnapshot(false))); completeTurn('untouched-thread', 'turn-2'); await waitFor(() => expect(probes).toHaveLength(3)) })
+  // prettier-ignore
+  it.each(['indeterminate', 'approval', 'inactive queue', 'durable queue', 'overlap'] as const)('refreshes after reconnect reconciles %s as idle', async (scenario) => { const request = transport.request.getMockImplementation()!; if (scenario === 'approval' || scenario === 'overlap') (serverProjects[0] as { sessions: Array<{ status?: string }> }).sessions[0]!.status = scenario === 'approval' ? 'approval' : 'working'; else if (scenario === 'inactive queue' || scenario === 'durable queue') (serverProjects[0] as { sessions: unknown[] }).sessions.push({ id: 'background-thread', title: 'Background', running: false }); const queuedTurn = { id: 'queued-turn', text: 'Reconnect me', attachments: [], createdAt: 1 }; let reconnecting = false; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? scenario === 'indeterminate' ? Promise.reject(new IndeterminateRequestError('socket lost')) : Promise.resolve({ queued: true, queuedTurn }) : method === 'thread.queue' && scenario === 'durable queue' && reconnecting ? Promise.resolve({ items: [queuedTurn], canSteer: true }) : method === 'thread.history' && scenario === 'inactive queue' && reconnecting ? Promise.resolve({ events: [{ seq: 1, event: { type: 'item.completed', item: { id: queuedTurn.id, turnId: 'offline', type: 'message', role: 'user', status: 'completed', text: queuedTurn.text, createdAt: 1 } } }], running: false }) : request(method, params)); await openNewSession(); if (scenario === 'overlap') { const histories: Array<(value: { events: []; running: false }) => void> = []; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.history' ? new Promise((resolve) => histories.push(resolve)) : request(method, params)); transport.request.mockClear(); act(() => { for (const listener of transport.sequenceGapListeners) { listener(1, 2); listener(2, 3) } }); await waitFor(() => expect(histories).toHaveLength(2)); await act(async () => histories[0]?.({ events: [], running: false })); await act(async () => histories[1]?.({ events: [], running: false })); await waitForWorkspace(1); return } if (scenario !== 'approval') { if (scenario === 'inactive queue' || scenario === 'durable queue') startTurn('untouched-thread', 'active-turn'); submitTurn('Reconnect me'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); if (scenario === 'inactive queue' || scenario === 'durable queue') fireEvent.click(screen.getByRole('button', { name: /^Background,/ })) } transport.request.mockClear(); reconnecting = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); if (scenario === 'durable queue') { await waitFor(() => expect(rpcCount('thread.queue')).toBeGreaterThan(0)); expect(rpcCount('workspace.info')).toBe(0); return } await waitForWorkspace(1) })
+  // prettier-ignore
+  it.each(['delete', 'steer'] as const)('releases queued ownership after %s', async (action) => { const request = transport.request.getMockImplementation()!, queuedTurn = { id: 'queued', text: 'Queue next', attachments: [], createdAt: 1 }; let accept!: (value: { queued: true; queuedTurn: typeof queuedTurn }) => void; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? new Promise((resolve) => { accept = resolve }) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'active'); transport.request.mockClear(); submitTurn('Queue next'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); await act(async () => accept({ queued: true, queuedTurn })); fireEvent.click(screen.getByRole('button', { name: action === 'delete' ? 'Remove Queue next from queue' : 'Steer' })); await waitFor(() => expect(transport.request).toHaveBeenCalledWith(`thread.${action === 'delete' ? 'delete' : 'steer'}QueuedTurn`, { threadId: 'untouched-thread', queuedTurnId: 'queued' })); emitQueue('untouched-thread', []); completeTurn('untouched-thread', 'active'); await waitForWorkspace(1) })
+  // prettier-ignore
+  it.each(['next', 'restored', 'historical'] as const)('keeps %s queued work ahead of workspace refresh', async (scenario) => { const request = transport.request.getMockImplementation()!, turns = [{ id: 'q1', text: 'First queued', attachments: [], createdAt: 1 }, { id: 'q2', text: 'Second queued', attachments: [], createdAt: 2 }]; let sent = 0; if (scenario === 'historical') { (serverProjects[0] as { sessions: Array<{ running: boolean }> }).sessions[0]!.running = true; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.history' ? Promise.resolve({ events: [{ seq: 1, event: { type: 'turn.started', turn: { id: 'old', threadId: 'untouched-thread', status: 'running', createdAt: 1 } } }], running: true }) : method === 'thread.sendTurn' ? Promise.resolve({ queued: true, queuedTurn: turns[sent++]! }) : request(method, params)) } else transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? Promise.resolve({ queued: true, queuedTurn: turns[sent++]! }) : request(method, params)); await openNewSession(); if (scenario !== 'historical') startTurn('untouched-thread', 'active'); transport.request.mockClear(); submitTurn('First queued'); if (scenario === 'next') submitTurn('Second queued'); await screen.findByRole('button', { name: `Remove ${scenario === 'next' ? 'Second' : 'First'} queued from queue` }); if (scenario === 'next') { emitQueue('untouched-thread', [turns[1]!]); startTurn('untouched-thread', 'q1-turn'); completeTurn('untouched-thread', 'q1-turn') } else if (scenario === 'restored') { emitQueue('untouched-thread', []); emitQueue('untouched-thread', [turns[0]!]); completeTurn('untouched-thread', 'active') } else { (serverProjects[0] as { sessions: Array<{ running: boolean }> }).sessions[0]!.running = false; completeTurn('untouched-thread', 'old') } await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); const remaining = scenario === 'next' ? turns[1]! : turns[0]!; fireEvent.click(screen.getByRole('button', { name: `Remove ${remaining.text} from queue` })); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('thread.deleteQueuedTurn', { threadId: 'untouched-thread', queuedTurnId: remaining.id })); emitQueue('untouched-thread', []); await waitForWorkspace(1) })
+  // prettier-ignore
+  it('refreshes after terminal thread errors', async () => { await openNewSession(); transport.request.mockClear(); emitThreadEvent('untouched-thread', { type: 'thread.error', threadId: 'untouched-thread', message: 'Design failed' }); await waitForWorkspace(1) })
+  // prettier-ignore
+  it('gives a switched project its own unknown-result retry', async () => { serverProjects.push(serverProject('/work/another-project', 'Another Project', [{ id: 'background-thread', title: 'Background', running: false }])); const probes = await renderWithDeferredProjectProbes(); completeTurn('untouched-thread', 'a'); await waitFor(() => expect(probes).toHaveLength(1)); await act(async () => probes[0]?.reject(new Error('A failed'))); await waitFor(() => expect(probes).toHaveLength(2)); fireEvent.keyDown(window, { key: 'p', metaKey: true }); fireEvent.click(screen.getByRole('option', { name: /^Another Project / })); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('workspace.info', { path: '/work/another-project' })); transport.request.mockClear(); completeTurn('background-thread', 'b'); await act(async () => probes[1]?.reject(new Error('A retry failed'))); await waitFor(() => expect(probes).toHaveLength(3)); await act(async () => probes[2]?.reject(new Error('B failed'))); await waitFor(() => expect(probes).toHaveLength(4)); await act(async () => probes[3]?.resolve(projectsSnapshot(false))); await waitForWorkspace(1) })
+  // prettier-ignore
+  it('reconciles an inactive project owner without letting it block the active project', async () => { const request = transport.request.getMockImplementation()!; serverProjects.push(serverProject('/work/another-project', 'Another Project', [{ id: 'background-thread', title: 'Background', running: false }])); transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? Promise.reject(new IndeterminateRequestError('lost')) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'a'); submitTurn('Lost submit'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); fireEvent.keyDown(window, { key: 'p', metaKey: true }); fireEvent.click(screen.getByRole('option', { name: /^Another Project / })); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('workspace.info', { path: '/work/another-project' })); (serverProjects[0] as { sessions: Array<{ running: boolean }> }).sessions[0]!.running = false; transport.request.mockClear(); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('thread.history', { threadId: 'untouched-thread' })); fireEvent.keyDown(window, { key: 'p', metaKey: true }); fireEvent.click(screen.getByRole('option', { name: /^project /i })); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('workspace.info', { path: '/work/project' })); transport.request.mockClear(); completeTurn('untouched-thread', 'a'); await waitForWorkspace(1) })
+  // prettier-ignore
+  it('scopes reconnect idle consensus to the active project', async () => { const request = transport.request.getMockImplementation()!, queued = { id: 'foreign', text: 'Foreign queue', attachments: [], createdAt: 1 }; let reconnecting = false; serverProjects.push(serverProject('/work/another-project', 'Another Project', [{ id: 'background-thread', title: 'Background', running: true }])); transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? Promise.reject(new IndeterminateRequestError('lost')) : reconnecting && method === 'thread.history' && (params as { threadId: string }).threadId === 'untouched-thread' ? Promise.resolve({ events: [], running: true }) : reconnecting && method === 'thread.queue' && (params as { threadId: string }).threadId === 'untouched-thread' ? Promise.resolve({ items: [queued], canSteer: true }) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'a'); submitTurn('Lost submit'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); fireEvent.keyDown(window, { key: 'p', metaKey: true }); fireEvent.click(screen.getByRole('option', { name: /^Another Project / })); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('workspace.info', { path: '/work/another-project' })); startTurn('background-thread', 'b'); (serverProjects[1] as { sessions: Array<{ running: boolean }> }).sessions[0]!.running = false; transport.request.mockClear(); reconnecting = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitForWorkspace(1) })
+  // prettier-ignore
+  it('reconciles workspace ownership when a running session is archived', async () => { await openNewSession(); startTurn('untouched-thread', 'active'); transport.request.mockClear(); fireEvent.click(screen.getByRole('button', { name: 'Archive New session' })); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('thread.delete', { threadId: 'untouched-thread' })); await waitForWorkspace(1) })
+  // prettier-ignore
+  it('keeps a claimed steer blocked until its exact outcome', async () => { const request = transport.request.getMockImplementation()!, queued = { id: 'steer-q', text: 'Steer later', attachments: [], createdAt: 1 }; let rejectSteer!: (reason: Error) => void; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? Promise.resolve({ queued: true, queuedTurn: queued }) : method === 'thread.steerQueuedTurn' ? new Promise((_, reject) => (rejectSteer = reject)) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'active'); transport.request.mockClear(); submitTurn('Steer later'); await screen.findByRole('button', { name: 'Remove Steer later from queue' }); fireEvent.click(screen.getByRole('button', { name: 'Steer' })); await waitFor(() => expect(rpcCount('thread.steerQueuedTurn')).toBe(1)); emitQueue('untouched-thread', []); completeTurn('untouched-thread', 'active'); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); emitQueue('untouched-thread', [queued]); await act(async () => rejectSteer(new Error('restored'))); fireEvent.click(screen.getByRole('button', { name: 'Remove Steer later from queue' })); emitQueue('untouched-thread', []); await waitForWorkspace(1) })
+  // prettier-ignore
+  it('keeps a reconnect queue claim blocked until durable evidence', async () => { const request = transport.request.getMockImplementation()!, queued = { id: 'claim-q', text: 'Claim later', attachments: [], createdAt: 1 }; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? Promise.resolve({ queued: true, queuedTurn: queued }) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'active'); submitTurn('Claim later'); await screen.findByRole('button', { name: 'Remove Claim later from queue' }); transport.request.mockClear(); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(rpcCount('thread.queue')).toBeGreaterThan(0)); expect(rpcCount('workspace.info')).toBe(0); emitQueue('untouched-thread', [queued]); fireEvent.click(screen.getByRole('button', { name: 'Remove Claim later from queue' })); emitQueue('untouched-thread', []); await waitForWorkspace(1) })
+  // prettier-ignore
+  it('retries unknown queue evidence on the next completion', async () => { const request = transport.request.getMockImplementation()!, queued = { id: 'stale', text: 'Offline queue', attachments: [], createdAt: 1 }; let failing = true; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.queue' && failing ? Promise.reject(new Error('offline')) : request(method, params)); await openNewSession(); emitQueue('untouched-thread', [queued]); transport.request.mockClear(); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(rpcCount('thread.queue')).toBeGreaterThan(0)); expect(rpcCount('workspace.info')).toBe(0); failing = false; completeTurn('untouched-thread', 'later'); await waitForWorkspace(1) })
+  // prettier-ignore
+  it.each(['clean', 'projects.list', 'thread.history', 'thread.queue'] as const)('refreshes after a turn runs wholly during an outage with %s reconciliation', async (scenario) => { const request = transport.request.getMockImplementation()!; await openNewSession(); let fail = scenario !== 'clean'; transport.request.mockImplementation((method: string, params: unknown) => method === scenario && fail ? (fail = false, Promise.reject(new Error('transient'))) : request(method, params)); transport.request.mockClear(); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitForWorkspace(1) })
+  // prettier-ignore
+  it('does not clear a submit owner created during resync', async () => { const request = transport.request.getMockImplementation()!; serverProjects = [serverProject('/work/project', 'project', [{ id: 'untouched-thread', title: 'New session', running: false }, { id: 'background-thread', title: 'Background', running: false, status: 'working' }])]; let accept!: (value: { queued: false; turnId: string }) => void; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? new Promise((resolve) => (accept = resolve)) : request(method, params)); await openNewSession(); (serverProjects[0] as { sessions: Array<{ status?: string }> }).sessions[1]!.status = 'ready'; transport.request.mockClear(); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); submitTurn('During resync'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); await act(async () => accept({ queued: false, turnId: 'new' })); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); startTurn('untouched-thread', 'new'); completeTurn('untouched-thread', 'new'); await waitForWorkspace(1) })
+  // prettier-ignore
+  it('reconciles pending owners when the transport is replaced', async () => { await openNewSession(); transport.request.mockClear(); submitTurn('Transport gap'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); await act(async () => { window.location.hash = '#access_token=reconnected'; window.dispatchEvent(new HashChangeEvent('hashchange')) }); act(() => setConnectionState('open')); await waitForWorkspace(1); transport.request.mockClear(); completeTurn('untouched-thread', 'later'); await waitForWorkspace(1) })
+  // prettier-ignore
+  it('blocks on authoritative queued status without a local queue cache', async () => { serverProjects = [serverProject('/work/project', 'project', [{ id: 'untouched-thread', title: 'New session', running: false }, { id: 'background-thread', title: 'Background', running: false, status: 'queued' }])]; await openNewSession(); transport.request.mockClear(); completeTurn('untouched-thread', 'a'); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); (serverProjects[0] as { sessions: Array<{ status?: string }> }).sessions[1]!.status = 'ready'; completeTurn('untouched-thread', 'b'); await waitForWorkspace(1) })
+  // prettier-ignore
+  it.each(['unknown authority', 'retained steer', 'project failure', 'remote claim', 'remote deletion', 'path return', 'overlapping action', 'duplicate consensus', 'stale submission'] as const)('settles final workspace audit case: %s', async (scenario) => { const request = transport.request.getMockImplementation()!, queued = { id: 'audit-q', text: 'Audit queue', attachments: [], createdAt: 1 }; if (scenario === 'unknown authority') { let failing = true; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.queue' && failing ? Promise.reject(new Error('unknown')) : request(method, params)); await openNewSession(); transport.request.mockClear(); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(rpcCount('thread.queue')).toBeGreaterThan(0)); completeTurn('untouched-thread', 'unknown'); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); failing = false; completeTurn('untouched-thread', 'known'); return waitForWorkspace(1) } if (scenario === 'retained steer') { let reject!: (error: Error) => void, running = true; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.steerQueuedTurn' ? new Promise((_, fail) => (reject = fail)) : method === 'thread.history' ? Promise.resolve({ events: [], running }) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'active'); emitQueue('untouched-thread', [queued]); fireEvent.click(screen.getByRole('button', { name: 'Steer' })); await act(async () => reject(new IndeterminateRequestError('lost'))); emitQueue('untouched-thread', []); transport.request.mockClear(); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(rpcCount('thread.queue')).toBeGreaterThan(0)); running = false; completeTurn('untouched-thread', 'active'); return waitForWorkspace(1) } if (scenario === 'project failure') { let failProjects = false; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? Promise.reject(new IndeterminateRequestError('lost')) : method === 'projects.list' && failProjects ? Promise.reject(new Error('projects')) : request(method, params)); await openNewSession(); submitTurn('Lost'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); transport.request.mockClear(); failProjects = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(rpcCount('thread.history')).toBeGreaterThan(0)); failProjects = false; completeTurn('untouched-thread', 'later'); return waitForWorkspace(1) } if (scenario === 'remote claim') { transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.steerQueuedTurn' ? new Promise(() => undefined) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'active'); emitQueue('untouched-thread', [queued]); transport.request.mockClear(); fireEvent.click(screen.getByRole('button', { name: 'Steer' })); emitQueue('untouched-thread', []); completeTurn('untouched-thread', 'active'); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); return } if (scenario === 'remote deletion') { transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? Promise.reject(new IndeterminateRequestError('lost')) : request(method, params)); await openNewSession(); submitTurn('Lost'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); (serverProjects[0] as { sessions: unknown[] }).sessions = []; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitForWorkspace(1); transport.request.mockClear(); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('thread.history')).toBe(0); return } if (scenario === 'path return') { serverProjects.push(serverProject('/work/another-project', 'Another Project', [{ id: 'background-thread', title: 'Background', running: false }])); const probes = await renderWithDeferredProjectProbes(); completeTurn('untouched-thread', 'old'); await waitFor(() => expect(probes).toHaveLength(1)); fireEvent.keyDown(window, { key: 'p', metaKey: true }); fireEvent.click(screen.getByRole('option', { name: /^Another Project / })); await waitForWorkspace(1); startTurn('untouched-thread', 'new'); fireEvent.keyDown(window, { key: 'p', metaKey: true }); fireEvent.click(screen.getByRole('option', { name: /^project /i })); await waitForWorkspace(2); transport.request.mockClear(); await act(async () => probes[0]?.resolve(projectsSnapshot(false))); expect(rpcCount('workspace.info')).toBe(0); return } if (scenario === 'overlapping action') { let calls = 0; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.steerQueuedTurn' ? ++calls === 1 ? new Promise(() => undefined) : Promise.reject(new Error('busy')) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'active'); emitQueue('untouched-thread', [queued]); transport.request.mockClear(); const steer = screen.getByRole('button', { name: 'Steer' }); fireEvent.click(steer); fireEvent.click(steer); await waitFor(() => expect(rpcCount('thread.steerQueuedTurn')).toBe(2)); emitQueue('untouched-thread', []); completeTurn('untouched-thread', 'active'); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); return } if (scenario === 'duplicate consensus') { let resolveHistory!: (value: { events: []; running: false }) => void, reconnecting = false; transport.request.mockImplementation((method: string, params: unknown) => reconnecting && method === 'thread.history' ? new Promise((resolve) => (resolveHistory = resolve)) : request(method, params)); await openNewSession(); transport.request.mockClear(); reconnecting = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(rpcCount('thread.history')).toBe(1)); completeTurn('untouched-thread', 'live'); await waitForWorkspace(1); await act(async () => resolveHistory({ events: [], running: false })); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(1); return } let lostId = '', reconnectQueue: QueuedTurn[] = [], lost = true; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' && lost ? (lostId = (params as { clientSubmissionId: string }).clientSubmissionId, Promise.reject(new IndeterminateRequestError('lost'))) : method === 'thread.queue' ? Promise.resolve({ items: reconnectQueue, canSteer: true }) : request(method, params)); await openNewSession(); submitTurn('Lost'); await waitFor(() => expect(lostId).not.toBe('')); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitForWorkspace(1); reconnectQueue = [{ ...queued, id: lostId }]; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(screen.getByRole('button', { name: 'Remove Audit queue from queue' })).toBeTruthy()); emitQueue('untouched-thread', []); lost = false; transport.request.mockClear(); submitTurn('Fresh'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); startTurn('untouched-thread', 'fresh'); completeTurn('untouched-thread', 'fresh'); await waitForWorkspace(1) })
+  // prettier-ignore
+  it('blocks a remote queue claim until reconciliation', async () => { const request = transport.request.getMockImplementation()!, queued = { id: 'remote-q', text: 'Remote queue', attachments: [], createdAt: 1 }; let resolveHistory!: (value: { events: []; running: false }) => void; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.history' ? new Promise((resolve) => (resolveHistory = resolve)) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'active'); emitQueue('untouched-thread', [queued]); transport.request.mockClear(); emitQueue('untouched-thread', []); completeTurn('untouched-thread', 'active'); await waitFor(() => expect(rpcCount('thread.history')).toBe(1)); expect(rpcCount('workspace.info')).toBe(0); await act(async () => resolveHistory({ events: [], running: false })); await waitForWorkspace(1) })
+  // prettier-ignore
+  it('coalesces sequential live and reconnect consensus', async () => { const request = transport.request.getMockImplementation()!; let resolveHistory!: (value: { events: []; running: false }) => void, reconnecting = false; transport.request.mockImplementation((method: string, params: unknown) => reconnecting && method === 'thread.history' ? new Promise((resolve) => (resolveHistory = resolve)) : request(method, params)); await openNewSession(); transport.request.mockClear(); reconnecting = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(rpcCount('thread.history')).toBe(1)); completeTurn('untouched-thread', 'live'); await waitForWorkspace(1); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); await act(async () => resolveHistory({ events: [], running: false })); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(1) })
+  // prettier-ignore
+  it.each(['composer steer', 'lost reply delete', 'lost delete', 'transport cache', 'late terminal', 'offline claim', 'remote delete', 'remote queue', 'new chat cleanup'] as const)('settles reviewed workspace ownership for %s', async (scenario) => { const request = transport.request.getMockImplementation()!, queued = { id: 'review-q', text: 'Reviewed queue', attachments: [], createdAt: 1 }; let rejectAction!: (reason: Error) => void, reconnecting = false, sends = 0, lostId = ''; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? scenario === 'lost reply delete' ? (lostId = (params as { clientSubmissionId: string }).clientSubmissionId, Promise.reject(new IndeterminateRequestError('lost'))) : Promise.resolve({ queued: true, queuedTurn: { ...queued, id: sends++ ? 'steer-q' : queued.id } }) : method === 'thread.steerQueuedTurn' && scenario === 'composer steer' ? new Promise(() => undefined) : method === 'thread.deleteQueuedTurn' && scenario === 'lost delete' ? new Promise((_, reject) => (rejectAction = reject)) : reconnecting && method === 'thread.queue' && scenario === 'lost reply delete' ? Promise.resolve({ items: [{ ...queued, id: lostId }], canSteer: true }) : reconnecting && method === 'thread.history' && scenario === 'offline claim' ? Promise.resolve({ events: [{ seq: 1, event: { type: 'item.completed', item: { id: queued.id, turnId: 'queued', type: 'message', role: 'user', status: 'completed', text: queued.text, createdAt: 1 } } }], running: true }) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'active'); if (scenario === 'remote queue' || scenario === 'new chat cleanup') { emitQueue('untouched-thread', [queued]); transport.request.mockClear(); completeTurn('untouched-thread', 'active'); if (scenario === 'new chat cleanup') fireEvent.click(screen.getByRole('button', { name: 'New chat' })); else emitQueue('untouched-thread', []); return waitForWorkspace(1) } submitTurn('Reviewed queue'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); await screen.findByRole('button', { name: /Remove Reviewed queue from queue/ }).catch(() => undefined); transport.request.mockClear(); if (scenario === 'composer steer') { const composer = screen.getByPlaceholderText('Do anything'); fireEvent.change(composer, { target: { value: 'Steer now' } }); fireEvent.click(screen.getByRole('button', { name: 'Steer' })); await waitFor(() => expect(rpcCount('thread.steerQueuedTurn')).toBe(1)); emitQueue('untouched-thread', []); completeTurn('untouched-thread', 'active'); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); return } if (scenario === 'late terminal') { completeTurn('untouched-thread', 'old'); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); return } if (scenario === 'remote delete') { (serverProjects[0] as { sessions: unknown[] }).sessions = []; reconnecting = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); return waitForWorkspace(1) } if (scenario === 'transport cache') { await act(async () => { window.location.hash = '#access_token=queue-cache'; window.dispatchEvent(new HashChangeEvent('hashchange')) }); return waitFor(() => expect(rpcCount('thread.queue')).toBeGreaterThan(0)) } if (scenario === 'lost reply delete') { reconnecting = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await screen.findByRole('button', { name: /Remove Reviewed queue from queue/ }) } if (scenario === 'offline claim') { emitQueue('untouched-thread', []); reconnecting = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); completeTurn('untouched-thread', 'queued'); return waitForWorkspace(1) } fireEvent.click(screen.getByRole('button', { name: /Remove Reviewed queue from queue/ })); if (scenario === 'lost delete') { emitQueue('untouched-thread', []); await act(async () => rejectAction(new IndeterminateRequestError('lost'))); reconnecting = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }) } else emitQueue('untouched-thread', []); await waitForWorkspace(1) })
 
   it('asks before discarding uncommitted work from an isolated session', async () => {
     serverProjects = [
@@ -874,7 +2084,7 @@ describe('new chats', () => {
     ]
     render(<App />)
 
-    fireEvent.contextMenu(await screen.findByRole('button', { name: 'Keep nearby' }))
+    fireEvent.contextMenu(await screen.findByRole('button', { name: /^Keep nearby,/ }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Pin chat' }))
 
     await waitFor(() => {
@@ -904,22 +2114,47 @@ describe('new chats', () => {
         ],
       },
     ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let historyReads = 0
+    let restoreRequests = 0
+    let rejectRestore!: (error: Error) => void
+    let releaseRestoreHistory: (() => void) | undefined
+    const restoreHistory = new Promise<{ events: never[]; running: false }>((resolve) => {
+      releaseRestoreHistory = () => resolve({ events: [], running: false })
+    })
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.history' && ++historyReads === 2) return restoreHistory
+      if (method === 'thread.restore' && restoreRequests++ === 0)
+        return new Promise((_, reject) => (rejectRestore = reject))
+      return request(method, params)
+    })
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Parser work' }))
-    fireEvent.click(await screen.findByRole('button', { name: '1 checkpoint' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Parser work,/ }))
+    fireEvent.click(
+      await within(screen.getByRole('main')).findByRole('button', {
+        name: 'Options for Parser work',
+      }),
+    )
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Checkpoint history (1)' }))
     fireEvent.click(screen.getByRole('button', { name: /Before “Fix the parser”/ }))
 
     expect(await screen.findByText('src/parser.ts')).toBeTruthy()
     expect(screen.getByText('src/parser.test.ts')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
-
-    await waitFor(() => {
-      expect(transport.request).toHaveBeenCalledWith('thread.restore', {
-        threadId: 'thread-rollback',
-        checkpointId: 7,
-      })
+    act(() => {
+      for (const listener of transport.stateListeners) listener('reconnecting')
+      for (const listener of transport.stateListeners) listener('open')
     })
+    await waitFor(() => expect(historyReads).toBe(2))
+    fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+    await waitFor(() => expect(restoreRequests).toBe(1))
+    await act(async () => releaseRestoreHistory?.())
+    await act(async () => rejectRestore(new IndeterminateRequestError('restore reply lost')))
+    // prettier-ignore
+    act(() => { for (const listener of transport.stateListeners) listener('reconnecting'); for (const listener of transport.stateListeners) listener('open') })
+    await waitFor(() => expect(historyReads).toBeGreaterThanOrEqual(3))
+    fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.undoRestore', {
@@ -927,6 +2162,8 @@ describe('new chats', () => {
         undo: 'undo-token',
       })
     })
+    // prettier-ignore
+    expect(transport.request.mock.calls.filter(([method]) => method === 'thread.history').map(([, params]) => params)).toEqual([{ threadId: 'thread-rollback' }, { threadId: 'thread-rollback', afterSeq: 0 }, { threadId: 'thread-rollback' }, { threadId: 'thread-rollback', afterSeq: 0 }, ...Array.from({ length: 2 }, () => ({ threadId: 'thread-rollback' }))])
   })
 
   it('persists the macOS font smoothing setting', async () => {
@@ -947,15 +2184,47 @@ describe('new chats', () => {
     })
   })
 
+  it('clears renderer preferences and reloads only after reset confirmation', () => {
+    localStorage.setItem('harness.theme', 'dark')
+    localStorage.setItem('harness.hiddenModels', '["codex:gpt-5.6-mini"]')
+    localStorage.setItem('harness.profile.displayName', 'Leon')
+    const reload = vi.spyOn(window.location, 'reload').mockImplementation(() => undefined)
+    render(<App />)
+
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Data & privacy' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Reset app preferences' }))
+    expect(localStorage.getItem('harness.theme')).toBe('dark')
+    expect(reload).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset and reload' }))
+    expect(localStorage.length).toBe(0)
+    expect(reload).toHaveBeenCalledOnce()
+  })
+
+  it('opens the account Profile shortcut directly in the top settings category', async () => {
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Account' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Profile' }).getAttribute('aria-current')).toBe(
+      'page',
+    )
+    expect(await screen.findByRole('heading', { name: 'Profile' })).toBeTruthy()
+    expect(transport.request).toHaveBeenCalledWith('usage.history', { range: 'all' })
+  })
+
   it('persists inbox mode and bounded inactivity settings on the server', async () => {
     serverSidebarSettings.mode = 'inbox'
     render(<App />)
 
     openSettings()
-    fireEvent.click(screen.getByRole('button', { name: 'Workflows' }))
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
 
     const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
-    expect(inbox.getAttribute('aria-checked')).toBe('true')
+    await waitFor(() => expect(inbox.getAttribute('aria-checked')).toBe('true'))
     fireEvent.click(screen.getByRole('radio', { name: 'V1 Classic' }))
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Auto-settle days' }), {
       target: { value: '7' },
@@ -971,13 +2240,165 @@ describe('new chats', () => {
     })
   })
 
+  it('rolls back an optimistic sidebar setting when persistence fails', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let rejectUpdate: ((error: Error) => void) | undefined
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'sidebar.updateSettings') {
+        return new Promise((_, reject) => {
+          rejectUpdate = reject
+        })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
+
+    const classic = screen.getByRole('radio', { name: 'V1 Classic' })
+    const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
+    await waitFor(() => {
+      expect(classic.getAttribute('aria-checked')).toBe('true')
+    })
+
+    fireEvent.click(inbox)
+    expect(inbox.getAttribute('aria-checked')).toBe('true')
+
+    await act(async () => {
+      rejectUpdate?.(new Error('Could not save sidebar settings'))
+      await Promise.resolve()
+    })
+
+    expect(classic.getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('alert').textContent).toContain('Could not save sidebar settings')
+  })
+
+  it('does not let an older sidebar settings response overwrite a newer save', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const saves: Array<{
+      params: unknown
+      resolve: (settings: typeof serverSidebarSettings) => void
+    }> = []
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'sidebar.updateSettings') {
+        return new Promise((resolve) => {
+          saves.push({ params, resolve })
+        })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
+
+    const classic = screen.getByRole('radio', { name: 'V1 Classic' })
+    const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
+    await waitFor(() => {
+      expect(classic.getAttribute('aria-checked')).toBe('true')
+    })
+    fireEvent.click(inbox)
+    fireEvent.click(classic)
+
+    expect(saves.map((save) => save.params)).toEqual([{ mode: 'inbox' }, { mode: 'classic' }])
+    expect(classic.getAttribute('aria-checked')).toBe('true')
+
+    await act(async () => {
+      saves[1]!.resolve({ mode: 'classic', autoSettleDays: 3 })
+      await Promise.resolve()
+    })
+    await act(async () => {
+      saves[0]!.resolve({ mode: 'inbox', autoSettleDays: 3 })
+      await Promise.resolve()
+    })
+
+    expect(classic.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('keeps resynced sidebar settings authoritative across a later failed save', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let updateCount = 0
+    let rejectSecondUpdate: ((error: Error) => void) | undefined
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'sidebar.updateSettings') return request(method, params)
+      updateCount += 1
+      if (updateCount === 1) {
+        serverSidebarSettings = {
+          ...serverSidebarSettings,
+          ...(params as Partial<typeof serverSidebarSettings>),
+        }
+        return Promise.reject(new Error('Sidebar response was lost'))
+      }
+      return new Promise((_, reject) => {
+        rejectSecondUpdate = reject
+      })
+    })
+
+    render(<App />)
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
+
+    const classic = screen.getByRole('radio', { name: 'V1 Classic' })
+    const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
+    await waitFor(() => {
+      expect(classic.getAttribute('aria-checked')).toBe('true')
+    })
+
+    // The server persisted Inbox, but the lost response makes the client roll
+    // its optimistic choice back until a reconnect resyncs authoritative state.
+    fireEvent.click(inbox)
+    await waitFor(() => {
+      expect(classic.getAttribute('aria-checked')).toBe('true')
+    })
+    act(() => {
+      for (const listener of transport.sequenceGapListeners) listener(4, 6)
+    })
+    await waitFor(() => {
+      expect(inbox.getAttribute('aria-checked')).toBe('true')
+    })
+
+    const days = screen.getByRole('spinbutton', { name: 'Auto-settle days' })
+    fireEvent.change(days, { target: { value: '7' } })
+    expect((days as HTMLInputElement).value).toBe('7')
+
+    // A second gap read must update the confirmed base without erasing the
+    // still-pending local patch layered over it.
+    const readsBefore = transport.request.mock.calls.filter(
+      ([method]) => method === 'sidebar.settings',
+    ).length
+    act(() => {
+      for (const listener of transport.sequenceGapListeners) listener(7, 9)
+    })
+    await waitFor(() => {
+      expect(
+        transport.request.mock.calls.filter(([method]) => method === 'sidebar.settings'),
+      ).toHaveLength(readsBefore + 1)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect((days as HTMLInputElement).value).toBe('7')
+
+    await act(async () => {
+      rejectSecondUpdate?.(new Error('Could not save inactivity setting'))
+      await Promise.resolve()
+    })
+
+    expect(inbox.getAttribute('aria-checked')).toBe('true')
+    expect((days as HTMLInputElement).value).toBe('3')
+  })
+
   it('switches sidebar versions only from settings', async () => {
     serverSidebarSettings.mode = 'classic'
     render(<App />)
 
     expect(screen.queryByRole('button', { name: /Switch to V[12].*sidebar/ })).toBeNull()
     openSettings()
-    fireEvent.click(screen.getByRole('button', { name: 'Workflows' }))
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
     fireEvent.click(screen.getByRole('radio', { name: 'V2 Inbox' }))
 
     await waitFor(() => {
@@ -1130,6 +2551,31 @@ describe('new chats', () => {
     })
   })
 
+  it('pushes a mid-chat access-level change to the live thread', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('providers.list', {})
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Start a chat' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.start', expect.anything())
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Full access/ }))
+
+    expect(transport.request).toHaveBeenCalledWith('thread.setApproval', {
+      threadId: 'thread-1',
+      approval: 'full',
+    })
+  })
+
   it('switches the new chat project from the prompt', async () => {
     serverProjects = [
       {
@@ -1166,6 +2612,44 @@ describe('new chats', () => {
     )
   })
 
+  it('toggles an empty project without leaving the current new chat', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'Personal Harness',
+        pinned: false,
+        createdAt: 0,
+        sessions: [],
+      },
+      {
+        path: '/work/another-project',
+        name: 'Another Project',
+        pinned: false,
+        createdAt: 1,
+        sessions: [],
+      },
+    ]
+
+    render(<App />)
+    await screen.findByRole('heading', { name: 'What should we build in Personal Harness?' })
+
+    const anotherProject = screen.getByRole('button', { name: 'Another Project' })
+    fireEvent.click(anotherProject)
+
+    expect(anotherProject.getAttribute('aria-expanded')).toBe('true')
+    expect(within(anotherProject.closest('.proj')!).getByText('No chats')).toBeTruthy()
+    expect(screen.getByRole('heading').textContent).toBe(
+      'What should we build in Personal Harness?',
+    )
+    expect(screen.getByPlaceholderText('Do anything')).toBeTruthy()
+
+    fireEvent.click(anotherProject)
+    expect(anotherProject.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByRole('heading').textContent).toBe(
+      'What should we build in Personal Harness?',
+    )
+  })
+
   it('keeps an untouched session out of the sidebar until the first prompt', async () => {
     render(<App />)
     await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
@@ -1193,7 +2677,7 @@ describe('new chats', () => {
         workspacePath: '/work/project',
         approval: 'ask',
       })
-      expect(screen.getByRole('button', { name: 'Fix the sidebar' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: /^Fix the sidebar,/ })).toBeTruthy()
       expect(screen.getByTestId('thread').textContent).toContain('Fix the sidebar')
     })
   })
@@ -1268,6 +2752,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'thread-1',
         text: 'Use the fast lane',
+        clientSubmissionId: expect.stringMatching(/^local:/),
         model: 'gpt-5.6-sol',
         effort: 'xhigh',
         serviceTier: 'priority',
@@ -1347,6 +2832,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'thread-1',
         text: 'Keep the rank',
+        clientSubmissionId: expect.stringMatching(/^local:/),
         model: 'gpt-5.6-mini',
         effort: 'high',
       })
@@ -1394,18 +2880,30 @@ describe('new chats', () => {
         return Promise.resolve({
           models: [
             {
-              id: 'opus',
-              displayName: 'Opus 5',
+              id: 'sonnet',
+              displayName: 'Sonnet 5',
               isDefault: true,
               reasoningEfforts: ['low', 'high'],
               defaultReasoningEffort: 'low',
               serviceTiers: [],
+            },
+            {
+              id: 'opus',
+              displayName: 'Opus 5',
+              isDefault: false,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [{ id: 'fast', name: 'Fast', description: 'Faster responses' }],
+              defaultServiceTier: 'fast',
             },
           ],
         })
       }
       return request(method, params)
     })
+
+    // The flow below walks providers through the rail layout's provider tabs.
+    localStorage.setItem('harness.modelPickerLayout', 'rail')
 
     render(<App />)
 
@@ -1450,11 +2948,305 @@ describe('new chats', () => {
       expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
         'Effort: Low',
       )
+      expect(screen.getByRole('button', { name: 'Enable fast mode' })).toBeTruthy()
     })
+    localStorage.removeItem('harness.modelPickerLayout')
+  })
+
+  it('restores source memory when discovery replaces a missing selected model', async () => {
+    serverProviders = [
+      {
+        ...(serverProviders[0] as Record<string, unknown>),
+        id: 'claude-code',
+        displayName: 'Claude Code',
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models: [
+            {
+              id: 'opus',
+              displayName: 'Opus 5',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.model', 'codex:retired-model')
+    localStorage.setItem('harness.effort', 'high')
+    localStorage.setItem('harness.serviceTier', 'priority')
+    localStorage.setItem(
+      'harness.modelBySource',
+      JSON.stringify({ 'claude-code': { modelKey: 'claude-code:opus', effort: 'low' } }),
+    )
+
+    render(<App />)
+
+    await waitFor(() => {
+      const modelButton = screen.getByRole('button', { name: 'Model and reasoning' })
+      expect(modelButton.textContent).toContain('Opus 5')
+      expect(modelButton.textContent).toContain('Low')
+      expect(localStorage.getItem('harness.serviceTier')).toBeNull()
+    })
+  })
+
+  it('prefers current source memory when discovery removes its selected model', async () => {
+    serverProviders = [
+      ...serverProviders,
+      {
+        ...(serverProviders[0] as Record<string, unknown>),
+        id: 'claude-code',
+        displayName: 'Claude Code',
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        const claude = (params as { provider: string }).provider === 'claude-code'
+        return Promise.resolve({
+          models: claude
+            ? [
+                {
+                  id: 'sonnet',
+                  displayName: 'Sonnet 5',
+                  isDefault: true,
+                  reasoningEfforts: ['low', 'high'],
+                  defaultReasoningEffort: 'low',
+                  serviceTiers: [],
+                },
+                {
+                  id: 'opus',
+                  displayName: 'Opus 5',
+                  isDefault: false,
+                  reasoningEfforts: ['low', 'high'],
+                  defaultReasoningEffort: 'low',
+                  serviceTiers: [],
+                },
+              ]
+            : [cachedCodexChoice().model],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.provider', 'claude-code')
+    localStorage.setItem('harness.model', 'claude-code:retired-model')
+    localStorage.setItem(
+      'harness.modelBySource',
+      JSON.stringify({
+        'claude-code': { modelKey: 'claude-code:opus', effort: 'high' },
+      }),
+    )
+
+    render(<App />)
+
+    await waitFor(() => {
+      const modelButton = screen.getByRole('button', { name: 'Model and reasoning' })
+      expect(modelButton.textContent).toContain('Opus 5')
+      expect(modelButton.textContent).toContain('High')
+      expect(localStorage.getItem('harness.model')).toBe('claude-code:opus')
+    })
+  })
+
+  it('moves the complete setup to the visible fallback when hiding the selected source', async () => {
+    serverProviders = [
+      ...serverProviders,
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        installed: true,
+        auth: 'authenticated',
+        capabilities: {
+          steer: false,
+          fork: false,
+          interrupt: true,
+          reasoningItems: true,
+          approvals: false,
+          userInput: false,
+          autoReview: false,
+          images: false,
+        },
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models:
+            (params as { provider: string }).provider === 'codex'
+              ? [
+                  {
+                    id: 'gpt-5.6-sol',
+                    displayName: 'GPT-5.6 Sol',
+                    isDefault: true,
+                    reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+                    defaultReasoningEffort: 'medium',
+                    serviceTiers: [
+                      { id: 'standard', name: 'Balanced', description: 'Standard speed' },
+                      { id: 'priority', name: 'Fast', description: 'Faster responses' },
+                    ],
+                    defaultServiceTier: 'standard',
+                  },
+                ]
+              : [
+                  {
+                    id: 'opus',
+                    displayName: 'Opus 5',
+                    isDefault: true,
+                    reasoningEfforts: ['low', 'high'],
+                    defaultReasoningEffort: 'low',
+                    serviceTiers: [],
+                  },
+                ],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.effort', 'xhigh')
+    localStorage.setItem('harness.serviceTier', 'priority')
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Sol',
+      )
+    })
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Models' }))
+    fireEvent.click(
+      await screen.findByRole('switch', { name: 'Include GPT-5.6 Sol in model picker' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Back to app' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        'Opus 5',
+      )
+      expect(localStorage.getItem('harness.provider')).toBe('claude-code')
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Use the visible fallback' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.start', {
+        provider: 'claude-code',
+        workspacePath: '/work/project',
+        approval: 'ask',
+        model: 'opus',
+        effort: 'high',
+      })
+      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
+        threadId: 'thread-1',
+        text: 'Use the visible fallback',
+        clientSubmissionId: expect.stringMatching(/^local:/),
+        model: 'opus',
+        effort: 'high',
+      })
+    })
+  })
+
+  it('has no internal model setup when every catalog model is hidden', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models: [
+            {
+              id: 'gpt-5.6-sol',
+              displayName: 'GPT-5.6 Sol',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [{ id: 'priority', name: 'Fast', description: 'Faster responses' }],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.effort', 'high')
+    localStorage.setItem('harness.serviceTier', 'priority')
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Sol',
+      )
+    })
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Models' }))
+    fireEvent.click(
+      await screen.findByRole('switch', { name: 'Include GPT-5.6 Sol in model picker' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Back to app' }))
+
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.model')).toBeNull()
+      expect(localStorage.getItem('harness.effort')).toBeNull()
+      expect(localStorage.getItem('harness.serviceTier')).toBeNull()
+    })
+    transport.request.mockClear()
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Do not use a hidden model' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect((composer as HTMLTextAreaElement).value).toBe('Do not use a hidden model')
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
   })
 })
 
 describe('sidebar chat ordering', () => {
+  it('persists the order chosen by dragging a project row', async () => {
+    serverProjects = [
+      { path: '/work/first', name: 'First', pinned: false, createdAt: 0, sessions: [] },
+      { path: '/work/second', name: 'Second', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+
+    const source = (await screen.findByRole('button', { name: 'First' })).closest('section')!
+    const target = screen.getByRole('button', { name: 'Second' }).closest('section')!
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+      bottom: 80,
+      height: 30,
+      left: 0,
+      right: 200,
+      top: 50,
+      width: 200,
+      x: 0,
+      y: 50,
+      toJSON: () => ({}),
+    })
+    const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
+
+    fireEvent.dragStart(source, { dataTransfer })
+    fireEvent.dragOver(target, { clientY: 75, dataTransfer })
+    fireEvent.drop(target, { clientY: 75, dataTransfer })
+
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('harness.projectOrder') ?? '[]')).toEqual([
+        '/work/second',
+        '/work/first',
+      ])
+    })
+  })
+
   it('persists the order chosen by dragging a chat row', async () => {
     serverProjects = [
       {
@@ -1472,8 +3264,8 @@ describe('sidebar chat ordering', () => {
 
     render(<App />)
 
-    const source = (await screen.findByRole('button', { name: 'First chat' })).closest('li')!
-    const target = screen.getByRole('button', { name: 'Third chat' }).closest('li')!
+    const source = (await screen.findByRole('button', { name: /^First chat,/ })).closest('li')!
+    const target = screen.getByRole('button', { name: /^Third chat,/ }).closest('li')!
     vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
       bottom: 88,
       height: 28,
@@ -1589,9 +3381,8 @@ describe('inbox lifecycle', () => {
     ]
 
     render(<App />)
-    fireEvent.change(await screen.findByRole('combobox', { name: 'Sidebar project filter' }), {
-      target: { value: '/work/beta' },
-    })
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Sidebar project filter' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Beta' }))
     fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
 
     const picker = screen.getByRole('dialog', { name: 'Choose a project for the new thread' })
@@ -1626,9 +3417,9 @@ describe('inbox lifecycle', () => {
     ]
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Ready chat, project, Done' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Ready chat, project, Codex, Done' }))
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: 'Ready chat, project, Done' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Ready chat, project, Codex, Done' })).toBeNull()
       expect(screen.getByRole('button', { name: /^Ready chat, project,/ })).toBeTruthy()
       expect(screen.queryByText('Woke')).toBeNull()
     })
@@ -1655,13 +3446,14 @@ describe('global shortcuts', () => {
     ]
 
     render(<App />)
-    await screen.findByRole('button', { name: 'Polish the sidebar' })
+    await screen.findByRole('button', { name: 'Another Project' })
     fireEvent.keyDown(window, { key: 'k', metaKey: true })
 
     expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeTruthy()
     const search = screen.getByRole('textbox', { name: 'Search commands' })
     expect(document.activeElement).toBe(search)
     expect(screen.getByRole('option', { name: /Settings/ })).toBeTruthy()
+    expect(document.querySelector('.shortcut')).toBeNull()
     expect(
       screen.getByRole('option', { name: /^Another Project \/work\/another-project$/ }),
     ).toBeTruthy()
@@ -1671,9 +3463,30 @@ describe('global shortcuts', () => {
     fireEvent.keyDown(search, { key: 'Enter' })
 
     expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Polish the sidebar' }).classList).toContain(
+    expect(screen.getByRole('button', { name: /^Polish the sidebar,/ }).classList).toContain(
       'is-active',
     )
+  })
+
+  it('opens the keyboard shortcuts reference from the command palette as a modal', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    const search = screen.getByRole('textbox', { name: 'Search commands' })
+    fireEvent.change(search, { target: { value: 'keyboard' } })
+    fireEvent.keyDown(search, { key: 'Enter' })
+
+    const shortcuts = screen.getByRole('dialog', { name: 'Keyboard shortcuts' })
+    expect(shortcuts).toBeTruthy()
+    expect(within(shortcuts).getByText('Command palette')).toBeTruthy()
+    expect(within(shortcuts).getByText('⌘K')).toBeTruthy()
+
+    fireEvent.keyDown(shortcuts, { key: 'n', metaKey: true })
+    expect(screen.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeTruthy()
+
+    fireEvent.keyDown(shortcuts, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull()
   })
 
   it('opens the project switcher directly without rendering a top project control', async () => {
@@ -1696,11 +3509,11 @@ describe('global shortcuts', () => {
     ]
     render(<App />)
 
-    await screen.findByRole('button', { name: 'New session' })
+    await screen.findByRole('button', { name: /^New session,/ })
     const actions = document.querySelector<HTMLElement>('.rail__actions')
     expect(actions).not.toBeNull()
-    expect(within(actions!).getByText('⌘N')).toBeTruthy()
-    expect(within(actions!).getByText('⌘⇧O')).toBeTruthy()
+    expect(within(actions!).queryByText('⌘N')).toBeNull()
+    expect(within(actions!).queryByText('⌘⇧O')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Project' })).toBeNull()
 
     fireEvent.keyDown(window, { key: 'p', metaKey: true })
@@ -1713,7 +3526,7 @@ describe('global shortcuts', () => {
   it('runs common shortcuts and never intercepts them from the composer', async () => {
     render(<App />)
 
-    await screen.findByRole('button', { name: 'New session' })
+    await screen.findByRole('button', { name: /^New session,/ })
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Keep this draft intact' } })
     fireEvent.keyDown(composer, { key: 'n', metaKey: true })
@@ -1739,11 +3552,53 @@ describe('global shortcuts', () => {
     composer.blur()
     fireEvent.keyDown(window, { key: ',', metaKey: true })
     expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy()
+
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy()
+    expect(screen.queryByRole('dialog', { name: 'Search all chats' })).toBeNull()
   })
 })
 
 describe('live sessions', () => {
-  it('shows an old-chat submission and working controls before the server resumes it', async () => {
+  it('keeps a rename made while a provisional session is starting', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let resolveStart: ((value: { threadId: string }) => void) | undefined
+    const start = new Promise<{ threadId: string }>((resolve) => {
+      resolveStart = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.start' ? start : request(method, params),
+    )
+
+    render(<App />)
+    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('providers.list', {}))
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Initial request' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Rename Initial request' }))
+    const input = screen.getByDisplayValue('Initial request')
+    fireEvent.change(input, { target: { value: 'My custom title' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(transport.request).not.toHaveBeenCalledWith('thread.rename', {
+      threadId: expect.stringMatching(/^pending:/),
+      title: 'My custom title',
+    })
+    await act(async () => resolveStart?.({ threadId: 'thread-1' }))
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.rename', {
+        threadId: 'thread-1',
+        title: 'My custom title',
+      })
+    })
+  })
+
+  it('keeps an old-chat submission above a colder history response', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -1755,13 +3610,12 @@ describe('live sessions', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    const pendingSend = new Promise(() => {})
-    transport.request.mockImplementation((method: string, params: unknown) =>
-      method === 'thread.sendTurn' ? pendingSend : request(method, params),
-    )
+    let resolveHistory!: (value: { events: []; running: false }) => void
+    // prettier-ignore
+    transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.history' ? new Promise((resolve) => (resolveHistory = resolve)) : method === 'thread.sendTurn' ? new Promise(() => {}) : request(method, params))
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Old chat' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Old chat,/ }))
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Continue immediately' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
@@ -1769,6 +3623,132 @@ describe('live sessions', () => {
     expect(screen.getByTestId('thread').textContent).toContain('Continue immediately')
     expect(screen.getByText('Working')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
+    const startedAt = screen.getByTestId('thread').getAttribute('data-started-at')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    expect(transport.request).toHaveBeenCalledWith('thread.interrupt', { threadId: 'thread-1' })
+
+    await act(async () => resolveHistory({ events: [], running: false }))
+    expect(screen.getByTestId('thread').textContent).toContain('Continue immediately')
+    expect(screen.getByTestId('thread').getAttribute('data-started-at')).toBe(startedAt)
+  })
+
+  // prettier-ignore
+  it.each([['turn', 'accepted'], ['turn', 'rejected'], ['queue', 'accepted'], ['queue', 'rejected']] as const)(
+    'settles an indeterminate %s as %s only after reconnect history',
+    async (kind, outcome) => {
+      // prettier-ignore
+      serverProjects = [{ path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [{ id: 'thread-1', title: 'Existing work', running: false }, { id: 'thread-2', title: 'Background', running: false }] }]
+      const request = transport.request.getMockImplementation()!
+      let historyCount = 0
+      const resyncs: Array<(value: { events: unknown[]; running: boolean }) => void> = []
+      let rejectSend!: (error: Error) => void
+      // prettier-ignore
+      const started = { seq: 1, event: { type: 'turn.started', turn: { id: 't', threadId: 'thread-1', status: 'running', createdAt: 1 } } } as const
+      // prettier-ignore
+      const reconnect = () => act(() => { for (const listener of transport.stateListeners) listener('reconnecting'); for (const listener of transport.stateListeners) listener('open') })
+      // prettier-ignore
+      transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? new Promise((_, reject) => (rejectSend = reject)) : method === 'thread.history' && historyCount++ > 0 ? new Promise((resolve) => resyncs.push(resolve)) : request(method, params))
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
+      if (kind === 'queue') emitThreadEvent('thread-1', started.event)
+      const composer = screen.getByPlaceholderText('Do anything')
+      const draft = () => (composer as HTMLTextAreaElement).value
+      if (kind === 'queue') await (reconnect(), waitFor(() => expect(resyncs).toHaveLength(1)))
+      dropFile(composer, '/work/retry.png')
+      fireEvent.change(composer, { target: { value: 'Submit exactly once' } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+      // prettier-ignore
+      const submissionId = (transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')?.[1] as { clientSubmissionId: string }).clientSubmissionId
+      // prettier-ignore
+      const accepted = { seq: 2, event: { type: 'item.completed', item: { id: submissionId, turnId: 'turn-1', type: 'message', role: 'user', status: 'completed', text: 'Submit exactly once', createdAt: 1 } } } as const
+      await act(async () => rejectSend(new IndeterminateRequestError('socket lost')))
+      if (kind === 'queue') await act(async () => resyncs[0]?.({ events: [started], running: true }))
+      else reconnect()
+      await waitFor(() => expect(resyncs).toHaveLength(kind === 'queue' ? 2 : 1))
+      // prettier-ignore
+      expect([kind === 'queue' ? screen.queryByLabelText('Queued prompts')?.textContent : screen.getByTestId('thread').textContent, draft()]).toEqual([expect.stringContaining('Submit exactly once'), ''])
+      if (kind === 'turn' && outcome === 'accepted') emitThreadEvent('thread-1', started.event)
+      // prettier-ignore
+      await act(async () => resyncs.at(-1)?.({ events: outcome === 'rejected' && kind === 'turn' ? [started] : outcome === 'accepted' && kind === 'queue' ? [accepted] : [], running: kind === 'queue' }))
+      if (outcome === 'accepted') {
+        emitThreadEvent('thread-1', accepted.event)
+        // prettier-ignore
+        expect([draft(), screen.getByText('Submit exactly once').dataset.itemId]).toEqual(['', submissionId])
+      } else {
+        // prettier-ignore
+        expect([within(screen.getByTestId('thread')).queryByText('Submit exactly once'), kind === 'turn' ? screen.queryByText('Working') : null, draft()]).toEqual([null, null, 'Submit exactly once'])
+        expect(screen.getByRole('button', { name: 'Remove retry.png' })).toBeTruthy()
+      }
+      if (kind !== 'queue') return
+      expect(screen.queryByLabelText('Queued prompts')).toBeNull()
+      if (outcome === 'accepted') return
+      fireEvent.change(composer, { target: { value: 'Edited queue' } })
+      fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
+      fireEvent.click(screen.getByRole('button', { name: /^Existing work/ }))
+      expect(draft()).toBe('Edited queue')
+      fireEvent.change(composer, { target: { value: '' } })
+      fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
+      fireEvent.click(screen.getByRole('button', { name: /^Existing work/ }))
+      expect(draft()).toBe('')
+    },
+  )
+
+  it('restores the draft and removes its optimistic row when the server rejects a turn', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-1', title: 'Old chat', running: false },
+          { id: 'thread-2', title: 'Background', running: false },
+        ],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let rejectSend: ((reason: Error) => void) | undefined
+    const pendingSend = new Promise((_, reject) => {
+      rejectSend = reject
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn' ? pendingSend : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Old chat,/ }))
+    await waitForInitialWorkspace()
+    transport.request.mockClear()
+    const composer = screen.getByPlaceholderText('Do anything')
+    dropFile(composer, '/work/reference.png')
+    fireEvent.change(composer, { target: { value: 'Keep this if restore wins' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(screen.getByTestId('thread').textContent).toContain('Keep this if restore wins')
+    expect(screen.getByText('Working')).toBeTruthy()
+    expect((composer as HTMLTextAreaElement).value).toBe('')
+
+    await act(async () => {
+      rejectSend?.(new Error('cannot start a turn while restoring a checkpoint'))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('thread').textContent).not.toContain('Keep this if restore wins')
+      expect((composer as HTMLTextAreaElement).value).toBe('Keep this if restore wins')
+      expect(screen.getByRole('button', { name: 'Remove reference.png' })).toBeTruthy()
+    })
+    expect(screen.queryByText('Working')).toBeNull()
+    expect(screen.getByRole('alert').textContent).toContain(
+      'cannot start a turn while restoring a checkpoint',
+    )
+    expect(rpcCount('workspace.info')).toBe(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Remove reference.png' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Old chat,/ }))
+    expect((composer as HTMLTextAreaElement).value).toBe('Keep this if restore wins')
+    expect(screen.queryByRole('button', { name: 'Remove reference.png' })).toBeNull()
   })
 
   it('queues Enter submissions while the active session is running', async () => {
@@ -1795,7 +3775,7 @@ describe('live sessions', () => {
     })
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
     emitThreadEvent('thread-1', {
       type: 'turn.started',
       turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
@@ -1809,34 +3789,88 @@ describe('live sessions', () => {
     expect(screen.getByLabelText('Queued prompts').textContent).toContain('Queue this next')
     expect(screen.getByTestId('thread').textContent).not.toContain('Queue this next')
 
+    let submissionId = ''
+    await waitFor(() => {
+      const call = transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')
+      submissionId = (call?.[1] as { clientSubmissionId?: string }).clientSubmissionId ?? ''
+      expect(submissionId).toMatch(/^local:/)
+    })
     await act(async () =>
       resolveSend?.({
         queued: true,
         queuedTurn: {
-          id: 'queued-1',
+          id: submissionId,
           text: 'Queue this next',
           attachments: [],
           createdAt: 1,
         },
       }),
     )
-    await waitFor(() => {
-      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
-        threadId: 'thread-1',
-        text: 'Queue this next',
-      })
-    })
     fireEvent.click(screen.getByRole('button', { name: 'Remove Queue this next from queue' }))
     expect(transport.request).toHaveBeenCalledWith('thread.deleteQueuedTurn', {
       threadId: 'thread-1',
-      queuedTurnId: 'queued-1',
+      queuedTurnId: submissionId,
     })
   })
 
-  it('acknowledges Stop instead of looking inert until the turn unwinds', async () => {
-    // Providers can take a second or two to stop. With no acknowledged state
-    // the button looked dead, so people pressed it repeatedly and concluded
-    // that stopping does not work.
+  it('keeps rapid queued prompts ordered when acknowledgements arrive backwards', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Existing work', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    const sends: Array<
+      (value: {
+        queued: true
+        queuedTurn: { id: string; text: string; attachments: string[]; createdAt: number }
+      }) => void
+    > = []
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn'
+        ? new Promise((resolve) => sends.push(resolve))
+        : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
+    emitThreadEvent('thread-1', {
+      type: 'turn.started',
+      turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    for (const text of ['First queued', 'Second queued']) {
+      fireEvent.change(composer, { target: { value: text } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+    }
+    await waitFor(() => expect(sends).toHaveLength(2))
+
+    await act(async () =>
+      sends[1]?.({
+        queued: true,
+        queuedTurn: { id: 'second', text: 'Second queued', attachments: [], createdAt: 2 },
+      }),
+    )
+    expect(
+      Array.from(document.querySelectorAll('.queue-row__text'), (row) => row.textContent),
+    ).toEqual(['First queued', 'Second queued'])
+    await act(async () =>
+      sends[0]?.({
+        queued: true,
+        queuedTurn: { id: 'first', text: 'First queued', attachments: [], createdAt: 1 },
+      }),
+    )
+
+    expect(
+      Array.from(document.querySelectorAll('.queue-row__text'), (row) => row.textContent),
+    ).toEqual(['First queued', 'Second queued'])
+  })
+
+  it('returns the active chat to an idle presentation immediately after Stop', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -1848,7 +3882,7 @@ describe('live sessions', () => {
     ]
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
     emitThreadEvent('thread-1', {
       type: 'turn.started',
       turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
@@ -1857,9 +3891,9 @@ describe('live sessions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
     expect(transport.request).toHaveBeenCalledWith('thread.interrupt', { threadId: 'thread-1' })
 
-    // Pending: named so, and no longer clickable — one interrupt is enough.
-    const stopping = await screen.findByRole('button', { name: 'Stopping…' })
-    expect((stopping as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.queryByText('Working')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Stopping…' })).toBeNull()
 
     // The turn actually ending is what clears it.
     emitThreadEvent('thread-1', {
@@ -1867,7 +3901,7 @@ describe('live sessions', () => {
       turnId: 'turn-1',
       status: 'interrupted',
     })
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stopping…' })).toBeNull())
+    expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy()
   })
 
   it('steers the active turn with Ctrl+Enter instead of leaving a queued prompt', async () => {
@@ -1882,6 +3916,7 @@ describe('live sessions', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
+    let submissionId = ''
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'thread.history') {
         return Promise.resolve({
@@ -1903,10 +3938,11 @@ describe('live sessions', () => {
         })
       }
       if (method === 'thread.sendTurn') {
+        submissionId = (params as { clientSubmissionId?: string }).clientSubmissionId ?? ''
         return Promise.resolve({
           queued: true,
           queuedTurn: {
-            id: 'queued-steer',
+            id: submissionId,
             text: 'Use this direction now',
             attachments: [],
             createdAt: 1,
@@ -1917,7 +3953,7 @@ describe('live sessions', () => {
     })
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Existing work' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.queue', { threadId: 'thread-1' }),
     )
@@ -1939,15 +3975,30 @@ describe('live sessions', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'thread-1',
         text: 'Use this direction now',
+        clientSubmissionId: submissionId,
       }),
     )
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.steerQueuedTurn', {
         threadId: 'thread-1',
-        queuedTurnId: 'queued-steer',
+        queuedTurnId: submissionId,
       })
     })
-    expect(screen.getByTestId('thread').textContent).toContain('Use this direction now')
+    emitThreadEvent('thread-1', {
+      type: 'item.completed',
+      item: {
+        id: submissionId,
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: 'Use this direction now',
+        createdAt: 1,
+      },
+    })
+    expect(screen.getByText('Use this direction now').getAttribute('data-item-id')).toBe(
+      submissionId,
+    )
     expect(screen.queryByLabelText('Queued prompts')).toBeNull()
   })
 
@@ -1968,7 +4019,7 @@ describe('live sessions', () => {
 
     render(<App />)
 
-    await screen.findByRole('button', { name: 'Newer session' })
+    await screen.findByRole('button', { name: /^Newer session,/ })
     expect(sessionTitles()).toEqual(['Newer session', 'Older session'])
 
     emitThreadEvent('thread-1', {
@@ -1981,7 +4032,7 @@ describe('live sessions', () => {
 
   it('folds streamed deltas once per animation frame', async () => {
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     await screen.findByTestId('thread')
     emitThreadEvent('untouched-thread', {
       type: 'turn.started',
@@ -1999,7 +4050,6 @@ describe('live sessions', () => {
         createdAt: 0,
       },
     })
-
     const frames: FrameRequestCallback[] = []
     const requestFrame = vi
       .spyOn(window, 'requestAnimationFrame')
@@ -2028,7 +4078,7 @@ describe('live sessions', () => {
 
   it('keeps static shell regions out of streamed-frame renders', async () => {
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     await screen.findByTestId('thread')
     emitThreadEvent('untouched-thread', {
       type: 'turn.started',
@@ -2054,6 +4104,7 @@ describe('live sessions', () => {
     })
     shellRenders.sidebar.mockClear()
     shellRenders.stageHeader.mockClear()
+    shellRenders.composer.mockClear()
 
     emitThreadEvent('untouched-thread', {
       type: 'item.delta',
@@ -2065,11 +4116,12 @@ describe('live sessions', () => {
 
     expect(shellRenders.sidebar).not.toHaveBeenCalled()
     expect(shellRenders.stageHeader).not.toHaveBeenCalled()
+    expect(shellRenders.composer).not.toHaveBeenCalled()
   })
 
   it('keeps open utility surfaces out of streamed-frame renders', async () => {
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     await screen.findByTestId('thread')
     emitThreadEvent('untouched-thread', {
       type: 'turn.started',
@@ -2088,7 +4140,7 @@ describe('live sessions', () => {
       },
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open terminal' }))
     await screen.findByTestId('terminal-pane')
     fireEvent.keyDown(window, { key: 'k', metaKey: true })
     const palette = screen.getByRole('dialog', { name: 'Command palette' })
@@ -2147,9 +4199,62 @@ describe('live sessions', () => {
     expect(utilityRenders.terminalPane).not.toHaveBeenCalled()
   })
 
+  it('opens chat search without rerendering the app shell', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    const branchPicker = await screen.findByRole('button', { name: 'Choose branch' })
+    await waitFor(() => expect((branchPicker as HTMLButtonElement).disabled).toBe(false))
+    appRenders.mockClear()
+
+    const opener = screen.getByRole('button', { name: 'Search chats' })
+    opener.focus()
+    fireEvent.click(opener)
+
+    const search = await screen.findByRole('combobox', { name: 'Search every chat' })
+    expect(appRenders).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(search, { key: 'Escape' })
+    expect(document.activeElement).toBe(opener)
+  })
+
+  it('returns focus to the keyboard shortcut opener after closing chat search', async () => {
+    render(<App />)
+    const composer = await screen.findByPlaceholderText('Do anything')
+    composer.focus()
+
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    const search = await screen.findByRole('combobox', { name: 'Search every chat' })
+    expect(document.activeElement).toBe(search)
+
+    fireEvent.keyDown(search, { key: 'Escape' })
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Search all chats' })).toBeNull(),
+    )
+    expect(document.activeElement).toBe(composer)
+  })
+
+  it('returns focus to inbox search after the command palette opener unmounts', async () => {
+    serverSidebarSettings.mode = 'inbox'
+    render(<App />)
+    const inboxSearch = await screen.findByRole('textbox', { name: 'Search threads' })
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    const commandSearch = screen.getByRole('textbox', { name: 'Search commands' })
+    fireEvent.change(commandSearch, { target: { value: 'search all chats' } })
+    fireEvent.keyDown(commandSearch, { key: 'Enter' })
+    const sessionSearch = await screen.findByRole('combobox', { name: 'Search every chat' })
+
+    fireEvent.keyDown(sessionSearch, { key: 'Escape' })
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Search all chats' })).toBeNull(),
+    )
+    expect(document.activeElement).toBe(inboxSearch)
+  })
+
   it('flushes pending deltas before a completion event', async () => {
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     await screen.findByTestId('thread')
     emitThreadEvent('untouched-thread', {
       type: 'turn.started',
@@ -2200,7 +4305,7 @@ describe('live sessions', () => {
       method === 'thread.history' ? history : defaultRequest(method, params),
     )
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'New session' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     await screen.findByTestId('thread')
 
     const frames: FrameRequestCallback[] = []
@@ -2253,7 +4358,7 @@ describe('live sessions', () => {
 
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'First session' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^First session,/ }))
     emitThreadEvent('thread-1', {
       type: 'turn.started',
       turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
@@ -2271,10 +4376,10 @@ describe('live sessions', () => {
       },
     })
 
-    const working = screen.getByRole('button', { name: 'First session, working' })
+    const working = screen.getByRole('button', { name: 'First session, Codex, working' })
     expect(working.querySelector('.sess__spinner')?.textContent).toBe('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Second session' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Second session,/ }))
     emitThreadEvent('thread-2', {
       type: 'turn.started',
       turn: { id: 'turn-2', threadId: 'thread-2', status: 'running', createdAt: 0 },
@@ -2290,11 +4395,11 @@ describe('live sessions', () => {
     })
 
     const attention = screen.getByRole('button', {
-      name: 'Second session, waiting for approval',
+      name: 'Second session, Codex, waiting for approval',
     })
     expect(attention.querySelector('.sess__status-dot.is-attention')).not.toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'First session, working' }))
+    fireEvent.click(screen.getByRole('button', { name: 'First session, Codex, working' }))
     await waitFor(() => expect(screen.getByText('First result')).toBeTruthy())
 
     emitThreadEvent('thread-1', {
@@ -2302,14 +4407,25 @@ describe('live sessions', () => {
       turnId: 'turn-1',
       status: 'completed',
     })
-    expect(screen.getByRole('button', { name: 'First session' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'First session, Codex' })).toBeTruthy()
   })
 })
 
-function emitThreadEvent(threadId: string, event: DomainEvent) {
+function dropFile(composer: HTMLElement, path: string) {
+  const file = new File(['test'], path.split('/').at(-1) ?? 'attachment')
+  Object.defineProperty(file, 'path', { value: path })
+  fireEvent.drop(composer.closest('.composer__box')!, { dataTransfer: { files: [file] } })
+}
+
+function emitThreadEvent(threadId: string, event: DomainEvent, seq?: number) {
   act(() => {
-    transport.listeners.get('thread.event')?.({ threadId, event })
+    transport.listeners.get('thread.event')?.({ threadId, event, seq })
   })
+}
+
+function completedHistoryEvent(seq: number, id: string, text: string) {
+  // prettier-ignore
+  return { seq, event: { type: 'item.completed' as const, item: { id, turnId: 'turn-1', type: 'message' as const, role: 'assistant' as const, status: 'completed' as const, text, createdAt: seq } } }
 }
 
 function emitQueue(
@@ -2337,7 +4453,7 @@ describe('reopening a session', () => {
     render(<App />)
     await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
 
-    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
 
     // The conversation used to exist only in the events this client had
     // personally seen, so switching or reloading showed nothing.
@@ -2349,5 +4465,548 @@ describe('reopening a session', () => {
     expect(screen.queryByText('75% left')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     expect(await screen.findByText('75% left')).toBeTruthy()
+  })
+
+  it('uses a visible same-source model when the remembered one is hidden', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models: [
+            {
+              id: 'gpt-5.6-sol',
+              displayName: 'GPT-5.6 Sol',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              serviceTiers: [],
+            },
+            {
+              id: 'gpt-5.6-mini',
+              displayName: 'GPT-5.6 Mini',
+              isDefault: false,
+              reasoningEfforts: ['low', 'high'],
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.provider', 'claude-code')
+    localStorage.setItem('harness.model', 'custom:claude-code:opus')
+    localStorage.setItem(
+      'harness.customModels.v1',
+      JSON.stringify([{ provider: 'claude-code', modelId: 'opus', displayName: 'Opus 5' }]),
+    )
+    localStorage.setItem('harness.hiddenModels', JSON.stringify(['codex:gpt-5.6-mini']))
+    localStorage.setItem(
+      'harness.modelBySource',
+      JSON.stringify({ codex: { modelKey: 'codex:gpt-5.6-mini' } }),
+    )
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        'Opus 5',
+      )
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Sol',
+      )
+    })
+
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Keep this model' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
+        threadId: 'untouched-thread',
+        text: 'Keep this model',
+        clientSubmissionId: expect.stringMatching(/^local:/),
+        model: 'gpt-5.6-sol',
+        effort: 'low',
+      })
+    })
+  })
+
+  it('keeps a server-bound API session active while beta discovery is pending', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          {
+            id: 'api-thread',
+            title: 'API thread',
+            provider: 'api',
+            createdAt: 0,
+            running: false,
+          },
+        ],
+      },
+    ]
+    let releaseModels!: () => void
+    const modelsGate = new Promise<void>((resolve) => {
+      releaseModels = resolve
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'providers.list') {
+        return modelsGate.then(() => ({ providers: serverProviders }))
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'API thread, API connection' }))
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.provider')).toBe('api')
+      expect(screen.queryByRole('button', { name: 'Model and reasoning' })).toBeNull()
+    })
+
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Use the session provider' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      const optimistic = screen.getByText('Use the session provider').getAttribute('data-item-id')
+      expect(optimistic).toMatch(/^local:/)
+      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
+        threadId: 'api-thread',
+        text: 'Use the session provider',
+        clientSubmissionId: optimistic,
+      })
+    })
+    await act(async () => {
+      releaseModels()
+      await modelsGate
+    })
+  })
+
+  it('preserves exact parked ACP memory without offering its loaded source', async () => {
+    serverProjects = [
+      {
+        ...(serverProjects[0] as Record<string, unknown>),
+        sessions: [
+          {
+            id: 'acp-thread',
+            title: 'ACP thread',
+            provider: 'acp',
+            agent: 'kimi',
+            createdAt: 0,
+            running: false,
+          },
+        ],
+      },
+    ]
+    localStorage.setItem(
+      'harness.modelBySource',
+      JSON.stringify({
+        'acp:kimi': { modelKey: 'acp:kimi:model-x', effort: 'high' },
+      }),
+    )
+
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'ACP thread, Kimi CLI' }))
+    await screen.findByText('Provider unavailable')
+    expect(screen.queryByRole('button', { name: 'Model and reasoning' })).toBeNull()
+    expect(JSON.parse(localStorage.getItem('harness.modelBySource') ?? '{}')).toMatchObject({
+      'acp:kimi': { modelKey: 'acp:kimi:model-x', effort: 'high' },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    const composer = screen.getByPlaceholderText('Do anything')
+    const sendButton = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
+    fireEvent.change(composer, { target: { value: 'Start on the beta source' } })
+    await waitFor(() => expect(sendButton.disabled).toBe(false))
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    const betaStart = expect.objectContaining({ provider: 'codex' })
+    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('thread.start', betaStart))
+  })
+
+  it('does not display a fallback from another provider after hiding the session source', async () => {
+    serverProviders = [
+      ...serverProviders,
+      {
+        ...(serverProviders[0] as Record<string, unknown>),
+        id: 'claude-code',
+        displayName: 'Claude Code',
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        const claude = (params as { provider: string }).provider === 'claude-code'
+        return Promise.resolve({
+          models: [
+            {
+              id: claude ? 'opus' : 'gpt-5.6-sol',
+              displayName: claude ? 'Opus 5' : 'GPT-5.6 Sol',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Models' }))
+    fireEvent.click(
+      await screen.findByRole('switch', { name: 'Include GPT-5.6 Sol in model picker' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Back to app' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Model and reasoning' })).toBeNull()
+      expect(localStorage.getItem('harness.provider')).toBe('codex')
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Stay with the session provider' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
+        threadId: 'untouched-thread',
+        text: 'Stay with the session provider',
+        clientSubmissionId: expect.stringMatching(/^local:/),
+      })
+    })
+  })
+
+  it('catches up only the missing durable suffix when the transport detects a push gap', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let historyRead = 0
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.history') {
+        historyRead += 1
+        return Promise.resolve(
+          historyRead === 1
+            ? { events: [completedHistoryEvent(7, 'base', 'Durable base')], running: false }
+            : {
+                events: [completedHistoryEvent(9, 'suffix', 'Missing suffix')],
+                running: false,
+              },
+        )
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+    await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'untouched-thread',
+      })
+    })
+    expect(await screen.findByText('Durable base')).toBeTruthy()
+    emitThreadEvent(
+      'untouched-thread',
+      {
+        type: 'item.completed',
+        item: {
+          id: 'live',
+          turnId: 'turn-1',
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          text: 'Durable live event',
+          createdAt: 8,
+        },
+      },
+      8,
+    )
+    transport.request.mockClear()
+
+    act(() => {
+      for (const listener of transport.sequenceGapListeners) listener(4, 6)
+    })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'untouched-thread',
+        afterSeq: 8,
+      })
+      expect(transport.request).toHaveBeenCalledWith('thread.queue', {
+        threadId: 'untouched-thread',
+      })
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        threadId: 'untouched-thread',
+      })
+      expect(transport.request).toHaveBeenCalledWith('projects.list', {})
+      expect(transport.request).toHaveBeenCalledWith('sidebar.settings', {})
+    })
+    const text = screen.getByTestId('thread').textContent
+    expect(text).toContain('Durable base')
+    expect(text).toContain('Durable live event')
+    expect(text).toContain('Missing suffix')
+  })
+
+  it('applies a cached background session suffix when it is reopened', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-1', title: 'Foreground', running: false },
+          { id: 'thread-2', title: 'Background', running: false },
+        ],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let foregroundReads = 0
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'thread.history') return request(method, params)
+      const { threadId } = params as { threadId: string }
+      if (threadId !== 'thread-1') return Promise.resolve({ events: [], running: false })
+      foregroundReads += 1
+      return Promise.resolve({
+        events: [
+          foregroundReads === 1
+            ? completedHistoryEvent(4, 'base', 'Cached base')
+            : completedHistoryEvent(5, 'suffix', 'Background suffix'),
+        ],
+        running: false,
+      })
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Foreground,/ }))
+    expect(await screen.findByText('Cached base')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
+    await waitFor(() =>
+      expect(screen.getByTestId('thread').textContent).not.toContain('Cached base'),
+    )
+    transport.request.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /^Foreground,/ }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'thread-1',
+        afterSeq: 4,
+      }),
+    )
+    const text = screen.getByTestId('thread').textContent
+    expect(text).toContain('Cached base')
+    expect(text).toContain('Background suffix')
+  })
+
+  it('does not advance past a deferred delta and ignores duplicate durable pushes', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let historyRead = 0
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'thread.history') return request(method, params)
+      historyRead += 1
+      return Promise.resolve(
+        historyRead === 1
+          ? {
+              events: [
+                {
+                  seq: 1,
+                  event: {
+                    type: 'turn.started' as const,
+                    turn: {
+                      id: 'turn-1',
+                      threadId: 'untouched-thread',
+                      status: 'running' as const,
+                      createdAt: 1,
+                    },
+                  },
+                },
+                {
+                  seq: 2,
+                  event: {
+                    type: 'item.started' as const,
+                    item: {
+                      id: 'streaming',
+                      turnId: 'turn-1',
+                      type: 'message' as const,
+                      role: 'assistant' as const,
+                      status: 'started' as const,
+                      text: '',
+                      createdAt: 2,
+                    },
+                  },
+                },
+              ],
+              running: true,
+            }
+          : {
+              events: [
+                {
+                  seq: 3,
+                  event: {
+                    type: 'item.delta' as const,
+                    turnId: 'turn-1',
+                    itemId: 'streaming',
+                    textDelta: 'Once',
+                  },
+                },
+              ],
+              running: true,
+            },
+      )
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'untouched-thread',
+      }),
+    )
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    transport.request.mockClear()
+
+    const delta = {
+      type: 'item.delta' as const,
+      turnId: 'turn-1',
+      itemId: 'streaming',
+      textDelta: 'Once',
+    }
+    emitThreadEvent('untouched-thread', delta, 3)
+    emitThreadEvent('untouched-thread', delta, 3)
+    emitThreadEvent('untouched-thread', { ...delta, textDelta: ' stale' }, 2)
+    act(() => {
+      for (const listener of transport.sequenceGapListeners) listener(4, 6)
+    })
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'untouched-thread',
+        afterSeq: 2,
+      }),
+    )
+    expect(screen.getByText('Once').textContent).toBe('Once')
+    act(() => frames.shift()?.(performance.now()))
+    expect(screen.getByText('Once').textContent).toBe('Once')
+    expect(screen.queryByText(/stale/)).toBeNull()
+  })
+
+  it('resyncs active server-owned state after reconnecting mid-stream', async () => {
+    render(<App />)
+    await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'untouched-thread',
+      })
+    })
+    transport.request.mockClear()
+
+    act(() => {
+      for (const listener of transport.stateListeners) listener('reconnecting')
+      for (const listener of transport.stateListeners) listener('open')
+    })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'untouched-thread',
+        afterSeq: 0,
+      })
+      expect(transport.request).toHaveBeenCalledWith('thread.queue', {
+        threadId: 'untouched-thread',
+      })
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        threadId: 'untouched-thread',
+      })
+      expect(transport.request).toHaveBeenCalledWith('projects.list', {})
+      expect(transport.request).toHaveBeenCalledWith('sidebar.settings', {})
+    })
+  })
+
+  it('keeps newer durable and live events when an older history load resolves last', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const historyResolvers: Array<
+      (value: { events: Array<{ seq: number; event: DomainEvent }>; running: boolean }) => void
+    > = []
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.history') {
+        return new Promise((resolve) => historyResolvers.push(resolve))
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+    await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    await waitFor(() => expect(historyResolvers).toHaveLength(1))
+    act(() => {
+      for (const listener of transport.stateListeners) listener('reconnecting')
+      for (const listener of transport.stateListeners) listener('open')
+    })
+    await waitFor(() => expect(historyResolvers).toHaveLength(2))
+
+    emitThreadEvent('untouched-thread', {
+      type: 'item.completed',
+      item: {
+        id: 'live-item',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: 'Live during reconnect',
+        createdAt: 3,
+      },
+    })
+    // prettier-ignore
+    emitThreadEvent('untouched-thread', { type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+    const historyEvent = (id: string, text: string): { seq: number; event: DomainEvent } => ({
+      seq: 1,
+      event: {
+        type: 'item.completed',
+        item: {
+          id,
+          turnId: 'turn-1',
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          text,
+          createdAt: 1,
+        },
+      },
+    })
+    await act(async () =>
+      historyResolvers[1]?.({ events: [historyEvent('newer', 'Newer history')], running: true }),
+    )
+    await act(async () =>
+      historyResolvers[0]?.({ events: [historyEvent('older', 'Older history')], running: false }),
+    )
+
+    const text = screen.getByTestId('thread').textContent
+    expect(text).toContain('Newer history')
+    expect(text).toContain('Live during reconnect')
+    expect(text).not.toContain('Older history')
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
   })
 })

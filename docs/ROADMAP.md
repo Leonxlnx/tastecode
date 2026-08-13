@@ -115,10 +115,19 @@ empty repo._
 
 ### M8 — Mobile
 
-Expo app reusing the same protocol. Session list, push notifications, read, approve, steer,
-diff review, voice. Connection over Tailscale/LAN first — a relay only later, opt-in, and
+Native SwiftUI app reusing the same protocol. Pairing, project and session browsing,
+attachments, read, approve, steer and diff review are implemented; push notifications and voice
+finish the milestone. Connection over Tailscale/LAN first — a relay only later, opt-in, and
 end-to-end encrypted.
 → _Approve a diff from your phone._
+
+**Shipped ahead of the milestone:** the full web app on a phone — the same UI as the
+harness desktop, served by the server from the built web client at
+`http://<tailscale-ip>:4312/#access_token=…` (stable across restarts, bookmarked once).
+The page derives its socket from its own origin, so no per-machine URL is baked in. A
+management console is deliberately not a web page — device management (see devices, copy
+URLs and pairing codes, revoke) lives in the desktop app's Settings under Mobile access.
+The web surface stays reachable while the server runs; native-app access toggles separately.
 
 ---
 
@@ -143,5 +152,7 @@ end-to-end encrypted.
 3. **Any commercial intent, ever?** Decides the license, and it's irreversible once outside
    contributors arrive.
 4. **What is the final TasteSkill v2 runtime contract?** M4 depends on it.
-5. **Web / self-host surface at launch?** Nearly free architecturally, but doubles the
-   support and security surface.
+5. **Web / self-host surface at launch?** The web app for phones is shipped (stable URL,
+   full harness UI over Tailscale/LAN); device management lives in the desktop app, not on
+   a web page. Full app hosting — serving the whole UI to any browser — still nearly free
+   architecturally, but doubles the support and security surface.

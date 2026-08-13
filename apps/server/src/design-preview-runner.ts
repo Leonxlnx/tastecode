@@ -1,10 +1,12 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { readFileSync, realpathSync } from 'node:fs'
+import { createServer } from 'node:net'
 import path from 'node:path'
 import type { PreviewPlan } from '@harness/design-agent'
 import { spawnCli } from '@harness/proc'
 import { existingWorkspacePath } from './api-workspace-paths.js'
+import { startStaticDesignPreview } from './design-static-preview.js'
 import { safeCommandEnvironment } from './safe-command-environment.js'
 
 /**
@@ -15,7 +17,10 @@ import { safeCommandEnvironment } from './safe-command-environment.js'
  */
 const COMMANDS = new Set(['bun', 'node', 'npm', 'pnpm', 'yarn'])
 const UNSAFE_ARG = /[&|<>^%!"\r\n()]/
+const PACKAGE_SCOPE_ARG =
+  /^-(?:C|F|r|w)|^--(?:cwd|dir|prefix|filter(?:-prod)?|recursive|workspace(?:-root|s)?|include-workspace-root)(?:=|$)/
 const MAX_OUTPUT_BYTES = 100_000
+const startingPreviewPorts = new Set<number>()
 
 export type RunningPreview = {
   url: string
@@ -29,42 +34,91 @@ export async function startDesignPreview(
   plan: PreviewPlan,
   timeoutMs = 30_000,
 ): Promise<RunningPreview> {
+  const workspace = realpathSync(workspacePath)
+  const cwd = existingWorkspacePath(workspace, plan.cwd, true)
+  if (plan.kind === 'static') {
+    return startStaticDesignPreview(cwd, plan)
+  }
   if (!COMMANDS.has(plan.command)) throw new Error('preview command is not allowed')
   if (plan.args.some((arg) => UNSAFE_ARG.test(arg))) {
     throw new Error('preview command argument is unsafe')
   }
-  const workspace = realpathSync(workspacePath)
-  const cwd = existingWorkspacePath(workspace, plan.cwd, true)
   assertRunsWorkspaceCode(workspace, cwd, plan)
-  const child = spawnCli(plan.command, plan.args, {
-    cwd,
-    replaceEnv: true,
-    env: safeCommandEnvironment(workspace),
-  })
-  child.stdin.end()
-
+  const commandArgs =
+    plan.command === 'node' || plan.args[0] === 'run' ? plan.args : ['run', ...plan.args]
+  const releaseStart = claimPreviewStart(plan.url)
+  let child: ChildProcessWithoutNullStreams | undefined
   let output = ''
-  const append = (chunk: string) => {
-    output = `${output}${chunk}`.slice(-MAX_OUTPUT_BYTES)
-  }
-  child.stdout.setEncoding('utf8')
-  child.stderr.setEncoding('utf8')
-  child.stdout.on('data', append)
-  child.stderr.on('data', append)
-
   try {
-    await waitForPreview(child, plan.url, timeoutMs, () => output)
+    await assertPreviewPortAvailable(plan.url)
+    const environment = safeCommandEnvironment(workspace)
+    child =
+      process.platform === 'win32'
+        ? spawnCli(plan.command, commandArgs, { cwd, replaceEnv: true, env: environment })
+        : spawn(plan.command, commandArgs, {
+            cwd,
+            env: environment,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            detached: true,
+          })
+    const childFailure = watchPreviewChild(child)
+    child.stdin.end()
+    const append = (chunk: string) => {
+      output = `${output}${chunk}`.slice(-MAX_OUTPUT_BYTES)
+    }
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', append)
+    child.stderr.on('data', append)
+    await waitForPreview(child, plan.url, timeoutMs, () => output, childFailure)
   } catch (error) {
-    await stopProcess(child)
+    if (child) await stopProcess(child, plan.url)
     throw error
+  } finally {
+    releaseStart()
   }
 
   return {
     url: plan.url,
     viewports: plan.viewports,
     output: () => output,
-    stop: () => stopProcess(child),
+    stop: () => stopProcess(child, plan.url),
   }
+}
+
+function claimPreviewStart(url: string): () => void {
+  const port = Number(new URL(url).port)
+  if (startingPreviewPorts.has(port)) {
+    throw new Error(`preview port ${port} is already being started`)
+  }
+  startingPreviewPorts.add(port)
+  return () => startingPreviewPorts.delete(port)
+}
+
+async function assertPreviewPortAvailable(url: string): Promise<void> {
+  const port = Number(new URL(url).port)
+  if (!(await previewPortAvailable(url))) {
+    throw new Error(
+      `preview port ${port} is already in use; choose another http://127.0.0.1 port and retry`,
+    )
+  }
+}
+
+function previewPortAvailable(url: string): Promise<boolean> {
+  const port = Number(new URL(url).port)
+  return new Promise<boolean>((resolve, reject) => {
+    const reservation = createServer()
+    reservation.once('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'EADDRINUSE') {
+        resolve(false)
+        return
+      }
+      reject(error)
+    })
+    reservation.listen({ host: '127.0.0.1', port, exclusive: true }, () => {
+      reservation.close((error) => (error ? reject(error) : resolve(true)))
+    })
+  })
 }
 
 /**
@@ -78,7 +132,11 @@ export async function startDesignPreview(
  * pointing Design Mode at the project; a package name resolved off the
  * network is not.
  */
-export function assertRunsWorkspaceCode(workspace: string, cwd: string, plan: PreviewPlan): void {
+export function assertRunsWorkspaceCode(
+  workspace: string,
+  cwd: string,
+  plan: Extract<PreviewPlan, { kind: 'command' }>,
+): void {
   if (plan.command === 'node') {
     const entries = plan.args.filter((arg) => !arg.startsWith('-'))
     if (entries.length === 0) throw new Error('preview command must name a script in the workspace')
@@ -98,6 +156,16 @@ export function assertRunsWorkspaceCode(workspace: string, cwd: string, plan: Pr
     return
   }
 
+  const scriptSeparator = plan.args.indexOf('--')
+  const packageManagerArgs =
+    scriptSeparator === -1 ? plan.args : plan.args.slice(0, scriptSeparator)
+  if (
+    packageManagerArgs.some((arg) => PACKAGE_SCOPE_ARG.test(arg)) ||
+    plan.args[0] === 'workspace' ||
+    plan.args[0] === 'workspaces'
+  ) {
+    throw new Error('preview package-manager workspace selectors are not allowed')
+  }
   // `pnpm dev` and `pnpm run dev` are both idiomatic; both must name a script.
   const named = plan.args.filter((arg) => !arg.startsWith('-'))
   const script = named[0] === 'run' ? named[1] : named[0]
@@ -118,7 +186,23 @@ function packageScripts(cwd: string): Set<string> {
   }
 }
 
-async function waitForPreview(
+export async function waitForPreview(
+  child: ChildProcessWithoutNullStreams,
+  url: string,
+  timeoutMs: number,
+  output: () => string,
+  childFailure: Promise<never>,
+): Promise<void> {
+  await Promise.race([pollForPreview(child, url, timeoutMs, output), childFailure])
+}
+
+export function watchPreviewChild(child: ChildProcessWithoutNullStreams): Promise<never> {
+  return new Promise<never>((_resolve, reject) => {
+    child.once('error', (error) => reject(new Error(`preview failed to start: ${error.message}`)))
+  })
+}
+
+async function pollForPreview(
   child: ChildProcessWithoutNullStreams,
   url: string,
   timeoutMs: number,
@@ -131,21 +215,65 @@ async function waitForPreview(
     }
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(500) })
-      if (response.ok) return
-    } catch {
+      if (response.ok) {
+        // A losing child can remain alive briefly while its wrapper unwinds.
+        // Do not let another process's response win that race.
+        await delay(100)
+        if (child.exitCode === null) return
+        throw new Error(`preview exited before it was ready\n${output()}`)
+      }
+    } catch (error) {
+      if (child.exitCode !== null) {
+        throw new Error(`preview exited before it was ready\n${output()}`, { cause: error })
+      }
       // The server is still starting.
     }
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    await delay(100)
   }
   throw new Error(`preview did not become ready within ${timeoutMs}ms\n${output()}`)
 }
 
-function stopProcess(child: ChildProcessWithoutNullStreams): Promise<void> {
-  if (child.exitCode !== null || child.pid === undefined) return Promise.resolve()
-  if (process.platform !== 'win32') {
-    child.kill('SIGTERM')
-    return Promise.resolve()
+async function stopProcess(child: ChildProcessWithoutNullStreams, url: string): Promise<void> {
+  if (child.pid === undefined) return
+  try {
+    if (process.platform === 'win32') {
+      await killWindowsTree(child)
+    } else {
+      await killPosixGroup(child.pid)
+    }
+    await waitForPortRelease(url, 500)
+  } catch {}
+}
+
+async function killPosixGroup(pid: number): Promise<void> {
+  signalProcessGroup(pid, 'SIGTERM')
+  if (await waitForProcessGroupExit(pid, 1_500)) return
+  signalProcessGroup(pid, 'SIGKILL')
+  await waitForProcessGroupExit(pid, 1_500)
+}
+
+async function waitForProcessGroupExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const startedAt = Date.now()
+  do {
+    if (!processGroupAlive(pid)) return true
+    await delay(50)
+  } while (Date.now() - startedAt < timeoutMs)
+  return false
+}
+
+function processGroupAlive(pid: number): boolean {
+  try {
+    process.kill(-pid, 0)
+    return true
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ESRCH') return false
+    if (code === 'EPERM') return true
+    throw error
   }
+}
+
+function killWindowsTree(child: ChildProcessWithoutNullStreams): Promise<void> {
   return new Promise((resolve) => {
     const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], {
       stdio: 'ignore',
@@ -157,4 +285,25 @@ function stopProcess(child: ChildProcessWithoutNullStreams): Promise<void> {
     })
     killer.on('exit', () => resolve())
   })
+}
+
+function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+  }
+}
+
+async function waitForPortRelease(url: string, timeoutMs: number): Promise<boolean> {
+  const startedAt = Date.now()
+  do {
+    if (await previewPortAvailable(url)) return true
+    await delay(50)
+  } while (Date.now() - startedAt < timeoutMs)
+  return false
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }

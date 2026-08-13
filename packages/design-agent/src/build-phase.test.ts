@@ -1,5 +1,13 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { designBuildPrompt, parseBuildPhaseOutput } from './build-phase.js'
+import {
+  designBuildPrompt,
+  exactBuildFileBaseline,
+  parseBuildPhaseOutput,
+  validateExactBuildFiles,
+} from './build-phase.js'
 
 const artifacts = [
   {
@@ -68,5 +76,92 @@ describe('build phase', () => {
         }),
       ),
     ).toMatchObject({ status: 'complete', files: ['src/App.tsx'] })
+  })
+
+  it('rejects workspace extras when the brief requires an exact file set', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-files-'))
+    const brief = {
+      ...artifacts[0],
+      originalRequest:
+        'Create exactly index.html, styles.css, and app.js in the current directory; do not create other files.',
+    }
+    try {
+      writeFileSync(path.join(workspace, 'README.md'), 'pre-existing user file')
+      const baseline = exactBuildFileBaseline(workspace, brief)
+      for (const file of [
+        'index.html',
+        'styles.css',
+        'app.js',
+        'preview-server.js',
+        'extra.json',
+      ]) {
+        writeFileSync(path.join(workspace, file), file)
+      }
+      mkdirSync(path.join(workspace, 'node_modules', 'package'), { recursive: true })
+      writeFileSync(path.join(workspace, 'node_modules', 'package', 'index.js'), 'ignored depth')
+
+      expect(() => validateExactBuildFiles(workspace, brief, baseline)).toThrow(
+        'unexpected files: extra.json, node_modules/, preview-server.js',
+      )
+      rmSync(path.join(workspace, 'README.md'))
+      expect(() => validateExactBuildFiles(workspace, brief, baseline)).toThrow(
+        'restore pre-existing files: README.md',
+      )
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    'Only create index.html, styles.css, and app.js; no other files.',
+    'The files must be exactly index.html, styles.css, and app.js.',
+    'Create these three files: index.html, styles.css, and app.js.',
+  ])('recognizes an exact file-list variant: %s', (constraint) => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-variant-'))
+    try {
+      for (const file of ['index.html', 'styles.css', 'app.js', 'extra.json']) {
+        writeFileSync(path.join(workspace, file), file)
+      }
+      expect(() =>
+        validateExactBuildFiles(workspace, { ...artifacts[0], constraints: [constraint] }),
+      ).toThrow('unexpected files: extra.json')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('supports explicitly required dotfiles', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-dotfile-'))
+    try {
+      writeFileSync(path.join(workspace, '.nojekyll'), '')
+      writeFileSync(path.join(workspace, 'extra.json'), '')
+      expect(() =>
+        validateExactBuildFiles(workspace, {
+          ...artifacts[0],
+          constraints: ['Create exactly .nojekyll.'],
+        }),
+      ).toThrow('unexpected files: extra.json')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('does not constrain briefs without an exact file requirement', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-open-files-'))
+    try {
+      writeFileSync(path.join(workspace, 'anything.txt'), 'kept')
+      expect(() => validateExactBuildFiles(workspace, artifacts[0])).not.toThrow()
+      for (const constraint of [
+        'Use exactly v1.0 syntax.',
+        'Create exactly the layout shown in reference.png using index.html.',
+        'The files must contain exactly the copy from copy.md.',
+      ]) {
+        expect(() =>
+          validateExactBuildFiles(workspace, { ...artifacts[0], constraints: [constraint] }),
+        ).not.toThrow()
+      }
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
   })
 })

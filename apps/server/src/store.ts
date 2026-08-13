@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createCipheriv, randomBytes, randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync, type StatementSync } from 'node:sqlite'
@@ -12,6 +12,7 @@ import type {
   ThreadLifecycle,
   Usage,
 } from '@harness/contracts'
+import type { TurnOptions } from './adapters.js'
 
 /**
  * Everything that has to survive a restart.
@@ -61,6 +62,10 @@ export type StoredThread = {
   lifecycle: ThreadLifecycle
   unread: boolean
   lastActiveAt: number
+  /** Temporary fork owned by Side chat; never shown in project history. */
+  ephemeral: boolean
+  /** Main conversation captured when an ephemeral Side chat was created. */
+  parentThreadId?: string | undefined
 }
 
 export type StoredCheckpoint = {
@@ -72,6 +77,24 @@ export type StoredCheckpoint = {
   commit: string
   label: string
   createdAt: number
+}
+
+export type StoredUsageEvent = {
+  threadId: string
+  provider: ProviderId
+  at: number
+  usage: Usage
+}
+
+export type StoredQueuedTurn = {
+  id: string
+  threadId: string
+  clientSubmissionId?: string | undefined
+  text: string
+  attachments: string[]
+  options: TurnOptions
+  createdAt: number
+  intent: 'normal' | 'steer'
 }
 
 export type SessionSearchOptions = {
@@ -87,11 +110,57 @@ export type SessionSearchPage = {
   nextCursor: string | null
 }
 
-type SearchCursor = { score: number; createdAt: number; rowid: number }
+type SearchCursor = {
+  snapshotId: string
+  position: number
+}
+
+type SearchSnapshot = {
+  ftsQuery: string
+  projectPath: string | null
+  provider: ProviderId | null
+}
+
+type InterruptedThreadState = {
+  openTurns: Set<string>
+  activeItems: Map<string, Extract<DomainEvent, { type: 'item.started' }>['item']>
+  approvals: Set<string>
+  userInputs: Set<string>
+  reviews: Map<string, Extract<DomainEvent, { type: 'approval.review.started' }>['review']>
+  hasResumableInput: boolean
+}
+
+const RESTART_INTERRUPTION_MESSAGE =
+  'Turn interrupted: Personal Harness restarted. Send a new message to continue.'
 
 const SNIPPET_START = '\u0001'
 const SNIPPET_END = '\u0002'
 const SEARCH_INDEX_VERSION = 'session_search_v1'
+const SEARCH_RESULT_KEY_SETTING = 'search_result_key_v1'
+const SEARCH_SNAPSHOT_TTL_MS = 5 * 60 * 1_000
+const MAX_SEARCH_SNAPSHOTS = 32
+const SEARCH_TOKEN = /[\p{L}\p{N}][\p{L}\p{N}\p{M}_]*/gu
+
+const SEARCH_SNAPSHOT_SCHEMA = `
+CREATE TEMP TABLE session_search_snapshots (
+  id           TEXT PRIMARY KEY,
+  fts_query    TEXT NOT NULL,
+  project_path TEXT,
+  provider     TEXT,
+  expires_at   INTEGER NOT NULL
+);
+
+CREATE TEMP TABLE session_search_snapshot_rows (
+  position     INTEGER PRIMARY KEY,
+  snapshot_id  TEXT NOT NULL,
+  search_rowid INTEGER NOT NULL,
+  snippet      TEXT NOT NULL,
+  UNIQUE (snapshot_id, search_rowid)
+);
+
+CREATE INDEX session_search_snapshot_page
+  ON session_search_snapshot_rows (snapshot_id, position);
+`
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -120,7 +189,9 @@ CREATE TABLE IF NOT EXISTS threads (
   keep_active      INTEGER NOT NULL DEFAULT 0,
   woke_at          INTEGER,
   unread           INTEGER NOT NULL DEFAULT 0,
-  last_active_at   INTEGER NOT NULL
+  last_active_at   INTEGER NOT NULL,
+  ephemeral        INTEGER NOT NULL DEFAULT 0,
+  parent_thread_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sidebar_settings (
@@ -129,13 +200,34 @@ CREATE TABLE IF NOT EXISTS sidebar_settings (
   auto_settle_days INTEGER CHECK (auto_settle_days BETWEEN 1 AND 90)
 );
 
-INSERT OR IGNORE INTO sidebar_settings (id, mode, auto_settle_days) VALUES (1, 'inbox', 3);
+INSERT OR IGNORE INTO sidebar_settings (id, mode, auto_settle_days) VALUES (1, 'classic', 3);
 
 CREATE TABLE IF NOT EXISTS events (
   seq       INTEGER PRIMARY KEY AUTOINCREMENT,
   thread_id TEXT NOT NULL,
   at        INTEGER NOT NULL,
   payload   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS queued_turn_events (
+  seq       INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  queue_id  TEXT,
+  at        INTEGER NOT NULL,
+  mutation  TEXT NOT NULL,
+  payload   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS queued_turns (
+  thread_id            TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  queue_id             TEXT NOT NULL,
+  client_submission_id TEXT,
+  position             INTEGER NOT NULL,
+  state                TEXT NOT NULL CHECK (state IN ('queued', 'dispatching')),
+  intent               TEXT NOT NULL CHECK (intent IN ('normal', 'steer')),
+  payload              TEXT NOT NULL,
+  created_at           INTEGER NOT NULL,
+  PRIMARY KEY (thread_id, queue_id)
 );
 
 CREATE TABLE IF NOT EXISTS checkpoints (
@@ -196,6 +288,13 @@ CREATE TABLE IF NOT EXISTS paired_devices (
 
 CREATE INDEX IF NOT EXISTS checkpoints_by_thread ON checkpoints (thread_id, seq);
 CREATE INDEX IF NOT EXISTS events_by_thread ON events (thread_id, seq);
+CREATE INDEX IF NOT EXISTS queued_turn_events_by_thread
+  ON queued_turn_events (thread_id, seq);
+CREATE INDEX IF NOT EXISTS queued_turns_by_thread
+  ON queued_turns (thread_id, state, position);
+CREATE UNIQUE INDEX IF NOT EXISTS queued_turn_submission_id
+  ON queued_turns (thread_id, client_submission_id)
+  WHERE client_submission_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS threads_by_project ON threads (project_path);
 `
 
@@ -228,12 +327,17 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'woke_at', definition: 'INTEGER' },
   { table: 'threads', column: 'unread', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'last_active_at', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'threads', column: 'ephemeral', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'threads', column: 'parent_thread_id', definition: 'TEXT' },
 ]
 
 export class Store {
   #db: DatabaseSync
   #insertEvent: StatementSync
   #insertSearchEntry: StatementSync
+  #searchResultKey: Buffer
+  /** Keeps the streamed-event path from querying SQLite just to skip search indexing. */
+  #ephemeralThreads = new Set<string>()
 
   /** `:memory:` in tests; a file under the user's data directory in the app. */
   constructor(location: string) {
@@ -248,6 +352,8 @@ export class Store {
     this.#db.exec('PRAGMA synchronous = NORMAL')
     this.#db.exec('PRAGMA foreign_keys = ON')
     this.#db.exec(SCHEMA)
+    this.#db.exec(SEARCH_SNAPSHOT_SCHEMA)
+    this.#searchResultKey = this.#loadSearchResultKey()
     // These statements run for every persisted event. Preparing them once
     // keeps SQLite compilation off the streamed-delta path.
     this.#insertEvent = this.#db.prepare(
@@ -258,6 +364,8 @@ export class Store {
        VALUES (?, ?, ?, ?, ?, ?)`,
     )
     this.#migrate()
+    this.#purgeEphemeralThreads()
+    this.#recoverQueuedTurnClaims()
     const searchIndexReady = this.#db
       .prepare(`SELECT 1 FROM schema_migrations WHERE name = ?`)
       .get(SEARCH_INDEX_VERSION)
@@ -277,8 +385,29 @@ export class Store {
     this.#db.exec(`UPDATE threads SET last_active_at = created_at WHERE last_active_at = 0`)
   }
 
+  /** Side chats intentionally do not survive an app restart or a crashed renderer. */
+  #purgeEphemeralThreads(): void {
+    const ids = this.#db
+      .prepare(`SELECT id FROM threads WHERE ephemeral = 1`)
+      .all()
+      .map((row) => String((row as { id: unknown }).id))
+    for (const id of ids) this.deleteThread(id)
+  }
+
   close(): void {
     this.#db.close()
+  }
+
+  #loadSearchResultKey(): Buffer {
+    this.#db
+      .prepare(`INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)`)
+      .run(SEARCH_RESULT_KEY_SETTING, randomBytes(32).toString('base64url'))
+    const row = this.#db
+      .prepare(`SELECT value FROM app_settings WHERE key = ?`)
+      .get(SEARCH_RESULT_KEY_SETTING) as { value: string }
+    const key = Buffer.from(row.value, 'base64url')
+    if (key.length !== 32) throw new Error('Search result identity key is invalid.')
+    return key
   }
 
   // ---- mobile connections -----------------------------------------------
@@ -388,18 +517,23 @@ export class Store {
   // ---- threads -----------------------------------------------------------
 
   addThread(
-    thread: Omit<StoredThread, 'createdAt' | 'pinned' | 'lifecycle' | 'unread' | 'lastActiveAt'> & {
+    thread: Omit<
+      StoredThread,
+      'createdAt' | 'pinned' | 'lifecycle' | 'unread' | 'lastActiveAt' | 'ephemeral'
+    > & {
       createdAt?: number
+      ephemeral?: boolean
     },
   ): StoredThread {
     const stored = { ...thread, createdAt: thread.createdAt ?? Date.now() }
+    const ephemeral = thread.ephemeral ?? false
     const lifecycle = { state: 'active', keepActive: false } as const
     this.#db
       .prepare(
         `INSERT INTO threads
-           (id, project_path, provider, agent, title, created_at, worktree_path, worktree_branch,
-            lifecycle_state, keep_active, unread, last_active_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?)`,
+          (id, project_path, provider, agent, title, created_at, worktree_path, worktree_branch,
+            lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
       )
       .run(
         stored.id,
@@ -411,8 +545,18 @@ export class Store {
         stored.worktreePath ?? null,
         stored.worktreeBranch ?? null,
         stored.createdAt,
+        ephemeral ? 1 : 0,
+        stored.parentThreadId ?? null,
       )
-    return { ...stored, pinned: false, lifecycle, unread: false, lastActiveAt: stored.createdAt }
+    if (ephemeral) this.#ephemeralThreads.add(stored.id)
+    return {
+      ...stored,
+      pinned: false,
+      lifecycle,
+      unread: false,
+      lastActiveAt: stored.createdAt,
+      ephemeral,
+    }
   }
 
   /**
@@ -425,7 +569,7 @@ export class Store {
     return this.#db
       .prepare(
         `SELECT id, project_path, worktree_path, worktree_branch FROM threads
-                WHERE worktree_path IS NOT NULL`,
+                WHERE worktree_path IS NOT NULL AND ephemeral = 0`,
       )
       .all()
       .map((row) => {
@@ -459,9 +603,11 @@ export class Store {
   threads(projectPath?: string): StoredThread[] {
     const rows = projectPath
       ? this.#db
-          .prepare(`SELECT * FROM threads WHERE project_path = ? ORDER BY created_at DESC`)
+          .prepare(
+            `SELECT * FROM threads WHERE project_path = ? AND ephemeral = 0 ORDER BY created_at DESC`,
+          )
           .all(projectPath)
-      : this.#db.prepare(`SELECT * FROM threads ORDER BY created_at DESC`).all()
+      : this.#db.prepare(`SELECT * FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`).all()
     return rows.map(toThread)
   }
 
@@ -541,7 +687,7 @@ export class Store {
     return this.#db
       .prepare(
         `SELECT * FROM threads WHERE closed_at IS NULL AND lifecycle_state = 'snoozed'
-         AND wake_at <= ? ORDER BY wake_at`,
+         AND ephemeral = 0 AND wake_at <= ? ORDER BY wake_at`,
       )
       .all(now)
       .map(toThread)
@@ -551,7 +697,7 @@ export class Store {
     return this.#db
       .prepare(
         `SELECT * FROM threads WHERE closed_at IS NULL AND lifecycle_state = 'active'
-         AND keep_active = 0 AND last_active_at <= ? ORDER BY last_active_at`,
+         AND ephemeral = 0 AND keep_active = 0 AND last_active_at <= ? ORDER BY last_active_at`,
       )
       .all(cutoff)
       .map(toThread)
@@ -586,7 +732,10 @@ export class Store {
    * process; it does not mean the user wanted the transcript gone.
    */
   closeThread(id: string): void {
-    this.#db.prepare(`UPDATE threads SET closed_at = ? WHERE id = ?`).run(Date.now(), id)
+    this.#transaction(() => {
+      this.#clearQueuedTurns(id)
+      this.#db.prepare(`UPDATE threads SET closed_at = ? WHERE id = ?`).run(Date.now(), id)
+    })
   }
 
   deleteThread(id: string): void {
@@ -605,6 +754,7 @@ export class Store {
       this.#db.prepare(`DELETE FROM design_runs WHERE thread_id = ?`).run(id)
       this.#db.prepare(`DELETE FROM threads WHERE id = ?`).run(id)
       this.#db.exec('COMMIT')
+      this.#ephemeralThreads.delete(id)
     } catch (error) {
       this.#db.exec('ROLLBACK')
       throw error
@@ -631,6 +781,272 @@ export class Store {
     this.#db.prepare(`DELETE FROM design_runs WHERE thread_id = ?`).run(threadId)
   }
 
+  // ---- queued turns -----------------------------------------------------
+
+  queuedTurns(threadId: string): StoredQueuedTurn[] {
+    return this.#db
+      .prepare(
+        `SELECT queued_turns.* FROM queued_turns
+         INNER JOIN threads ON threads.id = queued_turns.thread_id
+         WHERE queued_turns.thread_id = ? AND queued_turns.state = 'queued'
+           AND threads.closed_at IS NULL
+         ORDER BY queued_turns.position`,
+      )
+      .all(threadId)
+      .map(toQueuedTurn)
+  }
+
+  hasQueuedSubmission(threadId: string, clientSubmissionId: string): boolean {
+    return (
+      this.#db
+        .prepare(
+          `SELECT 1 FROM queued_turns
+           WHERE thread_id = ? AND client_submission_id = ? LIMIT 1`,
+        )
+        .get(threadId, clientSubmissionId) !== undefined
+    )
+  }
+
+  enqueueQueuedTurn(turn: Omit<StoredQueuedTurn, 'intent'>): void {
+    const payload = JSON.stringify({
+      text: turn.text,
+      attachments: turn.attachments,
+      options: turn.options,
+    })
+    this.#transaction(() => {
+      const open = this.#db
+        .prepare(`SELECT 1 FROM threads WHERE id = ? AND closed_at IS NULL`)
+        .get(turn.threadId)
+      if (!open) throw new Error('thread not found')
+      const position = Number(
+        (
+          this.#db
+            .prepare(
+              `SELECT COALESCE(MAX(position), -1) + 1 AS position
+               FROM queued_turns WHERE thread_id = ?`,
+            )
+            .get(turn.threadId) as { position: number }
+        ).position,
+      )
+      this.#appendQueuedTurnEvent(turn.threadId, turn.id, 'enqueue', {
+        ...turn,
+        intent: 'normal',
+        position,
+      })
+      this.#db
+        .prepare(
+          `INSERT INTO queued_turns
+             (thread_id, queue_id, client_submission_id, position, state, intent, payload, created_at)
+           VALUES (?, ?, ?, ?, 'queued', 'normal', ?, ?)`,
+        )
+        .run(
+          turn.threadId,
+          turn.id,
+          turn.clientSubmissionId ?? null,
+          position,
+          payload,
+          turn.createdAt,
+        )
+    })
+  }
+
+  deleteQueuedTurn(threadId: string, queueId: string): boolean {
+    return this.#mutateQueuedTurn(threadId, queueId, 'queued', 'delete', () => {
+      this.#db
+        .prepare(`DELETE FROM queued_turns WHERE thread_id = ? AND queue_id = ?`)
+        .run(threadId, queueId)
+    })
+  }
+
+  moveQueuedTurn(threadId: string, queueId: string, direction: 'up' | 'down'): boolean {
+    return this.#transaction(() => {
+      const current = this.#db
+        .prepare(
+          `SELECT position FROM queued_turns
+           WHERE thread_id = ? AND queue_id = ? AND state = 'queued'`,
+        )
+        .get(threadId, queueId) as { position: number } | undefined
+      if (!current) return false
+      const comparison = direction === 'up' ? '<' : '>'
+      const order = direction === 'up' ? 'DESC' : 'ASC'
+      const adjacent = this.#db
+        .prepare(
+          `SELECT queue_id, position FROM queued_turns
+           WHERE thread_id = ? AND state = 'queued' AND position ${comparison} ?
+           ORDER BY position ${order} LIMIT 1`,
+        )
+        .get(threadId, current.position) as { queue_id: string; position: number } | undefined
+      if (!adjacent) return false
+      this.#appendQueuedTurnEvent(threadId, queueId, 'move', { direction })
+      this.#db
+        .prepare(
+          `UPDATE queued_turns SET position = CASE queue_id WHEN ? THEN ? WHEN ? THEN ? END
+           WHERE thread_id = ? AND queue_id IN (?, ?)`,
+        )
+        .run(
+          queueId,
+          adjacent.position,
+          adjacent.queue_id,
+          current.position,
+          threadId,
+          queueId,
+          adjacent.queue_id,
+        )
+      return true
+    })
+  }
+
+  claimQueuedTurn(
+    threadId: string,
+    queueId: string,
+    intent: 'normal' | 'steer',
+  ): StoredQueuedTurn | undefined {
+    return this.#transaction(() => {
+      const row = this.#db
+        .prepare(
+          `SELECT * FROM queued_turns
+           WHERE thread_id = ? AND queue_id = ? AND state = 'queued'`,
+        )
+        .get(threadId, queueId)
+      if (!row) return undefined
+      this.#appendQueuedTurnEvent(threadId, queueId, 'claim', { intent })
+      this.#db
+        .prepare(
+          `UPDATE queued_turns SET state = 'dispatching', intent = ?
+           WHERE thread_id = ? AND queue_id = ?`,
+        )
+        .run(intent, threadId, queueId)
+      return { ...toQueuedTurn(row), intent }
+    })
+  }
+
+  restoreQueuedTurn(threadId: string, queueId: string): boolean {
+    return this.#mutateQueuedTurn(threadId, queueId, 'dispatching', 'restore', () => {
+      this.#db
+        .prepare(
+          `UPDATE queued_turns SET state = 'queued', intent = 'normal'
+           WHERE thread_id = ? AND queue_id = ?`,
+        )
+        .run(threadId, queueId)
+    })
+  }
+
+  completeQueuedTurn(threadId: string, queueId: string): boolean {
+    return this.#mutateQueuedTurn(threadId, queueId, 'dispatching', 'complete', () => {
+      this.#db
+        .prepare(`DELETE FROM queued_turns WHERE thread_id = ? AND queue_id = ?`)
+        .run(threadId, queueId)
+    })
+  }
+
+  appendAndCompleteQueuedTurn(threadId: string, queueId: string, event: DomainEvent): number {
+    return this.#transaction(() => {
+      const claimed = this.#db
+        .prepare(
+          `SELECT 1 FROM queued_turns
+           WHERE thread_id = ? AND queue_id = ? AND state = 'dispatching'`,
+        )
+        .get(threadId, queueId)
+      if (!claimed) throw new Error('queued prompt is no longer claimed')
+      const seq = this.#appendEvent(threadId, event, Date.now())
+      this.#appendQueuedTurnEvent(threadId, queueId, 'complete', {})
+      this.#db
+        .prepare(
+          `DELETE FROM queued_turns
+           WHERE thread_id = ? AND queue_id = ? AND state = 'dispatching'`,
+        )
+        .run(threadId, queueId)
+      return seq
+    })
+  }
+
+  clearQueuedTurns(threadId: string): void {
+    this.#transaction(() => this.#clearQueuedTurns(threadId))
+  }
+
+  clearAllQueuedTurns(): string[] {
+    return this.#transaction(() => {
+      const threadIds = this.#db
+        .prepare(`SELECT DISTINCT thread_id FROM queued_turns ORDER BY thread_id`)
+        .all()
+        .map((row) => String((row as { thread_id: unknown }).thread_id))
+      for (const threadId of threadIds) this.#clearQueuedTurns(threadId)
+      return threadIds
+    })
+  }
+
+  #mutateQueuedTurn(
+    threadId: string,
+    queueId: string,
+    state: 'queued' | 'dispatching',
+    mutation: string,
+    project: () => void,
+  ): boolean {
+    return this.#transaction(() => {
+      const exists = this.#db
+        .prepare(`SELECT 1 FROM queued_turns WHERE thread_id = ? AND queue_id = ? AND state = ?`)
+        .get(threadId, queueId, state)
+      if (!exists) return false
+      this.#appendQueuedTurnEvent(threadId, queueId, mutation, {})
+      project()
+      return true
+    })
+  }
+
+  #clearQueuedTurns(threadId: string): void {
+    const exists = this.#db
+      .prepare(`SELECT 1 FROM queued_turns WHERE thread_id = ? LIMIT 1`)
+      .get(threadId)
+    if (!exists) return
+    this.#appendQueuedTurnEvent(threadId, null, 'clear', {})
+    this.#db.prepare(`DELETE FROM queued_turns WHERE thread_id = ?`).run(threadId)
+  }
+
+  #appendQueuedTurnEvent(
+    threadId: string,
+    queueId: string | null,
+    mutation: string,
+    payload: unknown,
+  ): void {
+    this.#db
+      .prepare(
+        `INSERT INTO queued_turn_events (thread_id, queue_id, at, mutation, payload)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(threadId, queueId, Date.now(), mutation, JSON.stringify(payload))
+  }
+
+  #recoverQueuedTurnClaims(): void {
+    const claims = this.#db
+      .prepare(`SELECT thread_id, queue_id, intent FROM queued_turns WHERE state = 'dispatching'`)
+      .all() as Array<{ thread_id: string; queue_id: string; intent: 'normal' | 'steer' }>
+    if (claims.length === 0) return
+    this.#transaction(() => {
+      for (const claim of claims) {
+        this.#appendQueuedTurnEvent(claim.thread_id, claim.queue_id, 'recover', {
+          intent: claim.intent,
+        })
+      }
+      this.#db
+        .prepare(
+          `UPDATE queued_turns SET state = 'queued', intent = 'normal' WHERE state = 'dispatching'`,
+        )
+        .run()
+    })
+  }
+
+  #transaction<T>(action: () => T): T {
+    this.#db.exec('BEGIN IMMEDIATE')
+    try {
+      const result = action()
+      this.#db.exec('COMMIT')
+      return result
+    } catch (error) {
+      this.#db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   setDiffDecision(threadId: string, targetId: string, decision: DiffDecision): void {
     this.#db
       .prepare(
@@ -649,20 +1065,193 @@ export class Store {
 
   // ---- events ------------------------------------------------------------
 
+  /**
+   * Close event lifecycles that cannot still be live in this server process.
+   *
+   * Agent sessions and their approval callbacks are process-owned. Replaying a
+   * request after restart can draw the old approval card, but accepting it can
+   * never reach the callback that died with the previous process. Settle that
+   * durable state before clients connect so history stays honest and the user
+   * gets a clear next action instead of a button that does nothing.
+   */
+  recoverInterruptedThreads(): string[] {
+    this.#db.exec('BEGIN IMMEDIATE')
+    try {
+      // SQLite returns only unfinished lifecycle starts. Months of completed
+      // turns and streamed deltas never cross into JavaScript at startup.
+      const rows = this.#db
+        .prepare(
+          `WITH typed_events AS (
+             SELECT events.seq, events.thread_id, events.payload,
+                    json_extract(events.payload, '$.type') AS event_type
+             FROM events
+             INNER JOIN threads ON threads.id = events.thread_id
+             WHERE threads.closed_at IS NULL
+           ),
+           lifecycle_events AS (
+             SELECT seq, thread_id, payload, event_type,
+                    CASE event_type
+                      WHEN 'turn.started' THEN 'turn:' || json_extract(payload, '$.turn.id')
+                      WHEN 'turn.completed' THEN 'turn:' || json_extract(payload, '$.turnId')
+                      WHEN 'item.started' THEN 'item:' || json_extract(payload, '$.item.id')
+                      WHEN 'item.completed' THEN 'item:' || json_extract(payload, '$.item.id')
+                      WHEN 'approval.requested' THEN 'approval:' || json_extract(payload, '$.request.id')
+                      WHEN 'approval.resolved' THEN 'approval:' || json_extract(payload, '$.id')
+                      WHEN 'user_input.requested' THEN 'input:' || json_extract(payload, '$.request.id')
+                      WHEN 'user_input.resolved' THEN 'input:' || json_extract(payload, '$.id')
+                      WHEN 'approval.review.started' THEN 'review:' || json_extract(payload, '$.review.id')
+                      WHEN 'approval.review.completed' THEN 'review:' || json_extract(payload, '$.review.id')
+                    END AS lifecycle_key
+             FROM typed_events
+             WHERE event_type IN (
+               'turn.started', 'turn.completed', 'thread.error',
+               'item.started', 'item.completed',
+               'approval.requested', 'approval.resolved',
+               'user_input.requested', 'user_input.resolved',
+               'approval.review.started', 'approval.review.completed'
+             )
+           ),
+           lifecycle_state AS (
+             SELECT thread_id, lifecycle_key,
+                    MAX(CASE WHEN event_type IN (
+                      'turn.started', 'item.started', 'approval.requested',
+                      'user_input.requested', 'approval.review.started') THEN seq END) AS started_seq,
+                    MAX(CASE WHEN event_type IN (
+                      'turn.completed', 'item.completed', 'approval.resolved',
+                      'user_input.resolved', 'approval.review.completed') THEN seq END) AS terminal_seq
+             FROM lifecycle_events
+             WHERE lifecycle_key IS NOT NULL
+             GROUP BY thread_id, lifecycle_key
+           ),
+           last_errors AS (
+             SELECT thread_id, MAX(seq) AS seq FROM lifecycle_events
+             WHERE event_type = 'thread.error'
+             GROUP BY thread_id
+           )
+           SELECT started.thread_id, started.payload,
+                  CASE WHEN started.event_type = 'user_input.requested'
+                    AND EXISTS (
+                      SELECT 1 FROM design_runs
+                      WHERE design_runs.thread_id = started.thread_id
+                        AND json_extract(design_runs.payload, '$.phase') = 'brief'
+                    ) THEN 1 ELSE 0 END AS resumable
+           FROM lifecycle_state
+           INNER JOIN lifecycle_events AS started ON started.seq = lifecycle_state.started_seq
+           LEFT JOIN last_errors ON last_errors.thread_id = started.thread_id
+           WHERE lifecycle_state.terminal_seq IS NULL
+             AND (started.event_type <> 'turn.started' OR last_errors.seq IS NULL
+                  OR last_errors.seq < started.seq)
+           ORDER BY started.seq`,
+        )
+        .all() as Array<{ thread_id: string; payload: string; resumable: number }>
+
+      const states = new Map<string, InterruptedThreadState>()
+      for (const row of rows) {
+        const event = JSON.parse(row.payload) as DomainEvent
+        const state = states.get(row.thread_id) ?? {
+          openTurns: new Set<string>(),
+          activeItems: new Map(),
+          approvals: new Set<string>(),
+          userInputs: new Set<string>(),
+          reviews: new Map(),
+          hasResumableInput: false,
+        }
+        states.set(row.thread_id, state)
+
+        if (event.type === 'turn.started') state.openTurns.add(event.turn.id)
+        if (event.type === 'item.started') state.activeItems.set(event.item.id, event.item)
+        if (event.type === 'approval.requested') state.approvals.add(event.request.id)
+        if (event.type === 'user_input.requested') {
+          if (row.resumable) state.hasResumableInput = true
+          else state.userInputs.add(event.request.id)
+        }
+        if (event.type === 'approval.review.started') {
+          state.reviews.set(event.review.id, event.review)
+        }
+      }
+
+      const recovered: string[] = []
+      const at = Date.now()
+      for (const [threadId, state] of states) {
+        for (const item of state.activeItems.values()) {
+          // Omitting text preserves every persisted delta when the renderer
+          // folds this terminal item over the streamed version.
+          const { text: _streamedText, ...started } = item
+          this.#appendEvent(
+            threadId,
+            { type: 'item.completed', item: { ...started, status: 'failed' } },
+            at,
+          )
+        }
+        for (const id of state.approvals) {
+          this.#appendEvent(threadId, { type: 'approval.resolved', id }, at)
+        }
+        for (const id of state.userInputs) {
+          this.#appendEvent(threadId, { type: 'user_input.resolved', id }, at)
+        }
+        for (const review of state.reviews.values()) {
+          if (review.status !== 'in_progress') continue
+          this.#appendEvent(
+            threadId,
+            {
+              type: 'approval.review.completed',
+              review: { ...review, status: 'aborted', completedAt: at },
+            },
+            at,
+          )
+        }
+        if (state.openTurns.size === 0) continue
+        for (const turnId of state.openTurns) {
+          this.#appendEvent(threadId, { type: 'turn.completed', turnId, status: 'interrupted' }, at)
+        }
+        if (!state.hasResumableInput) {
+          this.#appendEvent(
+            threadId,
+            { type: 'thread.error', threadId, message: RESTART_INTERRUPTION_MESSAGE },
+            at,
+          )
+        }
+        this.touchThread(threadId, true, at)
+        recovered.push(threadId)
+      }
+      this.#db.exec('COMMIT')
+      return recovered
+    } catch (error) {
+      this.#db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   /** Returns the sequence number, which is what a client resumes from. */
   append(threadId: string, event: DomainEvent): number {
     const at = Date.now()
     this.#db.exec('BEGIN IMMEDIATE')
     try {
-      const result = this.#insertEvent.run(threadId, at, JSON.stringify(event))
-      const seq = Number(result.lastInsertRowid)
-      this.#indexEvent(seq, threadId, at, event)
+      const seq = this.#appendEvent(threadId, event, at)
       this.#db.exec('COMMIT')
       return seq
     } catch (error) {
       this.#db.exec('ROLLBACK')
       throw error
     }
+  }
+
+  hasItem(threadId: string, itemId: string): boolean {
+    return (
+      this.#db
+        .prepare(
+          `SELECT 1 FROM events
+           WHERE thread_id = ? AND json_extract(payload, '$.item.id') = ? LIMIT 1`,
+        )
+        .get(threadId, itemId) !== undefined
+    )
+  }
+
+  #appendEvent(threadId: string, event: DomainEvent, at: number): number {
+    const result = this.#insertEvent.run(threadId, at, JSON.stringify(event))
+    const seq = Number(result.lastInsertRowid)
+    if (!this.#ephemeralThreads.has(threadId)) this.#indexEvent(seq, threadId, at, event)
+    return seq
   }
 
   /**
@@ -686,9 +1275,11 @@ export class Store {
     const limit = Number.isSafeInteger(requestedLimit)
       ? Math.min(Math.max(requestedLimit, 1), 100)
       : 25
+    const ftsQuery = toFtsQuery(options.query)
+    if (!ftsQuery) return { results: [], nextCursor: null }
     const cursor = decodeCursor(options.cursor)
     const clauses = ['session_search MATCH ?']
-    const parameters: Array<string | number> = [toFtsQuery(options.query)]
+    const parameters: Array<string | number> = [ftsQuery]
 
     if (options.projectPath) {
       clauses.push('threads.project_path = ?')
@@ -699,49 +1290,111 @@ export class Store {
       parameters.push(options.provider)
     }
 
-    const cursorClause = cursor
-      ? `WHERE score > ?
-            OR (score = ? AND created_at < ?)
-            OR (score = ? AND created_at = ? AND search_rowid < ?)`
-      : ''
-    const cursorParameters = cursor
-      ? [cursor.score, cursor.score, cursor.createdAt, cursor.score, cursor.createdAt, cursor.rowid]
-      : []
+    const now = Date.now()
+    this.#pruneSearchSnapshots(now, !cursor)
+    const snapshotId = cursor?.snapshotId ?? randomUUID()
+    if (cursor) {
+      const snapshot = this.#db
+        .prepare(
+          `SELECT fts_query, project_path, provider
+           FROM session_search_snapshots
+           WHERE id = ? AND expires_at > ?`,
+        )
+        .get(snapshotId, now) as
+        { fts_query: string; project_path: string | null; provider: ProviderId | null } | undefined
+      if (!snapshot) throw new Error('Search results expired. Search again.')
+      const expected: SearchSnapshot = {
+        ftsQuery,
+        projectPath: options.projectPath ?? null,
+        provider: options.provider ?? null,
+      }
+      if (
+        snapshot.fts_query !== expected.ftsQuery ||
+        snapshot.project_path !== expected.projectPath ||
+        snapshot.provider !== expected.provider
+      ) {
+        throw new Error('Search cursor does not match this query.')
+      }
+      this.#db
+        .prepare(`UPDATE session_search_snapshots SET expires_at = ? WHERE id = ?`)
+        .run(now + SEARCH_SNAPSHOT_TTL_MS, snapshotId)
+    } else {
+      this.#db.exec('SAVEPOINT create_search_snapshot')
+      try {
+        this.#db
+          .prepare(
+            `INSERT INTO session_search_snapshots
+               (id, fts_query, project_path, provider, expires_at)
+             VALUES (?, ?, ?, ?, ?)`,
+          )
+          .run(
+            snapshotId,
+            ftsQuery,
+            options.projectPath ?? null,
+            options.provider ?? null,
+            now + SEARCH_SNAPSHOT_TTL_MS,
+          )
+        this.#db
+          .prepare(
+            `INSERT INTO session_search_snapshot_rows
+               (snapshot_id, search_rowid, snippet)
+             SELECT ?, session_search.rowid,
+                    snippet(session_search, 4, ?, ?, ' … ', 24)
+             FROM session_search
+             JOIN threads ON threads.id = session_search.thread_id
+             JOIN projects ON projects.path = threads.project_path
+             WHERE ${clauses.join(' AND ')}
+             ORDER BY bm25(session_search), session_search.created_at DESC,
+                      session_search.rowid DESC`,
+          )
+          .run(snapshotId, SNIPPET_START, SNIPPET_END, ...parameters)
+        this.#db.exec('RELEASE create_search_snapshot')
+      } catch (error) {
+        this.#db.exec('ROLLBACK TO create_search_snapshot')
+        this.#db.exec('RELEASE create_search_snapshot')
+        throw error
+      }
+    }
+
+    const position = cursor?.position ?? 0
     const rows = this.#db
       .prepare(
-        `WITH matches AS (
-           SELECT projects.path AS project_path, projects.name AS project_name,
-                  threads.id AS thread_id, threads.title AS thread_title,
-                  threads.provider, session_search.turn_id, session_search.created_at,
-                  session_search.rowid AS search_rowid, bm25(session_search) AS score,
-                  snippet(session_search, 4, ?, ?, ' … ', 24) AS snippet
-           FROM session_search
-           JOIN threads ON threads.id = session_search.thread_id
-           JOIN projects ON projects.path = threads.project_path
-           WHERE ${clauses.join(' AND ')}
-         )
-         SELECT * FROM matches
-         ${cursorClause}
-         ORDER BY score, created_at DESC, search_rowid DESC
+        `SELECT projects.path AS project_path, projects.name AS project_name,
+                 threads.id AS thread_id, threads.title AS thread_title,
+                 threads.provider, session_search.event_seq, session_search.turn_id,
+                 session_search.created_at,
+                 snapshot.position,
+                 snapshot.snippet
+         FROM session_search_snapshot_rows AS snapshot
+         JOIN session_search ON session_search.rowid = snapshot.search_rowid
+         JOIN threads ON threads.id = session_search.thread_id
+         JOIN projects ON projects.path = threads.project_path
+         WHERE snapshot.snapshot_id = ? AND snapshot.position > ?
+         ORDER BY snapshot.position
          LIMIT ?`,
       )
-      .all(SNIPPET_START, SNIPPET_END, ...parameters, ...cursorParameters, limit + 1) as Array<{
+      .all(snapshotId, position, limit + 1) as Array<{
       project_path: string
       project_name: string
       thread_id: string
       thread_title: string
       provider: ProviderId
+      event_seq: number
       turn_id: string
       created_at: number
-      search_rowid: number
-      score: number
+      position: number
       snippet: string
     }>
 
     const page = rows.slice(0, limit)
+    const resultIds = encodeSearchResultIds(
+      this.#searchResultKey,
+      page.map((row) => Number(row.event_seq)),
+    )
     const last = page.at(-1)
     return {
-      results: page.map((row) => ({
+      results: page.map((row, index) => ({
+        resultId: resultIds[index]!,
         projectPath: row.project_path,
         projectName: row.project_name,
         threadId: row.thread_id,
@@ -754,11 +1407,29 @@ export class Store {
       nextCursor:
         rows.length > limit && last
           ? encodeCursor({
-              score: Number(last.score),
-              createdAt: Number(last.created_at),
-              rowid: Number(last.search_rowid),
+              snapshotId,
+              position: Number(last.position),
             })
           : null,
+    }
+  }
+
+  #pruneSearchSnapshots(now: number, reserveSlot: boolean): void {
+    const expired = this.#db
+      .prepare(`SELECT id FROM session_search_snapshots WHERE expires_at <= ?`)
+      .all(now)
+      .map((row) => String((row as { id: unknown }).id))
+    const active = this.#db
+      .prepare(`SELECT id FROM session_search_snapshots ORDER BY expires_at DESC`)
+      .all()
+      .map((row) => String((row as { id: unknown }).id))
+    const retainedCount = MAX_SEARCH_SNAPSHOTS - (reserveSlot ? 1 : 0)
+    const overflow = active.slice(retainedCount)
+    for (const snapshotId of new Set([...expired, ...overflow])) {
+      this.#db
+        .prepare(`DELETE FROM session_search_snapshot_rows WHERE snapshot_id = ?`)
+        .run(snapshotId)
+      this.#db.prepare(`DELETE FROM session_search_snapshots WHERE id = ?`).run(snapshotId)
     }
   }
 
@@ -802,6 +1473,30 @@ export class Store {
   }
 
   /** Persistent totals derived from the event log that already owns usage. */
+  usageEvents(): StoredUsageEvent[] {
+    const rows = this.#db
+      .prepare(
+        `SELECT e.thread_id, e.at, e.payload, t.provider
+         FROM events e JOIN threads t ON t.id = e.thread_id
+         WHERE e.payload LIKE '%"usage.updated"%'
+         ORDER BY e.thread_id, e.seq`,
+      )
+      .all() as Array<{ thread_id: string; at: number; payload: string; provider: ProviderId }>
+
+    const events: StoredUsageEvent[] = []
+    for (const row of rows) {
+      const event = JSON.parse(row.payload) as DomainEvent
+      if (event.type !== 'usage.updated') continue
+      events.push({
+        threadId: row.thread_id,
+        provider: row.provider,
+        at: row.at,
+        usage: event.usage,
+      })
+    }
+    return events
+  }
+
   usageSummary(threadId: string, since: number): { session: UsageTotal; today: UsageTotal } {
     const thread = this.thread(threadId)
     if (!thread) return { session: emptyUsage(), today: emptyUsage() }
@@ -814,9 +1509,13 @@ export class Store {
     // Two bounded scans instead of one unbounded one: the session total only
     // needs this thread's rows, and "today" only needs rows since midnight —
     // across every provider, because the user's day is not provider-scoped.
-    const parseUsage = (payload: string): UsageTotal | undefined => {
+    const parseUsage = (
+      payload: string,
+    ): { total: UsageTotal; cumulative: boolean } | undefined => {
       const event = JSON.parse(payload) as DomainEvent
-      return event.type === 'usage.updated' ? withoutContext(event.usage) : undefined
+      return event.type === 'usage.updated'
+        ? { total: withoutContext(event.usage), cumulative: event.usage.cumulative === true }
+        : undefined
     }
 
     let session = emptyUsage()
@@ -829,12 +1528,11 @@ export class Store {
         .all(threadId) as Array<{ payload: string }>
       let previous: UsageTotal | undefined
       for (const row of rows) {
-        const current = parseUsage(row.payload)
-        if (!current) continue
-        // Codex reports a running thread total. Claude reports one completed turn.
-        const increment =
-          thread.provider === 'claude-code' ? current : usageIncrement(current, previous)
-        previous = current
+        const sample = parseUsage(row.payload)
+        if (!sample) continue
+        const current = sample.total
+        const increment = sample.cumulative ? usageIncrement(current, previous) : current
+        if (sample.cumulative) previous = current
         session = addUsage(session, increment)
       }
     }
@@ -856,7 +1554,7 @@ export class Store {
         .all(since) as Array<{ thread_id: string; payload: string }>
       for (const seed of seeds) {
         const usage = parseUsage(seed.payload)
-        if (usage) previous.set(seed.thread_id, usage)
+        if (usage?.cumulative) previous.set(seed.thread_id, usage.total)
       }
 
       const rows = this.#db
@@ -868,13 +1566,13 @@ export class Store {
         )
         .all(since) as Array<{ thread_id: string; payload: string; provider: string }>
       for (const row of rows) {
-        const current = parseUsage(row.payload)
-        if (!current) continue
-        const increment =
-          row.provider === 'claude-code'
-            ? current
-            : usageIncrement(current, previous.get(row.thread_id))
-        previous.set(row.thread_id, current)
+        const sample = parseUsage(row.payload)
+        if (!sample) continue
+        const current = sample.total
+        const increment = sample.cumulative
+          ? usageIncrement(current, previous.get(row.thread_id))
+          : current
+        if (sample.cumulative) previous.set(row.thread_id, current)
         today = addUsage(today, increment)
       }
     }
@@ -1093,10 +1791,25 @@ function searchableEntry(
   return { turnId: item.turnId, createdAt: item.createdAt, text }
 }
 
-function toFtsQuery(query: string): string {
-  const terms = query.trim().split(/\s+/).filter(Boolean)
-  if (terms.length === 0) throw new Error('search query cannot be empty')
-  return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(' ')
+function encodeSearchResultIds(key: Buffer, eventSeqs: number[]): string[] {
+  const source = Buffer.alloc(eventSeqs.length * 16)
+  for (const [index, eventSeq] of eventSeqs.entries()) {
+    source[index * 16] = 1
+    source.writeBigUInt64BE(BigInt(eventSeq), index * 16 + 8)
+  }
+  const cipher = createCipheriv('aes-256-ecb', key, null)
+  cipher.setAutoPadding(false)
+  const encoded = Buffer.concat([cipher.update(source), cipher.final()])
+  return eventSeqs.map(
+    (_, index) => `sr1_${encoded.subarray(index * 16, (index + 1) * 16).toString('base64url')}`,
+  )
+}
+
+function toFtsQuery(query: string): string | undefined {
+  const terms = query.normalize('NFKC').toLowerCase().match(SEARCH_TOKEN) ?? []
+  const uniqueTerms = [...new Set(terms)]
+  if (uniqueTerms.length === 0) return undefined
+  return uniqueTerms.map((term) => `("${term}" OR "${term}"*)`).join(' AND ')
 }
 
 function encodeCursor(cursor: SearchCursor): string {
@@ -1108,11 +1821,10 @@ function decodeCursor(cursor: string | undefined): SearchCursor | undefined {
   try {
     const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as SearchCursor
     if (
-      !Number.isFinite(value.score) ||
-      !Number.isSafeInteger(value.createdAt) ||
-      value.createdAt < 0 ||
-      !Number.isSafeInteger(value.rowid) ||
-      value.rowid < 1
+      typeof value.snapshotId !== 'string' ||
+      value.snapshotId.length < 1 ||
+      !Number.isSafeInteger(value.position) ||
+      value.position < 1
     ) {
       return undefined
     }
@@ -1146,7 +1858,7 @@ function parseSnippet(value: string): SessionSearchResult['snippet'] {
   return parts.length > 0 ? parts : [{ text: value, highlighted: false }]
 }
 
-type UsageTotal = Omit<Usage, 'contextWindow'>
+type UsageTotal = Omit<Usage, 'contextWindow' | 'model' | 'cumulative' | 'inputIncludesCached'>
 
 function emptyUsage(): UsageTotal {
   return {
@@ -1159,8 +1871,23 @@ function emptyUsage(): UsageTotal {
 }
 
 function withoutContext(usage: Usage): UsageTotal {
-  const { contextWindow: _contextWindow, ...total } = usage
-  return total
+  const {
+    contextWindow: _contextWindow,
+    model: _model,
+    cumulative: _cumulative,
+    inputIncludesCached: _inputIncludesCached,
+    ...total
+  } = usage
+  // ACP can report context occupancy and cumulative cost without end-turn
+  // token accounting. Keep the cost, but don't turn "tokens currently in
+  // context" into tokens processed by the session summary.
+  return usage.contextWindow &&
+    total.inputTokens === 0 &&
+    total.cachedInputTokens === 0 &&
+    total.outputTokens === 0 &&
+    total.reasoningTokens === 0
+    ? { ...total, totalTokens: 0 }
+    : total
 }
 
 function addUsage(left: UsageTotal, right: UsageTotal): UsageTotal {
@@ -1199,6 +1926,32 @@ function toProject(row: unknown): StoredProject {
   }
 }
 
+function toQueuedTurn(row: unknown): StoredQueuedTurn {
+  const r = row as {
+    thread_id: string
+    queue_id: string
+    client_submission_id: string | null
+    intent: 'normal' | 'steer'
+    payload: string
+    created_at: number
+  }
+  const payload = JSON.parse(r.payload) as {
+    text: string
+    attachments: string[]
+    options: TurnOptions
+  }
+  return {
+    id: r.queue_id,
+    threadId: r.thread_id,
+    ...(r.client_submission_id === null ? {} : { clientSubmissionId: r.client_submission_id }),
+    text: payload.text,
+    attachments: payload.attachments,
+    options: payload.options,
+    createdAt: Number(r.created_at),
+    intent: r.intent,
+  }
+}
+
 function toThread(row: unknown): StoredThread {
   const r = row as {
     id: string
@@ -1219,6 +1972,8 @@ function toThread(row: unknown): StoredThread {
     woke_at: number | null
     unread: number
     last_active_at: number
+    ephemeral: number
+    parent_thread_id: string | null
   }
   // Null timestamps (rows migrated before these columns existed) must not
   // become NaN — a snoozed thread with NaN wakeAt can never be woken.
@@ -1254,6 +2009,8 @@ function toThread(row: unknown): StoredThread {
     lifecycle,
     unread: r.unread === 1,
     lastActiveAt: Number(r.last_active_at),
+    ephemeral: r.ephemeral === 1,
+    ...(r.parent_thread_id === null ? {} : { parentThreadId: r.parent_thread_id }),
   }
 }
 

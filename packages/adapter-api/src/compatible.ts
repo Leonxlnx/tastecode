@@ -89,6 +89,7 @@ export function createOpenAiCompatibleTransport(options: OpenAiCompatibleOptions
             outputTokens: number(usage.completion_tokens),
             reasoningTokens: number(object(usage.completion_tokens_details).reasoning_tokens),
             totalTokens: number(usage.total_tokens),
+            inputIncludesCached: true,
           },
         } satisfies ApiStreamEvent
       }

@@ -1,0 +1,20 @@
+diff --git a/dist/managers/InteractionManager.js b/dist/managers/InteractionManager.js
+index 937b8b664147b4fa153b57e5c5cc2fd091e762f7..e05348c4cbca41f64173dcc9b0ac14535574ed46 100644
+--- a/dist/managers/InteractionManager.js
++++ b/dist/managers/InteractionManager.js
+@@ -446,6 +446,7 @@ var InteractionManager = class {
+ 				}
+ 				const completedRange = this.buildSelectedLineRange(session.anchor, session.current);
+ 				onGutterUtilityClick?.({ ...completedRange });
++				this.updateSelection(null, void 0, false);
+ 				this.selectionAnchor = void 0;
+ 				this.notifySelectionEnd(completedRange);
+ 				this.notifySelectionCommitted(completedRange);
+@@ -486,6 +487,7 @@ var InteractionManager = class {
+ 					if (event.pointerId !== this.pointerSession.pointerId) return;
+ 				}
+ 				this.selectionAnchor = void 0;
++				if (this.pointerSession.mode === "gutterSelecting") this.updateSelection(null, void 0, false);
+ 				this.clearProposedSelection();
+ 				this.clearPendingSingleLineState();
+ 				this.clearPointerSession();

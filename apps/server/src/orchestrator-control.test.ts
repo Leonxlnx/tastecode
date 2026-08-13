@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Store } from './store.js'
 
 const control = vi.hoisted(() => ({
   constructed: 0,
   started: 0,
   releases: [] as Array<() => void>,
+  usageChanged: undefined as (() => void) | undefined,
 }))
 
 vi.mock('@harness/adapter-codex', async (importOriginal) => {
@@ -17,6 +18,9 @@ vi.mock('@harness/adapter-codex', async (importOriginal) => {
       }
 
       on(): void {}
+      onUsageChanged(listener: () => void): void {
+        control.usageChanged = listener
+      }
       dispose(): void {}
       listModels(): [] {
         return []
@@ -32,7 +36,52 @@ vi.mock('@harness/adapter-codex', async (importOriginal) => {
 
 import { Orchestrator } from './orchestrator.js'
 
+beforeEach(() => {
+  control.constructed = 0
+  control.started = 0
+  control.releases = []
+  control.usageChanged = undefined
+})
+
 describe('control adapter startup', () => {
+  it('forwards the long-lived control adapter usage signal', async () => {
+    const changed = vi.fn()
+    const orchestrator = new Orchestrator(new Store(':memory:'), {
+      onEvent: () => {},
+      onLog: () => {},
+      onLogin: () => {},
+      onUsageChanged: changed,
+    })
+
+    const started = orchestrator.listModels('codex')
+    await vi.waitFor(() => expect(control.releases).toHaveLength(1))
+    control.releases[0]?.()
+    await started
+    control.usageChanged?.()
+
+    expect(changed).toHaveBeenCalledWith('codex')
+    await orchestrator.disposeAll()
+  })
+
+  it('ignores a control signal after disposal', async () => {
+    const changed = vi.fn()
+    const orchestrator = new Orchestrator(new Store(':memory:'), {
+      onEvent: () => {},
+      onLog: () => {},
+      onLogin: () => {},
+      onUsageChanged: changed,
+    })
+    const started = orchestrator.listModels('codex')
+    await vi.waitFor(() => expect(control.releases).toHaveLength(1))
+    control.releases[0]?.()
+    await started
+
+    await orchestrator.disposeAll()
+    control.usageChanged?.()
+
+    expect(changed).not.toHaveBeenCalled()
+  })
+
   it('shares one startup across concurrent settings requests', async () => {
     const orchestrator = new Orchestrator(new Store(':memory:'), {
       onEvent: () => {},
@@ -47,6 +96,6 @@ describe('control adapter startup', () => {
     expect(control.constructed).toBe(1)
     control.releases[0]?.()
     await expect(Promise.all([first, second])).resolves.toEqual([[], []])
-    orchestrator.disposeAll()
+    await orchestrator.disposeAll()
   })
 })

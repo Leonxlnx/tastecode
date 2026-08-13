@@ -18,6 +18,14 @@
 
   --bg: #0f0f0f;
   --bg-rail: #131313;
+  /* Always a solid colour. The glass tint mixes this with transparent, and
+     color-mix() rejects a gradient — light mode's gradient rail made the whole
+     declaration invalid, so the frosted rail turned fully transparent there. */
+  --bg-rail-tint: var(--bg-rail);
+  /* How strongly the glass strength thins the pane. Dark can afford a thin
+     pane over the dark blur; light over an arbitrary desktop turns to grey
+     mud below ~75% opacity, so it fades far less per step. */
+  --rail-glass-fade: 130%;
   --bg-prompt: #1a1a1a;
   --bg-shelf: #222222;
   --bg-queue: #222222;
@@ -25,9 +33,9 @@
   --surface-2: #222222;
   --surface-3: #2b2b2b;
   --control-hover: #222222;
-  --menu-bg: #222222;
-  --menu-hover: #2b2b2b;
-  --menu-line: #333333;
+  --menu-bg: var(--chrome-raised);
+  --menu-hover: var(--chrome-raised-hover);
+  --menu-line: var(--chrome-border);
 
   --line: #262626;
   --line-strong: #333333;
@@ -83,16 +91,12 @@
   --composer-design-beam-stroke-strength: 1;
   --composer-design-beam-inner-strength: 1;
   --composer-design-beam-bloom-strength: 1;
-  --model-picker-bg: var(--surface-2);
+  --model-picker-bg: var(--menu-bg);
   --model-picker-controls-bg: transparent;
-  --model-picker-title-bg: var(--surface-2);
-  --model-picker-selected-bg: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--surface-3) 92%, transparent),
-    color-mix(in srgb, var(--surface) 56%, transparent)
-  );
-  --model-picker-selected-shadow: inset 0 1px color-mix(in srgb, white 7%, transparent);
-  --model-picker-hover-bg: var(--surface-3);
+  --model-picker-title-bg: var(--model-picker-bg);
+  --model-picker-selected-bg: var(--menu-hover);
+  --model-picker-selected-shadow: inset 0 0 0 1px var(--chrome-border), var(--chrome-shadow);
+  --model-picker-hover-bg: var(--chrome-raised);
   --model-picker-fast-bg: linear-gradient(
     180deg,
     color-mix(in srgb, var(--surface-3) 78%, transparent),
@@ -156,6 +160,11 @@
 
   --font-ui: 'Geist Variable', 'Segoe UI Variable Text', system-ui, sans-serif;
   --font-mono: 'Geist Mono Variable', 'Cascadia Code', ui-monospace, monospace;
+  --font-terminal:
+    'JetBrainsMono Nerd Font Mono', 'JetBrains Mono Variable', 'JetBrains Mono',
+    'CaskaydiaCove Nerd Font Mono', 'Cascadia Mono', 'Cascadia Code', 'Geist Mono Variable',
+    'Symbols Nerd Font Mono', ui-monospace, monospace;
+  --terminal-workspace-bg: #0d0d0d;
 
   --t-xs: 11.5px;
   --t-sm: 12.5px;
@@ -164,11 +173,23 @@
   --t-xl: 20px;
   --t-2xl: 26px;
 
+  /* The 10px control shape is the visual anchor. Containers need larger
+     radii to carry the same perceived roundness across a larger footprint. */
+  --r-xs: 2px;
   --r-sm: 3px;
   --r-md: 5px;
   --r-lg: 8px;
   --r-xl: 10px;
   --r-2xl: 20px;
+  --r-card: 12px;
+  --r-panel: 16px;
+  --r-dialog: 20px;
+  /* Small floating surfaces stay tighter than dialogs. Their interactive
+     rows use the next radius down so nested corners read as one shape. */
+  --r-popup: var(--r-xl);
+  --r-popup-item: var(--r-lg);
+  --r-pill: 999px;
+  --r-circle: 50%;
 
   --rail-w: 248px;
   --chat-w: 808px;
@@ -184,6 +205,15 @@
   --dur-press: 140ms;
   --dur-fast: 180ms;
   --dur-slow: 260ms;
+
+  /* The rail is the largest thing that moves. The quick ease-out above spends
+     most of its distance in the first few frames, which reads as a snap on a
+     whole column; this curve keeps a steady middle and settles instead. */
+  --ease-rail: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur-rail: 380ms;
+  /* The hover reveal is a flyout, not a layout change: it comes and goes
+     quickly. Only the deliberate collapse keeps the slower --dur-rail. */
+  --dur-reveal: 160ms;
 }
 
 :root[data-font='system'] {
@@ -250,7 +280,14 @@
   --on-danger: #fefefe;
 
   --bg: #fdfdfd;
+  --terminal-workspace-bg: #eff1f5;
   --bg-rail: var(--chrome-raised);
+  /* The rail itself may be a gradient; the glass tint must stay a solid. */
+  --bg-rail-tint: #fcfcfc;
+  /* Light never shows the desktop through the window: the pane sits over the
+     app itself, so it stays close to opaque and the blur frosts app content
+     (the revealed flyout over the stage) rather than the wallpaper. */
+  --rail-glass-fade: 20%;
   --bg-prompt: #ffffff;
   --bg-shelf: #fafafa;
   --bg-queue: #ffffff;
@@ -260,7 +297,7 @@
   --control-hover: var(--chrome-raised-hover);
   --menu-bg: var(--chrome-raised);
   --menu-hover: var(--chrome-raised-hover);
-  --menu-line: #e6e6e9;
+  --menu-line: var(--chrome-border);
 
   --line: #ebebed;
   --line-strong: #dedee2;
@@ -303,8 +340,8 @@
   --composer-design-beam-bloom-strength: 1.25;
   --model-picker-bg: var(--menu-bg);
   --model-picker-controls-bg: linear-gradient(180deg, #fafafa 0%, #f6f6f7 100%);
-  --model-picker-title-bg: transparent;
-  --model-picker-selected-bg: var(--chrome-raised-hover);
+  --model-picker-title-bg: var(--model-picker-bg);
+  --model-picker-selected-bg: var(--menu-hover);
   --model-picker-selected-shadow: inset 0 0 0 1px var(--chrome-border), var(--chrome-shadow);
   --model-picker-hover-bg: var(--chrome-raised);
   --model-picker-fast-bg: var(--chrome-raised);
@@ -446,7 +483,7 @@ html.is-macos-font-smoothing {
   background: var(--surface-3);
   border: 3px solid transparent;
   background-clip: content-box;
-  border-radius: 99px;
+  border-radius: var(--r-pill);
 }
 ::-webkit-scrollbar-thumb:hover {
   /* Was a hardcoded near-black, which in the light theme jumped from a pale

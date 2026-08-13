@@ -2,20 +2,25 @@ import {
   useDeferredValue,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type KeyboardEvent,
   type PointerEvent,
 } from 'react'
+import { performAppHaptic, prepareAppHaptics } from '../haptics.js'
+import { readModelPickerLayout, subscribeModelPickerLayout } from '../model-picker-layout.js'
 import { Check, ChevronDown, Zap } from 'lucide-react'
 import {
   filterModelChoicesByQuery,
   resolveReasoningEffort,
+  sourceKey,
   type ModelChoice,
 } from '../model-catalog.js'
 import { DitherSlider } from './dither-kit/DitherSlider.js'
 import { Menu } from './Menu.js'
 import { ModelSearchField } from './ModelSearchField.js'
 import { ProviderIcon } from './ProviderIcon.js'
+import { SourceIdentity } from './SourceIdentity.js'
 
 const SLIDER_DITHER_MIN_WIDTH = 44
 const SLIDER_DITHER_INSET = 2
@@ -100,7 +105,11 @@ type ModelGroup = {
 }
 
 function modelSourceKey(entry: ModelChoice): string {
-  return `${entry.provider}:${entry.connectionId ?? ''}:${entry.sourceName}`
+  return sourceKey({
+    provider: entry.provider,
+    connectionId: entry.connectionId,
+    agentId: entry.agent?.id,
+  })
 }
 
 /** One section per source, in catalog order, so a provider's name renders once. */
@@ -153,6 +162,7 @@ function ProviderModelList(props: {
   selectedChoice: ModelChoice | undefined
   onModelSelect: (choice: ModelChoice) => void
 }) {
+  const catalog = useRef<HTMLDivElement>(null)
   const groups = groupModelsBySource(props.models)
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
@@ -164,15 +174,24 @@ function ProviderModelList(props: {
     groups.find((group) => group.key === activeGroupKey) ??
     groups.find((group) => group.key === selectedGroupKey) ??
     groups[0]
-  const filteredEntries = activeGroup
-    ? filterModelChoicesByQuery(activeGroup.entries, deferredQuery)
-    : []
+  const searching = deferredQuery.trim().length > 0
+  const filteredGroups = searching
+    ? groupModelsBySource(filterModelChoicesByQuery(props.models, deferredQuery))
+    : groups
+  const visibleGroup =
+    filteredGroups.find((group) => group.key === activeGroup?.key) ??
+    filteredGroups[0] ??
+    activeGroup
+  const filteredEntries = searching
+    ? (filteredGroups.find((group) => group.key === visibleGroup?.key)?.entries ?? [])
+    : (visibleGroup?.entries ?? [])
+  const focusResult = (edge: 'first' | 'last') => focusModelResult(catalog.current, edge)
 
   return (
-    <div className="model-selector__catalog">
+    <div className="model-selector__catalog" ref={catalog}>
       <div className="model-selector__providers" role="group" aria-label="Providers">
         {groups.map((group) => {
-          const active = group.key === activeGroup?.key
+          const active = group.key === visibleGroup?.key
           return (
             <button
               key={group.key}
@@ -181,7 +200,10 @@ function ProviderModelList(props: {
               aria-label={`Show ${group.name} models`}
               aria-pressed={active}
               title={group.name}
-              onClick={() => setActiveGroupKey(group.key)}
+              onClick={() => {
+                setActiveGroupKey(group.key)
+                setQuery('')
+              }}
             >
               <ProviderIcon mark={group.mark} size={18} />
             </button>
@@ -190,21 +212,25 @@ function ProviderModelList(props: {
       </div>
 
       <div
-        key={activeGroup?.key}
         className="model-selector__models"
         role="group"
-        aria-label={activeGroup ? `${activeGroup.name} models` : 'Models'}
+        aria-label={visibleGroup ? `${visibleGroup.name} models` : 'Models'}
       >
-        {activeGroup ? (
+        {visibleGroup ? (
           <section className="model-selector__group">
             <div className="model-selector__group-head">
-              <p className="model-selector__group-title">{activeGroup.name}</p>
+              <p className="model-selector__group-title">
+                <SourceIdentity
+                  presentation={{ label: visibleGroup.name, mark: visibleGroup.mark }}
+                />
+              </p>
               <ModelSearchField
                 className="model-selector__search"
                 value={query}
-                label={`Search ${activeGroup.name} models`}
+                label="Search models"
                 autoFocus
                 onChange={setQuery}
+                onNavigate={focusResult}
               />
             </div>
             {filteredEntries.length > 0 ? (
@@ -234,6 +260,76 @@ function ProviderModelList(props: {
       </div>
     </div>
   )
+}
+
+/** The original picker layout: one flat scrolling list, providers as inline
+ *  section headings. Default; the provider-rail catalog is opt-in in Settings. */
+function FlatModelList(props: {
+  models: ModelChoice[]
+  selectedChoice: ModelChoice | undefined
+  onModelSelect: (choice: ModelChoice) => void
+}) {
+  const list = useRef<HTMLDivElement>(null)
+  const [query, setQuery] = useState('')
+  const deferredQuery = useDeferredValue(query)
+  const groups = groupModelsBySource(filterModelChoicesByQuery(props.models, deferredQuery))
+
+  return (
+    <div
+      className="model-selector__models model-selector__models--flat"
+      role="group"
+      aria-label="Models"
+      ref={list}
+    >
+      <div className="model-selector__flat-head">
+        <ModelSearchField
+          className="model-selector__search"
+          value={query}
+          label="Search models"
+          autoFocus
+          onChange={setQuery}
+          onNavigate={(edge) => focusModelResult(list.current, edge)}
+        />
+      </div>
+      {groups.map((group) => (
+        <section className="model-selector__group" key={group.key}>
+          <p className="model-selector__group-title">
+            <SourceIdentity
+              presentation={{ label: group.name, mark: group.mark }}
+              density="compact"
+            />
+          </p>
+          {group.entries.map((entry) => {
+            const selected = entry.key === props.selectedChoice?.key
+            return (
+              <button
+                key={entry.key}
+                type="button"
+                className={`model-selector__model${selected ? ' is-selected' : ''}`}
+                aria-pressed={selected}
+                aria-label={`Use ${entry.model.displayName} through ${entry.sourceName}`}
+                onClick={() => props.onModelSelect(entry)}
+              >
+                <span className="model-selector__model-name">{entry.model.displayName}</span>
+                {selected ? <Check size={14} aria-hidden /> : null}
+              </button>
+            )
+          })}
+        </section>
+      ))}
+      {groups.length === 0 ? (
+        <p className="model-selector__empty" role="status">
+          No matching models.
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+function focusModelResult(container: HTMLElement | null, edge: 'first' | 'last'): void {
+  const results = container?.querySelectorAll<HTMLButtonElement>('.model-selector__model')
+  const index = edge === 'first' ? 0 : (results?.length ?? 0) - 1
+  results?.[index]?.focus()
 }
 
 /** Carries fast *intent* across models whose fast tiers use different ids
@@ -305,9 +401,11 @@ function DitherChoiceRow(props: {
       stopCount: props.optionLabels.length,
     })
     if (pointerIndexRef.current !== nextIndex) {
+      const previousIndex = pointerIndexRef.current ?? displayIndex
       pointerIndexRef.current = nextIndex
       setPointerIndex(nextIndex)
       props.onPreviewIndex(nextIndex)
+      if (nextIndex !== previousIndex) performAppHaptic('alignment')
     }
   }
 
@@ -350,11 +448,15 @@ function DitherChoiceRow(props: {
         event.preventDefault()
         event.stopPropagation()
       }}
+      onPointerEnter={() => {
+        if (!props.disabled) prepareAppHaptics()
+      }}
       onKeyDown={handleKeyDown}
       onPointerDown={(event) => {
         if (props.disabled) return
         event.preventDefault()
         event.stopPropagation()
+        prepareAppHaptics()
         setPointerCaptureSafe(event.currentTarget, event.pointerId)
         previewFromPointer(event)
       }}
@@ -425,6 +527,7 @@ function DitherChoiceRow(props: {
 
 export function ModelSelector(props: ModelSelectorProps) {
   const [previewEffortIndex, setPreviewEffortIndex] = useState<number | null>(null)
+  const pickerLayout = useSyncExternalStore(subscribeModelPickerLayout, readModelPickerLayout)
   const choice = getSelectedChoice(props.models, props.modelId)
   const model = choice?.model
   const selectedEffort = getSelectedEffort(model, props.effort)
@@ -453,7 +556,6 @@ export function ModelSelector(props: ModelSelectorProps) {
       props.onModelChange(nextChoice.key)
     }
   }
-
   return (
     <Menu
       align="right"
@@ -485,51 +587,65 @@ export function ModelSelector(props: ModelSelectorProps) {
     >
       {() => (
         <div className="model-selector">
-          <ProviderModelList
-            key={choice ? modelSourceKey(choice) : 'no-model'}
-            models={props.models}
-            selectedChoice={choice}
-            onModelSelect={handleModelSelect}
-          />
+          {pickerLayout === 'rail' ? (
+            <ProviderModelList
+              key={choice ? modelSourceKey(choice) : 'no-model'}
+              models={props.models}
+              selectedChoice={choice}
+              onModelSelect={handleModelSelect}
+            />
+          ) : (
+            <FlatModelList
+              models={props.models}
+              selectedChoice={choice}
+              onModelSelect={handleModelSelect}
+            />
+          )}
 
-          <div className="model-selector__controls">
-            <div className="model-selector__controls-head">
-              <span className="model-selector__effort-title">
-                Effort: <span>{displayedEffortLabel}</span>
-              </span>
-              {fastTier ? (
-                <div className="model-selector__fast-row">
-                  <button
-                    type="button"
-                    className={`model-selector__fast${fastEnabled ? ' is-on' : ''}`}
-                    aria-label={fastEnabled ? 'Disable fast mode' : 'Enable fast mode'}
-                    aria-pressed={fastEnabled}
-                    onClick={() =>
-                      props.onServiceTierChange(
-                        fastEnabled ? getFastModeOffValue(model) : fastTier.id,
-                      )
-                    }
-                  >
-                    <span className="model-selector__fast-icon" aria-hidden>
-                      <Zap size={15} />
-                    </span>
-                  </button>
-                </div>
+          {effortOptions.length > 0 || fastTier ? (
+            <div
+              className={`model-selector__controls${effortOptions.length === 0 ? ' is-fast-only' : ''}`}
+            >
+              <div className="model-selector__controls-head">
+                {effortOptions.length > 0 ? (
+                  <span className="model-selector__effort-title">
+                    Effort: <span>{displayedEffortLabel}</span>
+                  </span>
+                ) : null}
+                {fastTier ? (
+                  <div className="model-selector__fast-row">
+                    <button
+                      type="button"
+                      className={`model-selector__fast${fastEnabled ? ' is-on' : ''}`}
+                      aria-label={fastEnabled ? 'Disable fast mode' : 'Enable fast mode'}
+                      aria-pressed={fastEnabled}
+                      onClick={() =>
+                        props.onServiceTierChange(
+                          fastEnabled ? getFastModeOffValue(model) : fastTier.id,
+                        )
+                      }
+                    >
+                      <span className="model-selector__fast-icon" aria-hidden>
+                        <Zap size={15} />
+                      </span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+
+              {effortOptions.length > 0 ? (
+                <DitherChoiceRow
+                  label="Effort"
+                  ariaLabel="Reasoning effort"
+                  optionLabels={effortLabels}
+                  selectedIndex={selectedEffortIndex}
+                  disabled={props.disabled || effortOptions.length <= 1}
+                  onPreviewIndex={setPreviewEffortIndex}
+                  onCommitIndex={commitEffortIndex}
+                />
               ) : null}
             </div>
-
-            {effortOptions.length > 0 ? (
-              <DitherChoiceRow
-                label="Effort"
-                ariaLabel="Reasoning effort"
-                optionLabels={effortLabels}
-                selectedIndex={selectedEffortIndex}
-                disabled={props.disabled || effortOptions.length <= 1}
-                onPreviewIndex={setPreviewEffortIndex}
-                onCommitIndex={commitEffortIndex}
-              />
-            ) : null}
-          </div>
+          ) : null}
         </div>
       )}
     </Menu>

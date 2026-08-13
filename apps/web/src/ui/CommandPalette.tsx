@@ -1,6 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Search } from 'lucide-react'
-import { ShortcutHint } from './ShortcutHint.js'
 
 export type CommandScope = 'all' | 'projects' | 'new-thread'
 
@@ -10,7 +9,6 @@ export type PaletteCommand = {
   detail?: string
   group: 'Actions' | 'Projects' | 'Chats'
   keywords?: string
-  shortcut?: string
   projectCommand?: boolean
   newThreadProject?: boolean
   run: () => void
@@ -170,7 +168,6 @@ function CommandPaletteComponent(props: {
                         <span className="command-palette__detail">{command.detail}</span>
                       ) : null}
                     </span>
-                    {command.shortcut ? <ShortcutHint>{command.shortcut}</ShortcutHint> : null}
                   </button>
                 </div>
               )

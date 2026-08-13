@@ -30,6 +30,15 @@ const catalog = [
     },
     [{ ...model, id: 'openai/gpt-5.6-sol' }],
   ),
+  ...choicesFor(
+    {
+      provider: 'pi',
+      sourceName: 'DeepSeek Pi',
+      mark: 'pi',
+      agent: { id: 'deepseek-pi', name: 'DeepSeek Pi' },
+    },
+    [{ ...model, id: 'openrouter/deepseek-v3.2' }],
+  ),
 ]
 
 describe('model catalog cache', () => {

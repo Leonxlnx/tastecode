@@ -1,8 +1,14 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { platformShell, TerminalManager } from './terminal.js'
+import type { IPty } from 'node-pty'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  platformShell,
+  terminalEnvironment,
+  TerminalManager,
+  TerminalOutputBuffer,
+} from './terminal.js'
 
 describe('TerminalManager', () => {
   it('selects a native shell without imposing a POSIX model', () => {
@@ -11,6 +17,117 @@ describe('TerminalManager', () => {
     )
     expect(platformShell('darwin', { SHELL: '/bin/zsh' })).toBe('/bin/zsh')
     expect(platformShell('linux', {})).toBe('/bin/sh')
+  })
+
+  it('advertises true color without dropping the native process environment', () => {
+    expect(terminalEnvironment({ PATH: '/system/bin', CUSTOM: 'kept' })).toEqual({
+      PATH: '/system/bin',
+      CUSTOM: 'kept',
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      TERM_PROGRAM: 'Harness',
+    })
+  })
+
+  it('batches high-volume PTY output without changing its byte order', () => {
+    const emitted: string[] = []
+    const buffer = new TerminalOutputBuffer((data) => emitted.push(data), 4, 64 * 1024)
+
+    for (let index = 0; index < 1024; index += 1) buffer.push('x'.repeat(1024))
+
+    expect(emitted).toHaveLength(16)
+    expect(emitted.join('')).toBe('x'.repeat(1024 * 1024))
+    buffer.dispose()
+  })
+
+  it('keeps interactive output latency bounded and flushes before exit', async () => {
+    vi.useFakeTimers()
+    try {
+      const events: string[] = []
+      const pty = controlledPty()
+      const manager = new TerminalManager(
+        {
+          onOutput: (_terminalId, data) => events.push(`output:${data}`),
+          onExit: (_terminalId, exitCode) => events.push(`exit:${String(exitCode)}`),
+        },
+        { spawnPty: () => pty },
+      )
+      manager.open('thread-buffered', os.tmpdir(), 80, 24)
+
+      pty.emitData('prompt')
+      expect(events).toEqual([])
+      await vi.advanceTimersByTimeAsync(3)
+      expect(events).toEqual([])
+      await vi.advanceTimersByTimeAsync(1)
+      expect(events).toEqual(['output:prompt'])
+
+      pty.emitData('last line')
+      pty.emitExit(0)
+      expect(events).toEqual(['output:prompt', 'output:last line', 'exit:0'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('bounds shutdown when a PTY never reports its exit', async () => {
+    const pty = controlledPty()
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      { spawnPty: () => pty, closeTimeoutMs: 10 },
+    )
+    const terminalId = manager.open('thread-1', os.tmpdir(), 80, 24)
+    const closing = manager.close(terminalId)
+
+    await expect(closing).rejects.toThrow(/shutdown timed out/i)
+    expect(manager.close(terminalId)).toBe(closing)
+    await expect(manager.closeThread('thread-1')).rejects.toThrow(/terminal shutdown failed/i)
+  })
+
+  it('keeps a terminal attached when node-pty rejects the kill request', async () => {
+    let rejectKill = true
+    const pty = controlledPty({
+      kill: () => {
+        if (rejectKill) throw new Error('kill failed')
+      },
+    })
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      { spawnPty: () => pty },
+    )
+    const terminalId = manager.open('thread-1', os.tmpdir(), 80, 24)
+
+    expect(() => manager.close(terminalId)).toThrow('kill failed')
+    expect(manager.open('thread-1', os.tmpdir(), 100, 30)).toBe(terminalId)
+
+    rejectKill = false
+    const closed = manager.close(terminalId)
+    pty.emitExit(0)
+    await expect(closed).resolves.toBeUndefined()
+  })
+
+  it('attempts every PTY close when one kill request fails', async () => {
+    let secondKilled = false
+    const first = controlledPty({
+      kill: () => {
+        throw new Error('first kill failed')
+      },
+    })
+    const second = controlledPty({
+      kill: () => {
+        secondKilled = true
+        queueMicrotask(() => second.emitExit(0))
+      },
+    })
+    const ptys = [first, second]
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      { spawnPty: () => ptys.shift()! },
+    )
+    manager.open('thread-1', os.tmpdir(), 80, 24)
+    manager.open('thread-2', os.tmpdir(), 80, 24)
+
+    await expect(manager.closeAll()).rejects.toThrow(/terminal shutdown failed/i)
+    expect(secondKilled).toBe(true)
   })
 
   it('runs one real PTY in the session checkout and reports its exit', async () => {
@@ -42,8 +159,8 @@ describe('TerminalManager', () => {
       await expect(within(exited)).resolves.toEqual({ terminalId, exitCode: 0 })
       expect(() => manager.write(terminalId, 'after exit')).toThrow(/no such terminal/i)
     } finally {
-      manager.closeAll()
-      rmSync(cwd, { recursive: true, force: true })
+      await manager.closeAll()
+      removeTemporaryDirectory(cwd)
     }
   }, 15_000)
 
@@ -74,8 +191,8 @@ describe('TerminalManager', () => {
       expect(output).toContain('harness-run-done')
       expect(output).not.toContain('something-else')
     } finally {
-      manager.closeAll()
-      rmSync(cwd, { recursive: true, force: true })
+      await manager.closeAll()
+      removeTemporaryDirectory(cwd)
     }
   }, 15_000)
 
@@ -93,8 +210,8 @@ describe('TerminalManager', () => {
       expect(() => manager.resize(terminalId, 100, 30)).toThrow(/no such terminal/i)
       await within(exited)
     } finally {
-      manager.closeAll()
-      rmSync(cwd, { recursive: true, force: true })
+      await manager.closeAll()
+      removeTemporaryDirectory(cwd)
     }
   })
 })
@@ -115,22 +232,64 @@ async function within<T>(promise: Promise<T>): Promise<T> {
 
 it('closing a stale terminal id does not unmap a newer pty under the same key', async () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-stale-'))
-  const manager = new TerminalManager({ onOutput: () => {}, onExit: () => {} })
+  const exited = new Set<string>()
+  const manager = new TerminalManager({
+    onOutput: () => {},
+    onExit: (terminalId) => exited.add(terminalId),
+  })
 
   try {
     const first = manager.open('thread-1', cwd, 80, 24)
     // Simulate the respawn race: the first pty is closed directly, a new
     // one is opened under the same key, and then someone closes the stale
     // first id again (a late client, a double-click).
-    manager.close(first)
+    const firstClosing = manager.close(first)
     const second = manager.open('thread-1', cwd, 80, 24)
-    manager.close(first)
+    expect(manager.close(first)).toBe(firstClosing)
 
     // The newer pty must still be mapped: asking for the thread's terminal
     // reattaches instead of spawning a third.
     expect(manager.open('thread-1', cwd, 80, 24)).toBe(second)
+    await manager.closeThread('thread-1')
+    expect(exited).toEqual(new Set([first, second]))
   } finally {
-    manager.closeAll()
-    rmSync(cwd, { recursive: true, force: true })
+    await manager.closeAll()
+    expect(exited.size).toBe(2)
+    removeTemporaryDirectory(cwd)
   }
 }, 15_000)
+
+function removeTemporaryDirectory(directory: string): void {
+  rmSync(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 })
+}
+
+function controlledPty(options: { kill?: () => void } = {}): IPty & {
+  emitData(data: string): void
+  emitExit(exitCode: number): void
+} {
+  let onData: (data: string) => void = () => {}
+  let onExit: (event: { exitCode: number; signal?: number }) => void = () => {}
+  return {
+    pid: 1,
+    cols: 80,
+    rows: 24,
+    process: 'fake',
+    handleFlowControl: false,
+    onData: (listener) => {
+      onData = listener
+      return { dispose: () => {} }
+    },
+    onExit: (listener) => {
+      onExit = listener
+      return { dispose: () => {} }
+    },
+    write: () => {},
+    resize: () => {},
+    clear: () => {},
+    kill: () => options.kill?.(),
+    pause: () => {},
+    resume: () => {},
+    emitData: (data) => onData(data),
+    emitExit: (exitCode) => onExit({ exitCode }),
+  }
+}

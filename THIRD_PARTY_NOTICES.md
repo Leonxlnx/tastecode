@@ -16,7 +16,7 @@ distributed build.
 | Lucide                              | Interface icons                     | ISC; some icons include Feather's MIT terms | [lucide-icons/lucide](https://github.com/lucide-icons/lucide)               |
 | Geist and Geist Mono via Fontsource | Fonts                               | OFL-1.1                                     | [fontsource/font-files](https://github.com/fontsource/font-files)           |
 | Border Beam                         | Animated border effect              | MIT                                         | [Jakubantalik/border-beam](https://github.com/Jakubantalik/border-beam)     |
-| Thinking Orbs                       | Agent activity indicators           | MIT                                         | [Jakubantalik/thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) |
+| Thinking Orbs                       | Native agent activity indicators    | [MIT](./licenses/thinking-orbs-MIT.txt)     | [Jakubantalik/thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) |
 | node-pty                            | Pseudoterminal integration          | MIT                                         | [microsoft/node-pty](https://github.com/microsoft/node-pty)                 |
 | keyring-node                        | OS credential-store integration     | MIT                                         | [Brooooooklyn/keyring-node](https://github.com/Brooooooklyn/keyring-node)   |
 | ws                                  | WebSocket runtime                   | MIT                                         | [websockets/ws](https://github.com/websockets/ws)                           |

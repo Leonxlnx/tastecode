@@ -11,6 +11,7 @@ import { spawnCli, StdioJsonRpc } from '@harness/proc'
 import { discoverAgentModels, findAgentSpec, type AcpAgentSpec } from './agents.js'
 import { optionFor, type PermissionOption } from './approvals.js'
 import { Streamer } from './events.js'
+import { acpSessionUsage, acpTurnUsage } from './usage.js'
 import {
   PROTOCOL_VERSION,
   type InitializeResult,
@@ -46,10 +47,25 @@ export type AcpStartOptions = {
   model?: string | undefined
 }
 
+export type AcpLaunchOptions = {
+  name: string
+  command: string
+  args?: string[]
+  spawn?: typeof spawnCli
+}
+
+type AcpLaunchSpec = Pick<
+  AcpAgentSpec,
+  'id' | 'name' | 'command' | 'args' | 'supportedVersion' | 'modelArg' | 'modelConfigId'
+>
+
 export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
-  #spec: AcpAgentSpec
+  #spec: AcpLaunchSpec
+  readonly #spawn: typeof spawnCli
   #rpc: StdioJsonRpc | undefined
+  #initialize: InitializeResult | undefined
   #sessionId: string | undefined
+  #model: string | undefined
   #streamer: Streamer | undefined
   #turnCounter = 0
   #instructions: string | undefined
@@ -68,8 +84,18 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   /** The options the agent offered, kept until the user answers. */
   #optionsById = new Map<string, PermissionOption[]>()
 
-  constructor(agentId: string) {
+  constructor(agentId: string, launch?: AcpLaunchOptions) {
     super()
+    this.#spawn = launch?.spawn ?? spawnCli
+    if (launch) {
+      this.#spec = {
+        id: agentId,
+        name: launch.name,
+        command: launch.command,
+        args: launch.args ?? [],
+      }
+      return
+    }
     const spec = findAgentSpec(agentId)
     if (!spec) throw new Error(`unknown ACP agent "${agentId}"`)
     this.#spec = spec
@@ -92,6 +118,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#setApproval(options.approval)
     this.#instructions = options.instructions
     this.#instructionsPending = Boolean(options.instructions)
+    this.#model = options.model
     const rpc = await this.#connect(workspacePath, options.model)
 
     const session = await rpc
@@ -129,6 +156,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#setApproval(options.approval)
     this.#instructions = options.instructions
     this.#instructionsPending = false
+    this.#model = options.model
     const sessionId = parseAcpThreadId(threadId, this.#spec.id)
     const rpc = await this.#connect(workspacePath, options.model)
     if (!this.#loadSession) {
@@ -174,7 +202,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
         sessionId: this.#sessionId,
         prompt: [{ type: 'text', text: prompt }],
       })
-      .then((result) => this.#finishTurn(threadId, turnId, result.stopReason, streamer))
+      .then((result) => this.#finishTurn(threadId, turnId, result, streamer))
       .catch((error: unknown) => {
         this.emit('event', {
           type: 'thread.error',
@@ -213,14 +241,38 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     if (decision === 'abort') void this.interrupt()
   }
 
+  /** Live access-level change; read again for every permission request. */
+  setApproval(approval: ApprovalMode | undefined): void {
+    this.#setApproval(approval)
+  }
+
   async listModels(): Promise<Model[]> {
     return discoverAgentModels(this.#spec.id)
+  }
+
+  /** Complete the ACP initialize handshake without creating a paid session. */
+  async verifyCompatibility(workspacePath: string): Promise<{
+    protocolVersion?: number
+    agentName?: string
+    agentVersion?: string
+  }> {
+    await this.#connect(workspacePath, undefined)
+    const initialize = this.#initialize
+    return {
+      ...(initialize?.protocolVersion === undefined
+        ? {}
+        : { protocolVersion: initialize.protocolVersion }),
+      ...(initialize?.agentInfo?.name ? { agentName: initialize.agentInfo.name } : {}),
+      ...(initialize?.agentInfo?.version ? { agentVersion: initialize.agentInfo.version } : {}),
+    }
   }
 
   dispose(): void {
     this.#rpc?.dispose()
     this.#rpc = undefined
+    this.#initialize = undefined
     this.#sessionId = undefined
+    this.#model = undefined
     this.#loadSession = false
     this.#pendingApprovals.clear()
   }
@@ -233,7 +285,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     // A second connect (retry after a failed resume, say) must not orphan the
     // agent process the first one spawned.
     this.#rpc?.dispose()
-    const child = spawnCli(this.#spec.command, args, { cwd: workspacePath })
+    const child = this.#spawn(this.#spec.command, args, { cwd: workspacePath })
     const rpc = new StdioJsonRpc(child, this.#spec.name)
     this.#rpc = rpc
     rpc.onStderr((text) => this.emit('log', text.trimEnd()))
@@ -244,6 +296,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
       clientInfo: { name: 'personal-harness', version: '0.0.0' },
     })
+    this.#initialize = init
     if (init.protocolVersion !== undefined && init.protocolVersion !== PROTOCOL_VERSION) {
       this.emit(
         'log',
@@ -285,7 +338,15 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   #onNotification(method: string, params: unknown): void {
     if (method !== 'session/update') return
     const update = (params as SessionNotification | undefined)?.update
-    if (!update || !this.#streamer) return
+    if (!update) return
+
+    if (update.sessionUpdate === 'usage_update') {
+      const usage = acpSessionUsage(update, this.#model)
+      if (usage) this.emit('event', { type: 'usage.updated', usage })
+      return
+    }
+
+    if (!this.#streamer) return
 
     if (
       update.sessionUpdate === 'available_commands' ||
@@ -373,17 +434,15 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     return undefined
   }
 
-  #finishTurn(
-    threadId: string,
-    turnId: string,
-    stopReason: PromptResult['stopReason'],
-    streamer?: Streamer,
-  ): void {
+  #finishTurn(threadId: string, turnId: string, result: PromptResult, streamer?: Streamer): void {
+    const stopReason = result.stopReason
     // Finish the streamer this turn owns, never whichever one is current —
     // a late completion must not close the next turn's open items.
     const owned = streamer ?? this.#streamer
     if (owned === this.#streamer) this.#streamer = undefined
     for (const event of owned?.finish() ?? []) this.emit('event', event)
+    const usage = acpTurnUsage(result.usage, this.#model)
+    if (usage) this.emit('event', { type: 'usage.updated', usage })
 
     // Anything still waiting is now unanswerable — the turn it belonged to is
     // over. The agent is still blocked on its request, so it must hear

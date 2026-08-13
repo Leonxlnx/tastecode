@@ -2,12 +2,47 @@ import { describe, expect, it } from 'vitest'
 import type { GuardianApprovalReviewAction } from './generated/v2/GuardianApprovalReviewAction'
 import type { ItemGuardianApprovalReviewCompletedNotification } from './generated/v2/ItemGuardianApprovalReviewCompletedNotification'
 import type { ItemGuardianApprovalReviewStartedNotification } from './generated/v2/ItemGuardianApprovalReviewStartedNotification'
+import type { RemoteControlStatusChangedNotification } from './generated/v2/RemoteControlStatusChangedNotification'
+import type { ThreadStatusChangedNotification } from './generated/v2/ThreadStatusChangedNotification'
+import type { ThreadTokenUsageUpdatedNotification } from './generated/v2/ThreadTokenUsageUpdatedNotification'
+import type { WarningNotification } from './generated/v2/WarningNotification'
+import type { ErrorNotification } from './generated/v2/ErrorNotification'
 import {
   CODEX_APPROVAL,
   CODEX_CAPABILITIES,
+  CodexAdapter,
+  formatCodexWarning,
+  mapCodexError,
+  mapCodexUsage,
+  isIgnorableCodexNotification,
+  mapApprovalResponse,
+  mapApprovalRequest,
   mapAutoApprovalReview,
   mapUserInputRequest,
+  permissionInterruptParams,
 } from './adapter.js'
+
+const capturedTokenUsage = {
+  threadId: 'captured-thread',
+  turnId: 'captured-turn',
+  tokenUsage: {
+    total: {
+      inputTokens: 570_000,
+      cachedInputTokens: 490_000,
+      outputTokens: 25_000,
+      reasoningOutputTokens: 6_152,
+      totalTokens: 601_152,
+    },
+    last: {
+      inputTokens: 97_000,
+      cachedInputTokens: 80_000,
+      outputTokens: 4_000,
+      reasoningOutputTokens: 1_000,
+      totalTokens: 102_000,
+    },
+    modelContextWindow: 258_400,
+  },
+} satisfies ThreadTokenUsageUpdatedNotification
 
 /** Sanitized frames captured from Codex 0.146.0 on Windows. */
 const capturedStarted = {
@@ -41,6 +76,78 @@ const capturedCompleted = {
     rationale: 'The user explicitly authorized this read-only git status check.',
   },
 } satisfies ItemGuardianApprovalReviewCompletedNotification
+
+const capturedRemoteControlStatus = {
+  status: 'disabled',
+  serverName: 'captured-server',
+  installationId: 'captured-installation',
+  environmentId: null,
+} satisfies RemoteControlStatusChangedNotification
+
+const capturedThreadStatus = {
+  threadId: 'captured-thread',
+  status: { type: 'idle' },
+} satisfies ThreadStatusChangedNotification
+
+const capturedWarning = {
+  threadId: 'captured-thread',
+  message:
+    'Under-development features enabled: default_mode_request_user_input. Under-development features are incomplete and may behave unpredictably.',
+} satisfies WarningNotification
+
+const capturedError = {
+  threadId: 'captured-thread',
+  turnId: 'captured-turn',
+  willRetry: false,
+  error: {
+    message: 'Failed to parse server response',
+    codexErrorInfo: 'internalServerError',
+    additionalDetails: null,
+  },
+} satisfies ErrorNotification
+
+describe('Codex notifications', () => {
+  it('does not present cumulative thread usage as current context occupancy', () => {
+    expect(mapCodexUsage(capturedTokenUsage, 'gpt-5.6')).toEqual({
+      model: 'gpt-5.6',
+      inputTokens: 570_000,
+      cachedInputTokens: 490_000,
+      outputTokens: 25_000,
+      reasoningTokens: 6_152,
+      totalTokens: 601_152,
+      cumulative: true,
+      inputIncludesCached: true,
+    })
+  })
+
+  it('does not collapse a failed account read into signed out', async () => {
+    await expect(new CodexAdapter().account()).rejects.toThrow('adapter not started')
+  })
+
+  it('silences the captured startup-only remote-control status', () => {
+    expect(capturedRemoteControlStatus.status).toBe('disabled')
+    expect(isIgnorableCodexNotification('remoteControl/status/changed')).toBe(true)
+    expect(isIgnorableCodexNotification('new/provider/event')).toBe(false)
+  })
+
+  it('silences the captured provider thread status', () => {
+    expect(capturedThreadStatus.status).toEqual({ type: 'idle' })
+    expect(isIgnorableCodexNotification('thread/status/changed')).toBe(true)
+  })
+
+  it('preserves the captured Codex warning text', () => {
+    expect(formatCodexWarning(capturedWarning)).toBe(`Codex warning: ${capturedWarning.message}`)
+  })
+
+  it('surfaces a terminal turn error but leaves retries to Codex', () => {
+    expect(mapCodexError(capturedError)).toEqual({
+      type: 'thread.error',
+      threadId: 'captured-thread',
+      message: 'Failed to parse server response',
+    })
+    expect(mapCodexError({ ...capturedError, willRetry: true })).toBeUndefined()
+  })
+})
 
 describe('Codex auto-review', () => {
   it('advertises the capability and maps captured lifecycle frames', () => {
@@ -146,6 +253,63 @@ describe('Codex structured user input', () => {
           options: [{ label: 'Decide for me', description: 'Infer the strongest direction.' }],
         },
       ],
+    })
+  })
+})
+
+describe('Codex permission approval', () => {
+  const requested = {
+    network: { enabled: true },
+    fileSystem: { read: ['D:\\reference'], write: null },
+  }
+
+  it('answers the permission-profile wire request with the requested grant and scope', () => {
+    expect(mapApprovalResponse('permissions', 'approve', requested)).toEqual({
+      permissions: requested,
+      scope: 'turn',
+    })
+    expect(mapApprovalResponse('permissions', 'approve-session', requested)).toEqual({
+      permissions: requested,
+      scope: 'session',
+    })
+  })
+
+  it('denies the permission-profile wire request with an empty turn grant', () => {
+    expect(mapApprovalResponse('permissions', 'deny', requested)).toEqual({
+      permissions: {},
+      scope: 'turn',
+    })
+    expect(mapApprovalResponse('permissions', 'abort', requested)).toEqual({
+      permissions: {},
+      scope: 'turn',
+    })
+  })
+
+  it('shows the exact requested access separately from the provider reason', () => {
+    expect(
+      mapApprovalRequest('permissions', {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'permission-1',
+        environmentId: null,
+        startedAtMs: 1,
+        cwd: 'D:\\repo',
+        reason: 'Read the supplied reference and fetch its font.',
+        permissions: requested,
+      }),
+    ).toMatchObject({
+      id: 'permission-1',
+      kind: 'permissions',
+      cwd: 'D:\\repo',
+      reason: 'Read the supplied reference and fetch its font.',
+      command: `Requested access:\n${JSON.stringify(requested, null, 2)}`,
+    })
+  })
+
+  it('interrupts the exact turn after aborting its permission request', () => {
+    expect(permissionInterruptParams('thread-1', 'turn-1')).toEqual({
+      threadId: 'thread-1',
+      turnId: 'turn-1',
     })
   })
 })

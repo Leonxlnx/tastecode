@@ -272,13 +272,15 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
             })
           }
           if (usage) {
+            const reasoningTokens = usage.thinking_tokens ?? 0
             this.emit('event', {
               type: 'usage.updated',
               usage: {
+                ...(this.#options.model ? { model: this.#options.model } : {}),
                 inputTokens: usage.input_tokens ?? 0,
                 cachedInputTokens: usage.cache_read_tokens ?? 0,
-                outputTokens: usage.output_tokens ?? 0,
-                reasoningTokens: usage.thinking_tokens ?? 0,
+                outputTokens: (usage.output_tokens ?? 0) + reasoningTokens,
+                reasoningTokens,
                 totalTokens: usage.total_tokens ?? 0,
               },
             })

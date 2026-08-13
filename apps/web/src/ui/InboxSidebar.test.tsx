@@ -89,9 +89,8 @@ describe('InboxSidebar', () => {
       [...container.querySelectorAll('.inbox-card__title')].map((node) => node.textContent),
     ).toEqual(['New Alpha', 'Beta approval', 'Older Alpha'])
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'Sidebar project filter' }), {
-      target: { value: '/alpha' },
-    })
+    fireEvent.click(screen.getByRole('combobox', { name: 'Sidebar project filter' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Alpha' }))
     expect(onScopeChange).toHaveBeenCalledWith('/alpha')
 
     rerender(<InboxSidebar {...props(projects)} scope="/alpha" />)
@@ -220,5 +219,22 @@ describe('InboxSidebar', () => {
 
     expect(onSettleMany).toHaveBeenCalledWith(['one', 'two'])
     expect(actions.onSettle).not.toHaveBeenCalled()
+  })
+
+  it('uses canonical provider and ACP source names in thread metadata', () => {
+    const sessions: Session[] = [
+      { ...active('claude', 'Claude task', 4), provider: 'claude-code' },
+      { ...active('grok', 'Grok task', 3), provider: 'grok' },
+      { ...active('gemini', 'Gemini task', 2), provider: 'acp', agent: 'gemini' },
+      { ...active('api', 'API task', 1), provider: 'api' },
+    ]
+    render(<InboxSidebar {...props([{ path: '/alpha', sessions }])} />)
+
+    for (const label of ['Claude Code', 'Grok', 'Gemini CLI', 'API connection']) {
+      const identity = screen.getByText(label).closest('.source-identity')
+      expect(identity?.classList.contains('source-identity--compact')).toBe(true)
+      expect(identity?.querySelector('svg')).toBeTruthy()
+      expect(identity?.closest('button')?.getAttribute('aria-label')).toContain(label)
+    }
   })
 })

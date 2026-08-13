@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentProps } from 'react'
+import type { Transport } from '../transport.js'
 import { Composer, insertTranscriptAtCursor } from './Composer.js'
 
 const recorder = vi.hoisted(() => ({
@@ -32,7 +33,8 @@ describe('Composer voice dictation', () => {
   it('records, transcribes, and inserts at the cursor without sending', async () => {
     const onSend = vi.fn()
     const onTranscribeVoice = vi.fn(async () => 'spoken words')
-    renderVoiceComposer({ onSend, onTranscribeVoice })
+    const onDraftChange = vi.fn()
+    renderVoiceComposer({ onSend, onTranscribeVoice, onDraftChange })
     const textarea = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
     fireEvent.change(textarea, { target: { value: 'hello world' } })
     textarea.setSelectionRange(5, 5)
@@ -42,6 +44,7 @@ describe('Composer voice dictation', () => {
 
     await waitFor(() => expect(textarea.value).toBe('hello spoken words world'))
     expect(onTranscribeVoice).toHaveBeenCalledTimes(1)
+    expect(onDraftChange).toHaveBeenLastCalledWith('hello spoken words world')
     expect(onSend).not.toHaveBeenCalled()
   })
 
@@ -55,6 +58,40 @@ describe('Composer voice dictation', () => {
 
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('spoken words', []))
     expect(onTranscribeVoice).toHaveBeenCalledTimes(1)
+  })
+
+  it('discards a recording without uploading it', async () => {
+    const onTranscribeVoice = vi.fn(async () => 'spoken words')
+    renderVoiceComposer({ onTranscribeVoice })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard voice note' }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Record voice note' })).toBeTruthy(),
+    )
+    expect(recorder.cancel).toHaveBeenCalledTimes(1)
+    expect(recorder.stop).not.toHaveBeenCalled()
+    expect(onTranscribeVoice).not.toHaveBeenCalled()
+  })
+
+  it('keeps a send-after transcript as a draft when the provider is not ready', async () => {
+    const onSend = vi.fn()
+    renderVoiceComposer({
+      onSend,
+      onTranscribeVoice: vi.fn(async () => 'spoken words'),
+      sendAvailability: 'setup-required',
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Transcribe and send voice note' }))
+
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+        'spoken words',
+      ),
+    )
+    expect(onSend).not.toHaveBeenCalled()
   })
 
   it('cancels an in-flight transcription by request id', async () => {
@@ -96,6 +133,8 @@ describe('insertTranscriptAtCursor', () => {
 function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}) {
   return render(
     <Composer
+      transport={voiceTransport()}
+      provider="codex"
       projects={[{ path: '/work/harness', name: 'Harness', sessions: [] }]}
       projectPath="/work/harness"
       projectName="Harness"
@@ -108,8 +147,10 @@ function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>>
       serviceTier={undefined}
       approval="ask"
       autoReviewSupported={false}
+      attachmentsSupported
       voiceAvailable
       disabled={false}
+      sendAvailability="ready"
       running={false}
       newSession
       isolate={false}
@@ -126,6 +167,7 @@ function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>>
       onProjectChange={vi.fn()}
       onBranchChange={vi.fn()}
       onProjectRequired={vi.fn()}
+      onSetupProvider={vi.fn()}
       onTranscribeVoice={vi.fn()}
       onCancelVoice={vi.fn()}
       onSend={vi.fn()}
@@ -137,4 +179,13 @@ function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>>
       {...overrides}
     />,
   )
+}
+
+function voiceTransport(): Transport {
+  return {
+    state: 'open',
+    request: vi.fn(),
+    on: vi.fn(() => () => undefined),
+    onState: vi.fn(() => () => undefined),
+  } as unknown as Transport
 }

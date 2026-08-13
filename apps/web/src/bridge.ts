@@ -10,21 +10,29 @@ type Bridge = {
   pickSkillFolder: () => Promise<string | undefined>
   pickFiles: () => Promise<string[]>
   revealPath: (path: string) => Promise<void>
+  revealProjectFile?: (path: string, projectPath: string) => Promise<void>
   savePastedImage: (image: { type: string; bytes: ArrayBuffer }) => Promise<string>
+  writeClipboardText?: (text: string) => Promise<void>
   setZoom: (action: ZoomAction) => Promise<void>
-  setTheme: (theme: AppTheme) => Promise<void>
+  setTheme: (preference: AppThemePreference) => Promise<void>
+  prepareHaptics?: () => void
+  performHaptic?: (pattern: NativeHapticPattern) => void
   capturePreview: (request: PreviewCaptureRequest) => Promise<PreviewCaptureResult>
+  openExternal: (url: string) => Promise<void>
   onZoomChange: (listener: (factor: number) => void) => () => void
   isDesktop: true
 }
 
 export type ZoomAction = 'in' | 'out' | 'reset'
 export type AppTheme = 'light' | 'dark'
+export type AppThemePreference = AppTheme | 'system'
+export type NativeHapticPattern = 'alignment' | 'generic'
 
 const bridge = (globalThis as { harness?: Bridge }).harness
 
 export const isDesktop = bridge?.isDesktop === true
 export const canCapturePreview = bridge?.capturePreview !== undefined
+export const canRevealProjectFile = bridge?.revealProjectFile !== undefined
 
 export function isMacOS(): boolean {
   return navigator.platform.startsWith('Mac')
@@ -50,17 +58,35 @@ export function revealPath(path: string): Promise<void> {
   return bridge?.revealPath(path) ?? Promise.resolve()
 }
 
+export function revealProjectFile(path: string, projectPath: string): Promise<void> {
+  return bridge?.revealProjectFile?.(path, projectPath) ?? Promise.resolve()
+}
+
 export async function savePastedImage(file: File): Promise<string | undefined> {
   if (!bridge) return undefined
   return bridge.savePastedImage({ type: file.type, bytes: await file.arrayBuffer() })
+}
+
+export async function writeClipboardText(text: string): Promise<void> {
+  if (bridge?.writeClipboardText) return bridge.writeClipboardText(text)
+  if (!navigator.clipboard?.writeText) throw new Error('Clipboard access is unavailable')
+  await navigator.clipboard.writeText(text)
 }
 
 export function setAppZoom(action: ZoomAction): Promise<void> {
   return bridge?.setZoom(action) ?? Promise.resolve()
 }
 
-export function setDesktopTheme(theme: AppTheme): Promise<void> {
-  return bridge?.setTheme(theme) ?? Promise.resolve()
+export function setDesktopTheme(preference: AppThemePreference): Promise<void> {
+  return bridge?.setTheme(preference) ?? Promise.resolve()
+}
+
+export function prepareNativeHaptics(): void {
+  bridge?.prepareHaptics?.()
+}
+
+export function performNativeHaptic(pattern: NativeHapticPattern): void {
+  bridge?.performHaptic?.(pattern)
 }
 
 export function onAppZoomChange(listener: (factor: number) => void): () => void {
@@ -82,5 +108,10 @@ export async function capturePreview(
       error: error instanceof Error ? error.message : String(error),
     }
   }
+}
+
+export function openExternalUrl(url: string): Promise<void> {
+  if (!url) return Promise.resolve()
+  return bridge?.openExternal(url) ?? Promise.resolve()
 }
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'

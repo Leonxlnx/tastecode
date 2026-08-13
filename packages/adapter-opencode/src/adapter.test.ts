@@ -56,12 +56,14 @@ describe('OpenCode adapter', () => {
         expect.objectContaining({
           type: 'usage.updated',
           usage: {
+            model: 'provider-1/model-1',
             inputTokens: 10,
             cachedInputTokens: 3,
-            outputTokens: 5,
+            outputTokens: 7,
             reasoningTokens: 2,
-            totalTokens: 17,
+            totalTokens: 20,
             costUsd: 0.01,
+            inputIncludesCached: false,
           },
         }),
         expect.objectContaining({ type: 'turn.completed', status: 'completed' }),
@@ -161,6 +163,125 @@ describe('OpenCode adapter', () => {
       },
     ])
     expect(adapter.capabilities).toEqual(OPENCODE_CAPABILITIES)
+    adapter.dispose()
+  })
+
+  it('auto-approves permissions after setApproval flips the live mode to full', async () => {
+    const mock = await serveOpenCode()
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    const thread = await adapter.resumeThread('opencode-session-1', 'C:\\repo')
+    const requested: string[] = []
+    adapter.on('event', (event) => {
+      if (event.type === 'approval.requested') requested.push(event.request.id)
+    })
+
+    adapter.setApproval('full')
+    await adapter.sendTurn(thread.id, 'Run a command')
+    mock.broadcast({
+      type: 'permission.updated',
+      properties: {
+        id: 'permission-1',
+        type: 'bash',
+        sessionID: 'session-1',
+        messageID: 'message-1',
+        title: 'npm test',
+        metadata: {},
+        time: { created: 200 },
+      },
+    })
+    const permission = await mock.waitFor('/session/session-1/permissions/permission-1')
+
+    expect(permission.body).toEqual({ response: 'always' })
+    expect(requested).toEqual([])
+    adapter.dispose()
+  })
+
+  it('keeps a permission retryable when the reply request fails', async () => {
+    const mock = await serveOpenCodeV2(1)
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    const requested: string[] = []
+    const resolved: string[] = []
+    const logs: string[] = []
+    adapter.on('event', (event) => {
+      if (event.type === 'approval.requested') requested.push(event.request.id)
+      if (event.type === 'approval.resolved') resolved.push(event.id)
+    })
+    adapter.on('log', (message) => logs.push(message))
+    await adapter.resumeThread('opencode-session-v2', 'C:\\repo')
+
+    mock.broadcast({
+      type: 'permission.asked',
+      data: {
+        id: 'permission-retry',
+        sessionID: 'session-v2',
+        action: 'bash',
+        resources: ['pnpm test'],
+      },
+    })
+    await expect.poll(() => requested).toEqual(['permission-retry'])
+
+    adapter.respondToApproval('permission-retry', 'approve')
+    adapter.respondToApproval('permission-retry', 'approve')
+    await expect.poll(() => logs).toContain('OpenCode permission response failed')
+    expect(mock.requests.filter(isPermissionReply)).toHaveLength(1)
+    adapter.respondToApproval('permission-retry', 'approve')
+
+    await expect.poll(() => mock.requests.filter(isPermissionReply)).toHaveLength(2)
+    await expect.poll(() => resolved).toEqual(['permission-retry'])
+    adapter.dispose()
+  })
+
+  it.each([
+    { approval: 'full' as const, action: 'bash' },
+    { approval: 'auto' as const, action: 'read' },
+  ])('surfaces a retry when $approval auto-reply fails', async ({ approval, action }) => {
+    const mock = await serveOpenCodeV2(1)
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    const requested: string[] = []
+    const resolved: string[] = []
+    adapter.on('event', (event) => {
+      if (event.type === 'approval.requested') requested.push(event.request.id)
+      if (event.type === 'approval.resolved') resolved.push(event.id)
+    })
+    await adapter.resumeThread('opencode-session-v2', 'C:\\repo', { approval })
+
+    mock.broadcast({
+      type: 'permission.asked',
+      data: { id: 'permission-auto', sessionID: 'session-v2', action, resources: ['file.txt'] },
+    })
+    await expect.poll(() => requested).toEqual(['permission-auto'])
+    adapter.respondToApproval('permission-auto', 'approve')
+
+    await expect.poll(() => mock.requests.filter(isPermissionReply)).toHaveLength(2)
+    await expect.poll(() => resolved).toEqual(['permission-auto'])
+    adapter.dispose()
+  })
+
+  it('ignores a late reply from a disposed session with the same approval id', async () => {
+    const mock = await serveOpenCodeV2(0, true)
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    const requested: string[] = []
+    const resolved: string[] = []
+    adapter.on('event', (event) => {
+      if (event.type === 'approval.requested') requested.push(event.request.id)
+      if (event.type === 'approval.resolved') resolved.push(event.id)
+    })
+    await adapter.resumeThread('opencode-session-v2', 'C:\\repo')
+    mock.broadcast(permissionAsked('permission-reused'))
+    await expect.poll(() => requested).toHaveLength(1)
+    adapter.respondToApproval('permission-reused', 'approve')
+    await mock.waitFor('/api/session/session-v2/permission/permission-reused/reply')
+
+    adapter.dispose()
+    await adapter.resumeThread('opencode-session-v2', 'C:\\repo')
+    mock.broadcast(permissionAsked('permission-reused'))
+    await expect.poll(() => requested).toHaveLength(2)
+    adapter.respondToApproval('permission-reused', 'approve')
+    await expect.poll(() => resolved).toEqual(['permission-reused'])
+
+    await mock.releaseHeldPermissionReply()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(resolved).toEqual(['permission-reused'])
     adapter.dispose()
   })
 
@@ -273,12 +394,14 @@ describe('OpenCode adapter', () => {
         expect.objectContaining({
           type: 'usage.updated',
           usage: {
+            model: 'provider-1/model-1',
             inputTokens: 10,
             cachedInputTokens: 3,
-            outputTokens: 5,
+            outputTokens: 7,
             reasoningTokens: 2,
-            totalTokens: 17,
+            totalTokens: 20,
             costUsd: 0.01,
+            inputIncludesCached: false,
           },
         }),
         expect.objectContaining({ type: 'turn.completed', status: 'completed' }),
@@ -400,15 +523,20 @@ async function serveOpenCode(): Promise<{
   }
 }
 
-async function serveOpenCodeV2(): Promise<{
+async function serveOpenCodeV2(
+  failedPermissionReplies = 0,
+  holdFirstPermissionReply = false,
+): Promise<{
   baseUrl: string
   requests: RequestRecord[]
   broadcast(event: unknown): void
   waitFor(url: string): Promise<RequestRecord>
+  releaseHeldPermissionReply(): Promise<void>
 }> {
   const requests: RequestRecord[] = []
   const streams = new Set<ServerResponse>()
   const waiters: { url: string; resolve: (request: RequestRecord) => void }[] = []
+  let heldPermissionReply: ServerResponse | undefined
   const session = {
     id: 'session-v2',
     title: 'Harness v2 session',
@@ -490,6 +618,14 @@ async function serveOpenCodeV2(): Promise<{
       return response.end()
     }
     if (request.method === 'POST' && request.url?.includes('/permission/')) {
+      if (failedPermissionReplies-- > 0) {
+        response.writeHead(503)
+        return response.end()
+      }
+      if (holdFirstPermissionReply && !heldPermissionReply) {
+        heldPermissionReply = response
+        return
+      }
       response.writeHead(204)
       return response.end()
     }
@@ -512,7 +648,25 @@ async function serveOpenCodeV2(): Promise<{
         ? Promise.resolve(request)
         : new Promise((resolve) => waiters.push({ url, resolve }))
     },
+    async releaseHeldPermissionReply() {
+      if (!heldPermissionReply) return
+      const finished = once(heldPermissionReply, 'finish')
+      heldPermissionReply.writeHead(204)
+      heldPermissionReply.end()
+      await finished
+    },
   }
+}
+
+function permissionAsked(id: string): unknown {
+  return {
+    type: 'permission.asked',
+    data: { id, sessionID: 'session-v2', action: 'bash', resources: ['pnpm test'] },
+  }
+}
+
+function isPermissionReply(request: RequestRecord): boolean {
+  return request.method === 'POST' && request.url.includes('/permission/')
 }
 
 async function requestBody(request: IncomingMessage): Promise<unknown> {

@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-07 fdaf539</span>
+        <span class="meta">2026-08-13 23be5257</span>
       </div>
     </div>
 
@@ -249,6 +249,8 @@
         <a href="#appearance">Appearance</a>
         <a href="#settings">Settings</a>
         <a href="#shell">Desktop shell and security</a>
+        <a href="#mobile">Native mobile</a>
+        <a href="#web-access">Web access</a>
       </div>
 
       <section id="providers">
@@ -271,7 +273,8 @@
               ><input type="checkbox" /><span
                 >Live model list from the provider
                 <span class="d"
-                  >GPT-5.6 Sol, Terra, Luna, GPT-5.5, 5.4, 5.4-Mini, 5.3-Codex-Spark</span
+                  >first-run visibility favors GPT-5.6 Sol, Terra, Luna, and 5.3-Codex-Spark;
+                  previously saved visibility remains authoritative</span
                 ></span
               ></label
             >
@@ -287,7 +290,7 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Steer mid-turn, fork a thread, interrupt, streamed reasoning</span
+                >Steer and interrupt the exact active turn, fork a thread, streamed reasoning</span
               ></label
             >
           </li>
@@ -295,7 +298,11 @@
             <label
               ><input type="checkbox" /><span
                 >Approval cards answered mid-turn, auto-review mode, agent questions back to the
-                user</span
+                user
+                <span class="d"
+                  >permission-profile requests show the requested access and answer with Codex's
+                  grant-and-scope wire shape; Stop uses the original thread and turn IDs</span
+                ></span
               ></label
             >
           </li>
@@ -306,7 +313,11 @@
             <label
               ><input type="checkbox" /><span
                 >Rate limit windows in the account popup
-                <span class="d">5 hour and weekly, with reset times</span></span
+                <span class="d"
+                  >clear dividers separate provider groups without splitting their windows; 5 hour
+                  and weekly reset times; non-ChatGPT accounts are honestly unavailable and
+                  malformed provider responses stay errors</span
+                ></span
               ></label
             >
           </li>
@@ -314,7 +325,10 @@
             <label
               ><input type="checkbox" /><span
                 >Voice dictation in the composer
-                <span class="d">Codex-backed, the one approved provider exception</span></span
+                <span class="d"
+                  >Codex-backed, the one approved provider exception; the recorder bar can discard a
+                  capture locally without uploading or transcribing it</span
+                ></span
               ></label
             >
           </li>
@@ -350,7 +364,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Interrupt, streamed reasoning, session resume across turns</span
+                >Interrupt, streamed reasoning, session resume across turns
+                <span class="d"
+                  >type-aware text and tool identities stay unique, chronological, and deterministic
+                  when Claude reuses a message ID</span
+                ></span
               ></label
             >
           </li>
@@ -359,6 +377,17 @@
               ><input type="checkbox" /><span
                 >Permission modes mapped to the CLI
                 <span class="d">ask, accept edits, bypass</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Provider-owned subscription-limit source
+                <span class="d"
+                  >distinguishes absent OAuth from valid empty usage and sanitized credential,
+                  refresh, transport, HTTP, or schema failures</span
+                ></span
               ></label
             >
           </li>
@@ -406,7 +435,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Own MCP servers and credentials passed through</span
+                >Own MCP servers, credentials, and retry-safe approval flow
+                <span class="d"
+                  >approval replies remain visible until OpenCode confirms them; failed auto and
+                  manual replies cannot strand an inert permission card</span
+                ></span
               ></label
             >
           </li>
@@ -452,21 +485,42 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Full turn streaming with reasoning items, file changes, and commands</span
+                >Full turn streaming with reasoning items, file changes, and commands
+                <span class="d">the bounded live catalog exposes Grok 4.6 and 4.5</span></span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Effort low to max, session resume, interrupt</span
+                >Effort low to max, session resume, interrupt
+                <span class="d"
+                  >explicit Stop emits one interrupted terminal state after process shutdown and
+                  restores sending without a duplicate completion</span
+                ></span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Signed-in detection through the CLI itself, sign out runs grok logout</span
+                >Signed-in detection through the CLI itself, sign out runs grok logout
+                <span class="d"
+                  >successful login retains the exact provider-confirmed email as soon as the CLI
+                  reports it; Settings otherwise reports only Signed in, uses a fixed-width privacy
+                  blur, and never asks the user to type an address</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Provider-reported billing limits over ACP
+                <span class="d"
+                  >weekly/reset, prepaid, and pay-as-you-go rows appear only when reported; signed
+                  out is unavailable and provider failures remain errors</span
+                ></span
               ></label
             >
           </li>
@@ -535,6 +589,23 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >One fixed setup and account row grammar
+                <span class="d"
+                  >Codex, Claude Code, and Grok keep mark, identity, status, issue, and actions in
+                  stable slots across loading, ready, setup, busy, and failure states; empty action
+                  slots do not create a second grid row, keeping signed-in rows at 46 px; primary
+                  and secondary actions share the fixed right edge on desktop and narrow layouts;
+                  CLI versions live in the provider-mark tooltip instead of widening account rows;
+                  <a href="./screenshots/provider-density-after.png">compact evidence</a>,
+                  <a href="./screenshots/provider-settings-desktop.png">desktop</a> and
+                  <a href="./screenshots/provider-settings-390.png">390 px</a> evidence</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Auto-detect installed CLIs with version check and mismatch warning</span
               ></label
             >
@@ -543,6 +614,18 @@
             <label
               ><input type="checkbox" /><span
                 >Guided install per provider in an in-app terminal</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Custom protocol-compatible harness executables
+                <span class="d"
+                  >separate model-picker source, desktop-safe PATH resolution, fixed argv without
+                  shell parsing, optional cwd/environment, protocol-aware verification, bounded
+                  startup, explicit stability and secret warning; includes Pi RPC</span
+                ></span
               ></label
             >
           </li>
@@ -575,7 +658,27 @@
             <label
               ><input type="checkbox" /><span
                 >Honest rows for what does not exist
-                <span class="d">Pi planned, Gemini CLI and Qwen retired</span></span
+                <span class="d"
+                  >canonical source names and marks across the picker, inbox, search, Profile, and
+                  Usage; Pi only through an explicit custom RPC harness, Gemini CLI and Qwen
+                  retired</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Provider-neutral subscription-limit source and refresh signal
+                <span class="d"
+                  >adapters own ready, unavailable, and error truth; the server returns one
+                  authoritative source with an exact legacy flatten, while change notifications
+                  carry only the provider id; installed sources prefetch in the background through
+                  bounded provider reads, so the account dialog opens cached values without a fresh
+                  request, keeps every source separate, distinguishes loading, successful-empty,
+                  unavailable, and failure, retains usable values during failed refreshes, and
+                  routes Retry to the correct provider with dialog focus entry and return</span
+                ></span
               ></label
             >
           </li>
@@ -591,50 +694,89 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Auto-growing prompt field with queued sends while a turn runs</span
+                >Auto-growing prompt field with ordered optimistic queued sends while a turn runs
+                <span class="d"
+                  >Thread, New chat, and composer controls respond to their pane width rather than
+                  the whole window, remaining usable beside workspace tools down to 332 px; the
+                  in-pane header names the current session or New chat and exposes the shared
+                  session menu plus direct Workspace and Terminal controls; each newly submitted
+                  queued turn gets a stable transcript anchor</span
+                ></span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Queued prompts are editable and reorderable before they fire</span
+                >Queued prompts are editable and reorderable by drag handle before they fire</span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Steer mid-turn where the engine supports it</span
+                >Skills and MCP servers searchable from $ or @ with keyboard navigation, a compact
+                resource picker, and selected resource chips</span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Model picker grouped by source with provider logos, stays open after
-                selection</span
+                >Steer mid-turn where the engine supports it
+                <span class="d"
+                  >Enter queues while an agent runs; Ctrl/Command+Enter and the visible Steer
+                  control redirect the current turn; every queued row can also steer
+                  immediately</span
+                ></span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Per-model effort slider and Fast toggle, helper text only on hover</span
+                >Model picker grouped by stable source identity with provider logos; the flat list
+                is the first-run layout, while both layouts share full-catalog search, arrow-key
+                entry into filtered results, and selection preservation; new-chat source changes
+                keep readiness checks silent; first-run visibility favors current Codex and Claude
+                families while saved visibility and future unknown models remain authoritative</span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Model, effort, and tier remembered per provider across sessions</span
+                >Per-model effort slider and Fast toggle only when declared by the model;
+                unsupported control regions are omitted</span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Hide single models or whole sources from the picker in Settings</span
+                >Model, effort, and tier remembered per provider across sessions
+                <span class="d"
+                  >catalog failures, hidden models, late discovery, and restart preserve the last
+                  valid same-source choice; cross-provider overrides never reach a bound
+                  thread</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Include or exclude individual catalog models in Settings while every catalog choice
+                remains visible; provider-wide tri-state controls and visibility counts are
+                omitted</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Stored custom model ids remain selectable and are still sent unchanged
+                <span class="d">new custom-model management is parked in beta Settings</span></span
               ></label
             >
           </li>
@@ -648,7 +790,12 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Context window usage shown beside the picker</span
+                >Context window usage shown beside the picker only when the source supplies a
+                compatible current-context numerator
+                <span class="d"
+                  >Codex cumulative thread accounting stays available without producing a false
+                  full-context ring, including when legacy history replays</span
+                ></span
               ></label
             >
           </li>
@@ -662,17 +809,39 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Image attachments where the engine takes them</span
+                >Image attachments gated by declared source capability, with rejected sends
+                restoring the original draft and attachment set</span
               ></label
             >
           </li>
           <li>
-            <label><input type="checkbox" /><span>Voice dictation with a recorder bar</span></label>
+            <label
+              ><input type="checkbox" /><span
+                >Voice dictation with a recorder bar and explicit local discard</span
+              ></label
+            >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Design mode entry point in the prompt bar</span
+                >Design mode entry point in the prompt bar
+                <span class="d"
+                  >ambiguous briefs ask material questions plus one final note; stale and
+                  interrupted phases stay isolated; answer submission shows definite retry and
+                  indeterminate reconciliation states instead of spinning forever; real provider
+                  startup events immediately own the Design phase, while a 30-second start-only
+                  watchdog fails silent starts visibly without timing out running work; terminal
+                  provider errors end briefing activity, remain visible, and cannot idle a newer
+                  turn; retired approval warnings are omitted from new and saved transcripts;
+                  recoverable preview startup retries once; package-manager selectors cannot escape
+                  the selected workspace; exact-file build reports are checked against the bounded
+                  before-and-after tree; Harness-owned static previews reject occupied ports and
+                  clean up child trees; rendered Chromium audits require exactly one h1 and at least
+                  44 by 44 CSS-pixel mobile interaction targets, and model review cannot erase those
+                  findings; a successful preview remains reachable until thread close or a
+                  replacement Design run, with process and port release awaited before cleanup;
+                  completed queued phases remain idle when their provider promise settles late</span
+                ></span
               ></label
             >
           </li>
@@ -688,7 +857,25 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Streaming markdown with syntax highlighting</span
+                >Streaming markdown with syntax highlighting
+                <span class="d"
+                  >the visible live tail applies each versioned suffix once through the bounded
+                  incremental parser; full Markdown and syntax highlighting run from the exact
+                  source at completion; assistant prose uses denser type and spacing without
+                  changing prompts, headings, or code</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Safe project-file actions in completed replies
+                <span class="d"
+                  >Desktop reveals validated files inside the selected project; outside-project and
+                  network paths show blocked reasons, and browser or mobile stay
+                  non-interactive</span
+                ></span
               ></label
             >
           </li>
@@ -697,7 +884,9 @@
               ><input type="checkbox" /><span
                 >Every item type first class
                 <span class="d"
-                  >message, reasoning, plan, command, file change, tool call, error</span
+                  >message, reasoning, plan, command, file change, tool call, subagent activity,
+                  error; completed narration and tool output remain chronological and accessible on
+                  replay</span
                 ></span
               ></label
             >
@@ -705,22 +894,36 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Virtualized list, folded deltas once per frame, no full-thread re-render while
-                streaming</span
+                >Virtualized list with folded deltas once per frame
+                <span class="d"
+                  >completed replay rebuilds 10,000 items linearly, while active-tail search stays
+                  bounded independently of transcript length; streamed frames overlay only the
+                  active turn, and stable completed-row identities survive both streaming and
+                  optimistic-to-canonical reconciliation</span
+                ></span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Single working orb that never restarts mid-turn</span
+                >Working status with a live elapsed label during active turns
+                <span class="d"
+                  >one stable rail owns narration and activity transitions; completed or failed
+                  image inspections remain visible as settled results without a duplicate live
+                  row</span
+                ></span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Collapse and expand per item, reasoning collapsed by default</span
+                >Collapse and expand per item, reasoning collapsed by default
+                <span class="d"
+                  >repeated settled reasoning-only histories with no answer compact to one Worked
+                  disclosure; live and single reasoning items stay unchanged</span
+                ></span
               ></label
             >
           </li>
@@ -741,7 +944,14 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Optimistic first message, no chat remount</span
+                >Immediate optimistic first message before the provider responds
+                <span class="d"
+                  >new tasks show the user row plus exactly one stable Working and Stop surface
+                  before the next paint; a reopened 1,513-event Desktop trace captured the same
+                  stable state at +87 ms without reload flashes, duplicate status, timer restarts,
+                  or limit-induced layout shifts; Stop immediately restores Send and removes live
+                  Working/Stopping presentation while the provider interrupt finishes</span
+                ></span
               ></label
             >
           </li>
@@ -782,6 +992,18 @@
           </li>
           <li>
             <label
+              ><input type="checkbox" /><span
+                >Dedicated Review workspace with exact old and new line numbers
+                <span class="d"
+                  >current checkout against HEAD, including staged, unstaged and untracked files;
+                  structured hunks, collapsed unchanged ranges, changed-file tree and live
+                  filtering</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
               ><input type="checkbox" /><span>Per-hunk and per-file accept or reject</span></label
             >
           </li>
@@ -802,7 +1024,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Checkpoint every turn, reversible rollback with changed-file inspection</span
+                >Checkpoint every turn, reversible rollback with changed-file inspection
+                <span class="d">missing and cross-thread checkpoints fail closed</span></span
               ></label
             >
           </li>
@@ -825,21 +1048,42 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Add project by folder, multiple projects at once</span
+                >Add project by folder, multiple projects at once
+                <span class="d"
+                  >project loading and failures remain explicit; Retry and the no-project action use
+                  the existing folder picker; opening an empty project's drawer reveals No chats
+                  without replacing or collapsing the current chat; compact folder rows align
+                  directly below Projects and expanded Show more actions have no extra leading
+                  spacer; <a href="./screenshots/empty-project.png">production evidence</a></span
+                ></span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Multiple concurrent sessions per project with live status</span
+                >Multiple concurrent sessions per project with live status
+                <span class="d"
+                  >conversation loading is distinct from a true zero-turn thread, whose composer
+                  remains available;
+                  <a href="./screenshots/empty-thread.png">production evidence</a></span
+                ></span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Sessions survive restart, server-owned SQLite event log</span
+                >Public-beta sessions survive restart, backed by the server-owned SQLite event log
+                <span class="d"
+                  >restart recovery removes stale approvals and settles unfinished work to a failed
+                  terminal state with an actionable transcript error; resumed threads retain shared
+                  reply guidance; server-owned start and completion timestamps keep live and
+                  replayed elapsed time identical; accepted prompts persist with exact submission
+                  identity across queue, steer, reconnect, and restart; reconnects, push gaps, and
+                  cached reopens fetch only the missing durable event suffix, while checkpoint
+                  restore and undo reload an atomic file-and-transcript state</span
+                ></span
               ></label
             >
           </li>
@@ -867,7 +1111,34 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Git branch and diff stats detected live for the context chip</span
+                >Git branch and diff stats detected live for the context chip
+                <span class="d"
+                  >agent turns refresh them only after the project becomes idle</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Pull-request library for authored, review-requested, and reviewed PRs across every
+                state for the signed-in GitHub account
+                <span class="d"
+                  >composable state, review, merge, repository, author, and base-branch filters with
+                  search and cached lazy loading</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Full pull-request management from summary, files, and activity views
+                <span class="d"
+                  >inline base, reviewer, assignee, label, milestone and status controls; checks,
+                  Diffs-powered file review, inline threads, comments, reviews, branch updates,
+                  merge and auto-merge</span
+                ></span
               ></label
             >
           </li>
@@ -875,7 +1146,11 @@
             <label
               ><input type="checkbox" /><span
                 >Persistent per-session and per-day usage accounting
-                <span class="d">money only when the provider reports real cost</span></span
+                <span class="d"
+                  >malformed or parser-stale generated caches trigger a cold rebuild; failed
+                  background scans back off, while Profile and Usage polling recovers from transient
+                  request failures; money only when the provider reports real cost</span
+                ></span
               ></label
             >
           </li>
@@ -891,15 +1166,55 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Two versions switchable in Settings
-                <span class="d">V1 Classic and V2 Inbox with auto-settle after N days</span></span
+                >Resizable right-side workspace with persistent tool tabs
+                <span class="d"
+                  >compact 2-by-2-plus-one icon launcher, Review, CSP-safe compact terminal with
+                  link detection, independent Browser tabs with middle-click closing and distinct
+                  desktop/tablet/mobile controls, lazy file tree and side chat; New chat terminals
+                  use the selected project's current checkout, while active chats use their exact
+                  session checkout; one fixed in-chat toggle opens the panel and its chrome owns
+                  closing, aligned square dividers stay below native window chrome, resizing keeps
+                  at least 360 px for the center chat with or without the left sidebar, missing
+                  workspace items fail without raw paths, and 390 px layouts do not overflow</span
+                ></span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Projects with sessions, both renameable inline</span
+                >Ephemeral Temporary chat seeded from the active conversation
+                <span class="d"
+                  >normal Thread presentation and matching composer without duplicate parent-status
+                  chrome or a full-panel startup spinner; Codex-compatible /side and /btw commands,
+                  hidden point-in-time parent context, independent streaming, approvals and
+                  structured input across every provider; startup fails visibly after 30 seconds
+                  instead of spinning forever, and closing it disposes the provider session and
+                  erases its temporary transcript</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Two versions switchable in Settings
+                <span class="d"
+                  >V1 Classic and V2 Inbox with auto-settle after N days; new profiles start on
+                  Classic with three-day settling enabled</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Projects with sessions, both renameable inline
+                <span class="d"
+                  >open and closed groups use the same chevron-free 36 px row rhythm; scrolling the
+                  list reveals a strong divider below the fixed New chat, New project, and Pull
+                  requests actions without shifting them</span
+                ></span
               ></label
             >
           </li>
@@ -913,21 +1228,29 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Drag to reorder sessions inside a project</span
+                >Drag to reorder projects and sessions, with the chosen order restored on
+                reload</span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Drag the edge to resize <span class="d">148 to 420 px</span>, drag past the minimum
-                to collapse</span
+                >Drag the edge to resize <span class="d">240 to 420 px</span>, with
+                velocity-adaptive macOS detents only while the rail tracks the pointer; drag past
+                the minimum to collapse with a distinct stop</span
               ></label
             >
           </li>
           <li>
             <label
-              ><input type="checkbox" /><span>Collapsed rail reveals on edge hover</span></label
+              ><input type="checkbox" /><span
+                >Collapsed rail reveals on edge hover
+                <span class="d"
+                  >the same fixed-width surface translates open and closed in 260 ms without
+                  clipping its contents</span
+                ></span
+              ></label
             >
           </li>
           <li>
@@ -938,13 +1261,32 @@
             >
           </li>
           <li>
-            <label><input type="checkbox" /><span>Archive a whole project's sessions</span></label>
+            <label
+              ><input type="checkbox" /><span
+                >Canonical provider or agent identity in Classic and Inbox session rows
+                <span class="d"
+                  >same mark and source label, included in accessible names and bounded beside touch
+                  actions</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Archive a whole project's sessions; project removal uses a centered confirmation
+                and never deletes its folder or chats</span
+              ></label
+            >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
                 >Account popup exactly as wide as its button
-                <span class="d">limit windows, then Settings</span></span
+                <span class="d"
+                  >lifted clear of the sidebar divider with matching corner radius; prefetched limit
+                  windows, Profile, then Settings</span
+                ></span
               ></label
             >
           </li>
@@ -967,13 +1309,22 @@
         <ul class="check">
           <li>
             <label
-              ><input type="checkbox" /><span>Command palette with keyboard shortcuts</span></label
+              ><input type="checkbox" /><span
+                >Command palette with a reachable keyboard-shortcut reference</span
+              ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Cross-session full-text search, scopable to one project</span
+                >Cross-session title and full-text search with project and agent filters
+                <span class="d"
+                  >compact 520 px panel with flat filter controls; prefix ranking, highlighted
+                  snippets, keyboard navigation, and stable pagination over an immutable ranked
+                  server snapshot with indexed range seeks; opaque result identities retain
+                  selection and DOM focus across inserts, and closing search restores an available
+                  opener or composer</span
+                ></span
               ></label
             >
           </li>
@@ -981,7 +1332,10 @@
             <label
               ><input type="checkbox" /><span
                 >Keyboard shortcuts with hints rendered in the UI
-                <span class="d">new chat, new project, settings, search</span></span
+                <span class="d"
+                  >new chat, new project, settings, search; Settings and modal dialogs retain
+                  keyboard ownership while visible</span
+                ></span
               ></label
             >
           </li>
@@ -997,14 +1351,19 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >MCP servers: add, enable and disable, inspect, per-project scope</span
+                >MCP servers: add, enable and disable, inspect, per-project scope
+                <span class="d"
+                  >project and transport scoped across reconnects; the heading reports provider
+                  capability instead of implying project availability</span
+                ></span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >MCP OAuth sign-in handled by the server, credentials in the OS store</span
+                >MCP OAuth sign-in handled by the server, credentials in the OS store
+                <span class="d">pending until the matching completion event</span></span
               ></label
             >
           </li>
@@ -1018,14 +1377,18 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Agent Skills: browse, enable per project, progressive loading</span
+                >Agent Skills: browse, enable per project, progressive loading
+                <span class="d"
+                  >stale refreshes cannot replace confirmed project state; the heading reports
+                  provider capability instead of the active project name</span
+                ></span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Workflows section: sidebar version switch and inbox auto-settle</span
+                >General section: sidebar version switch and inbox auto-settle</span
               ></label
             >
           </li>
@@ -1077,7 +1440,10 @@
             <label
               ><input type="checkbox" /><span
                 >Sidebar translucency in four steps
-                <span class="d">Off, Subtle, Medium, Strong, default Medium</span></span
+                <span class="d"
+                  >Off, Subtle, Medium, Strong, default Medium; previews use flat tones without
+                  decorative gradients</span
+                ></span
               ></label
             >
           </li>
@@ -1099,7 +1465,18 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Design tokens throughout, no raw values downstream</span
+                >macOS trackpad haptics for sidebar, workspace and terminal resizing, reasoning
+                effort stops, and chat drag placement, with one global toggle</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Design tokens throughout, no raw values downstream
+                <span class="d"
+                  >rounded controls stay unchanged while cards and panels scale up around them</span
+                ></span
               ></label
             >
           </li>
@@ -1115,10 +1492,20 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Eight sections
+                >Twelve sections
                 <span class="d"
-                  >Providers, Models, MCP, Skills, Workflows, Appearance, Data, About</span
+                  >General, Profile, and Appearance first, then Providers, Models, MCP, Skills,
+                  Mobile access, Usage, Data &amp; privacy, Debug, About</span
                 ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Profile: renderer-local display name and validated PNG, JPEG, or WebP avatar plus
+                lifetime stats, streaks, token heatmap with per-day provider breakdowns, and model
+                insights</span
               ></label
             >
           </li>
@@ -1130,12 +1517,30 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Models: per-source and per-model visibility toggles for the picker</span
+                >Models: compact search-free Settings lists keep every catalog model and individual
+                visibility switch visible
+                <span class="d"
+                  >composer pickers retain full-catalog search; first-run defaults wait for complete
+                  installed-provider discovery; stored custom entries remain usable while creation
+                  controls are parked;
+                  <a href="./screenshots/model-settings-no-search.png">desktop evidence</a></span
+                ></span
               ></label
             >
           </li>
           <li>
-            <label><input type="checkbox" /><span>Data: project count and full reset</span></label>
+            <label
+              ><input type="checkbox" /><span
+                >Data: project count and confirmed renderer-preference reset
+                <span class="d"
+                  >roomier action layout also applies to Debug; projects, workspaces, files,
+                  history, and provider credentials remain untouched;
+                  <a href="./screenshots/reset-preferences-confirm.png"
+                    >production evidence</a
+                  ></span
+                ></span
+              ></label
+            >
           </li>
           <li>
             <label
@@ -1148,7 +1553,17 @@
             <label
               ><input type="checkbox" /><span
                 >Full keyboard dialog behavior
-                <span class="d">focus trapped, Escape closes</span></span
+                <span class="d"
+                  >focus trapped, nested controls retain handled keys, and Escape or Back closes
+                  before restoring the opener</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Settings navigation remains scrollable in short desktop windows</span
               ></label
             >
           </li>
@@ -1164,8 +1579,10 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Hardened Electron shell, renderer never spawns processes or reads the
-                filesystem</span
+                >Hardened Electron shell, renderer never spawns processes or reads the filesystem
+                <span class="d"
+                  >server replacement and watchdog recovery are generation-safe</span
+                ></span
               ></label
             >
           </li>
@@ -1207,7 +1624,27 @@
             <label
               ><input type="checkbox" /><span
                 >Real PTY terminal sessions server-side
-                <span class="d">installs, sign-ins, session terminals</span></span
+                <span class="d"
+                  >installs, sign-ins, session and registered-project terminals; shutdown waits for
+                  native PTY exit before worktree cleanup, including Windows ConPTY; bounded 4 ms /
+                  64 KiB output batching, true-color capability negotiation, Unicode 11 cell widths,
+                  deterministic JetBrains Mono metrics, immediate WebGL rendering, and CSP-safe link
+                  detection without the WebAssembly image addon</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Sandboxed in-app browser previews through Electron &lt;webview&gt; guests
+                <span class="d"
+                  >dedicated persistent site session, HTTP and HTTPS only, denied permissions,
+                  sandboxing with Node disabled, back and forward history, and new-window navigation
+                  retained inside the guest; the DOM-owned host follows workspace layout, with 1280
+                  × 800, 768 × 1024 and 390 × 844 presets scaled to fit without stretching, plus an
+                  explicit system-browser handoff</span
+                ></span
               ></label
             >
           </li>
@@ -1222,6 +1659,118 @@
             <label
               ><input type="checkbox" /><span
                 >Vendor sign-in and setup live in Settings, never a launch gate</span
+              ></label
+            >
+          </li>
+        </ul>
+      </section>
+
+      <section id="mobile">
+        <header>
+          <h2>Native mobile <span class="pill-parked">parked for the beta</span></h2>
+          <span class="count"></span>
+        </header>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Native SwiftUI iPhone client generated with XcodeGen
+                <span class="d">iOS 26, Swift 6 strict concurrency</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >One-time QR or deep-link pairing over Tailscale or a trusted private LAN</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Paired credentials stored in Keychain with reconnect and revocation support</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Browse and add remote projects, search sessions, and manage thread lifecycle</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Start and continue turns with provider, model, effort, approval, mode and
+                attachment controls</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Stream transcripts, answer approvals, steer queued turns, interrupt and review
+                diffs</span
+              ></label
+            >
+          </li>
+        </ul>
+      </section>
+
+      <section id="web-access">
+        <header>
+          <h2>Web access</h2>
+          <span class="count"></span>
+        </header>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >The full harness web app on a phone — same UI as the desktop, served by the server
+                from the built web client at <code>/</code> on the mobile port
+                <span class="d"
+                  >no Vite needed in packaged builds; the dev stack serves the live Vite source
+                  instead of the built client</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Stable, bookmarkable app URL — long-lived admin token in the OS credential store,
+                unchanged across restarts
+                <span class="d"
+                  >fixed port + Tailscale address + persistent token in the hash</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >The phone page derives its WebSocket from its own origin
+                (<code>ws://&lt;host&gt;/ws</code>); loopback stays on
+                <code>ws://127.0.0.1:4311</code></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Web surfaces reachable whenever the server runs; native-app access toggled
+                separately</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >The desktop app is the management console: Settings → Mobile access shows the app
+                URL with explicit copy states and its adjacent scan QR, generates pairing codes,
+                lists paired devices and revokes them</span
               ></label
             >
           </li>

@@ -11,6 +11,18 @@ import type { Transport } from '../transport.js'
 
 type Inventory = ResultOf<'mcp.list'>
 type Editor = { mode: 'add' | 'edit'; id: string; displayName: string; transport: string }
+type OAuthCompletion = {
+  serverId: string
+  loginId: string
+  success: boolean
+  error: string | null
+}
+type PendingOAuth = {
+  serverId: string
+  loginId: string | undefined
+  completion?: OAuthCompletion
+}
+type Context = { transport: Transport; provider: ProviderId; projectPath: string | undefined }
 
 export function McpSettings(props: {
   transport: Transport
@@ -25,6 +37,23 @@ export function McpSettings(props: {
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
+  const inventoryContext = useRef<Context | undefined>(undefined)
+  const errorContext = useRef<Context | undefined>(undefined)
+  const pendingOAuth = useRef<PendingOAuth | undefined>(undefined)
+  const activeContext = useRef({
+    transport: props.transport,
+    provider: props.provider,
+    projectPath: props.projectPath,
+  })
+  activeContext.current = {
+    transport: props.transport,
+    provider: props.provider,
+    projectPath: props.projectPath,
+  }
+  const isCurrentContext = () =>
+    activeContext.current.transport === props.transport &&
+    activeContext.current.provider === props.provider &&
+    activeContext.current.projectPath === props.projectPath
 
   // Generation counter: a slow reply from a previous project must not land
   // on top of the current one's list (or arrive after unmount).
@@ -37,7 +66,12 @@ export function McpSettings(props: {
   )
 
   const refresh = useCallback(async () => {
-    if (!props.projectPath) return
+    if (!props.projectPath || !isCurrentContext()) return
+    const context = {
+      transport: props.transport,
+      provider: props.provider,
+      projectPath: props.projectPath,
+    }
     const generation = ++refreshGeneration.current
     setLoading(true)
     try {
@@ -45,22 +79,46 @@ export function McpSettings(props: {
         provider: props.provider,
         projectPath: props.projectPath,
       })
-      if (refreshGeneration.current !== generation) return
+      if (refreshGeneration.current !== generation || !isCurrentContext()) return
+      inventoryContext.current = context
+      errorContext.current = undefined
       setInventory(inventory)
       setError(undefined)
     } catch (cause) {
-      if (refreshGeneration.current !== generation) return
+      if (refreshGeneration.current !== generation || !isCurrentContext()) return
+      errorContext.current = context
       setError(message(cause))
     } finally {
-      if (refreshGeneration.current === generation) setLoading(false)
+      if (refreshGeneration.current === generation && isCurrentContext()) setLoading(false)
     }
   }, [props.transport, props.provider, props.projectPath])
 
+  const completeOAuth = useCallback(
+    (result: OAuthCompletion) => {
+      pendingOAuth.current = undefined
+      setBusy((current) => (current === result.serverId ? undefined : current))
+      if (result.success) {
+        setNotice('MCP sign-in completed.')
+        setError(undefined)
+        void refresh()
+      } else {
+        setNotice(undefined)
+        setError(result.error ?? 'MCP sign-in failed.')
+      }
+    },
+    [refresh],
+  )
+
   useEffect(() => {
     setInventory(undefined)
+    inventoryContext.current = undefined
+    errorContext.current = undefined
     setError(undefined)
     // "Server added." must not survive into an unrelated project's panel.
     setNotice(undefined)
+    setEditor(undefined)
+    pendingOAuth.current = undefined
+    setBusy(undefined)
     if (!props.projectPath) {
       setLoading(false)
       return
@@ -68,29 +126,47 @@ export function McpSettings(props: {
     void refresh()
     const offOAuth = props.transport.on('mcp.oauth', (result) => {
       if (result.provider !== props.provider || result.projectPath !== props.projectPath) return
-      setBusy(undefined)
-      if (result.success) {
-        setNotice('MCP sign-in completed.')
-        setError(undefined)
-        void refresh()
-      } else {
-        setError(result.error ?? 'MCP sign-in failed.')
+      const pending = pendingOAuth.current
+      if (pending) {
+        if (pending.serverId !== result.serverId) {
+          if (result.success) void refresh()
+          return
+        }
+        if (pending.loginId === undefined) {
+          pending.completion = result
+          return
+        }
+        if (pending.loginId !== result.loginId) {
+          if (result.success) void refresh()
+          return
+        }
       }
+      completeOAuth(result)
     })
     const offChanged = props.transport.on('mcp.changed', ({ provider, projectPath }) => {
       if (provider === props.provider && projectPath === props.projectPath) void refresh()
     })
+    let reconnecting = props.transport.state === 'reconnecting'
+    const offState = props.transport.onState((state) => {
+      if (state === 'reconnecting') reconnecting = true
+      else if (state === 'open' && reconnecting) {
+        reconnecting = false
+        void refresh()
+      }
+    })
     return () => {
       offOAuth()
       offChanged()
+      offState()
     }
-  }, [props.transport, props.provider, props.projectPath, refresh])
+  }, [props.transport, props.provider, props.projectPath, refresh, completeOAuth])
 
   async function applyChange(action: () => Promise<unknown>, success: string): Promise<boolean> {
     setError(undefined)
     setNotice(undefined)
     try {
       await action()
+      if (!isCurrentContext()) return false
       setNotice(success)
       if (inventory?.capabilities.reload && props.projectPath) {
         try {
@@ -98,18 +174,20 @@ export function McpSettings(props: {
             provider: props.provider,
             projectPath: props.projectPath,
           })
+          if (!isCurrentContext()) return false
           setNotice(`${success} Active sessions reloaded.`)
         } catch (cause) {
+          if (!isCurrentContext()) return false
           setNotice(`${success} ${message(cause)}`)
         }
       }
       await refresh()
       return true
     } catch (cause) {
-      setError(message(cause))
+      if (isCurrentContext()) setError(message(cause))
       return false
     } finally {
-      setBusy(undefined)
+      if (isCurrentContext()) setBusy(undefined)
     }
   }
 
@@ -176,7 +254,8 @@ export function McpSettings(props: {
   }
 
   async function signIn(server: McpServer): Promise<void> {
-    if (!props.projectPath) return
+    if (!props.projectPath || pendingOAuth.current) return
+    pendingOAuth.current = { serverId: server.id, loginId: undefined }
     setBusy(server.id)
     setError(undefined)
     try {
@@ -185,28 +264,52 @@ export function McpSettings(props: {
         projectPath: props.projectPath,
         serverId: server.id,
       })
+      if (!isCurrentContext()) return
+      const pending = pendingOAuth.current
+      if (!pending || pending.serverId !== server.id) return
+      pending.loginId = result.loginId
+      if (pending.completion?.loginId === result.loginId) {
+        completeOAuth(pending.completion)
+        return
+      }
+      delete pending.completion
       const opened = window.open(result.authUrl, '_blank', 'noopener,noreferrer')
       if (!opened) {
         setNotice(`Your browser blocked the sign-in window. Open it yourself: ${result.authUrl}`)
+      } else {
+        setNotice('Finish signing in in your browser.')
       }
-      setNotice('Finish signing in in your browser.')
-      setBusy(undefined)
     } catch (cause) {
-      setError(message(cause))
-      setBusy(undefined)
+      if (isCurrentContext()) {
+        pendingOAuth.current = undefined
+        setBusy((current) => (current === server.id ? undefined : current))
+        setError(message(cause))
+      }
     }
   }
 
-  const project = props.projectName ?? props.projectPath
+  const contextMatches = (context: Context | undefined) =>
+    context?.transport === props.transport &&
+    context.provider === props.provider &&
+    context.projectPath === props.projectPath
+  const currentInventory = contextMatches(inventoryContext.current) ? inventory : undefined
+  const currentError = currentInventory || contextMatches(errorContext.current) ? error : undefined
+  const providerStatus = !props.projectPath
+    ? 'Select a project to check MCP support.'
+    : currentError && !currentInventory
+      ? `${props.providerName} · MCP inventory status unavailable`
+      : !currentInventory
+        ? `Checking ${props.providerName} MCP support…`
+        : `${props.providerName} · MCP inventory ${currentInventory.capabilities.inventory ? 'available' : 'unavailable'}`
   const status = !props.projectPath
     ? 'Select a project in the sidebar first.'
-    : loading
+    : loading && !inventory
       ? 'Loading MCP servers…'
-      : !inventory
+      : !currentInventory
         ? undefined
-        : !inventory.capabilities.inventory
+        : !currentInventory.capabilities.inventory
           ? `${props.providerName} does not expose MCP servers here yet.`
-          : inventory.servers.length === 0
+          : currentInventory.servers.length === 0
             ? 'No MCP servers are configured for this project.'
             : undefined
 
@@ -217,9 +320,11 @@ export function McpSettings(props: {
           <h1 className="settings__title" id="settings-mcp">
             MCP servers
           </h1>
-          <p>{project ? `Available in ${project}` : 'Choose a project to inspect its servers.'}</p>
+          <p role="status" aria-live="polite" aria-atomic="true">
+            {providerStatus}
+          </p>
         </div>
-        {props.projectPath && inventory?.capabilities.add ? (
+        {props.projectPath && currentInventory?.capabilities.add ? (
           <button
             className="settings__action"
             type="button"
@@ -239,9 +344,9 @@ export function McpSettings(props: {
         ) : null}
       </header>
 
-      {error ? (
+      {currentError ? (
         <p className="mcp-settings__message is-error" role="alert">
-          {error}{' '}
+          {currentError}{' '}
           <button className="settings__action" type="button" onClick={() => void refresh()}>
             Retry
           </button>
@@ -258,13 +363,13 @@ export function McpSettings(props: {
           onSubmit={(event) => void save(event)}
         />
       ) : null}
-      {inventory?.capabilities.inventory && inventory.servers.length ? (
+      {currentInventory?.capabilities.inventory && currentInventory.servers.length ? (
         <div className="settings__group">
-          {inventory.servers.map((server) => (
+          {currentInventory.servers.map((server) => (
             <ServerRow
               key={server.id}
               server={server}
-              capabilities={inventory.capabilities}
+              capabilities={currentInventory.capabilities}
               busy={busy === server.id}
               onSignIn={() => void signIn(server)}
               onToggle={() => toggle(server)}
@@ -294,10 +399,10 @@ function ServerRow(props: {
   onEdit: () => void
   onRemove: () => void
 }) {
+  const auth = props.server.auth
+  const startup = props.server.startup
   const needsOAuth =
-    props.capabilities.startOAuth &&
-    props.server.auth.status === 'sign_in_required' &&
-    props.server.auth.method === 'oauth'
+    props.capabilities.startOAuth && auth?.status === 'sign_in_required' && auth.method === 'oauth'
   const canToggle =
     props.capabilities.remove &&
     ((!props.server.enabled && props.server.scope === 'project') ||
@@ -312,13 +417,15 @@ function ServerRow(props: {
         <div className="mcp-row__heading">
           <h2>{props.server.displayName ?? props.server.id}</h2>
           <span>{props.server.scope}</span>
-          <span>{props.server.enabled ? props.server.startup.state : 'disabled'}</span>
+          <span>
+            {props.server.enabled ? (startup?.state ?? 'status unavailable') : 'disabled'}
+          </span>
         </div>
         <p className="mcp-row__transport">{transportLabel(props.server.transport)}</p>
-        {props.server.startup.state === 'failed' ? (
+        {startup?.state === 'failed' ? (
           <p className="mcp-row__failure" role="alert">
             <AlertTriangle size={13} aria-hidden />
-            {props.server.startup.message}
+            {startup.message}
           </p>
         ) : null}
         <details className="mcp-row__details">

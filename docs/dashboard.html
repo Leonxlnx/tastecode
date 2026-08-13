@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-08 nightly model</span>
+        <span class="meta">2026-08-13 main 23be5257</span>
       </div>
     </div>
 
@@ -314,9 +314,9 @@
             <small>thread, review, sessions, git, settings</small>
           </div>
           <div class="kpi">
-            <b>2</b>
+            <b>1</b>
             <span>workstreams running</span>
-            <small>design agent, visual polish</small>
+            <small>design</small>
           </div>
           <div class="kpi">
             <b>8</b>
@@ -328,16 +328,22 @@
 
       <section id="ready">
         <h2>Release checklist</h2>
-        <p class="sub">Checked means it works on main right now, verified in the running app.</p>
+        <p class="sub">
+          Checked means it works on main right now and passed the verification recorded with its
+          change.
+        </p>
         <div class="lanes">
           <div class="lane l-done">
-            <header>Ready <span class="count">10</span></header>
+            <header>Ready <span class="count">30</span></header>
             <ul>
               <li>
                 <i class="tick">✓</i>
                 <span
                   >Codex plan
-                  <span class="d">OAuth, live models, effort, steer, approvals, limits, voice</span>
+                  <span class="d"
+                    >OAuth, live models, effort, steer, approvals, limits, voice with explicit local
+                    discard</span
+                  >
                 </span>
               </li>
               <li>
@@ -351,28 +357,256 @@
                 <i class="tick">✓</i>
                 <span
                   >Grok plan
-                  <span class="d">streaming, reasoning, effort, resume, sign in and out</span>
+                  <span class="d"
+                    >streaming, reasoning, effort, resume, sign in and out; explicit Stop reaches
+                    one interrupted terminal state and restores sending; provider-owned billing
+                    source with honest unavailable and error states; successful sign-in captures the
+                    provider-confirmed email without manual entry</span
+                  >
                 </span>
               </li>
               <li>
                 <i class="tick">✓</i>
                 <span
                   >Thread and composer
-                  <span class="d">streaming, all item types, queue, steer, interrupt</span>
+                  <span class="d"
+                    >streaming, ordered queue, visible Steer actions, Enter-to-queue and
+                    Ctrl/Command+Enter-to-steer, reconnect, deduplicated design phases, idle-only
+                    git refreshes, stable anchors for newly queued turns, denser assistant
+                    typography, pane-aware Thread, New chat, and composer layouts down to a 332 px
+                    workspace split, plus an in-pane session header with shared rename, pin,
+                    archive, checkpoint, Workspace, and Terminal actions; Stop immediately restores
+                    the idle presentation while provider interruption finishes in the
+                    background</span
+                  >
                 </span>
               </li>
               <li>
                 <i class="tick">✓</i>
                 <span
                   >Review and safety
-                  <span class="d">per-hunk diff review, approvals, checkpoints, modes</span>
+                  <span class="d"
+                    >per-hunk diff review, approvals, validated checkpoints, modal keyboard
+                    isolation, modes</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Workspace tools
+                  <span class="d"
+                    >resizable Review, CSP-safe compact terminal with link detection, independent
+                    middle-click-closeable Browser tabs with distinct viewport controls, lazy file
+                    tree, and Temporary chat use the active session checkout; Temporary chat
+                    presents the normal thread and composer without a duplicate parent-status header
+                    and erases its transcript when closed; one in-chat toggle opens a
+                    2-by-2-plus-one icon launcher and the panel chrome owns closing, aligned
+                    dividers stay square, resizing preserves a 360 px center chat with or without
+                    the left sidebar, missing workspace items fail without exposing raw paths,
+                    startup is bounded, and 390 px layouts do not overflow</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Design and approval recovery
+                  <span class="d"
+                    >stale reasoning-only histories compact to one Worked disclosure; Design answer
+                    submission exposes retry or reconciliation instead of spinning; Codex grants
+                    only the requested permission profile and aborts with the original thread and
+                    turn IDs; failed OpenCode approval replies remain retryable; and Design accepts
+                    real startup events while a 30-second start-only watchdog fails silent starts
+                    visibly without limiting running work; obsolete approval warnings are omitted
+                    from new and saved transcripts</span
+                  >
                 </span>
               </li>
               <li>
                 <i class="tick">✓</i>
                 <span
                   >Sessions and git
-                  <span class="d">projects, parallel sessions, worktrees, usage accounting</span>
+                  <span class="d"
+                    >projects, parallel sessions, worktrees, desktop recovery, usage accounting;
+                    Codex cumulative thread totals never masquerade as current-context occupancy,
+                    including on historical replay</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Lifecycle hardening
+                  <span class="d"
+                    >reply guidance survives resume, stale usage indexes rebuild, failed scans
+                    recover without retry storms, Windows PTY cleanup waits for exit</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Restart recovery
+                  <span class="d"
+                    >unfinished work settles to a failed terminal state, stale approvals disappear,
+                    and the transcript explains how to continue</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Actionable empty and error states
+                  <span class="d"
+                    >project loading failures offer Retry, the first-project prompt opens the folder
+                    picker, empty project drawers show No chats without replacing the current chat,
+                    and a true zero-turn thread keeps the composer available;
+                    <a href="./screenshots/empty-project.png">project</a> and
+                    <a href="./screenshots/empty-thread.png">thread</a> evidence</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Symmetric sidebar motion
+                  <span class="d"
+                    >a fixed-width rail translates in both directions without clipping its contents,
+                    settles in 260 ms, remains interruptible during rapid toggles, and uses
+                    chevron-free 36 px project rows aligned on the folder mark; the fixed New chat,
+                    New project, and Pull requests block gains a strong divider only while the list
+                    below is scrolled; new profiles start on V1 Classic with three-day settling
+                    enabled</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Model and source coherence
+                  <span class="d"
+                    >catalog recovery keeps the selected provider, model, effort, and tier; source
+                    names and marks stay consistent; flat and rail pickers share search; Settings
+                    keeps the short catalog lists search-free while every model and its switch
+                    remain picker inclusion; the flat list is the first-run layout, current Codex
+                    and Claude families are prioritized, Grok 4.5 remains discoverable, provider
+                    readiness stays silent during new-chat source changes, and saved custom ids
+                    remain usable while their management UI is parked</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Custom harness sources (parked)
+                  <span class="d"
+                    >the server retains protocol-compatible executable support for future/nightly
+                    work, while the public-beta Providers screen exposes only Codex, Claude Code,
+                    and Grok</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Durable completed-turn timing
+                  <span class="d"
+                    >the server persists canonical start and completion boundaries, so live and
+                    replayed elapsed time agree</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Server-owned submission identity
+                  <span class="d"
+                    >accepted prompts persist once across queue, steer, reconnect, and restart,
+                    including providers without user echoes</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Durable prompt delivery and reconnect convergence
+                  <span class="d"
+                    >queued prompts survive restart; accepted, rejected, and indeterminate sends
+                    converge once without duplicate rows or cross-thread draft leaks</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Incremental durable-history catch-up
+                  <span class="d"
+                    >reconnects, push gaps, and cached reopens fetch only the missing event suffix;
+                    checkpoint restore and undo keep files, transcript, and cursor atomic</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Narration and tool lifecycles
+                  <span class="d"
+                    >adapter activity stays unique and chronological; completed narration, tool
+                    output, and file details remain visible on replay</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Search, menus, and focus
+                  <span class="d"
+                    >compact 520 px cross-chat search with flat project and agent filters, stable
+                    result identity, keyboard-complete menus, trapped focus, and deterministic focus
+                    restoration across task changes</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Claude Code item identity
+                  <span class="d"
+                    >reused message IDs keep narration and tool blocks unique, chronological, and
+                    deterministic on replay</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Stable session-search pagination
+                  <span class="d"
+                    >ranked server snapshots and indexed range seeks prevent later inserts from
+                    repeating, skipping, or injecting rows</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Bounded live Markdown parser foundation
+                  <span class="d"
+                    >append operations scan only the delta, bound parser state, and retain exact
+                    source for the full completion render</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Safe project-file actions
+                  <span class="d"
+                    >completed replies reveal validated in-project files in Desktop; outside-root
+                    and network paths stay blocked, while browser and mobile remain
+                    non-interactive</span
+                  >
                 </span>
               </li>
               <li>
@@ -385,7 +619,24 @@
               <li>
                 <i class="tick">✓</i>
                 <span
-                  >Settings <span class="d">one-line rows, masked emails, limits in the popup</span>
+                  >Settings
+                  <span class="d"
+                    >General, Profile, and Appearance lead the navigation; local display name and
+                    validated avatar stay on this device; provider actions share a fixed right edge
+                    and empty action slots no longer double signed-in row height;
+                    background-prefetched limits open from the lifted account menu without a fresh
+                    request; clear dividers separate provider groups, while loading, unavailable,
+                    successful-empty, and failure states preserve usable values through Retry; roomy
+                    Data and Debug rows, short-window scrolling, contained keyboard focus, and a
+                    scoped confirmation before resetting renderer preferences preserve projects,
+                    files, history, and credentials;
+                    <a href="./screenshots/provider-density-after.png">compact provider</a>,
+                    <a href="./screenshots/model-settings-no-search.png">model settings</a>,
+                    <a href="./screenshots/provider-settings-desktop.png">desktop</a> and
+                    <a href="./screenshots/provider-settings-390.png">390 px</a> provider evidence,
+                    plus
+                    <a href="./screenshots/reset-preferences-confirm.png">reset dialog</a></span
+                  >
                 </span>
               </li>
               <li>
@@ -393,7 +644,19 @@
                 <span
                   >Appearance
                   <span class="d"
-                    >themes, fonts, accents, backdrops, frosted sidebar that shows</span
+                    >themes, fonts, accents, backdrops, and flat translucency previews for the
+                    frosted sidebar</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Direct-manipulation haptics
+                  <span class="d"
+                    >one global macOS toggle coordinates meaningful resize, reasoning-effort, and
+                    chat- and project-placement stops without firing when the rendered control does
+                    not move</span
                   >
                 </span>
               </li>
@@ -402,7 +665,23 @@
                 <span
                   >MCP and Skills, kept simple
                   <span class="d"
-                    >add, enable, per-project scope. Stays this size for the beta</span
+                    >add, enable, per-project scope, reconnect recovery, null-safe legacy inventory,
+                    and provider capability status instead of misleading project-name copy. Stays
+                    this size for the beta</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Long-thread and first-progress performance
+                  <span class="d"
+                    >bounded active-tail reads, incremental live Markdown, stable completed rows,
+                    and linear 10k-item replay are pinned deterministically; new tasks show the
+                    optimistic user row plus one stable Working and Stop surface before the next
+                    paint, while the reopened 1,513-event Desktop trace captured the same stable
+                    state at +87 ms without a reload flash, duplicate status, timer restart, or
+                    limit-induced layout shift</span
                   >
                 </span>
               </li>
@@ -410,20 +689,24 @@
           </div>
 
           <div class="lane l-active">
-            <header>In progress <span class="count">2</span></header>
+            <header>In progress <span class="count">1</span></header>
             <ul>
               <li>
                 <i class="tick">●</i>
                 <span
                   >Design agent, simple for now
-                  <span class="d">appearance-focused, owned by the Codex chat</span>
-                </span>
-              </li>
-              <li>
-                <i class="tick">●</i>
-                <span
-                  >Visual polish toward M5
-                  <span class="d">screen-by-screen pass, empty and error states (#15)</span>
+                  <span class="d"
+                    >appearance-focused; ambiguous requests get bounded briefing questions and a
+                    final note, stale phases and terminal provider completions cannot mutate a newer
+                    run, terminal provider failures are visible instead of leaving briefing activity
+                    stuck, recoverable previews retry once without weakening file boundaries,
+                    package-manager previews stay in the selected workspace, and build reports must
+                    match the exact changed-file set; rendered preview audits require exactly one h1
+                    and mobile interaction targets of at least 44 by 44 CSS pixels before visual
+                    review can pass; successful previews remain reachable until their owning thread
+                    closes or starts a replacement, and a completed queued Design turn stays idle
+                    even when its provider start promise resolves late</span
+                  >
                 </span>
               </li>
             </ul>
@@ -493,9 +776,7 @@
           <span>Kimi CLI over ACP</span>
           <span>API connections, 6 presets</span>
           <span>GLM and Z.ai coding plans</span>
-          <span>Qwen route (#380)</span>
-          <span>Pi agent (#147, no CLI exists)</span>
-          <span>Mobile app (M8)</span>
+          <span>Native mobile app (M8, source on main; release QA pending)</span>
         </div>
       </section>
 

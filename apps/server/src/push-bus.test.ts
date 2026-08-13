@@ -54,6 +54,20 @@ describe('PushBus', () => {
     expect(sequences(second)).toEqual([1])
   })
 
+  it('broadcasts provider-neutral usage changes without provider-specific payloads', () => {
+    const bus = new PushBus()
+    const client = socket()
+    bus.add(client)
+
+    bus.broadcast('usage.changed', { provider: 'codex' })
+
+    expect(JSON.parse(client.sent[0] ?? '')).toEqual({
+      channel: 'usage.changed',
+      sequence: 1,
+      data: { provider: 'codex' },
+    })
+  })
+
   it('closes a connection whose write failed instead of silently muting it', () => {
     // Dropping it from the map while leaving the socket open was the bug: the
     // client's onclose never fired, its gap detector only fires on a frame it

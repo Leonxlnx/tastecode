@@ -17,6 +17,7 @@
     { "path": "../../packages/adapter-opencode" },
     { "path": "../../packages/adapter-claude-code" },
     { "path": "../../packages/adapter-antigravity" },
-    { "path": "../../packages/adapter-grok" }
+    { "path": "../../packages/adapter-grok" },
+    { "path": "../../packages/adapter-pi" }
   ]
 }

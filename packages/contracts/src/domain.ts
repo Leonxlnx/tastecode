@@ -15,6 +15,7 @@ export const ProviderIdSchema = z.enum([
   'cursor',
   'opencode',
   'antigravity',
+  'pi',
   'acp',
   'api',
 ])
@@ -40,13 +41,22 @@ export type ItemType = z.infer<typeof ItemTypeSchema>
 export const ItemStatusSchema = z.enum(['started', 'completed', 'failed'])
 export type ItemStatus = z.infer<typeof ItemStatusSchema>
 
+export const AssistantPhaseSchema = z.enum(['commentary', 'final_answer'])
+export type AssistantPhase = z.infer<typeof AssistantPhaseSchema>
+
 export const ItemSchema = z.object({
+  /**
+   * Stable identity for exactly one started -> deltas -> completed lifecycle.
+   * Producers must not reuse it; per-event validation cannot enforce uniqueness across a log.
+   */
   id: z.string(),
   turnId: z.string(),
   type: ItemTypeSchema,
   status: ItemStatusSchema,
   /** Present on `message`. */
   role: z.enum(['user', 'assistant']).optional(),
+  /** Present when a provider reliably classifies an assistant message; absent means unknown. */
+  phase: AssistantPhaseSchema.optional(),
   /** Accumulated text. Deltas append here. */
   text: z.string().optional(),
   /** Present on `command`: the command line and its exit code once finished. */
@@ -172,6 +182,12 @@ export const UsageSchema = z.object({
   outputTokens: z.number(),
   reasoningTokens: z.number(),
   totalTokens: z.number(),
+  /** Model that produced this usage, when the runtime can identify it. */
+  model: z.string().min(1).optional(),
+  /** True when the counters cover the whole session rather than one response. */
+  cumulative: z.boolean().optional(),
+  /** Whether cached input is already included in `inputTokens`. */
+  inputIncludesCached: z.boolean().optional(),
   /** Actual cost reported by the provider. Absent when it would be an estimate. */
   costUsd: z.number().nonnegative().optional(),
   contextWindow: z.number().optional(),
@@ -193,6 +209,8 @@ export const DomainEventSchema = z.discriminatedUnion('type', [
     type: z.literal('turn.completed'),
     turnId: z.string(),
     status: z.enum(['completed', 'interrupted', 'failed']),
+    /** Server receipt time. Optional so histories written before this field still replay. */
+    completedAt: z.number().optional(),
   }),
   z.object({ type: z.literal('thread.error'), threadId: z.string(), message: z.string() }),
   /** The agent's plan for this turn, replaced wholesale each time it changes. */
@@ -295,6 +313,89 @@ export const ProviderSetupSchema = z.object({
   login: z.enum(['app', 'provider']),
 })
 export type ProviderSetup = z.infer<typeof ProviderSetupSchema>
+
+/**
+ * A user-owned CLI that speaks one of the protocols Harness already knows.
+ * `command` is an executable name on PATH or an absolute executable path;
+ * fixed argv entries stay separate so paths and values containing spaces are
+ * never re-parsed through a shell.
+ */
+export const CustomHarnessSchema = z.object({
+  id: z.string().trim().min(1).max(128),
+  displayName: z.string().trim().min(1).max(80),
+  provider: z.enum([
+    'codex',
+    'claude-code',
+    'grok',
+    'cursor',
+    'opencode',
+    'antigravity',
+    'pi',
+    'acp',
+  ]),
+  command: z
+    .string()
+    .trim()
+    .min(1)
+    .max(4096)
+    .refine((value) => !value.includes('\0'), 'command cannot contain a null byte'),
+  args: z
+    .array(
+      z
+        .string()
+        .max(4096)
+        .refine((value) => !value.includes('\0'), 'argument cannot contain a null byte'),
+    )
+    .max(64),
+  /**
+   * Optional launcher cwd. The active project remains available to wrappers
+   * as HARNESS_WORKSPACE_PATH even when a mod has to boot from its own source
+   * directory.
+   */
+  workingDirectory: z
+    .string()
+    .trim()
+    .min(1)
+    .max(4096)
+    .refine((value) => !value.includes('\0'), 'working directory cannot contain a null byte')
+    .optional(),
+  /** Non-secret process settings such as an isolated state/config directory. */
+  environment: z
+    .record(
+      z
+        .string()
+        .trim()
+        .min(1)
+        .max(128)
+        .refine(
+          (value) => !value.includes('=') && !value.includes('\0'),
+          'invalid environment key',
+        ),
+      z
+        .string()
+        .max(8192)
+        .refine((value) => !value.includes('\0'), 'environment value cannot contain a null byte'),
+    )
+    .refine((value) => Object.keys(value).length <= 64, 'too many environment entries')
+    .optional(),
+})
+export type CustomHarness = z.infer<typeof CustomHarnessSchema>
+
+export const CustomHarnessVerificationCheckSchema = z.object({
+  label: z.string().min(1),
+  status: z.enum(['passed', 'warning', 'failed']),
+  detail: z.string().min(1),
+})
+export type CustomHarnessVerificationCheck = z.infer<typeof CustomHarnessVerificationCheckSchema>
+
+export const CustomHarnessVerificationSchema = z.object({
+  status: z.enum(['ready', 'warning', 'error']),
+  summary: z.string().min(1),
+  checkedAt: z.number().int().nonnegative(),
+  resolvedCommand: z.string().min(1).optional(),
+  checks: z.array(CustomHarnessVerificationCheckSchema).min(1),
+})
+export type CustomHarnessVerification = z.infer<typeof CustomHarnessVerificationSchema>
 
 export const ProviderStatusSchema = z.object({
   id: ProviderIdSchema,

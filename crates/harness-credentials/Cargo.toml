@@ -1,0 +1,10 @@
+[package]
+name = "harness-credentials"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+keyring.workspace = true
+thiserror.workspace = true

@@ -1,5 +1,7 @@
 import os, { type NetworkInterfaceInfo } from 'node:os'
 import path from 'node:path'
+import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
@@ -16,18 +18,23 @@ import {
   type ProviderId,
   type SidebarSettings,
 } from '@harness/contracts'
-import { StaleDiffSnapshotError } from './diff-review.js'
+import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { MobileAccess, type MobileConnectionAccess } from './mobile-access.js'
-import { Orchestrator } from './orchestrator.js'
+import { Orchestrator, resolveWorkspacePath } from './orchestrator.js'
 import { detectProviders, installCommandFor, launchCommandFor } from './providers.js'
 import { checkForUpdates } from './update-check.js'
 import { PushBus } from './push-bus.js'
+import { loadOrCreateWebClientToken } from './mobile-web-token.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
 import { browseProjectDirectory } from './project-directory-browser.js'
+import { PullRequestService } from './pull-requests.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
+import { UsageHistoryService } from './usage-history.js'
+import { usageSummaryWithLimits } from './usage-summary.js'
 import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
+import { listWorkspaceDirectory, readWorkspaceTextFile } from './workspace-files.js'
 
 export const SERVER_VERSION = '0.0.0'
 export { DEFAULT_PORT } from './server-config.js'
@@ -70,12 +77,33 @@ export function startServer(
     mobilePort?: number
     mobileNetworkInterfaces?: () => NodeJS.Dict<NetworkInterfaceInfo[]>
     resolveTailscaleAddresses?: () => Promise<ReadonlySet<string>>
+    /** Long-lived token for the full web app on a phone. Defaults to the OS
+     * credential store. */
+    webToken?: string
+    /** Directory containing the built web app. Defaults to apps/web/dist. */
+    webRoot?: string
+    /** Vite dev server the mobile web-app surface proxies to in dev. */
+    webDevServerUrl?: string
+    /** Where to probe for a live Vite dev server; `false` disables the probe. */
+    webDevServerProbeUrl?: string | false
     projectBrowserHome?: string
   } = {},
 ) {
   const port = options.port ?? DEFAULT_PORT
   const host = options.host ?? '127.0.0.1'
   const mobilePort = options.mobilePort ?? (port === 0 ? 0 : port + 1)
+  const webToken = options.webToken ?? loadOrCreateWebClientToken()
+  if (options.webToken === undefined && webToken === '') {
+    console.warn('[server] no OS credential store available — the mobile web app is disabled')
+  }
+  const webRoot = resolveWebRoot(options.webRoot)
+  if (options.webDevServerUrl) {
+    console.log(`[server] serving the web app for phones from ${options.webDevServerUrl}`)
+  } else if (webRoot) {
+    console.log(`[server] serving the web app for phones from ${webRoot}`)
+  } else {
+    console.warn('[server] web app build not found (apps/web/dist) — the phone web app is disabled')
+  }
   assertSafeBind(host, options.accessToken)
   const wss = new WebSocketServer({ port, host })
   const push = new PushBus()
@@ -98,9 +126,19 @@ export function startServer(
     process.exit(1)
   })
 
-  const store = new Store(storeLocation())
+  const databasePath = storeLocation()
+  const store = new Store(databasePath)
+  store.recoverInterruptedThreads()
+  const usageHistory = new UsageHistoryService({
+    cacheFile: path.join(path.dirname(databasePath), 'usage-history.json'),
+    harnessUsage: () => store.usageEvents(),
+  })
+  const pullRequests = new PullRequestService()
+  void usageHistory.startBackgroundRefresh()
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event, seq) => push.broadcast('thread.event', { threadId, event, seq }),
+    onSideEvent: (threadId, event, seq) =>
+      push.broadcast('sideChat.event', { threadId, event, seq }),
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
     onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
@@ -110,6 +148,7 @@ export function startServer(
       push.broadcast('mcp.changed', { provider, projectPath }),
     onSkillsChanged: (provider, projectPath) =>
       push.broadcast('skills.changed', { provider, projectPath }),
+    onUsageChanged: (provider) => push.broadcast('usage.changed', { provider }),
     onLifecycle: (threadId, lifecycle) =>
       push.broadcast('thread.lifecycle', { threadId, lifecycle }),
     onTerminalOutput: (terminalId, data) => push.broadcast('terminal.output', { terminalId, data }),
@@ -127,6 +166,12 @@ export function startServer(
     store,
     port: mobilePort,
     onConnection: (socket, request, access) => acceptConnection(socket, request, access),
+    webToken,
+    webRoot,
+    webDevServerUrl: options.webDevServerUrl,
+    ...(options.webDevServerProbeUrl !== undefined
+      ? { webDevServerProbeUrl: options.webDevServerProbeUrl }
+      : {}),
     ...(options.mobileNetworkInterfaces
       ? { networkInterfaces: options.mobileNetworkInterfaces }
       : {}),
@@ -140,22 +185,22 @@ export function startServer(
   // starts instead of failing with a message about our own leftovers.
   void orchestrator.recoverWorktrees().catch(() => undefined)
 
+  // The web app for phones is part of the running server: reachable on every
+  // launch so the bookmarked URL keeps working. Native-app connections are
+  // restored separately from the persisted switch.
+  void mobileAccess
+    .start()
+    .catch((error) => console.error(`[server] could not start mobile access: ${messageOf(error)}`))
   if (store.mobileAccessEnabled()) {
-    void mobileAccess
-      .start()
-      .catch((error) =>
-        console.error(`[server] could not restore mobile access: ${messageOf(error)}`),
-      )
+    mobileAccess.setProtocolEnabled(true)
   }
 
   async function startPairing() {
-    const offer = await mobileAccess.startPairing()
-    store.setMobileAccessEnabled(true)
-    return offer
+    return mobileAccess.startPairing()
   }
 
   wss.on('connection', (socket, request) => {
-    if (!allowedOrigin(request.headers.origin)) {
+    if (!allowedOrigin(request.headers.origin, options.accessToken)) {
       socket.close(1008, 'Origin not allowed')
       return
     }
@@ -251,12 +296,11 @@ export function startServer(
       const result = await route(socket, method as MethodName, decoded.data, access)
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ id, result }))
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
       respondError(
         socket,
         id,
         error instanceof StaleDiffSnapshotError ? ErrorCode.STALE_SNAPSHOT : ErrorCode.INTERNAL,
-        message,
+        clientErrorMessage(error),
       )
     }
   }
@@ -303,8 +347,62 @@ export function startServer(
           },
         )
 
+      case 'pullRequests.list': {
+        const p = params as ParamsOf<'pullRequests.list'>
+        return pullRequests.list(
+          store.projects().map((project) => project.path),
+          p.refresh ?? false,
+        )
+      }
+
+      case 'pullRequests.detail': {
+        const p = params as ParamsOf<'pullRequests.detail'>
+        return pullRequests.detail(
+          p.repository,
+          p.number,
+          store.projects().map((project) => project.path),
+          p.refresh ?? false,
+        )
+      }
+
+      case 'pullRequests.files': {
+        const p = params as ParamsOf<'pullRequests.files'>
+        return pullRequests.files(p.repository, p.number, p.page ?? 1, p.refresh ?? false)
+      }
+
+      case 'pullRequests.metadataOptions': {
+        const p = params as ParamsOf<'pullRequests.metadataOptions'>
+        return pullRequests.metadataOptions(p.repository, p.refresh ?? false)
+      }
+
+      case 'pullRequests.action': {
+        const p = params as ParamsOf<'pullRequests.action'>
+        return pullRequests.action(p.repository, p.number, p.action)
+      }
+
       case 'providers.list':
         return { providers: await detectProviders() }
+
+      case 'harnesses.list':
+        return { harnesses: orchestrator.listCustomHarnesses() }
+
+      case 'harnesses.upsert':
+        return {
+          harness: orchestrator.upsertCustomHarness(params as ParamsOf<'harnesses.upsert'>),
+        }
+
+      case 'harnesses.verify': {
+        const p = params as ParamsOf<'harnesses.verify'>
+        return {
+          verification: await orchestrator.verifyCustomHarness(p.harness, p.workspacePath),
+        }
+      }
+
+      case 'harnesses.remove': {
+        const p = params as ParamsOf<'harnesses.remove'>
+        orchestrator.removeCustomHarness(p.harnessId)
+        return {}
+      }
 
       case 'providers.install': {
         const p = params as ParamsOf<'providers.install'>
@@ -356,7 +454,7 @@ export function startServer(
 
       case 'connections.stop':
         store.setMobileAccessEnabled(false)
-        await mobileAccess.stop()
+        mobileAccess.setProtocolEnabled(false)
         return {}
 
       case 'connections.revoke': {
@@ -485,12 +583,12 @@ export function startServer(
 
       case 'workspace.info': {
         const p = params as { path: string }
-        return readWorkspace(p.path)
+        return readWorkspace(resolveWorkspacePath(p.path))
       }
 
       case 'workspace.branches': {
         const p = params as { path: string }
-        return { branches: await listWorkspaceBranches(p.path) }
+        return { branches: await listWorkspaceBranches(resolveWorkspacePath(p.path)) }
       }
 
       case 'workspace.switchBranch': {
@@ -501,7 +599,22 @@ export function startServer(
         if (localSessionRunning) {
           throw new Error('stop local sessions in this project before switching branches')
         }
-        return switchWorkspaceBranch(p.path, p.branch)
+        return switchWorkspaceBranch(resolveWorkspacePath(p.path), p.branch)
+      }
+
+      case 'workspace.diff': {
+        const p = params as ParamsOf<'workspace.diff'>
+        return readWorkspaceDiff(workspaceForRequest(store, p))
+      }
+
+      case 'workspace.listDirectory': {
+        const p = params as ParamsOf<'workspace.listDirectory'>
+        return listWorkspaceDirectory(workspaceForRequest(store, p), p.directory)
+      }
+
+      case 'workspace.readFile': {
+        const p = params as ParamsOf<'workspace.readFile'>
+        return readWorkspaceTextFile(workspaceForRequest(store, p), p.path)
       }
 
       case 'models.list': {
@@ -600,15 +713,20 @@ export function startServer(
         }
         // The sidebar entry can disappear while its history remains available
         // when the project is added again. Running processes still need an owner.
-        for (const thread of store.threads(p.path)) orchestrator.close(thread.id)
+        await Promise.all(store.threads(p.path).map((thread) => orchestrator.close(thread.id)))
         orchestrator.forgetProject(p.path)
         store.removeProject(p.path)
         return {}
       }
 
       case 'terminal.open': {
-        const p = params as { threadId: string; columns: number; rows: number }
-        return { terminalId: orchestrator.openTerminal(p.threadId, p.columns, p.rows) }
+        const p = params as ParamsOf<'terminal.open'>
+        return {
+          terminalId:
+            'threadId' in p
+              ? orchestrator.openTerminal(p.threadId, p.columns, p.rows)
+              : orchestrator.openProjectTerminal(p.projectPath, p.columns, p.rows),
+        }
       }
 
       case 'terminal.input': {
@@ -683,7 +801,7 @@ export function startServer(
         if (store.thread(p.threadId)?.worktreePath) {
           throw new Error('discard the isolated session checkout before deleting it')
         }
-        orchestrator.close(p.threadId)
+        await orchestrator.close(p.threadId)
         store.deleteThread(p.threadId)
         return {}
       }
@@ -691,7 +809,7 @@ export function startServer(
       case 'thread.history': {
         const p = params as { threadId: string; afterSeq?: number }
         const result = {
-          events: orchestrator.history(p.threadId, p.afterSeq ?? 0),
+          events: await orchestrator.history(p.threadId, p.afterSeq ?? 0),
           running: orchestrator.isTurnRunning(p.threadId),
         }
         orchestrator.markThreadRead(p.threadId)
@@ -743,12 +861,39 @@ export function startServer(
           reasoningTokens: 0,
           totalTokens: 0,
         }
-        return {
-          ...('threadId' in p
+        const totals =
+          'threadId' in p
             ? store.usageSummary(p.threadId, startOfToday.getTime())
-            : { session: empty, today: empty }),
-          limits: await orchestrator.usageLimits(provider),
-        }
+            : { session: empty, today: empty }
+        return usageSummaryWithLimits(totals, provider, (requestedProvider) =>
+          orchestrator.usageLimitSource(requestedProvider),
+        )
+      }
+
+      case 'usage.history': {
+        const p = params as ParamsOf<'usage.history'>
+        return usageHistory.history(p.range, p.refresh ?? false)
+      }
+
+      case 'usage.resetHistory':
+        await usageHistory.resetAndRefresh()
+        return { started: true as const }
+
+      case 'sideChat.start': {
+        const p = params as ParamsOf<'sideChat.start'>
+        const thread = await orchestrator.startSideThread(p.parentThreadId, {
+          model: p.model,
+          serviceTier: p.serviceTier,
+          effort: p.effort,
+          approval: p.approval,
+        })
+        return { threadId: thread.id }
+      }
+
+      case 'sideChat.close': {
+        const p = params as ParamsOf<'sideChat.close'>
+        orchestrator.closeSideThread(p.threadId)
+        return {}
       }
 
       case 'thread.start': {
@@ -819,20 +964,19 @@ export function startServer(
       }
 
       case 'thread.sendTurn': {
-        const p = params as {
-          threadId: string
-          text: string
-          attachments?: string[]
-          model?: string
-          effort?: string
-          serviceTier?: string
-        }
+        const p = params as ParamsOf<'thread.sendTurn'>
         return {
-          ...(await orchestrator.submitTurn(p.threadId, p.text, p.attachments, {
-            model: p.model,
-            effort: p.effort,
-            serviceTier: p.serviceTier,
-          })),
+          ...(await orchestrator.submitTurn(
+            p.threadId,
+            p.text,
+            p.attachments,
+            {
+              model: p.model,
+              effort: p.effort,
+              serviceTier: p.serviceTier,
+            },
+            p.clientSubmissionId,
+          )),
         }
       }
 
@@ -889,9 +1033,15 @@ export function startServer(
         return {}
       }
 
+      case 'thread.setApproval': {
+        const p = params as { threadId: string; approval: 'ask' | 'auto' | 'auto-review' | 'full' }
+        orchestrator.setThreadApproval(p.threadId, p.approval)
+        return {}
+      }
+
       case 'thread.close': {
         const p = params as { threadId: string }
-        orchestrator.close(p.threadId)
+        await orchestrator.close(p.threadId)
         return {}
       }
 
@@ -925,13 +1075,19 @@ export function startServer(
     startPairing,
     close: async () => {
       clearInterval(lifecycleTimer)
-      orchestrator.disposeAll()
+      usageHistory.dispose()
+      const orchestratorClosed = orchestrator.disposeAll()
       for (const socket of wss.clients) socket.terminate()
-      await Promise.all([
+      const results = await Promise.allSettled([
+        orchestratorClosed,
         mobileAccess.stop(),
         new Promise<void>((resolve) => wss.close(() => resolve())),
       ])
       store.close()
+      const errors = results
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+        .map((result) => result.reason)
+      if (errors.length > 0) throw new AggregateError(errors, 'server shutdown failed')
     },
   }
 }
@@ -954,15 +1110,24 @@ export function startServer(
  * gate straight back to the attacker it exists to stop. If a renderer of ours
  * ever reports an opaque origin, the answer is an access token for that
  * surface, not a hole here.
+ *
+ * When the server binds beyond loopback — a Tailscale or LAN address so a
+ * phone can reach the web UI — an access token is mandatory (see
+ * assertSafeBind), and that token becomes the trust boundary: any origin may
+ * attempt the handshake, but only a connection carrying the token is admitted.
+ * The dev:mobile flow serves the page from the same host, so its origin would
+ * otherwise be bounced here before the token was ever checked.
  */
-export function allowedOrigin(origin: string | undefined): boolean {
+export function allowedOrigin(origin: string | undefined, accessToken?: string): boolean {
   if (!origin || origin === 'file://') return true
+  if (origin === 'null') return false
   let hostname: string
   try {
     ;({ hostname } = new URL(origin))
   } catch {
     return false
   }
+  if (accessToken) return true
   return (
     hostname === 'localhost' ||
     hostname === '::1' ||
@@ -976,6 +1141,7 @@ type ConnectionAccess = { kind: 'admin' } | MobileConnectionAccess
 const DEVICE_METHODS = new Set<MethodName>([
   'system.info',
   'providers.list',
+  'harnesses.list',
   'connections.list',
   'connections.models',
   'connections.deviceStatus',
@@ -988,6 +1154,8 @@ const DEVICE_METHODS = new Set<MethodName>([
   'projects.browse',
   'projects.add',
   'attachments.saveFile',
+  'sideChat.start',
+  'sideChat.close',
   'thread.history',
   'thread.queue',
   'thread.start',
@@ -1013,8 +1181,40 @@ function methodAllowed(access: ConnectionAccess, method: MethodName): boolean {
   return DEVICE_METHODS.has(method)
 }
 
+function workspaceForRequest(
+  store: Store,
+  request: { projectPath: string; threadId?: string | undefined },
+): string {
+  const project = store.projects().find((entry) => entry.path === request.projectPath)
+  if (!project) throw new Error('project is not registered')
+  if (!request.threadId) return resolveWorkspacePath(project.path)
+
+  const thread = store.thread(request.threadId)
+  if (!thread || thread.projectPath !== project.path)
+    throw new Error('thread is not in this project')
+  return resolveWorkspacePath(thread.worktreePath ?? project.path)
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+export function clientErrorMessage(error: unknown): string {
+  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+    return 'This project folder or workspace item is unavailable. Choose another project or add the folder again.'
+  }
+  return messageOf(error)
+}
+
+/**
+ * Where the built web app lives. Defaults to apps/web/dist beside this
+ * package; HARNESS_WEB_DIST overrides it (tests, packaging).
+ */
+function resolveWebRoot(option: string | undefined): string | undefined {
+  const candidate = option ?? process.env['HARNESS_WEB_DIST']
+  if (candidate) return candidate
+  const relative = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist')
+  return existsSync(relative) ? relative : undefined
 }
 
 export function hasAccess(requestUrl: string | undefined, expected: string | undefined): boolean {

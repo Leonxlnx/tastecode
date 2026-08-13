@@ -1,20 +1,14 @@
-import type { Model, ModelConnectionPreset, ProviderId } from '@harness/contracts'
+import type { Model, ProviderId } from '@harness/contracts'
+import type { ProviderMark } from './provider-presentation.js'
+import { sourcePresentation } from './provider-presentation.js'
 
-export type ProviderMark =
-  | 'openai'
-  | 'anthropic'
-  | 'grok'
-  | 'cursor'
-  | 'opencode'
-  | 'openrouter'
-  | 'kimi'
-  | 'gemini'
-  | 'qwen'
-  | 'zai'
-  | 'antigravity'
-  | 'pi'
-  | 'acp'
-  | 'custom'
+export {
+  agentMark,
+  connectionMark,
+  providerDisplayName,
+  providerMark,
+} from './provider-presentation.js'
+export type { ProviderMark } from './provider-presentation.js'
 
 export type ModelChoice = {
   key: string
@@ -24,6 +18,15 @@ export type ModelChoice = {
   connectionId?: string | undefined
   agent?: { id: string; name: string } | undefined
   model: Model
+}
+
+/** A user-defined model the provider may accept without listing it. */
+export type CustomModelInput = {
+  provider: ProviderId
+  /** The exact id the adapter hands to the engine, e.g. `qwen-max`. */
+  modelId: string
+  /** Shown in the picker; falls back to the model id when empty. */
+  displayName: string
 }
 
 const MODEL_SEARCH_WHITESPACE = /\s+/
@@ -38,6 +41,15 @@ export function filterModelChoicesByQuery(choices: ModelChoice[], query: string)
       `${choice.sourceName} ${choice.model.displayName} ${choice.model.id}`.toLowerCase()
     return terms.every((term) => searchableText.includes(term))
   })
+}
+
+/** Curate the first-run picker without overriding a user's saved toggles.
+ * Unknown models stay visible: vendors can add models at any time, so only
+ * generations explicitly superseded in the current beta roster start hidden. */
+export function modelVisibleByDefault(model: Model): boolean {
+  const id = model.id.toLowerCase()
+  if (/^gpt-5\.(?:4|5)(?:$|-)/.test(id)) return false
+  return !['haiku', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6'].includes(id)
 }
 
 const REASONING_EFFORT_RANKS = new Map([
@@ -120,7 +132,7 @@ export function sourceKey(input: {
   agentId?: string | undefined
 }): string {
   if (input.connectionId) return `api:${input.connectionId}`
-  if (input.agentId) return `acp:${input.agentId}`
+  if (input.agentId) return `${input.provider}:${input.agentId}`
   return input.provider
 }
 
@@ -141,22 +153,43 @@ export function automaticModel(): Model {
   }
 }
 
-export function providerMark(provider: ProviderId): ProviderMark {
-  if (provider === 'codex') return 'openai'
-  if (provider === 'claude-code') return 'anthropic'
-  if (provider === 'api') return 'custom'
-  return provider
+/**
+ * Source bucket for custom models. It is deliberately distinct from the
+ * provider's own source key: a custom id may already exist in the provider's
+ * catalog, and the two must never share a choice key.
+ */
+export function customModelSource(provider: ProviderId): string {
+  return `custom:${provider}`
 }
 
-export function connectionMark(preset: ModelConnectionPreset): ProviderMark {
-  if (preset === 'openai') return 'openai'
-  if (preset === 'anthropic') return 'anthropic'
-  return preset
+export function customModelKey(input: CustomModelInput): string {
+  return modelChoiceKey(customModelSource(input.provider), input.modelId)
 }
 
-export function agentMark(agentId: string): ProviderMark {
-  if (agentId === 'gemini' || agentId === 'kimi' || agentId === 'qwen') return agentId
-  return 'acp'
+export function customModelChoice(
+  input: CustomModelInput,
+  sourceName: string,
+  mark: ProviderMark,
+): ModelChoice {
+  const presentation = sourcePresentation({ provider: input.provider, sourceName, mark })
+  return {
+    provider: input.provider,
+    sourceName: presentation.label,
+    mark: presentation.mark,
+    model: {
+      id: input.modelId,
+      displayName: input.displayName.trim() || input.modelId,
+      description: 'Custom model',
+      isDefault: false,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    },
+    key: customModelKey(input),
+  }
+}
+
+export function isCustomModelChoice(choice: ModelChoice): boolean {
+  return choice.key.startsWith('custom:')
 }
 
 export function choicesFor(
@@ -164,6 +197,12 @@ export function choicesFor(
   models: Model[],
   fallback = true,
 ): ModelChoice[] {
+  // An agent identity on a direct provider means this is a user-owned
+  // executable, whose chosen name is the source identity. Stock provider
+  // discovery remains canonical even if a transport reports another label.
+  const presentation = input.agent
+    ? { label: input.sourceName.trim(), mark: input.mark }
+    : sourcePresentation(input)
   const source = sourceKey({
     provider: input.provider,
     connectionId: input.connectionId,
@@ -171,6 +210,8 @@ export function choicesFor(
   })
   return (models.length > 0 ? models : fallback ? [automaticModel()] : []).map((model) => ({
     ...input,
+    sourceName: presentation.label,
+    mark: presentation.mark,
     model,
     key: modelChoiceKey(source, model.id),
   }))

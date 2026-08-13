@@ -36,13 +36,20 @@ function ContextMenuHarness() {
   )
 }
 
+const focusElement = HTMLElement.prototype.focus
+
 beforeEach(() => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 300 })
   Object.defineProperty(window, 'innerHeight', { configurable: true, value: 200 })
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    if (this.textContent === 'Project row') return rect(40, 60, 100, 20)
     if (this.classList.contains('menutrigger')) return rect(215, 170, 24, 24)
     if (this.classList.contains('menu')) return rect(0, 0, 260, 142)
     return rect(0, 0, 0, 0)
+  })
+  vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (this: HTMLElement) {
+    if (this.closest<HTMLElement>('.menu')?.style.visibility === 'hidden') return
+    focusElement.call(this)
   })
 })
 
@@ -61,7 +68,7 @@ describe('Menu', () => {
       </div>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Options' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Options' }), { detail: 1 })
 
     const menu = screen.getByRole('menu')
     expect(screen.getByTestId('clip').contains(menu)).toBe(false)
@@ -70,9 +77,23 @@ describe('Menu', () => {
     expect(menu.style.left).toBe('8px')
     expect(menu.style.top).toBe('')
     expect(menu.style.bottom).toBe('36px')
+    expect(menu.dataset.inputModality).toBe('pointer')
+    expect(menu.style.transformOrigin).toBe('right bottom')
 
     fireEvent.mouseDown(menu)
     expect(screen.getByRole('menu')).toBeTruthy()
+  })
+
+  it('honors a larger gap for a raised panel', () => {
+    render(
+      <Menu drop="up" gap={14} label="Account" trigger={() => <span>Account</span>}>
+        {() => <div>Plan limits</div>}
+      </Menu>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+
+    expect(screen.getByRole('menu').style.bottom).toBe('44px')
   })
 
   it('does not reposition when its own content scrolls', () => {
@@ -99,6 +120,7 @@ describe('Menu', () => {
 
   it('opens at the pointer when its context-menu target is right-clicked', () => {
     vi.mocked(Element.prototype.getBoundingClientRect).mockImplementation(function (this: Element) {
+      if (this.textContent === 'Project row') return rect(40, 60, 100, 20)
       if (this.classList.contains('menutrigger')) return rect(215, 170, 24, 24)
       if (this.classList.contains('menu')) return rect(0, 0, 100, 80)
       return rect(0, 0, 0, 0)
@@ -113,8 +135,120 @@ describe('Menu', () => {
     const menu = screen.getByRole('menu')
     expect(menu.style.left).toBe('120px')
     expect(menu.style.top).toBe('80px')
+    expect(menu.dataset.inputModality).toBe('pointer')
+    expect(menu.style.transformOrigin).toBe('left top')
     expect(
       screen.getByRole('button', { name: 'Project options' }).getAttribute('aria-expanded'),
     ).toBe('true')
+
+    fireEvent.keyDown(menu, { key: 'Escape' })
+    const target = screen.getByRole('button', { name: 'Project row' })
+    fireEvent.keyDown(target, { key: 'F10', shiftKey: true })
+    fireEvent.contextMenu(target, { clientX: 0, clientY: 0 })
+    const keyboardMenu = screen.getByRole('menu')
+    expect(keyboardMenu.dataset.inputModality).toBe('keyboard')
+    expect(keyboardMenu.style.left).toBe('40px')
+    expect(keyboardMenu.style.top).toBe('80px')
+  })
+
+  it('roves, typeaheads, selects, and restores focus after dismissals', () => {
+    const onSelect = vi.fn()
+    render(
+      <>
+        <Menu label="Actions" trigger={() => <span>Open</span>}>
+          {(close) =>
+            ['Alpha', 'Bravo', 'Charlie', 'Delta'].map((title) => (
+              <MenuItem
+                key={title}
+                title={title}
+                disabled={title === 'Bravo'}
+                onClick={() => {
+                  onSelect(title)
+                  if (title === 'Delta') close()
+                }}
+              />
+            ))
+          }
+        </Menu>
+        <button>Outside</button>
+      </>,
+    )
+
+    const trigger = screen.getByRole('button', { name: 'Actions' })
+    const outside = screen.getByRole('button', { name: 'Outside' })
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+
+    const alpha = screen.getByRole('menuitem', { name: 'Alpha' })
+    const bravo = screen.getByRole('menuitem', { name: 'Bravo' })
+    const charlie = screen.getByRole('menuitem', { name: 'Charlie' })
+    const delta = screen.getByRole('menuitem', { name: 'Delta' })
+    expect(document.activeElement).toBe(alpha)
+    expect((bravo as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole('menu').dataset.inputModality).toBe('keyboard')
+
+    fireEvent.keyDown(alpha, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(charlie)
+
+    fireEvent.keyDown(charlie, { key: 'd' })
+    expect(document.activeElement).toBe(delta)
+    fireEvent.keyDown(delta, { key: 'Enter' })
+
+    expect(onSelect).toHaveBeenCalledWith('Delta')
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+
+    fireEvent.keyDown(trigger, { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Delta' }))
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' })
+    expect(document.activeElement).toBe(trigger)
+
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    fireEvent.mouseDown(outside)
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Alpha' }), { key: 'Tab' })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(outside)
+
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Alpha' }), {
+      key: 'Tab',
+      shiftKey: true,
+    })
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('contains Tab only inside dialog-style panels', () => {
+    render(
+      <Menu
+        drop="down"
+        label="Choose model"
+        panelLabel="Models"
+        panelRole="dialog"
+        trigger={() => <span>Open</span>}
+      >
+        {() => (
+          <>
+            <button type="button">Apply</button>
+            <input autoFocus aria-label="Filter models" />
+          </>
+        )}
+      </Menu>,
+    )
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Choose model' }), {
+      key: 'ArrowDown',
+    })
+    const filter = screen.getByRole('textbox', { name: 'Filter models' })
+    const apply = screen.getByRole('button', { name: 'Apply' })
+    expect(screen.getByRole('dialog').getAttribute('aria-modal')).toBe('true')
+    expect(document.activeElement).toBe(filter)
+
+    fireEvent.keyDown(filter, { key: 'Tab' })
+    expect(document.activeElement).toBe(apply)
+    fireEvent.keyDown(apply, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(filter)
   })
 })

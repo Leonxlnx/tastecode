@@ -8,6 +8,8 @@ import {
   AccountSchema,
   ApprovalDecisionSchema,
   ApprovalModeSchema,
+  CustomHarnessSchema,
+  CustomHarnessVerificationSchema,
   DomainEventSchema,
   ModelSchema,
   ProviderIdSchema,
@@ -15,6 +17,15 @@ import {
   ProviderStatusSchema,
   UsageSchema,
 } from './domain.js'
+import {
+  GitHubRepositoryNameSchema,
+  PullRequestActionResultSchema,
+  PullRequestActionSchema,
+  PullRequestDetailSchema,
+  PullRequestFilesResultSchema,
+  PullRequestListResultSchema,
+  PullRequestMetadataOptionsSchema,
+} from './pull-requests.js'
 
 /**
  * The wire protocol between any client (desktop renderer, web, later mobile)
@@ -65,11 +76,16 @@ export const PairedDeviceSchema = z.object({
 export type PairedDevice = z.infer<typeof PairedDeviceSchema>
 
 export const ConnectionsStatusSchema = z.object({
+  /** Whether the listener currently accepts native-app connections. */
   enabled: z.boolean(),
   serverName: z.string().min(1),
   port: z.number().int().min(0).max(65_535),
   addresses: z.array(ConnectionAddressSchema),
   devices: z.array(PairedDeviceSchema),
+  /** Stable, bookmarkable URLs for the full web app on a phone (one per
+   * reachable address, Tailscale first). Each carries the long-lived web
+   * token in the hash. Admin-only: never returned to devices. */
+  webUrls: z.array(z.string().regex(/^https?:\/\//i, 'expected an HTTP app URL')),
 })
 export type ConnectionsStatus = z.infer<typeof ConnectionsStatusSchema>
 
@@ -155,7 +171,30 @@ export const PreviewViewportSchema = z.object({
 })
 export type PreviewViewport = z.infer<typeof PreviewViewportSchema>
 
-export const PreviewScreenshotSchema = PreviewViewportSchema.extend({ path: z.string().min(1) })
+export const PreviewInteractiveTargetViolationSchema = z
+  .object({
+    selector: z.string().min(1).max(512),
+    label: z.string().max(200),
+    width: z.number().finite().nonnegative(),
+    height: z.number().finite().nonnegative(),
+  })
+  .refine(({ width, height }) => width < 44 || height < 44, {
+    message: 'interactive target violations must be smaller than 44 CSS px',
+  })
+export type PreviewInteractiveTargetViolation = z.infer<
+  typeof PreviewInteractiveTargetViolationSchema
+>
+
+export const PreviewDomAuditSchema = z.object({
+  h1Count: z.number().int().nonnegative().max(10_000),
+  interactiveTargetViolations: z.array(PreviewInteractiveTargetViolationSchema).max(200),
+})
+export type PreviewDomAudit = z.infer<typeof PreviewDomAuditSchema>
+
+export const PreviewScreenshotSchema = PreviewViewportSchema.extend({
+  path: z.string().min(1),
+  domAudit: PreviewDomAuditSchema.optional(),
+})
 export type PreviewScreenshot = z.infer<typeof PreviewScreenshotSchema>
 
 export const PreviewCaptureRequestSchema = z.object({
@@ -338,6 +377,13 @@ export const SearchSnippetPartSchema = z.object({
 export type SearchSnippetPart = z.infer<typeof SearchSnippetPartSchema>
 
 export const SessionSearchResultSchema = z.object({
+  /**
+   * Opaque server-owned identity for the indexed source record. When present,
+   * it stays stable across queries, pages, index rebuilds and process restarts,
+   * and is unique within that server's search corpus. Clients must not parse it.
+   * Optional only for staged compatibility with producers that predate it.
+   */
+  resultId: z.string().min(1).max(256).optional(),
   projectPath: z.string(),
   projectName: z.string(),
   threadId: z.string(),
@@ -454,6 +500,143 @@ export const SessionDiffSchema = z.object({
 })
 export type SessionDiff = z.infer<typeof SessionDiffSchema>
 
+export const UsageHistoryRangeSchema = z.enum(['7d', '30d', '90d', '365d', 'all'])
+export type UsageHistoryRange = z.infer<typeof UsageHistoryRangeSchema>
+
+export const UsageHistoryTotalsSchema = z.object({
+  uncachedInputTokens: z.number().int().nonnegative(),
+  cachedInputTokens: z.number().int().nonnegative(),
+  cacheWriteInputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  reasoningTokens: z.number().int().nonnegative(),
+  processedTokens: z.number().int().nonnegative(),
+  estimatedCostUsd: z.number().nonnegative(),
+  cacheSavingsUsd: z.number().nonnegative(),
+  providerReportedCostUsd: z.number().nonnegative(),
+  providerReportedTokens: z.number().int().nonnegative(),
+  pricedTokens: z.number().int().nonnegative(),
+  unpricedTokens: z.number().int().nonnegative(),
+})
+export type UsageHistoryTotals = z.infer<typeof UsageHistoryTotalsSchema>
+
+export const UsageHistoryProviderSchema = z.object({
+  provider: ProviderIdSchema,
+  sessionCount: z.number().int().nonnegative(),
+  totals: UsageHistoryTotalsSchema,
+})
+export type UsageHistoryProvider = z.infer<typeof UsageHistoryProviderSchema>
+
+export const UsageHistoryModelSchema = z.object({
+  provider: ProviderIdSchema,
+  model: z.string().min(1),
+  sessionCount: z.number().int().nonnegative(),
+  pricing: z.enum(['exact', 'family', 'unpriced']),
+  totals: UsageHistoryTotalsSchema,
+})
+export type UsageHistoryModel = z.infer<typeof UsageHistoryModelSchema>
+
+export const UsageHistoryDaySchema = z.object({
+  date: z.string().date(),
+  sessionCount: z.number().int().nonnegative(),
+  totals: UsageHistoryTotalsSchema,
+  providers: z.array(
+    z.object({
+      provider: ProviderIdSchema,
+      tokens: z.number().int().nonnegative(),
+      estimatedCostUsd: z.number().nonnegative(),
+    }),
+  ),
+})
+export type UsageHistoryDay = z.infer<typeof UsageHistoryDaySchema>
+
+export const UsageHistoryScanSchema = z.object({
+  status: z.enum(['idle', 'scanning']),
+  filesProcessed: z.number().int().nonnegative(),
+  filesTotal: z.number().int().nonnegative(),
+})
+export type UsageHistoryScan = z.infer<typeof UsageHistoryScanSchema>
+
+export const UsageHistoryResultSchema = z.object({
+  range: UsageHistoryRangeSchema,
+  startDate: z.string().date(),
+  endDate: z.string().date(),
+  generatedAt: z.number().int().nonnegative(),
+  sessionCount: z.number().int().nonnegative(),
+  activeDays: z.number().int().nonnegative(),
+  totals: UsageHistoryTotalsSchema,
+  providers: z.array(UsageHistoryProviderSchema),
+  models: z.array(UsageHistoryModelSchema),
+  daily: z.array(UsageHistoryDaySchema),
+  sources: z.array(
+    z.object({
+      provider: ProviderIdSchema,
+      available: z.boolean(),
+      sessionCount: z.number().int().nonnegative(),
+    }),
+  ),
+  scan: UsageHistoryScanSchema,
+  warnings: z.array(z.string()),
+})
+export type UsageHistoryResult = z.infer<typeof UsageHistoryResultSchema>
+
+export const ProviderLimitSchema = z.object({
+  label: z.string().min(1).max(120),
+  usedPercent: z.number().min(0).max(100),
+  /** Unix time in milliseconds. */
+  resetsAt: z.number().int().nonnegative().optional(),
+  /** Non-percent rows (credit balances, reset counts) render this text instead of a bar. */
+  valueLabel: z.string().min(1).max(160).optional(),
+})
+export type ProviderLimit = z.infer<typeof ProviderLimitSchema>
+
+export const ProviderLimitSourceSchema = z.discriminatedUnion('status', [
+  z.object({
+    provider: ProviderIdSchema,
+    status: z.literal('ready'),
+    /** A successful source can honestly report no plan limits. */
+    limits: z.array(ProviderLimitSchema),
+  }),
+  z.object({
+    provider: ProviderIdSchema,
+    status: z.literal('unavailable'),
+  }),
+])
+export type ProviderLimitSource = z.infer<typeof ProviderLimitSourceSchema>
+
+const UsageSummaryResultSchema = z
+  .object({
+    session: UsageSchema.omit({
+      contextWindow: true,
+      model: true,
+      cumulative: true,
+      inputIncludesCached: true,
+    }),
+    today: UsageSchema.omit({
+      contextWindow: true,
+      model: true,
+      cumulative: true,
+      inputIncludesCached: true,
+    }),
+    /** Flattened compatibility view for clients predating `limitSource`. */
+    limits: z.array(ProviderLimitSchema),
+    /**
+     * Authoritative provider-neutral source state. Optional for one old-server
+     * compatibility window; current servers always send it.
+     */
+    limitSource: ProviderLimitSourceSchema.optional(),
+  })
+  .superRefine((summary, context) => {
+    if (!summary.limitSource) return
+    const expected = summary.limitSource.status === 'ready' ? summary.limitSource.limits : []
+    if (JSON.stringify(summary.limits) !== JSON.stringify(expected)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['limits'],
+        message: 'limits must exactly mirror the authoritative limitSource',
+      })
+    }
+  })
+
 /**
  * Method table. Adding a method means adding it here first — this object is the
  * single source of truth that the server routes against and the client calls.
@@ -503,6 +686,26 @@ export const methods = {
   'providers.list': {
     params: z.object({}),
     result: z.object({ providers: z.array(ProviderStatusSchema) }),
+  },
+  /** User-owned protocol-compatible CLIs. Secrets never belong in these fields. */
+  'harnesses.list': {
+    params: z.object({}),
+    result: z.object({ harnesses: z.array(CustomHarnessSchema) }),
+  },
+  'harnesses.upsert': {
+    params: CustomHarnessSchema,
+    result: z.object({ harness: CustomHarnessSchema }),
+  },
+  'harnesses.verify': {
+    params: z.object({
+      harness: CustomHarnessSchema,
+      workspacePath: z.string().min(1).optional(),
+    }),
+    result: z.object({ verification: CustomHarnessVerificationSchema }),
+  },
+  'harnesses.remove': {
+    params: z.object({ harnessId: z.string().min(1) }),
+    result: z.object({}),
   },
   /**
    * Install a provider CLI in the background. The client only names the
@@ -653,6 +856,42 @@ export const methods = {
       nextCursor: z.string().min(1).nullable(),
     }),
   },
+  'pullRequests.list': {
+    params: z.object({ refresh: z.boolean().optional() }),
+    result: PullRequestListResultSchema,
+  },
+  'pullRequests.detail': {
+    params: z.object({
+      repository: GitHubRepositoryNameSchema,
+      number: z.number().int().positive(),
+      refresh: z.boolean().optional(),
+    }),
+    result: PullRequestDetailSchema,
+  },
+  'pullRequests.files': {
+    params: z.object({
+      repository: GitHubRepositoryNameSchema,
+      number: z.number().int().positive(),
+      page: z.number().int().min(1).max(100).optional(),
+      refresh: z.boolean().optional(),
+    }),
+    result: PullRequestFilesResultSchema,
+  },
+  'pullRequests.metadataOptions': {
+    params: z.object({
+      repository: GitHubRepositoryNameSchema,
+      refresh: z.boolean().optional(),
+    }),
+    result: PullRequestMetadataOptionsSchema,
+  },
+  'pullRequests.action': {
+    params: z.object({
+      repository: GitHubRepositoryNameSchema,
+      number: z.number().int().positive(),
+      action: PullRequestActionSchema,
+    }),
+    result: PullRequestActionResultSchema,
+  },
   'auth.status': {
     params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
     result: AccountSchema,
@@ -707,11 +946,57 @@ export const methods = {
       dirtyFiles: z.number(),
     }),
   },
+  /** Structured staged, unstaged and untracked changes in the active checkout. */
+  'workspace.diff': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+    }),
+    result: SessionDiffSchema,
+  },
+  /** Lazily list one folder in a registered project or a session's isolated checkout. */
+  'workspace.listDirectory': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+      directory: z.string().max(4096).optional(),
+    }),
+    result: z.object({
+      path: z.string(),
+      entries: z.array(
+        z.object({
+          name: z.string().min(1),
+          path: z.string(),
+          kind: z.enum(['directory', 'file']),
+          size: z.number().nonnegative(),
+          modifiedAt: z.number().nonnegative(),
+          restricted: z.boolean(),
+        }),
+      ),
+    }),
+  },
+  /** Read a bounded public text file without exposing renderer filesystem access. */
+  'workspace.readFile': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+      path: z.string().min(1).max(4096),
+    }),
+    result: z.object({
+      name: z.string().min(1),
+      path: z.string().min(1),
+      size: z.number().nonnegative(),
+      binary: z.boolean(),
+      truncated: z.boolean(),
+      content: z.string().optional(),
+    }),
+  },
   'models.list': {
     params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
     result: z.object({ models: z.array(ModelSchema) }),
   },
-  /** Reports the separate listener used by paired native clients. */
+  /** Reports the mobile listener: native-app acceptance, reachable routes and
+   * the stable web-app URLs. */
   'connections.status': {
     params: z.object({}),
     result: ConnectionsStatusSchema,
@@ -885,9 +1170,12 @@ export const methods = {
     params: z.object({ path: z.string() }),
     result: z.object({}),
   },
-  /** Open the session's platform-selected shell in its actual checkout. */
+  /** Open the platform-selected shell in a session checkout or registered project. */
   'terminal.open': {
-    params: z.object({ threadId: z.string().min(1), ...TerminalSizeSchema.shape }),
+    params: z.union([
+      z.object({ threadId: z.string().min(1), ...TerminalSizeSchema.shape }).strict(),
+      z.object({ projectPath: z.string().min(1), ...TerminalSizeSchema.shape }).strict(),
+    ]),
     result: z.object({ terminalId: TerminalIdSchema }),
   },
   'terminal.input': {
@@ -992,19 +1280,40 @@ export const methods = {
   /** Persistent token totals, with money only when the provider reports it. */
   'usage.summary': {
     params: z.union([z.object({ threadId: z.string() }), z.object({ provider: ProviderIdSchema })]),
-    result: z.object({
-      session: UsageSchema.omit({ contextWindow: true }),
-      today: UsageSchema.omit({ contextWindow: true }),
-      /** Provider-reported subscription windows. Empty when unavailable. */
-      limits: z.array(
-        z.object({
-          label: z.string(),
-          usedPercent: z.number().min(0).max(100),
-          /** Unix time in milliseconds. */
-          resetsAt: z.number().optional(),
-        }),
-      ),
+    result: UsageSummaryResultSchema,
+  },
+  /**
+   * Local, model-attributed usage history. Dollar values are API-equivalent
+   * estimates, and pricing coverage is returned with the estimate so clients
+   * can show when a model could not be priced.
+   */
+  'usage.history': {
+    params: z.object({
+      range: UsageHistoryRangeSchema,
+      refresh: z.boolean().optional(),
     }),
+    result: UsageHistoryResultSchema,
+  },
+  /** Clears the generated local usage index and starts a cold background scan. */
+  'usage.resetHistory': {
+    params: z.object({}),
+    result: z.object({ started: z.literal(true) }),
+  },
+  /** Start a temporary conversation forked from the current main chat. */
+  'sideChat.start': {
+    params: z.object({
+      parentThreadId: z.string().min(1),
+      model: z.string().min(1).optional(),
+      serviceTier: z.string().min(1).optional(),
+      effort: z.string().min(1).optional(),
+      approval: ApprovalModeSchema.optional(),
+    }),
+    result: z.object({ threadId: z.string().min(1) }),
+  },
+  /** Dispose the provider session and erase its temporary transcript. */
+  'sideChat.close': {
+    params: z.object({ threadId: z.string().min(1) }),
+    result: z.object({}),
   },
   'thread.start': {
     params: z
@@ -1093,6 +1402,8 @@ export const methods = {
     params: z.object({
       threadId: z.string(),
       text: z.string(),
+      /** Stable renderer identity used to converge optimistic and durable user items. */
+      clientSubmissionId: z.string().min(1).max(256).optional(),
       /** Absolute paths the user attached. The agent reads them itself. */
       attachments: z.array(z.string()).optional(),
       model: z.string().optional(),
@@ -1146,6 +1457,19 @@ export const methods = {
   },
   'thread.interrupt': {
     params: z.object({ threadId: z.string() }),
+    result: z.object({}),
+  },
+  /**
+   * Change the access level of a live thread. Adapters that keep approval
+   * state mutable honour it for pending and future permission requests;
+   * engines that map the mode onto launch switches keep the sandbox they
+   * started with.
+   */
+  'thread.setApproval': {
+    params: z.object({
+      threadId: z.string(),
+      approval: ApprovalModeSchema,
+    }),
     result: z.object({}),
   },
   'thread.close': {
@@ -1211,6 +1535,10 @@ export const channels = {
     provider: ProviderIdSchema,
     projectPath: z.string().min(1),
   }),
+  /** A provider reported that its subscription usage or limits changed. */
+  'usage.changed': z.object({
+    provider: ProviderIdSchema,
+  }),
   'thread.event': z.object({
     threadId: z.string(),
     event: DomainEventSchema,
@@ -1220,6 +1548,12 @@ export const channels = {
      * without it, events landing during the round trip are either dropped
      * or applied twice. Optional for one release of compatibility.
      */
+    seq: z.number().optional(),
+  }),
+  /** Events from an ephemeral Side chat stay out of the main conversation stream. */
+  'sideChat.event': z.object({
+    threadId: z.string(),
+    event: DomainEventSchema,
     seq: z.number().optional(),
   }),
   'thread.queue': z.object({

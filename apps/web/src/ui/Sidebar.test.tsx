@@ -1,14 +1,30 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { Sidebar } from './Sidebar.js'
+
+const haptics = vi.hoisted(() => ({
+  performAppHaptic: vi.fn(),
+  prepareAppHaptics: vi.fn(),
+}))
 
 vi.mock('../bridge.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../bridge.js')>()),
   isMacOS: () => true,
 }))
 
-afterEach(cleanup)
+vi.mock('../haptics.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../haptics.js')>()),
+  appHapticsSupported: () => true,
+  performAppHaptic: haptics.performAppHaptic,
+  prepareAppHaptics: haptics.prepareAppHaptics,
+}))
+
+afterEach(() => {
+  cleanup()
+  haptics.performAppHaptic.mockClear()
+  haptics.prepareAppHaptics.mockClear()
+})
 
 const session = (id: string, title: string) => ({
   id,
@@ -21,6 +37,90 @@ const session = (id: string, title: string) => ({
 })
 
 describe('Sidebar chat actions', () => {
+  it('shows a divider below the fixed actions only after the project list scrolls', () => {
+    render(
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    const actions = document.querySelector('.rail__actions')
+    const body = document.querySelector<HTMLElement>('.rail__body')
+    expect(actions?.classList.contains('is-scrolled')).toBe(false)
+    if (!body) throw new Error('Missing sidebar body')
+
+    body.scrollTop = 12
+    fireEvent.scroll(body)
+    expect(actions?.classList.contains('is-scrolled')).toBe(true)
+
+    body.scrollTop = 0
+    fireEvent.scroll(body)
+    expect(actions?.classList.contains('is-scrolled')).toBe(false)
+  })
+
+  it('toggles an empty project without leaving the current chat', () => {
+    const onClose = vi.fn()
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query) => ({ matches: query === '(max-width: 700px)' }) as MediaQueryList,
+    )
+    render(
+      <Sidebar
+        projects={[{ path: '/work/empty', name: 'Empty project', sessions: [] }]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={onClose}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    const projectButton = screen.getByRole('button', { name: 'Empty project' })
+    expect(projectButton.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(projectButton)
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByText('No chats')).toBeTruthy()
+    expect(projectButton.getAttribute('aria-expanded')).toBe('true')
+
+    fireEvent.click(projectButton)
+    expect(projectButton.getAttribute('aria-expanded')).toBe('false')
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
   it('uses the classic account footer in the inbox sidebar', () => {
     const onAddProject = vi.fn()
     const onOpenSettings = vi.fn()
@@ -31,23 +131,35 @@ describe('Sidebar chat actions', () => {
         activeSessionId={undefined}
         account={{ signedIn: true, email: 'private@example.com', plan: 'Pro' }}
         providerName="Codex"
-        usageSummary={{
-          session: {
-            inputTokens: 800,
-            cachedInputTokens: 0,
-            outputTokens: 200,
-            reasoningTokens: 0,
-            totalTokens: 1_000,
+        usageStates={[
+          {
+            status: 'ready',
+            provider: 'codex',
+            summary: {
+              session: {
+                inputTokens: 800,
+                cachedInputTokens: 0,
+                outputTokens: 200,
+                reasoningTokens: 0,
+                totalTokens: 1_000,
+              },
+              today: {
+                inputTokens: 4_000,
+                cachedInputTokens: 0,
+                outputTokens: 1_000,
+                reasoningTokens: 0,
+                totalTokens: 5_000,
+              },
+              limits: [{ label: '7 days', usedPercent: 85 }],
+              limitSource: {
+                provider: 'codex',
+                status: 'ready',
+                limits: [{ label: '7 days', usedPercent: 85 }],
+              },
+            },
           },
-          today: {
-            inputTokens: 4_000,
-            cachedInputTokens: 0,
-            outputTokens: 1_000,
-            reasoningTokens: 0,
-            totalTokens: 5_000,
-          },
-          limits: [{ label: '7 days', usedPercent: 85 }],
-        }}
+        ]}
+        onRetryUsage={vi.fn()}
         mode="inbox"
         inbox={{
           onSettle: vi.fn(),
@@ -82,14 +194,31 @@ describe('Sidebar chat actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
     expect(onAddProject).toHaveBeenCalledOnce()
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    expect(screen.getByText('Limits')).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: 'Account and plan limits' })).toBeTruthy()
+    expect(screen.getByText('Plan limits')).toBeTruthy()
     expect(screen.getByText('7 days')).toBeTruthy()
     expect(screen.getByText('15% left')).toBeTruthy()
-    const limitBar = screen.getByRole('progressbar', { name: '7 days left' })
+    const limitBar = screen.getByRole('progressbar', { name: 'Codex 7 days left' })
     expect(limitBar.getAttribute('aria-valuenow')).toBe('15')
     expect((limitBar.firstElementChild as HTMLElement).style.width).toBe('15%')
-    fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
-    expect(onOpenSettings).toHaveBeenCalledOnce()
+    expect(document.activeElement?.textContent).toContain('Plan limits')
+
+    expect(screen.queryAllByRole('menuitem')).toHaveLength(0)
+    const accountActions = screen
+      .getAllByRole('button')
+      .filter((button) => ['Profile', 'Settings'].includes(button.textContent ?? ''))
+    for (const item of accountActions) expect(item.querySelector('svg')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }))
+    expect(onOpenSettings).toHaveBeenCalledWith('profile')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Account' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }))
+    expect(onOpenSettings).toHaveBeenCalledTimes(2)
+    expect(onOpenSettings).toHaveBeenLastCalledWith()
   })
 
   it('shows direct Lucide rename and archive actions for each chat', () => {
@@ -127,6 +256,12 @@ describe('Sidebar chat actions', () => {
         onOpenSettings={vi.fn()}
       />,
     )
+
+    const chat = screen.getByText('Polish the sidebar').closest('button')!
+    const identity = within(chat).getByText('Codex').closest('.source-identity')
+    expect(identity?.classList.contains('source-identity--compact')).toBe(true)
+    expect(identity?.querySelector('svg')).toBeTruthy()
+    expect(chat.getAttribute('aria-label')).toBe('Polish the sidebar, Codex')
 
     const rename = screen.getByRole('button', { name: 'Rename Polish the sidebar' })
     const archive = screen.getByRole('button', { name: 'Archive Polish the sidebar' })
@@ -203,6 +338,9 @@ describe('Sidebar chat actions', () => {
       ),
     ).toBeTruthy()
     const removeButton = screen.getByRole('button', { name: 'Remove project' })
+    expect(screen.getByRole('dialog', { name: 'Remove project?' }).parentElement).toBe(
+      document.body,
+    )
     expect(removeButton.classList.contains('btn--danger')).toBe(true)
     expect(document.activeElement?.textContent).toBe('Cancel')
     fireEvent.click(removeButton)
@@ -247,7 +385,7 @@ describe('Sidebar chat actions', () => {
 
     expect(screen.getByText('Pinned')).toBeTruthy()
     expect(screen.getAllByText('Pinned chat')).toHaveLength(1)
-    fireEvent.contextMenu(screen.getByRole('button', { name: 'Pinned chat' }))
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Pinned chat, Codex' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Unpin chat' }))
     expect(onToggleSessionPin).toHaveBeenCalledWith('thread-1')
   })
@@ -287,19 +425,57 @@ describe('Sidebar chat actions', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: 'Chat 5' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Chat 6' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Chat 5, Codex' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Chat 6, Codex' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
-    expect(screen.getByRole('button', { name: 'Chat 7' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Chat 7, Codex' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Show less' }))
-    expect(screen.queryByRole('button', { name: 'Chat 6' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Chat 6, Codex' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
     fireEvent.click(screen.getByRole('button', { name: 'Harness' }))
     fireEvent.click(screen.getByRole('button', { name: 'Harness' }))
-    expect(screen.queryByRole('button', { name: 'Chat 6' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Chat 6, Codex' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
+  })
+
+  it('starts with only the active project expanded', () => {
+    render(
+      <Sidebar
+        projects={[
+          { path: '/work/active', name: 'Active', sessions: [session('active-1', 'Active chat')] },
+          { path: '/work/quiet', name: 'Quiet', sessions: [session('quiet-1', 'Quiet chat')] },
+        ]}
+        activeProjectPath="/work/active"
+        activeSessionId="active-1"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Active' }).getAttribute('aria-expanded')).toBe(
+      'true',
+    )
+    expect(screen.getByRole('button', { name: 'Quiet' }).getAttribute('aria-expanded')).toBe(
+      'false',
+    )
   })
 
   it('reorders chats when one is dragged between sidebar rows', () => {
@@ -337,8 +513,8 @@ describe('Sidebar chat actions', () => {
       />,
     )
 
-    const source = screen.getByRole('button', { name: 'First chat' }).closest('li')!
-    const target = screen.getByRole('button', { name: 'Second chat' }).closest('li')!
+    const source = screen.getByRole('button', { name: 'First chat, Codex' }).closest('li')!
+    const target = screen.getByRole('button', { name: 'Second chat, Codex' }).closest('li')!
     vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
       bottom: 88,
       height: 28,
@@ -358,10 +534,68 @@ describe('Sidebar chat actions', () => {
 
     fireEvent.dragStart(source, { dataTransfer })
     fireEvent.dragOver(target, { clientY: 80, dataTransfer })
+    fireEvent.dragOver(target, { clientY: 80, dataTransfer })
     expect(target.dataset.dropPosition).toBe('after')
+    expect(haptics.prepareAppHaptics).toHaveBeenCalledOnce()
+    expect(haptics.performAppHaptic).toHaveBeenCalledOnce()
+    expect(haptics.performAppHaptic).toHaveBeenCalledWith('alignment')
     fireEvent.drop(target, { clientY: 80, dataTransfer })
 
     expect(onReorderSession).toHaveBeenCalledWith('/work/harness', 'thread-1', 'thread-2', 'after')
+  })
+
+  it('reorders projects when one is dragged between sidebar rows', () => {
+    const onReorderProject = vi.fn()
+    render(
+      <Sidebar
+        projects={[
+          { path: '/work/first', name: 'First', sessions: [] },
+          { path: '/work/second', name: 'Second', sessions: [] },
+        ]}
+        activeProjectPath="/work/first"
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderProject={onReorderProject}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    const source = screen.getByRole('button', { name: 'First' }).closest('section')!
+    const target = screen.getByRole('button', { name: 'Second' }).closest('section')!
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+      bottom: 80,
+      height: 30,
+      left: 0,
+      right: 200,
+      top: 50,
+      width: 200,
+      x: 0,
+      y: 50,
+      toJSON: () => ({}),
+    })
+    const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
+
+    fireEvent.dragStart(source, { dataTransfer })
+    fireEvent.dragOver(target, { clientY: 75, dataTransfer })
+    fireEvent.drop(target, { clientY: 75, dataTransfer })
+
+    expect(onReorderProject).toHaveBeenCalledWith('/work/first', '/work/second', 'after')
   })
 
   it('closes an open sidebar from the mobile backdrop', () => {
@@ -436,9 +670,212 @@ describe('Sidebar chat actions', () => {
     expect(slot?.classList).toContain('is-revealed')
     expect(rail?.hasAttribute('inert')).toBe(false)
 
-    fireEvent.mouseLeave(slot!)
-    expect(slot?.classList).not.toContain('is-revealed')
-    expect(rail?.hasAttribute('inert')).toBe(true)
+    // Leaving hides only after a grace period, so the pointer can travel to
+    // the title bar toggle without the flyout flickering away.
+    vi.useFakeTimers()
+    try {
+      // Coming to rest anywhere in the rail's column keeps it, however the
+      // pointer got there — this is the path to the title bar toggle.
+      fireEvent.mouseLeave(slot!)
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+      expect(slot?.classList).toContain('is-revealed')
+
+      // Moving away arms the hide once. Carrying on moving must not postpone
+      // it, or the rail would stay out until the mouse came to a full stop.
+      fireEvent.mouseMove(window, { clientX: 900, clientY: 400 })
+      act(() => {
+        vi.advanceTimersByTime(60)
+      })
+      fireEvent.mouseMove(window, { clientX: 905, clientY: 405 })
+      fireEvent.mouseMove(window, { clientX: 910, clientY: 410 })
+      act(() => {
+        vi.advanceTimersByTime(80)
+      })
+      expect(slot?.classList).not.toContain('is-revealed')
+      expect(rail?.hasAttribute('inert')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a revealed rail in place while the pointer travels to the toggle', () => {
+    const view = (collapsed: boolean) => (
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={collapsed}
+        width={240}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    )
+    const { container, rerender } = render(view(true))
+    const slot = container.querySelector('.rail-slot')
+    fireEvent.mouseEnter(container.querySelector('.rail__edge')!)
+    expect(slot?.classList).toContain('is-revealed')
+
+    vi.useFakeTimers()
+    try {
+      // Aiming at the title bar toggle leaves the slot but stays at the rail.
+      fireEvent.mouseLeave(slot!)
+      fireEvent.mouseMove(window, { clientX: 300, clientY: 12 })
+      // And once it comes to rest there, with no further moves at all.
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+      expect(slot?.classList).toContain('is-revealed')
+
+      // Pressing it docks the rail open for good: no collapsed flyout left.
+      rerender(view(false))
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+      expect(slot?.classList).not.toContain('is-collapsed')
+      expect(slot?.classList).not.toContain('is-revealed')
+
+      // Well clear of the rail it retracts as before.
+      rerender(view(true))
+      fireEvent.mouseEnter(container.querySelector('.rail__edge')!)
+      expect(slot?.classList).toContain('is-revealed')
+      fireEvent.mouseMove(window, { clientX: 900, clientY: 400 })
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+      expect(slot?.classList).not.toContain('is-revealed')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a rail folded by dragging does not spring back out under the pointer', () => {
+    const onClose = vi.fn()
+    const view = (collapsed: boolean) => (
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={collapsed}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={onClose}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    )
+    const { container, rerender } = render(view(false))
+    const handle = screen.getByRole('separator', { name: 'Resize sidebar' })
+
+    vi.useFakeTimers()
+    try {
+      // Fold it and let go with the pointer resting on the reveal strip.
+      fireEvent.pointerDown(handle, { clientX: 248, pointerId: 1 })
+      fireEvent.pointerMove(handle, { clientX: 80, pointerId: 1 })
+      fireEvent.pointerUp(handle, { clientX: 3, pointerId: 1 })
+      expect(onClose).toHaveBeenCalledOnce()
+      rerender(view(true))
+
+      const slot = container.querySelector('.rail-slot')
+      // Hovering the strip during the wait is ignored.
+      fireEvent.mouseEnter(container.querySelector('.rail__edge')!)
+      act(() => {
+        vi.advanceTimersByTime(600)
+      })
+      expect(slot?.classList).not.toContain('is-revealed')
+
+      // Once it passes, a pointer still parked there gets its reveal.
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+      expect(slot?.classList).toContain('is-revealed')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('resizes a revealed rail without collapsing it', () => {
+    const onClose = vi.fn()
+    const onWidthChange = vi.fn()
+    const { container } = render(
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed
+        width={248}
+        onWidthChange={onWidthChange}
+        onClose={onClose}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    // A collapsed rail has no drag edge until it is revealed.
+    expect(screen.queryByRole('separator', { name: 'Resize sidebar' })).toBeNull()
+    fireEvent.mouseEnter(container.querySelector('.rail__edge')!)
+    const handle = screen.getByRole('separator', { name: 'Resize sidebar' })
+
+    // Dragging it narrow keeps the reveal: there is nothing left to collapse.
+    fireEvent.pointerDown(handle, { clientX: 248, pointerId: 1 })
+    fireEvent.pointerMove(handle, { clientX: 60, pointerId: 1 })
+    fireEvent.pointerUp(handle, { clientX: 60, pointerId: 1 })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(onWidthChange).toHaveBeenCalledWith(240)
+
+    // Widening carries the pointer clear of the rail, which must not retract it.
+    vi.useFakeTimers()
+    try {
+      fireEvent.pointerDown(handle, { clientX: 248, pointerId: 2 })
+      fireEvent.pointerMove(handle, { clientX: 420, pointerId: 2 })
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+      expect(container.querySelector('.rail-slot')?.classList).toContain('is-revealed')
+      fireEvent.pointerUp(handle, { clientX: 420, pointerId: 2 })
+      expect(onWidthChange).toHaveBeenCalledWith(420)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('resizes with pointer or keyboard and collapses below the threshold', () => {
@@ -474,9 +911,72 @@ describe('Sidebar chat actions', () => {
     fireEvent.keyDown(handle, { key: 'ArrowRight' })
     expect(onWidthChange).toHaveBeenCalledWith(256)
 
+    // Dragging a little past the stop clamps at the minimum instead of
+    // squeezing the content, and does not collapse.
     fireEvent.pointerDown(handle, { clientX: 248, pointerId: 1 })
-    fireEvent.pointerMove(handle, { clientX: 160, pointerId: 1 })
-    fireEvent.pointerUp(handle, { clientX: 160, pointerId: 1 })
+    fireEvent.pointerMove(handle, { clientX: 200, pointerId: 1 })
+    fireEvent.pointerUp(handle, { clientX: 200, pointerId: 1 })
+    expect(onWidthChange).toHaveBeenCalledWith(240)
+    expect(onClose).not.toHaveBeenCalled()
+
+    // Far past the stop the rail folds as a preview; pulling back while still
+    // holding unfolds it again, and releasing keeps it open at that width.
+    fireEvent.pointerDown(handle, { clientX: 248, pointerId: 2 })
+    fireEvent.pointerMove(handle, { clientX: 80, pointerId: 2 })
+    expect(onClose).not.toHaveBeenCalled()
+    fireEvent.pointerMove(handle, { clientX: 270, pointerId: 2 })
+    fireEvent.pointerUp(handle, { clientX: 270, pointerId: 2 })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(onWidthChange).toHaveBeenCalledWith(270)
+
+    // Releasing while folded makes the collapse real.
+    fireEvent.pointerDown(handle, { clientX: 248, pointerId: 3 })
+    fireEvent.pointerMove(handle, { clientX: 80, pointerId: 3 })
+    fireEvent.pointerUp(handle, { clientX: 80, pointerId: 3 })
     expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('releases a sidebar resize when native window movement cancels its pointer', () => {
+    const onWidthChange = vi.fn()
+    render(
+      <div className="shell">
+        <Sidebar
+          projects={[]}
+          activeProjectPath={undefined}
+          activeSessionId={undefined}
+          account={undefined}
+          providerName="Codex"
+          collapsed={false}
+          width={248}
+          onWidthChange={onWidthChange}
+          onClose={vi.fn()}
+          onAddProject={vi.fn()}
+          onNewSession={vi.fn()}
+          onSelectSession={vi.fn()}
+          onRenameProject={vi.fn()}
+          onRemoveProject={vi.fn()}
+          onTogglePin={vi.fn()}
+          onRenameSession={vi.fn()}
+          onDeleteSession={vi.fn()}
+          onArchiveProject={vi.fn()}
+          onReorderSession={vi.fn()}
+          onOpenSearch={vi.fn()}
+          onOpenSettings={vi.fn()}
+        />
+      </div>,
+    )
+    const handle = screen.getByRole('separator', { name: 'Resize sidebar' })
+    const shell = handle.closest('.shell')
+
+    fireEvent.pointerDown(handle, { clientX: 248, pointerId: 7 })
+    fireEvent.pointerMove(handle, { clientX: 320, pointerId: 7 })
+    expect(shell?.hasAttribute('data-resizing')).toBe(true)
+
+    fireEvent.pointerCancel(handle, { clientX: 320, pointerId: 7 })
+    expect(onWidthChange).toHaveBeenCalledWith(320)
+    expect(shell?.hasAttribute('data-resizing')).toBe(false)
+
+    fireEvent.pointerMove(handle, { clientX: 400, pointerId: 7 })
+    expect(onWidthChange).toHaveBeenCalledTimes(1)
   })
 })

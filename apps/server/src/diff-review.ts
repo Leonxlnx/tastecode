@@ -10,6 +10,9 @@ const run = promisify(execFile)
 type ParsedHunk = { value: DiffHunk; patch: string }
 type ParsedFile = { value: DiffFile; patch: string; targetId: string; hunks: ParsedHunk[] }
 type ParsedDiff = { value: SessionDiff; files: ParsedFile[] }
+type DecisionReader = Pick<Store, 'diffDecision'>
+
+const NO_DECISIONS: DecisionReader = { diffDecision: () => undefined }
 
 export class StaleDiffSnapshotError extends Error {
   constructor() {
@@ -24,6 +27,11 @@ export async function readSessionDiff(
   store: Store,
 ): Promise<SessionDiff> {
   return (await parseDiff(repoPath, threadId, store)).value
+}
+
+/** Read the current checkout against HEAD without enabling destructive review actions. */
+export async function readWorkspaceDiff(repoPath: string): Promise<SessionDiff> {
+  return (await parseDiff(repoPath, `workspace-${digest(repoPath)}`, NO_DECISIONS)).value
 }
 
 export async function reviewDiffHunk(
@@ -73,7 +81,11 @@ async function currentDiff(
   return diff
 }
 
-async function parseDiff(repoPath: string, threadId: string, store: Store): Promise<ParsedDiff> {
+async function parseDiff(
+  repoPath: string,
+  threadId: string,
+  store: DecisionReader,
+): Promise<ParsedDiff> {
   const snapshot = await takeSnapshot(repoPath)
   const version = (await git(repoPath, ['rev-parse', `${snapshot.commit}^{tree}`])).trim()
   const files = await changedFiles(repoPath, snapshot.commit)

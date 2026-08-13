@@ -7,14 +7,15 @@ For any coding agent working in this repo — Claude Code, Codex, Cursor, an ACP
 **Where the project is:** M0 through M3 are done. M4 (the design agent) is next. See
 [docs/ROADMAP.md](./docs/ROADMAP.md) for durable status and GitHub issues/PRs for live work.
 
-**Branch model (Leon and Bluedev, 2026-08-08):** is the public beta for roughly the
-next four weeks and becomes the stable release at v1. is the integration branch:
+**Branch model (Leon and Bluedev, 2026-08-08):** `main` is the public beta for roughly the
+next four weeks and becomes the stable release at v1. `nightly` is the integration branch:
 every new change lands there first and nothing is hidden on it — it carries the full
 provider roster (Codex, Claude Code, Grok plus the parked Cursor, OpenCode, Antigravity,
 ACP and API-connection surfaces, all working). Work that the beta itself needs (fixes and
-polish for the three shipped plans) still goes to by PR and reaches nightly on the
-next rebase; everything else targets . Keep nightly rebased onto main. Do not
-un-park a provider on without Leon saying so. stays as an
+polish for the three shipped plans) still goes to `main` by PR and reaches `nightly` on the
+next sync; everything else targets `nightly`. Keep `nightly` synchronized by merging `main`
+and resolving conflicts without rewriting published history. Do not un-park a provider on
+`main` without Leon saying so. `harness-rust` stays as an
 experiment. [docs/dashboard.html](./docs/dashboard.html) is the release checklist.
 
 ## Read first
@@ -39,6 +40,11 @@ experiment. [docs/dashboard.html](./docs/dashboard.html) is the release checklis
   exercised against the running app, and nothing in the PR touches `packages/contracts`,
   security, or another assignee's files. When any of that is in doubt, wait for the human
   responsible for the work. Approval from the other human is always optional.
+- **Never rebase a working branch, and never force-push one.** If its target branch advances
+  or GitHub reports conflicts, merge the target into the working branch, resolve every
+  conflict explicitly, rerun the affected checks, and push normally. For agents, this
+  overrides any branch-sync instruction to rebase. GitHub's server-side rebase-merge remains
+  the final PR merge method because it does not rewrite the published working branch.
 - **Never mix a refactor with a behavior change** in one commit.
 - **Build shared features for every provider.** Contracts, persistence, orchestration and UI
   must still work when the user has only a direct API provider configured. A vendor CLI,
@@ -54,8 +60,9 @@ experiment. [docs/dashboard.html](./docs/dashboard.html) is the release checklis
   in parallel. Expect `main` to move under you, expect open draft PRs and `scratch/`
   worktrees you did not create, and expect the shared dev stack on ports 4311/5183 to be
   restarted by someone else — a fresh `pnpm dev` deliberately replaces the running one.
-  Before starting: check open PRs and worktrees, rebase instead of assuming, and never
-  delete or modify a worktree, branch, or running process you did not create.
+  Before starting: check open PRs and worktrees, fetch and compare with the target branch
+  instead of assuming, and never delete or modify a worktree, branch, or running process
+  you did not create.
 - **Many small commits**, one logical change each. Push after every one — unpushed work is
   invisible to the other two.
 - **Every issue has exactly one directly responsible assignee from creation.** The

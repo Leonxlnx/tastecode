@@ -39,52 +39,70 @@ to a TypeScript client).
 
 ---
 
-## Desktop shell: Electron, not Tauri
+## Desktop client: Rust and GPUI
 
-Tauri wins on size — ~10MB vs ~150MB, and much lower idle memory. We choose Electron anyway.
+**The primary desktop client is a single Rust + GPUI application on macOS and Windows.** GPUI
+draws the same retained element tree through Metal and DirectX, so both platforms share one
+layout, text and motion implementation without shipping Chromium or accepting two operating
+system webviews. Exact colors, geometry, typography and timings are Rust design tokens rather
+than a second design system invented during the port.
 
-**The reason is rendering.** Tauri uses the OS webview: Chromium on Windows, WebKit on
-macOS, WebKitGTK on Linux. CSS and font rendering diverge. For most apps that's an
-annoyance; for an app whose entire pitch is visual craft it's fatal. Two developers cannot
-hold pixel and motion parity across three engines — the Windows dev would ship something
-beautiful that the macOS dev sees rendered subtly wrong, every time. The 150MB is what buys
-never having that conversation.
+The server/client boundary above remains load-bearing. The native client first speaks the
+existing protocol v2 to the Node server; persistence, orchestration, PTY support and adapters
+then move to Rust behind that stable boundary. The Electron/React app remains the visual and
+behavioral oracle during migration and is removed only after native parity. This order keeps
+every screen testable against working product behavior instead of coupling a renderer rewrite
+to an adapter rewrite.
 
-Supporting reasons: the whole product is process orchestration and every vendor SDK here is
-JS/TS first · `node-pty` (ConPTY) is the only real PTY option and its Electron friction is
-solved and documented · `electron-builder` gives us NSIS, differential updates and a working
-Azure Trusted Signing path · T3 Code is Electron, and Conductor is native macOS which is
-exactly why it will never run on Windows.
+GPUI is pre-1.0, so the workspace pins an exact release and wraps framework-facing primitives
+inside `harness-ui`. A GPUI update is an intentional compatibility change, not a floating
+dependency update. macOS and Windows builds and screenshots are separate release gates;
+source-level platform support is not evidence that font rasterization, title bars or input
+behavior match on both systems.
 
-**What we accept:** ~150MB installs, and a weaker security default than Tauri. The second
-one is non-negotiable to fix, in the scaffold from day one — `contextIsolation: true`,
-`nodeIntegration: false`, `sandbox: true`, strict CSP, a narrow typed `contextBridge`,
-deny-by-default external navigation. The renderer never spawns a process, touches the
-filesystem, or reads a credential.
+_Superseded:_ Electron bought one Chromium renderer across platforms, but its install size,
+idle footprint and per-frame JavaScript/DOM work conflict with the native performance goal.
+_Rejected:_ Tauri/Wails/Neutralino retain divergent OS webviews · separate AppKit and WinUI
+clients create two permanent UI implementations · a web-only primary cannot own the native
+terminal, filesystem and credential-store surface.
 
-_Rejected:_ Tauri v2 (above) · native per-platform (two codebases for two developers means
-Windows is permanently the worse one) · web-only as primary (no PTY, no filesystem, no
-credential store — but we'll ship it as a secondary surface since it's nearly free) ·
-Wails/Neutralino (same webview divergence, smaller ecosystem).
+### Embedded browser during the Electron reference phase
+
+**Page previews use a renderer-owned Electron `<webview>` guest, never an iframe or an
+operating-system webview.** Before attachment, the main process strips preload access, assigns a
+dedicated persistent partition, disables Node integration, and requires sandboxing, context
+isolation, and web security. The guest accepts only HTTP(S) navigation, denies permissions, keeps
+attempted new windows in the same preview, and exposes an explicit validated system-browser
+handoff.
+
+The guest remains a normal DOM element, so it follows the animated workspace without a native
+overlay or bounds IPC. A renderer `ResizeObserver` fits fluid, desktop, tablet, and mobile modes;
+fixed modes retain their requested CSS viewport and scale the complete guest to fit instead of
+stretching it. All modes therefore share Electron's Chromium path across macOS, Windows, and
+Linux.
 
 ---
 
-## Stack
+## Target stack
 
-|                    |                                             |                                                                                                                                     |
-| ------------------ | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Language / runtime | TypeScript strict, Node 24 LTS              | Not Bun — native modules and Windows maturity still lag                                                                             |
-| Monorepo           | pnpm workspaces + Turborepo + Vite          | pnpm's store makes worktree-heavy work cheap                                                                                        |
-| UI                 | React 19                                    | The two load-bearing libraries below are React                                                                                      |
-| Chat list          | TanStack Virtual, `anchorTo: 'end'`         | Purpose-built for streaming AI chat                                                                                                 |
-| Markdown           | Streamdown + Shiki in a worker              | Handles unterminated markdown mid-stream                                                                                            |
-| Styling            | Tailwind v4 + our own token layer           | Tokens generated from the design system                                                                                             |
-| Components         | Radix / Base UI primitives, our own visuals | **No component kit adopted wholesale** — shadcn-default styling is the most recognizable AI-app look and would undercut the premise |
-| Motion             | Motion                                      | Spring physics, used sparingly                                                                                                      |
-| State              | Zustand + event-derived store               | Selector discipline matters more than the library                                                                                   |
-| DB                 | SQLite (`better-sqlite3`), WAL, FTS5        | Native module — needs prebuilds on both OSes in CI                                                                                  |
-| PTY                | `node-pty` (ConPTY)                         | Windows 10 1809+ required                                                                                                           |
-| Tests              | Vitest; Playwright for Electron             | Adapter contract tests run the real binaries                                                                                        |
+The TypeScript workspace remains beside this target during migration. It is reference code,
+not a second implementation to maintain after native parity.
+
+|                    |                                              |                                                                                                                        |
+| ------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Language / runtime | Rust stable, pinned by the workspace         | One native runtime for the client, server and adapters                                                                 |
+| Monorepo           | Cargo workspace                              | Crates keep protocol, UI, orchestration and adapters independently testable                                            |
+| UI                 | GPUI 0.2.2, exact pin                        | One GPU-rendered element tree through Metal and DirectX                                                                |
+| Chat list          | Custom end-anchored virtual GPUI element     | Variable-height streaming rows need stable keys, cached measurement and explicit anchor control                        |
+| Markdown           | Incremental parser + native highlighter      | Incomplete streamed blocks stay cheap; completed blocks become immutable                                               |
+| Styling            | Typed Harness tokens                         | The current CSS values are migrated exactly, including every theme and density state                                   |
+| Components         | Harness-owned GPUI primitives                | Focus, menus, sheets and inputs preserve current behavior without importing another visual language                    |
+| Motion             | GPUI frame animations                        | Existing easing and durations are the contract; reduced motion remains first-class                                     |
+| State              | GPUI entities + event-derived read models    | Deltas update the live tail without invalidating the whole application tree                                            |
+| DB                 | SQLite, WAL, FTS5                            | Append-only events and rebuildable read models remain unchanged                                                        |
+| PTY                | Rust ConPTY / Unix PTY abstraction           | Process-tree termination and intentional-exit semantics remain cross-platform requirements                             |
+| Terminal state     | `alacritty_terminal` 0.26.0                  | ANSI parsing mutates a bounded cell grid incrementally, while Harness retains ownership of PTY lifecycle and transport |
+| Tests              | Rust unit, protocol fixture and render tests | Real provider captures and platform screenshots remain the final contract                                              |
 
 **On Effect-TS:** T3 Code uses it throughout and it genuinely fits this problem. We don't
 adopt it for v1 — the learning curve colors every signature and with two developers the
@@ -101,15 +119,33 @@ designed and maps straight onto the UI. Items are `message`, `reasoning`, `comma
 `file_change`, `tool_call`, `plan`, `error`, each with a `started → deltas → completed`
 lifecycle. Adapters translate _into_ this. Nothing engine-specific leaks past them.
 
-| Tier       | Mechanism                        | Engines                                             | Fidelity                                 |
-| ---------- | -------------------------------- | --------------------------------------------------- | ---------------------------------------- |
-| 1 — Native | Vendor's own protocol            | Codex (`app-server` JSON-RPC), OpenCode (JS/TS SDK) | Full — approvals, fork, steer, fs events |
-| 2 — ACP    | Agent Client Protocol over stdio | Gemini CLI + ~25 others                             | Good. One adapter, long tail for free    |
-| 3 — CLI    | Headless NDJSON                  | Claude Code, Cursor, Grok                           | Adequate. Version-pinned, fragile        |
+| Tier       | Mechanism                        | Engines                                                        | Fidelity                              |
+| ---------- | -------------------------------- | -------------------------------------------------------------- | ------------------------------------- |
+| 1 — Native | Vendor's own protocol            | Codex (`app-server` JSON-RPC), OpenCode (HTTP), Pi (RPC JSONL) | Full where the protocol exposes it    |
+| 2 — ACP    | Agent Client Protocol over stdio | Gemini CLI + ~25 others                                        | Good. One adapter, long tail for free |
+| 3 — CLI    | Headless NDJSON                  | Claude Code, Cursor, Grok                                      | Adequate. Version-pinned, fragile     |
 
 Engines can appear in more than one tier. We default to the highest fidelity available, with
 a user override — so if Claude Code's ACP surface proves more stable than its CLI surface,
 we switch tiers without touching the UI. That's the point of the layer.
+
+**Users may register protocol-compatible executables as separate harness sources.** Each
+entry names an existing adapter protocol and stores an executable, fixed argv, optional launch
+directory, and non-secret environment overrides in
+`~/.personalharness/custom-harnesses.json`; arguments never pass through a shell, and secrets
+never belong in this file. Custom commands resolve against a desktop-safe PATH that includes
+conventional user locations such as `~/.local/bin`. When a mod boots from its own directory,
+`HARNESS_WORKSPACE_PATH` retains the active project for its wrapper and native protocols still
+receive that project normally. The source gets its own model catalog and persisted identity, so
+a fork can coexist with the stock CLI without replacing it.
+
+Settings can run a bounded compatibility check before the first prompt. Codex, Pi, OpenCode,
+and ACP complete their actual initialize handshake; one-shot CLI adapters run only their free
+help/model-discovery command. Missing executables, inaccessible directories, protocol failures,
+and timeouts are reported separately, and timed-out protocol children are disposed. A successful
+check proves the advertised handshake, not arbitrary behavior in a modified implementation, so
+version drift and custom-server instability remain disclosed. Parked built-ins stay hidden unless
+the user explicitly registers one of these sources.
 
 **`capabilities()` is what makes it honest.** Not every engine can fork, steer, or emit
 reasoning. The UI reads capabilities and hides what's unavailable rather than showing a
@@ -130,6 +166,13 @@ own shared product behavior. New features are designed against the internal cont
 first, then mapped through every adapter. A missing provider capability hides or degrades
 only that capability, never the surrounding workflow. Behavioral provider-name branches
 belong inside adapters, not the server or renderer.
+
+**Side chat is a provider-neutral ephemeral session, not a native-fork dependency.** At the
+fork boundary the orchestrator folds a bounded, reasoning-free snapshot of the parent event
+log into session instructions and starts a normal session through the selected adapter.
+The side event channel and transcript are independent, the row stays out of project history
+and search, and closing the panel disposes and deletes it. A provider may expose native fork,
+but shared Side chat semantics cannot depend on that optional capability.
 
 **Direct model APIs use one small Harness-owned agent runtime.** OpenAI, Anthropic and
 OpenAI-compatible endpoints provide inference and tool calls, not a complete coding-agent
@@ -289,9 +332,13 @@ registry entry, which is deliberately a good first outside contribution.
 
 ## Change log
 
-| Date       | Change                                                                 |
-| ---------- | ---------------------------------------------------------------------- |
-| 2026-07-28 | Initial decisions.                                                     |
-| 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration. |
-| 2026-08-02 | Added Codex-backed voice dictation.                                    |
-| 2026-08-03 | Added the provider-neutral direct API runtime decision.                |
+| Date       | Change                                                                  |
+| ---------- | ----------------------------------------------------------------------- |
+| 2026-07-28 | Initial decisions.                                                      |
+| 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration.  |
+| 2026-08-02 | Added Codex-backed voice dictation.                                     |
+| 2026-08-03 | Added the provider-neutral direct API runtime decision.                 |
+| 2026-08-06 | Replaced the Electron target with a staged Rust + GPUI migration.       |
+| 2026-08-12 | Added user-owned, protocol-compatible harness commands and Pi RPC.      |
+| 2026-08-12 | Defined provider-neutral ephemeral Side chat sessions.                  |
+| 2026-08-12 | Standardized Electron browser previews on sandboxed `<webview>` guests. |

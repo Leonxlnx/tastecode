@@ -1,42 +1,153 @@
-import { memo } from 'react'
-import { GitBranch, History, SquareTerminal } from 'lucide-react'
+import { memo, useEffect, useRef, useState } from 'react'
+import { Ellipsis, GitBranch, PanelRightOpen, SquareTerminal } from 'lucide-react'
+import { isDesktop, revealPath } from '../bridge.js'
+import { Menu, MenuItem } from './Menu.js'
 
-/**
- * Header above the thread: the session title and its workspace tools.
- */
+/** Chat identity and direct workspace actions above the thread. */
 function StageHeaderComponent(props: {
+  sessionId: string | undefined
   title: string | undefined
+  pinned: boolean
+  projectPath: string | undefined
   checkpointCount: number
   worktreeBranch: string | undefined
   terminalOpen: boolean
+  workspacePanelOpen: boolean
   onOpenRollback: () => void
+  onToggleWorkspace: () => void
   onToggleTerminal: () => void
+  onRenameSession: (id: string, title: string) => void
+  onToggleSessionPin: (id: string) => void
+  onArchiveSession: (id: string) => void
 }) {
+  const [renaming, setRenaming] = useState(false)
+  const [draft, setDraft] = useState(props.title ?? '')
+  const renameInput = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!renaming) setDraft(props.title ?? '')
+  }, [props.title, renaming])
+
+  useEffect(() => {
+    if (renaming) renameInput.current?.select()
+  }, [renaming])
+
+  const commitRename = () => {
+    const title = draft.trim()
+    if (title && props.sessionId) props.onRenameSession(props.sessionId, title)
+    setRenaming(false)
+  }
+
   return (
     <header className="stagehead">
-      {props.title ? <span className="stagehead__title">{props.title}</span> : null}
+      <div className="stagehead__identity">
+        {renaming ? (
+          <input
+            ref={renameInput}
+            className="stagehead__rename"
+            value={draft}
+            aria-label="Rename chat"
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') commitRename()
+              if (event.key === 'Escape') setRenaming(false)
+            }}
+          />
+        ) : (
+          <span className="stagehead__title" title={props.title ?? 'New chat'}>
+            {props.title ?? 'New chat'}
+          </span>
+        )}
+
+        {props.sessionId ? (
+          <Menu
+            drop="down"
+            align="left"
+            label={`Options for ${props.title ?? 'chat'}`}
+            triggerClassName="stagehead__menu-trigger"
+            panelClassName="menu--sidebar"
+            trigger={() => <Ellipsis size={16} aria-hidden />}
+          >
+            {(close) => (
+              <>
+                <MenuItem
+                  title={props.pinned ? 'Unpin chat' : 'Pin chat'}
+                  onClick={() => {
+                    props.onToggleSessionPin(props.sessionId!)
+                    close()
+                  }}
+                />
+                <MenuItem
+                  title="Rename chat"
+                  onClick={() => {
+                    setRenaming(true)
+                    close()
+                  }}
+                />
+                <MenuItem
+                  title="Archive chat"
+                  onClick={() => {
+                    props.onArchiveSession(props.sessionId!)
+                    close()
+                  }}
+                />
+                {isDesktop && props.projectPath ? (
+                  <MenuItem
+                    title="Open in Explorer"
+                    onClick={() => {
+                      void revealPath(props.projectPath!)
+                      close()
+                    }}
+                  />
+                ) : null}
+                {props.checkpointCount > 0 ? (
+                  <MenuItem
+                    title={`Checkpoint history (${props.checkpointCount})`}
+                    onClick={() => {
+                      props.onOpenRollback()
+                      close()
+                    }}
+                  />
+                ) : null}
+                {props.worktreeBranch ? (
+                  <MenuItem
+                    title="Isolated checkout"
+                    detail={props.worktreeBranch}
+                    icon={<GitBranch size={13} aria-hidden />}
+                    disabled
+                    onClick={() => {}}
+                  />
+                ) : null}
+              </>
+            )}
+          </Menu>
+        ) : null}
+      </div>
 
       <div className="stagehead__tools">
-        {props.title ? (
+        {!props.workspacePanelOpen ? (
           <button
-            className={`ghost terminal-trigger${props.terminalOpen ? ' is-open' : ''}`}
-            aria-pressed={props.terminalOpen}
-            onClick={props.onToggleTerminal}
+            type="button"
+            className="stagehead__action"
+            aria-label="Show workspace tools"
+            aria-pressed={false}
+            title="Workspace tools"
+            onClick={props.onToggleWorkspace}
           >
-            <SquareTerminal size={13} aria-hidden />
-            Terminal
+            <PanelRightOpen size={16} aria-hidden />
           </button>
         ) : null}
-        {props.worktreeBranch ? (
-          <span className="worktree-branch" title="Isolated checkout">
-            <GitBranch size={12} aria-hidden />
-            {props.worktreeBranch}
-          </span>
-        ) : null}
-        {props.checkpointCount > 0 ? (
-          <button className="ghost rollback-trigger" onClick={props.onOpenRollback}>
-            <History size={12} aria-hidden />
-            {props.checkpointCount} checkpoint{props.checkpointCount === 1 ? '' : 's'}
+        {props.sessionId ? (
+          <button
+            type="button"
+            className={`stagehead__action${props.terminalOpen ? ' is-open' : ''}`}
+            aria-label={props.terminalOpen ? 'Close terminal' : 'Open terminal'}
+            aria-pressed={props.terminalOpen}
+            title="Terminal"
+            onClick={props.onToggleTerminal}
+          >
+            <SquareTerminal size={16} aria-hidden />
           </button>
         ) : null}
       </div>
@@ -44,9 +155,5 @@ function StageHeaderComponent(props: {
   )
 }
 
-/**
- * Memoised: the app root re-renders on every streamed frame, and this subtree
- * does not change while an answer arrives. Stable owner callbacks let the
- * shallow comparison keep header controls out of that path.
- */
+/** Kept out of the streamed-frame render path through stable owner callbacks. */
 export const StageHeader = memo(StageHeaderComponent)

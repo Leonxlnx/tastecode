@@ -18,9 +18,62 @@ describe('provider-neutral briefing workflow', () => {
   it('asks every provider for the same adaptive JSON protocol', () => {
     const prompt = designBriefingPrompt('Create a modern studio website.')
     expect(prompt).toContain('There is no total question limit')
+    expect(prompt).toContain('materially changes the result')
     expect(prompt).toContain('Personal Harness presents them one at a time')
     expect(prompt).toContain('Do not include the final open-ended check yourself')
     expect(prompt).toContain('Create a modern studio website.')
+    // The UI always offers a free-text answer and never renders label tags,
+    // so the model must not duplicate either.
+    expect(prompt).toContain('the UI always shows a free-text field')
+    expect(prompt).toContain('Never suffix a label with "(Recommended)"')
+  })
+
+  it.each([
+    {
+      request: 'Make it pop.',
+      expectedRule: 'terse visual intent',
+      capturedOutput: {
+        status: 'questions',
+        message: 'Preparing questions.',
+        questions: [
+          {
+            id: 'surface',
+            header: 'Surface',
+            question: 'Which website or interface should change?',
+            allowOther: true,
+            options: [{ label: 'Decide for me', description: 'Choose a suitable surface.' }],
+          },
+        ],
+        brief: null,
+      },
+    },
+    {
+      request: 'Calm, motion-free landing page with energetic animation everywhere.',
+      expectedRule: 'requirements conflict',
+      capturedOutput: {
+        status: 'questions',
+        message: 'Preparing questions.',
+        questions: [
+          {
+            id: 'motion_direction',
+            header: 'Motion',
+            question: 'Should the page be motion-free or use energetic animation?',
+            allowOther: true,
+            options: [
+              { label: 'Motion-free', description: 'Keep the experience calm and static.' },
+              { label: 'Energetic', description: 'Use expressive animation throughout.' },
+            ],
+          },
+        ],
+        brief: null,
+      },
+    },
+  ])('keeps $request in clarification', ({ request, expectedRule, capturedOutput }) => {
+    expect(designBriefingPrompt(request)).toContain(expectedRule)
+    expect(parseBriefingOutput(JSON.stringify(capturedOutput))).toMatchObject({
+      status: 'questions',
+      brief: null,
+    })
   })
 
   it('parses questions and continues with their answers', () => {
@@ -53,5 +106,7 @@ describe('provider-neutral briefing workflow', () => {
     expect(FINAL_BRIEFING_QUESTION.question).toBe(
       "Before I finalize your brief, is there anything else you'd like me to know?",
     )
+    // No "(Recommended)" tag on the no-more-details answer.
+    expect(FINAL_BRIEFING_QUESTION.options[0]?.label).toBe("No, that's everything")
   })
 })

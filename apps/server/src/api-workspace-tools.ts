@@ -83,13 +83,14 @@ export const API_WORKSPACE_TOOLS: ApiTool[] = [
 
 export function createApiWorkspaceTools(workspacePath: string, approval: ApprovalMode = 'ask') {
   const workspace = realpathSync(workspacePath)
+  let currentApproval = approval
 
   return {
     tools: API_WORKSPACE_TOOLS,
     executeTool: (call: ApiToolCall, signal: AbortSignal) =>
       executeWorkspaceTool(workspace, call, signal),
     reviewTool: (call: ApiToolCall): Omit<ApprovalRequest, 'id' | 'createdAt'> | undefined => {
-      if (approval === 'full') return undefined
+      if (currentApproval === 'full') return undefined
       const input = record(call.input, `${call.name} input`)
       if (call.name === 'write_file') {
         return {
@@ -107,6 +108,10 @@ export function createApiWorkspaceTools(workspacePath: string, approval: Approva
         }
       }
       return undefined
+    },
+    /** Live access-level change for the running direct-API session. */
+    setApproval(next: ApprovalMode): void {
+      currentApproval = next
     },
   }
 }

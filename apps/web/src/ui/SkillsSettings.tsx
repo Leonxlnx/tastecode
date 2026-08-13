@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ProviderId, ResultOf, Skill } from '@harness/contracts'
 import { AlertTriangle, FolderPlus } from 'lucide-react'
 import { pickSkillFolder } from '../bridge.js'
 import type { Transport } from '../transport.js'
 
 type Inventory = ResultOf<'skills.list'>
+type Context = { transport: Transport; provider: ProviderId; projectPath: string | undefined }
 
 export function SkillsSettings(props: {
   transport: Transport
@@ -18,45 +19,88 @@ export function SkillsSettings(props: {
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState<string>()
   const [reload, setReload] = useState(0)
+  const inventoryGeneration = useRef(0)
+  const inventoryContext = useRef<Context | undefined>(undefined)
+  const errorContext = useRef<Context | undefined>(undefined)
+  const activeContext = useRef({
+    transport: props.transport,
+    provider: props.provider,
+    projectPath: props.projectPath,
+  })
+  activeContext.current = {
+    transport: props.transport,
+    provider: props.provider,
+    projectPath: props.projectPath,
+  }
+  const isCurrentContext = () =>
+    activeContext.current.transport === props.transport &&
+    activeContext.current.provider === props.provider &&
+    activeContext.current.projectPath === props.projectPath
 
   useEffect(() => {
     if (!props.projectPath) {
+      inventoryGeneration.current += 1
       setInventory(undefined)
+      inventoryContext.current = undefined
+      errorContext.current = undefined
       setLoading(false)
+      setError(undefined)
+      setBusy(undefined)
       return
     }
 
     let active = true
     // Ordered: two overlapping refreshes (initial load racing a
     // skills.changed push) must not land out of order.
-    let generation = 0
     const load = async () => {
-      const mine = ++generation
+      const context = {
+        transport: props.transport,
+        provider: props.provider,
+        projectPath: props.projectPath,
+      }
+      const mine = ++inventoryGeneration.current
       setLoading(true)
       try {
         const next = await props.transport.request('skills.list', {
           provider: props.provider,
           projectPath: props.projectPath!,
         })
-        if (active && mine === generation) {
+        if (active && mine === inventoryGeneration.current) {
+          inventoryContext.current = context
+          errorContext.current = undefined
           setInventory(next)
           setError(undefined)
         }
       } catch (cause) {
-        if (active && mine === generation) setError(message(cause))
+        if (active && mine === inventoryGeneration.current) {
+          errorContext.current = context
+          setError(message(cause))
+        }
       } finally {
-        if (active && mine === generation) setLoading(false)
+        if (active && mine === inventoryGeneration.current) setLoading(false)
       }
     }
     setInventory(undefined)
+    inventoryContext.current = undefined
+    errorContext.current = undefined
     setError(undefined)
+    setBusy(undefined)
     void load()
     const off = props.transport.on('skills.changed', ({ provider, projectPath }) => {
       if (provider === props.provider && projectPath === props.projectPath) void load()
     })
+    let reconnecting = props.transport.state === 'reconnecting'
+    const offState = props.transport.onState((state) => {
+      if (state === 'reconnecting') reconnecting = true
+      else if (state === 'open' && reconnecting) {
+        reconnecting = false
+        void load()
+      }
+    })
     return () => {
       active = false
       off()
+      offState()
     }
   }, [props.transport, props.provider, props.projectPath, reload])
 
@@ -71,6 +115,9 @@ export function SkillsSettings(props: {
         skillId: skill.id,
         enabled: !skill.enabled,
       })
+      if (!isCurrentContext()) return
+      inventoryGeneration.current += 1
+      setLoading(false)
       setInventory((current) =>
         current
           ? {
@@ -82,24 +129,27 @@ export function SkillsSettings(props: {
           : current,
       )
     } catch (cause) {
-      setError(message(cause))
+      if (isCurrentContext()) setError(message(cause))
     } finally {
-      setBusy(undefined)
+      if (isCurrentContext()) setBusy(undefined)
     }
   }
 
   async function install(): Promise<void> {
     if (!props.projectPath) return
-    const folderPath = await pickSkillFolder()
-    if (!folderPath) return
-    setBusy('install')
     setError(undefined)
+    setBusy('install')
     try {
+      const folderPath = await pickSkillFolder()
+      if (!folderPath || !isCurrentContext()) return
       const { skill } = await props.transport.request('skills.installFromFolder', {
         provider: props.provider,
         projectPath: props.projectPath,
         folderPath,
       })
+      if (!isCurrentContext()) return
+      inventoryGeneration.current += 1
+      setLoading(false)
       setInventory((current) =>
         current
           ? {
@@ -109,24 +159,36 @@ export function SkillsSettings(props: {
           : current,
       )
     } catch (cause) {
-      setError(message(cause))
+      if (isCurrentContext()) setError(message(cause))
     } finally {
-      setBusy(undefined)
+      if (isCurrentContext()) setBusy(undefined)
     }
   }
 
-  const project = props.projectName ?? props.projectPath
+  const contextMatches = (context: Context | undefined) =>
+    context?.transport === props.transport &&
+    context.provider === props.provider &&
+    context.projectPath === props.projectPath
+  const currentInventory = contextMatches(inventoryContext.current) ? inventory : undefined
+  const currentError = currentInventory || contextMatches(errorContext.current) ? error : undefined
+  const providerStatus = !props.projectPath
+    ? 'Select a project to check Agent Skills support.'
+    : currentError && !currentInventory
+      ? `${props.providerName} · Agent Skills status unavailable`
+      : !currentInventory
+        ? `Checking ${props.providerName} Agent Skills support…`
+        : `${props.providerName} · Agent Skills inventory ${currentInventory.capabilities.inventory ? 'available' : 'unavailable'}`
   const status = !props.projectPath
     ? 'Select a project in the sidebar first.'
     : // A background refresh keeps the current list on screen; blanking it
       // to a loading note on every skills.changed push read as flicker.
       loading && !inventory
       ? 'Discovering skills…'
-      : !inventory
+      : !currentInventory
         ? undefined
-        : !inventory.capabilities.inventory
+        : !currentInventory.capabilities.inventory
           ? `${props.providerName} does not expose Agent Skills here yet.`
-          : inventory.skills.length === 0
+          : currentInventory.skills.length === 0
             ? 'No skills were discovered for this project.'
             : undefined
 
@@ -137,9 +199,11 @@ export function SkillsSettings(props: {
           <h1 className="settings__title" id="settings-skills">
             Agent Skills
           </h1>
-          <p>{project ? `Available in ${project}` : 'Choose a project to manage its skills.'}</p>
+          <p role="status" aria-live="polite" aria-atomic="true">
+            {providerStatus}
+          </p>
         </div>
-        {props.projectPath && inventory?.capabilities.install ? (
+        {props.projectPath && currentInventory?.capabilities.install ? (
           <button
             className="settings__action"
             type="button"
@@ -152,9 +216,9 @@ export function SkillsSettings(props: {
         ) : null}
       </header>
 
-      {error ? (
+      {currentError ? (
         <p className="skills-settings__error" role="alert">
-          {error}{' '}
+          {currentError}{' '}
           <button
             className="settings__action"
             type="button"
@@ -165,23 +229,23 @@ export function SkillsSettings(props: {
         </p>
       ) : null}
       {status ? <p className="skills-settings__empty">{status}</p> : null}
-      {inventory?.errors.length ? (
+      {currentInventory?.errors.length ? (
         <div className="skills-settings__error" role="alert">
           <strong>Some skills could not be loaded</strong>
-          {inventory.errors.map((entry) => (
+          {currentInventory.errors.map((entry) => (
             <p key={`${entry.path}:${entry.message}`}>
               {entry.message} · {entry.path}
             </p>
           ))}
         </div>
       ) : null}
-      {inventory?.capabilities.inventory && inventory.skills.length ? (
+      {currentInventory?.capabilities.inventory && currentInventory.skills.length ? (
         <div className="settings__group">
-          {inventory.skills.map((skill) => (
+          {currentInventory.skills.map((skill) => (
             <SkillRow
               key={skill.id}
               skill={skill}
-              configurable={inventory.capabilities.configure}
+              configurable={currentInventory.capabilities.configure}
               busy={busy === skill.id}
               onToggle={() => void toggle(skill)}
             />

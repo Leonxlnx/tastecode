@@ -11,6 +11,17 @@ export interface ReviewScreenshot {
   path: string
   width: number
   height: number
+  domAudit?:
+    | {
+        h1Count: number
+        interactiveTargetViolations: Array<{
+          selector: string
+          label: string
+          width: number
+          height: number
+        }>
+      }
+    | undefined
 }
 
 export interface VisualReview {
@@ -41,7 +52,7 @@ export function designReviewPrompt(
 ): string {
   return `You are running the visual Review phase of Personal Harness Design Mode.
 
-Inspect every supplied screenshot with image-viewing tools. Compare visible evidence against the brief, brand system, page blueprint, responsive intent, and acceptance criteria. Review hierarchy, composition, spacing, typography, color roles, imagery, content fit, interaction affordance, responsive behavior, overflow, clipping, and obvious accessibility failures.
+Inspect every supplied screenshot with image-viewing tools. Compare visible evidence against the brief, brand system, page blueprint, responsive intent, and acceptance criteria. Review hierarchy, composition, spacing, typography, color roles, imagery, content fit, interaction affordance, responsive behavior, overflow, clipping, and obvious accessibility failures. Screenshot DOM audits are objective Harness evidence: include repairs for their failures and never dismiss them from visual judgment.
 
 Do not edit files, redesign from preference, or praise the work. Report only visible, actionable discrepancies. Use an available visual-review skill when exposed by the session without assuming a provider, model, skill name, or private API.
 
@@ -80,6 +91,65 @@ export function parseReviewPhaseOutput(text: string): VisualReview {
     version: 1,
     verdict: value.verdict,
     summary: string(value.summary, 'visual review summary'),
+    findings,
+  }
+}
+
+const AUDIT_FINDING_IDS = new Set(['document_h1_count', 'mobile_interactive_target_size'])
+
+export function enforceDomAuditFindings(
+  review: VisualReview,
+  screenshots: ReviewScreenshot[],
+): VisualReview {
+  const h1Failures = screenshots.filter(
+    (screenshot) => screenshot.domAudit && screenshot.domAudit.h1Count !== 1,
+  )
+  const mobileFailures = screenshots.filter(
+    (screenshot) =>
+      screenshot.width <= 480 && screenshot.domAudit?.interactiveTargetViolations.length,
+  )
+  const findings = review.findings.filter(({ id }) => !AUDIT_FINDING_IDS.has(id))
+
+  if (h1Failures.length) {
+    findings.push({
+      id: 'document_h1_count',
+      severity: 'blocking',
+      area: 'Document structure',
+      evidence: h1Failures
+        .map(
+          ({ width, height, domAudit }) => `${width}x${height}: ${domAudit!.h1Count} h1 elements`,
+        )
+        .join('; '),
+      repair: 'Render exactly one h1 element in the document at every reviewed viewport.',
+    })
+  }
+  if (mobileFailures.length) {
+    const count = mobileFailures.reduce(
+      (total, screenshot) => total + screenshot.domAudit!.interactiveTargetViolations.length,
+      0,
+    )
+    const examples = mobileFailures
+      .flatMap(({ width, domAudit }) =>
+        domAudit!.interactiveTargetViolations.map(
+          ({ selector, label, width: targetWidth, height }) =>
+            `${width}px ${selector}${label ? ` (${label})` : ''}: ${targetWidth}x${height}`,
+        ),
+      )
+      .slice(0, 5)
+      .join('; ')
+    findings.push({
+      id: 'mobile_interactive_target_size',
+      severity: 'blocking',
+      area: 'Mobile interaction targets',
+      evidence: `${count} visible interactive target${count === 1 ? '' : 's'} below 44x44 CSS px. ${examples}`,
+      repair: 'Make every visible mobile interactive target at least 44x44 CSS px.',
+    })
+  }
+  if (!h1Failures.length && !mobileFailures.length) return review
+  return {
+    ...review,
+    verdict: 'repair',
+    summary: `${review.summary} Harness DOM audit found ${h1Failures.length + mobileFailures.length} blocking accessibility group${h1Failures.length + mobileFailures.length === 1 ? '' : 's'}.`,
     findings,
   }
 }

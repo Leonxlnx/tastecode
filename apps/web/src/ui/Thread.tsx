@@ -10,6 +10,7 @@ import type {
 } from '@harness/contracts'
 import { ThinkingOrb } from 'thinking-orbs'
 import {
+  ArrowDownToLine,
   BookOpen,
   Brain,
   Check,
@@ -21,12 +22,14 @@ import {
   Images,
   ListChecks,
   LoaderCircle,
+  Palette,
   Pencil,
   RotateCcw,
   Search,
   SquareTerminal,
   Wrench,
 } from 'lucide-react'
+import { writeClipboardText } from '../bridge.js'
 import { isEditableTarget } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
 import { Approval, AutomaticApprovalReview } from './Approval.js'
@@ -34,10 +37,20 @@ import { Diff } from './Diff.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
 import { ThreadSearch } from './ThreadSearch.js'
-import { createThreadProjector, neighbourTurn } from './turns.js'
-import { isAtBottom, modeForNewTurn, shouldReleaseAnchor, type ScrollMode } from './scroll-mode.js'
+import { createThreadProjector, neighbourTurn, type TurnTiming } from './turns.js'
+import {
+  activeTurnAnchor,
+  isAtBottom,
+  modeForNewTurn,
+  shouldReleaseAnchor,
+  type ScrollMode,
+} from './scroll-mode.js'
+import { useVirtualItemKey } from './use-virtual-item-key.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
+import { threadItemAt, type LiveItemUpdate } from '../thread-store.js'
+
+const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()
 
 /**
  * The thread.
@@ -53,9 +66,15 @@ import type { Checkpoint } from './RollbackDialog.js'
  */
 export function Thread(props: {
   items: Item[]
+  loading?: boolean
+  liveItems?: ReadonlyMap<number, LiveItemUpdate> | undefined
+  itemVersion?: number | undefined
+  liveStart?: number | undefined
+  projectPath?: string | undefined
   running: boolean
   searching?: boolean
   activeTurn: { id: string; startedAt: number } | undefined
+  turnTiming?: TurnTiming | undefined
   plan: PlanStep[]
   diff: string | undefined
   threadId?: string | undefined
@@ -66,10 +85,11 @@ export function Thread(props: {
   userInputs: UserInputRequest[]
   reviews: ApprovalReview[]
   checkpoints?: Checkpoint[] | undefined
+  keyboardActive?: boolean | undefined
   onEditMessage?: ((text: string) => void) | undefined
   onRevertCheckpoint?: ((checkpoint: Checkpoint) => void) | undefined
   onDecide: (id: string, decision: ApprovalDecision) => void
-  onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void
+  onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
 }) {
   const scroller = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<ScrollMode>('follow-end')
@@ -81,7 +101,11 @@ export function Thread(props: {
 
   /** Index the current turn starts at, for anchor mode. */
   const anchorIndex = useRef(0)
-  const wasRunning = useRef(props.running)
+  const activeAnchor = useMemo(
+    () => activeTurnAnchor(props.items, props.activeTurn?.id),
+    [props.items, props.activeTurn?.id],
+  )
+  const anchoredTurn = useRef({ threadId: props.threadId, itemId: activeAnchor?.id })
   /**
    * Our own scrollTop writes fire scroll events too. Without telling them
    * apart from the user's, the handler cannot let a manual scroll take over
@@ -103,8 +127,14 @@ export function Thread(props: {
     writtenScrollTop.current = target
     el.scrollTop = target
   }, [])
+  const liveItems = props.liveItems ?? EMPTY_LIVE_ITEMS
+  const itemAt = useCallback(
+    (index: number) => threadItemAt(props.items, liveItems, index),
+    [props.items, liveItems],
+  )
   const enteringItemIds = useEnteringItemIds(props.items, props.threadId)
   const settledTurnId = useSettledTurnId(props.running, props.activeTurn?.id)
+  const getItemKey = useVirtualItemKey(props.items, props.threadId)
 
   const virtualizer = useVirtualizer({
     count: props.items.length,
@@ -113,7 +143,7 @@ export function Thread(props: {
     estimateSize: () => 72,
     // Stable identity per item, never the index — index keys make every
     // insertion look like a change to every row after it.
-    getItemKey: (index) => props.items[index]?.id ?? index,
+    getItemKey,
     overscan: 8,
     // Assume a viewport for the very first render, before measurement has run.
     // Without it the first frame contains no rows at all, which reads as a
@@ -122,14 +152,26 @@ export function Thread(props: {
   })
 
   // A turn starting is the one moment the reading position should change.
+  // Watch its first item rather than the running boolean: a queued turn can
+  // start in the same render batch that the previous turn completes, leaving
+  // `running` true throughout. The submission id also survives the local ->
+  // durable handoff, so provider confirmation does not cause a second jump.
   useEffect(() => {
-    if (props.running && !wasRunning.current) {
-      const el = scroller.current
-      anchorIndex.current = Math.max(0, props.items.length - 1)
-      setMode(modeForNewTurn(el ? isAtBottom(el) : true))
+    if (anchoredTurn.current.threadId !== props.threadId) {
+      anchoredTurn.current = { threadId: props.threadId, itemId: activeAnchor?.id }
+      return
     }
-    wasRunning.current = props.running
-  }, [props.running, props.items.length])
+    if (!props.running) {
+      anchoredTurn.current.itemId = undefined
+      return
+    }
+    if (!activeAnchor || anchoredTurn.current.itemId === activeAnchor.id) return
+
+    anchoredTurn.current.itemId = activeAnchor.id
+    anchorIndex.current = activeAnchor.index
+    const el = scroller.current
+    setMode(modeForNewTurn(el ? isAtBottom(el) : true))
+  }, [props.running, props.threadId, activeAnchor])
 
   // Layout effect, not effect: this runs before paint, so the correction is
   // never visible as a jump.
@@ -161,7 +203,7 @@ export function Thread(props: {
       }
       writeScrollTop(el, start)
     }
-  }, [props.items, props.revealRequest, virtualizer, writeScrollTop])
+  }, [props.items, props.itemVersion, props.revealRequest, virtualizer, writeScrollTop])
 
   const onScroll = useCallback(() => {
     const el = scroller.current
@@ -188,6 +230,7 @@ export function Thread(props: {
   // Ctrl+F cannot work with a virtualised list — the match may not be in the
   // DOM — so the app owns find instead of the browser.
   useEffect(() => {
+    if (props.keyboardActive === false) return
     const onKey = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target)) return
       // Plain Ctrl+F only — Ctrl+Shift+F belongs to the global chat search,
@@ -205,7 +248,7 @@ export function Thread(props: {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [props.keyboardActive])
 
   const jumpTo = useCallback(
     (index: number) => {
@@ -216,26 +259,12 @@ export function Thread(props: {
   )
 
   const projectThread = useMemo(createThreadProjector, [props.threadId])
-  const { turns, presentations } = projectThread(props.items)
+  const { turns, presentations } = projectThread(props.items, props.turnTiming)
   const activePresentation = props.activeTurn ? presentations.get(props.activeTurn.id) : undefined
   const rawWorkLabel = useMemo(
-    () => workLabel(props.items, props.activeTurn?.id, props.searching),
-    [props.items, props.activeTurn?.id, props.searching],
+    () => workLabel(props.items, props.activeTurn?.id, props.searching, liveItems, props.liveStart),
+    [props.items, props.activeTurn?.id, props.searching, liveItems, props.liveStart],
   )
-  // Between two tool calls — which is exactly while prose streams — nothing
-  // is 'started', so the label fell back to the generic "Working" and then
-  // returned. Each flip remounts the span and replays its fade, so a normal
-  // read/search/edit sequence strobed. Hold the last specific label instead.
-  const lastSpecific = useRef<string | undefined>(undefined)
-  const activeTurnId = props.activeTurn?.id
-  const previousTurnId = useRef(activeTurnId)
-  if (previousTurnId.current !== activeTurnId) {
-    previousTurnId.current = activeTurnId
-    lastSpecific.current = undefined
-  }
-  if (rawWorkLabel !== 'Working') lastSpecific.current = rawWorkLabel
-  const activeWorkLabel =
-    rawWorkLabel === 'Working' ? (lastSpecific.current ?? 'Working') : rawWorkLabel
 
   useEffect(() => {
     const target = props.searchJump
@@ -251,6 +280,7 @@ export function Thread(props: {
   // Alt+Up/Down moves a turn at a time. Scrolling by pixel through a long
   // session to find where an exchange began is the slow way to do it.
   useEffect(() => {
+    if (props.keyboardActive === false) return
     const onKey = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target)) return
       if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
@@ -268,7 +298,7 @@ export function Thread(props: {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [turns, virtualizer])
+  }, [props.keyboardActive, turns, virtualizer])
 
   const rows = virtualizer.getVirtualItems()
 
@@ -297,48 +327,95 @@ export function Thread(props: {
     // latest" rendered below the viewport exactly when it was needed.
     <div className="thread-shell">
       {finding ? (
-        <ThreadSearch items={props.items} onJump={jumpTo} onClose={() => setFinding(false)} />
+        <ThreadSearch
+          items={props.items}
+          liveItems={liveItems}
+          threadId={props.threadId}
+          onJump={jumpTo}
+          onClose={() => setFinding(false)}
+        />
+      ) : null}
+      {props.items.length === 0 && !props.running ? (
+        props.loading ? (
+          <div className="empty thread__empty" role="status">
+            Loading conversation…
+          </div>
+        ) : (
+          <div className="empty thread__empty">
+            <div className="empty__prompt" role="heading" aria-level={1}>
+              Tell the agent what you want to build, then send it below.
+            </div>
+          </div>
+        )
       ) : null}
       <div className="thread" ref={scroller} onScroll={onScroll}>
         <div className="thread__col">
           <div className="thread__runway" style={{ height: virtualizer.getTotalSize() }}>
             {rows.map((row) => {
-              const item = props.items[row.index]
+              const item = itemAt(row.index)
               if (!item) return null
+              const liveItemUpdate = liveItems.get(row.index)
               const presentation = presentations.get(item.turnId)
               const live = props.running && props.activeTurn?.id === item.turnId
-              const compactedActivity =
-                !live && presentation?.complete === true && presentation.activity.includes(item)
-              const activityLead =
-                compactedActivity && presentation.firstActivityIndex === row.index
+              const activityGroup =
+                !live && presentation?.complete === true
+                  ? presentation.activityGroups.find(
+                      ({ firstIndex, lastIndex }) =>
+                        row.index >= firstIndex && row.index <= lastIndex,
+                    )
+                  : undefined
+              const compactedActivity = activityGroup !== undefined
+              const activityLead = compactedActivity && activityGroup.firstIndex === row.index
               const responseLead =
                 !live &&
                 presentation?.complete === true &&
                 presentation.finalAnswerIndex === row.index
-              const suppressed = compactedActivity && !activityLead
+              // Image inspection is an authored result, not another running
+              // status. Keep its completed/failed outcome visible while the
+              // turn continues, but render it as settled so it never gains
+              // the duplicate `.aux--live` treatment.
+              const visibleLiveImageResult =
+                live &&
+                (item.status === 'completed' || item.status === 'failed') &&
+                isImageView(item)
               const liveActivity = live && isActivity(item)
+              const suppressed =
+                (compactedActivity && !activityLead) ||
+                (liveActivity && !visibleLiveImageResult) ||
+                isRepeatedDesignRow(item, props.items, row.index) ||
+                // A design turn tells its story through the phase labels and
+                // Harness notes; the provider's raw commands, tool calls, and
+                // thinking would drown that story in noise.
+                (presentation?.design === true &&
+                  !compactedActivity &&
+                  isActivity(item) &&
+                  !designPhaseLabel(toolText(item)))
               const settling = settledTurnId === item.turnId
               const railAnchor = live && presentation?.firstResponseIndex === row.index
               return (
                 <div
                   key={row.key}
-                  className={`thread__row${suppressed ? ' is-suppressed' : ''}${liveActivity ? ' is-live-activity' : ''}${enteringItemIds.has(item.id) ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
+                  className={`thread__row${suppressed ? ' is-suppressed' : ''}${enteringItemIds.has(item.id) ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
                   data-index={row.index}
                   ref={virtualizer.measureElement}
                   style={{ transform: `translateY(${row.start}px)` }}
                 >
                   <Row
                     item={item}
+                    liveTextUpdate={liveItemUpdate?.textUpdate}
+                    liveUpdateVersion={liveItemUpdate?.version}
+                    projectPath={props.projectPath}
                     hidden={suppressed}
-                    activity={activityLead ? presentation.activity : undefined}
+                    activity={activityLead ? activityGroup.items : undefined}
                     elapsedMs={presentation?.elapsedMs}
-                    live={live}
+                    live={live && !visibleLiveImageResult}
                     responseText={responseLead ? presentation.responseText : undefined}
+                    finalResponse={responseLead && !props.running}
                     settling={settling}
                     showCompletionRail={
                       !live &&
                       presentation?.complete === true &&
-                      presentation.activity.length === 0 &&
+                      presentation.activityGroups.length === 0 &&
                       presentation.finalAnswerIndex === row.index
                     }
                     onEditMessage={props.onEditMessage}
@@ -356,7 +433,7 @@ export function Thread(props: {
               // sits at the end of the runway, over the space the spacer
               // below holds.
               <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
-                <WorkingRail startedAt={props.activeTurn.startedAt} label={activeWorkLabel} />
+                <WorkingRail startedAt={props.activeTurn.startedAt} label={rawWorkLabel} />
               </div>
             ) : null}
           </div>
@@ -398,11 +475,20 @@ export function Thread(props: {
         <button
           className="jump"
           onClick={() => {
-            setMode('follow-end')
             const el = scroller.current
-            if (el) el.scrollTop = el.scrollHeight
+            if (!el) return
+            // Stay in free mode for the whole glide. Flipping to follow-end
+            // here unmounts the button, and the first mid-flight scroll event
+            // then flips it straight back — remounting it with its entrance
+            // animation — until the scroll lands. The onScroll handler hands
+            // over to follow-end once the glide actually reaches the bottom.
+            el.scrollTo({ top: el.scrollHeight - el.clientHeight, behavior: 'smooth' })
+            // Already at the bottom? Nothing animates and no scroll event
+            // comes, so there would be no handover — hide right away.
+            if (isAtBottom(el)) setMode('follow-end')
           }}
         >
+          <ArrowDownToLine size={13} aria-hidden />
           Jump to latest
         </button>
       ) : null}
@@ -534,17 +620,17 @@ function isActivity(item: Item): boolean {
   return item.type !== 'message' && item.type !== 'error'
 }
 
-function isAssistantMessage(item: Item): boolean {
-  return item.type === 'message' && item.role === 'assistant'
-}
-
 const Row = memo(function Row({
   item,
+  liveTextUpdate,
+  liveUpdateVersion,
+  projectPath,
   hidden,
   activity,
   elapsedMs,
   live,
   responseText,
+  finalResponse,
   settling,
   showCompletionRail,
   onEditMessage,
@@ -552,11 +638,15 @@ const Row = memo(function Row({
   onRevertCheckpoint,
 }: {
   item: Item
+  liveTextUpdate: LiveItemUpdate['textUpdate'] | undefined
+  liveUpdateVersion: number | undefined
+  projectPath: string | undefined
   hidden: boolean
   activity: Item[] | undefined
   elapsedMs: number | undefined
   live: boolean
   responseText: string | undefined
+  finalResponse: boolean
   settling: boolean
   showCompletionRail: boolean
   onEditMessage: ((text: string) => void) | undefined
@@ -565,8 +655,22 @@ const Row = memo(function Row({
 }) {
   if (hidden) return null
 
+  // The working rail already announces the running design phase by name; a
+  // second row with the same label reads as a duplicate. The row appears once
+  // the phase completes, with its duration.
+  if (item.type === 'tool_call' && item.status === 'started' && designPhaseLabel(toolText(item))) {
+    return null
+  }
+
   if (activity) {
-    return <CompletionRail activity={activity} elapsedMs={elapsedMs ?? 0} settling={settling} />
+    return (
+      <CompletionRail
+        activity={activity}
+        elapsedMs={elapsedMs ?? 0}
+        projectPath={projectPath}
+        settling={settling}
+      />
+    )
   }
 
   // The user's own words get a surface so the eye can find where each exchange
@@ -609,19 +713,59 @@ const Row = memo(function Row({
     return (
       <div className={`reply${live ? ' is-streaming' : ''}`}>
         {showCompletionRail ? (
-          <CompletionRail activity={[]} elapsedMs={elapsedMs ?? 0} settling={settling} />
+          <CompletionRail
+            activity={[]}
+            elapsedMs={elapsedMs ?? 0}
+            projectPath={projectPath}
+            settling={settling}
+          />
         ) : null}
-        <Markdown text={text} streaming={live && item.status === 'started'} />
-        {!live && item.status === 'completed' && text ? (
+        <Markdown
+          text={text}
+          projectPath={projectPath}
+          streaming={live && item.status === 'started'}
+          liveUpdate={liveTextUpdate}
+          updateVersion={liveUpdateVersion}
+        />
+        {finalResponse && !live && item.status === 'completed' && text ? (
           <ResponseActions text={text} createdAt={item.createdAt} />
         ) : null}
       </div>
     )
   }
 
+  // A thread-level failure is a statement, not an operational row: the alert
+  // and the reason, without the disclosure affordance tool calls get.
+  if (item.type === 'error') {
+    return (
+      <div className="turn-error">
+        <CircleAlert className="turn-error__glyph" size={13} aria-hidden />
+        <p className="turn-error__text">{item.text}</p>
+      </div>
+    )
+  }
+
+  return <AuxDisclosure item={item} live={live} />
+})
+
+/**
+ * One collapsed operational row — a command, reasoning, file edit or tool
+ * call. A controlled disclosure rather than <details>: keeping the output
+ * mounted lets the height transition play both ways, so closing is as smooth
+ * as opening, exactly like the completion rail below.
+ */
+function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
+  const [expanded, setExpanded] = useState(false)
+  const detail = imageViewDetail(item) ?? item.text
+
   return (
-    <details className={`aux aux--${item.type} ${live ? 'aux--live' : ''}`}>
-      <summary className="aux__row">
+    <div className={`aux aux--${item.type} ${live ? 'aux--live' : ''}`} data-expanded={expanded}>
+      <button
+        type="button"
+        className="aux__row"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+      >
         <span className="aux__glyph" aria-hidden>
           {glyph(item)}
         </span>
@@ -633,33 +777,44 @@ const Row = memo(function Row({
         {item.durationMs !== undefined && item.durationMs >= 1000 ? (
           <span className="aux__time">{duration(item.durationMs)}</span>
         ) : null}
-        {!live && item.status === 'started' ? (
+        {!live && item.status === 'started' && !isImageView(item) ? (
           <LoaderCircle className="spinner" aria-hidden />
         ) : null}
-      </summary>
-      {item.text ? <pre className="aux__out">{item.text}</pre> : null}
-    </details>
+      </button>
+      {/* Design markers have no output worth expanding — their text is the slug. */}
+      {detail && !(item.type === 'tool_call' && designPhaseLabel(toolText(item))) ? (
+        <div className="aux__reveal" data-open={expanded} aria-hidden={!expanded} inert={!expanded}>
+          <div className="aux__reveal-clip">
+            <pre className="aux__out">{detail}</pre>
+          </div>
+        </div>
+      ) : null}
+    </div>
   )
-})
+}
 
 function checkpointFor(item: Item, checkpoints: Checkpoint[]): Checkpoint | undefined {
   if (item.type !== 'message' || item.role !== 'user' || !item.text) return undefined
+  const label = item.text.trim().slice(0, 60) || 'Turn'
   return checkpoints.findLast(
-    (checkpoint) => checkpoint.label === item.text && checkpoint.createdAt <= item.createdAt,
+    (checkpoint) => checkpoint.label === label && checkpoint.createdAt <= item.createdAt,
   )
 }
 
 function CompletionRail({
   activity,
   elapsedMs,
+  projectPath,
   settling,
 }: {
   activity: Item[]
   elapsedMs: number
+  projectPath: string | undefined
   settling: boolean
 }) {
   const label = `Worked for ${workedFor(elapsedMs)}`
   const visibleActivity = activity.filter(isVisibleWorkedItem)
+  const [expanded, setExpanded] = useState(false)
 
   if (visibleActivity.length === 0) {
     return (
@@ -670,34 +825,67 @@ function CompletionRail({
   }
 
   return (
-    <details className={`activity${settling ? ' is-settling' : ''}`}>
-      <summary className="activity__summary">
+    <div className={`activity${settling ? ' is-settling' : ''}`} data-expanded={expanded}>
+      <button
+        type="button"
+        className="activity__summary"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+      >
         <span>{label}</span>
         <ChevronRight size={15} strokeWidth={1.8} aria-hidden />
-      </summary>
-      <div className="activity__body">
-        {visibleActivity.map((item) =>
-          item.type === 'message' ? (
-            <div className="activity__message" key={item.id}>
-              <Markdown text={item.text ?? ''} />
-            </div>
-          ) : (
-            <div className="activity__file-change" key={item.id}>
-              <FilePenLine size={15} strokeWidth={1.8} aria-hidden />
-              <span>Edited files</span>
-            </div>
-          ),
-        )}
+      </button>
+      <div
+        className="activity__reveal"
+        data-open={expanded}
+        aria-hidden={!expanded}
+        inert={!expanded}
+      >
+        <div className="activity__reveal-clip">
+          <div className="activity__body">
+            {visibleActivity.map((item) => {
+              if (item.type === 'message') {
+                return (
+                  <div className="activity__message" key={item.id}>
+                    <Markdown text={item.text ?? ''} projectPath={projectPath} />
+                  </div>
+                )
+              }
+              const detail = activityDetail(item)
+              return (
+                <div className="activity__item" key={item.id}>
+                  <div className="activity__file-change">
+                    {glyph(item)}
+                    <span>{summarise(item)}</span>
+                    {item.exitCode !== undefined && item.exitCode !== 0 ? (
+                      <span className="aux__code">exit {item.exitCode}</span>
+                    ) : null}
+                  </div>
+                  {detail ? <pre className="activity__detail">{detail}</pre> : null}
+                </div>
+              )
+            })}
+          </div>
+        </div>
       </div>
-    </details>
+    </div>
   )
 }
 
 function isVisibleWorkedItem(item: Item): boolean {
-  return (
-    item.type === 'file_change' ||
-    (isAssistantMessage(item) && item.status === 'completed' && Boolean(item.text?.trim()))
+  return isActivity(item)
+}
+
+function activityDetail(item: Item): string | undefined {
+  if (item.type === 'tool_call' && designPhaseLabel(toolText(item))) return undefined
+  const image = imageViewDetail(item)
+  if (image !== undefined) return image
+  const summary = summarise(item)
+  const details = item.type === 'file_change' ? [item.path, item.text] : [item.text]
+  const unique = details.filter(
+    (detail, index) => detail && detail !== summary && details.indexOf(detail) === index,
   )
+  return unique.length > 0 ? unique.join('\n') : undefined
 }
 
 function ResponseActions({ text, createdAt }: { text: string; createdAt: number }) {
@@ -713,6 +901,7 @@ function ResponseActions({ text, createdAt }: { text: string; createdAt: number 
 
 function CopyAction({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false)
+  const [failed, setFailed] = useState(false)
   // Rows are virtualized, so this unmounts the moment it scrolls out of the
   // overscan window — the tick-reset timer must not outlive it.
   const resetTimer = useRef<number | undefined>(undefined)
@@ -720,19 +909,40 @@ function CopyAction({ text, label }: { text: string; label: string }) {
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(text)
+      await writeClipboardText(text)
+      setFailed(false)
       setCopied(true)
       window.clearTimeout(resetTimer.current)
       resetTimer.current = window.setTimeout(() => setCopied(false), 1600)
     } catch {
+      window.clearTimeout(resetTimer.current)
       setCopied(false)
+      setFailed(true)
     }
   }
 
   return (
-    <button type="button" onClick={() => void copy()} aria-label={label} title="Copy">
-      {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
-    </button>
+    <span className={`copy-action${failed ? ' is-failed' : ''}`}>
+      <button
+        type="button"
+        onClick={() => void copy()}
+        aria-label={label}
+        title={failed ? 'Copy failed — click to retry' : 'Copy'}
+      >
+        {failed ? (
+          <CircleAlert aria-hidden />
+        ) : copied ? (
+          <Check aria-hidden />
+        ) : (
+          <Copy aria-hidden />
+        )}
+      </button>
+      {failed ? (
+        <span className="copy-action__error" role="alert">
+          Copy failed
+        </span>
+      ) : null}
+    </span>
   )
 }
 
@@ -768,6 +978,8 @@ export function workLabel(
   items: Item[],
   turnId: string | undefined,
   searching: boolean | undefined,
+  liveItems: ReadonlyMap<number, LiveItemUpdate> = EMPTY_LIVE_ITEMS,
+  liveStart = 0,
 ) {
   if (searching) return 'Searching'
   if (!turnId) return 'Working'
@@ -775,14 +987,22 @@ export function workLabel(
   // The active turn's items are the tail of the transcript; once the walk
   // leaves them there is nothing further back worth scanning — without the
   // break this was a full-transcript scan per streamed frame.
-  for (let index = items.length - 1; index >= 0; index--) {
-    const item = items[index]
+  let latest: string | undefined
+  for (let index = items.length - 1; index >= liveStart; index--) {
+    const item = threadItemAt(items, liveItems, index)
     if (!item) continue
     if (item.turnId !== turnId) break
-    if (item.status === 'started' && isActivity(item)) return summariseLive(item)
+    if (item.status !== 'started' || !isActivity(item)) continue
+    // A design phase owns its whole turn: its label must not flicker to
+    // "Running a command" for every tool the provider uses inside it.
+    if (item.type === 'tool_call') {
+      const phase = designPhaseLabel(toolText(item))
+      if (phase) return phase
+    }
+    latest ??= summariseLive(item)
   }
 
-  return 'Working'
+  return latest ?? 'Working'
 }
 
 // Updating this text node directly avoids committing the virtualized thread
@@ -808,13 +1028,22 @@ function duration(ms: number): string {
   return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
 }
 
-function workedFor(ms: number): string {
-  const seconds = Math.max(1, Math.round(ms / 1000))
-  if (seconds < 60) return `${seconds}s`
+export function workedFor(ms: number): string {
+  let remaining = Math.max(1, Math.round(ms / 1000))
+  const parts: string[] = []
 
-  const minutes = Math.floor(seconds / 60)
-  const remainder = seconds % 60
-  return remainder === 0 ? `${minutes}m` : `${minutes}m ${remainder}s`
+  for (const [unit, seconds] of [
+    ['d', 86_400],
+    ['h', 3_600],
+    ['m', 60],
+    ['s', 1],
+  ] as const) {
+    const value = Math.floor(remaining / seconds)
+    remaining %= seconds
+    if (value > 0) parts.push(`${value}${unit}`)
+  }
+
+  return parts.join(' ')
 }
 
 function glyph(item: Item) {
@@ -827,13 +1056,12 @@ function glyph(item: Item) {
       return <FilePenLine size={13} />
     case 'tool_call':
       if (toolText(item).includes('image')) return <Images size={14} />
+      if (designPhaseLabel(toolText(item))) return <Palette size={13} />
       if (toolText(item).match(/read|open|file/)) return <BookOpen size={14} />
       if (toolText(item).includes('search')) return <Search size={14} />
       return <Wrench size={13} />
     case 'plan':
       return <ListChecks size={13} />
-    case 'error':
-      return <CircleAlert size={13} />
     default:
       return <CircleQuestionMark size={13} />
   }
@@ -853,6 +1081,10 @@ function summariseLive(item: Item): string {
       const text = toolText(item)
       const designPhase = designPhaseLabel(text)
       if (designPhase) return designPhase
+      if (isImageView(item)) {
+        if (item.status === 'failed') return 'Could not view image'
+        return ongoing ? 'Viewing image' : 'Viewed image'
+      }
       if (text.includes('image')) return ongoing ? 'Viewing an image' : 'Viewed an image'
       if (text.match(/read|open|file/)) return ongoing ? 'Reading files' : 'Read files'
       if (text.includes('search')) return ongoing ? 'Searching' : 'Searched'
@@ -890,12 +1122,55 @@ function summarise(item: Item): string {
     case 'file_change':
       return 'Edited files'
     case 'tool_call':
-      return item.text ?? 'Tool call'
+      // Design phase markers carry an internal slug; the reader gets the
+      // same human label the working rail used while the phase ran.
+      return (
+        designPhaseLabel(toolText(item)) ??
+        (isImageView(item)
+          ? item.status === 'failed'
+            ? 'Could not view image'
+            : item.status === 'started'
+              ? 'Image inspection interrupted'
+              : 'Viewed image'
+          : item.text) ??
+        'Tool call'
+      )
     case 'plan':
       return 'Plan'
-    case 'error':
-      return item.text ?? 'Error'
     default:
       return item.type
   }
+}
+
+function isImageView(item: Item): boolean {
+  return item.type === 'tool_call' && item.text?.split('\n', 1)[0]?.trim() === 'image view'
+}
+
+function imageViewDetail(item: Item): string | undefined {
+  if (!isImageView(item)) return undefined
+  const detail = item.text?.split('\n').slice(1).join('\n').trim()
+  return detail || undefined
+}
+
+/** A phase that retried produces one marker per adjacent provider turn; the
+ *  reader cares that the phase happened, not about suppressed work between retries. */
+export function isRepeatedDesignRow(item: Item, items: readonly Item[], index: number): boolean {
+  if (item.type !== 'tool_call') return false
+  const phase = designPhaseLabel(toolText(item))
+  if (!phase) return false
+
+  let adjacentTurn: string | undefined
+  for (let priorIndex = index - 1; priorIndex >= 0; priorIndex--) {
+    const prior = items[priorIndex]
+    if (!prior) continue
+    const priorPhase = prior.type === 'tool_call' ? designPhaseLabel(toolText(prior)) : undefined
+    if (priorPhase) {
+      return priorPhase === phase && (adjacentTurn === undefined || adjacentTurn === prior.turnId)
+    }
+    if (!isActivity(prior)) return false
+    if (prior.turnId === item.turnId) continue
+    if (adjacentTurn !== undefined && adjacentTurn !== prior.turnId) return false
+    adjacentTurn = prior.turnId
+  }
+  return false
 }

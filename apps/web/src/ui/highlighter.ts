@@ -57,3 +57,9 @@ export const shikiPlugin: CodeHighlighterPlugin = {
     return runtime.highlight(options)
   },
 }
+
+/** Streaming code stays cheap; the completed message swaps in Shiki once. */
+export const plainCodePlugin: CodeHighlighterPlugin = {
+  ...shikiPlugin,
+  highlight: (options) => plainHighlight(options.code) as never,
+}

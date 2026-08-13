@@ -35,10 +35,19 @@ export {
   type DesignRunState,
   type DesignRunStatus,
 } from './run.js'
-export { designBuildPrompt, parseBuildPhaseOutput, type BuildPhaseOutput } from './build-phase.js'
+export {
+  designBuildCorrectionPrompt,
+  designBuildPrompt,
+  exactBuildFileBaseline,
+  parseBuildPhaseOutput,
+  validateExactBuildFiles,
+  type BuildPhaseOutput,
+  ExactBuildFilesError,
+} from './build-phase.js'
 export {
   designRepairPrompt,
   designReviewPrompt,
+  enforceDomAuditFindings,
   parseRepairPhaseOutput,
   parseReviewPhaseOutput,
   readVisualReview,

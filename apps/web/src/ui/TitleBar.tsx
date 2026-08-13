@@ -1,24 +1,20 @@
 import { memo } from 'react'
 import { PanelLeft } from 'lucide-react'
-import { isMacOS } from '../bridge.js'
-import { SHORTCUTS, shortcutAria, shortcutLabel } from '../shortcuts.js'
+import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
 
 /**
- * Title bar. Holds the window-level controls — the sidebar toggle belongs here
- * rather than inside the sidebar it hides, so its position never moves.
+ * Title bar. Holds the window-level sidebar control.
  *
  * Height comes from --titlebar-h, which the main process also uses for the
  * native caption buttons.
  */
 function TitleBarComponent(props: { collapsed: boolean; onToggleRail: () => void }) {
-  const shortcut = shortcutLabel(SHORTCUTS.toggleSidebar, isMacOS())
-
   return (
     <header className="titlebar">
       <button
         className="icon-btn icon-btn--always titlebar__toggle"
         onClick={props.onToggleRail}
-        title={`${props.collapsed ? 'Show sidebar' : 'Hide sidebar'} (${shortcut})`}
+        title={props.collapsed ? 'Show sidebar' : 'Hide sidebar'}
         aria-pressed={!props.collapsed}
         aria-keyshortcuts={shortcutAria(SHORTCUTS.toggleSidebar)}
       >

@@ -5,6 +5,13 @@ import type { Model } from '@harness/contracts'
 import { useState, type ReactNode } from 'react'
 import type { ModelChoice } from '../model-catalog.js'
 
+const haptics = vi.hoisted(() => ({
+  performAppHaptic: vi.fn(),
+  prepareAppHaptics: vi.fn(),
+}))
+
+vi.mock('../haptics.js', () => haptics)
+
 vi.mock('./Menu.js', () => ({
   Menu(props: {
     trigger: (open: boolean) => ReactNode
@@ -109,6 +116,8 @@ function renderSelector(overrides: RenderOverrides = {}) {
 }
 
 beforeEach(() => {
+  haptics.performAppHaptic.mockClear()
+  haptics.prepareAppHaptics.mockClear()
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback: FrameRequestCallback) => {
     callback(0)
     return 1
@@ -137,6 +146,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  localStorage.removeItem('harness.modelPickerLayout')
 })
 
 describe('ModelSelector', () => {
@@ -227,7 +237,9 @@ describe('ModelSelector', () => {
       toJSON: () => ({}),
     })
 
+    fireEvent.pointerEnter(slider)
     fireEvent.pointerDown(slider, { clientX: 110, pointerId: 4 })
+    fireEvent.pointerMove(slider, { clientX: 350, pointerId: 4 })
     fireEvent.pointerMove(slider, { clientX: 350, pointerId: 4 })
     expect(slider.getAttribute('aria-valuetext')).toBe('Extra High')
     expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
@@ -237,6 +249,10 @@ describe('ModelSelector', () => {
     expect(slider.querySelectorAll('canvas')).toHaveLength(2)
     expect(slider.querySelectorAll('.model-selector__slider-stop')).toHaveLength(4)
     expect(slider.querySelector('.model-selector__slider-thumb')).toBeNull()
+    expect(haptics.prepareAppHaptics).toHaveBeenCalled()
+    expect(haptics.performAppHaptic).toHaveBeenCalledTimes(2)
+    expect(haptics.performAppHaptic).toHaveBeenNthCalledWith(1, 'alignment')
+    expect(haptics.performAppHaptic).toHaveBeenNthCalledWith(2, 'alignment')
 
     fireEvent.pointerUp(slider, { clientX: 350, pointerId: 4 })
     expect(onEffortChange).toHaveBeenCalledWith('xhigh')
@@ -278,7 +294,95 @@ describe('ModelSelector', () => {
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
   })
 
+  it('defaults to the flat list with inline provider headings', () => {
+    renderSelector()
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+
+    expect(screen.queryByRole('group', { name: 'Providers' })).toBeNull()
+    expect(document.querySelector('.model-selector__models--flat')).toBeTruthy()
+    expect(screen.getByRole('searchbox', { name: 'Search models' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
+    const heading = document.querySelector('.model-selector__group-title .source-identity')
+    expect(heading?.getAttribute('title')).toBe('Codex')
+    expect(heading?.querySelector('svg')?.getAttribute('width')).toBe('11')
+  })
+
+  it('searches every flat-list source without changing the selected model', () => {
+    const claude = {
+      ...MODELS[0]!,
+      key: 'claude-code:sonnet',
+      provider: 'claude-code' as const,
+      sourceName: 'Claude Code',
+      mark: 'anthropic' as const,
+      model: { ...MODELS[0]!.model, id: 'sonnet', displayName: 'Sonnet 5' },
+    }
+    const { onModelChange } = renderSelector({ models: [...MODELS, claude] })
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    const search = screen.getByRole('searchbox', { name: 'Search models' })
+
+    fireEvent.change(search, { target: { value: 'claude sonnet' } })
+    expect(screen.getByRole('button', { name: 'Use Sonnet 5 through Claude Code' })).toBeTruthy()
+    expect(onModelChange).not.toHaveBeenCalled()
+    fireEvent.keyDown(search, { key: 'Escape' })
+    expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
+  })
+
+  it('moves from model search into the matching results with arrow keys', () => {
+    renderSelector()
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    const search = screen.getByRole('searchbox', { name: 'Search models' })
+
+    fireEvent.change(search, { target: { value: 'mini' } })
+    fireEvent.keyDown(search, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Use GPT-5.6 Mini through Codex' }),
+    )
+
+    search.focus()
+    fireEvent.change(search, { target: { value: '' } })
+    fireEvent.keyDown(search, { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Use GPT-5.6 Mini through Codex' }),
+    )
+  })
+
+  it('omits controls when the selected model declares none', () => {
+    const plain = {
+      ...MODELS[0]!,
+      key: 'grok:plain',
+      provider: 'grok' as const,
+      sourceName: 'Grok',
+      mark: 'grok' as const,
+      model: { ...MODELS[0]!.model, reasoningEfforts: [], serviceTiers: [] },
+    }
+    renderSelector({ models: [plain], modelId: plain.key, effort: undefined })
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+
+    expect(document.querySelector('.model-selector__controls')).toBeNull()
+    expect(screen.queryByRole('slider', { name: 'Reasoning effort' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Enable fast mode' })).toBeNull()
+  })
+
+  it('renders only a compact Fast control when effort is unsupported', () => {
+    const fastOnly = {
+      ...MODELS[1]!,
+      model: { ...MODELS[1]!.model, reasoningEfforts: [] },
+    }
+    renderSelector({
+      models: [fastOnly],
+      modelId: fastOnly.key,
+      effort: undefined,
+      serviceTier: 'fast',
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+
+    expect(document.querySelector('.model-selector__controls.is-fast-only')).toBeTruthy()
+    expect(screen.queryByRole('slider', { name: 'Reasoning effort' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Disable fast mode' })).toBeTruthy()
+  })
+
   it('filters the model list through a provider logo rail', () => {
+    localStorage.setItem('harness.modelPickerLayout', 'rail')
     const claudeModel: ModelChoice = {
       key: 'claude-code:sonnet',
       provider: 'claude-code',
@@ -315,6 +419,11 @@ describe('ModelSelector', () => {
       (title) => title.textContent,
     )
     expect(titles).toEqual(['Codex'])
+    expect(
+      document
+        .querySelector('.model-selector__group-title .source-identity')
+        ?.getAttribute('title'),
+    ).toBe('Codex')
 
     fireEvent.click(screen.getByRole('button', { name: 'Show Claude Code models' }))
 
@@ -326,7 +435,31 @@ describe('ModelSelector', () => {
     expect(onModelChange).not.toHaveBeenCalled()
   })
 
-  it('searches the active provider without changing the selected model', () => {
+  it('keeps ACP sources distinct by stable agent identity', () => {
+    const acpModels: ModelChoice[] = ['gemini', 'qwen'].map((agentId) => ({
+      ...MODELS[0]!,
+      key: `acp:${agentId}:default`,
+      provider: 'acp',
+      sourceName: 'Workspace agent',
+      mark: 'acp',
+      agent: { id: agentId, name: 'Workspace agent' },
+      model: {
+        ...MODELS[0]!.model,
+        id: 'default',
+        displayName: `${agentId} default`,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    }))
+
+    expect(groupModelsBySource(acpModels).map((group) => group.key)).toEqual([
+      'acp:gemini',
+      'acp:qwen',
+    ])
+  })
+
+  it('searches every rail source without changing the selected model', () => {
+    localStorage.setItem('harness.modelPickerLayout', 'rail')
     const claudeModel: ModelChoice = {
       key: 'claude-code:sonnet',
       provider: 'claude-code',
@@ -344,7 +477,7 @@ describe('ModelSelector', () => {
     const { onModelChange } = renderSelector({ models: [...MODELS, claudeModel] })
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
 
-    const search = screen.getByRole('searchbox', { name: 'Search Codex models' })
+    const search = screen.getByRole('searchbox', { name: 'Search models' })
     fireEvent.change(search, { target: { value: 'mini' } })
 
     expect(screen.queryByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeNull()
@@ -352,11 +485,17 @@ describe('ModelSelector', () => {
     expect(onModelChange).not.toHaveBeenCalled()
 
     fireEvent.change(search, { target: { value: 'sonnet' } })
-    expect(screen.getByRole('status').textContent).toBe('No matching models.')
-    fireEvent.click(screen.getByRole('button', { name: 'Show Claude Code models' }))
     expect(screen.getByRole('button', { name: 'Use Sonnet 5 through Claude Code' })).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Show Claude Code models' }).getAttribute('aria-pressed'),
+    ).toBe('true')
 
-    const claudeSearch = screen.getByRole('searchbox', { name: 'Search Claude Code models' })
+    const claudeSearch = screen.getByRole('searchbox', { name: 'Search models' })
+    fireEvent.keyDown(claudeSearch, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Use Sonnet 5 through Claude Code' }),
+    )
+    claudeSearch.focus()
     fireEvent.keyDown(claudeSearch, { key: 'Escape' })
     expect((claudeSearch as HTMLInputElement).value).toBe('')
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()

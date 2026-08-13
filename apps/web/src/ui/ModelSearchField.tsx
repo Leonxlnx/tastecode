@@ -7,6 +7,7 @@ export function ModelSearchField(props: {
   className?: string
   autoFocus?: boolean
   onChange: (value: string) => void
+  onNavigate?: (edge: 'first' | 'last') => void
 }) {
   const input = useRef<HTMLInputElement>(null)
 
@@ -25,6 +26,12 @@ export function ModelSearchField(props: {
         spellCheck={false}
         onChange={(event) => props.onChange(event.currentTarget.value)}
         onKeyDown={(event) => {
+          if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && props.onNavigate) {
+            event.preventDefault()
+            event.stopPropagation()
+            props.onNavigate(event.key === 'ArrowDown' ? 'first' : 'last')
+            return
+          }
           if (event.key !== 'Escape' || !props.value) return
           event.preventDefault()
           event.stopPropagation()

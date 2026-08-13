@@ -1,10 +1,19 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProviderIdSchema } from '@harness/contracts'
 import type {
+  ApprovalMode,
   Capabilities,
   DomainEvent,
   McpServer,
@@ -17,20 +26,34 @@ import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
 import * as checkpoint from './checkpoint.js'
+import { beginOptimisticTurn, emptyThread, reduceEventLog } from '../../web/src/thread-store.js'
+import { presentTurns } from '../../web/src/ui/turns.js'
 
 /** Counts stops, so tests can prove the dev server does not outlive its flow. */
-const previewStops = vi.hoisted(() => ({ count: 0 }))
+const previewStops = vi.hoisted(() => ({ count: 0, barriers: [] as Promise<void>[] }))
+const previewStarts = vi.hoisted(() => ({
+  count: 0,
+  barriers: [] as Promise<void>[],
+  failures: [] as unknown[],
+}))
 
 vi.mock('./design-preview-runner.js', () => ({
   startDesignPreview: vi.fn(
-    async (_workspace: string, plan: { url: string; viewports: unknown[] }) => ({
-      url: plan.url,
-      viewports: plan.viewports,
-      output: () => 'ready',
-      stop: async () => {
-        previewStops.count += 1
-      },
-    }),
+    async (_workspace: string, plan: { url: string; viewports: unknown[] }) => {
+      previewStarts.count += 1
+      await previewStarts.barriers.shift()
+      const failure = previewStarts.failures.shift()
+      if (failure) throw failure
+      return {
+        url: plan.url,
+        viewports: plan.viewports,
+        output: () => 'ready',
+        stop: async () => {
+          previewStops.count += 1
+          await previewStops.barriers.shift()
+        },
+      }
+    },
   ),
 }))
 
@@ -65,7 +88,15 @@ class FakeSession implements AgentSession {
   sentOptions: Array<TurnOptions | undefined> = []
   steered: string[] = []
   userInputs: Array<{ requestId: string; answers: Record<string, string[]> }> = []
+  approvalModes: ApprovalMode[] = []
   mcpServers: McpServer[] = []
+  turnIds: string[] = []
+  sendError: Error | undefined
+  eventDuringSend: DomainEvent | undefined
+  lateSendError: Error | undefined
+  emitUsageChanged: () => void = () => {}
+  afterEventBarrier: Promise<void> | undefined
+  steerBarriers: Promise<void>[] = []
   /** Resolves the pending sendTurn, letting a test hold one open. */
   release: (() => void) | undefined
 
@@ -83,11 +114,17 @@ class FakeSession implements AgentSession {
     this.sentAttachments.push(attachments)
     this.sentOptions.push(options)
     if (this.release) await new Promise<void>((resolve) => (this.release = resolve))
-    return `${this.id}-turn`
+    if (this.sendError) throw this.sendError
+    if (this.eventDuringSend) this.emit(this.eventDuringSend)
+    if (this.afterEventBarrier) await this.afterEventBarrier
+    if (this.lateSendError) throw this.lateSendError
+    return this.turnIds.shift() ?? `${this.id}-turn`
   }
 
   async steer(_threadId: string, text: string): Promise<void> {
     this.steered.push(text)
+    const barrier = this.steerBarriers.shift()
+    if (barrier) await barrier
   }
 
   async interrupt(_threadId: string): Promise<void> {
@@ -102,6 +139,9 @@ class FakeSession implements AgentSession {
   respondToUserInput(requestId: string, answers: Record<string, string[]>): void {
     this.userInputs.push({ requestId, answers })
   }
+  setApproval(approval: ApprovalMode): void {
+    this.approvalModes.push(approval)
+  }
   dispose(): void {
     this.disposed = true
   }
@@ -112,18 +152,28 @@ class FakeSession implements AgentSession {
       for (const l of this.#listeners) l(event)
     }
   }
+
+  onUsageChanged(listener: () => void): void {
+    this.emitUsageChanged = listener
+  }
 }
 
 function harness(worktreeRoot?: string, store = new Store(':memory:')) {
   const sessions: FakeSession[] = []
   const received: Array<{ threadId: string; event: DomainEvent }> = []
+  const sideReceived: Array<{ threadId: string; event: DomainEvent }> = []
   const lifecycles: Array<{ threadId: string; lifecycle: ThreadLifecycle }> = []
+  const logs: string[] = []
+  const queueChanges: Array<{ threadId: string; itemIds: string[] }> = []
+  const usageChanges: ProviderId[] = []
+  const queueNotificationError: { current?: Error } = {}
 
   /** Where each session was actually told to run. */
   const startedIn: string[] = []
   const startedOptions: StartOptions[] = []
   const resumedIds: string[] = []
   const resumedIn: string[] = []
+  const resumedOptions: StartOptions[] = []
   const capturePreview = vi.fn(
     async (_url: string, viewports: Array<{ width: number; height: number }>) =>
       viewports.map((viewport) => ({
@@ -154,9 +204,10 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     },
     ...(provider === 'codex'
       ? {
-          async resume(threadId: string, workspacePath: string) {
+          async resume(threadId: string, workspacePath: string, options: StartOptions) {
             resumedIds.push(threadId)
             resumedIn.push(workspacePath)
+            resumedOptions.push(options)
             const session = new FakeSession(`s${sessions.length + 1}`)
             sessions.push(session)
             return {
@@ -175,9 +226,15 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
 
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event) => received.push({ threadId, event }),
+    onQueue: (threadId, state) => {
+      queueChanges.push({ threadId, itemIds: state.items.map(({ id }) => id) })
+      if (queueNotificationError.current) throw queueNotificationError.current
+    },
+    onSideEvent: (threadId, event) => sideReceived.push({ threadId, event }),
     onLifecycle: (threadId, lifecycle) => lifecycles.push({ threadId, lifecycle }),
-    onLog: () => {},
+    onLog: (line) => logs.push(line),
     onLogin: () => {},
+    onUsageChanged: (provider) => usageChanges.push(provider),
     mcpConfig: new McpConfigStore(
       path.join(mkdtempSync(path.join(os.tmpdir(), 'harness-mcp-')), 'mcp.json'),
     ),
@@ -191,15 +248,43 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     store,
     sessions,
     received,
+    sideReceived,
     lifecycles,
+    logs,
+    queueChanges,
+    usageChanges,
+    queueNotificationError,
     orchestrator,
     startedIn,
     startedOptions,
     resumedIds,
     resumedIn,
+    resumedOptions,
     capturePreview,
   }
 }
+
+describe('provider usage changes', () => {
+  it('forwards a live session signal with its provider identity', async () => {
+    const { orchestrator, sessions, usageChanges } = harness()
+    await orchestrator.startThread('codex', process.cwd())
+
+    sessions[0]?.emitUsageChanged()
+
+    expect(usageChanges).toEqual(['codex'])
+  })
+
+  it('ignores a signal from a closed session', async () => {
+    const { orchestrator, sessions, usageChanges } = harness()
+    const thread = await orchestrator.startThread('codex', process.cwd())
+    const session = sessions[0]
+
+    orchestrator.close(thread.id)
+    session?.emitUsageChanged()
+
+    expect(usageChanges).toEqual([])
+  })
+})
 
 const message = (text: string, turnId = 't1'): DomainEvent => ({
   type: 'item.completed',
@@ -214,6 +299,27 @@ const message = (text: string, turnId = 't1'): DomainEvent => ({
   },
 })
 
+const userMessage = (
+  id: string,
+  text: string,
+  turnId: string,
+  status: 'started' | 'completed' = 'completed',
+): DomainEvent => ({
+  type: status === 'started' ? 'item.started' : 'item.completed',
+  item: {
+    id,
+    turnId,
+    type: 'message',
+    role: 'user',
+    status,
+    text,
+    createdAt: 0,
+  },
+})
+const turnStarted = (threadId: string, turnId: string): DomainEvent => ({
+  type: 'turn.started',
+  turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
+})
 describe('structured user input', () => {
   it('returns answers to the session that owns the waiting request', async () => {
     const { orchestrator, sessions } = harness()
@@ -226,6 +332,23 @@ describe('structured user input', () => {
     expect(sessions[0]?.userInputs).toEqual([
       { requestId: 'brief-1', answers: { palette: ['Decide for me'] } },
     ])
+  })
+})
+
+describe('live access level', () => {
+  it('records the new mode and forwards it to the session', async () => {
+    const { orchestrator, sessions } = harness()
+    const thread = await orchestrator.startThread('codex', process.cwd(), { approval: 'ask' })
+
+    orchestrator.setThreadApproval(thread.id, 'full')
+
+    expect(sessions[0]?.approvalModes).toEqual(['full'])
+  })
+
+  it('throws for a thread it does not know', async () => {
+    const { orchestrator } = harness()
+
+    expect(() => orchestrator.setThreadApproval('missing-thread', 'auto')).toThrow(/no such thread/)
   })
 })
 
@@ -242,13 +365,896 @@ describe('reply style', () => {
   )
 })
 
+describe('provider-neutral Side chat', () => {
+  it.each(ProviderIdSchema.options)(
+    'forks an ephemeral %s session from the parent boundary',
+    async (provider) => {
+      const { orchestrator, store, sessions, startedOptions, received, sideReceived } = harness()
+      const parent = await orchestrator.startThread(provider, process.cwd(), { approval: 'auto' })
+      store.append(
+        parent.id,
+        userMessage(`user-${provider}`, 'Explain this failure.', 'parent-turn'),
+      )
+
+      const side = await orchestrator.startSideThread(parent.id, {
+        model: 'selected-model',
+        effort: 'high',
+      })
+
+      expect(side.provider).toBe(provider)
+      expect(store.thread(side.id)).toMatchObject({
+        ephemeral: true,
+        parentThreadId: parent.id,
+      })
+      expect(store.threads().map((thread) => thread.id)).toEqual([parent.id])
+      expect(startedOptions[1]).toMatchObject({
+        model: 'selected-model',
+        effort: 'high',
+        approval: 'auto',
+      })
+      expect(startedOptions[1]?.instructions).toContain('temporary Side chat')
+      expect(startedOptions[1]?.instructions).toContain('Explain this failure.')
+
+      sessions[1]?.emit(message('side answer', 'side-turn'))
+      expect(sideReceived).toContainEqual({
+        threadId: side.id,
+        event: message('side answer', 'side-turn'),
+      })
+      expect(received.some((entry) => entry.threadId === side.id)).toBe(false)
+
+      expect(await orchestrator.startSideThread(parent.id)).toBe(side)
+      await expect(orchestrator.startSideThread(side.id)).rejects.toThrow('cannot be opened')
+      orchestrator.closeSideThread(side.id)
+      expect(sessions[1]?.disposed).toBe(true)
+      expect(sessions[0]?.disposed).toBe(false)
+      expect(store.thread(side.id)).toBeUndefined()
+    },
+  )
+})
+
+describe('workspace paths', () => {
+  it('expands a home-relative project before starting Grok and taking checkpoints', async () => {
+    const projectPath = ['~', 'Developer', 'harness'].join(path.sep)
+    const resolvedPath = path.join(os.homedir(), 'Developer', 'harness')
+    const { orchestrator, startedIn, store } = harness()
+    const snapshot = vi
+      .spyOn(checkpoint, 'takeSnapshot')
+      .mockResolvedValueOnce({ commit: 'checkpoint', clean: true })
+
+    const thread = await orchestrator.startThread('grok', projectPath)
+    await orchestrator.sendTurn(thread.id, 'hello')
+
+    expect(startedIn).toEqual([resolvedPath])
+    expect(snapshot).toHaveBeenCalledWith(resolvedPath)
+    expect(store.thread(thread.id)?.projectPath).toBe(projectPath)
+    await orchestrator.disposeAll()
+  })
+})
+
+describe('durable turn timing', () => {
+  it('replays the accepted start after a provider reports a later timestamp', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const optimistic = beginOptimisticTurn(emptyThread, 'Do the work.')
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('api', '/repo')
+      const session = sessions[0]!
+      session.turnIds.push('turn-replay')
+      await orchestrator.sendTurn(thread.id, 'Do the work.')
+
+      now.mockReturnValue(5_000)
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 'turn-replay', threadId: thread.id, status: 'running', createdAt: 5_000 },
+      })
+      now.mockReturnValue(8_000)
+      const answer = message('Done.', 'turn-replay')
+      if (answer.type !== 'item.completed') throw new Error('expected completed message')
+      session.emit({ ...answer, item: { ...answer.item, createdAt: 8_000 } })
+      session.emit({ type: 'turn.completed', turnId: 'turn-replay', status: 'completed' })
+
+      const history = store.history(thread.id)
+      const replayed = reduceEventLog(emptyThread, history)
+      const live = reduceEventLog(optimistic, history)
+      expect(replayed.turnTiming['turn-replay']).toEqual({ startedAt: 1_000, completedAt: 8_000 })
+      expect(
+        [live, replayed].map(
+          (state) => presentTurns(state.items, state.turnTiming).get('turn-replay')?.elapsedMs,
+        ),
+      ).toEqual([7_000, 7_000])
+    } finally {
+      now.mockRestore()
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('normalizes a start emitted before the provider returns its turn id', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('api', '/repo')
+      const session = sessions[0]!
+      session.turnIds.push('turn-sync')
+      session.eventDuringSend = {
+        type: 'turn.started',
+        turn: { id: 'turn-sync', threadId: thread.id, status: 'running', createdAt: 5_000 },
+      }
+
+      await orchestrator.sendTurn(thread.id, 'Do the work.')
+
+      expect(store.history(thread.id).at(-1)?.event).toMatchObject({
+        type: 'turn.started',
+        turn: { id: 'turn-sync', createdAt: 1_000 },
+      })
+    } finally {
+      now.mockRestore()
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it.each(['codex', 'api'] as const)(
+    'records server-owned lifecycle boundaries for %s turns',
+    async (provider) => {
+      const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+      const { orchestrator, sessions, store, received } = harness()
+      try {
+        const thread = await orchestrator.startThread(provider, '/repo')
+        const session = sessions[0]!
+        session.turnIds.push('turn-1')
+        await orchestrator.sendTurn(thread.id, 'Do the work.')
+
+        now.mockReturnValue(5_000)
+        session.emit({
+          type: 'turn.started',
+          turn: { id: 'turn-1', threadId: thread.id, status: 'running', createdAt: 5_000 },
+        })
+        now.mockReturnValue(32_000)
+        session.emit({
+          type: 'turn.completed',
+          turnId: 'turn-1',
+          status: 'completed',
+          completedAt: 4_000,
+        })
+
+        const lifecycle = store
+          .history(thread.id)
+          .map(({ event }) => event)
+          .filter((event) => event.type === 'turn.started' || event.type === 'turn.completed')
+        expect(lifecycle).toEqual([
+          {
+            type: 'turn.started',
+            turn: { id: 'turn-1', threadId: thread.id, status: 'running', createdAt: 1_000 },
+          },
+          {
+            type: 'turn.completed',
+            turnId: 'turn-1',
+            status: 'completed',
+            completedAt: 32_000,
+          },
+        ])
+        expect(received.map(({ event }) => event).slice(-2)).toEqual(lifecycle)
+      } finally {
+        now.mockRestore()
+        await orchestrator.disposeAll()
+      }
+    },
+  )
+
+  it('anchors queued and design turns when their provider work actually starts', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds.push('first', 'queued', 'design')
+      await orchestrator.submitTurn(thread.id, 'First')
+      await orchestrator.submitTurn(thread.id, 'Queued')
+
+      now.mockReturnValue(5_000)
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 'first', threadId: thread.id, status: 'running', createdAt: 5_000 },
+      })
+      now.mockReturnValue(7_000)
+      session.emit({ type: 'turn.completed', turnId: 'first', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toEqual(['First', 'Queued']))
+      now.mockReturnValue(9_000)
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 'queued', threadId: thread.id, status: 'running', createdAt: 9_000 },
+      })
+      session.emit({ type: 'turn.completed', turnId: 'queued', status: 'completed' })
+
+      now.mockReturnValue(11_000)
+      await orchestrator.sendTurn(thread.id, 'Design', [DESIGN_BRIEF_ATTACHMENT])
+      now.mockReturnValue(13_000)
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 'design', threadId: thread.id, status: 'running', createdAt: 13_000 },
+      })
+
+      const starts = store
+        .history(thread.id)
+        .map(({ event }) => event)
+        .filter(
+          (event): event is Extract<DomainEvent, { type: 'turn.started' }> =>
+            event.type === 'turn.started',
+        )
+      expect(starts.map(({ turn }) => [turn.id, turn.createdAt])).toEqual([
+        ['first', 1_000],
+        ['queued', 7_000],
+        ['design', 11_000],
+      ])
+    } finally {
+      now.mockRestore()
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('does not reuse failed or disposed turn anchors', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    const session = sessions[0]!
+    try {
+      session.sendError = new Error('provider rejected the turn')
+      await expect(orchestrator.sendTurn(thread.id, 'Fails')).rejects.toThrow('provider rejected')
+
+      session.sendError = undefined
+      session.turnIds.push('after-failure', 'before-error', 'before-dispose')
+      now.mockReturnValue(2_000)
+      await orchestrator.sendTurn(thread.id, 'Retry')
+      now.mockReturnValue(5_000)
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 'after-failure', threadId: thread.id, status: 'running', createdAt: 5_000 },
+      })
+
+      now.mockReturnValue(6_000)
+      await orchestrator.sendTurn(thread.id, 'Errors')
+      session.emit({ type: 'thread.error', threadId: thread.id, message: 'provider failed' })
+      now.mockReturnValue(7_000)
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 'before-error', threadId: thread.id, status: 'running', createdAt: 7_000 },
+      })
+
+      now.mockReturnValue(8_000)
+      await orchestrator.sendTurn(thread.id, 'Dispose')
+      await orchestrator.disposeAll()
+      now.mockReturnValue(9_000)
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 'before-dispose', threadId: thread.id, status: 'running', createdAt: 9_000 },
+      })
+
+      const starts = store
+        .history(thread.id)
+        .map(({ event }) => event)
+        .filter(
+          (event): event is Extract<DomainEvent, { type: 'turn.started' }> =>
+            event.type === 'turn.started',
+        )
+      expect(starts.map(({ turn }) => turn.createdAt)).toEqual([2_000, 7_000, 9_000])
+    } finally {
+      now.mockRestore()
+      await orchestrator.disposeAll()
+    }
+  })
+})
+
+describe('durable user submissions', () => {
+  it.each([
+    ['codex', true],
+    ['claude-code', false],
+    ['grok', false],
+    ['api', false],
+  ] as const)('owns exact repeated user messages for %s', async (provider, emitsUserEcho) => {
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread(provider, '/repo')
+      const session = sessions[0]!
+      for (const [turnId, submissionId] of [
+        ['turn-a', 'submission-a'],
+        ['turn-b', 'submission-b'],
+      ] as const) {
+        session.turnIds.push(turnId)
+        await orchestrator.submitTurn(thread.id, 'Repeat this.', [], {}, submissionId)
+        expect(store.hasItem(thread.id, submissionId)).toBe(true)
+        session.emit(turnStarted(thread.id, turnId))
+        if (emitsUserEcho) {
+          session.emit(userMessage(`provider-${submissionId}`, 'Repeat this.', turnId, 'started'))
+          session.emit({
+            type: 'item.delta',
+            turnId,
+            itemId: `provider-${submissionId}`,
+            textDelta: 'Repeat this.',
+          })
+          session.emit(userMessage(`provider-${submissionId}`, 'Repeat this.', turnId))
+        }
+        session.emit({ type: 'turn.completed', turnId, status: 'completed' })
+      }
+      const users = store
+        .history(thread.id)
+        .map(({ event }) => event)
+        .filter(
+          (event): event is Extract<DomainEvent, { type: 'item.completed' }> =>
+            event.type === 'item.completed' &&
+            event.item.type === 'message' &&
+            event.item.role === 'user',
+        )
+      expect(users.map(({ item }) => [item.id, item.text])).toEqual([
+        ['submission-a', 'Repeat this.'],
+        ['submission-b', 'Repeat this.'],
+      ])
+      expect(store.history(thread.id).some(({ event }) => event.type === 'item.delta')).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+  it('persists the exact user item before an accepted request returns', async () => {
+    const { orchestrator, sessions, store } = harness()
+    let release = () => {}
+    let submitting = Promise.resolve<unknown>(undefined)
+    try {
+      const thread = await orchestrator.startThread('api', '/repo')
+      const session = sessions[0]!
+      session.turnIds.push('turn-in-flight')
+      session.eventDuringSend = turnStarted(thread.id, 'turn-in-flight')
+      session.afterEventBarrier = new Promise<void>((resolve) => (release = resolve))
+      submitting = orchestrator.submitTurn(thread.id, 'Accepted.', [], {}, 'submission-in-flight')
+      await vi.waitFor(() => expect(store.hasItem(thread.id, 'submission-in-flight')).toBe(true))
+      expect(store.history(thread.id).map(({ event }) => event.type)).toEqual([
+        'turn.started',
+        'item.completed',
+      ])
+    } finally {
+      release()
+      await submitting.catch(() => undefined)
+      await orchestrator.disposeAll()
+    }
+  })
+  it('preserves submission identity through queue drain and steer', async () => {
+    const { orchestrator, sessions, store } = harness()
+    let releaseSteer = () => {}
+    let steering: Promise<void> | undefined
+    try {
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds.push('turn-current', 'turn-queued', 'turn-steered')
+      await orchestrator.submitTurn(thread.id, 'Repeat this.', [], {}, 'submission-current')
+      session.emit(turnStarted(thread.id, 'turn-current'))
+      const queued = await orchestrator.submitTurn(
+        thread.id,
+        'Repeat this.',
+        [],
+        {},
+        'submission-queued',
+      )
+      const steered = await orchestrator.submitTurn(
+        thread.id,
+        'Repeat this.',
+        [],
+        {},
+        'submission-steered',
+      )
+      if (!queued.queued || !steered.queued) throw new Error('expected queued submissions')
+      session.steerBarriers.push(new Promise<void>((resolve) => (releaseSteer = resolve)))
+      steering = orchestrator.steerQueuedTurn(thread.id, steered.queuedTurn.id)
+      await vi.waitFor(() => expect(orchestrator.queue(thread.id).items).toHaveLength(1))
+      await expect(
+        orchestrator.submitTurn(thread.id, 'Repeat this.', [], {}, 'submission-steered'),
+      ).rejects.toThrow(/clientSubmissionId.*already used/)
+      await expect(orchestrator.steerQueuedTurn(thread.id, queued.queuedTurn.id)).rejects.toThrow(
+        /already being steered/,
+      )
+      session.emit({ type: 'turn.completed', turnId: 'turn-current', status: 'completed' })
+      expect(session.sent).toEqual(['Repeat this.'])
+      releaseSteer()
+      await steering
+      await vi.waitFor(() => expect(session.sent).toEqual(['Repeat this.', 'Repeat this.']))
+      session.emit(turnStarted(thread.id, 'turn-queued'))
+      session.emit({ type: 'turn.completed', turnId: 'turn-queued', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toHaveLength(3))
+      session.emit(turnStarted(thread.id, 'turn-steered'))
+      const users = store
+        .history(thread.id)
+        .map(({ event }) => event)
+        .filter(
+          (event): event is Extract<DomainEvent, { type: 'item.completed' }> =>
+            event.type === 'item.completed' && event.item.role === 'user',
+        )
+      expect(users.map(({ item }) => [item.id, item.turnId])).toEqual([
+        ['submission-current', 'turn-current'],
+        ['submission-queued', 'turn-queued'],
+        ['submission-steered', 'turn-steered'],
+      ])
+    } finally {
+      releaseSteer()
+      await steering?.catch(() => undefined)
+      await orchestrator.disposeAll()
+    }
+  })
+  it('releases rejected identities but rejects a durable reuse', async () => {
+    const { orchestrator, sessions } = harness()
+    try {
+      const thread = await orchestrator.startThread('api', '/repo')
+      const session = sessions[0]!
+      session.sendError = new Error('provider rejected')
+      await expect(
+        orchestrator.submitTurn(thread.id, 'Try this.', [], {}, 'submission-retry'),
+      ).rejects.toThrow('provider rejected')
+      session.sendError = undefined
+      session.turnIds.push('turn-retry')
+      await orchestrator.submitTurn(thread.id, 'Try this.', [], {}, 'submission-retry')
+      session.emit(turnStarted(thread.id, 'turn-retry'))
+      session.emit({ type: 'turn.completed', turnId: 'turn-retry', status: 'completed' })
+      await expect(
+        orchestrator.submitTurn(thread.id, 'Try this.', [], {}, 'submission-retry'),
+      ).rejects.toThrow(/clientSubmissionId.*already used/)
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+})
+
 describe('provider-neutral design briefing', () => {
+  it('accepts a Design turn from turn.started while sendTurn is still pending', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-started-'))
+    const { orchestrator, sessions, received, store, logs } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      const session = sessions[0]!
+      session.release = () => {}
+      const sending = orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      await vi.waitFor(() => expect(session.sent).toHaveLength(1))
+      const releaseProvider = session.release
+
+      session.emit(turnStarted(thread.id, 'design-turn'))
+      await expect(sending).resolves.toBe('design-turn')
+      session.turnIds.push('different-late-id')
+      releaseProvider?.()
+      await vi.waitFor(() =>
+        expect(logs).toContain(
+          'provider returned a different turn id after Design already started',
+        ),
+      )
+      for (let index = 0; index < 4; index += 1) {
+        session.emit({
+          type: 'item.completed',
+          item: {
+            id: `thinking-${index}`,
+            turnId: 'design-turn',
+            type: 'reasoning',
+            status: 'completed',
+            text: 'Thinking',
+            createdAt: index,
+          },
+        })
+      }
+      session.emit(
+        message(
+          JSON.stringify({
+            status: 'questions',
+            message: 'Preparing questions.',
+            questions: [
+              {
+                id: 'audience',
+                header: 'Audience',
+                question: 'Who is this for?',
+                allowOther: true,
+                options: [{ label: 'Decide for me', description: 'Let the Design Agent decide.' }],
+              },
+            ],
+            brief: null,
+          }),
+          'design-turn',
+        ),
+      )
+      session.emit({ type: 'turn.completed', turnId: 'design-turn', status: 'completed' })
+
+      const history = store.history(thread.id)
+      expect(
+        history.filter(
+          ({ event }) => event.type === 'item.started' && event.item.text === 'design:brief',
+        ),
+      ).toHaveLength(1)
+      expect(
+        presentTurns(reduceEventLog(emptyThread, history).items).get('design-turn')?.design,
+      ).toBe(true)
+      expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(true)
+      expect(
+        history.some(
+          ({ event }) =>
+            event.type === 'item.completed' && event.item.text.includes('Ask-first may block'),
+        ),
+      ).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('fails and drains a Design start that the provider never acknowledges', async () => {
+    vi.useFakeTimers()
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-start-timeout-'))
+    const { orchestrator, sessions, received, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      const session = sessions[0]!
+      session.release = () => {}
+      let releaseInterrupt = () => {}
+      session.interruptBarrier = new Promise<void>((resolve) => (releaseInterrupt = resolve))
+      const sending = orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      await vi.waitFor(() => expect(session.sent).toHaveLength(1))
+      session.release = undefined
+      await orchestrator.submitTurn(thread.id, 'Continue normally.')
+      const failure = expect(sending).rejects.toThrow('did not start the Design phase')
+
+      await vi.advanceTimersByTimeAsync(30_000)
+      await vi.waitFor(() => expect(session.interrupted).toBe(true))
+      session.emit(turnStarted(thread.id, 'late-design-turn'))
+      releaseInterrupt()
+
+      await failure
+      expect(store.designRun(thread.id)).toBeUndefined()
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'thread.error' && event.message.includes('Design mode failed'),
+        ),
+      ).toBe(true)
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'item.completed' &&
+            event.item.turnId === 'late-design-turn' &&
+            event.item.text === 'design:brief' &&
+            event.item.status === 'failed',
+        ),
+      ).toBe(true)
+      await vi.waitFor(() => expect(session.sent.at(-1)).toBe('Continue normally.'))
+    } finally {
+      vi.useRealTimers()
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('keeps an accepted Design flow after its provider start rejects late', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-late-reject-'))
+    const { orchestrator, sessions, received, store, logs } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      const session = sessions[0]!
+      session.release = () => {}
+      session.lateSendError = new Error('late start rejection')
+      const sending = orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      await vi.waitFor(() => expect(session.sent).toHaveLength(1))
+      session.emit(turnStarted(thread.id, 'design-turn'))
+      await expect(sending).resolves.toBe('design-turn')
+      session.release?.()
+      session.emit(
+        message(
+          JSON.stringify({
+            status: 'questions',
+            message: 'Preparing questions.',
+            questions: [
+              {
+                id: 'audience',
+                header: 'Audience',
+                question: 'Who is this for?',
+                allowOther: true,
+                options: [{ label: 'Decide for me', description: 'Let the agent decide.' }],
+              },
+            ],
+            brief: null,
+          }),
+          'design-turn',
+        ),
+      )
+      session.emit({ type: 'turn.completed', turnId: 'design-turn', status: 'completed' })
+
+      await vi.waitFor(() =>
+        expect(logs.some((line) => line.includes('late start rejection'))).toBe(true),
+      )
+      expect(store.designRun(thread.id)).toMatchObject({ phase: 'brief' })
+      expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(true)
+      expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('does not accept completion as proof that a Design turn started', async () => {
+    vi.useFakeTimers()
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-complete-only-'))
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      const session = sessions[0]!
+      session.release = () => {}
+      const sending = orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      const failure = expect(sending).rejects.toThrow('did not start the Design phase')
+      await vi.waitFor(() => expect(session.sent).toHaveLength(1))
+
+      session.emit({ type: 'turn.completed', turnId: 'completed-only', status: 'completed' })
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      await failure
+      expect(store.designRun(thread.id)).toBeUndefined()
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('stays idle when a Design turn completes before sendTurn returns', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-fast-complete-'))
+    const { orchestrator, sessions } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      const session = sessions[0]!
+      session.release = () => {}
+      const sending = orchestrator.submitTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      await vi.waitFor(() => expect(session.sent).toHaveLength(1))
+
+      session.emit(turnStarted(thread.id, 'fast-turn'))
+      session.emit({ type: 'turn.completed', turnId: 'fast-turn', status: 'failed' })
+
+      await expect(sending).resolves.toMatchObject({ queued: false, turnId: 'fast-turn' })
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('drains queued work after an error arrives during Design startup', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-start-error-'))
+    const { orchestrator, sessions } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      const session = sessions[0]!
+      session.release = () => {}
+      const sending = orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      await vi.waitFor(() => expect(session.sent).toHaveLength(1))
+      const releaseProvider = session.release
+      session.sendError = new Error('provider start failed')
+      await orchestrator.submitTurn(thread.id, 'Continue normally.')
+
+      session.emit({ type: 'thread.error', threadId: thread.id, message: 'provider failed' })
+      releaseProvider?.()
+
+      await expect(sending).rejects.toThrow('provider start failed')
+      await vi.waitFor(() => expect(session.sent.at(-1)).toBe('Continue normally.'))
+    } finally {
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  async function previewRecoveryHarness(error: unknown) {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-preview-recovery-'))
+    const taste = path.join(workspace, '.taste')
+    mkdirSync(taste)
+    const artifacts = ['brand.json', 'page.json', 'build.txt'].map((name) => {
+      const file = path.join(taste, name)
+      writeFileSync(file, `${name}:approved`)
+      return [file, readFileSync(file, 'utf8')] as const
+    })
+    const store = new Store(':memory:')
+    store.addProject(workspace)
+    store.addThread({
+      id: 'preview-recovery',
+      projectPath: workspace,
+      provider: 'codex',
+      title: 'Preview recovery',
+    })
+    store.setDesignRun('preview-recovery', {
+      originalRequest: 'Build a site.',
+      options: { effort: 'high' },
+      phase: 'preview',
+      pendingPrompt: 'Preview Setup phase',
+      askedQuestions: false,
+      finalAsked: false,
+      explicitAnswers: [],
+    })
+    const result = harness(undefined, store)
+    result.capturePreview.mockResolvedValueOnce(undefined)
+    if (error) previewStarts.failures.push(error)
+    const queued = await result.orchestrator.submitTurn('preview-recovery', 'Continue afterward.')
+    if (queued.queued)
+      result.orchestrator.deleteQueuedTurn('preview-recovery', queued.queuedTurn.id)
+    await vi.waitFor(() => expect(result.sessions[0]?.sent).toHaveLength(1))
+    result.sessions[0]?.emit(turnStarted('preview-recovery', 's1-turn'))
+    return { ...result, workspace, artifacts }
+  }
+
+  const commandPreviewPlan = {
+    version: 1,
+    kind: 'command',
+    command: 'pnpm',
+    args: ['dev', '--host', '127.0.0.1'],
+    cwd: '.',
+    url: 'http://127.0.0.1:5173',
+    viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+  }
+
+  const staticPreviewPlan = {
+    version: 1,
+    kind: 'static',
+    entry: 'index.html',
+    cwd: '.',
+    url: 'http://127.0.0.1:4173/',
+    viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+  }
+
+  async function completedPreviewHarness() {
+    const result = await previewRecoveryHarness(undefined)
+    result.sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+    await vi.waitFor(() =>
+      expect(
+        result.received.some(
+          ({ event }) =>
+            event.type === 'item.completed' && event.item.text?.startsWith('Website built.'),
+        ),
+      ).toBe(true),
+    )
+    return result
+  }
+
+  function delayNextPreviewStop(): () => void {
+    let release = () => {}
+    previewStops.barriers.push(new Promise<void>((resolve) => (release = resolve)))
+    return release
+  }
+
+  it('waits for its successful preview to stop before close resolves', async () => {
+    const result = await completedPreviewHarness()
+    const stopCount = previewStops.count
+    const release = delayNextPreviewStop()
+    let closed = false
+    try {
+      const closing = Promise.resolve(result.orchestrator.close('preview-recovery')).then(() => {
+        closed = true
+      })
+      await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(closed).toBe(false)
+      release()
+      await closing
+    } finally {
+      release()
+      await result.orchestrator.disposeAll()
+      result.store.close()
+      rmSync(result.workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('waits for every successful preview to stop before disposal resolves', async () => {
+    const result = await completedPreviewHarness()
+    const stopCount = previewStops.count
+    const release = delayNextPreviewStop()
+    let disposed = false
+    try {
+      const disposing = result.orchestrator.disposeAll().then(() => {
+        disposed = true
+      })
+      await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(disposed).toBe(false)
+      release()
+      await disposing
+    } finally {
+      release()
+      await result.orchestrator.disposeAll()
+      result.store.close()
+      rmSync(result.workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('drains a preview start already in flight before disposal resolves', async () => {
+    const result = await previewRecoveryHarness(undefined)
+    const startCount = previewStarts.count
+    const stopCount = previewStops.count
+    let releaseStart = () => {}
+    previewStarts.barriers.push(new Promise<void>((resolve) => (releaseStart = resolve)))
+    const releaseStop = delayNextPreviewStop()
+    let disposed = false
+    try {
+      result.sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+      await vi.waitFor(() => expect(previewStarts.count).toBe(startCount + 1))
+      const disposing = result.orchestrator.disposeAll().then(() => {
+        disposed = true
+      })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(disposed).toBe(false)
+      releaseStart()
+      await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(disposed).toBe(false)
+      releaseStop()
+      await disposing
+    } finally {
+      releaseStart()
+      releaseStop()
+      await result.orchestrator.disposeAll()
+      result.store.close()
+      rmSync(result.workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('stops the prior successful preview before starting the next Design run', async () => {
+    const result = await completedPreviewHarness()
+    const stopCount = previewStops.count
+    const sentCount = result.sessions[0]!.sent.length
+    const release = delayNextPreviewStop()
+    try {
+      const sending = result.orchestrator.sendTurn('preview-recovery', 'Build another site.', [
+        DESIGN_BRIEF_ATTACHMENT,
+      ])
+      await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(result.sessions[0]?.sent).toHaveLength(sentCount)
+      release()
+      await sending
+      expect(result.sessions[0]?.sent).toHaveLength(sentCount + 1)
+    } finally {
+      release()
+      await result.orchestrator.disposeAll()
+      result.store.close()
+      rmSync(result.workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('drains a stale preview start before starting the next Design run', async () => {
+    const result = await previewRecoveryHarness(undefined)
+    const startCount = previewStarts.count
+    const stopCount = previewStops.count
+    let releaseStart = () => {}
+    previewStarts.barriers.push(new Promise<void>((resolve) => (releaseStart = resolve)))
+    const releaseStop = delayNextPreviewStop()
+    try {
+      result.sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+      await vi.waitFor(() => expect(previewStarts.count).toBe(startCount + 1))
+      result.sessions[0]?.emit({
+        type: 'turn.completed',
+        turnId: 's1-turn',
+        status: 'interrupted',
+      })
+      const sentCount = result.sessions[0]!.sent.length
+      const sending = result.orchestrator.sendTurn('preview-recovery', 'Build another site.', [
+        DESIGN_BRIEF_ATTACHMENT,
+      ])
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(result.sessions[0]?.sent).toHaveLength(sentCount)
+      releaseStart()
+      await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(result.sessions[0]?.sent).toHaveLength(sentCount)
+      releaseStop()
+      await sending
+      expect(result.sessions[0]?.sent).toHaveLength(sentCount + 1)
+    } finally {
+      releaseStart()
+      releaseStop()
+      await result.orchestrator.disposeAll()
+      result.store.close()
+      rmSync(result.workspace, { recursive: true, force: true })
+    }
+  })
+
   it.each(ProviderIdSchema.options)(
     'runs the same adaptive question loop with %s',
     async (provider) => {
       const model = 'future-provider/model-that-needs-no-design-code'
       const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-flow-'))
       const { orchestrator, sessions, received, store, capturePreview } = harness()
+      const stopCount = previewStops.count
       try {
         const thread = await orchestrator.startThread(provider, workspace, {})
         await orchestrator.sendTurn(thread.id, 'Create a website.', [DESIGN_BRIEF_ATTACHMENT], {
@@ -354,7 +1360,7 @@ describe('provider-neutral design briefing', () => {
         expect(finalRequest.request.questions[0]?.id).toBe('final_note')
 
         orchestrator.respondToUserInput(thread.id, finalRequest.request.id, {
-          final_note: ["No, that's everything (Recommended)"],
+          final_note: ["No, that's everything"],
         })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(4))
         expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand' })
@@ -366,6 +1372,28 @@ describe('provider-neutral design briefing', () => {
         ])
         expect(sessions[0]?.userInputs).toEqual([])
         expect(sessions[0]?.sent[3]).toContain('Brand phase')
+
+        // The transcript walks the user through the briefing in plain words:
+        // an invitation, an ack per answer round, a clarify nudge, a close.
+        const notes = received
+          .filter(
+            ({ event }) =>
+              event.type === 'item.completed' &&
+              event.item.type === 'message' &&
+              event.item.id.startsWith('design-note-'),
+          )
+          .map(({ event }) =>
+            event.type === 'item.completed' && event.item.type === 'message'
+              ? event.item.text
+              : undefined,
+          )
+        expect(notes).toEqual([
+          'I have a few questions before designing — they are right below.',
+          'Got it, thanks.',
+          'Some answers need one more pass — please take another look below.',
+          'Got it, thanks.',
+          'Brief locked in. Starting the design.',
+        ])
 
         sessions[0]?.emit(
           message(
@@ -542,10 +1570,7 @@ describe('provider-neutral design briefing', () => {
           'review.json',
         ])
         expect(store.designRun(thread.id)).toBeUndefined()
-        // The preview is a real dev server with its cwd in the session's
-        // worktree. Left running it holds a port and, on Windows, a lock that
-        // makes removing that worktree fail.
-        expect(previewStops.count).toBeGreaterThan(0)
+        expect(previewStops.count).toBe(stopCount)
         expect(capturePreview).toHaveBeenCalledTimes(2)
         expect(
           JSON.parse(readFileSync(path.join(workspace, '.taste', 'review.json'), 'utf8')),
@@ -570,29 +1595,153 @@ describe('provider-neutral design briefing', () => {
           'design:repair',
           'design:review',
         ])
+        orchestrator.close(thread.id)
+        await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
       } finally {
+        await orchestrator.disposeAll()
         rmSync(workspace, { recursive: true, force: true })
       }
     },
   )
 
+  it('asks the final note once before locking an initially complete brief', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-complete-'))
+    const { orchestrator, sessions, received, store } = harness()
+    try {
+      const request =
+        'Create a calm one-page Acme payroll landing page for small agencies with a Start free trial CTA, pricing, security, responsive behavior, and WCAG 2.2 AA support.'
+      const completeOutput = JSON.stringify({
+        status: 'complete',
+        message: 'Brief complete.',
+        questions: [],
+        brief: {
+          originalRequest: request,
+          subject: 'Acme payroll',
+          pageType: 'Landing page',
+          scope: 'One responsive page',
+          primaryGoal: 'Start free trials',
+          audience: 'Small agencies',
+          offer: 'Payroll software',
+          primaryAction: 'Start free trial',
+          requiredContent: ['Pricing', 'Security'],
+          constraints: ['WCAG 2.2 AA'],
+          brandInputs: ['Calm'],
+          creativeControl: 'Agent-led',
+          explicitAnswers: [],
+          assumptions: [],
+          unresolved: [],
+        },
+      })
+      const thread = await orchestrator.startThread('codex', workspace)
+      await orchestrator.sendTurn(thread.id, request, [DESIGN_BRIEF_ATTACHMENT])
+      sessions[0]?.emit(message(completeOutput, 's1-turn'))
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+
+      const finalRequests = () =>
+        received.filter(
+          ({ event }) =>
+            event.type === 'user_input.requested' &&
+            event.request.questions.some(({ id }) => id === 'final_note'),
+        )
+      await vi.waitFor(() => expect(finalRequests()).toHaveLength(1))
+      const finalRequest = finalRequests()[0]?.event
+      if (finalRequest?.type !== 'user_input.requested') throw new Error('missing final note')
+      expect(finalRequest.request.questions[0]).toMatchObject({
+        question: "Before I finalize your brief, is there anything else you'd like me to know?",
+        options: [{ label: "No, that's everything" }],
+      })
+
+      sessions[0]?.turnIds.push('final-note-turn', 'motion-turn', 'brand-turn')
+      orchestrator.respondToUserInput(thread.id, finalRequest.request.id, {
+        final_note: ["No, that's everything — except keep it motion-free."],
+      })
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+      sessions[0]?.emit(
+        message(
+          JSON.stringify({
+            status: 'questions',
+            message: 'Preparing questions.',
+            questions: [
+              {
+                id: 'motion',
+                header: 'Motion',
+                question: 'Should every animation be removed?',
+                allowOther: true,
+                options: [
+                  { label: 'Yes', description: 'Use no animation.' },
+                  { label: 'No', description: 'Keep restrained feedback.' },
+                ],
+              },
+            ],
+            brief: null,
+          }),
+          'final-note-turn',
+        ),
+      )
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 'final-note-turn', status: 'completed' })
+      const motionRequest = received
+        .filter(({ event }) => event.type === 'user_input.requested')
+        .at(-1)?.event
+      if (motionRequest?.type !== 'user_input.requested') throw new Error('missing clarification')
+      orchestrator.respondToUserInput(thread.id, motionRequest.request.id, { motion: ['Yes'] })
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
+      sessions[0]?.emit(message(completeOutput, 'motion-turn'))
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 'motion-turn', status: 'completed' })
+
+      await vi.waitFor(() => expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand' }))
+      expect(finalRequests()).toHaveLength(1)
+    } finally {
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
   it('clears a failed provider run so later prompts are not trapped behind it', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-error-'))
-    const { orchestrator, sessions, store } = harness()
+    const { orchestrator, sessions, received, store } = harness()
     try {
       const thread = await orchestrator.startThread('codex', workspace)
+      sessions[0]?.turnIds.push('design-turn', 'queued-turn')
       await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      await expect(orchestrator.submitTurn(thread.id, 'Continue normally.')).resolves.toMatchObject(
+        { queued: true },
+      )
       sessions[0]?.emit({ type: 'thread.error', threadId: thread.id, message: 'provider failed' })
 
       expect(store.designRun(thread.id)).toBeUndefined()
-      await expect(orchestrator.submitTurn(thread.id, 'Continue normally.')).resolves.toMatchObject(
-        {
-          queued: false,
-        },
-      )
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'item.completed' &&
+            event.item.text === 'design:brief' &&
+            event.item.status === 'failed',
+        ),
+      ).toBe(true)
+      expect(
+        received.some(
+          ({ event }) => event.type === 'thread.error' && event.message === 'provider failed',
+        ),
+      ).toBe(true)
+      await vi.waitFor(() => expect(sessions[0]?.sent.at(-1)).toBe('Continue normally.'))
+      sessions[0]?.emit(turnStarted(thread.id, 'queued-turn'))
+
+      // Codex follows a terminal error with completion for the failed turn.
+      // That stale completion must not release the new turn behind it.
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 'design-turn', status: 'failed' })
+      await expect(orchestrator.submitTurn(thread.id, 'After the retry.')).resolves.toMatchObject({
+        queued: true,
+      })
       expect(sessions[0]?.sent.at(-1)).toBe('Continue normally.')
+      const state = reduceEventLog(emptyThread, store.history(thread.id))
+      expect(state.running).toBe(true)
+      expect(state.activeTurn?.id).toBe('queued-turn')
+      expect(
+        received.some(
+          ({ event }) => event.type === 'turn.completed' && event.turnId === 'design-turn',
+        ),
+      ).toBe(false)
     } finally {
-      orchestrator.disposeAll()
+      await orchestrator.disposeAll()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
@@ -633,7 +1782,160 @@ describe('provider-neutral design briefing', () => {
       )
       expect(store.designRun(thread.id)).toMatchObject({ phase: 'brief', correcting: false })
     } finally {
-      orchestrator.disposeAll()
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it.each([
+    {
+      failure: new Error('preview port 5173 is already in use; choose another port'),
+      name: 'occupied port',
+      plan: commandPreviewPlan,
+    },
+    {
+      failure: undefined,
+      name: 'missing static entry',
+      plan: staticPreviewPlan,
+    },
+    {
+      failure: Object.assign(new Error('ENOENT: no such file or directory, realpath app.mjs'), {
+        code: 'ENOENT',
+      }),
+      name: 'missing command entry',
+      plan: commandPreviewPlan,
+    },
+    {
+      failure: Object.assign(new Error('listen EADDRINUSE: address already in use'), {
+        code: 'EADDRINUSE',
+      }),
+      name: 'occupied static port',
+      plan: staticPreviewPlan,
+    },
+    {
+      failure: new Error('static preview must contain exactly one <h1>; found 0'),
+      name: 'static semantic validation',
+      plan: staticPreviewPlan,
+    },
+  ])(
+    'corrects one recoverable $name failure and retries Preview',
+    async ({ failure, name, plan }) => {
+      const { orchestrator, sessions, received, store, workspace, artifacts } =
+        await previewRecoveryHarness(failure)
+      const startCount = previewStarts.count
+      try {
+        if (plan.kind === 'static' && name !== 'missing static entry') {
+          writeFileSync(path.join(workspace, plan.entry), '<h1>Preview</h1>')
+        }
+        sessions[0]?.emit(message(JSON.stringify(plan), 's1-turn'))
+        await vi.waitFor(() =>
+          expect(store.designRun('preview-recovery')).toMatchObject({
+            originalRequest: 'Build a site.',
+            options: { effort: 'high' },
+            phase: 'preview',
+            correcting: true,
+          }),
+        )
+        expect(sessions[0]?.sent).toHaveLength(1)
+        expect(artifacts.map(([file]) => readFileSync(file, 'utf8'))).toEqual(
+          artifacts.map(([, contents]) => contents),
+        )
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+        expect(sessions[0]?.sent[1]).toContain('previous Design Mode response failed validation')
+
+        if (name === 'missing static entry') {
+          writeFileSync(path.join(workspace, plan.entry), '<h1>Preview</h1>')
+        }
+        sessions[0]?.emit(message(JSON.stringify(plan), 's1-turn'))
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+
+        await vi.waitFor(() =>
+          expect(
+            received.some(
+              ({ event }) =>
+                event.type === 'item.completed' && event.item.text?.startsWith('Website built.'),
+            ),
+          ).toBe(true),
+        )
+        expect(previewStarts.count).toBe(startCount + (failure ? 2 : 1))
+        expect(sessions[0]?.sent).toHaveLength(2)
+        expect(store.designRun('preview-recovery')).toBeUndefined()
+        expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+      } finally {
+        previewStarts.failures.length = 0
+        await orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+      }
+    },
+  )
+
+  it('fails after the bounded Preview correction also fails', async () => {
+    const failure = new Error('preview port 5173 is already in use; choose another port')
+    const { orchestrator, sessions, received, store, workspace } =
+      await previewRecoveryHarness(failure)
+    previewStarts.failures.push(failure)
+    try {
+      sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+      await vi.waitFor(() =>
+        expect(store.designRun('preview-recovery')).toMatchObject({ correcting: true }),
+      )
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+
+      sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+      await vi.waitFor(() => expect(store.designRun('preview-recovery')).toBeUndefined())
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      expect(sessions[0]?.sent).toHaveLength(2)
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'thread.error' && event.message.includes('preview port 5173'),
+        ),
+      ).toBe(true)
+    } finally {
+      previewStarts.failures.length = 0
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it.each([
+    {
+      detail: 'preview command argument is unsafe',
+      failure: new Error('preview command argument is unsafe'),
+      plan: commandPreviewPlan,
+    },
+    {
+      detail: 'path escapes the workspace',
+      failure: new Error('path escapes the workspace'),
+      plan: commandPreviewPlan,
+    },
+    {
+      detail: 'credential files are not available',
+      failure: undefined,
+      plan: { ...staticPreviewPlan, entry: '.env' },
+    },
+  ])('keeps the Preview security violation fatal: $detail', async ({ detail, failure, plan }) => {
+    const { orchestrator, sessions, received, store, workspace } =
+      await previewRecoveryHarness(failure)
+    try {
+      if (plan.kind === 'static') writeFileSync(path.join(workspace, plan.entry), 'not public')
+      sessions[0]?.emit(message(JSON.stringify(plan), 's1-turn'))
+      await vi.waitFor(() => expect(store.designRun('preview-recovery')).toBeUndefined())
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      expect(sessions[0]?.sent).toHaveLength(1)
+      expect(
+        received.some(
+          ({ event }) => event.type === 'thread.error' && event.message.includes(detail),
+        ),
+      ).toBe(true)
+    } finally {
+      previewStarts.failures.length = 0
+      await orchestrator.disposeAll()
+      store.close()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
@@ -670,7 +1972,7 @@ describe('provider-neutral design briefing', () => {
       expect(store.designRun(thread.id)).toMatchObject({ phase: 'brief', correcting: false })
       expect(sessions[0]?.sent).toHaveLength(1)
     } finally {
-      orchestrator.disposeAll()
+      await orchestrator.disposeAll()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
@@ -695,7 +1997,7 @@ describe('provider-neutral design briefing', () => {
         ),
       ).toBe(true)
     } finally {
-      orchestrator.disposeAll()
+      await orchestrator.disposeAll()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
@@ -719,7 +2021,120 @@ describe('provider-neutral design briefing', () => {
         ),
       ).toBe(true)
     } finally {
-      orchestrator.disposeAll()
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it.each(
+    (['preview start', 'screenshot capture'] as const).flatMap((delay) =>
+      (['resolve', 'reject'] as const).map((outcome) => ({ delay, outcome })),
+    ),
+  )('does not revive a replaced flow after a late $delay $outcome', async ({ delay, outcome }) => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-late-preview-'))
+    const store = new Store(':memory:')
+    store.addProject(workspace)
+    store.addThread({
+      id: 'late-preview',
+      projectPath: workspace,
+      provider: 'codex',
+      title: 'Late preview',
+    })
+    store.setDesignRun('late-preview', {
+      originalRequest: 'Build a site.',
+      options: {},
+      phase: 'preview',
+      pendingPrompt: 'Preview Setup phase',
+      askedQuestions: false,
+      finalAsked: false,
+      explicitAnswers: [],
+    })
+    expect(store.designRun('late-preview')).toMatchObject({ phase: 'preview' })
+    const { orchestrator, sessions, received, capturePreview } = harness(undefined, store)
+    const startCount = previewStarts.count
+    const stopCount = previewStops.count
+    let releaseAwait = () => {}
+    let rejectAwait = (_error: Error) => {}
+    const barrier = new Promise<void>((resolve, reject) => {
+      releaseAwait = resolve
+      rejectAwait = reject
+    })
+    if (delay === 'preview start') {
+      previewStarts.barriers.push(barrier)
+    } else {
+      capturePreview.mockImplementationOnce(async (_url, viewports) => {
+        await barrier
+        return viewports.map((viewport) => ({
+          path: path.join(os.tmpdir(), `${viewport.width}x${viewport.height}.png`),
+          ...viewport,
+        }))
+      })
+    }
+    try {
+      const queued = await orchestrator.submitTurn('late-preview', 'Continue afterward.')
+      expect(queued).toMatchObject({ queued: true })
+      if (queued.queued) orchestrator.deleteQueuedTurn('late-preview', queued.queuedTurn.id)
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
+      sessions[0]?.emit(
+        message(
+          JSON.stringify({
+            version: 1,
+            command: 'pnpm',
+            args: ['dev', '--host', '127.0.0.1'],
+            cwd: '.',
+            url: 'http://127.0.0.1:5173',
+            viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+          }),
+          's1-turn',
+        ),
+      )
+      if (delay === 'preview start') {
+        await vi.waitFor(() => expect(previewStarts.count).toBe(startCount + 1))
+      } else {
+        await vi.waitFor(() => expect(capturePreview).toHaveBeenCalledTimes(1))
+      }
+
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'interrupted' })
+      expect(store.designRun('late-preview')).toBeUndefined()
+      sessions[0]?.turnIds.push('replacement-turn')
+      const replacement = orchestrator.sendTurn('late-preview', 'Build a replacement.', [
+        DESIGN_BRIEF_ATTACHMENT,
+      ])
+      if (outcome === 'resolve') releaseAwait()
+      else rejectAwait(new Error('stale preview failed'))
+      await replacement
+      expect(store.designRun('late-preview')).toMatchObject({
+        originalRequest: 'Build a replacement.',
+        phase: 'brief',
+      })
+
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      expect(previewStops.count).toBe(
+        stopCount + (delay === 'screenshot capture' || outcome === 'resolve' ? 1 : 0),
+      )
+      expect(capturePreview).toHaveBeenCalledTimes(delay === 'preview start' ? 0 : 1)
+      expect(sessions[0]?.sent.some((prompt) => prompt.includes('visual Review phase'))).toBe(false)
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'item.completed' && event.item.text?.startsWith('Website built.'),
+        ),
+      ).toBe(false)
+      expect(store.designRun('late-preview')).toMatchObject({
+        originalRequest: 'Build a replacement.',
+        phase: 'brief',
+      })
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'thread.error' && event.message.includes('stale preview failed'),
+        ),
+      ).toBe(false)
+    } finally {
+      releaseAwait()
+      await orchestrator.disposeAll()
+      store.close()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
@@ -774,7 +2189,7 @@ describe('persisted threads', () => {
       await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
       expect(sessions[0]?.sent[0]).toContain('Independent founders')
     } finally {
-      orchestrator.disposeAll()
+      await orchestrator.disposeAll()
       store.close()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
@@ -828,7 +2243,150 @@ describe('persisted threads', () => {
       expect(sessions[0]?.sentOptions[0]).toEqual({ model: 'shared-model', effort: 'high' })
       expect(orchestrator.queue('persisted-design').items[0]?.text).toBe('Do this after design.')
     } finally {
-      orchestrator.disposeAll()
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('stops before Preview after one failed exact-file correction', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-resume-'))
+    const store = new Store(':memory:')
+    const request =
+      'Create exactly index.html, styles.css, and app.js in the current directory; do not create other files.'
+    store.addProject(workspace)
+    store.addThread({
+      id: 'persisted-exact-build',
+      projectPath: workspace,
+      provider: 'codex',
+      title: 'Exact build',
+    })
+    writeDesignBrief(workspace, {
+      originalRequest: request,
+      subject: 'Studio',
+      pageType: 'Landing page',
+      scope: 'Single page',
+      primaryGoal: 'Generate enquiries',
+      audience: 'Prospective clients',
+      offer: 'Design services',
+      primaryAction: 'Start a project',
+      requiredContent: [],
+      constraints: [request],
+      brandInputs: [],
+      creativeControl: 'Agent-led',
+      explicitAnswers: [],
+      assumptions: [],
+      unresolved: [],
+    })
+    writeFileSync(
+      path.join(workspace, '.taste', 'brand.json'),
+      JSON.stringify({
+        version: 1,
+        creativeDirection: { summary: 'Editorial', keywords: [], avoid: [] },
+        colorPalette: [{ name: 'Ink', value: '#111111', usage: 'Text' }],
+        typefaces: [{ family: 'Arial', source: 'system', roles: ['body'], weights: [400] }],
+        interfaceDirection: 'Editorial grid',
+        imageDirection: { summary: 'None', subjects: [], treatment: 'None', avoid: [] },
+        motionDirection: { summary: 'Minimal', principles: [], avoid: [] },
+        voice: { summary: 'Direct', avoid: [] },
+      }),
+    )
+    writeFileSync(
+      path.join(workspace, '.taste', 'page.json'),
+      JSON.stringify({
+        version: 1,
+        page: { title: 'Studio', route: '/', description: 'Studio services' },
+        navigation: [],
+        sections: [
+          {
+            id: 'hero',
+            purpose: 'Introduce the offer',
+            copy: { heading: 'Studio', body: [], callsToAction: [] },
+            layout: 'Single column',
+            componentNeeds: [],
+            assetNeeds: [],
+          },
+        ],
+        responsive: [],
+        interactions: [],
+        acceptanceCriteria: [],
+      }),
+    )
+    writeFileSync(
+      path.join(workspace, '.taste', 'assets.json'),
+      JSON.stringify({ version: 1, assets: [] }),
+    )
+    for (const file of ['index.html', 'styles.css', 'app.js', 'preview-server.js', 'extra.json']) {
+      writeFileSync(path.join(workspace, file), file)
+    }
+    writeFileSync(path.join(workspace, 'README.md'), 'pre-existing user file')
+    store.setDesignRun('persisted-exact-build', {
+      originalRequest: request,
+      options: {},
+      phase: 'build',
+      askedQuestions: false,
+      finalAsked: false,
+      explicitAnswers: [],
+      buildFileBaseline: ['README.md'],
+    })
+
+    const { orchestrator, sessions, received, capturePreview } = harness(undefined, store)
+    const queuedPrompt = 'Queue this until design finishes.'
+    const report = JSON.stringify({
+      status: 'complete',
+      summary: 'Implemented the page.',
+      files: ['index.html', 'styles.css', 'app.js'],
+      checks: [],
+    })
+    try {
+      await orchestrator.submitTurn('persisted-exact-build', queuedPrompt)
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
+      await vi.waitFor(() =>
+        expect(
+          received.some(
+            ({ event }) => event.type === 'item.started' && event.item.text === 'design:build',
+          ),
+        ).toBe(true),
+      )
+
+      sessions[0]?.turnIds.push('correction-turn')
+      sessions[0]?.emit(message(report, 's1-turn'))
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+      expect(sessions[0]?.sent[1]).toContain('Make one bounded correction')
+      expect(store.designRun('persisted-exact-build')).toMatchObject({
+        phase: 'build',
+        correcting: true,
+      })
+      expect(capturePreview).not.toHaveBeenCalled()
+
+      await vi.waitFor(() =>
+        expect(
+          received.some(
+            ({ event }) => event.type === 'item.started' && event.item.turnId === 'correction-turn',
+          ),
+        ).toBe(true),
+      )
+      sessions[0]?.emit(message(report, 'correction-turn'))
+      sessions[0]?.emit({
+        type: 'turn.completed',
+        turnId: 'correction-turn',
+        status: 'completed',
+      })
+      await vi.waitFor(() => expect(store.designRun('persisted-exact-build')).toBeUndefined())
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
+      expect(sessions[0]?.sent[2]).toBe(queuedPrompt)
+      expect(capturePreview).not.toHaveBeenCalled()
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'thread.error' && event.message.includes('unexpected files'),
+        ),
+      ).toBe(true)
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+    } finally {
+      await orchestrator.disposeAll()
       store.close()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
@@ -862,6 +2420,23 @@ describe('persisted threads', () => {
 
     sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
     await vi.waitFor(() => expect(sessions[0]?.sent).toEqual(['first', 'second']))
+  })
+
+  it('restores the shared reply instructions when resuming a Codex thread', async () => {
+    const store = new Store(':memory:')
+    store.addProject('/repo')
+    store.addThread({
+      id: 'persisted-thread',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Persisted',
+    })
+    const { orchestrator, resumedOptions } = harness(undefined, store)
+
+    await orchestrator.submitTurn('persisted-thread', 'continue')
+
+    expect(resumedOptions[0]?.instructions).toContain('clear, capable teammate')
+    expect(resumedOptions[0]?.instructions).toContain('Do not use em dashes')
   })
 
   it('does not invent continuity for a provider without resume support', async () => {
@@ -993,6 +2568,27 @@ describe('several sessions at once', () => {
     await expect(orchestrator.sendTurn(second.id, 'quick one')).resolves.toBe('s2-turn')
   })
 
+  it('delivers Stop after a turn waiting for its checkpoint becomes interruptible', async () => {
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    let releaseCheckpoint: (value: checkpoint.Snapshot) => void = () => undefined
+    vi.spyOn(checkpoint, 'takeSnapshot').mockReturnValueOnce(
+      new Promise<checkpoint.Snapshot>((resolve) => {
+        releaseCheckpoint = resolve
+      }),
+    )
+
+    const sending = orchestrator.submitTurn(thread.id, 'stop before the reply')
+    await vi.waitFor(() => expect(orchestrator.isTurnRunning(thread.id)).toBe(true))
+    const stopping = orchestrator.interrupt(thread.id)
+
+    await expect(stopping).resolves.toBeUndefined()
+    expect(sessions[0]!.interrupted).toBe(false)
+    releaseCheckpoint({ commit: 'checkpoint', clean: true })
+    await expect(sending).resolves.toMatchObject({ queued: false })
+    await vi.waitFor(() => expect(sessions[0]!.interrupted).toBe(true))
+  })
+
   it('routes each session events to its own thread', async () => {
     const { sessions, received, orchestrator } = harness()
 
@@ -1073,16 +2669,64 @@ describe('several sessions at once', () => {
   })
 
   it('drops queued prompts so interrupted sessions do not restart', async () => {
-    const { sessions, orchestrator } = harness()
+    const { sessions, orchestrator, store, queueChanges } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
     await orchestrator.submitTurn(thread.id, 'running')
     await orchestrator.submitTurn(thread.id, 'do not restart')
 
+    const beforePanic = queueChanges.length
     await orchestrator.panicStop()
     sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' })
 
     await vi.waitFor(() => expect(orchestrator.queue(thread.id).items).toEqual([]))
+    expect(store.queuedTurns(thread.id)).toEqual([])
     expect(sessions[0]!.sent).toEqual(['running'])
+    expect(queueChanges.slice(beforePanic)).toEqual([{ threadId: thread.id, itemIds: [] }])
+  })
+
+  it.each(['store', 'listener'] as const)(
+    'still interrupts and releases its latch after a %s queue failure',
+    async (failure) => {
+      const { sessions, orchestrator, store, queueNotificationError } = harness()
+      const first = await orchestrator.startThread('codex', '/repo')
+      await orchestrator.startThread('codex', '/repo')
+      await orchestrator.submitTurn(first.id, 'Running.')
+      await orchestrator.submitTurn(first.id, 'Do not run after failed Stop all.')
+      if (failure === 'store') {
+        vi.spyOn(store, 'clearAllQueuedTurns').mockImplementationOnce(() => {
+          throw new Error('C:\\private\\harness.db is full')
+        })
+      } else {
+        queueNotificationError.current = new Error('listener failed')
+      }
+
+      await expect(orchestrator.panicStop()).rejects.toThrow(
+        'could not clear every queued prompt during Stop all',
+      )
+      expect(sessions.map(({ interrupted }) => interrupted)).toEqual([true, true])
+      queueNotificationError.current = undefined
+      sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'interrupted' })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(sessions[0]!.sent).toEqual(['Running.'])
+      expect(orchestrator.queue(first.id).items).toEqual([])
+      expect(store.queuedTurns(first.id)).toHaveLength(failure === 'store' ? 1 : 0)
+      await expect(
+        orchestrator.submitTurn(first.id, 'Work after failed Stop all.'),
+      ).resolves.toMatchObject({ queued: false })
+    },
+  )
+
+  it('drops durable queues that were never loaded into this process', async () => {
+    const { sessions, orchestrator, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'Active.')
+    await orchestrator.submitTurn(thread.id, 'Queued.', [], {}, 'submission-old')
+    await orchestrator.disposeAll()
+
+    await expect(orchestrator.panicStop()).resolves.toEqual({ sessions: [] })
+    expect(store.queuedTurns(thread.id)).toEqual([])
+    await orchestrator.submitTurn(thread.id, 'New work.', [], {}, 'submission-new')
+    expect(sessions[1]?.sent).toEqual(['New work.'])
   })
 
   it('cancels a turn still waiting for its checkpoint', async () => {
@@ -1144,6 +2788,7 @@ describe('sidebar inbox lifecycle', () => {
       keepActive: true,
     })
 
+    sessions[0]!.turnIds.push('turn-1')
     await orchestrator.submitTurn(thread.id, 'working')
     expect(() => orchestrator.settleThread(thread.id)).toThrow(/status is working/)
     sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
@@ -1205,9 +2850,154 @@ describe('sidebar inbox lifecycle', () => {
 })
 
 describe('queued turns', () => {
+  it('restores exact mutations and drains in order after a server restart', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-orchestrator-queue-'))
+    const file = path.join(dir, 'harness.db')
+    const seededStore = new Store(file)
+    const seeded = harness(undefined, seededStore)
+    try {
+      const thread = await seeded.orchestrator.startThread('codex', '/repo')
+      const submit = seeded.orchestrator.submitTurn.bind(seeded.orchestrator)
+      await seeded.orchestrator.submitTurn(thread.id, 'Active.', [], {}, 'submission-active')
+      seeded.sessions[0]!.emit(turnStarted(thread.id, 'active-turn'))
+      for (const [id, attachment, model] of [
+        ['submission-a', 'C:\\private\\a.png', 'model-a'],
+        ['submission-b', 'C:\\private\\b.png', 'model-b'],
+        ['submission-c', 'C:\\private\\c.png', 'model-c'],
+      ] as const) {
+        await submit(thread.id, 'Repeat.', [attachment], { model }, id)
+      }
+      seeded.orchestrator.moveQueuedTurn(thread.id, 'submission-c', 'up')
+      seeded.orchestrator.deleteQueuedTurn(thread.id, 'submission-a')
+      await seeded.orchestrator.disposeAll()
+      seededStore.close()
+
+      const restartedStore = new Store(file)
+      restartedStore.recoverInterruptedThreads()
+      const restarted = harness(undefined, restartedStore)
+      try {
+        expect(restarted.orchestrator.queue(thread.id).items.map(({ id }) => id)).toEqual([
+          'submission-c',
+          'submission-b',
+        ])
+        await restarted.orchestrator.submitTurn(thread.id, 'Wake the queue.')
+        await vi.waitFor(() => expect(restarted.sessions[0]?.sent).toEqual(['Repeat.']))
+        expect(restarted.sessions[0]?.sentAttachments[0]).toEqual(['C:\\private\\c.png'])
+        expect(restarted.sessions[0]?.sentOptions[0]).toEqual({ model: 'model-c' })
+
+        restarted.sessions[0]!.emit({
+          type: 'turn.completed',
+          turnId: 's1-turn',
+          status: 'completed',
+        })
+        await vi.waitFor(() => expect(restarted.sessions[0]?.sent).toHaveLength(2))
+        expect(restarted.orchestrator.queue(thread.id).items).toHaveLength(1)
+      } finally {
+        await restarted.orchestrator.disposeAll()
+        restartedStore.close()
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('restores a provider-rejected drain without logging prompt content or paths', async () => {
+    const { sessions, orchestrator, store, logs } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'Active.')
+    await orchestrator.submitTurn(
+      thread.id,
+      'private prompt content',
+      ['C:\\secret\\private.png'],
+      {},
+      'submission-private',
+    )
+    sessions[0]!.sendError = new Error(
+      'provider rejected private prompt content at C:\\secret\\private.png',
+    )
+
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+
+    await vi.waitFor(() => expect(logs).toContain('could not start queued turn; it remains queued'))
+    expect(orchestrator.queue(thread.id).items.map(({ id }) => id)).toEqual(['submission-private'])
+    expect(store.queuedTurns(thread.id).map(({ id }) => id)).toEqual(['submission-private'])
+    expect(logs.join('\n')).not.toMatch(/private prompt content|secret\\private/)
+  })
+
+  it('does not resurrect work accepted before the provider request rejects', async () => {
+    const { sessions, orchestrator, store, logs } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'Active.')
+    await orchestrator.submitTurn(thread.id, 'Accepted once.', [], {}, 'submission-accepted')
+    sessions[0]!.eventDuringSend = turnStarted(thread.id, 'accepted-turn')
+    sessions[0]!.afterEventBarrier = Promise.reject(new Error('request disconnected'))
+
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+
+    await vi.waitFor(() =>
+      expect(logs).toContain('queued turn ended after acceptance or cancellation'),
+    )
+    expect(store.queuedTurns(thread.id)).toEqual([])
+    expect(store.hasItem(thread.id, 'submission-accepted')).toBe(true)
+  })
+
+  it('does not revive a closed thread after a legacy queued send resolves', async () => {
+    const { sessions, orchestrator, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'Active.')
+    await orchestrator.submitTurn(thread.id, 'Legacy queued work.')
+    sessions[0]!.release = () => {}
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    await vi.waitFor(() => expect(sessions[0]!.sent).toHaveLength(2))
+
+    orchestrator.close(thread.id)
+    sessions[0]!.release?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+    expect(orchestrator.queue(thread.id).items).toEqual([])
+    expect(store.thread(thread.id)?.closedAt).toBeDefined()
+  })
+
+  it('does not touch the store when a queued send rejects after server disposal', async () => {
+    const { sessions, orchestrator, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'Active.')
+    await orchestrator.submitTurn(thread.id, 'Queued work.')
+    sessions[0]!.release = () => {}
+    sessions[0]!.sendError = new Error('provider stopped')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    await vi.waitFor(() => expect(sessions[0]!.sent).toHaveLength(2))
+
+    await orchestrator.disposeAll()
+    store.close()
+    sessions[0]!.release?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+
+  it('does not restore or drain a steer that resolves after server disposal', async () => {
+    const { sessions, orchestrator, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'Active.')
+    sessions[0]!.emit(turnStarted(thread.id, 'active-turn'))
+    const queued = await orchestrator.submitTurn(thread.id, 'Steer later.')
+    if (!queued.queued) throw new Error('expected the prompt to queue')
+    let release = () => {}
+    sessions[0]!.steerBarriers.push(new Promise<void>((resolve) => (release = resolve)))
+    const steering = orchestrator.steerQueuedTurn(thread.id, queued.queuedTurn.id)
+    await vi.waitFor(() => expect(sessions[0]!.steered).toEqual(['Steer later.']))
+
+    await orchestrator.disposeAll()
+    store.close()
+    release()
+
+    await expect(steering).resolves.toBeUndefined()
+  })
+
   it('runs queued prompts in order after the active turn completes', async () => {
     const { sessions, orchestrator } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
+    sessions[0]!.turnIds.push('first-turn', 'second-turn', 'third-turn')
 
     await expect(orchestrator.submitTurn(thread.id, 'first')).resolves.toMatchObject({
       queued: false,
@@ -1238,6 +3028,31 @@ describe('queued turns', () => {
     })
     await vi.waitFor(() => expect(sessions[0]!.sent).toEqual(['first', 'second', 'third']))
     expect(orchestrator.queue(thread.id).items).toEqual([])
+  })
+
+  it('stays idle when a queued turn completes before sendTurn returns', async () => {
+    const { sessions, orchestrator, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds.push('first-turn', 'queued-turn')
+      await orchestrator.submitTurn(thread.id, 'first')
+      await orchestrator.submitTurn(thread.id, 'queued')
+      session.release = () => {}
+
+      session.emit({ type: 'turn.completed', turnId: 'first-turn', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toEqual(['first', 'queued']))
+      session.emit(turnStarted(thread.id, 'queued-turn'))
+      session.emit({ type: 'turn.completed', turnId: 'queued-turn', status: 'completed' })
+      session.emit(message('Website built.', 'queued-turn'))
+      session.release?.()
+
+      await vi.waitFor(() => expect(orchestrator.queue(thread.id).items).toEqual([]))
+      await vi.waitFor(() => expect(orchestrator.isTurnRunning(thread.id)).toBe(false))
+      expect(reduceEventLog(emptyThread, store.history(thread.id)).running).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+    }
   })
 
   it('can remove a queued prompt or steer it into the running turn', async () => {
@@ -1357,6 +3172,17 @@ describe('isolated sessions', () => {
     // Refusing has to actually leave it there.
     expect(existsSync(store.thread(thread.id)!.worktreePath!)).toBe(true)
   })
+
+  it('waits for the checkout terminal to exit before discarding its worktree', async () => {
+    const { store, orchestrator } = harness(trees)
+    const thread = await orchestrator.startThread('codex', repo, { isolate: true })
+    const worktreePath = store.thread(thread.id)!.worktreePath!
+
+    orchestrator.openTerminal(thread.id, 80, 24)
+    await orchestrator.discardWorktree(thread.id)
+
+    expect(existsSync(worktreePath)).toBe(false)
+  }, 20_000)
 
   it('closing a session leaves its checkout alone', async () => {
     const { store, orchestrator } = harness(trees)
@@ -1501,6 +3327,15 @@ describe('rolling a session back', () => {
     expect(files.sort()).toEqual(['file.txt', 'new.txt'])
   })
 
+  it('rejects inspection of a missing checkpoint', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+
+    await expect(orchestrator.changedSinceCheckpoint(thread.id, 404)).rejects.toThrow(
+      'no such checkpoint',
+    )
+  })
+
   it('refuses to restore while the agent is still writing', async () => {
     const { orchestrator, sessions } = harness()
 
@@ -1515,6 +3350,212 @@ describe('rolling a session back', () => {
     await expect(orchestrator.restoreCheckpoint(thread.id, checkpoint.id)).rejects.toThrow(
       'cannot restore during a running turn',
     )
+  })
+
+  it('refuses to restore while a turn is still taking its checkpoint', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'first task')
+    const first = orchestrator.checkpoints(thread.id)[0]!
+
+    let release = (_value: checkpoint.Snapshot) => {}
+    vi.spyOn(checkpoint, 'takeSnapshot').mockReturnValueOnce(
+      new Promise<checkpoint.Snapshot>((resolve) => (release = resolve)),
+    )
+    const sending = orchestrator.sendTurn(thread.id, 'second task')
+    await vi.waitFor(() => expect(orchestrator.isTurnRunning(thread.id)).toBe(true))
+
+    try {
+      await expect(orchestrator.restoreCheckpoint(thread.id, first.id)).rejects.toThrow(
+        'cannot restore during a running turn',
+      )
+    } finally {
+      release({ commit: 'checkpoint', clean: true })
+      await sending
+    }
+  })
+
+  it('refuses to undo a restore while a turn is still taking its checkpoint', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'first task')
+    writeFileSync(path.join(repo, 'file.txt'), 'work to restore later\n')
+    const first = orchestrator.checkpoints(thread.id)[0]!
+    const { undo } = await orchestrator.restoreCheckpoint(thread.id, first.id)
+
+    let release = (_value: checkpoint.Snapshot) => {}
+    vi.spyOn(checkpoint, 'takeSnapshot').mockReturnValueOnce(
+      new Promise<checkpoint.Snapshot>((resolve) => (release = resolve)),
+    )
+    const sending = orchestrator.sendTurn(thread.id, 'second task')
+    await vi.waitFor(() => expect(orchestrator.isTurnRunning(thread.id)).toBe(true))
+
+    try {
+      await expect(orchestrator.undoRestore(thread.id, undo)).rejects.toThrow(
+        'cannot restore during a running turn',
+      )
+    } finally {
+      release({ commit: 'checkpoint', clean: true })
+      await sending
+    }
+  })
+
+  it('refuses restore and undo while an automatic design turn is still starting', async () => {
+    const { orchestrator, sessions } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'first task')
+    writeFileSync(path.join(repo, 'file.txt'), 'work to restore later\n')
+    const first = orchestrator.checkpoints(thread.id)[0]!
+    const { undo } = await orchestrator.restoreCheckpoint(thread.id, first.id)
+
+    await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+    const designCheckpoint = orchestrator.checkpoints(thread.id).at(-1)!
+    const session = sessions[0]!
+    session.release = () => {}
+    session.emit(message('not json', 's1-turn'))
+    session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    await vi.waitFor(() => expect(session.sent.at(-1)).toContain('failed validation'))
+
+    try {
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(true)
+      await expect(orchestrator.restoreCheckpoint(thread.id, designCheckpoint.id)).rejects.toThrow(
+        'cannot restore during a running turn',
+      )
+      await expect(orchestrator.undoRestore(thread.id, undo)).rejects.toThrow(
+        'cannot restore during a running turn',
+      )
+
+      orchestrator.close(thread.id)
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+    } finally {
+      session.release?.()
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('refuses a second restore while the first restore is still in progress', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'first task')
+    const first = orchestrator.checkpoints(thread.id)[0]!
+
+    let release = (_value: checkpoint.Snapshot) => {}
+    const restoringSnapshot = new Promise<checkpoint.Snapshot>((resolve) => (release = resolve))
+    const restoreSnapshot = vi
+      .spyOn(checkpoint, 'restoreSnapshot')
+      .mockClear()
+      .mockReturnValueOnce(restoringSnapshot)
+    const restoring = orchestrator.restoreCheckpoint(thread.id, first.id)
+    await vi.waitFor(() => expect(restoreSnapshot).toHaveBeenCalledTimes(1))
+
+    const history = Promise.resolve(orchestrator.history(thread.id))
+    let historySettled = false
+    void history.then(() => (historySettled = true))
+    try {
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(historySettled).toBe(false)
+      await expect(orchestrator.restoreCheckpoint(thread.id, first.id)).rejects.toThrow(
+        'cannot restore while another restore is running',
+      )
+    } finally {
+      release({ commit: 'replaced', clean: false })
+      await restoring
+    }
+    expect(await history).toEqual([])
+  })
+
+  it('refuses a new turn while a checkpoint restore is still in progress', async () => {
+    const { orchestrator, sessions } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'first task')
+    const first = orchestrator.checkpoints(thread.id)[0]!
+
+    let release = (_value: checkpoint.Snapshot) => {}
+    const restoringSnapshot = new Promise<checkpoint.Snapshot>((resolve) => (release = resolve))
+    const restoreSnapshot = vi
+      .spyOn(checkpoint, 'restoreSnapshot')
+      .mockClear()
+      .mockReturnValueOnce(restoringSnapshot)
+    const restoring = orchestrator.restoreCheckpoint(thread.id, first.id)
+    await vi.waitFor(() => expect(restoreSnapshot).toHaveBeenCalledTimes(1))
+
+    try {
+      await expect(orchestrator.sendTurn(thread.id, 'too soon')).rejects.toThrow(
+        'cannot start a turn while restoring a checkpoint',
+      )
+      expect(sessions[0]!.sent).toEqual(['first task'])
+    } finally {
+      release({ commit: 'replaced', clean: false })
+      await restoring
+    }
+  })
+
+  it('refuses restore and undo while a diff rejection is still in progress', async () => {
+    const trees = path.join(path.dirname(repo), 'trees')
+    const { orchestrator, store } = harness(trees)
+    const thread = await orchestrator.startThread('codex', repo, { isolate: true })
+    const worktree = store.thread(thread.id)!.worktreePath!
+    await orchestrator.sendTurn(thread.id, 'first task')
+    writeFileSync(path.join(worktree, 'file.txt'), 'work to restore later\n')
+    const first = orchestrator.checkpoints(thread.id)[0]!
+    const { undo } = await orchestrator.restoreCheckpoint(thread.id, first.id)
+
+    writeFileSync(path.join(worktree, 'file.txt'), 'reject this change\n')
+    const diff = await orchestrator.diff(thread.id)
+    const file = diff.files[0]!
+    const heldSnapshot = await checkpoint.takeSnapshot(worktree)
+    let release = (_value: checkpoint.Snapshot) => {}
+    const takeSnapshot = vi
+      .spyOn(checkpoint, 'takeSnapshot')
+      .mockClear()
+      .mockReturnValueOnce(new Promise<checkpoint.Snapshot>((resolve) => (release = resolve)))
+    const reviewing = orchestrator.reviewHunk(
+      thread.id,
+      diff.version,
+      file.path,
+      file.hunks[0]!.id,
+      'reject',
+    )
+    await vi.waitFor(() => expect(takeSnapshot).toHaveBeenCalledTimes(1))
+
+    try {
+      await expect(orchestrator.restoreCheckpoint(thread.id, first.id)).rejects.toThrow(
+        'cannot restore while a diff rejection is running',
+      )
+      await expect(orchestrator.undoRestore(thread.id, undo)).rejects.toThrow(
+        'cannot restore while a diff rejection is running',
+      )
+    } finally {
+      release(heldSnapshot)
+      await reviewing.catch(() => undefined)
+    }
+  })
+
+  it('refuses hunk and file rejection while a checkpoint restore is still in progress', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'first task')
+    const first = orchestrator.checkpoints(thread.id)[0]!
+
+    let release = (_value: checkpoint.Snapshot) => {}
+    const restoreSnapshot = vi
+      .spyOn(checkpoint, 'restoreSnapshot')
+      .mockClear()
+      .mockReturnValueOnce(new Promise<checkpoint.Snapshot>((resolve) => (release = resolve)))
+    const restoring = orchestrator.restoreCheckpoint(thread.id, first.id)
+    await vi.waitFor(() => expect(restoreSnapshot).toHaveBeenCalledTimes(1))
+
+    try {
+      await expect(
+        orchestrator.reviewHunk(thread.id, 'version', 'file.txt', 'hunk', 'reject'),
+      ).rejects.toThrow('Refresh the diff and try again.')
+      await expect(
+        orchestrator.reviewFile(thread.id, 'version', 'file.txt', 'reject'),
+      ).rejects.toThrow('Refresh the diff and try again.')
+    } finally {
+      release({ commit: 'replaced', clean: false })
+      await restoring
+    }
   })
 
   it('does not fail a turn just because the folder is not a repository', async () => {

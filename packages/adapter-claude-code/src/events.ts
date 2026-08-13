@@ -59,7 +59,7 @@ export function toDomainEvents(event: ClaudeEvent, turnId: string): DomainEvent[
 
   if (event.type === 'assistant' && event.message?.content) {
     return event.message.content.flatMap((block, index) => {
-      const id = `${event.message?.id ?? event.uuid ?? at}-${index}`
+      const id = assistantBlockId(event, block, index, at)
       const item = blockToItem(block, id, turnId, at)
       return item ? [{ type: 'item.completed' as const, item }] : []
     })
@@ -103,6 +103,19 @@ export function toDomainEvents(event: ClaudeEvent, turnId: string): DomainEvent[
   }
 
   return []
+}
+
+function assistantBlockId(
+  event: ClaudeEvent,
+  block: ContentBlock,
+  index: number,
+  fallback: number,
+): string {
+  if (block.type === 'tool_use') {
+    const toolUseId = (block as Extract<ContentBlock, { type: 'tool_use' }>).id
+    if (toolUseId) return `${toolUseId}-call`
+  }
+  return `${event.message?.id ?? event.uuid ?? fallback}-${block.type}-${index}`
 }
 
 function blockToItem(
@@ -165,6 +178,7 @@ export function toUsage(usage: ClaudeUsage | undefined, costUsd?: number): Usage
     // Claude Code does not report reasoning tokens separately.
     reasoningTokens: 0,
     totalTokens: input + output + cached + (usage.cache_creation_input_tokens ?? 0),
+    inputIncludesCached: false,
     ...(costUsd === undefined ? {} : { costUsd }),
   }
 }

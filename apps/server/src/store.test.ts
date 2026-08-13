@@ -3,7 +3,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DiffDecision, DomainEvent } from '@harness/contracts'
+import {
+  ItemTypeSchema,
+  type DiffDecision,
+  type DomainEvent,
+  type ItemType,
+} from '@harness/contracts'
 import { Store } from './store.js'
 
 let store: Store
@@ -25,7 +30,7 @@ const message = (text: string): DomainEvent => ({
   },
 })
 
-const usage = (totalTokens: number, costUsd?: number): DomainEvent => ({
+const usage = (totalTokens: number, costUsd?: number, cumulative = false): DomainEvent => ({
   type: 'usage.updated',
   usage: {
     inputTokens: totalTokens,
@@ -33,8 +38,314 @@ const usage = (totalTokens: number, costUsd?: number): DomainEvent => ({
     outputTokens: 0,
     reasoningTokens: 0,
     totalTokens,
+    ...(cumulative ? { cumulative: true } : {}),
     ...(costUsd === undefined ? {} : { costUsd }),
   },
+})
+
+const lifecycleItem = (
+  id: string,
+  turnId: string,
+  type: ItemType,
+  status: 'started' | 'completed' = 'started',
+): DomainEvent => ({
+  type: status === 'started' ? 'item.started' : 'item.completed',
+  item: { id, turnId, type, status, text: `${status} ${type}`, createdAt: 2 },
+})
+
+const userInput = (id: string, turnId: string): DomainEvent => ({
+  type: 'user_input.requested',
+  request: {
+    id,
+    turnId,
+    questions: [
+      {
+        id: 'choice',
+        header: 'Choice',
+        question: 'Continue?',
+        allowOther: false,
+        secret: false,
+        options: [{ label: 'Yes', description: 'Continue the work.' }],
+      },
+    ],
+    autoResolutionMs: null,
+    createdAt: 3,
+  },
+})
+
+describe('ephemeral Side chats', () => {
+  it('keeps Side chats addressable without listing or indexing them', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'main', projectPath: '/repo', provider: 'codex', title: 'Main' })
+    store.addThread({
+      id: 'side',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Side chat',
+      ephemeral: true,
+      parentThreadId: 'main',
+    })
+    store.append('side', message('private side answer'))
+
+    expect(store.thread('side')).toMatchObject({ ephemeral: true, parentThreadId: 'main' })
+    expect(store.threads('/repo').map((thread) => thread.id)).toEqual(['main'])
+    expect(store.searchSessions({ query: 'private side answer' }).results).toEqual([])
+  })
+
+  it('purges a crashed Side chat when the store reopens', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-side-chat-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'main', projectPath: '/repo', provider: 'codex', title: 'Main' })
+    seeded.addThread({
+      id: 'side',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Side chat',
+      ephemeral: true,
+      parentThreadId: 'main',
+    })
+    seeded.append('side', message('temporary'))
+    seeded.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.thread('main')).toBeDefined()
+      expect(reopened.thread('side')).toBeUndefined()
+      expect(reopened.history('side')).toEqual([])
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('durable queued turns', () => {
+  const queued = (id: string, text = 'Repeat this.') => ({
+    id,
+    threadId: 'thread-1',
+    clientSubmissionId: id,
+    text,
+    attachments: [`C:\\private\\${id}.png`],
+    options: { model: `model-${id}`, serviceTier: 'fast' },
+    createdAt: Number(id.at(-1)?.charCodeAt(0)),
+  })
+
+  it('replays exact records and mutations in order after a restart', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-queued-turns-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'Queue' })
+
+    seeded.enqueueQueuedTurn(queued('submission-a'))
+    seeded.enqueueQueuedTurn(queued('submission-b'))
+    seeded.moveQueuedTurn('thread-1', 'submission-b', 'up')
+    seeded.deleteQueuedTurn('thread-1', 'submission-a')
+    seeded.enqueueQueuedTurn(queued('submission-c', 'Third.'))
+    expect(seeded.claimQueuedTurn('thread-1', 'submission-b', 'steer')?.intent).toBe('steer')
+    for (let index = 0; index < 1_000; index += 1) {
+      seeded.append('thread-1', message(`old transcript delta ${index}`))
+    }
+    seeded.close()
+
+    const restarted = new Store(file)
+    try {
+      const parse = vi.spyOn(JSON, 'parse')
+      const replayed = restarted.queuedTurns('thread-1')
+      expect(parse).toHaveBeenCalledTimes(2)
+      parse.mockRestore()
+      expect(replayed.map(({ id, text, intent }) => [id, text, intent])).toEqual([
+        ['submission-b', 'Repeat this.', 'normal'],
+        ['submission-c', 'Third.', 'normal'],
+      ])
+      expect(replayed[0]).toMatchObject(queued('submission-b'))
+      expect(restarted.hasQueuedSubmission('thread-1', 'submission-b')).toBe(true)
+      expect(restarted.hasQueuedSubmission('thread-1', 'missing')).toBe(false)
+    } finally {
+      restarted.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('restores rejected claims and permanently completes accepted ones', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'api', title: 'Queue' })
+    store.enqueueQueuedTurn(queued('submission-1', 'Try this.'))
+
+    expect(store.claimQueuedTurn('thread-1', 'submission-1', 'normal')).toMatchObject({
+      id: 'submission-1',
+      intent: 'normal',
+    })
+    expect(store.deleteQueuedTurn('thread-1', 'submission-1')).toBe(false)
+    expect(store.restoreQueuedTurn('thread-1', 'submission-1')).toBe(true)
+    expect(store.completeQueuedTurn('thread-1', 'submission-1')).toBe(false)
+    expect(store.queuedTurns('thread-1').map(({ id }) => id)).toEqual(['submission-1'])
+
+    store.claimQueuedTurn('thread-1', 'submission-1', 'normal')
+    store.completeQueuedTurn('thread-1', 'submission-1')
+    expect(store.queuedTurns('thread-1')).toEqual([])
+    expect(store.hasQueuedSubmission('thread-1', 'submission-1')).toBe(false)
+  })
+
+  it('cleans queued state for closed and deleted threads', () => {
+    store.addProject('/repo')
+    for (const threadId of ['closed', 'deleted']) {
+      store.addThread({ id: threadId, projectPath: '/repo', provider: 'codex', title: threadId })
+      store.enqueueQueuedTurn({ ...queued(`${threadId}-submission`), threadId })
+    }
+
+    store.closeThread('closed')
+    store.deleteThread('deleted')
+
+    expect(store.queuedTurns('closed')).toEqual([])
+    expect(store.queuedTurns('deleted')).toEqual([])
+  })
+})
+
+describe('recovering interrupted turns', () => {
+  function seedThread(target: Store, id: string, turnId = `${id}-turn`): void {
+    target.addThread({ id, projectPath: '/repo', provider: 'codex', title: 'Pending' })
+    target.append(id, {
+      type: 'turn.started',
+      turn: { id: turnId, threadId: id, status: 'running', createdAt: 1 },
+    })
+  }
+
+  it('settles every process-owned lifecycle while preserving terminal and resumable state', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-interrupted-turn-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seedThread(seeded, 'thread-1', 'turn-1')
+    const itemTypes = ItemTypeSchema.options
+    for (const type of itemTypes) {
+      seeded.append('thread-1', lifecycleItem(`active-${type}`, 'turn-1', type))
+    }
+    seeded.append('thread-1', lifecycleItem('terminal-item', 'turn-1', 'tool_call', 'completed'))
+    seeded.append('thread-1', lifecycleItem('terminal-item', 'turn-1', 'tool_call'))
+    seeded.append('thread-1', {
+      type: 'approval.requested',
+      request: { id: 'approval-1', kind: 'command', createdAt: 3 },
+    })
+    seeded.append('thread-1', userInput('input-1', 'turn-1'))
+    seeded.append('thread-1', {
+      type: 'approval.review.started',
+      review: {
+        id: 'review-1',
+        turnId: 'turn-1',
+        status: 'in_progress',
+        description: 'Run tests',
+        startedAt: 13,
+      },
+    })
+
+    seedThread(seeded, 'resumable-design', 'design-turn')
+    seeded.setDesignRun('resumable-design', { phase: 'brief' })
+    seeded.append('resumable-design', userInput('design-input', 'design-turn'))
+
+    seedThread(seeded, 'closed-thread')
+    seeded.closeThread('closed-thread')
+    seeded.close()
+
+    const restarted = new Store(file)
+    try {
+      expect(restarted.recoverInterruptedThreads()).toEqual(['thread-1', 'resumable-design'])
+      const recovered = restarted.history('thread-1').map(({ event }) => event)
+      expect(
+        recovered
+          .filter((event) => event.type === 'item.completed' && event.item.status === 'failed')
+          .map((event) => (event.type === 'item.completed' ? event.item.id : '')),
+      ).toEqual(itemTypes.map((type) => `active-${type}`))
+      expect(recovered).toContainEqual({ type: 'approval.resolved', id: 'approval-1' })
+      expect(recovered).toContainEqual({ type: 'user_input.resolved', id: 'input-1' })
+      expect(recovered).toContainEqual({
+        type: 'approval.review.completed',
+        review: expect.objectContaining({ id: 'review-1', status: 'aborted' }),
+      })
+      expect(recovered).toContainEqual({
+        type: 'turn.completed',
+        turnId: 'turn-1',
+        status: 'interrupted',
+      })
+      expect(
+        recovered.filter(
+          (event) => event.type === 'item.completed' && event.item.id === 'terminal-item',
+        ),
+      ).toHaveLength(1)
+      expect(restarted.thread('thread-1')?.unread).toBe(true)
+      const designEvents = restarted.history('resumable-design').map(({ event }) => event)
+      expect(designEvents).toContainEqual({
+        type: 'turn.completed',
+        turnId: 'design-turn',
+        status: 'interrupted',
+      })
+      expect(designEvents.some((event) => event.type === 'user_input.resolved')).toBe(false)
+      expect(designEvents.some((event) => event.type === 'thread.error')).toBe(false)
+      expect(restarted.history('closed-thread')).toHaveLength(1)
+
+      const recoveredLength = restarted.history('thread-1').length
+      expect(restarted.recoverInterruptedThreads()).toEqual([])
+      expect(restarted.history('thread-1')).toHaveLength(recoveredLength)
+    } finally {
+      restarted.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rolls back the whole recovery when one terminal event cannot be written', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-recovery-atomic-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seedThread(seeded, 'thread-1')
+    seeded.append('thread-1', {
+      type: 'approval.requested',
+      request: { id: 'approval-1', kind: 'command', createdAt: 2 },
+    })
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw.exec(`CREATE TRIGGER fail_recovery BEFORE INSERT ON events
+      WHEN json_extract(NEW.payload, '$.type') = 'turn.completed'
+      BEGIN SELECT RAISE(ABORT, 'injected recovery failure'); END`)
+    raw.close()
+
+    const restarted = new Store(file)
+    try {
+      expect(() => restarted.recoverInterruptedThreads()).toThrow('injected recovery failure')
+      expect(restarted.history('thread-1')).toHaveLength(2)
+      expect(restarted.thread('thread-1')?.unread).toBe(false)
+    } finally {
+      restarted.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('filters old lifecycle history within the cold-start budget', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'Scale' })
+    for (let index = 0; index < 5_000; index += 1) {
+      const turnId = `completed-${index}`
+      store.append('thread-1', {
+        type: 'turn.started',
+        turn: { id: turnId, threadId: 'thread-1', status: 'running', createdAt: index },
+      })
+      store.append('thread-1', { type: 'turn.completed', turnId, status: 'completed' })
+    }
+    store.append('thread-1', {
+      type: 'turn.started',
+      turn: { id: 'open-turn', threadId: 'thread-1', status: 'running', createdAt: 100 },
+    })
+    const parse = vi.spyOn(JSON, 'parse')
+    const startedAt = performance.now()
+
+    expect(store.recoverInterruptedThreads()).toEqual(['thread-1'])
+    expect(performance.now() - startedAt).toBeLessThan(1_500)
+    expect(parse).toHaveBeenCalledTimes(1)
+    parse.mockRestore()
+  })
 })
 
 describe('opening a database written by an older build', () => {
@@ -318,6 +629,10 @@ describe('threads', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('starts new profiles with the classic sidebar and three-day settling', () => {
+    expect(store.sidebarSettings()).toEqual({ mode: 'classic', autoSettleDays: 3 })
+  })
 })
 
 describe('events', () => {
@@ -409,6 +724,94 @@ describe('cross-session search', () => {
     expect(store.searchSessions({ query: 'private-thought-marker' }).results).toEqual([])
   })
 
+  it('identifies otherwise indistinguishable content results without exposing their source', () => {
+    const duplicate = message('opaque collision marker')
+    store.append('t1', duplicate)
+    store.append('t1', duplicate)
+
+    const results = store.searchSessions({ query: 'opaque collision' }).results
+    const resultIds = results.map((result) => result.resultId)
+
+    expect(results).toHaveLength(2)
+    expect(new Set(resultIds).size).toBe(2)
+    for (const resultId of resultIds) {
+      expect(resultId).toMatch(/^sr1_[A-Za-z0-9_-]{22}$/)
+      expect(resultId!.length).toBeLessThanOrEqual(256)
+    }
+  })
+
+  it('keeps result identity stable across queries, pagination, and title changes', () => {
+    for (let index = 0; index < 3; index += 1) {
+      store.append('t1', message(`stableidentity shared result-${index}`))
+    }
+
+    const first = store.searchSessions({ query: 'stableidentity', limit: 2 })
+    const second = store.searchSessions({
+      query: 'stableidentity',
+      cursor: first.nextCursor!,
+      limit: 2,
+    })
+    const original = [...first.results, ...second.results]
+    store.renameThread('t1', 'Renamed after the first search')
+    const repeated = store.searchSessions({ query: 'stableidentity shared' }).results
+    const identityBySnippet = new Map(
+      original.map((result) => [result.snippet.map((part) => part.text).join(''), result.resultId]),
+    )
+
+    expect(original.map((result) => result.resultId)).not.toContain(undefined)
+    expect(new Set(original.map((result) => result.resultId)).size).toBe(3)
+    expect(
+      repeated.map((result) => [result.snippet.map((part) => part.text).join(''), result.resultId]),
+    ).toEqual(
+      expect.arrayContaining(
+        [...identityBySnippet].map(([snippet, resultId]) => [snippet, resultId]),
+      ),
+    )
+    expect(
+      repeated.every((result) => result.threadTitle === 'Renamed after the first search'),
+    ).toBe(true)
+  })
+
+  it('preserves result identity across process restarts and index rebuilds', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-search-identity-'))
+    const file = path.join(dir, 'identity.db')
+    const seeded = new Store(file)
+    seeded.addProject('/private/repository', 'Private')
+    seeded.addThread({
+      id: 'private-thread',
+      projectPath: '/private/repository',
+      provider: 'codex',
+      title: 'Private title',
+    })
+    seeded.append('private-thread', message('persistent opaque identity'))
+    const before = seeded.searchSessions({ query: 'persistent' }).results[0]?.resultId
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('session_search_v1')
+    raw.close()
+
+    const rebuilt = new Store(file)
+    try {
+      const after = rebuilt.searchSessions({ query: 'identity' }).results[0]?.resultId
+      expect(before).toBeDefined()
+      expect(after).toBe(before)
+    } finally {
+      rebuilt.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('ranks exact words ahead of prefixes and ignores punctuation-only queries', () => {
+    store.append('t1', message('testing the performance budget'))
+    store.append('t1', message('test the performance budget'))
+
+    const matches = store.searchSessions({ query: 'test perf' }).results
+    expect(matches).toHaveLength(2)
+    expect(matches[0]?.snippet.map((part) => part.text).join('')).toContain('test the')
+    expect(store.searchSessions({ query: '---' }).results).toEqual([])
+  })
+
   it('filters and paginates without repeating results', () => {
     store.addProject('/other', 'Other')
     store.addThread({
@@ -434,19 +837,117 @@ describe('cross-session search', () => {
     expect(second.nextCursor).toBeNull()
   })
 
-  it('keeps pagination stable when a new matching event arrives', () => {
-    store.append('t1', message('first stable result'))
-    store.append('t1', message('second stable result'))
-    const first = store.searchSessions({ query: 'stable', limit: 1 })
+  it('keeps the original ranked snapshot when matching rows arrive between pages', () => {
+    for (let index = 0; index < 20; index += 1) {
+      store.append('t1', message(`pagefreeze old-${index}`))
+    }
+    const first = store.searchSessions({ query: 'pagefreeze', limit: 5 })
 
-    store.append('t1', message('new stable result'))
+    for (let index = 0; index < 100; index += 1) {
+      store.append(
+        't1',
+        message(`pagefreeze newly inserted result with different document length ${index}`),
+      )
+    }
     const second = store.searchSessions({
-      query: 'stable',
-      limit: 1,
+      query: 'pagefreeze',
+      limit: 5,
       cursor: first.nextCursor!,
     })
+    const snippetText = (result: SessionSearchResult): string =>
+      result.snippet.map((part) => part.text).join('')
 
-    expect(second.results[0]?.snippet.map((part) => part.text).join('')).toContain('first')
+    expect(first.results.map(snippetText)).toEqual([
+      'pagefreeze old-19',
+      'pagefreeze old-18',
+      'pagefreeze old-17',
+      'pagefreeze old-16',
+      'pagefreeze old-15',
+    ])
+    expect(second.results.map(snippetText)).toEqual([
+      'pagefreeze old-14',
+      'pagefreeze old-13',
+      'pagefreeze old-12',
+      'pagefreeze old-11',
+      'pagefreeze old-10',
+    ])
+  })
+
+  it('traverses more than 100 unchanged pages without gaps or repeats', () => {
+    for (let index = 0; index < 205; index += 1) {
+      store.append('t1', message(`longpagination result-${index}`))
+    }
+
+    const seen = new Set<string>()
+    let cursor: string | undefined
+    let pages = 0
+    do {
+      const page = store.searchSessions({
+        query: 'longpagination',
+        limit: 2,
+        ...(cursor ? { cursor } : {}),
+      })
+      for (const result of page.results) {
+        const text = result.snippet.map((part) => part.text).join('')
+        expect(seen.has(text)).toBe(false)
+        seen.add(text)
+      }
+      if (page.nextCursor) {
+        const continuation = JSON.parse(
+          Buffer.from(page.nextCursor, 'base64url').toString('utf8'),
+        ) as { position: number }
+        expect(continuation.position).toBeGreaterThan(pages * 2)
+      }
+      cursor = page.nextCursor ?? undefined
+      pages += 1
+    } while (cursor)
+
+    expect(pages).toBe(103)
+    expect(seen.size).toBe(205)
+  })
+
+  it('binds continuation cursors to the original query and filters', () => {
+    store.append('t1', message('filtered snapshot first'))
+    store.append('t1', message('filtered snapshot second'))
+    const first = store.searchSessions({ query: 'filtered', projectPath: '/repo', limit: 1 })
+
+    expect(
+      store.searchSessions({
+        query: 'filtered',
+        projectPath: '/repo',
+        cursor: first.nextCursor!,
+        limit: 1,
+      }).results,
+    ).toHaveLength(1)
+    expect(() =>
+      store.searchSessions({
+        query: 'different',
+        projectPath: '/repo',
+        cursor: first.nextCursor!,
+        limit: 1,
+      }),
+    ).toThrow('does not match')
+    expect(() =>
+      store.searchSessions({ query: 'filtered', cursor: first.nextCursor!, limit: 1 }),
+    ).toThrow('does not match')
+  })
+
+  it('expires abandoned search snapshots', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-08-11T10:00:00Z'))
+      store.append('t1', message('expiring snapshot first'))
+      store.append('t1', message('expiring snapshot second'))
+      const first = store.searchSessions({ query: 'expiring', limit: 1 })
+
+      vi.advanceTimersByTime(5 * 60 * 1_000 + 1)
+
+      expect(() =>
+        store.searchSessions({ query: 'expiring', cursor: first.nextCursor!, limit: 1 }),
+      ).toThrow('expired')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('clamps internal page sizes and treats malformed cursors as a fresh search', () => {
@@ -545,10 +1046,10 @@ describe('usage totals', () => {
       store.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
       store.addThread({ id: 'two', projectPath: '/repo', provider: 'codex', title: 'Two' })
       vi.setSystemTime(new Date('2026-07-30T23:50:00'))
-      store.append('one', usage(100))
+      store.append('one', usage(100, undefined, true))
       vi.setSystemTime(new Date('2026-07-31T00:10:00'))
-      store.append('one', usage(140))
-      store.append('two', usage(50))
+      store.append('one', usage(140, undefined, true))
+      store.append('two', usage(50, undefined, true))
 
       expect(store.usageSummary('one', new Date('2026-07-31T00:00:00').getTime())).toEqual({
         session: expect.objectContaining({ totalTokens: 140 }),
@@ -571,6 +1072,35 @@ describe('usage totals', () => {
       session: expect.objectContaining({ totalTokens: 30, costUsd: 0.05 }),
       today: expect.objectContaining({ totalTokens: 70, costUsd: 0.09 }),
     })
+  })
+
+  it('exposes persisted usage metadata for the historical usage page', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'one', projectPath: '/repo', provider: 'api', title: 'One' })
+    store.append('one', {
+      type: 'usage.updated',
+      usage: {
+        inputTokens: 100,
+        cachedInputTokens: 40,
+        outputTokens: 20,
+        reasoningTokens: 5,
+        totalTokens: 120,
+        model: 'gpt-5.6-luna',
+        inputIncludesCached: true,
+      },
+    })
+
+    expect(store.usageEvents()).toEqual([
+      expect.objectContaining({
+        threadId: 'one',
+        provider: 'api',
+        usage: expect.objectContaining({
+          model: 'gpt-5.6-luna',
+          inputTokens: 100,
+          inputIncludesCached: true,
+        }),
+      }),
+    ])
   })
 })
 

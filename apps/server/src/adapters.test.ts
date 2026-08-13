@@ -23,9 +23,11 @@ class FakeTurnAdapter {
   readonly provider: 'grok' | 'antigravity' | 'claude-code'
   startOptions: Record<string, unknown> | undefined
   turnOptions: Record<string, unknown> | undefined
+  launchOptions: Record<string, unknown> | undefined
 
-  constructor(provider: FakeTurnAdapter['provider']) {
+  constructor(provider: FakeTurnAdapter['provider'], options?: Record<string, unknown>) {
     this.provider = provider
+    this.launchOptions = options
     turnAdapters.push(this)
   }
 
@@ -58,20 +60,20 @@ class FakeTurnAdapter {
 }
 
 class FakeGrokAdapter extends FakeTurnAdapter {
-  constructor() {
-    super('grok')
+  constructor(options?: Record<string, unknown>) {
+    super('grok', options)
   }
 }
 
 class FakeAntigravityAdapter extends FakeTurnAdapter {
-  constructor() {
-    super('antigravity')
+  constructor(options?: Record<string, unknown>) {
+    super('antigravity', options)
   }
 }
 
 class FakeClaudeCodeAdapter extends FakeTurnAdapter {
-  constructor() {
-    super('claude-code')
+  constructor(options?: Record<string, unknown>) {
+    super('claude-code', options)
   }
 }
 
@@ -138,6 +140,38 @@ describe('one-shot provider turn options', () => {
       expect(turnAdapters[0]?.turnOptions).toEqual({ model: 'model-b', effort: 'high' })
     },
   )
+
+  it('binds a named custom source to the compatible adapter launch', async () => {
+    const runtime = providerRuntime(
+      'grok',
+      () => {},
+      (id) =>
+        id === 'my-grok'
+          ? {
+              id,
+              displayName: 'My Grok',
+              provider: 'grok',
+              command: '/opt/my-grok',
+              args: ['--profile', 'work'],
+            }
+          : undefined,
+    )
+
+    await runtime.start('/repo', { agent: 'my-grok' })
+
+    expect(turnAdapters[0]?.launchOptions?.spawn).toEqual(expect.any(Function))
+  })
+
+  it('fails instead of silently falling back after a custom source is removed', async () => {
+    const runtime = providerRuntime(
+      'grok',
+      () => {},
+      () => undefined,
+    )
+    await expect(runtime.start('/repo', { agent: 'removed-grok' })).rejects.toThrow(
+      'custom harness "removed-grok" no longer exists',
+    )
+  })
 })
 
 describe('openCodeRuntime.listModels', () => {

@@ -1,0 +1,22 @@
+[package]
+name = "harness-native"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-channel.workspace = true
+dirs.workspace = true
+harness-server = { path = "../../crates/harness-server" }
+harness-ui = { path = "../../crates/harness-ui" }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

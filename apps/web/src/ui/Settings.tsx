@@ -3,35 +3,40 @@ import {
   memo,
   Suspense,
   useCallback,
-  useDeferredValue,
   useEffect,
+  useId,
   useRef,
   useState,
   useSyncExternalStore,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
+import { createPortal } from 'react-dom'
 import type {
   Account,
   ConnectionAddress,
   ConnectionsStatus,
+  DataOf,
   ModelConnection,
   ModelConnectionPreset,
   ModelTransport,
   ProviderId,
-  ProviderSetup,
   ProviderStatus,
-  PairedDevice,
   ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
 import {
   ArrowLeft,
+  BarChart3,
+  Bug,
   CircleAlert,
+  CircleUserRound,
   Blocks,
+  Check,
   ChevronDown,
+  Copy,
   Database,
   Info,
-  LogOut,
   Boxes,
   KeyRound,
   Network,
@@ -44,12 +49,12 @@ import {
 import {
   agentMark,
   connectionMark,
-  filterModelChoicesByQuery,
+  isCustomModelChoice,
   providerMark,
   type ModelChoice,
   type ProviderMark,
 } from '../model-catalog.js'
-import { isDesktop } from '../bridge.js'
+import { isDesktop, writeClipboardText } from '../bridge.js'
 import {
   beginInstall,
   beginLogin,
@@ -58,6 +63,7 @@ import {
   installKey,
   installState,
   loginKey,
+  signedInEmail,
   subscribeInstalls,
   type InstallTarget,
 } from '../provider-install.js'
@@ -68,26 +74,47 @@ import type {
   FontPreference,
   ThemePreference,
 } from '../theme.js'
+import {
+  readModelPickerLayout,
+  subscribeModelPickerLayout,
+  writeModelPickerLayout,
+} from '../model-picker-layout.js'
+import {
+  performAppHaptic,
+  prepareAppHaptics,
+  readAppHaptics,
+  subscribeAppHaptics,
+  writeAppHaptics,
+} from '../haptics.js'
 import { McpSettings } from './McpSettings.js'
 import { Menu, MenuItem } from './Menu.js'
-import { ModelSearchField } from './ModelSearchField.js'
+import { groupModelsBySource } from './ModelSelector.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderIcon } from './ProviderIcon.js'
+import { ProviderRow, type ProviderAction } from './ProviderRow.js'
+import { ProfileSettings } from './ProfileSettings.js'
+import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { renderQrSvg } from './qr-code.js'
+import { SourceIdentity } from './SourceIdentity.js'
+import { SettingsMeta, StateLabel } from './SettingsStatus.js'
+import { UsageSettings } from './UsageSettings.js'
 
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
 )
 
-type SettingsSection =
+export type SettingsSection =
+  | 'profile'
   | 'providers'
   | 'models'
   | 'mcp'
   | 'skills'
   | 'workflows'
   | 'mobile'
+  | 'usage'
   | 'appearance'
   | 'data'
+  | 'debug'
   | 'about'
 
 const THEME_OPTIONS = [
@@ -133,6 +160,9 @@ const BACKDROP_OPTIONS = [
   { value: 'plum', label: 'Plum' },
 ] as const satisfies ReadonlyArray<{ value: BackdropPreference; label: string }>
 
+const FOCUSABLE_SELECTOR =
+  'a[href]:not([tabindex="-1"]), button:not([disabled]):not([tabindex="-1"]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 /**
  * Settings stays intentionally small: the sidebar reorganizes the decisions
  * the app already exposes without inventing preferences for their own sake.
@@ -144,6 +174,8 @@ function SettingsComponent(props: {
   projectPath: string | undefined
   projectName: string | undefined
   account: Account | undefined
+  profileIdentity?: ProfileIdentityPreferences | undefined
+  onProfileIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
   providerStatuses: ProviderStatus[]
   acpAgents: ResultOf<'acp.agents'>['agents']
   modelConnections: ModelConnection[]
@@ -167,28 +199,56 @@ function SettingsComponent(props: {
   showMacOSFontSmoothing: boolean
   macOSFontSmoothing: boolean
   onMacOSFontSmoothingChange: (enabled: boolean) => void
+  showMacOSHaptics?: boolean | undefined
   onAccountChange: (provider: ProviderId, account: Account) => void
+  initialSection?: SettingsSection | undefined
   onReset: () => void
   onClose: () => void
 }) {
-  const [section, setSection] = useState<SettingsSection>('providers')
+  const [section, setSection] = useState<SettingsSection>(props.initialSection ?? 'providers')
 
-  // A dialog owns the keyboard: focus moves into it on open (Tab must not
-  // walk the app hidden underneath), and Escape closes it.
+  useEffect(() => {
+    setSection(props.initialSection ?? 'providers')
+  }, [props.initialSection])
+
   const panel = useRef<HTMLDivElement>(null)
+  const onClose = useRef(props.onClose)
+  onClose.current = props.onClose
   useEffect(() => {
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
     panel.current?.focus()
-  }, [])
-  const { onClose } = props
-  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
+      if (event.key === 'Escape' && !event.defaultPrevented) {
+        event.preventDefault()
+        onClose.current()
+        return
+      }
+      if (event.key !== 'Tab' || event.defaultPrevented || !panel.current) return
+
+      const focusable = Array.from(
+        panel.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+      ).filter((element) => !element.closest('[hidden], [inert], [aria-hidden="true"]'))
+      const first = focusable[0]
+      const last = focusable.at(-1)
+      const active = document.activeElement
+      const atBoundary =
+        !first ||
+        !last ||
+        active === panel.current ||
+        !panel.current.contains(active) ||
+        (event.shiftKey ? active === first : active === last)
+      if (!atBoundary) return
+
       event.preventDefault()
-      onClose()
+      ;(event.shiftKey ? last : first)?.focus()
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      if (previousFocus?.isConnected) previousFocus.focus()
+    }
+  }, [])
 
   return (
     <div
@@ -209,6 +269,24 @@ function SettingsComponent(props: {
 
         <p className="settings__nav-label">Settings</p>
         <nav className="settings__nav" aria-label="Settings categories">
+          <SettingsNavItem
+            active={section === 'workflows'}
+            icon={<PanelLeft size={15} aria-hidden />}
+            label="General"
+            onClick={() => setSection('workflows')}
+          />
+          <SettingsNavItem
+            active={section === 'profile'}
+            icon={<CircleUserRound size={15} aria-hidden />}
+            label="Profile"
+            onClick={() => setSection('profile')}
+          />
+          <SettingsNavItem
+            active={section === 'appearance'}
+            icon={<Palette size={15} aria-hidden />}
+            label="Appearance"
+            onClick={() => setSection('appearance')}
+          />
           <SettingsNavItem
             active={section === 'providers'}
             icon={<UserRound size={15} aria-hidden />}
@@ -234,28 +312,28 @@ function SettingsComponent(props: {
             onClick={() => setSection('skills')}
           />
           <SettingsNavItem
-            active={section === 'workflows'}
-            icon={<PanelLeft size={15} aria-hidden />}
-            label="Workflows"
-            onClick={() => setSection('workflows')}
-          />
-          <SettingsNavItem
             active={section === 'mobile'}
             icon={<Smartphone size={15} aria-hidden />}
             label="Mobile access"
             onClick={() => setSection('mobile')}
           />
           <SettingsNavItem
-            active={section === 'appearance'}
-            icon={<Palette size={15} aria-hidden />}
-            label="Appearance"
-            onClick={() => setSection('appearance')}
+            active={section === 'usage'}
+            icon={<BarChart3 size={15} aria-hidden />}
+            label="Usage"
+            onClick={() => setSection('usage')}
           />
           <SettingsNavItem
             active={section === 'data'}
             icon={<Database size={15} aria-hidden />}
-            label="Data"
+            label="Data & privacy"
             onClick={() => setSection('data')}
+          />
+          <SettingsNavItem
+            active={section === 'debug'}
+            icon={<Bug size={15} aria-hidden />}
+            label="Debug"
+            onClick={() => setSection('debug')}
           />
           <SettingsNavItem
             active={section === 'about'}
@@ -267,15 +345,28 @@ function SettingsComponent(props: {
       </aside>
 
       <main className="settings__main">
-        <div className="settings__content">
+        <div
+          className={`settings__content${section === 'profile' ? ' settings__content--profile' : ''}${section === 'usage' ? ' settings__content--usage' : ''}`}
+        >
+          {section === 'profile' ? (
+            <ProfileSettings
+              transport={props.transport}
+              account={props.account}
+              providerName={props.providerName}
+              identity={props.profileIdentity}
+              onIdentityChange={props.onProfileIdentityChange}
+            />
+          ) : null}
           {section === 'providers' ? <ProviderSettings {...props} /> : null}
           {section === 'models' ? <ModelSettings {...props} /> : null}
           {section === 'mcp' ? <McpSettings {...props} /> : null}
           {section === 'skills' ? <SkillsSettings {...props} /> : null}
           {section === 'workflows' ? <WorkflowSettings {...props} /> : null}
           {section === 'mobile' ? <MobileAccessSettings transport={props.transport} /> : null}
+          {section === 'usage' ? <UsageSettings transport={props.transport} /> : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
           {section === 'data' ? <DataSettings {...props} /> : null}
+          {section === 'debug' ? <DebugSettings transport={props.transport} /> : null}
           {section === 'about' ? <AboutSettings transport={props.transport} /> : null}
         </div>
       </main>
@@ -291,7 +382,7 @@ function WorkflowSettings(props: {
   const autoSettle = props.sidebarSettings.autoSettleDays !== null
 
   return (
-    <SettingsPanel title="Workflows">
+    <SettingsPanel title="General">
       <SettingsRow title="Sidebar version">
         <div className="settings__sidebar-switcher" role="radiogroup" aria-label="Sidebar version">
           <button
@@ -342,6 +433,12 @@ function WorkflowSettings(props: {
             <span className="switch__thumb" />
           </button>
         </div>
+      </SettingsRow>
+      <SettingsRow
+        title="Model picker"
+        note="Show providers in a compact rail instead of a single list."
+      >
+        <ModelPickerLayoutToggle />
       </SettingsRow>
     </SettingsPanel>
   )
@@ -408,158 +505,331 @@ const CONNECTION_PRESETS: Record<
   },
 }
 
-function ProviderSettings(props: {
+type ProviderMap<T> = Partial<Record<ProviderId, T>>
+
+export function ProviderSettings(props: {
   provider: ProviderId
-  providerName: string
   account: Account | undefined
   providerStatuses: ProviderStatus[]
   acpAgents: ResultOf<'acp.agents'>['agents']
   modelConnections: ModelConnection[]
+  projectPath?: string | undefined
   transport: Transport
   onConnectionsChanged: () => void
   onAccountChange: (provider: ProviderId, account: Account) => void
 }) {
-  const [adding, setAdding] = useState(false)
-  const [preset, setPreset] = useState<ModelConnectionPreset>('openai')
-  const [name, setName] = useState('OpenAI API')
-  const [baseUrl, setBaseUrl] = useState(CONNECTION_PRESETS.openai.baseUrl)
-  const [defaultModel, setDefaultModel] = useState('')
-  const [apiKey, setApiKey] = useState('')
-  const [error, setError] = useState<string>()
-  const [saving, setSaving] = useState(false)
-  const [accounts, setAccounts] = useState<Partial<Record<ProviderId, Account>>>({})
+  type AuthReadState =
+    | { phase: 'loading' }
+    | { phase: 'ready'; account: Account }
+    | { phase: 'error'; message: string }
+  type AuthOperation = {
+    id: number
+    kind: 'sign-in' | 'sign-out'
+    transport: Transport
+    loginId?: string
+  }
+
   const [agentAccounts, setAgentAccounts] = useState<Record<string, Account>>({})
-  const [authBusy, setAuthBusy] = useState<ProviderId>()
-  const [authError, setAuthError] = useState<string>()
+  const [agentAccountErrors, setAgentAccountErrors] = useState<Record<string, string>>({})
+  const [agentBusy, setAgentBusy] = useState<string>()
+  const [addingConnection, setAddingConnection] = useState(false)
+  const [connectionPreset, setConnectionPreset] = useState<ModelConnectionPreset>('openai')
+  const [connectionName, setConnectionName] = useState(CONNECTION_PRESETS.openai.label)
+  const [connectionBaseUrl, setConnectionBaseUrl] = useState(CONNECTION_PRESETS.openai.baseUrl)
+  const [connectionDefaultModel, setConnectionDefaultModel] = useState('')
+  const [connectionApiKey, setConnectionApiKey] = useState('')
+  const [connectionError, setConnectionError] = useState<string>()
+  const [connectionSaving, setConnectionSaving] = useState(false)
+  const [authStates, setAuthStates] = useState<ProviderMap<AuthReadState>>(() =>
+    props.account ? { [props.provider]: { phase: 'ready', account: props.account } } : {},
+  )
+  const [authOperations, setAuthOperations] = useState<ProviderMap<AuthOperation>>({})
+  const [authErrors, setAuthErrors] = useState<ProviderMap<string>>({})
+  const sequence = useRef(0)
+  const statusRequests = useRef<ProviderMap<{ id: number; transport: Transport }>>({})
+  const operations = useRef<ProviderMap<AuthOperation>>({})
+  const earlyEvents = useRef<
+    ProviderMap<Map<string | null, { operationId: number; event: DataOf<'auth.event'> }>>
+  >({})
+  const currentTransport = useRef(props.transport)
+  currentTransport.current = props.transport
+
+  const updateOperation = useCallback((provider: ProviderId, operation?: AuthOperation) => {
+    operations.current = { ...operations.current, [provider]: operation }
+    setAuthOperations(operations.current)
+  }, [])
+
+  const operationIsCurrent = useCallback(
+    (provider: ProviderId, operation: AuthOperation) =>
+      operations.current[provider]?.id === operation.id &&
+      currentTransport.current === operation.transport,
+    [],
+  )
+
+  const beginOperation = (provider: ProviderId, kind: AuthOperation['kind']) => {
+    const operation = { id: ++sequence.current, kind, transport: props.transport }
+    delete statusRequests.current[provider]
+    delete earlyEvents.current[provider]
+    updateOperation(provider, operation)
+    setAuthErrors((current) => ({ ...current, [provider]: undefined }))
+    return operation
+  }
 
   const refreshAccount = useCallback(
-    async (provider: ProviderId) => {
-      const account = await props.transport.request('auth.status', { provider })
-      setAccounts((current) => ({ ...current, [provider]: account }))
-      props.onAccountChange(provider, account)
+    async (provider: ProviderId, forceLoading = false) => {
+      const request = { id: ++sequence.current, transport: props.transport }
+      statusRequests.current = { ...statusRequests.current, [provider]: request }
+      setAuthStates((current) =>
+        !forceLoading && current[provider]?.phase === 'ready'
+          ? current
+          : { ...current, [provider]: { phase: 'loading' } },
+      )
+      try {
+        const account = await props.transport.request('auth.status', { provider })
+        if (
+          statusRequests.current[provider] !== request ||
+          currentTransport.current !== request.transport
+        )
+          return
+        setAuthStates((current) => ({
+          ...current,
+          [provider]: { phase: 'ready', account },
+        }))
+        props.onAccountChange(provider, account)
+      } catch (cause) {
+        if (
+          statusRequests.current[provider] !== request ||
+          currentTransport.current !== request.transport
+        )
+          return
+        setAuthStates((current) => ({
+          ...current,
+          [provider]: {
+            phase: 'error',
+            message: cause instanceof Error ? cause.message : String(cause),
+          },
+        }))
+      }
     },
     [props.transport, props.onAccountChange],
   )
 
+  const authProviderIds = props.providerStatuses
+    .filter((status) => status.installed && status.id !== 'acp')
+    .map((status) => status.id)
+  const authProviderKey = authProviderIds.join('|')
+
+  const completeLogin = useCallback(
+    (event: DataOf<'auth.event'>) => {
+      updateOperation(event.provider)
+      setAuthErrors((current) => ({
+        ...current,
+        [event.provider]: event.success ? undefined : (event.error ?? 'Sign-in was cancelled.'),
+      }))
+      if (event.success) void refreshAccount(event.provider, true)
+    },
+    [refreshAccount, updateOperation],
+  )
+
+  useEffect(() => {
+    for (const provider of authProviderIds) {
+      void refreshAccount(provider)
+    }
+    const unsubscribe = props.transport.on('auth.event', (event) => {
+      if (event.agent) return
+      const operation = operations.current[event.provider]
+      if (!operation) {
+        if (event.success) void refreshAccount(event.provider, true)
+        return
+      }
+      if (operation.kind !== 'sign-in' || operation.transport !== props.transport) return
+      if (operation.loginId === undefined) {
+        const events = earlyEvents.current[event.provider] ?? new Map()
+        events.set(event.loginId, { operationId: operation.id, event })
+        earlyEvents.current[event.provider] = events
+        return
+      }
+      if (operation.loginId === event.loginId) completeLogin(event)
+    })
+
+    return () => {
+      unsubscribe()
+      for (const provider of authProviderIds) {
+        delete statusRequests.current[provider]
+      }
+    }
+  }, [props.transport, authProviderKey, completeLogin, refreshAccount])
+
+  useEffect(() => {
+    operations.current = {}
+    setAuthOperations({})
+    setAuthErrors({})
+  }, [props.transport])
+
   const refreshAgentAccount = useCallback(
     async (agentId: string) => {
-      const account = await props.transport.request('auth.status', {
-        provider: 'acp',
-        agent: agentId,
-      })
-      setAgentAccounts((current) => ({ ...current, [agentId]: account }))
+      try {
+        const account = await props.transport.request('auth.status', {
+          provider: 'acp',
+          agent: agentId,
+        })
+        setAgentAccounts((current) => ({ ...current, [agentId]: account }))
+        setAgentAccountErrors((current) => ({ ...current, [agentId]: '' }))
+      } catch (cause) {
+        setAgentAccountErrors((current) => ({
+          ...current,
+          [agentId]: cause instanceof Error ? cause.message : String(cause),
+        }))
+      }
     },
     [props.transport],
   )
 
+  const installedAgentKey = props.acpAgents
+    .filter((agent) => agent.installed)
+    .map((agent) => agent.id)
+    .join('|')
   useEffect(() => {
-    for (const status of props.providerStatuses) {
-      if (status.installed && status.id !== 'acp') {
-        void refreshAccount(status.id).catch(() =>
-          setAccounts((current) => ({ ...current, [status.id]: { signedIn: false } })),
-        )
-      }
+    for (const agentId of installedAgentKey.split('|')) {
+      if (agentId) void refreshAgentAccount(agentId)
     }
-    for (const agent of props.acpAgents) {
-      if (agent.installed) void refreshAgentAccount(agent.id).catch(() => {})
-    }
-    return props.transport.on('auth.event', (event) => {
-      if (event.agent) return
-      setAuthBusy((current) => (current === event.provider ? undefined : current))
-      if (event.success) {
-        setAuthError(undefined)
-        void refreshAccount(event.provider).catch((cause) =>
-          setAuthError(cause instanceof Error ? cause.message : String(cause)),
-        )
-      } else {
-        setAuthError(event.error ?? 'Sign-in was cancelled.')
-      }
-    })
-  }, [
-    props.transport,
-    props.providerStatuses,
-    props.acpAgents,
-    refreshAccount,
-    refreshAgentAccount,
-  ])
+  }, [installedAgentKey, refreshAgentAccount])
 
   const signIn = async (provider: ProviderId) => {
-    setAuthBusy(provider)
-    setAuthError(undefined)
+    const operation = beginOperation(provider, 'sign-in')
     try {
       const result = await props.transport.request('auth.startLogin', { provider })
+      if (!operationIsCurrent(provider, operation)) return
+      const early = earlyEvents.current[provider]?.get(result.loginId)
+      delete earlyEvents.current[provider]
+      if (early?.operationId === operation.id && early.event.loginId === result.loginId) {
+        completeLogin(early.event)
+        return
+      }
+      updateOperation(provider, { ...operation, loginId: result.loginId })
       if (result.authUrl) window.open(result.authUrl, '_blank', 'noopener,noreferrer')
     } catch (cause) {
-      setAuthBusy(undefined)
-      setAuthError(cause instanceof Error ? cause.message : String(cause))
+      if (!operationIsCurrent(provider, operation)) return
+      updateOperation(provider)
+      setAuthErrors((current) => ({
+        ...current,
+        [provider]: cause instanceof Error ? cause.message : String(cause),
+      }))
     }
   }
 
   const signOut = async (provider: ProviderId) => {
-    setAuthBusy(provider)
-    setAuthError(undefined)
+    const operation = beginOperation(provider, 'sign-out')
     try {
       await props.transport.request('auth.signOut', { provider })
+      if (!operationIsCurrent(provider, operation)) return
       const account = { signedIn: false }
-      setAccounts((current) => ({ ...current, [provider]: account }))
+      localStorage.removeItem(providerEmailKey(provider))
+      setAuthStates((current) => ({
+        ...current,
+        [provider]: { phase: 'ready', account },
+      }))
       props.onAccountChange(provider, account)
+      updateOperation(provider)
     } catch (cause) {
-      setAuthError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setAuthBusy(undefined)
+      if (!operationIsCurrent(provider, operation)) return
+      updateOperation(provider)
+      setAuthErrors((current) => ({
+        ...current,
+        [provider]: cause instanceof Error ? cause.message : String(cause),
+      }))
     }
   }
 
-  const choosePreset = (next: ModelConnectionPreset) => {
-    const config = CONNECTION_PRESETS[next]
-    setPreset(next)
-    setName(config.label)
-    setBaseUrl(config.baseUrl)
-    setDefaultModel('')
+  const signOutAgent = async (agentId: string) => {
+    setAgentBusy(agentId)
+    setAgentAccountErrors((current) => ({ ...current, [agentId]: '' }))
+    try {
+      await props.transport.request('auth.signOut', { provider: 'acp', agent: agentId })
+      setAgentAccounts((current) => ({ ...current, [agentId]: { signedIn: false } }))
+    } catch (cause) {
+      setAgentAccountErrors((current) => ({
+        ...current,
+        [agentId]: cause instanceof Error ? cause.message : String(cause),
+      }))
+    } finally {
+      setAgentBusy((current) => (current === agentId ? undefined : current))
+    }
+  }
+
+  const chooseConnectionPreset = (preset: ModelConnectionPreset) => {
+    const config = CONNECTION_PRESETS[preset]
+    setConnectionPreset(preset)
+    setConnectionName(config.label)
+    setConnectionBaseUrl(config.baseUrl)
+    setConnectionDefaultModel('')
   }
 
   const addConnection = async () => {
-    setSaving(true)
-    setError(undefined)
+    setConnectionSaving(true)
+    setConnectionError(undefined)
     try {
-      const id = `${preset}-${crypto.randomUUID()}`
+      const id = `${connectionPreset}-${crypto.randomUUID()}`
       await props.transport.request('connections.upsert', {
         id,
-        displayName: name.trim(),
-        preset,
-        transport: CONNECTION_PRESETS[preset].transport,
-        baseUrl: baseUrl.trim(),
-        ...(defaultModel.trim() ? { defaultModel: defaultModel.trim() } : {}),
+        displayName: connectionName.trim(),
+        preset: connectionPreset,
+        transport: CONNECTION_PRESETS[connectionPreset].transport,
+        baseUrl: connectionBaseUrl.trim(),
+        ...(connectionDefaultModel.trim() ? { defaultModel: connectionDefaultModel.trim() } : {}),
         enabled: true,
       })
       await props.transport.request('connections.setCredential', {
         connectionId: id,
-        apiKey: apiKey.trim(),
+        apiKey: connectionApiKey.trim(),
       })
-      setAdding(false)
-      setApiKey('')
+      setAddingConnection(false)
+      setConnectionApiKey('')
       props.onConnectionsChanged()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setConnectionError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setSaving(false)
+      setConnectionSaving(false)
     }
   }
 
   const renderProviderRow = (status: ProviderStatus) => {
-    const account =
-      accounts[status.id] ?? (status.id === props.provider ? props.account : undefined)
+    const authState =
+      authStates[status.id] ??
+      (status.id === props.provider && props.account
+        ? { phase: 'ready' as const, account: props.account }
+        : { phase: 'loading' as const })
+    const account = authState.phase === 'ready' ? authState.account : undefined
     if (!status.installed && !account?.signedIn) {
       return (
         <InstallableRow
           key={status.id}
-          title={status.displayName}
-          idleNote={status.problem}
-          icon={<ProviderIcon mark={providerMark(status.id)} size={17} />}
+          provider={status}
           target={{ provider: status.id }}
-          setup={status.setup}
           transport={props.transport}
           onInstalled={props.onConnectionsChanged}
+        />
+      )
+    }
+    if (authState.phase !== 'ready') {
+      return (
+        <ProviderRow
+          key={status.id}
+          provider={status}
+          status={authState.phase === 'error' ? 'Account unavailable' : 'Checking account…'}
+          live={authState.phase === 'loading'}
+          issue={
+            authState.phase === 'error'
+              ? { message: authState.message, announce: true }
+              : status.problem
+                ? { message: status.problem }
+                : undefined
+          }
+          primary={
+            authState.phase === 'error'
+              ? { label: 'Retry', onClick: () => void refreshAccount(status.id, true) }
+              : undefined
+          }
         />
       )
     }
@@ -567,153 +837,150 @@ function ProviderSettings(props: {
       return (
         <CliSignInRow
           key={status.id}
-          title={status.displayName}
-          icon={<ProviderIcon mark={providerMark(status.id)} size={17} />}
+          provider={status}
           target={{ provider: status.id }}
           transport={props.transport}
-          onSignedIn={() => void refreshAccount(status.id).catch(() => undefined)}
+          onSignedIn={() => void refreshAccount(status.id, true)}
         />
       )
     }
     const accountStatus = account?.signedIn ? (
-      account.email || account.plan ? (
-        <>
-          {account.email ? <AccountEmail email={account.email} /> : null}
-          {account.email && account.plan ? ' · ' : null}
-          {account.plan}
-        </>
-      ) : (
-        'Signed in'
-      )
+      <AccountIdentity provider={status.id} account={account} />
     ) : (
       'Not signed in'
     )
-    const busy = authBusy === status.id
+    const operation = authOperations[status.id]
+    const authError = authErrors[status.id]
+    const operationStatus =
+      operation?.kind === 'sign-in'
+        ? 'Signing in…'
+        : operation?.kind === 'sign-out'
+          ? 'Signing out…'
+          : accountStatus
     return (
-      <SettingsRow key={status.id} title={status.displayName}>
-        <div className="provider-settings__actions">
-          <span className="settings__status">{accountStatus}</span>
-          <ProviderIcon mark={providerMark(status.id)} size={17} />
-          {account?.signedIn ? (
-            <button
-              className="settings__action"
-              type="button"
-              disabled={busy}
-              onClick={() => void signOut(status.id)}
-            >
-              <LogOut size={13} aria-hidden />
-              {busy ? 'Signing out…' : 'Sign out'}
-            </button>
-          ) : (
-            <button
-              className="settings__action"
-              type="button"
-              disabled={busy}
-              onClick={() => void signIn(status.id)}
-            >
-              {busy ? 'Signing in…' : 'Sign in'}
-            </button>
-          )}
-        </div>
-      </SettingsRow>
+      <ProviderRow
+        key={status.id}
+        provider={status}
+        status={operationStatus}
+        live={operation !== undefined}
+        issue={
+          authError
+            ? {
+                message: authError,
+                announce: true,
+              }
+            : status.problem
+              ? { message: status.problem }
+              : undefined
+        }
+        primary={
+          account?.signedIn
+            ? undefined
+            : {
+                label: operation?.kind === 'sign-in' ? 'Signing in…' : 'Sign in',
+                disabled: operation !== undefined,
+                onClick: () => void signIn(status.id),
+              }
+        }
+        secondary={
+          account?.signedIn
+            ? {
+                label: operation?.kind === 'sign-out' ? 'Signing out…' : 'Sign out',
+                disabled: operation !== undefined,
+                danger: true,
+                onClick: () => void signOut(status.id),
+              }
+            : undefined
+        }
+      />
     )
   }
 
   const direct = props.providerStatuses.filter((status) => status.id !== 'acp')
   const byId = (id: ProviderId) => direct.filter((status) => status.id === id)
-  const agentById = (id: string) => props.acpAgents.filter((agent) => agent.id === id)
-  // 'gemini' stays in this set although it has no row: it is retired (the
-  // server no longer lists it), and the set keeps an older server's listing
-  // out of the unknown-agents catch-all below.
-  const knownAgents = new Set(['gemini', 'kimi', 'qwen'])
+  const knownAgentIds = new Set(['kimi', 'qwen'])
+  const agents = [
+    ...props.acpAgents.filter((agent) => knownAgentIds.has(agent.id)),
+    ...props.acpAgents.filter((agent) => !knownAgentIds.has(agent.id) && agent.id !== 'gemini'),
+  ]
+
+  const renderAgentRow = (agent: ResultOf<'acp.agents'>['agents'][number]) => {
+    const provider: ProviderStatus = {
+      id: 'acp',
+      displayName: agent.name,
+      installed: agent.installed,
+      auth: 'unknown',
+      setup: agent.setup,
+      ...(agent.problem ? { problem: agent.problem } : {}),
+    }
+    if (!agent.installed) {
+      return (
+        <InstallableRow
+          key={agent.id}
+          provider={provider}
+          target={{ provider: 'acp', agent: agent.id }}
+          transport={props.transport}
+          onInstalled={props.onConnectionsChanged}
+        />
+      )
+    }
+    const account = agentAccounts[agent.id]
+    const accountError = agentAccountErrors[agent.id]
+    if (!account && !accountError) {
+      return <ProviderRow key={agent.id} provider={provider} status="Checking account…" live />
+    }
+    if (!account?.signedIn) {
+      return (
+        <CliSignInRow
+          key={agent.id}
+          provider={{
+            ...provider,
+            ...(accountError ? { problem: accountError } : {}),
+          }}
+          target={{ provider: 'acp', agent: agent.id }}
+          transport={props.transport}
+          onSignedIn={() => void refreshAgentAccount(agent.id)}
+        />
+      )
+    }
+    return (
+      <ProviderRow
+        key={agent.id}
+        provider={provider}
+        status="Signed in"
+        issue={accountError ? { message: accountError, announce: true } : undefined}
+        secondary={{
+          label: agentBusy === agent.id ? 'Signing out…' : 'Sign out',
+          disabled: agentBusy === agent.id,
+          danger: true,
+          onClick: () => void signOutAgent(agent.id),
+        }}
+      />
+    )
+  }
 
   return (
-    <SettingsPanel title="Providers">
-      {authError ? (
-        <p className="provider-form__error" role="alert">
-          {authError}
-        </p>
-      ) : null}
+    <SettingsPanel title="Providers" groupClassName="settings__group--providers">
       {byId('codex').map(renderProviderRow)}
       {byId('claude-code').map(renderProviderRow)}
       {byId('grok').map(renderProviderRow)}
-      {byId('cursor').map(renderProviderRow)}
-      {byId('opencode').map(renderProviderRow)}
       {direct
-        .filter(
-          (status) => !['codex', 'claude-code', 'grok', 'cursor', 'opencode'].includes(status.id),
-        )
+        .filter((status) => !['codex', 'claude-code', 'grok'].includes(status.id))
         .map(renderProviderRow)}
-
-      <PlannedRow title="Pi" mark="pi" />
-      {[
-        ...agentById('kimi'),
-        ...agentById('qwen'),
-        ...props.acpAgents.filter((agent) => !knownAgents.has(agent.id)),
-      ].map((agent) =>
-        // A signed-in CLI must not keep offering "Sign in" — that ran the
-        // whole login flow against an already-authenticated binary. Signing
-        // out removes the credential the login left behind, so the row works
-        // like every direct provider's.
-        agent.installed && agentAccounts[agent.id]?.signedIn ? (
-          <SettingsRow key={agent.id} title={agent.name}>
-            <div className="provider-settings__actions">
-              <span className="settings__status">Signed in</span>
-              <ProviderIcon mark={agentMark(agent.id)} size={17} />
-              <button
-                className="settings__action"
-                type="button"
-                onClick={() => {
-                  void props.transport
-                    .request('auth.signOut', { provider: 'acp', agent: agent.id })
-                    .then(() => refreshAgentAccount(agent.id))
-                    .catch((cause) =>
-                      setAuthError(cause instanceof Error ? cause.message : String(cause)),
-                    )
-                }}
-              >
-                <LogOut size={13} aria-hidden />
-                Sign out
-              </button>
-            </div>
-          </SettingsRow>
-        ) : agent.installed ? (
-          <CliSignInRow
-            key={agent.id}
-            title={agent.name}
-            idleNote={agent.problem}
-            icon={<ProviderIcon mark={agentMark(agent.id)} size={17} />}
-            target={{ provider: 'acp', agent: agent.id }}
-            transport={props.transport}
-            onSignedIn={() => {
-              props.onConnectionsChanged()
-              void refreshAgentAccount(agent.id).catch(() => {})
-            }}
-          />
-        ) : (
-          <InstallableRow
-            key={agent.id}
-            title={agent.name}
-            icon={<ProviderIcon mark={agentMark(agent.id)} size={17} />}
-            target={{ provider: 'acp', agent: agent.id }}
-            setup={agent.setup}
-            transport={props.transport}
-            onInstalled={props.onConnectionsChanged}
-          />
-        ),
-      )}
+      {agents.map(renderAgentRow)}
 
       <h2 className="settings__group-title settings__group-title--inside">API connections</h2>
       {props.modelConnections.map((connection) => (
         <SettingsRow key={connection.id} title={connection.displayName}>
           <div className="provider-settings__actions">
-            <span
-              className={`settings__status${connection.credentialConfigured ? '' : ' is-warning'}`}
-            >
-              {connection.credentialConfigured
-                ? CONNECTION_PRESETS[connection.preset].label
-                : 'Key missing'}
-            </span>
+            <StateLabel
+              state={connection.credentialConfigured ? 'ready' : 'setup-needed'}
+              detail={
+                connection.credentialConfigured
+                  ? CONNECTION_PRESETS[connection.preset].label
+                  : 'Key missing'
+              }
+            />
             <ProviderIcon mark={connectionMark(connection.preset)} size={17} />
             <button
               className="settings__action is-danger"
@@ -729,22 +996,22 @@ function ProviderSettings(props: {
           </div>
         </SettingsRow>
       ))}
-      {adding ? (
+      {addingConnection ? (
         <div className="provider-form">
           <div className="provider-form__field">
             <span>Provider</span>
             <Menu
               align="left"
               drop="down"
-              label={`Provider, ${CONNECTION_PRESETS[preset].label}`}
+              label={`Provider, ${CONNECTION_PRESETS[connectionPreset].label}`}
               panelLabel="API provider"
               panelClassName="provider-form__menu"
               triggerClassName="provider-form__select"
               trigger={(open) => (
                 <>
                   <span className="provider-form__select-value">
-                    <ProviderIcon mark={connectionMark(preset)} size={16} />
-                    {CONNECTION_PRESETS[preset].label}
+                    <ProviderIcon mark={connectionMark(connectionPreset)} size={16} />
+                    {CONNECTION_PRESETS[connectionPreset].label}
                   </span>
                   <ChevronDown className={open ? 'is-open' : undefined} size={14} aria-hidden />
                 </>
@@ -755,9 +1022,9 @@ function ProviderSettings(props: {
                   <MenuItem
                     key={value}
                     title={config.label}
-                    active={value === preset}
+                    active={value === connectionPreset}
                     onClick={() => {
-                      choosePreset(value as ModelConnectionPreset)
+                      chooseConnectionPreset(value as ModelConnectionPreset)
                       close()
                     }}
                   />
@@ -767,22 +1034,25 @@ function ProviderSettings(props: {
           </div>
           <label>
             <span>Name</span>
-            <input value={name} onChange={(event) => setName(event.target.value)} />
+            <input
+              value={connectionName}
+              onChange={(event) => setConnectionName(event.target.value)}
+            />
           </label>
           <label className="provider-form__wide">
             <span>Base URL</span>
             <input
-              value={baseUrl}
-              onChange={(event) => setBaseUrl(event.target.value)}
+              value={connectionBaseUrl}
+              onChange={(event) => setConnectionBaseUrl(event.target.value)}
               spellCheck={false}
             />
           </label>
           <label>
             <span>Default model</span>
             <input
-              value={defaultModel}
-              onChange={(event) => setDefaultModel(event.target.value)}
-              placeholder={CONNECTION_PRESETS[preset].placeholder}
+              value={connectionDefaultModel}
+              onChange={(event) => setConnectionDefaultModel(event.target.value)}
+              placeholder={CONNECTION_PRESETS[connectionPreset].placeholder}
               spellCheck={false}
             />
           </label>
@@ -790,28 +1060,37 @@ function ProviderSettings(props: {
             <span>API key</span>
             <input
               type="password"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
+              value={connectionApiKey}
+              onChange={(event) => setConnectionApiKey(event.target.value)}
               autoComplete="off"
             />
           </label>
-          {error ? <p className="provider-form__error">{error}</p> : null}
+          {connectionError ? <p className="provider-form__error">{connectionError}</p> : null}
           <div className="provider-form__actions">
-            <button className="ghost" type="button" onClick={() => setAdding(false)}>
+            <button className="ghost" type="button" onClick={() => setAddingConnection(false)}>
               Cancel
             </button>
             <button
               className="btn"
               type="button"
-              disabled={saving || !name.trim() || !baseUrl.trim() || !apiKey.trim()}
+              disabled={
+                connectionSaving ||
+                !connectionName.trim() ||
+                !connectionBaseUrl.trim() ||
+                !connectionApiKey.trim()
+              }
               onClick={() => void addConnection()}
             >
-              {saving ? 'Connecting…' : 'Connect'}
+              {connectionSaving ? 'Connecting…' : 'Connect'}
             </button>
           </div>
         </div>
       ) : (
-        <button className="provider-settings__add" type="button" onClick={() => setAdding(true)}>
+        <button
+          className="settings__action"
+          type="button"
+          onClick={() => setAddingConnection(true)}
+        >
           <KeyRound size={15} aria-hidden />
           Connect another plan or API
         </button>
@@ -825,33 +1104,20 @@ function ModelSettings(props: {
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
 }) {
-  const sources = props.models.reduce((groups, choice) => {
-    const group = groups.get(choice.sourceName) ?? []
-    group.push(choice)
-    groups.set(choice.sourceName, group)
-    return groups
-  }, new Map<string, ModelChoice[]>())
-  const visibleModelCount = props.models.filter(
-    (choice) => !props.hiddenModels.has(choice.key),
-  ).length
+  // Existing stored custom choices remain usable in the composer, but raw
+  // provider-id editing is intentionally absent from beta settings.
+  const catalogModels = props.models.filter((choice) => !isCustomModelChoice(choice))
+  const sources = groupModelsBySource(catalogModels)
 
   return (
     <SettingsPanel title="Models" groupClassName="settings__group--plain model-settings">
-      {props.models.length > 0 ? (
-        <div className="model-settings__summary">
-          <span>
-            {visibleModelCount} of {props.models.length} visible
-          </span>
-        </div>
-      ) : null}
-
-      {sources.size > 0 ? (
+      {sources.length > 0 ? (
         <div className="model-settings__sources">
-          {[...sources.entries()].map(([source, choices]) => (
+          {sources.map((group) => (
             <ModelVisibilityGroup
-              key={source}
-              source={source}
-              choices={choices}
+              key={group.key}
+              source={group.name}
+              choices={group.entries}
               hiddenModels={props.hiddenModels}
               onModelVisibilityChange={props.onModelVisibilityChange}
             />
@@ -873,49 +1139,19 @@ function ModelVisibilityGroup(props: {
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
 }) {
-  const [query, setQuery] = useState('')
-  const deferredQuery = useDeferredValue(query)
-  const visibleCount = props.choices.filter((choice) => !props.hiddenModels.has(choice.key)).length
-  const anyVisible = visibleCount > 0
-  const filteredChoices = filterModelChoicesByQuery(props.choices, deferredQuery)
-
   return (
     <section className="model-visibility" aria-label={props.source}>
       <header className="model-visibility__source">
-        <div className="model-visibility__source-copy">
-          {props.choices[0] ? <ProviderIcon mark={props.choices[0].mark} size={18} /> : null}
-          <h3>{props.source}</h3>
-          <span className="settings__status">
-            {visibleCount}/{props.choices.length}
-          </span>
-        </div>
-        <ModelSearchField
-          className="model-visibility__search"
-          value={query}
-          label={`Search ${props.source} models`}
-          onChange={setQuery}
-        />
-        <button
-          className={`switch switch--source${anyVisible ? ' is-on' : ''}`}
-          type="button"
-          role="switch"
-          aria-label={`Show any models from ${props.source}`}
-          aria-checked={anyVisible}
-          onClick={() => {
-            // One master switch per provider: off hides every model, on
-            // brings them all back — "deselect a provider" without
-            // disconnecting it.
-            for (const choice of props.choices)
-              props.onModelVisibilityChange(choice.key, !anyVisible)
-          }}
-        >
-          <span className="switch__thumb" />
-        </button>
+        {props.choices[0] ? (
+          <h3>
+            <SourceIdentity presentation={{ label: props.source, mark: props.choices[0].mark }} />
+          </h3>
+        ) : null}
       </header>
 
       <div className="model-visibility__models">
-        {filteredChoices.length > 0 ? (
-          filteredChoices.map((choice) => {
+        <div>
+          {props.choices.map((choice) => {
             const visible = !props.hiddenModels.has(choice.key)
             return (
               <SettingsRow
@@ -927,7 +1163,7 @@ function ModelVisibilityGroup(props: {
                   className={`switch${visible ? ' is-on' : ''}`}
                   type="button"
                   role="switch"
-                  aria-label={`Show ${choice.model.displayName}`}
+                  aria-label={`Include ${choice.model.displayName} in model picker`}
                   aria-checked={visible}
                   onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
                 >
@@ -935,12 +1171,8 @@ function ModelVisibilityGroup(props: {
                 </button>
               </SettingsRow>
             )
-          })
-        ) : (
-          <p className="model-visibility__empty" role="status">
-            No matching models.
-          </p>
-        )}
+          })}
+        </div>
       </div>
     </section>
   )
@@ -950,26 +1182,55 @@ function MobileAccessSettings(props: { transport: Transport }) {
   const [status, setStatus] = useState<ConnectionsStatus>()
   const [pairing, setPairing] = useState<ResultOf<'connections.startPairing'>>()
   const [qrSvg, setQrSvg] = useState<string>()
+  const [webQrSvg, setWebQrSvg] = useState<string>()
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState<'pair' | 'stop' | string>()
+  const [copiedPairingUri, setCopiedPairingUri] = useState<string>()
+  const [copiedWebUrl, setCopiedWebUrl] = useState<string>()
   const [now, setNow] = useState(Date.now)
+  const transportEpoch = useRef(0)
+  const statusMutationEpoch = useRef(0)
+  const statusRequest = useRef<Promise<void> | undefined>(undefined)
 
-  const refresh = useCallback(async () => {
-    try {
-      setStatus(await props.transport.request('connections.status', {}))
-      setError(undefined)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    }
+  const refresh = useCallback(() => {
+    if (statusRequest.current) return statusRequest.current
+
+    const mutationEpoch = statusMutationEpoch.current
+    const request = (async () => {
+      try {
+        const nextStatus = await props.transport.request('connections.status', {})
+        if (mutationEpoch !== statusMutationEpoch.current) return
+        setStatus(nextStatus)
+        setError(undefined)
+      } catch (cause) {
+        if (mutationEpoch !== statusMutationEpoch.current) return
+        setError(cause instanceof Error ? cause.message : String(cause))
+      }
+    })()
+    statusRequest.current = request
+    void request.then(() => {
+      if (statusRequest.current === request) statusRequest.current = undefined
+    })
+    return request
   }, [props.transport])
 
+  const invalidateStatusReads = () => {
+    statusMutationEpoch.current += 1
+    statusRequest.current = undefined
+  }
+
   useEffect(() => {
+    setBusy(undefined)
     void refresh()
     const timer = window.setInterval(() => {
       setNow(Date.now())
       void refresh()
     }, 2_000)
-    return () => window.clearInterval(timer)
+    return () => {
+      window.clearInterval(timer)
+      transportEpoch.current += 1
+      invalidateStatusReads()
+    }
   }, [refresh])
 
   useEffect(() => {
@@ -990,43 +1251,99 @@ function MobileAccessSettings(props: { transport: Transport }) {
     }
   }, [pairing])
 
+  const primaryWebUrl = status?.webUrls?.[0]
+  useEffect(() => {
+    if (!primaryWebUrl) {
+      setWebQrSvg(undefined)
+      return
+    }
+    let cancelled = false
+    void renderQrSvg(primaryWebUrl)
+      .then((svg) => {
+        if (!cancelled) setWebQrSvg(svg)
+      })
+      .catch(() => {
+        // QR rendering is a convenience; a broken one must not block the panel.
+        if (!cancelled) setWebQrSvg(undefined)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [primaryWebUrl])
+
   const startPairing = async () => {
+    const requestTransportEpoch = transportEpoch.current
     setBusy('pair')
     try {
       const offer = await props.transport.request('connections.startPairing', {})
+      if (requestTransportEpoch !== transportEpoch.current) return
+      invalidateStatusReads()
       setStatus(offer)
       setPairing(offer)
       setNow(Date.now())
       setError(undefined)
     } catch (cause) {
+      if (requestTransportEpoch !== transportEpoch.current) return
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setBusy(undefined)
+      if (requestTransportEpoch === transportEpoch.current) setBusy(undefined)
     }
   }
 
   const stop = async () => {
+    const requestTransportEpoch = transportEpoch.current
     setBusy('stop')
     try {
       await props.transport.request('connections.stop', {})
+      if (requestTransportEpoch !== transportEpoch.current) return
+      invalidateStatusReads()
       setPairing(undefined)
       await refresh()
     } catch (cause) {
+      if (requestTransportEpoch !== transportEpoch.current) return
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setBusy(undefined)
+      if (requestTransportEpoch === transportEpoch.current) setBusy(undefined)
     }
   }
 
   const disconnectDevice = async (deviceId: string) => {
+    const requestTransportEpoch = transportEpoch.current
     setBusy(deviceId)
     try {
       await props.transport.request('connections.revoke', { deviceId })
+      if (requestTransportEpoch !== transportEpoch.current) return
+      invalidateStatusReads()
       await refresh()
     } catch (cause) {
+      if (requestTransportEpoch !== transportEpoch.current) return
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setBusy(undefined)
+      if (requestTransportEpoch === transportEpoch.current) setBusy(undefined)
+    }
+  }
+
+  const copyPairingLink = async (pairingUri: string) => {
+    try {
+      await writeClipboardText(pairingUri)
+      setCopiedPairingUri(pairingUri)
+      setError(undefined)
+    } catch (cause) {
+      setCopiedPairingUri(undefined)
+      const message = cause instanceof Error ? cause.message : String(cause)
+      setError(`Could not copy pairing link: ${message}`)
+    }
+  }
+
+  const copyWebUrl = async (url: string) => {
+    try {
+      await writeClipboardText(url)
+      setCopiedWebUrl(url)
+      setError(undefined)
+    } catch (cause) {
+      setCopiedWebUrl(undefined)
+      const message = cause instanceof Error ? cause.message : String(cause)
+      setError(`Could not copy the app link: ${message}`)
     }
   }
 
@@ -1039,13 +1356,51 @@ function MobileAccessSettings(props: { transport: Transport }) {
         note={
           status?.enabled
             ? `${status.serverName} is listening on port ${status.port}.`
-            : 'Generate a one-time code to start the private listener and pair a device.'
+            : 'Generate a one-time code to accept the native app again. The web app stays available.'
         }
       >
-        <span className={`settings__status${status?.enabled ? ' is-on' : ''}`}>
-          {status?.enabled ? 'On' : 'Off'}
-        </span>
+        <StateLabel state={status?.enabled ? 'ready' : 'unavailable'} />
       </SettingsRow>
+
+      {(status?.webUrls?.length ?? 0) > 0 ? (
+        <div className="settings__mobile-block">
+          <div className="settings__web-access">
+            <div className="settings__web-access-qr">
+              {webQrSvg ? (
+                <div
+                  className="settings__qr"
+                  role="img"
+                  aria-label="App QR code"
+                  dangerouslySetInnerHTML={{ __html: webQrSvg }}
+                />
+              ) : (
+                <div className="settings__qr" aria-hidden>
+                  Generating QR…
+                </div>
+              )}
+              <p className="settings__qr-caption">Scan to open it on your phone</p>
+            </div>
+            <div className="settings__web-access-main">
+              <p className="settings__row-title">App on your phone — bookmark this</p>
+              <p className="settings__row-note">
+                The URL stays the same across restarts. Open it on your phone to use the whole
+                harness — the same UI as this desktop.
+              </p>
+              <div className="settings__console-urls">
+                {status?.webUrls.map((url, index) => (
+                  <UrlRow
+                    url={url}
+                    key={url}
+                    primary={index === 0}
+                    copied={copiedWebUrl === url}
+                    onCopy={() => void copyWebUrl(url)}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {status?.addresses.length ? (
         <div className="settings__mobile-block">
@@ -1077,7 +1432,7 @@ function MobileAccessSettings(props: { transport: Transport }) {
             disabled={busy !== undefined}
             onClick={() => void stop()}
           >
-            {busy === 'stop' ? 'Stopping...' : 'Stop mobile access'}
+            {busy === 'stop' ? 'Stopping...' : 'Stop accepting connections'}
           </button>
         ) : null}
       </div>
@@ -1109,9 +1464,9 @@ function MobileAccessSettings(props: { transport: Transport }) {
             <button
               className="settings__action"
               type="button"
-              onClick={() => void navigator.clipboard?.writeText(activePairing.pairingUri)}
+              onClick={() => void copyPairingLink(activePairing.pairingUri)}
             >
-              Copy pairing link
+              {copiedPairingUri === activePairing.pairingUri ? 'Copied' : 'Copy pairing link'}
             </button>
           </div>
         </div>
@@ -1120,7 +1475,11 @@ function MobileAccessSettings(props: { transport: Transport }) {
       <h2 className="settings__group-title settings__group-title--inside">Paired devices</h2>
       {status?.devices.length ? (
         status.devices.map((device) => (
-          <SettingsRow key={device.id} title={device.name} note={formatDeviceNote(device, now)}>
+          <SettingsRow
+            key={device.id}
+            title={device.name}
+            note={formatDeviceNote(device.lastSeenAt, now)}
+          >
             <button
               className="settings__action is-danger"
               type="button"
@@ -1138,6 +1497,29 @@ function MobileAccessSettings(props: { transport: Transport }) {
   )
 }
 
+function UrlRow(props: { url: string; primary: boolean; copied: boolean; onCopy: () => void }) {
+  return (
+    <div className="settings__console-url">
+      <code className="settings__console-url-code" title={props.url}>
+        {props.url}
+      </code>
+      {props.primary ? (
+        <span className="settings__console-primary" title="The QR above encodes this URL">
+          QR
+        </span>
+      ) : null}
+      <button
+        className={`settings__console-copy${props.copied ? ' is-copied' : ''}`}
+        type="button"
+        onClick={props.onCopy}
+      >
+        {props.copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />}
+        {props.copied ? 'Copied' : 'Copy'}
+      </button>
+    </div>
+  )
+}
+
 function AddressPill(props: { address: ConnectionAddress }) {
   return (
     <span className="settings__mobile-route" title={props.address.url}>
@@ -1152,9 +1534,14 @@ function formatCountdown(ms: number): string {
   return seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`
 }
 
-function formatDeviceNote(device: PairedDevice, now: number): string {
-  const minutes = Math.max(0, Math.floor((now - device.lastSeenAt) / 60_000))
-  return minutes === 0 ? 'Seen just now' : `Seen ${minutes}m ago`
+export function formatDeviceNote(lastSeenAt: number, now: number): string {
+  const minutes = Math.max(0, Math.floor((now - lastSeenAt) / 60_000))
+  if (minutes === 0) return 'Seen just now'
+  if (minutes < 60) return `Seen ${minutes}m ago`
+
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `Seen ${hours}h ago`
+  return `Seen ${Math.floor(hours / 24)}d ago`
 }
 
 function AppearanceSettings(props: {
@@ -1171,6 +1558,7 @@ function AppearanceSettings(props: {
   showMacOSFontSmoothing: boolean
   macOSFontSmoothing: boolean
   onMacOSFontSmoothingChange: (enabled: boolean) => void
+  showMacOSHaptics?: boolean | undefined
 }) {
   return (
     <SettingsPanel title="Appearance" groupClassName="settings__group--plain">
@@ -1252,6 +1640,7 @@ function AppearanceSettings(props: {
           })}
         </fieldset>
       </div>
+      {props.showMacOSHaptics ? <SidebarHapticsSetting /> : null}
       <div className="appearance__text">
         <h2 className="settings__group-title">Accent palette</h2>
         <fieldset
@@ -1299,6 +1688,58 @@ function AppearanceSettings(props: {
   )
 }
 
+function SidebarHapticsSetting() {
+  const enabled = useSyncExternalStore(subscribeAppHaptics, readAppHaptics, readAppHaptics)
+  return (
+    <div className="appearance__text">
+      <h2 className="settings__group-title">Interaction</h2>
+      <div className="settings__group">
+        <SettingsRow
+          title="Trackpad haptics"
+          note="Feel responsive detents while resizing, choosing effort, and placing dragged chats."
+        >
+          <button
+            className={`switch${enabled ? ' is-on' : ''}`}
+            type="button"
+            role="switch"
+            aria-label="Trackpad haptics"
+            aria-checked={enabled}
+            onClick={() => {
+              const next = !enabled
+              writeAppHaptics(next)
+              if (next) {
+                prepareAppHaptics()
+                performAppHaptic('generic')
+              }
+            }}
+          >
+            <span className="switch__thumb" />
+          </button>
+        </SettingsRow>
+      </div>
+    </div>
+  )
+}
+
+/** Self-contained: Settings and the open picker subscribe to the same layout
+ *  preference, including its in-memory fallback when storage is unavailable. */
+function ModelPickerLayoutToggle() {
+  const layout = useSyncExternalStore(subscribeModelPickerLayout, readModelPickerLayout)
+  const railOn = layout === 'rail'
+  return (
+    <button
+      className={`switch${railOn ? ' is-on' : ''}`}
+      type="button"
+      role="switch"
+      aria-label="Provider rail layout"
+      aria-checked={railOn}
+      onClick={() => writeModelPickerLayout(railOn ? 'list' : 'rail')}
+    >
+      <span className="switch__thumb" />
+    </button>
+  )
+}
+
 function ThemePicker(props: {
   value: ThemePreference
   onChange: (theme: ThemePreference) => void
@@ -1341,14 +1782,157 @@ function ThemePicker(props: {
 }
 
 function DataSettings(props: { projectCount: number; onReset: () => void }) {
+  const [confirming, setConfirming] = useState(false)
   const projectLabel = `${props.projectCount} ${props.projectCount === 1 ? 'project' : 'projects'} on this machine`
 
   return (
-    <SettingsPanel title="Data">
-      <SettingsRow title={projectLabel}>
-        <button className="settings__action" type="button" onClick={props.onReset}>
+    <SettingsPanel title="Data & privacy">
+      <SettingsRow
+        title={projectLabel}
+        note="Reset only clears this renderer’s preferences. It does not delete projects, workspaces, files, chat history, or provider credentials."
+        className="settings__row--roomy"
+      >
+        <button
+          className="settings__action is-danger"
+          type="button"
+          onClick={() => setConfirming(true)}
+        >
           <RotateCcw size={13} aria-hidden />
-          <span>Reset app</span>
+          <span>Reset app preferences</span>
+        </button>
+      </SettingsRow>
+      {confirming ? (
+        <ResetConfirmation
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => {
+            setConfirming(false)
+            props.onReset()
+          }}
+        />
+      ) : null}
+    </SettingsPanel>
+  )
+}
+
+function ResetConfirmation(props: { onCancel: () => void; onConfirm: () => void }) {
+  const panel = useRef<HTMLDivElement>(null)
+  const titleId = useId()
+  const descriptionId = useId()
+
+  useEffect(() => {
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    panel.current?.querySelector<HTMLButtonElement>('[data-reset-cancel]')?.focus()
+    return () => {
+      if (previousFocus?.isConnected) previousFocus.focus()
+    }
+  }, [])
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      props.onCancel()
+      return
+    }
+    if (event.key !== 'Tab' || event.defaultPrevented || !panel.current) return
+    const focusable = Array.from(
+      panel.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+    ).filter((element) => !element.hasAttribute('disabled'))
+    if (focusable.length === 0) return
+    const current = focusable.indexOf(document.activeElement as HTMLElement)
+    const next =
+      current < 0
+        ? event.shiftKey
+          ? focusable.length - 1
+          : 0
+        : event.shiftKey
+          ? (current - 1 + focusable.length) % focusable.length
+          : (current + 1) % focusable.length
+    event.preventDefault()
+    focusable[next]?.focus()
+  }
+
+  return createPortal(
+    <div className="sheet" role="presentation">
+      <button
+        className="sheet__scrim"
+        type="button"
+        tabIndex={-1}
+        aria-label="Cancel reset"
+        onClick={props.onCancel}
+      />
+      <div
+        className="sheet__panel checkout-discard"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        ref={panel}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+      >
+        <header className="sheet__head">
+          <h2 className="sheet__title" id={titleId}>
+            Reset app preferences?
+          </h2>
+        </header>
+        <section className="sheet__section">
+          <p className="checkout-discard__copy" id={descriptionId}>
+            This clears renderer-local preferences, including appearance, model choices, hidden
+            models, layout, and recent UI selections, then reloads Personal Harness. Projects,
+            workspaces, files, chat history, and provider credentials are not deleted.
+          </p>
+          <div className="checkout-discard__actions">
+            <button className="ghost" type="button" data-reset-cancel onClick={props.onCancel}>
+              Cancel
+            </button>
+            <button className="btn btn--danger" type="button" onClick={props.onConfirm}>
+              Reset and reload
+            </button>
+          </div>
+        </section>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+export function DebugSettings(props: { transport: Transport }) {
+  const [state, setState] = useState<'idle' | 'resetting' | 'started' | 'error'>('idle')
+  const [error, setError] = useState<string>()
+
+  const resetUsage = async () => {
+    setState('resetting')
+    setError(undefined)
+    try {
+      await props.transport.request('usage.resetHistory', {})
+      setState('started')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+      setState('error')
+    }
+  }
+
+  return (
+    <SettingsPanel title="Debug">
+      <SettingsRow
+        title="Usage history index"
+        note="Clears the generated cache and reparses every local provider history. Sessions and Harness data are not deleted."
+        className="settings__row--roomy"
+      >
+        {state === 'started' ? <StateLabel state="checking" detail="Scan started" live /> : null}
+        {state === 'error' && error ? (
+          <RowIssue message={error} tip="Restart the app, then try the reset again." />
+        ) : null}
+        <button
+          className="settings__action"
+          type="button"
+          disabled={state === 'resetting'}
+          onClick={() => void resetUsage()}
+        >
+          <RotateCcw size={13} aria-hidden />
+          <span>{state === 'resetting' ? 'Resetting…' : 'Reset and rescan'}</span>
         </button>
       </SettingsRow>
     </SettingsPanel>
@@ -1377,23 +1961,30 @@ function AboutSettings(props: { transport: Transport }) {
     : result.error
       ? undefined
       : result.upToDate
-        ? `Up to date · ${short(result.remote?.sha ?? '')}`
+        ? {
+            state: 'ready' as const,
+            detail: result.remote ? `Up to date · ${short(result.remote.sha)}` : 'Up to date',
+          }
         : result.remote
-          ? `Newer: ${short(result.remote.sha)} — pull and restart`
-          : 'No verdict'
+          ? {
+              state: 'setup-needed' as const,
+              detail: `Newer: ${short(result.remote.sha)} — pull and restart`,
+            }
+          : { state: 'unavailable' as const, detail: 'No verdict' }
 
   return (
     <SettingsPanel title="About">
       <SettingsRow title="Personal Harness">
-        <span className="settings__status">
+        <SettingsMeta>
           {`${isDesktop ? 'Desktop' : 'Browser'} · pre-release${result?.localCommit ? ` · ${short(result.localCommit)}` : ''}`}
-        </span>
+        </SettingsMeta>
       </SettingsRow>
       <SettingsRow title="Updates">
         {result?.error ? (
           <RowIssue message={result.error} tip="Check your network or GitHub access, then retry." />
         ) : null}
-        {updateStatus ? <span className="settings__status">{updateStatus}</span> : null}
+        {checking ? <StateLabel state="checking" live /> : null}
+        {!checking && updateStatus ? <StateLabel {...updateStatus} live /> : null}
         <button
           className="settings__action"
           type="button"
@@ -1445,15 +2036,13 @@ function SettingsPanel(props: { title: string; groupClassName?: string; children
  * hidden until the user asks for it or the install fails and needs them.
  */
 function InstallableRow(props: {
-  title: string
-  idleNote?: string | undefined
-  icon: ReactNode
+  provider: ProviderStatus
   target: InstallTarget
-  setup: ProviderSetup | undefined
   transport: Transport
   onInstalled: () => void
 }) {
   const key = installKey(props.target)
+  const detailsId = useId()
   const install = useSyncExternalStore(subscribeInstalls, () => installState(key))
   const [showTerminal, setShowTerminal] = useState(false)
   const [startError, setStartError] = useState<string>()
@@ -1489,6 +2078,7 @@ function InstallableRow(props: {
 
   const start = () => {
     setStartError(undefined)
+    setShowTerminal(false)
     void beginInstall(props.transport, props.target).catch((cause: unknown) =>
       setStartError(cause instanceof Error ? cause.message : String(cause)),
     )
@@ -1496,61 +2086,61 @@ function InstallableRow(props: {
 
   const status =
     install?.phase === 'running'
-      ? install.lastLine || 'Installing…'
+      ? 'Installing…'
       : install?.phase === 'succeeded'
         ? 'Installed · refreshing…'
-        : undefined
+        : install?.phase === 'failed' || startError
+          ? 'Install failed'
+          : 'Not installed'
   const issue =
     install?.phase === 'failed'
       ? {
           message: `Install failed${install.exitCode === null ? '' : ` (exit ${install.exitCode})`}.`,
-          tip: 'Open the terminal below for the log, then retry.',
+          announce: true,
         }
       : startError
-        ? { message: startError, tip: 'Retry, or install it from the terminal yourself.' }
-        : props.idleNote
-          ? { message: props.idleNote, tip: 'Install it here, then come back to sign in.' }
-          : undefined
+        ? {
+            message: startError,
+            announce: true,
+          }
+        : undefined
+  const setup = props.provider.setup
+  const details: ProviderAction | undefined =
+    install?.phase === 'running' || install?.phase === 'failed' || install?.phase === 'succeeded'
+      ? {
+          label: showTerminal ? 'Hide details' : 'Details',
+          expanded: showTerminal,
+          controls: detailsId,
+          onClick: () => setShowTerminal((visible) => !visible),
+        }
+      : undefined
+  const primary: ProviderAction | undefined = !setup?.installCommand
+    ? setup
+      ? { label: 'Open setup guide', href: setup.installUrl }
+      : undefined
+    : install?.phase === 'running'
+      ? { label: 'Installing…', disabled: true }
+      : install?.phase === 'succeeded'
+        ? { label: 'Installed', disabled: true }
+        : {
+            label: install?.phase === 'failed' ? 'Retry install' : 'Install',
+            onClick: start,
+          }
 
   return (
     <>
-      <SettingsRow title={props.title}>
-        <div className="provider-settings__actions">
-          {issue ? <RowIssue message={issue.message} tip={issue.tip} /> : null}
-          {status ? <span className="settings__status">{status}</span> : null}
-          {props.icon}
-          {!props.setup?.installCommand ? (
-            <button
-              className="settings__action"
-              type="button"
-              disabled={!props.setup}
-              onClick={() =>
-                props.setup && window.open(props.setup.installUrl, '_blank', 'noopener,noreferrer')
-              }
-            >
-              Install first
-            </button>
-          ) : install?.phase === 'running' ? (
-            <button
-              className="settings__action"
-              type="button"
-              onClick={() => setShowTerminal((visible) => !visible)}
-            >
-              {showTerminal ? 'Hide terminal' : 'Installing…'}
-            </button>
-          ) : install?.phase === 'succeeded' ? (
-            <button className="settings__action" type="button" disabled>
-              Installed
-            </button>
-          ) : (
-            <button className="settings__action" type="button" onClick={start}>
-              {install?.phase === 'failed' ? 'Retry install' : 'Install'}
-            </button>
-          )}
+      <ProviderRow
+        provider={props.provider}
+        status={status}
+        live={install?.phase === 'running' || install?.phase === 'succeeded'}
+        issue={issue}
+        primary={primary}
+        secondary={details}
+      />
+      {install ? (
+        <div id={detailsId} className="provider-terminal" hidden={!showTerminal}>
+          {showTerminal ? <ProviderTerminal transport={props.transport} installKey={key} /> : null}
         </div>
-      </SettingsRow>
-      {install && showTerminal ? (
-        <ProviderTerminal transport={props.transport} installKey={key} />
       ) : null}
     </>
   )
@@ -1564,14 +2154,13 @@ function InstallableRow(props: {
  * keeps the log around for reading before a retry.
  */
 function CliSignInRow(props: {
-  title: string
-  idleNote?: string | undefined
-  icon: ReactNode
+  provider: ProviderStatus
   target: InstallTarget
   transport: Transport
   onSignedIn: () => void
 }) {
   const key = loginKey(props.target)
+  const detailsId = useId()
   const login = useSyncExternalStore(subscribeInstalls, () => installState(key))
   // The terminal is the fallback, not the flow: it stays hidden until asked
   // for, and opens itself only when a failure makes it the evidence.
@@ -1584,6 +2173,11 @@ function CliSignInRow(props: {
   // parent render, and firing more than once per success is the seed of the
   // refresh loop fixed there.
   const notifiedLogin = useRef(false)
+  const confirmedEmail = signedInEmail(login?.log ?? '')
+  useEffect(() => {
+    if (confirmedEmail) localStorage.setItem(providerEmailKey(props.provider.id), confirmedEmail)
+  }, [confirmedEmail, props.provider.id])
+
   useEffect(() => {
     if (login?.phase === 'succeeded') {
       if (!notifiedLogin.current) {
@@ -1615,36 +2209,41 @@ function CliSignInRow(props: {
     login?.phase === 'failed'
       ? {
           message: `The CLI exited${login.exitCode === null ? '' : ` (exit ${login.exitCode})`}.`,
-          tip: 'Check the terminal below for what happened, then retry.',
+          announce: true,
         }
       : startError
-        ? { message: startError, tip: 'Retry, or run the login in your own terminal.' }
-        : props.idleNote
-          ? { message: props.idleNote, tip: undefined }
+        ? {
+            message: startError,
+            announce: true,
+          }
+        : props.provider.problem
+          ? { message: props.provider.problem }
           : undefined
+  const status = running ? 'Signing in…' : issue?.announce ? 'Sign-in failed' : 'Not signed in'
+  const details: ProviderAction | undefined =
+    login && (running || login.phase === 'failed')
+      ? {
+          label: showTerminal ? 'Hide details' : 'Details',
+          expanded: showTerminal,
+          controls: detailsId,
+          onClick: () => setShowTerminal((visible) => !visible),
+        }
+      : undefined
 
   return (
     <>
-      <SettingsRow title={props.title}>
-        <div className="provider-settings__actions">
-          {issue ? <RowIssue message={issue.message} tip={issue.tip} /> : null}
-          {running ? <span className="settings__status">Signing in…</span> : null}
-          {props.icon}
-          {running ? (
-            <button
-              className="settings__action"
-              type="button"
-              onClick={() => setShowTerminal((visible) => !visible)}
-            >
-              {showTerminal ? 'Hide details' : 'Details'}
-            </button>
-          ) : (
-            <button className="settings__action" type="button" onClick={start}>
-              {login?.phase === 'failed' ? 'Retry sign-in' : 'Sign in'}
-            </button>
-          )}
-        </div>
-      </SettingsRow>
+      <ProviderRow
+        provider={props.provider}
+        status={status}
+        live={running}
+        issue={issue}
+        primary={{
+          label: running ? 'Signing in…' : login?.phase === 'failed' ? 'Retry sign-in' : 'Sign in',
+          disabled: running,
+          onClick: start,
+        }}
+        secondary={details}
+      />
       {running ? (
         <div className="signin-card">
           {code ? (
@@ -1678,14 +2277,14 @@ function CliSignInRow(props: {
             </button>
           ) : null}
           {!showTerminal && login.lastLine ? (
-            <span className="signin-card__live" aria-live="polite">
-              {login.lastLine}
-            </span>
+            <span className="signin-card__live">{login.lastLine}</span>
           ) : null}
         </div>
       ) : null}
-      {login && showTerminal ? (
-        <ProviderTerminal transport={props.transport} installKey={key} />
+      {login ? (
+        <div id={detailsId} className="provider-terminal" hidden={!showTerminal}>
+          {showTerminal ? <ProviderTerminal transport={props.transport} installKey={key} /> : null}
+        </div>
       ) : null}
     </>
   )
@@ -1704,24 +2303,28 @@ function ProviderTerminal(props: { transport: Transport; installKey: string }) {
  * omitting it — "not supported yet" and "not installed" must stay
  * distinguishable, and the roadmap belongs in the product, not a doc.
  */
-function maskEmail(email: string): string {
-  const at = email.indexOf('@')
-  if (at <= 1) return email
-  return `${email[0]}…${email.slice(at)}`
+function providerEmailKey(provider: ProviderId): string {
+  return `harness.providerEmail.${provider}`
 }
 
-/**
- * Privacy by default: the address shows masked until pointed at or focused.
- * Both forms render stacked in one grid cell so the row never shifts when
- * the longer full address appears.
- */
+function AccountIdentity(props: { provider: ProviderId; account: Account }) {
+  const [savedEmail] = useState(() => localStorage.getItem(providerEmailKey(props.provider)))
+  const email = props.account.email ?? savedEmail
+
+  return (
+    <>
+      {email ? <AccountEmail email={email} /> : 'Signed in'}
+      {props.account.plan ? ' · ' : null}
+      {props.account.plan}
+    </>
+  )
+}
+
+/** Privacy by default: reveal the fixed-width blurred address only on intent. */
 function AccountEmail(props: { email: string }) {
   return (
-    <span className="settings__email" tabIndex={0} aria-label={'Account email, hover to reveal'}>
-      <span className="settings__email-masked" aria-hidden>
-        {maskEmail(props.email)}
-      </span>
-      <span className="settings__email-full">{props.email}</span>
+    <span className="settings__email" tabIndex={0} title={props.email}>
+      <span className="settings__email-value">{props.email}</span>
     </span>
   )
 }

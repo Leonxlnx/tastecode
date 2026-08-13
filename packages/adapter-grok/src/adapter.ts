@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { killTree, readNdjson } from '@harness/proc'
@@ -30,9 +30,9 @@ import { killTree, readNdjson } from '@harness/proc'
  * unparsable lines to the log callback, so it is tolerated by construction.
  *
  * `grok.exe` is a real executable, not a .cmd shim, so it is spawned
- * directly rather than through `spawnCli`'s cmd.exe route — cmd.exe
- * truncates argv at the first newline (#372), and a direct spawn carries
- * multi-line prompts intact.
+ * directly rather than through `spawnCli`'s cmd.exe route. Prompts still do
+ * not belong on argv: CreateProcess rejects long command lines even without
+ * cmd.exe. Grok's `--prompt-file` keeps the exact UTF-8 text off argv.
  *
  * This never reads a credential. `grok models` reports "You are not
  * authenticated." on its own, which is the entire auth probe.
@@ -89,16 +89,15 @@ function applyGrokTurnOptions(current: GrokStartOptions, next: GrokTurnOptions):
   return merged
 }
 
-/** The per-turn argv. The prompt may be multi-line because the binary is
- *  spawned directly (never through cmd.exe). */
+/** The per-turn argv. Only a prompt file path travels through CreateProcess. */
 export function grokTurnArgs(
-  prompt: string,
+  promptFile: string,
   options: GrokStartOptions,
   sessionId: string | undefined,
 ): string[] {
   return [
-    '-p',
-    prompt,
+    '--prompt-file',
+    promptFile,
     '--output-format',
     'streaming-json',
     ...(options.model ? ['--model', options.model] : []),
@@ -131,8 +130,11 @@ type GrokFrame = {
   title?: string
   status?: string | null
   rawInput?: { file_path?: string; command?: string }
+  content?: unknown
+  rawOutput?: unknown
   stopReason?: string
   sessionId?: string
+  total_cost_usd?: number
   usage?: {
     input_tokens?: number
     output_tokens?: number
@@ -160,8 +162,9 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   /** grok's own session id, so follow-up turns resume rather than restart. */
   #sessionId: string | undefined
   #child: ChildProcessWithoutNullStreams | undefined
-  /** Children we killed on purpose — their non-zero exits are not failures. */
-  #intentionalKills = new WeakSet<ChildProcessWithoutNullStreams>()
+  /** Why we killed a child: only an explicit Stop completes the turn. */
+  #killReasons = new WeakMap<ChildProcessWithoutNullStreams, 'interrupt' | 'silent'>()
+  #promptDirectories = new WeakMap<ChildProcessWithoutNullStreams, string>()
   #turnCounter = 0
   /** Session instructions ride in front of the first prompt: the CLI's
    *  --system-prompt-override would REPLACE the agent's own prompt, which is
@@ -207,15 +210,30 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${text}`
         : text
     this.#instructionsPending = false
-    const args = grokTurnArgs(prompt, this.#options, this.#sessionId)
+    const promptDirectory = mkdtempSync(path.join(tmpdir(), 'harness-grok-'))
+    const promptFile = path.join(promptDirectory, 'prompt.md')
+    try {
+      writeFileSync(promptFile, prompt, 'utf8')
+    } catch (error) {
+      rmSync(promptDirectory, { recursive: true, force: true })
+      throw error
+    }
+    const args = grokTurnArgs(promptFile, this.#options, this.#sessionId)
 
     // A turn already in flight would be orphaned by the reassignment below.
     if (this.#child) this.#stop(this.#child)
-    const child = this.#spawn(grokCommand(), args, {
-      cwd: this.#workspacePath,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
+    let child: ChildProcessWithoutNullStreams
+    try {
+      child = this.#spawn(grokCommand(), args, {
+        cwd: this.#workspacePath,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      })
+    } catch (error) {
+      rmSync(promptDirectory, { recursive: true, force: true })
+      throw error
+    }
+    this.#promptDirectories.set(child, promptDirectory)
     this.#child = child
 
     this.emit('event', {
@@ -223,9 +241,11 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
       turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
     })
 
-    let sawEnd = false
-    const message = new StreamedItem(`${turnId}-message`)
+    let terminal = false
+    let messageCounter = 1
+    let message = new StreamedItem(`${turnId}-message-${messageCounter}`)
     const reasoning = new StreamedItem(`${turnId}-reasoning`)
+    let toolCounter = 0
     /** toolCallId -> the open item it maps to. */
     const tools = new Map<
       string,
@@ -233,6 +253,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         itemId: string
         itemType: 'command' | 'file_change' | 'tool_call'
         label: string
+        command?: string
         path?: string
       }
     >()
@@ -250,6 +271,8 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
           return
         }
         if (frame.type === 'tool_call' && frame.toolCallId) {
+          message.complete(turnId, 'message', this)
+          message = new StreamedItem(`${turnId}-message-${++messageCounter}`)
           const name = frame.toolName ?? frame.title ?? 'tool'
           const itemType =
             name === 'write' || name === 'search_replace'
@@ -257,11 +280,12 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
               : name === 'run_terminal_command'
                 ? 'command'
                 : 'tool_call'
-          const itemId = `${turnId}-tool-${tools.size + 1}`
+          const itemId = `${turnId}-tool-${++toolCounter}`
           const entry = {
             itemId,
             itemType,
             label: frame.title ?? name,
+            ...(frame.rawInput?.command ? { command: frame.rawInput.command } : {}),
             ...(frame.rawInput?.file_path ? { path: frame.rawInput.file_path } : {}),
           } as const
           tools.set(frame.toolCallId, entry)
@@ -285,6 +309,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         if (frame.type === 'tool_call_update' && frame.toolCallId && frame.status) {
           const entry = tools.get(frame.toolCallId)
           if (!entry) return
+          const output = grokToolOutput(frame)
           this.emit('event', {
             type: 'item.completed',
             item: {
@@ -292,9 +317,14 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
               turnId,
               type: entry.itemType,
               status: frame.status === 'failed' ? 'failed' : 'completed',
-              ...(entry.itemType === 'command' ? { command: entry.label } : {}),
+              ...(entry.itemType === 'command'
+                ? { command: entry.command ?? entry.label, ...(output ? { text: output } : {}) }
+                : {}),
               ...(entry.itemType === 'file_change' && entry.path ? { path: entry.path } : {}),
-              ...(entry.itemType === 'tool_call' ? { text: entry.label } : {}),
+              ...(entry.itemType === 'file_change' && output ? { text: output } : {}),
+              ...(entry.itemType === 'tool_call'
+                ? { text: output ? `${entry.label}\n${output}` : entry.label }
+                : {}),
               createdAt: Date.now(),
             },
           })
@@ -302,20 +332,27 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
           return
         }
         if (frame.type === 'end') {
-          sawEnd = true
+          if (terminal) return
+          terminal = true
           if (frame.sessionId) this.#sessionId = frame.sessionId
           reasoning.complete(turnId, 'reasoning', this)
           message.complete(turnId, 'message', this)
           const usage = frame.usage
           if (usage) {
+            const reasoningTokens = usage.reasoning_tokens ?? 0
             this.emit('event', {
               type: 'usage.updated',
               usage: {
+                ...(this.#options.model ? { model: this.#options.model } : {}),
                 inputTokens: usage.input_tokens ?? 0,
                 cachedInputTokens: usage.cache_read_input_tokens ?? 0,
-                outputTokens: usage.output_tokens ?? 0,
-                reasoningTokens: usage.reasoning_tokens ?? 0,
+                outputTokens: (usage.output_tokens ?? 0) + reasoningTokens,
+                reasoningTokens,
                 totalTokens: usage.total_tokens ?? 0,
+                inputIncludesCached: false,
+                ...(typeof frame.total_cost_usd === 'number'
+                  ? { costUsd: frame.total_cost_usd }
+                  : {}),
               },
             })
           }
@@ -338,10 +375,17 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))
 
-    child.on('exit', (code) => {
+    child.on('close', (code) => {
+      this.#cleanupPrompt(child)
       if (this.#child === child) this.#child = undefined
-      if (this.#intentionalKills.has(child)) return
-      if (sawEnd) return
+      if (terminal) return
+      terminal = true
+      const killReason = this.#killReasons.get(child)
+      if (killReason === 'interrupt') {
+        this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
+        return
+      }
+      if (killReason === 'silent') return
       // An exit without an end frame would otherwise look like a hang.
       this.emit('event', {
         type: 'thread.error',
@@ -354,7 +398,16 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     // A spawn failure emits 'error' on the child; without a listener that
     // throws out of the event loop and takes the whole server down.
     child.on('error', (error) => {
+      this.#cleanupPrompt(child)
       if (this.#child === child) this.#child = undefined
+      if (terminal) return
+      terminal = true
+      const killReason = this.#killReasons.get(child)
+      if (killReason === 'interrupt') {
+        this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
+        return
+      }
+      if (killReason === 'silent') return
       this.emit('event', { type: 'thread.error', threadId, message: String(error) })
       this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
     })
@@ -364,7 +417,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   }
 
   async interrupt(): Promise<void> {
-    if (this.#child) this.#stop(this.#child)
+    if (this.#child) this.#stop(this.#child, 'interrupt')
   }
 
   /** `grok models` prints a default line plus an "Available models:" list. */
@@ -377,9 +430,21 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     this.#child = undefined
   }
 
-  #stop(child: ChildProcessWithoutNullStreams): void {
-    this.#intentionalKills.add(child)
+  #stop(child: ChildProcessWithoutNullStreams, reason: 'interrupt' | 'silent' = 'silent'): void {
+    if (reason === 'interrupt' || !this.#killReasons.has(child))
+      this.#killReasons.set(child, reason)
     killTree(child)
+  }
+
+  #cleanupPrompt(child: ChildProcessWithoutNullStreams): void {
+    const directory = this.#promptDirectories.get(child)
+    if (!directory) return
+    this.#promptDirectories.delete(child)
+    try {
+      rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })
+    } catch (error) {
+      this.emit('log', `temporary prompt cleanup failed: ${String(error)}`)
+    }
   }
 
   #capture(args: string[], timeoutMs = 15000): Promise<string> {
@@ -414,6 +479,18 @@ function captureGrok(spawnFn: SpawnFn, args: string[], timeoutMs = 15000): Promi
     child.stdin.on('error', () => undefined)
     child.stdin.end()
   })
+}
+
+function grokToolOutput(frame: GrokFrame): string | undefined {
+  const parts = [frame.content, frame.rawOutput]
+    .map((value) => {
+      if (value === null || value === undefined || value === '') return undefined
+      if (Array.isArray(value) && value.length === 0) return undefined
+      return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+    })
+    .filter((value): value is string => value !== undefined)
+  const unique = [...new Set(parts)]
+  return unique.length ? unique.join('\n') : undefined
 }
 
 /** Auth as the CLI reports it on `grok models` — nothing else is read. */
@@ -488,7 +565,8 @@ class StreamedItem {
 }
 
 /**
- * Parse `grok models`. Captured shape (grok 0.1.219):
+ * Parse `grok models`. Grok 1.0 marks the default with `*` and the remaining
+ * available models with `-`; 0.1 used `*` for every row.
  *
  *   You are not authenticated.
  *
@@ -500,15 +578,24 @@ class StreamedItem {
 export function parseGrokModels(output: string): Model[] {
   const models: Model[] = []
   let reading = false
+  let foundModel = false
   for (const rawLine of output.split(/\r\n|\n|\r/)) {
     const line = rawLine.trim()
     if (/^Available models:/i.test(line)) {
       reading = true
       continue
     }
-    if (!reading || !line) continue
-    const match = line.match(/^\*\s*(\S+)(\s+\(default\))?/)
-    if (!match) continue
+    if (!reading) continue
+    if (!line) {
+      if (foundModel) break
+      continue
+    }
+    const match = line.match(/^[*-]\s*(\S+)(\s+\(default\))?/)
+    if (!match) {
+      if (foundModel) break
+      continue
+    }
+    foundModel = true
     const id = match[1]!
     const details = GROK_MODEL_DETAILS[id]
     models.push({

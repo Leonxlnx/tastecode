@@ -1,4 +1,5 @@
 import { History, X } from 'lucide-react'
+import { useDialogFocus } from './dialog-focus.js'
 
 export type Checkpoint = {
   id: number
@@ -17,11 +18,18 @@ export function RollbackDialog(props: {
   onClose: () => void
 }) {
   const selected = props.inspection?.checkpoint
+  const dialog = useDialogFocus<HTMLDivElement>(props.onClose)
 
   return (
-    <div className="sheet" role="dialog" aria-modal="true" aria-label="Restore checkpoint">
+    <div
+      className="sheet"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Restore checkpoint"
+      onKeyDown={dialog.onKeyDown}
+    >
       <button className="sheet__scrim" onClick={props.onClose} aria-label="Close checkpoints" />
-      <div className="sheet__panel rollback">
+      <div className="sheet__panel rollback" ref={dialog.panel} tabIndex={-1}>
         <header className="sheet__head">
           <div>
             <h2 className="sheet__title">Return to a checkpoint</h2>

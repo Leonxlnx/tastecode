@@ -42,7 +42,7 @@ const PROBES: Probe[] = [
     command: 'codex',
     capabilities: CODEX_CAPABILITIES,
     setup: {
-      installUrl: 'https://help.openai.com/en/articles/11096431',
+      installUrl: 'https://developers.openai.com/codex/cli',
       installCommand: 'npm install -g @openai/codex',
       login: 'app',
     },
@@ -53,7 +53,7 @@ const PROBES: Probe[] = [
     command: 'claude',
     capabilities: CLAUDE_CAPABILITIES,
     setup: {
-      installUrl: 'https://docs.anthropic.com/en/docs/claude-code/getting-started',
+      installUrl: 'https://code.claude.com/docs/en/getting-started',
       installCommand: 'npm install -g @anthropic-ai/claude-code',
       login: 'app',
     },
@@ -64,7 +64,7 @@ const PROBES: Probe[] = [
     command: 'grok',
     capabilities: GROK_CAPABILITIES,
     setup: {
-      installUrl: 'https://x.ai/',
+      installUrl: 'https://x.ai/cli',
       login: 'provider',
     },
     // Device flow in the CLI's own terminal, same shape as `kimi login`.

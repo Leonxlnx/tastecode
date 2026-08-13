@@ -5,10 +5,12 @@ import path from 'node:path'
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
   nativeImage,
+  nativeTheme,
   session,
   shell,
   systemPreferences,
@@ -16,15 +18,24 @@ import {
   type WebContents,
 } from 'electron'
 import {
+  PreviewDomAuditSchema,
   PreviewCaptureRequestSchema,
   type PreviewCaptureRequest,
   type PreviewCaptureResult,
 } from '@harness/contracts'
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
+import { clipboardText } from './clipboard-text.js'
+import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
+import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { allowsMicrophoneRequest } from './media-permissions.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
 import { revealablePath } from './reveal-path.js'
-import { windowThemeOptions } from './window-theme.js'
+import { projectFilePath } from './project-file-path.js'
+import { PREVIEW_DOM_AUDIT_SCRIPT } from './preview-dom-audit.js'
+import { ServerSupervisor } from './server-supervisor.js'
+import { restoreMainWindowPresence } from './window-presence.js'
+import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
+import { windowThemeOptions, windowThemeSource } from './window-theme.js'
 import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './zoom-shortcuts.js'
 
 /**
@@ -65,12 +76,64 @@ const CAPTURE_SETTLE_SCRIPT = `new Promise(resolve => requestAnimationFrame(reso
   ]))
   .then(() => document.fonts?.ready)
   .then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))`
+// Windows' native occlusion tracker can wrongly decide the window is fully
+// covered and stick there: the page keeps running with visibilityState
+// 'hidden' while the window shows nothing but its background colour — the
+// intermittent all-black window. Verified over CDP: DOM complete, renderer
+// healthy, compositor off. The watchdog below covers whatever this misses.
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
+}
+// Diagnostics for the field: software rendering and a DevTools port, both
+// opt-in via environment so a broken machine can be inspected.
+if (process.env['HARNESS_DISABLE_GPU'] === '1') app.disableHardwareAcceleration()
+if (process.env['HARNESS_DEBUG_PORT']) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env['HARNESS_DEBUG_PORT'])
+}
+
 const ownsSingleInstance = app.requestSingleInstanceLock()
 let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let appIsQuitting = false
+let serverSupervisor: ServerSupervisor | undefined
+const macOSHaptics = new MacOSHaptics()
 
-if (!ownsSingleInstance) app.quit()
+if (!ownsSingleInstance) {
+  console.error('[desktop] another Harness instance owns the single-instance lock')
+  app.quit()
+}
+
+/**
+ * Outside development the shell owns its core server: without this a packaged
+ * app has nothing listening on the socket and every feature sits behind a
+ * permanent "Reconnecting…". In dev, dev.js runs the server with a watcher and
+ * signals that through HARNESS_DEV_SERVER.
+ *
+ * The child is this same Electron binary in Node mode — the one runtime an
+ * installed app is guaranteed to carry, with the Node version the server was
+ * built against.
+ */
+function startOwnedServer(): void {
+  if (devServer || serverSupervisor) return
+  const serverEntry = path.join(here, '../../server/dist/main.js')
+  serverSupervisor = new ServerSupervisor({
+    command: process.execPath,
+    args: [serverEntry],
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    onLog: (line) => console.log('[server]', line),
+    onGaveUp: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        void dialog.showMessageBox(mainWindow, {
+          type: 'error',
+          title: 'Harness',
+          message: 'The core server keeps crashing.',
+          detail: 'Restart the app. If this keeps happening, reinstall it.',
+        })
+      }
+    },
+  })
+  serverSupervisor.start()
+}
 
 function createWindow(): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -84,6 +147,9 @@ function createWindow(): void {
     height: 820,
     minWidth: 720,
     minHeight: 520,
+    focusable: true,
+    movable: true,
+    skipTaskbar: false,
     backgroundColor: initialTheme.backgroundColor,
     // Real glass, the way Codex does it: the OS draws its blur material
     // behind the window, and the renderer keeps every surface opaque except
@@ -108,6 +174,7 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      webviewTag: true,
       // Defaults to on, which loads Chromium's spellcheck service and
       // downloads Hunspell dictionaries at first run — the only network
       // traffic the app would ever do outside the renderer's own CSP.
@@ -116,6 +183,10 @@ function createWindow(): void {
     },
   })
   mainWindow = window
+  configureEmbeddedBrowser(window.webContents)
+  restoreMainWindowPresence(process.platform, app, window)
+  const stopWatchdog = startVisibilityWatchdog(window, (line) => console.warn('[desktop]', line))
+  window.on('closed', stopWatchdog)
 
   window.on('close', (event) => {
     if (!shouldHideWindowOnClose(process.platform, appIsQuitting)) return
@@ -125,9 +196,22 @@ function createWindow(): void {
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = undefined
   })
+  window.on('focus', () => restoreMainWindowPresence(process.platform, app, window))
+  window.on('show', () => restoreMainWindowPresence(process.platform, app, window))
+  window.on('unresponsive', () => {
+    console.error('[desktop] main window renderer became unresponsive')
+  })
+  window.on('responsive', () => {
+    console.info('[desktop] main window renderer recovered')
+  })
+  window.webContents.on('render-process-gone', (_event, details) => {
+    console.error(
+      `[desktop] main window renderer exited: ${details.reason} (code ${details.exitCode})`,
+    )
+  })
 
   // Avoid the white flash before React paints.
-  window.once('ready-to-show', () => window.show())
+  window.once('ready-to-show', showMainWindow)
 
   // Nothing in this app should ever open a second window, and any external
   // link belongs in the user's browser, not in a chromeless Electron window.
@@ -181,6 +265,7 @@ function showMainWindow(): void {
     createWindow()
     return
   }
+  restoreMainWindowPresence(process.platform, app, window)
   if (window.isMinimized()) window.restore()
   window.show()
   window.focus()
@@ -217,10 +302,12 @@ ipcMain.handle('harness:setZoom', (event, action: unknown) => {
   applyZoom(window, action)
 })
 
-ipcMain.handle('harness:setTheme', (event, theme: unknown) => {
+ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
   requireOwnRenderer(event.sender)
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window) throw new Error('No window for theme change')
+  nativeTheme.themeSource = windowThemeSource(preference)
+  const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
   const options = windowThemeOptions(theme)
   // Repainting an opaque background would sit on top of the acrylic/vibrancy
   // material and kill the sidebar glass; on those platforms the material owns
@@ -233,11 +320,31 @@ ipcMain.handle('harness:setTheme', (event, theme: unknown) => {
   }
 })
 
+ipcMain.on('harness:hapticsPrepare', (event) => {
+  if (!isOwnRenderer(event.sender)) return
+  macOSHaptics.prepare()
+})
+
+ipcMain.on('harness:hapticFeedback', (event, pattern: unknown) => {
+  if (!isOwnRenderer(event.sender) || !isMacHapticPattern(pattern)) return
+  macOSHaptics.perform(pattern)
+})
+
+ipcMain.handle('harness:writeClipboardText', (event, value: unknown) => {
+  requireOwnRenderer(event.sender)
+  clipboard.writeText(clipboardText(value))
+})
+
 ipcMain.handle('harness:capturePreview', async (event, value: unknown) => {
   if (!isOwnRenderer(event.sender)) throw new Error('Preview capture requires the app renderer')
   const parsed = PreviewCaptureRequestSchema.safeParse(value)
   if (!parsed.success) throw new Error('Invalid preview capture request')
   return capturePreview(parsed.data)
+})
+
+ipcMain.handle('harness:openExternal', async (event, url: unknown) => {
+  requireOwnRenderer(event.sender)
+  await shell.openExternal(browserGuestUrl(url))
 })
 
 function applyZoom(window: BrowserWindow, action: ZoomAction): void {
@@ -305,12 +412,20 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
       seen.add(key)
       preview.setContentSize(viewport.width, viewport.height)
       await Promise.race([preview.webContents.executeJavaScript(CAPTURE_SETTLE_SCRIPT), deadline])
+      const domAudit = PreviewDomAuditSchema.parse(
+        await Promise.race([
+          preview.webContents.executeJavaScriptInIsolatedWorld(1001, [
+            { code: PREVIEW_DOM_AUDIT_SCRIPT },
+          ]),
+          deadline,
+        ]),
+      )
       const destination = path.join(directory, `${key}.png`)
       await writeFile(destination, (await preview.webContents.capturePage()).toPNG(), {
         flag: 'wx',
         mode: 0o600,
       })
-      screenshots.push({ path: destination, ...viewport })
+      screenshots.push({ path: destination, ...viewport, domAudit })
     }
     return { status: 'completed', requestId: request.requestId, screenshots }
   } catch (error) {
@@ -386,6 +501,11 @@ ipcMain.handle('harness:revealPath', (event, value: unknown) => {
   shell.showItemInFolder(revealablePath(value))
 })
 
+ipcMain.handle('harness:revealProjectFile', (event, value: unknown, projectRootValue: unknown) => {
+  requireOwnRenderer(event.sender)
+  shell.showItemInFolder(projectFilePath(value, projectRootValue))
+})
+
 ipcMain.handle('harness:savePastedImage', async (event, payload: unknown) => {
   requireOwnRenderer(event.sender)
   const image = pastedImage(payload)
@@ -402,16 +522,28 @@ if (ownsSingleInstance) {
     appIsQuitting = true
   })
   app.on('will-quit', () => {
+    macOSHaptics.stop()
+    serverSupervisor?.stop()
+    serverSupervisor = undefined
     tray?.destroy()
     tray = undefined
   })
 
   void app.whenReady().then(() => {
+    startOwnedServer()
     configureMediaPermissions()
     void sweepStaleCaptures()
     createWindow()
     createBackgroundTray()
     app.on('activate', showMainWindow)
+    if (process.platform === 'darwin') {
+      app.on('did-become-active', () => {
+        const window = mainWindow
+        if (window && !window.isDestroyed()) {
+          restoreMainWindowPresence(process.platform, app, window)
+        }
+      })
+    }
   })
 }
 

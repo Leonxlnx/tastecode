@@ -14,10 +14,12 @@ import {
   PushSchema,
   RequestSchema,
   ResponseSchema,
+  SessionSearchResultSchema,
   SidebarSettingsSchema,
   SkillCapabilitiesSchema,
   SkillSchema,
   ThreadLifecycleSchema,
+  UsageHistoryResultSchema,
 } from './protocol.js'
 
 describe('domain events', () => {
@@ -29,6 +31,20 @@ describe('domain events', () => {
       textDelta: 'hello',
     }
     expect(DomainEventSchema.parse(event)).toEqual(event)
+  })
+
+  it('carries a durable turn completion boundary without rejecting legacy history', () => {
+    const completed = {
+      type: 'turn.completed',
+      turnId: 't1',
+      status: 'completed',
+      completedAt: 32_000,
+    }
+
+    expect(DomainEventSchema.parse(completed)).toEqual(completed)
+    expect(
+      DomainEventSchema.parse({ type: 'turn.completed', turnId: 'legacy', status: 'completed' }),
+    ).toEqual({ type: 'turn.completed', turnId: 'legacy', status: 'completed' })
   })
 
   it('rejects an event with an unknown type instead of passing it through', () => {
@@ -47,6 +63,53 @@ describe('domain events', () => {
       createdAt: Date.now(),
     })
     expect(item.type).toBe('unknown')
+  })
+
+  it('preserves assistant phases without rejecting legacy items', () => {
+    const legacy = {
+      id: 'i1',
+      turnId: 't1',
+      type: 'message',
+      status: 'completed',
+      role: 'assistant',
+      text: 'Done.',
+      createdAt: 1,
+    }
+
+    expect(ItemSchema.parse(legacy)).toEqual(legacy)
+    expect(ItemSchema.parse({ ...legacy, phase: 'commentary' }).phase).toBe('commentary')
+    expect(ItemSchema.parse({ ...legacy, phase: 'final_answer' }).phase).toBe('final_answer')
+    expect(() => ItemSchema.parse({ ...legacy, phase: 'analysis' })).toThrow()
+  })
+
+  it('carries one item ID through a complete lifecycle', () => {
+    const item = {
+      id: 'assistant-1',
+      turnId: 't1',
+      type: 'message',
+      status: 'started',
+      role: 'assistant',
+      createdAt: 1,
+    }
+    const events = [
+      DomainEventSchema.parse({ type: 'item.started', item }),
+      DomainEventSchema.parse({
+        type: 'item.delta',
+        turnId: item.turnId,
+        itemId: item.id,
+        textDelta: 'Done.',
+      }),
+      DomainEventSchema.parse({
+        type: 'item.completed',
+        item: { ...item, status: 'completed', text: 'Done.' },
+      }),
+    ]
+
+    expect(events.map((event) => ('item' in event ? event.item.id : event.itemId))).toEqual([
+      item.id,
+      item.id,
+      item.id,
+    ])
   })
 
   it('accepts automatic approval review progress and results', () => {
@@ -104,6 +167,55 @@ describe('protocol envelopes', () => {
     expect(RequestSchema.parse({ id: '1', method: 'system.info', params: {} })).toBeTruthy()
   })
 
+  it('keeps usage estimates paired with their pricing coverage', () => {
+    const totals = {
+      uncachedInputTokens: 100,
+      cachedInputTokens: 200,
+      cacheWriteInputTokens: 10,
+      outputTokens: 20,
+      reasoningTokens: 5,
+      processedTokens: 330,
+      estimatedCostUsd: 0.01,
+      cacheSavingsUsd: 0.02,
+      providerReportedCostUsd: 0,
+      providerReportedTokens: 0,
+      pricedTokens: 300,
+      unpricedTokens: 30,
+    }
+    const result = {
+      range: '30d' as const,
+      startDate: '2026-07-10',
+      endDate: '2026-08-08',
+      generatedAt: 1,
+      sessionCount: 1,
+      activeDays: 1,
+      totals,
+      providers: [{ provider: 'codex' as const, sessionCount: 1, totals }],
+      models: [
+        {
+          provider: 'codex' as const,
+          model: 'gpt-5.6-sol',
+          sessionCount: 1,
+          pricing: 'exact' as const,
+          totals,
+        },
+      ],
+      daily: [
+        {
+          date: '2026-08-08',
+          sessionCount: 1,
+          totals,
+          providers: [{ provider: 'codex' as const, tokens: 330, estimatedCostUsd: 0.01 }],
+        },
+      ],
+      sources: [{ provider: 'codex' as const, available: true, sessionCount: 1 }],
+      scan: { status: 'idle' as const, filesProcessed: 1, filesTotal: 1 },
+      warnings: [],
+    }
+
+    expect(UsageHistoryResultSchema.parse(result)).toEqual(result)
+  })
+
   it('requires a sequence on every push so clients can detect gaps', () => {
     expect(() => PushSchema.parse({ channel: 'server.welcome', data: {} })).toThrow()
   })
@@ -125,13 +237,47 @@ describe('protocol envelopes', () => {
         viewports: [{ width: 10_000, height: 900 }],
       }),
     ).toThrow()
-    expect(
+    const legacyResult = {
+      status: 'completed' as const,
+      requestId: request.requestId,
+      screenshots: [{ path: 'C:\\tmp\\desktop.png', width: 1_440, height: 900 }],
+    }
+    expect(PreviewCaptureResultSchema.parse(legacyResult)).toEqual(legacyResult)
+
+    const auditedResult = {
+      ...legacyResult,
+      screenshots: [
+        {
+          path: 'C:\\tmp\\mobile.png',
+          width: 390,
+          height: 844,
+          domAudit: {
+            h1Count: 0,
+            interactiveTargetViolations: [
+              { selector: '#theme', label: 'Theme', width: 32.5, height: 32 },
+              { selector: 'a:nth-of-type(2)', label: '', width: 80, height: 20 },
+            ],
+          },
+        },
+      ],
+    }
+    expect(PreviewCaptureResultSchema.parse(auditedResult)).toEqual(auditedResult)
+    expect(() =>
       PreviewCaptureResultSchema.parse({
-        status: 'completed',
-        requestId: request.requestId,
-        screenshots: [{ path: 'C:\\tmp\\desktop.png', width: 1_440, height: 900 }],
-      }).status,
-    ).toBe('completed')
+        ...auditedResult,
+        screenshots: [
+          {
+            ...auditedResult.screenshots[0],
+            domAudit: {
+              h1Count: 1,
+              interactiveTargetViolations: [
+                { selector: '#large', label: 'Large control', width: 44, height: 44 },
+              ],
+            },
+          },
+        ],
+      }),
+    ).toThrow()
   })
 
   it('validates params for every declared method', () => {
@@ -147,11 +293,32 @@ describe('protocol envelopes', () => {
       methods['thread.sendTurn'].params.parse({
         threadId: 'th1',
         text: 'hello',
+        clientSubmissionId: 'submission-1',
         model: 'gpt-5.6-sol',
         effort: 'xhigh',
         serviceTier: 'priority',
       }),
-    ).toBeTruthy()
+    ).toMatchObject({ clientSubmissionId: 'submission-1' })
+    expect(
+      methods['thread.sendTurn'].params.parse({
+        threadId: 'legacy-thread',
+        text: 'legacy client',
+      }),
+    ).toEqual({ threadId: 'legacy-thread', text: 'legacy client' })
+    expect(() =>
+      methods['thread.sendTurn'].params.parse({
+        threadId: 'th1',
+        text: 'hello',
+        clientSubmissionId: '',
+      }),
+    ).toThrow()
+    expect(() =>
+      methods['thread.sendTurn'].params.parse({
+        threadId: 'th1',
+        text: 'hello',
+        clientSubmissionId: 'x'.repeat(257),
+      }),
+    ).toThrow()
     expect(
       methods['thread.sendTurn'].result.parse({
         queued: true,
@@ -163,6 +330,9 @@ describe('protocol envelopes', () => {
         },
       }),
     ).toBeTruthy()
+    expect(
+      methods['thread.setApproval'].params.parse({ threadId: 'th1', approval: 'full' }),
+    ).toEqual({ threadId: 'th1', approval: 'full' })
     expect(methods['thread.queue'].result.parse({ items: [], canSteer: true })).toEqual({
       items: [],
       canSteer: true,
@@ -190,6 +360,44 @@ describe('protocol envelopes', () => {
       provider: 'acp',
       agent: 'kimi',
     })
+    expect(
+      methods['harnesses.upsert'].params.parse({
+        id: 'deepseek-pi',
+        displayName: 'DeepSeek Pi',
+        provider: 'pi',
+        command: '/Applications/Pi forks/deepseek-pi',
+        args: ['--openrouter', 'value with spaces'],
+        workingDirectory: '~/Developer/pi-deepseek',
+        environment: { PI_CODING_AGENT_DIR: '/Users/me/.pi-deepseek' },
+      }),
+    ).toMatchObject({
+      provider: 'pi',
+      args: ['--openrouter', 'value with spaces'],
+      workingDirectory: '~/Developer/pi-deepseek',
+      environment: { PI_CODING_AGENT_DIR: '/Users/me/.pi-deepseek' },
+    })
+    expect(
+      methods['harnesses.verify'].result.parse({
+        verification: {
+          status: 'ready',
+          summary: 'DeepSeek Pi is compatible',
+          checkedAt: 1,
+          resolvedCommand: '/Users/me/.local/bin/deepseek-pi',
+          checks: [
+            { label: 'Pi RPC', status: 'passed', detail: 'Initialize handshake completed.' },
+          ],
+        },
+      }),
+    ).toMatchObject({ verification: { status: 'ready' } })
+    expect(() =>
+      methods['harnesses.upsert'].params.parse({
+        id: 'bad',
+        displayName: 'Bad',
+        provider: 'api',
+        command: 'bad',
+        args: [],
+      }),
+    ).toThrow()
     expect(() => methods['models.list'].params.parse({ provider: 'acp', agent: '' })).toThrow()
     expect(methods['auth.status'].params.parse({ provider: 'acp', agent: 'kimi' })).toEqual({
       provider: 'acp',
@@ -266,6 +474,7 @@ describe('protocol envelopes', () => {
         },
       ],
       devices: [],
+      webUrls: ['http://100.101.22.33:4312/#access_token=stable-web-token'],
       pairingUri: 'harness://pair?payload=short-lived-ticket',
       expiresAt: Date.now() + 300_000,
     })
@@ -279,6 +488,30 @@ describe('protocol envelopes', () => {
         error: { code: ErrorCode.FORBIDDEN, message: 'This device cannot perform that action' },
       }),
     ).toMatchObject({ error: { code: 'forbidden' } })
+  })
+
+  it('only exposes the web-app URLs on the admin status surface', () => {
+    const status = methods['connections.status'].result.parse({
+      enabled: true,
+      serverName: 'Studio Mac',
+      port: 4312,
+      addresses: [{ kind: 'lan', label: 'en0 192.168.1.44', url: 'ws://192.168.1.44:4312' }],
+      devices: [],
+      webUrls: ['http://192.168.1.44:4312/#access_token=stable-web-token'],
+    })
+    expect(status.webUrls[0]).toBe('http://192.168.1.44:4312/#access_token=stable-web-token')
+
+    // The device-facing shape deliberately carries no app URLs: a paired
+    // device must not learn the long-lived web token.
+    expect(
+      methods['connections.deviceStatus'].result.parse({
+        serverName: 'Studio Mac',
+        addresses: [{ kind: 'lan', label: 'en0 192.168.1.44', url: 'ws://192.168.1.44:4312' }],
+      }),
+    ).toEqual({
+      serverName: 'Studio Mac',
+      addresses: [{ kind: 'lan', label: 'en0 192.168.1.44', url: 'ws://192.168.1.44:4312' }],
+    })
   })
 
   it('validates remote attachment materialization requests', () => {
@@ -321,6 +554,21 @@ describe('protocol envelopes', () => {
       rows: 40,
     })
     expect(opened).toEqual({ threadId: 'thread-1', columns: 120, rows: 40 })
+    expect(
+      methods['terminal.open'].params.parse({
+        projectPath: '/workspace',
+        columns: 100,
+        rows: 30,
+      }),
+    ).toEqual({ projectPath: '/workspace', columns: 100, rows: 30 })
+    expect(() =>
+      methods['terminal.open'].params.parse({
+        threadId: 'thread-1',
+        projectPath: '/workspace',
+        columns: 100,
+        rows: 30,
+      }),
+    ).toThrow()
 
     const { terminalId } = methods['terminal.open'].result.parse({ terminalId: 'terminal-1' })
     expect(methods['terminal.input'].params.parse({ terminalId, data: '\u0003' })).toEqual({
@@ -371,11 +619,117 @@ describe('protocol envelopes', () => {
         costUsd: 0.04,
       },
       limits: [{ label: '5 hours', usedPercent: 25, resetsAt: 1_800_000 }],
+      limitSource: {
+        provider: 'codex',
+        status: 'ready',
+        limits: [{ label: '5 hours', usedPercent: 25, resetsAt: 1_800_000 }],
+      },
     })
 
     expect(result.session.costUsd).toBeUndefined()
     expect(result.today.costUsd).toBe(0.04)
     expect(result.limits[0]?.usedPercent).toBe(25)
+    expect(result.limitSource).toEqual({
+      provider: 'codex',
+      status: 'ready',
+      limits: [{ label: '5 hours', usedPercent: 25, resetsAt: 1_800_000 }],
+    })
+    expect(channels['usage.changed'].parse({ provider: 'codex' })).toEqual({
+      provider: 'codex',
+    })
+  })
+
+  it('keeps one authoritative provider limit source with a legacy fallback', () => {
+    const usage = {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    }
+    const parse = (limits: unknown[], limitSource?: unknown) =>
+      methods['usage.summary'].result.parse({
+        session: usage,
+        today: usage,
+        limits,
+        ...(limitSource === undefined ? {} : { limitSource }),
+      })
+
+    expect(parse([]).limitSource).toBeUndefined()
+    expect(parse([], { provider: 'grok', status: 'ready', limits: [] }).limitSource).toEqual({
+      provider: 'grok',
+      status: 'ready',
+      limits: [],
+    })
+    expect(parse([], { provider: 'api', status: 'unavailable' }).limitSource).toEqual({
+      provider: 'api',
+      status: 'unavailable',
+    })
+
+    expect(() =>
+      parse([{ label: 'Weekly', usedPercent: 10 }], {
+        provider: 'grok',
+        status: 'unavailable',
+      }),
+    ).toThrow()
+    expect(() =>
+      parse([], {
+        provider: 'grok',
+        status: 'ready',
+        limits: [{ label: 'Weekly', usedPercent: 10 }],
+      }),
+    ).toThrow()
+    expect(() => parse([], { provider: 'unknown', status: 'unavailable' })).toThrow()
+    expect(() => parse([], { provider: 'grok', status: 'stale' })).toThrow()
+  })
+
+  it('proves each provider limit field boundary independently', () => {
+    const usage = {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    }
+    const baseline = { label: 'L', usedPercent: 50, resetsAt: 1, valueLabel: 'V' }
+    const parse = (overrides: Partial<typeof baseline>) => {
+      const limit = { ...baseline, ...overrides }
+      return methods['usage.summary'].result.parse({
+        session: usage,
+        today: usage,
+        limits: [limit],
+        limitSource: { provider: 'grok', status: 'ready', limits: [limit] },
+      })
+    }
+
+    const valid: Array<[string, Partial<typeof baseline>]> = [
+      ['label minimum', { label: 'x' }],
+      ['label maximum', { label: 'x'.repeat(120) }],
+      ['value label minimum', { valueLabel: 'x' }],
+      ['value label maximum', { valueLabel: 'x'.repeat(160) }],
+      ['percent minimum', { usedPercent: 0 }],
+      ['percent maximum', { usedPercent: 100 }],
+      ['reset minimum', { resetsAt: 0 }],
+      ['reset maximum safe integer', { resetsAt: Number.MAX_SAFE_INTEGER }],
+    ]
+    for (const [boundary, override] of valid) {
+      expect(parse(override), boundary).toBeDefined()
+    }
+
+    const invalid: Array<[string, Partial<typeof baseline>]> = [
+      ['label below minimum', { label: '' }],
+      ['label above maximum', { label: 'x'.repeat(121) }],
+      ['value label below minimum', { valueLabel: '' }],
+      ['value label above maximum', { valueLabel: 'x'.repeat(161) }],
+      ['percent below minimum', { usedPercent: -0.01 }],
+      ['percent above maximum', { usedPercent: 100.01 }],
+      ['reset below minimum', { resetsAt: -1 }],
+      ['reset non-integer', { resetsAt: 0.5 }],
+      ['reset above maximum safe integer', { resetsAt: Number.MAX_SAFE_INTEGER + 1 }],
+    ]
+    for (const [boundary, override] of invalid) {
+      expect(() => parse(override), boundary).toThrow()
+    }
   })
 
   it('validates versioned diff review and stale snapshot errors', () => {
@@ -413,6 +767,13 @@ describe('protocol envelopes', () => {
     }
 
     expect(methods['thread.diff'].result.parse(diff)).toEqual(diff)
+    expect(
+      methods['workspace.diff'].params.parse({
+        projectPath: '/repo',
+        threadId: 'thread-1',
+      }),
+    ).toEqual({ projectPath: '/repo', threadId: 'thread-1' })
+    expect(methods['workspace.diff'].result.parse(diff)).toEqual(diff)
     expect(
       methods['thread.reviewHunk'].params.parse({
         threadId: 'thread-1',
@@ -502,6 +863,74 @@ describe('protocol envelopes', () => {
     expect(() => methods['search.sessions'].params.parse({ query: '   ' })).toThrow()
     expect(() =>
       methods['search.sessions'].params.parse({ query: 'regression', limit: 101 }),
+    ).toThrow()
+  })
+
+  it('preserves distinct identities for same-millisecond search results', () => {
+    const shared = {
+      projectPath: 'D:\\project',
+      projectName: 'project',
+      threadId: 'thread-1',
+      threadTitle: 'Find the collision',
+      turnId: 'turn-2',
+      provider: 'codex',
+      createdAt: 42,
+      snippet: [{ text: 'same timestamp', highlighted: true }],
+    }
+    const parsed = methods['search.sessions'].result.parse({
+      results: [
+        { ...shared, resultId: 'event:41' },
+        { ...shared, resultId: 'event:42' },
+      ],
+      nextCursor: null,
+    })
+
+    const legacyKeys = parsed.results.map(
+      (result) => `${result.threadId}:${result.turnId}:${result.createdAt}`,
+    )
+    expect(new Set(legacyKeys).size).toBe(1)
+    expect(parsed.results.map((result) => result.resultId)).toEqual(['event:41', 'event:42'])
+  })
+
+  it('keeps search result identity compatible across staged clients', () => {
+    const result = {
+      projectPath: 'D:\\project',
+      projectName: 'project',
+      threadId: 'thread-1',
+      threadTitle: 'Find the regression',
+      turnId: 'turn-2',
+      provider: 'codex' as const,
+      createdAt: 42,
+      snippet: [{ text: 'regression', highlighted: true }],
+    }
+
+    expect(SessionSearchResultSchema.parse(result)).toEqual(result)
+    expect(
+      SessionSearchResultSchema.omit({ resultId: true }).parse({
+        ...result,
+        resultId: 'event:41',
+      }),
+    ).toEqual(result)
+  })
+
+  it('bounds opaque search result identities', () => {
+    const result = {
+      projectPath: 'D:\\project',
+      projectName: 'project',
+      threadId: 'thread-1',
+      threadTitle: 'Find the regression',
+      turnId: 'turn-2',
+      provider: 'codex' as const,
+      createdAt: 42,
+      snippet: [{ text: 'regression', highlighted: true }],
+    }
+
+    expect(SessionSearchResultSchema.parse({ ...result, resultId: 'x'.repeat(256) }).resultId).toBe(
+      'x'.repeat(256),
+    )
+    expect(() => SessionSearchResultSchema.parse({ ...result, resultId: '' })).toThrow()
+    expect(() =>
+      SessionSearchResultSchema.parse({ ...result, resultId: 'x'.repeat(257) }),
     ).toThrow()
   })
 
@@ -861,6 +1290,13 @@ describe('protocol envelopes', () => {
       }),
     ).toBeTruthy()
     expect(
+      channels['sideChat.event'].parse({
+        threadId: 'side-1',
+        seq: 12,
+        event: { type: 'turn.completed', turnId: 't1', status: 'completed' },
+      }),
+    ).toBeTruthy()
+    expect(
       channels['thread.queue'].parse({
         threadId: 'th1',
         items: [
@@ -874,5 +1310,25 @@ describe('protocol envelopes', () => {
         canSteer: false,
       }),
     ).toBeTruthy()
+  })
+
+  it('validates the ephemeral Side chat lifecycle', () => {
+    expect(
+      methods['sideChat.start'].params.parse({
+        parentThreadId: 'main-1',
+        model: 'gpt-5.6',
+        effort: 'high',
+        approval: 'ask',
+      }),
+    ).toEqual({
+      parentThreadId: 'main-1',
+      model: 'gpt-5.6',
+      effort: 'high',
+      approval: 'ask',
+    })
+    expect(methods['sideChat.close'].params.parse({ threadId: 'side-1' })).toEqual({
+      threadId: 'side-1',
+    })
+    expect(() => methods['sideChat.start'].params.parse({ parentThreadId: '' })).toThrow()
   })
 })

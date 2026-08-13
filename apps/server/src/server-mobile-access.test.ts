@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { once } from 'node:events'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -22,6 +22,8 @@ const INTERFACES = {
     },
   ],
 }
+
+const WEB_TOKEN = 'web-token-for-tests'
 
 const previousDataDir = process.env['HARNESS_DATA_DIR']
 
@@ -46,6 +48,9 @@ describe('server mobile trust boundary', () => {
       mobilePort: 0,
       mobileNetworkInterfaces: () => INTERFACES,
       resolveTailscaleAddresses: async () => new Set(['100.101.22.33']),
+      webToken: WEB_TOKEN,
+      webRoot: await fixtureWebApp(),
+      webDevServerProbeUrl: false,
       projectBrowserHome: canonicalProjectBrowserHome,
     })
     const sockets = new Set<WebSocket>()
@@ -59,6 +64,29 @@ describe('server mobile trust boundary', () => {
       const offer = methods['connections.startPairing'].result.parse(
         await request(admin, 'pair', 'connections.startPairing', {}),
       )
+      expect(offer.webUrls).toEqual([
+        `http://100.101.22.33:${offer.port}/#access_token=${WEB_TOKEN}`,
+      ])
+
+      // The web app (the full harness UI on a phone) is served at the root
+      // without a token gate — the token lives in the hash and gates the socket.
+      const appPage = await fetch(`http://127.0.0.1:${offer.port}/`)
+      expect(appPage.status).toBe(200)
+      expect(await appPage.text()).toContain('fixture-app-marker')
+
+      // Its socket authenticates as a full admin client.
+      const webClient = await openSocket(
+        sockets,
+        `ws://127.0.0.1:${offer.port}/ws?token=${encodeURIComponent(WEB_TOKEN)}`,
+      )
+      await expect(request(webClient, 'projects', 'projects.list', {})).resolves.toEqual({
+        projects: [],
+      })
+      const statusAsAdmin = methods['connections.status'].result.parse(
+        await request(webClient, 'status', 'connections.status', {}),
+      )
+      expect(statusAsAdmin.webUrls.length).toBe(1)
+
       const bootstrap = await openSocket(
         sockets,
         `ws://127.0.0.1:${offer.port}/?pairing_ticket=${encodeURIComponent(pairingTicket(offer.pairingUri))}`,
@@ -125,6 +153,9 @@ describe('server mobile trust boundary', () => {
       mobilePort: 0,
       mobileNetworkInterfaces: () => INTERFACES,
       resolveTailscaleAddresses: async () => new Set(['100.101.22.33']),
+      webToken: WEB_TOKEN,
+      webRoot: await fixtureWebApp(),
+      webDevServerProbeUrl: false,
     })
     const sockets = new Set<WebSocket>()
     let firstServerClosed = false
@@ -162,6 +193,9 @@ describe('server mobile trust boundary', () => {
         mobilePort: offer.port,
         mobileNetworkInterfaces: () => INTERFACES,
         resolveTailscaleAddresses: async () => new Set(['100.101.22.33']),
+        webToken: WEB_TOKEN,
+        webRoot: await fixtureWebApp(),
+        webDevServerProbeUrl: false,
       })
       await waitForPort(offer.port)
       const restored = await openSocket(
@@ -172,6 +206,19 @@ describe('server mobile trust boundary', () => {
       await expect(request(restored, 'projects', 'projects.list', {})).resolves.toEqual({
         projects: [],
       })
+
+      // The bookmarked web-app URL is byte-identical after the restart.
+      const admin2 = await openSocket(
+        sockets,
+        `ws://127.0.0.1:${port}/?token=${encodeURIComponent('desktop-admin')}`,
+      )
+      const statusAfterRestart = methods['connections.status'].result.parse(
+        await request(admin2, 'status-after-restart', 'connections.status', {}),
+      )
+      expect(statusAfterRestart.webUrls).toEqual([
+        `http://100.101.22.33:${offer.port}/#access_token=${WEB_TOKEN}`,
+      ])
+      expect(statusAfterRestart.devices.map((device) => device.name)).toEqual(['Persistent phone'])
     } finally {
       for (const socket of sockets) socket.terminate()
       if (secondServer) await secondServer.close()
@@ -248,6 +295,16 @@ function pairingTicket(uri: string): string {
   if (!encoded) throw new Error('missing pairing payload')
   const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString()) as { ticket: string }
   return payload.ticket
+}
+
+async function fixtureWebApp(): Promise<string> {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-web-app-'))
+  mkdirSync(path.join(dir, 'assets'), { recursive: true })
+  writeFileSync(
+    path.join(dir, 'index.html'),
+    '<!doctype html><html><head></head><body>fixture-app-marker</body></html>',
+  )
+  return dir
 }
 
 function asText(raw: unknown): string {

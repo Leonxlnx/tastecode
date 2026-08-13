@@ -1,0 +1,6 @@
+{"event":"init","conversation_id":"9f1827a7-3506-4a85-add9-63182b9917a4","init":{"model":"gemini-3.6-flash-low","cwd":"C:\\tmp"}}
+{"event":"step_update","step_update":{"conversation_id":"9f1827a7-3506-4a85-add9-63182b9917a4","step_index":0,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"conversation_id":"9f1827a7-3506-4a85-add9-63182b9917a4","step_index":2,"state":"ACTIVE","step_type":"agent_response","text_delta":"MOND"}}
+{"event":"step_update","step_update":{"conversation_id":"9f1827a7-3506-4a85-add9-63182b9917a4","step_index":2,"state":"DONE","step_type":"agent_response","text_delta":"LICHT\n","usage":{"input_tokens":26267,"output_tokens":3,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":26270}}}
+{"event":"step_update","step_update":{"conversation_id":"9f1827a7-3506-4a85-add9-63182b9917a4","step_index":3,"state":"DONE","step_type":"checkpoint"}}
+{"event":"result","result":{"conversation_id":"9f1827a7-3506-4a85-add9-63182b9917a4","status":"SUCCESS","response":"MONDLICHT\n","num_turns":1,"usage":{"input_tokens":26368,"output_tokens":6,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":26374}}}

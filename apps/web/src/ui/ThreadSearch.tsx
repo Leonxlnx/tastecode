@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Item } from '@harness/contracts'
 import { ChevronDown, ChevronUp, X } from 'lucide-react'
+import { threadItemAt, type LiveItemUpdate } from '../thread-store.js'
 
 /**
  * Find within the open thread.
@@ -11,6 +12,8 @@ import { ChevronDown, ChevronUp, X } from 'lucide-react'
  */
 export function ThreadSearch(props: {
   items: Item[]
+  liveItems?: ReadonlyMap<number, LiveItemUpdate> | undefined
+  threadId?: string | undefined
   onJump: (index: number) => void
   onClose: () => void
 }) {
@@ -18,6 +21,8 @@ export function ThreadSearch(props: {
   const [cursor, setCursor] = useState(0)
   const input = useRef<HTMLInputElement>(null)
   const jumped = useRef(false)
+  const liveItems = useRef(props.liveItems)
+  liveItems.current = props.liveItems
 
   useEffect(() => {
     input.current?.focus()
@@ -27,19 +32,8 @@ export function ThreadSearch(props: {
   // Memoised: three toLowerCase passes over the whole thread per keystroke
   // (and per render) is real work on long transcripts.
   const hits = useMemo(
-    () =>
-      term
-        ? props.items
-            .map((item, index) => ({ item, index }))
-            .filter(
-              ({ item }) =>
-                item.text?.toLowerCase().includes(term) ||
-                item.command?.toLowerCase().includes(term) ||
-                item.path?.toLowerCase().includes(term),
-            )
-            .map(({ index }) => index)
-        : [],
-    [props.items, term],
+    () => (term ? findHits(props.items, liveItems.current, term) : []),
+    [props.items, props.threadId, term],
   )
 
   const go = (next: number) => {
@@ -95,3 +89,26 @@ export function ThreadSearch(props: {
     </div>
   )
 }
+
+function findHits(
+  items: Item[],
+  liveItems: ReadonlyMap<number, LiveItemUpdate> | undefined,
+  term: string,
+): number[] {
+  const hits: number[] = []
+  const updates = liveItems ?? EMPTY_LIVE_ITEMS
+  for (let index = 0; index < items.length; index += 1) {
+    const item = threadItemAt(items, updates, index)
+    if (
+      item &&
+      (item.text?.toLowerCase().includes(term) ||
+        item.command?.toLowerCase().includes(term) ||
+        item.path?.toLowerCase().includes(term))
+    ) {
+      hits.push(index)
+    }
+  }
+  return hits
+}
+
+const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()

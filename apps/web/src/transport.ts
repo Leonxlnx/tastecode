@@ -19,6 +19,15 @@ export type ConnectionState = 'connecting' | 'open' | 'reconnecting' | 'closed'
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void }
 
+/** The server may have accepted a transmitted mutation before its reply was lost. */
+export class IndeterminateRequestError extends Error {
+  override name = 'IndeterminateRequestError'
+}
+
+export function isIndeterminateRequestError(error: unknown): error is IndeterminateRequestError {
+  return error instanceof IndeterminateRequestError
+}
+
 export class Transport {
   #url: string
   #socket: WebSocket | undefined
@@ -35,6 +44,7 @@ export class Transport {
   #healthCheck: Promise<void> | undefined
 
   #stateListeners = new Set<(s: ConnectionState) => void>()
+  #sequenceGapListeners = new Set<(expected: number, received: number) => void>()
   #channelListeners = new Map<string, Set<(data: unknown) => void>>()
 
   constructor(url: string) {
@@ -108,6 +118,11 @@ export class Transport {
     return () => this.#stateListeners.delete(listener)
   }
 
+  onSequenceGap(listener: (expected: number, received: number) => void): () => void {
+    this.#sequenceGapListeners.add(listener)
+    return () => this.#sequenceGapListeners.delete(listener)
+  }
+
   on<C extends ChannelName>(channel: C, listener: (data: DataOf<C>) => void): () => void {
     let set = this.#channelListeners.get(channel)
     if (!set) {
@@ -152,11 +167,14 @@ export class Transport {
       // Same replaced-socket guard as onmessage/onclose: an orphan socket
       // must not flush the queue into a connection whose replies are dropped.
       if (this.#socket !== socket) return
-      this.#setState('open')
       for (const entry of this.#queue.splice(0)) {
         socket.send(entry.payload)
         if (entry.id) this.#inFlight.add(entry.id)
       }
+      // State listeners may immediately issue resync reads. Announce the open
+      // socket only after older queued mutations are on the wire, preserving
+      // request order across the disconnect.
+      this.#setState('open')
       void this.request('client.capabilities', { previewCapture: canCapturePreview }).catch(
         () => undefined,
       )
@@ -200,7 +218,7 @@ export class Transport {
       const call = this.#pending.get(id)
       if (call) {
         this.#pending.delete(id)
-        call.reject(new Error('Connection to the server was lost.'))
+        call.reject(new IndeterminateRequestError('Connection to the server was lost.'))
       }
     }
     this.#inFlight.clear()
@@ -254,10 +272,16 @@ export class Transport {
     const sequence = message['sequence']
     if (typeof channel !== 'string' || typeof sequence !== 'number') return
 
-    // A gap means we missed a push. Loud, because silently diverging from the
-    // server is the bug you cannot reproduce later.
-    if (this.#lastSequence !== 0 && sequence !== this.#lastSequence + 1) {
-      console.warn(`[transport] push gap: expected ${this.#lastSequence + 1}, got ${sequence}`)
+    const expected = this.#lastSequence + 1
+    if (this.#lastSequence !== 0 && sequence <= this.#lastSequence) {
+      console.warn(`[transport] ignored stale push: last ${this.#lastSequence}, got ${sequence}`)
+      return
+    }
+    // A forward gap means durable pushes were missed. Tell the owner to
+    // resync instead of only logging state divergence it cannot repair.
+    if (this.#lastSequence !== 0 && sequence !== expected) {
+      console.warn(`[transport] push gap: expected ${expected}, got ${sequence}`)
+      for (const listener of this.#sequenceGapListeners) listener(expected, sequence)
     }
     this.#lastSequence = sequence
 

@@ -4,22 +4,31 @@ import {
   CodexAdapter,
 } from '@harness/adapter-codex'
 import { acpAccount, acpSignOut } from '@harness/adapter-acp'
-import { grokAccount, signOutGrok } from '@harness/adapter-grok'
-import { claudeAccount, signOutClaude, startClaudeLogin } from '@harness/adapter-claude-code'
+import { grokAccount, grokLimitSource, signOutGrok } from '@harness/adapter-grok'
+import {
+  claudeAccount,
+  claudeLimitSource,
+  signOutClaude,
+  startClaudeLogin,
+} from '@harness/adapter-claude-code'
 import { cursorAccount, signOutCursor, startCursorLogin } from '@harness/adapter-cursor'
 import {
   DESIGN_BRIEF_ATTACHMENT,
+  ExactBuildFilesError,
   FINAL_BRIEFING_QUESTION,
   designAssetPrompt,
   designBrandPrompt,
   designBriefingContinuation,
   designBriefingPrompt,
+  designBuildCorrectionPrompt,
   designBuildPrompt,
+  exactBuildFileBaseline,
   designPagePrompt,
   designPhaseCorrectionPrompt,
   designPreviewPrompt,
   designRepairPrompt,
   designReviewPrompt,
+  enforceDomAuditFindings,
   parseAssetPhaseOutput,
   parseBrandPhaseOutput,
   parseBriefingOutput,
@@ -33,6 +42,7 @@ import {
   readBrandSystem,
   readDesignBrief,
   readPageBlueprint,
+  validateExactBuildFiles,
   writeAssetManifest,
   writeBrandSystem,
   writeDesignBrief,
@@ -46,12 +56,13 @@ import {
 import {
   providerRuntime,
   apiRuntime,
+  verifyCustomHarness as verifyCustomHarnessCompatibility,
   type AgentSession,
   type ProviderRuntime,
   type StartOptions,
   type TurnOptions,
 } from './adapters.js'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -68,6 +79,7 @@ import {
 import type {
   Account,
   ApprovalDecision,
+  ApprovalMode,
   DiffDecision,
   DomainEvent,
   McpCapabilities,
@@ -78,6 +90,8 @@ import type {
   PanicStopResult,
   ParamsOf,
   ProviderId,
+  ProviderLimit,
+  ProviderLimitSource,
   QueuedTurn,
   SessionDiff,
   Skill,
@@ -97,12 +111,23 @@ import {
 import { McpConfigStore } from './mcp-config.js'
 import { readCredential } from './credentials.js'
 import { ModelConnectionStore } from './model-connections.js'
+import { CustomHarnessStore } from './custom-harnesses.js'
 import { TerminalManager } from './terminal.js'
 import { installLocalSkill } from './skill-install.js'
 import { startDesignPreview, type RunningPreview } from './design-preview-runner.js'
+import { assertPublicWorkspaceFile, existingWorkspacePath } from './api-workspace-paths.js'
+import { sideChatInstructions } from './side-chat.js'
 
-type QueuedTurnEntry = QueuedTurn & { options: TurnOptions }
+type UserSubmission = { id: string; text: string; createdAt: number; queueId?: string }
+type QueuedTurnEntry = QueuedTurn & { options: TurnOptions; clientSubmissionId?: string }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
+type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
+type AdapterLimitSource = { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
+const userTurnKey = (threadId: string, turnId: string) => JSON.stringify([threadId, turnId])
+const composeInstructions = (instructions?: string): string =>
+  instructions?.trim()
+    ? `${REPLY_STYLE_INSTRUCTIONS}\n\n${instructions.trim()}`
+    : REPLY_STYLE_INSTRUCTIONS
 type DesignFlowPhase =
   'brief' | 'brand' | 'page' | 'assets' | 'build' | 'preview' | 'review' | 'repair' | 'complete'
 type DesignFlow = {
@@ -122,7 +147,18 @@ type DesignFlow = {
   previewUrl?: string
   screenshots?: ReviewScreenshot[]
   review?: VisualReview
+  buildFileBaseline?: string[] | undefined
 }
+
+export function resolveWorkspacePath(workspacePath: string): string {
+  if (workspacePath === '~') return os.homedir()
+  if (workspacePath.startsWith('~/') || workspacePath.startsWith('~\\')) {
+    return path.join(os.homedir(), workspacePath.slice(2))
+  }
+  return workspacePath
+}
+
+const projectTerminalKey = (projectPath: string): string => `project:${projectPath}`
 
 function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlow | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
@@ -218,7 +254,29 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     ...(previewPlan ? { previewUrl: previewPlan.url } : {}),
     ...(screenshots ? { screenshots } : {}),
     ...(review ? { review } : {}),
+    ...(Array.isArray(stored.buildFileBaseline) &&
+    stored.buildFileBaseline.every((file) => typeof file === 'string')
+      ? { buildFileBaseline: stored.buildFileBaseline as string[] }
+      : {}),
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function isRecoverablePreviewError(error: unknown): boolean {
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? (error as { code?: unknown }).code
+      : undefined
+  const message = errorMessage(error)
+  return (
+    code === 'ENOENT' ||
+    code === 'EADDRINUSE' ||
+    /preview port \d+ is already (?:being started|in use)/i.test(message) ||
+    /^static preview /i.test(message)
+  )
 }
 
 function unresolvedDesignInput(
@@ -259,6 +317,7 @@ type DesignInput = {
   final: boolean
 }
 const PANIC_STOP_TIMEOUT_MS = 5_000
+const DESIGN_START_TIMEOUT_MS = 30_000
 const DESIGN_REPAIR_LIMIT = 2
 const UNSUPPORTED_MCP_CAPABILITIES: McpCapabilities = {
   inventory: false,
@@ -299,14 +358,29 @@ const UNSUPPORTED_SKILL_CAPABILITIES: SkillCapabilities = {
  */
 export class Orchestrator {
   #threads = new Map<string, { thread: Thread; session: AgentSession; worktree?: Worktree }>()
+  /** Approval mode each live thread was started with; not persisted. */
+  #threadApprovals = new Map<string, ApprovalMode>()
+  #sideThreads = new Map<string, string>()
+  #sideParents = new Map<string, string>()
+  #startingSideThreads = new Map<string, Promise<Thread>>()
+  #discardedSideThreads = new Set<string>()
   #activeTurns = new Set<string>()
+  #activeTurnIds = new Map<string, string>()
+  #serverOwnedUserTurns = new Set<string>()
+  #suppressedUserItems = new Map<string, Set<string>>()
+  #inFlightSubmissionIds = new Map<string, Set<string>>()
   #startingTurns = new Set<string>()
+  #turnStartBarriers = new Map<string, { done: Promise<void>; release: () => void }>()
+  #pendingTurnStarts = new Map<string, PendingTurnStart>()
+  #acceptedTurnStarts = new Map<string, Map<string, PendingTurnStart>>()
+  #restoringThreads = new Map<string, Promise<void>>()
   #reviewingDiffs = new Set<string>()
   #queuedTurns = new Map<string, QueuedTurnEntry[]>()
   #drainingQueues = new Set<string>()
   #designFlows = new Map<string, DesignFlow>()
   #designTurns = new Map<string, string>()
   #designStartingThreads = new Set<string>()
+  #designStartWaiters = new Map<string, (turnId: string) => void>()
   #designMessageItems = new Set<string>()
   #acceptedDesignOutputs = new Set<string>()
   #designOutputErrors = new Map<string, unknown>()
@@ -314,12 +388,15 @@ export class Orchestrator {
   #designInputs = new Map<string, DesignInput>()
   #designInputByThread = new Map<string, string>()
   #designPreviews = new Map<string, RunningPreview>()
+  #designPreviewTasks = new Map<string, Promise<void>>()
+  #stoppingDesignPreviews = new Map<string, Promise<void>>()
   #resumingThreads = new Map<string, Promise<void>>()
   #panicGeneration = 0
   #panicStopping = false
   #store: Store
   #worktreeRoot: string
   #onEvent: (threadId: string, event: DomainEvent, seq: number) => void
+  #onSideEvent: (threadId: string, event: DomainEvent, seq: number) => void
   #onQueue: (threadId: string, state: QueueState) => void
   #onLog: (line: string) => void
   #onLogin: (
@@ -333,6 +410,7 @@ export class Orchestrator {
   ) => void
   #onMcpChanged: (provider: ProviderId, projectPath: string) => void
   #onSkillsChanged: (provider: ProviderId, projectPath: string) => void
+  #onUsageChanged: (provider: ProviderId) => void
   #onLifecycle: (threadId: string, lifecycle: ThreadLifecycle) => void
   #capturePreview:
     | ((
@@ -348,6 +426,7 @@ export class Orchestrator {
   >()
   #mcpConfig: McpConfigStore
   #modelConnections: ModelConnectionStore
+  #customHarnesses: CustomHarnessStore
   #readCredential: (reference: string) => string
   #terminals: TerminalManager
 
@@ -364,6 +443,7 @@ export class Orchestrator {
     store: Store,
     handlers: {
       onEvent: (threadId: string, event: DomainEvent, seq: number) => void
+      onSideEvent?: (threadId: string, event: DomainEvent, seq: number) => void
       onQueue?: (threadId: string, state: QueueState) => void
       onLog: (line: string) => void
       onLogin: (
@@ -377,6 +457,7 @@ export class Orchestrator {
       ) => void
       onMcpChanged?: (provider: ProviderId, projectPath: string) => void
       onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
+      onUsageChanged?: (provider: ProviderId) => void
       onLifecycle?: (threadId: string, lifecycle: ThreadLifecycle) => void
       capturePreview?: (
         url: string,
@@ -384,6 +465,7 @@ export class Orchestrator {
       ) => Promise<ReviewScreenshot[] | undefined>
       mcpConfig?: McpConfigStore
       modelConnections?: ModelConnectionStore
+      customHarnesses?: CustomHarnessStore
       readCredential?: (reference: string) => string
       onTerminalOutput?: (terminalId: string, data: string) => void
       onTerminalExit?: (terminalId: string, exitCode: number | null) => void
@@ -395,22 +477,28 @@ export class Orchestrator {
     this.#store = store
     this.#worktreeRoot = handlers.worktreeRoot ?? path.join(os.tmpdir(), 'personal-harness-trees')
     this.#onEvent = handlers.onEvent
+    this.#onSideEvent = handlers.onSideEvent ?? handlers.onEvent
     this.#onQueue = handlers.onQueue ?? (() => {})
     this.#onLog = handlers.onLog
     this.#onLogin = handlers.onLogin
     this.#onMcpOAuth = handlers.onMcpOAuth ?? (() => {})
     this.#onMcpChanged = handlers.onMcpChanged ?? (() => {})
     this.#onSkillsChanged = handlers.onSkillsChanged ?? (() => {})
+    this.#onUsageChanged = handlers.onUsageChanged ?? (() => {})
     this.#onLifecycle = handlers.onLifecycle ?? (() => {})
     this.#capturePreview = handlers.capturePreview
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
     this.#modelConnections = handlers.modelConnections ?? new ModelConnectionStore()
+    this.#customHarnesses = handlers.customHarnesses ?? new CustomHarnessStore()
     this.#readCredential = handlers.readCredential ?? readCredential
     this.#terminals = new TerminalManager({
       onOutput: handlers.onTerminalOutput ?? (() => {}),
       onExit: handlers.onTerminalExit ?? (() => {}),
     })
-    this.#runtimeFor = handlers.runtimeFor ?? providerRuntime
+    this.#runtimeFor =
+      handlers.runtimeFor ??
+      ((provider, onLog) =>
+        providerRuntime(provider, onLog, (id) => this.#customHarnesses.find(id)))
     this.#runtimeForInjected = handlers.runtimeFor !== undefined
   }
 
@@ -431,6 +519,9 @@ export class Orchestrator {
     const adapter = new CodexAdapter()
     adapter.on('log', (line) => this.#onLog(line))
     adapter.on('login', (result) => this.#onLogin('codex', result))
+    adapter.onUsageChanged(() => {
+      if (this.#control === adapter) this.#onUsageChanged('codex')
+    })
     adapter.on('skillsChanged', () => {
       for (const projectPath of this.#watchedSkillProjects) {
         this.#onSkillsChanged('codex', projectPath)
@@ -461,7 +552,7 @@ export class Orchestrator {
   async listModels(provider: ProviderId, agent?: string): Promise<Model[]> {
     // Codex has a control adapter already running; everything else asks its
     // own runtime, which is free to answer with nothing.
-    if (provider === 'codex') return (await this.#controlAdapter()).listModels()
+    if (provider === 'codex' && !agent) return (await this.#controlAdapter()).listModels()
     // The injected seam, not the module function — otherwise tests spawn the
     // real vendor CLIs just to draw a model list.
     return this.#runtimeFor(provider, this.#onLog).listModels(agent)
@@ -469,6 +560,25 @@ export class Orchestrator {
 
   listModelConnections() {
     return this.#modelConnections.list()
+  }
+
+  listCustomHarnesses() {
+    return this.#customHarnesses.list()
+  }
+
+  upsertCustomHarness(harness: Parameters<CustomHarnessStore['upsert']>[0]) {
+    return this.#customHarnesses.upsert(harness)
+  }
+
+  verifyCustomHarness(
+    harness: Parameters<CustomHarnessStore['upsert']>[0],
+    workspacePath?: string,
+  ) {
+    return verifyCustomHarnessCompatibility(harness, workspacePath, this.#onLog)
+  }
+
+  removeCustomHarness(harnessId: string): void {
+    this.#customHarnesses.remove(harnessId)
   }
 
   upsertModelConnection(connection: Parameters<ModelConnectionStore['upsert']>[0]) {
@@ -707,11 +817,25 @@ export class Orchestrator {
     return { signedIn: false }
   }
 
-  async usageLimits(
-    provider: ProviderId,
-  ): Promise<Array<{ label: string; usedPercent: number; resetsAt?: number | undefined }>> {
-    if (provider !== 'codex') return []
-    return (await this.#controlAdapter()).rateLimits()
+  async usageLimitSource(provider: ProviderId): Promise<ProviderLimitSource> {
+    const readers: Partial<Record<ProviderId, () => Promise<AdapterLimitSource>>> = {
+      codex: async () => {
+        const adapter = new CodexAdapter()
+        adapter.on('log', (line) => this.#onLog(line))
+        try {
+          await adapter.start()
+          return await adapter.rateLimitSource()
+        } finally {
+          adapter.dispose()
+        }
+      },
+      'claude-code': claudeLimitSource,
+      grok: grokLimitSource,
+    }
+    const source = await (readers[provider]?.() ?? Promise.resolve({ status: 'unavailable' }))
+    return source.status === 'ready'
+      ? { provider, status: 'ready', limits: source.limits }
+      : { provider, status: 'unavailable' }
   }
 
   async startLogin(provider: ProviderId): Promise<{ loginId: string; authUrl?: string }> {
@@ -802,8 +926,9 @@ export class Orchestrator {
     // The id has to exist before the worktree, and the worktree before the
     // agent — it is the directory the agent will be spawned in.
     const threadId = `${provider}-${crypto.randomUUID()}`
+    const resolvedWorkspacePath = resolveWorkspacePath(workspacePath)
     const worktree = options.isolate
-      ? await createWorktree(workspacePath, threadId, this.#worktreeRoot)
+      ? await createWorktree(resolvedWorkspacePath, threadId, this.#worktreeRoot)
       : undefined
 
     const runtime =
@@ -812,12 +937,12 @@ export class Orchestrator {
         : this.#runtimeFor(provider, this.#onLog)
     const runtimeOptions = {
       ...options,
-      instructions: REPLY_STYLE_INSTRUCTIONS,
+      instructions: composeInstructions(options.instructions),
       ...this.#mcpRuntimeOptions(provider, workspacePath),
     }
     let started
     try {
-      started = await runtime.start(worktree?.path ?? workspacePath, runtimeOptions)
+      started = await runtime.start(worktree?.path ?? resolvedWorkspacePath, runtimeOptions)
     } catch (error) {
       // A worktree for a session that never started is litter, and the next
       // attempt would trip over it.
@@ -839,7 +964,102 @@ export class Orchestrator {
       ...(worktree ? { worktreePath: worktree.path, worktreeBranch: worktree.branch } : {}),
     })
     this.#attachThread(thread, session, workspacePath, worktree)
+    if (options.approval) this.#threadApprovals.set(thread.id, options.approval)
     return thread
+  }
+
+  /**
+   * Starts one temporary conversation at the current parent boundary.
+   *
+   * This deliberately uses the same adapter start path for every provider.
+   * Native fork APIs are uneven and would make Side chat silently weaker on
+   * exactly the providers the shared UI promises to support.
+   */
+  async startSideThread(
+    parentThreadId: string,
+    options: Pick<StartOptions, 'model' | 'serviceTier' | 'effort' | 'approval'> = {},
+  ): Promise<Thread> {
+    const existingId = this.#sideThreads.get(parentThreadId)
+    const existing = existingId ? this.#threads.get(existingId) : undefined
+    if (existing) return existing.thread
+    if (existingId) {
+      this.#sideThreads.delete(parentThreadId)
+      this.#sideParents.delete(existingId)
+    }
+
+    const starting = this.#startingSideThreads.get(parentThreadId)
+    if (starting) return starting
+    const pending = this.#createSideThread(parentThreadId, options).finally(() => {
+      if (this.#startingSideThreads.get(parentThreadId) === pending) {
+        this.#startingSideThreads.delete(parentThreadId)
+      }
+    })
+    this.#startingSideThreads.set(parentThreadId, pending)
+    return pending
+  }
+
+  async #createSideThread(
+    parentThreadId: string,
+    options: Pick<StartOptions, 'model' | 'serviceTier' | 'effort' | 'approval'>,
+  ): Promise<Thread> {
+    await this.#ensureThread(parentThreadId)
+    const storedParent = this.#store.thread(parentThreadId)
+    if (!storedParent) throw new Error(`no such thread: ${parentThreadId}`)
+    if (storedParent.ephemeral) throw new Error('Side chat cannot be opened inside Side chat.')
+
+    const parent = this.#get(parentThreadId).thread
+    const provider = parent.provider
+    const workspacePath =
+      storedParent.worktreePath ?? resolveWorkspacePath(storedParent.projectPath)
+    const approval = options.approval ?? this.#threadApprovals.get(parentThreadId) ?? 'ask'
+    const runtime =
+      provider === 'api' && !this.#runtimeForInjected
+        ? this.#apiRuntime(parent.connectionId)
+        : this.#runtimeFor(provider, this.#onLog)
+    const runtimeOptions: StartOptions = {
+      ...options,
+      approval,
+      ...(storedParent.agent ? { agent: storedParent.agent } : {}),
+      ...(parent.connectionId ? { connectionId: parent.connectionId } : {}),
+      instructions: composeInstructions(sideChatInstructions(this.#store.history(parentThreadId))),
+      ...this.#mcpRuntimeOptions(provider, storedParent.projectPath),
+    }
+
+    let started: Awaited<ReturnType<ProviderRuntime['start']>> | undefined
+    try {
+      started = await runtime.start(workspacePath, runtimeOptions)
+      const { thread, session } = started
+      const currentParent = this.#store.thread(parentThreadId)
+      if (!currentParent || currentParent.closedAt !== undefined) {
+        throw new Error('The main chat closed while Side chat was starting.')
+      }
+      this.#store.addThread({
+        id: thread.id,
+        projectPath: storedParent.projectPath,
+        provider,
+        ...(storedParent.agent ? { agent: storedParent.agent } : {}),
+        title: 'Side chat',
+        createdAt: thread.createdAt,
+        ephemeral: true,
+        parentThreadId,
+      })
+      this.#sideThreads.set(parentThreadId, thread.id)
+      this.#sideParents.set(thread.id, parentThreadId)
+      this.#attachThread(thread, session, storedParent.projectPath)
+      this.#threadApprovals.set(thread.id, approval)
+      return thread
+    } catch (error) {
+      started?.session.dispose()
+      const sideThreadId = started?.thread.id
+      if (sideThreadId) {
+        this.#sideParents.delete(sideThreadId)
+        if (this.#store.thread(sideThreadId)?.ephemeral) this.#store.deleteThread(sideThreadId)
+      }
+      if (this.#sideThreads.get(parentThreadId) === sideThreadId) {
+        this.#sideThreads.delete(parentThreadId)
+      }
+      throw error
+    }
   }
 
   #apiRuntime(connectionId: string | undefined): ProviderRuntime {
@@ -855,14 +1075,27 @@ export class Orchestrator {
     text: string,
     attachments: string[] = [],
     options: TurnOptions = {},
+    submission?: UserSubmission,
   ): Promise<string> {
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
     if (this.#reviewingDiffs.has(threadId)) {
       throw new Error('cannot start a turn while a diff rejection is running')
     }
-    this.#wakeForActivity(threadId)
+    if (this.#restoringThreads.has(threadId)) {
+      throw new Error('cannot start a turn while restoring a checkpoint')
+    }
+    if (!this.#sideParents.has(threadId)) this.#wakeForActivity(threadId)
     const panicGeneration = this.#panicGeneration
+    const pendingStart = this.#beginTurnStart(threadId, submission)
     this.#startingTurns.add(threadId)
+    let releaseTurnStart: () => void = () => undefined
+    const turnStartBarrier = {
+      done: new Promise<void>((resolve) => {
+        releaseTurnStart = resolve
+      }),
+      release: () => releaseTurnStart(),
+    }
+    this.#turnStartBarriers.set(threadId, turnStartBarrier)
     try {
       // Before the agent writes, not after. A checkpoint taken afterwards would
       // record the damage rather than the state worth returning to.
@@ -872,7 +1105,7 @@ export class Orchestrator {
       }
       const design = attachments.includes(DESIGN_BRIEF_ATTACHMENT)
       if (design) {
-        this.#stopDesignPreview(threadId)
+        await this.#stopDesignPreview(threadId)
         // The flow keeps the user's own options; only brief-phase turns force
         // low effort (see #designTurnOptions). Storing the lowered options
         // here made Brand, Page, Build, and Review inherit the fast briefing
@@ -890,16 +1123,43 @@ export class Orchestrator {
         }
         this.#designFlows.set(threadId, flow)
         this.#saveDesignFlow(threadId)
-        return await this.#sendDesignTurn(
-          threadId,
-          designBriefingPrompt(text),
-          attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT),
-          this.#designTurnOptions(flow),
-        )
+        let turnId: string
+        try {
+          turnId = await this.#sendDesignTurn(
+            threadId,
+            designBriefingPrompt(text),
+            attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT),
+            this.#designTurnOptions(flow),
+            pendingStart,
+          )
+        } catch (error) {
+          this.#startingTurns.delete(threadId)
+          if (this.#designFlows.has(threadId)) this.#failDesignFlow(threadId, error)
+          else void this.#drainQueue(threadId)
+          throw error
+        }
+        return turnId
       }
-      return await this.#get(threadId).session.sendTurn(threadId, text, attachments, options)
+      const turnId = await this.#get(threadId).session.sendTurn(
+        threadId,
+        text,
+        attachments,
+        options,
+      )
+      if (this.#discardedSideThreads.has(threadId)) {
+        throw new Error('Side chat was closed while its turn was starting.')
+      }
+      this.#acceptTurnStart(threadId, turnId, pendingStart)
+      return turnId
+    } catch (error) {
+      this.#forgetPendingTurnStart(threadId, pendingStart)
+      throw error
     } finally {
       this.#startingTurns.delete(threadId)
+      if (this.#turnStartBarriers.get(threadId) === turnStartBarrier) {
+        this.#turnStartBarriers.delete(threadId)
+      }
+      turnStartBarrier.release()
     }
   }
 
@@ -909,23 +1169,32 @@ export class Orchestrator {
     text: string,
     attachments: string[] = [],
     options: TurnOptions = {},
+    clientSubmissionId?: string,
   ): Promise<{ queued: false; turnId: string } | { queued: true; queuedTurn: QueuedTurn }> {
     await this.#ensureThread(threadId)
-    const queue = this.#queuedTurns.get(threadId) ?? []
+    if (clientSubmissionId) this.#assertFreshSubmissionId(threadId, clientSubmissionId)
+    const submittedAt = Date.now()
+    const submission = clientSubmissionId
+      ? { id: clientSubmissionId, text, createdAt: submittedAt }
+      : undefined
+    const queue = this.#queueEntries(threadId)
     if (
       this.#activeTurns.has(threadId) ||
       this.#startingTurns.has(threadId) ||
+      this.#drainingQueues.has(threadId) ||
       this.#designFlows.has(threadId) ||
       this.#designInputByThread.has(threadId) ||
       queue.length > 0
     ) {
       const queuedTurn: QueuedTurnEntry = {
-        id: crypto.randomUUID(),
+        id: clientSubmissionId ?? crypto.randomUUID(),
         text,
         attachments,
-        createdAt: Date.now(),
+        createdAt: submittedAt,
         options,
+        ...(clientSubmissionId ? { clientSubmissionId } : {}),
       }
+      this.#store.enqueueQueuedTurn({ ...queuedTurn, threadId })
       queue.push(queuedTurn)
       this.#queuedTurns.set(threadId, queue)
       this.#notifyQueue(threadId)
@@ -940,32 +1209,34 @@ export class Orchestrator {
       return { queued: true, queuedTurn: this.#publicQueuedTurn(queuedTurn) }
     }
 
-    const turnId = await this.sendTurn(threadId, text, attachments, options)
-    this.#activeTurns.add(threadId)
+    const turnId = await this.sendTurn(threadId, text, attachments, options, submission)
+    if (this.#activeTurnIds.get(threadId) === turnId) this.#activeTurns.add(threadId)
     return { queued: false, turnId }
   }
 
   queue(threadId: string): QueueState {
     const session = this.#threads.get(threadId)?.session
     return {
-      items: (this.#queuedTurns.get(threadId) ?? []).map((item) => this.#publicQueuedTurn(item)),
+      items: this.#queueEntries(threadId).map((item) => this.#publicQueuedTurn(item)),
       canSteer: session?.capabilities.steer === true && session.steer !== undefined,
     }
   }
 
   deleteQueuedTurn(threadId: string, queuedTurnId: string): void {
-    const queue = this.#queuedTurns.get(threadId) ?? []
+    const queue = this.#queueEntries(threadId)
     const index = queue.findIndex((item) => item.id === queuedTurnId)
     if (index < 0) return
+    if (!this.#store.deleteQueuedTurn(threadId, queuedTurnId)) return
     queue.splice(index, 1)
     this.#notifyQueue(threadId)
   }
 
   moveQueuedTurn(threadId: string, queuedTurnId: string, direction: 'up' | 'down'): void {
-    const queue = this.#queuedTurns.get(threadId) ?? []
+    const queue = this.#queueEntries(threadId)
     const from = queue.findIndex((item) => item.id === queuedTurnId)
     const to = from + (direction === 'up' ? -1 : 1)
     if (from < 0 || to < 0 || to >= queue.length) return
+    if (!this.#store.moveQueuedTurn(threadId, queuedTurnId, direction)) return
     ;[queue[from], queue[to]] = [queue[to]!, queue[from]!]
     this.#notifyQueue(threadId)
   }
@@ -976,19 +1247,63 @@ export class Orchestrator {
     if (!session.capabilities.steer || !session.steer) {
       throw new Error('this agent does not support steering a running turn')
     }
+    if (this.#drainingQueues.has(threadId))
+      throw new Error('a queued prompt is already being steered')
 
-    const queue = this.#queuedTurns.get(threadId) ?? []
+    const queue = this.#queueEntries(threadId)
     const index = queue.findIndex((item) => item.id === queuedTurnId)
     if (index < 0) throw new Error('queued prompt not found')
+    const queued = queue[index]!
+    const activeTurnId = this.#activeTurnIds.get(threadId)
+    if (queued.clientSubmissionId && !activeTurnId) {
+      throw new Error('running turn identity is not available yet')
+    }
+    const claimed = this.#store.claimQueuedTurn(threadId, queuedTurnId, 'steer')
+    if (!claimed) throw new Error('queued prompt is no longer available')
     const [item] = queue.splice(index, 1)
     if (!item) return
+    const claimedIds = this.#inFlightSubmissionIds.get(threadId) ?? new Set<string>()
+    if (item.clientSubmissionId) {
+      claimedIds.add(item.clientSubmissionId)
+      this.#inFlightSubmissionIds.set(threadId, claimedIds)
+    }
     this.#notifyQueue(threadId)
+    const ownedTurnKey = activeTurnId ? userTurnKey(threadId, activeTurnId) : undefined
+    const alreadyOwned = ownedTurnKey ? this.#serverOwnedUserTurns.has(ownedTurnKey) : false
+    if (ownedTurnKey && item.clientSubmissionId) this.#serverOwnedUserTurns.add(ownedTurnKey)
+    this.#drainingQueues.add(threadId)
     try {
       await session.steer(threadId, item.text, item.attachments)
+      if (!this.#threads.has(threadId)) return
+      if (!this.#activeTurns.has(threadId) || this.#activeTurnIds.get(threadId) !== activeTurnId) {
+        this.#store.restoreQueuedTurn(threadId, item.id)
+        queue.splice(index, 0, item)
+        this.#notifyQueue(threadId)
+      } else if (activeTurnId && item.clientSubmissionId) {
+        this.#recordUserSubmission(threadId, activeTurnId, {
+          id: item.clientSubmissionId,
+          text: item.text,
+          createdAt: item.createdAt,
+          queueId: item.id,
+        })
+      } else {
+        this.#store.completeQueuedTurn(threadId, item.id)
+      }
     } catch (error) {
+      if (!this.#threads.has(threadId)) throw error
+      if (ownedTurnKey && !alreadyOwned) this.#serverOwnedUserTurns.delete(ownedTurnKey)
+      this.#store.restoreQueuedTurn(threadId, item.id)
       queue.splice(index, 0, item)
       this.#notifyQueue(threadId)
       throw error
+    } finally {
+      if (item.clientSubmissionId) {
+        claimedIds.delete(item.clientSubmissionId)
+        if (claimedIds.size === 0 && this.#inFlightSubmissionIds.get(threadId) === claimedIds)
+          this.#inFlightSubmissionIds.delete(threadId)
+      }
+      this.#drainingQueues.delete(threadId)
+      void this.#drainQueue(threadId)
     }
   }
 
@@ -1000,22 +1315,70 @@ export class Orchestrator {
    * write has to happen first even though it is the slower half.
    */
   #record(threadId: string, event: DomainEvent): void {
-    if (event.type === 'turn.started') this.#activeTurns.add(threadId)
+    if (this.#discardedSideThreads.has(threadId)) return
+    if (
+      event.type === 'turn.completed' &&
+      this.#activeTurnIds.has(threadId) &&
+      this.#activeTurnIds.get(threadId) !== event.turnId
+    ) {
+      return
+    }
+    let matchedStart: PendingTurnStart | undefined
+    if (event.type === 'turn.started') {
+      const acceptedStarts = this.#acceptedTurnStarts.get(threadId)
+      matchedStart = acceptedStarts?.get(event.turn.id)
+      if (matchedStart) {
+        acceptedStarts?.delete(event.turn.id)
+      } else {
+        matchedStart = this.#pendingTurnStarts.get(threadId)
+        if (matchedStart) this.#pendingTurnStarts.delete(threadId)
+      }
+      if (matchedStart) {
+        event = { ...event, turn: { ...event.turn, createdAt: matchedStart.acceptedAt } }
+      }
+    }
+    if (event.type === 'turn.completed') {
+      this.#acceptedTurnStarts.get(threadId)?.delete(event.turnId)
+      event = { ...event, completedAt: Date.now() }
+    }
+    if (event.type === 'thread.error') {
+      this.#pendingTurnStarts.delete(threadId)
+      this.#acceptedTurnStarts.delete(threadId)
+    }
+    if (event.type === 'turn.started') {
+      this.#activeTurns.add(threadId)
+      this.#activeTurnIds.set(threadId, event.turn.id)
+    }
     if (event.type === 'turn.completed' || event.type === 'thread.error') {
       this.#activeTurns.delete(threadId)
+      const activeTurnId =
+        event.type === 'turn.completed' ? event.turnId : this.#activeTurnIds.get(threadId)
+      this.#activeTurnIds.delete(threadId)
+      if (activeTurnId) this.#serverOwnedUserTurns.delete(userTurnKey(threadId, activeTurnId))
+      this.#suppressedUserItems.delete(threadId)
     }
     const seq = this.#store.append(threadId, event)
+    const sideChat = this.#sideParents.has(threadId)
     if (
-      event.type === 'turn.started' ||
-      event.type === 'approval.requested' ||
-      event.type === 'user_input.requested'
+      !sideChat &&
+      (event.type === 'turn.started' ||
+        event.type === 'approval.requested' ||
+        event.type === 'user_input.requested')
     ) {
       this.#wakeForActivity(threadId)
     }
-    if (event.type === 'turn.completed' || event.type === 'thread.error') {
+    if (!sideChat && (event.type === 'turn.completed' || event.type === 'thread.error')) {
       this.#wakeForActivity(threadId, true)
     }
-    this.#onEvent(threadId, event, seq)
+    if (sideChat) this.#onSideEvent(threadId, event, seq)
+    else this.#onEvent(threadId, event, seq)
+    if (
+      event.type === 'turn.started' &&
+      matchedStart?.submission &&
+      !this.#serverOwnedUserTurns.has(userTurnKey(threadId, event.turn.id))
+    ) {
+      this.#recordUserSubmission(threadId, event.turn.id, matchedStart.submission)
+    }
     if (
       event.type === 'turn.completed' &&
       !this.#designFlows.has(threadId) &&
@@ -1025,8 +1388,34 @@ export class Orchestrator {
     }
   }
 
+  #recordUserSubmission(threadId: string, turnId: string, submission: UserSubmission): void {
+    this.#serverOwnedUserTurns.add(userTurnKey(threadId, turnId))
+    const event: DomainEvent = {
+      type: 'item.completed',
+      item: {
+        id: submission.id,
+        turnId,
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: submission.text,
+        createdAt: submission.createdAt,
+      },
+    }
+    if (submission.queueId) {
+      const seq = this.#store.appendAndCompleteQueuedTurn(threadId, submission.queueId, event)
+      this.#onEvent(threadId, event, seq)
+    } else {
+      this.#record(threadId, event)
+    }
+  }
+
   /** A thread's history, for a client opening or reattaching to it. */
-  history(threadId: string, afterSeq = 0): Array<{ seq: number; event: DomainEvent }> {
+  async history(
+    threadId: string,
+    afterSeq = 0,
+  ): Promise<Array<{ seq: number; event: DomainEvent }>> {
+    await this.#restoringThreads.get(threadId)
     return this.#store.history(threadId, afterSeq)
   }
 
@@ -1079,13 +1468,19 @@ export class Orchestrator {
 
   /** Whether the agent is inside a turn, rather than merely attached to the session. */
   isTurnRunning(threadId: string): boolean {
-    return this.#activeTurns.has(threadId) || this.#startingTurns.has(threadId)
+    return (
+      this.#activeTurns.has(threadId) ||
+      this.#startingTurns.has(threadId) ||
+      this.#designStartingThreads.has(threadId)
+    )
   }
 
   inboxStatus(threadId: string): ThreadInboxStatus {
-    if (this.#startingTurns.has(threadId)) return 'starting'
+    if (this.#startingTurns.has(threadId) || this.#designStartingThreads.has(threadId)) {
+      return 'starting'
+    }
     if (this.#activeTurns.has(threadId)) return 'working'
-    if ((this.#queuedTurns.get(threadId)?.length ?? 0) > 0) return 'queued'
+    if (this.#queueEntries(threadId).length > 0) return 'queued'
 
     // Incremental projection over the durable log. The fold is append-only,
     // so each call replays only events after the last consumed seq — the
@@ -1210,6 +1605,17 @@ export class Orchestrator {
     return this.#terminals.open(threadId, this.#repoPath(threadId), columns, rows)
   }
 
+  openProjectTerminal(projectPath: string, columns: number, rows: number): string {
+    const project = this.#store.project(projectPath)
+    if (!project) throw new Error('project is not registered')
+    return this.#terminals.open(
+      projectTerminalKey(project.path),
+      resolveWorkspacePath(project.path),
+      columns,
+      rows,
+    )
+  }
+
   /**
    * Run a provider install command in its own terminal session. Keyed by
    * target so clicking install twice attaches to the run already going, and
@@ -1239,13 +1645,15 @@ export class Orchestrator {
   }
 
   closeTerminal(terminalId: string): void {
-    this.#terminals.close(terminalId)
+    void this.#terminals
+      .close(terminalId)
+      .catch((error) => this.#onLog(`[terminal] close failed: ${errorMessage(error)}`))
   }
 
   #repoPath(threadId: string): string {
     const stored = this.#store.thread(threadId)
     if (!stored) throw new Error(`no such thread: ${threadId}`)
-    return stored.worktreePath ?? stored.projectPath
+    return stored.worktreePath ?? resolveWorkspacePath(stored.projectPath)
   }
 
   #diffRepoPath(threadId: string): string {
@@ -1258,6 +1666,7 @@ export class Orchestrator {
     if (this.isTurnRunning(threadId)) {
       throw new Error('cannot reject a diff while the agent turn is running')
     }
+    if (this.#restoringThreads.has(threadId)) throw new StaleDiffSnapshotError()
     // One rejection at a time per thread: two concurrent reverse-applies pass
     // the same staleness check and then patch the same worktree, and git's
     // fuzz can land the second one at the wrong offset silently. The client
@@ -1273,41 +1682,69 @@ export class Orchestrator {
 
   async #drainQueue(threadId: string): Promise<void> {
     if (
+      !this.#threads.has(threadId) ||
       // A panic stop empties every queue; a drain that was already in flight
       // must not start the turn it grabbed before the panic landed.
       this.#panicStopping ||
       this.#drainingQueues.has(threadId) ||
-      this.#activeTurns.has(threadId) ||
-      this.#startingTurns.has(threadId) ||
+      this.isTurnRunning(threadId) ||
       this.#designInputByThread.has(threadId)
     ) {
       return
     }
-    const queue = this.#queuedTurns.get(threadId)
-    const next = queue?.shift()
+    const queue = this.#queueEntries(threadId)
+    const next = queue[0]
     if (!queue || !next) return
+
+    const claimed = this.#store.claimQueuedTurn(threadId, next.id, 'normal')
+    if (!claimed) return
+    queue.shift()
 
     this.#drainingQueues.add(threadId)
     this.#notifyQueue(threadId)
     const generation = this.#panicGeneration
     try {
-      await this.sendTurn(threadId, next.text, next.attachments, next.options)
+      const turnId = await this.sendTurn(
+        threadId,
+        next.text,
+        next.attachments,
+        next.options,
+        next.clientSubmissionId
+          ? {
+              id: next.clientSubmissionId,
+              text: next.text,
+              createdAt: next.createdAt,
+              queueId: next.id,
+            }
+          : undefined,
+      )
+      if (!this.#threads.has(threadId)) return
       if (generation !== this.#panicGeneration) {
         // A panic landed while the adapter call was in flight: the user said
         // stop-everything, so this turn must neither run on nor re-queue.
         await this.#threads.get(threadId)?.session.interrupt(threadId)
         return
       }
-      this.#activeTurns.add(threadId)
-    } catch (error) {
+      if (!next.clientSubmissionId && !this.#store.completeQueuedTurn(threadId, next.id)) return
+      if (!this.#threads.has(threadId) || this.#store.thread(threadId)?.closedAt !== undefined)
+        return
+      if (this.#activeTurnIds.get(threadId) === turnId) this.#activeTurns.add(threadId)
+    } catch {
+      if (!this.#threads.has(threadId)) return
       // After a panic the queue was emptied on purpose; putting the grabbed
       // prompt back would resurrect it.
+      let restored = false
       if (generation === this.#panicGeneration) {
-        queue.unshift(next)
-        this.#notifyQueue(threadId)
+        restored = this.#store.restoreQueuedTurn(threadId, next.id)
+        if (restored) {
+          queue.unshift(next)
+          this.#notifyQueue(threadId)
+        }
       }
       this.#onLog(
-        `could not start queued turn: ${error instanceof Error ? error.message : String(error)}`,
+        restored
+          ? 'could not start queued turn; it remains queued'
+          : 'queued turn ended after acceptance or cancellation',
       )
     } finally {
       this.#drainingQueues.delete(threadId)
@@ -1328,11 +1765,22 @@ export class Orchestrator {
     }
   }
 
+  #queueEntries(threadId: string): QueuedTurnEntry[] {
+    const cached = this.#queuedTurns.get(threadId)
+    if (cached) return cached
+    const restored = this.#store.queuedTurns(threadId).map((turn) => {
+      const { threadId: _threadId, intent: _intent, clientSubmissionId, ...entry } = turn
+      return { ...entry, ...(clientSubmissionId ? { clientSubmissionId } : {}) }
+    })
+    this.#queuedTurns.set(threadId, restored)
+    return restored
+  }
+
   /** Where the working tree stood before a turn. Silent when there is no repo. */
   async #checkpoint(threadId: string, label: string): Promise<void> {
     const stored = this.#store.thread(threadId)
     if (!stored) return
-    const repoPath = stored.worktreePath ?? stored.projectPath
+    const repoPath = this.#repoPath(threadId)
 
     try {
       const snapshot = await takeSnapshot(repoPath)
@@ -1359,42 +1807,72 @@ export class Orchestrator {
    * action someone can regret. Nothing reachable this way is unrecoverable.
    */
   async restoreCheckpoint(threadId: string, checkpointId: number): Promise<{ undo: string }> {
-    if (this.#activeTurns.has(threadId)) throw new Error('cannot restore during a running turn')
-    const stored = this.#store.thread(threadId)
-    const checkpoint = this.#store.checkpoint(checkpointId)
-    if (!stored || !checkpoint || checkpoint.threadId !== threadId) {
-      throw new Error('no such checkpoint')
+    if (this.isTurnRunning(threadId)) {
+      throw new Error('cannot restore during a running turn')
     }
-
-    const repoPath = stored.worktreePath ?? stored.projectPath
-    const replaced = await restoreSnapshot(repoPath, checkpoint.commit)
-
-    // Rolling the files back without this would leave the transcript
-    // describing work that no longer exists on disk.
+    if (this.#restoringThreads.has(threadId)) {
+      throw new Error('cannot restore while another restore is running')
+    }
+    if (this.#reviewingDiffs.has(threadId)) {
+      throw new Error('cannot restore while a diff rejection is running')
+    }
+    let finishRestore!: () => void
+    this.#restoringThreads.set(threadId, new Promise((resolve) => (finishRestore = resolve)))
     try {
-      this.#dropInboxProjection(threadId)
-      return { undo: this.#store.saveRestoreUndo(threadId, checkpoint.seq, replaced.commit) }
-    } catch (error) {
-      await restoreSnapshot(repoPath, replaced.commit)
-      throw error
+      const stored = this.#store.thread(threadId)
+      const checkpoint = this.#store.checkpoint(checkpointId)
+      if (!stored || !checkpoint || checkpoint.threadId !== threadId) {
+        throw new Error('no such checkpoint')
+      }
+
+      const repoPath = this.#repoPath(threadId)
+      const replaced = await restoreSnapshot(repoPath, checkpoint.commit)
+
+      // Rolling the files back without this would leave the transcript
+      // describing work that no longer exists on disk.
+      try {
+        this.#dropInboxProjection(threadId)
+        return { undo: this.#store.saveRestoreUndo(threadId, checkpoint.seq, replaced.commit) }
+      } catch (error) {
+        await restoreSnapshot(repoPath, replaced.commit)
+        throw error
+      }
+    } finally {
+      this.#restoringThreads.delete(threadId)
+      finishRestore()
     }
   }
 
   /** Reverse the latest restore, including both files and conversation. */
   async undoRestore(threadId: string, token: string): Promise<void> {
-    if (this.#activeTurns.has(threadId)) throw new Error('cannot restore during a running turn')
-    const stored = this.#store.thread(threadId)
-    const undo = this.#store.restoreUndo(threadId, token)
-    if (!stored || !undo) throw new Error('restore can no longer be undone')
-
-    const repoPath = stored.worktreePath ?? stored.projectPath
-    const replaced = await restoreSnapshot(repoPath, undo.commit)
+    if (this.isTurnRunning(threadId)) {
+      throw new Error('cannot restore during a running turn')
+    }
+    if (this.#restoringThreads.has(threadId)) {
+      throw new Error('cannot restore while another restore is running')
+    }
+    if (this.#reviewingDiffs.has(threadId)) {
+      throw new Error('cannot restore while a diff rejection is running')
+    }
+    let finishRestore!: () => void
+    this.#restoringThreads.set(threadId, new Promise((resolve) => (finishRestore = resolve)))
     try {
-      this.#store.applyRestoreUndo(threadId, token)
-      this.#dropInboxProjection(threadId)
-    } catch (error) {
-      await restoreSnapshot(repoPath, replaced.commit)
-      throw error
+      const stored = this.#store.thread(threadId)
+      const undo = this.#store.restoreUndo(threadId, token)
+      if (!stored || !undo) throw new Error('restore can no longer be undone')
+
+      const repoPath = this.#repoPath(threadId)
+      const replaced = await restoreSnapshot(repoPath, undo.commit)
+      try {
+        this.#store.applyRestoreUndo(threadId, token)
+        this.#dropInboxProjection(threadId)
+      } catch (error) {
+        await restoreSnapshot(repoPath, replaced.commit)
+        throw error
+      }
+    } finally {
+      this.#restoringThreads.delete(threadId)
+      finishRestore()
     }
   }
 
@@ -1402,14 +1880,26 @@ export class Orchestrator {
   async changedSinceCheckpoint(threadId: string, checkpointId: number): Promise<string[]> {
     const stored = this.#store.thread(threadId)
     const checkpoint = this.#store.checkpoint(checkpointId)
-    if (!stored || !checkpoint || checkpoint.threadId !== threadId) return []
-    return changedSince(stored.worktreePath ?? stored.projectPath, checkpoint.commit).catch(
-      () => [],
-    )
+    if (!stored || !checkpoint || checkpoint.threadId !== threadId) {
+      throw new Error('no such checkpoint')
+    }
+    return changedSince(this.#repoPath(threadId), checkpoint.commit)
   }
 
   respondToApproval(threadId: string, approvalId: string, decision: ApprovalDecision): void {
     this.#get(threadId).session.respondToApproval(approvalId, decision)
+  }
+
+  /**
+   * Change the access level of a live thread. The mode is recorded for the
+   * design-flow note and pushed to sessions that keep approval state
+   * mutable; engines that mapped the mode onto launch switches keep the
+   * sandbox they started with.
+   */
+  setThreadApproval(threadId: string, approval: ApprovalMode): void {
+    const session = this.#get(threadId).session
+    this.#threadApprovals.set(threadId, approval)
+    session.setApproval?.(approval)
   }
 
   respondToUserInput(threadId: string, requestId: string, answers: Record<string, string[]>): void {
@@ -1423,8 +1913,8 @@ export class Orchestrator {
 
       const noMoreDetails =
         designInput.final &&
-        (answers[FINAL_BRIEFING_QUESTION.id] ?? []).some((answer) =>
-          answer.startsWith("No, that's everything"),
+        (answers[FINAL_BRIEFING_QUESTION.id] ?? []).includes(
+          FINAL_BRIEFING_QUESTION.options[0]!.label,
         )
       if (!noMoreDetails) {
         flow.explicitAnswers.push(
@@ -1434,6 +1924,7 @@ export class Orchestrator {
           }),
         )
         this.#saveDesignFlow(threadId)
+        this.#recordDesignNote(threadId, designInput.turnId, 'Got it, thanks.')
       }
       if (noMoreDetails && flow.pendingBrief) {
         try {
@@ -1470,68 +1961,95 @@ export class Orchestrator {
   async interrupt(threadId: string): Promise<void> {
     // "Stop" on a thread that is not live must be a no-op, not an error the
     // user cannot act on.
-    const entry = this.#threads.get(threadId)
-    if (!entry) return
-    await entry.session.interrupt(threadId)
+    if (!this.#threads.has(threadId)) return
+    // The checkpoint runs before the provider starts. An interrupt sent in
+    // that window used to hit an idle adapter and disappear, after which the
+    // turn started anyway. Wait until the adapter has accepted or rejected
+    // the start, then deliver the interrupt against its real active turn.
+    const barrier = this.#turnStartBarriers.get(threadId)?.done
+    void (async () => {
+      await barrier
+      const entry = this.#threads.get(threadId)
+      if (entry) await entry.session.interrupt(threadId)
+    })().catch((error) => {
+      if (!this.isTurnRunning(threadId)) return
+      this.#record(threadId, {
+        type: 'thread.error',
+        threadId,
+        message: `Could not stop the agent: ${errorMessage(error)}`,
+      })
+    })
   }
 
   async panicStop(): Promise<PanicStopResult> {
     const sessions = [...this.#threads.entries()]
     this.#panicStopping = true
     this.#panicGeneration += 1
-    for (const [threadId] of sessions) {
-      if (this.#queuedTurns.delete(threadId)) this.#notifyQueue(threadId)
-    }
 
     try {
-      return {
-        sessions: await Promise.all(
-          sessions.map(async ([threadId, entry]) => {
-            let timeout: NodeJS.Timeout | undefined
-            try {
-              await Promise.race([
-                entry.session.interrupt(threadId),
-                new Promise<never>((_, reject) => {
-                  timeout = setTimeout(
-                    () => reject(new Error('interrupt timed out; session was force-stopped')),
-                    PANIC_STOP_TIMEOUT_MS,
-                  )
-                }),
-              ])
-              return { threadId, status: 'interrupted' as const }
-            } catch (error) {
-              this.close(threadId)
-              return {
-                threadId,
-                status: 'failed' as const,
-                error: (error instanceof Error ? error.message : String(error)) || 'Unknown error',
-              }
-            } finally {
-              if (timeout) clearTimeout(timeout)
-            }
-          }),
-        ),
+      let queueClearFailed = false
+      const hideQueues = (threadIds: Iterable<string>) => {
+        for (const threadId of threadIds) {
+          const cached = this.#queuedTurns.get(threadId)
+          this.#queuedTurns.set(threadId, [])
+          if (!cached) continue
+          try {
+            this.#notifyQueue(threadId)
+          } catch {
+            queueClearFailed = true
+          }
+        }
       }
+      try {
+        hideQueues(this.#store.clearAllQueuedTurns())
+      } catch {
+        queueClearFailed = true
+        hideQueues(
+          new Set([...sessions.map(([threadId]) => threadId), ...this.#queuedTurns.keys()]),
+        )
+      }
+
+      const stoppedSessions = await Promise.all(
+        sessions.map(async ([threadId, entry]) => {
+          let timeout: NodeJS.Timeout | undefined
+          try {
+            await Promise.race([
+              entry.session.interrupt(threadId),
+              new Promise<never>((_, reject) => {
+                timeout = setTimeout(
+                  () => reject(new Error('interrupt timed out; session was force-stopped')),
+                  PANIC_STOP_TIMEOUT_MS,
+                )
+              }),
+            ])
+            return { threadId, status: 'interrupted' as const }
+          } catch (error) {
+            await this.close(threadId)
+            return {
+              threadId,
+              status: 'failed' as const,
+              error: (error instanceof Error ? error.message : String(error)) || 'Unknown error',
+            }
+          } finally {
+            if (timeout) clearTimeout(timeout)
+          }
+        }),
+      )
+      if (queueClearFailed) throw new Error('could not clear every queued prompt during Stop all')
+      return { sessions: stoppedSessions }
     } finally {
       this.#panicStopping = false
     }
   }
 
-  close(threadId: string): void {
-    this.#terminals.closeThread(threadId)
-    this.#stopDesignPreview(threadId)
-    this.#inboxProjections.delete(threadId)
-    const entry = this.#threads.get(threadId)
-    if (entry) {
-      entry.session.dispose()
-      this.#threads.delete(threadId)
+  async close(threadId: string): Promise<void> {
+    if (this.#store.thread(threadId)?.ephemeral) {
+      this.closeSideThread(threadId)
+      return
     }
-    this.#activeTurns.delete(threadId)
-    this.#startingTurns.delete(threadId)
-    this.#reviewingDiffs.delete(threadId)
-    this.#queuedTurns.delete(threadId)
-    this.#drainingQueues.delete(threadId)
-    this.#clearDesignFlow(threadId)
+    const sideThreadId = this.#sideThreads.get(threadId)
+    if (sideThreadId) this.closeSideThread(sideThreadId)
+    const runtimeDisposed = this.#disposeThreadRuntime(threadId)
     // Always mark closed, live entry or not: closing is the user's statement
     // about the thread. Early-returning when no session was attached left a
     // thread mid-resume unmarked, so the resume guard never saw the close
@@ -1543,6 +2061,52 @@ export class Orchestrator {
     // The worktree deliberately survives: it may hold work the agent did not
     // commit, and closing a session is not a statement about that work.
     this.#store.closeThread(threadId)
+    await runtimeDisposed
+  }
+
+  closeSideThread(threadId: string): void {
+    const stored = this.#store.thread(threadId)
+    if (!stored) return
+    if (!stored.ephemeral) throw new Error('thread is not a Side chat')
+    this.#discardedSideThreads.add(threadId)
+    void this.#disposeThreadRuntime(threadId)
+    if (stored.parentThreadId && this.#sideThreads.get(stored.parentThreadId) === threadId) {
+      this.#sideThreads.delete(stored.parentThreadId)
+    }
+    this.#sideParents.delete(threadId)
+    this.#store.deleteThread(threadId)
+  }
+
+  #disposeThreadRuntime(threadId: string): Promise<void> {
+    const terminalsClosed = this.#terminals
+      .closeThread(threadId)
+      .catch((error) => this.#onLog(`[terminal] thread close failed: ${errorMessage(error)}`))
+    const previewStopped = this.#stopDesignPreview(threadId)
+    this.#inboxProjections.delete(threadId)
+    const entry = this.#threads.get(threadId)
+    if (entry) {
+      entry.session.dispose()
+      this.#threads.delete(threadId)
+    }
+    this.#threadApprovals.delete(threadId)
+    this.#activeTurns.delete(threadId)
+    const activeTurnId = this.#activeTurnIds.get(threadId)
+    this.#activeTurnIds.delete(threadId)
+    if (activeTurnId) this.#serverOwnedUserTurns.delete(userTurnKey(threadId, activeTurnId))
+    this.#suppressedUserItems.delete(threadId)
+    this.#inFlightSubmissionIds.delete(threadId)
+    this.#startingTurns.delete(threadId)
+    this.#turnStartBarriers.get(threadId)?.release()
+    this.#turnStartBarriers.delete(threadId)
+    this.#pendingTurnStarts.delete(threadId)
+    this.#acceptedTurnStarts.delete(threadId)
+    this.#designStartingThreads.delete(threadId)
+    this.#designStartWaiters.delete(threadId)
+    this.#reviewingDiffs.delete(threadId)
+    this.#queuedTurns.delete(threadId)
+    this.#drainingQueues.delete(threadId)
+    this.#clearDesignFlow(threadId)
+    return Promise.all([terminalsClosed, previewStopped]).then(() => undefined)
   }
 
   /**
@@ -1568,10 +2132,14 @@ export class Orchestrator {
     const stored = this.#store.thread(threadId)
     if (!stored?.worktreePath || !stored.worktreeBranch) return
 
-    this.#terminals.closeThread(threadId)
+    await Promise.all([this.#terminals.closeThread(threadId), this.#stopDesignPreview(threadId)])
 
     await removeWorktree(
-      { path: stored.worktreePath, branch: stored.worktreeBranch, repoPath: stored.projectPath },
+      {
+        path: stored.worktreePath,
+        branch: stored.worktreeBranch,
+        repoPath: resolveWorkspacePath(stored.projectPath),
+      },
       force,
     )
     this.#store.forgetWorktree(threadId)
@@ -1587,7 +2155,9 @@ export class Orchestrator {
    * forgotten; anything still on disk may hold work.
    */
   async recoverWorktrees(): Promise<void> {
-    const repos = new Set(this.#store.worktrees().map((entry) => entry.repoPath))
+    const repos = new Set(
+      this.#store.worktrees().map((entry) => resolveWorkspacePath(entry.repoPath)),
+    )
     for (const repo of repos) {
       await pruneWorktrees(repo).catch(() => undefined)
     }
@@ -1597,28 +2167,42 @@ export class Orchestrator {
     }
   }
 
-  disposeAll(): void {
+  async disposeAll(): Promise<void> {
+    const terminalsClosed = this.#terminals.closeAll()
+    const previewsStopped = [...this.#designPreviews.keys()].map((threadId) =>
+      this.#stopDesignPreview(threadId),
+    )
     for (const controller of this.#voiceRequests.values()) controller.abort()
     this.#voiceRequests.clear()
-    this.#terminals.closeAll()
     for (const [, entry] of this.#threads) entry.session.dispose()
     this.#threads.clear()
+    this.#sideThreads.clear()
+    this.#sideParents.clear()
+    this.#startingSideThreads.clear()
+    this.#discardedSideThreads.clear()
     this.#activeTurns.clear()
+    this.#activeTurnIds.clear()
+    this.#serverOwnedUserTurns.clear()
+    this.#suppressedUserItems.clear()
+    this.#inFlightSubmissionIds.clear()
     this.#startingTurns.clear()
+    for (const barrier of this.#turnStartBarriers.values()) barrier.release()
+    this.#turnStartBarriers.clear()
+    this.#pendingTurnStarts.clear()
+    this.#acceptedTurnStarts.clear()
     this.#reviewingDiffs.clear()
     this.#queuedTurns.clear()
     this.#drainingQueues.clear()
     this.#designFlows.clear()
     this.#designTurns.clear()
     this.#designStartingThreads.clear()
+    this.#designStartWaiters.clear()
     this.#designMessageItems.clear()
     this.#acceptedDesignOutputs.clear()
     this.#designOutputErrors.clear()
     this.#designActivityItems.clear()
     this.#designInputs.clear()
     this.#designInputByThread.clear()
-    for (const preview of this.#designPreviews.values()) void preview.stop()
-    this.#designPreviews.clear()
     this.#resumingThreads.clear()
     void this.#controlStarting?.then(
       (adapter) => adapter.dispose(),
@@ -1627,6 +2211,9 @@ export class Orchestrator {
     this.#controlStarting = undefined
     this.#control?.dispose()
     this.#control = undefined
+    await Promise.allSettled([...this.#designPreviewTasks.values(), ...previewsStopped])
+    await Promise.allSettled(this.#stoppingDesignPreviews.values())
+    await terminalsClosed
   }
 
   #get(threadId: string) {
@@ -1655,9 +2242,10 @@ export class Orchestrator {
     if (!runtime.resume) {
       throw new Error(`${stored.provider} sessions cannot resume after Harness restarts yet`)
     }
-    const workspacePath = stored.worktreePath ?? stored.projectPath
+    const workspacePath = stored.worktreePath ?? resolveWorkspacePath(stored.projectPath)
     const result = await runtime.resume(threadId, workspacePath, {
       ...(stored.agent ? { agent: stored.agent } : {}),
+      instructions: REPLY_STYLE_INSTRUCTIONS,
       ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
     })
     if (result.thread.id !== threadId) {
@@ -1763,52 +2351,163 @@ export class Orchestrator {
     prompt: string,
     attachments: string[],
     options: TurnOptions,
+    pendingStart = this.#beginTurnStart(threadId),
   ): Promise<string> {
     for (const [turnId, owner] of this.#designTurns) {
       if (owner === threadId) {
         this.#acceptedDesignOutputs.delete(turnId)
         this.#designOutputErrors.delete(turnId)
+        this.#completeDesignActivity(threadId, turnId)
       }
     }
     this.#designStartingThreads.add(threadId)
+    let resolveStarted = (_turnId: string) => {}
+    const started = new Promise<string>((resolve) => (resolveStarted = resolve))
+    this.#designStartWaiters.set(threadId, resolveStarted)
+    const session = this.#get(threadId).session
+    const providerStart = session.sendTurn(threadId, prompt, attachments, options)
+    const flow = this.#designFlows.get(threadId)
+    let timedOut = false
+    let timeout: NodeJS.Timeout | undefined
     try {
-      const turnId = await this.#get(threadId).session.sendTurn(
-        threadId,
-        prompt,
-        attachments,
-        options,
-      )
-      this.#designTurns.set(turnId, threadId)
-      const flow = this.#designFlows.get(threadId)
-      if (flow) {
-        const item: Item = {
-          id: `design-activity-${crypto.randomUUID()}`,
-          turnId,
-          type: 'tool_call',
-          status: 'started',
-          text: `design:${flow.phase}`,
-          createdAt: Date.now(),
-        }
-        this.#designActivityItems.set(turnId, item)
-        this.#record(threadId, { type: 'item.started', item })
+      const result = await Promise.race([
+        providerStart.then((turnId) => ({ source: 'provider' as const, turnId })),
+        started.then((turnId) => ({ source: 'event' as const, turnId })),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => {
+            timedOut = true
+            reject(new Error('the agent did not start the Design phase within 30 seconds'))
+          }, DESIGN_START_TIMEOUT_MS)
+        }),
+      ])
+      const { turnId } = result
+      this.#acceptTurnStart(threadId, turnId, pendingStart)
+      this.#startDesignActivity(threadId, turnId)
+      if (result.source === 'event') {
+        void providerStart.then(
+          (returnedTurnId) => {
+            if (returnedTurnId !== turnId && this.#designFlows.get(threadId) === flow) {
+              this.#onLog('provider returned a different turn id after Design already started')
+            }
+          },
+          (error: unknown) => {
+            this.#onLog(`provider rejected after Design already started: ${errorMessage(error)}`)
+          },
+        )
       }
       return turnId
+    } catch (error) {
+      if (timedOut) {
+        await Promise.race([
+          session
+            .interrupt(threadId)
+            .catch((interruptError) =>
+              this.#onLog(`Design start interruption failed: ${errorMessage(interruptError)}`),
+            ),
+          new Promise<void>((resolve) => setTimeout(resolve, PANIC_STOP_TIMEOUT_MS)),
+        ])
+      }
+      throw error
     } finally {
+      if (timeout) clearTimeout(timeout)
+      if (this.#designStartWaiters.get(threadId) === resolveStarted) {
+        this.#designStartWaiters.delete(threadId)
+      }
+      this.#forgetPendingTurnStart(threadId, pendingStart)
       this.#designStartingThreads.delete(threadId)
     }
   }
 
+  #startDesignActivity(threadId: string, turnId: string): void {
+    this.#designTurns.set(turnId, threadId)
+    if (this.#designActivityItems.has(turnId)) return
+    const flow = this.#designFlows.get(threadId)
+    if (!flow) return
+    const item: Item = {
+      id: `design-activity-${crypto.randomUUID()}`,
+      turnId,
+      type: 'tool_call',
+      status: 'started',
+      text: `design:${flow.phase}`,
+      createdAt: Date.now(),
+    }
+    this.#designActivityItems.set(turnId, item)
+    this.#record(threadId, { type: 'item.started', item })
+  }
+
+  #acceptTurnStart(threadId: string, turnId: string, pendingStart: PendingTurnStart): void {
+    if (this.#pendingTurnStarts.get(threadId) !== pendingStart) return
+    this.#pendingTurnStarts.delete(threadId)
+    this.#activeTurnIds.set(threadId, turnId)
+    const starts = this.#acceptedTurnStarts.get(threadId) ?? new Map<string, PendingTurnStart>()
+    starts.set(turnId, pendingStart)
+    this.#acceptedTurnStarts.set(threadId, starts)
+    if (pendingStart.submission) {
+      this.#recordUserSubmission(threadId, turnId, pendingStart.submission)
+    }
+  }
+
+  #beginTurnStart(threadId: string, submission?: UserSubmission): PendingTurnStart {
+    const pending = { acceptedAt: Date.now(), ...(submission ? { submission } : {}) }
+    this.#pendingTurnStarts.set(threadId, pending)
+    return pending
+  }
+
+  #forgetPendingTurnStart(threadId: string, pending: PendingTurnStart): void {
+    if (this.#pendingTurnStarts.get(threadId) === pending) {
+      this.#pendingTurnStarts.delete(threadId)
+    }
+  }
+
+  #assertFreshSubmissionId(threadId: string, clientSubmissionId: string): void {
+    const pending = this.#pendingTurnStarts.get(threadId)?.submission?.id === clientSubmissionId
+    const accepted = [...(this.#acceptedTurnStarts.get(threadId)?.values() ?? [])].some(
+      (start) => start.submission?.id === clientSubmissionId,
+    )
+    const queued = this.#queueEntries(threadId).some(
+      (turn) => turn.clientSubmissionId === clientSubmissionId,
+    )
+    const inFlight = this.#inFlightSubmissionIds.get(threadId)?.has(clientSubmissionId)
+    if (
+      pending ||
+      accepted ||
+      queued ||
+      inFlight ||
+      this.#store.hasQueuedSubmission(threadId, clientSubmissionId) ||
+      this.#store.hasItem(threadId, clientSubmissionId)
+    ) {
+      throw new Error(`clientSubmissionId "${clientSubmissionId}" was already used for this thread`)
+    }
+  }
+
   #handleSessionEvent(threadId: string, event: DomainEvent): void {
+    const suppressedUserItems = this.#suppressedUserItems.get(threadId)
+    if (event.type === 'item.delta' && suppressedUserItems?.has(event.itemId)) return
+    if (
+      (event.type === 'item.started' || event.type === 'item.completed') &&
+      event.item.type === 'message' &&
+      event.item.role === 'user' &&
+      (this.#serverOwnedUserTurns.has(userTurnKey(threadId, event.item.turnId)) ||
+        this.#pendingTurnStarts.get(threadId)?.submission !== undefined ||
+        this.#acceptedTurnStarts.get(threadId)?.get(event.item.turnId)?.submission !== undefined)
+    ) {
+      if (event.type === 'item.started') {
+        const itemIds = suppressedUserItems ?? new Set<string>()
+        itemIds.add(event.item.id)
+        this.#suppressedUserItems.set(threadId, itemIds)
+      } else {
+        suppressedUserItems?.delete(event.item.id)
+      }
+      return
+    }
     if (event.type === 'thread.error' && this.#designFlows.has(threadId)) {
+      const turnId = this.#activeTurnIds.get(threadId)
+      if (turnId) this.#completeDesignActivity(threadId, turnId, 'failed')
       this.#clearDesignFlow(threadId)
       this.#record(threadId, event)
       void this.#drainQueue(threadId)
       return
     }
-    if (event.type === 'turn.started' && this.#designStartingThreads.has(threadId)) {
-      this.#designTurns.set(event.turn.id, threadId)
-    }
-
     const turnId =
       event.type === 'turn.started'
         ? event.turn.id
@@ -1817,6 +2516,11 @@ export class Orchestrator {
           : event.type === 'item.started' || event.type === 'item.completed'
             ? event.item.turnId
             : undefined
+    if (turnId && this.#designStartingThreads.has(threadId) && event.type !== 'turn.completed') {
+      this.#designTurns.set(turnId, threadId)
+      this.#designStartWaiters.get(threadId)?.(turnId)
+      if (event.type !== 'turn.started') this.#startDesignActivity(threadId, turnId)
+    }
     if (!turnId || this.#designTurns.get(turnId) !== threadId) {
       this.#record(threadId, event)
       return
@@ -1907,6 +2611,9 @@ export class Orchestrator {
       }
     }
     this.#record(threadId, event)
+    if (event.type === 'turn.started' && this.#designTurns.get(event.turn.id) === threadId) {
+      this.#startDesignActivity(threadId, event.turn.id)
+    }
   }
 
   #handleDesignOutput(threadId: string, turnId: string, text: string): void {
@@ -1920,11 +2627,11 @@ export class Orchestrator {
     const output = parseBriefingOutput(text)
     flow.correcting = false
     if (output.status === 'questions') {
+      const round = flow.askedQuestions ? 'follow-up' : 'first'
       flow.askedQuestions = true
-      flow.finalAsked = false
       flow.pendingBrief = undefined
       this.#saveDesignFlow(threadId)
-      this.#requestDesignInput(threadId, turnId, output.questions, false)
+      this.#requestDesignInput(threadId, turnId, output.questions, false, round)
       return
     }
     if (output.status === 'not_design') {
@@ -1943,7 +2650,7 @@ export class Orchestrator {
       })
       return
     }
-    if (flow.askedQuestions && !flow.finalAsked) {
+    if (!flow.finalAsked) {
       flow.pendingBrief = output.brief
       flow.finalAsked = true
       this.#saveDesignFlow(threadId)
@@ -1953,12 +2660,42 @@ export class Orchestrator {
     this.#completeDesignBrief(threadId, turnId, output.brief)
   }
 
+  #recordDesignNote(threadId: string, turnId: string, text: string): void {
+    this.#record(threadId, {
+      type: 'item.completed',
+      item: {
+        id: `design-note-${crypto.randomUUID()}`,
+        turnId,
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text,
+        createdAt: Date.now(),
+      },
+    })
+  }
+
   #requestDesignInput(
     threadId: string,
     turnId: string,
     questions: BriefingQuestion[],
     final: boolean,
+    round: 'first' | 'follow-up' | 'final' = 'final',
   ): void {
+    if (round === 'first') {
+      this.#recordDesignNote(
+        threadId,
+        turnId,
+        'I have a few questions before designing — they are right below.',
+      )
+    }
+    if (round === 'follow-up') {
+      this.#recordDesignNote(
+        threadId,
+        turnId,
+        'Some answers need one more pass — please take another look below.',
+      )
+    }
     const id = crypto.randomUUID()
     this.#designInputs.set(id, { threadId, turnId, questions, final })
     this.#designInputByThread.set(threadId, id)
@@ -1990,6 +2727,7 @@ export class Orchestrator {
         ? { ...brief, explicitAnswers: flow.explicitAnswers }
         : brief,
     )
+    this.#recordDesignNote(threadId, turnId, 'Brief locked in. Starting the design.')
     flow.phase = 'brand'
     const prompt = designBrandPrompt(saved)
     if (this.#activeTurns.has(threadId)) {
@@ -2030,6 +2768,10 @@ export class Orchestrator {
       const output = parseAssetPhaseOutput(text)
       flow.correcting = false
       const assets = writeAssetManifest(flow.workspacePath, output)
+      flow.buildFileBaseline = exactBuildFileBaseline(
+        flow.workspacePath,
+        readDesignBrief(flow.workspacePath),
+      )
       flow.phase = 'build'
       flow.pendingPrompt = designBuildPrompt(
         readDesignBrief(flow.workspacePath),
@@ -2042,8 +2784,13 @@ export class Orchestrator {
     }
     if (flow.phase === 'build') {
       const output = parseBuildPhaseOutput(text)
-      flow.correcting = false
       if (output.status === 'failed') throw new Error(output.error)
+      validateExactBuildFiles(
+        flow.workspacePath,
+        readDesignBrief(flow.workspacePath),
+        flow.buildFileBaseline,
+      )
+      flow.correcting = false
       flow.phase = 'preview'
       flow.pendingPrompt = designPreviewPrompt()
       this.#saveDesignFlow(threadId)
@@ -2051,14 +2798,52 @@ export class Orchestrator {
     }
     if (flow.phase === 'preview') {
       const plan = parsePreviewPhaseOutput(text)
-      flow.correcting = false
-      void this.#startDesignPreview(threadId, turnId, flow, plan).catch((error: unknown) =>
-        this.#failDesignFlow(threadId, error),
+      const task = this.#startDesignPreview(threadId, turnId, flow, plan).catch(
+        (error: unknown) => {
+          if (this.#designFlows.get(threadId) !== flow) return
+          if (
+            isRecoverablePreviewError(error) &&
+            this.#queueDesignCorrection(threadId, flow, error)
+          ) {
+            if (this.#activeTurns.has(threadId)) return
+            const prompt = flow.pendingPrompt!
+            delete flow.pendingPrompt
+            this.#saveDesignFlow(threadId)
+            void this.#sendDesignTurn(
+              threadId,
+              prompt,
+              this.#designAttachmentsFor(flow),
+              this.#designTurnOptions(flow),
+            ).catch((sendError: unknown) => {
+              if (this.#designFlows.get(threadId) === flow) {
+                this.#failDesignFlow(threadId, sendError)
+              }
+            })
+            return
+          }
+          this.#failDesignFlow(threadId, error)
+        },
+      )
+      this.#designPreviewTasks.set(threadId, task)
+      void task.then(
+        () => {
+          if (this.#designPreviewTasks.get(threadId) === task) {
+            this.#designPreviewTasks.delete(threadId)
+          }
+        },
+        () => {
+          if (this.#designPreviewTasks.get(threadId) === task) {
+            this.#designPreviewTasks.delete(threadId)
+          }
+        },
       )
       return
     }
     if (flow.phase === 'review') {
-      const review = writeVisualReview(flow.workspacePath, parseReviewPhaseOutput(text))
+      const review = writeVisualReview(
+        flow.workspacePath,
+        enforceDomAuditFindings(parseReviewPhaseOutput(text), flow.screenshots ?? []),
+      )
       flow.correcting = false
       flow.review = review
       if (review.verdict === 'pass') {
@@ -2083,16 +2868,16 @@ export class Orchestrator {
       const output = parseRepairPhaseOutput(text)
       flow.correcting = false
       if (output.status === 'failed') throw new Error(output.summary)
-      void this.#captureDesignReview(threadId, turnId, flow).catch((error: unknown) =>
-        this.#failDesignFlow(threadId, error),
-      )
+      void this.#captureDesignReview(threadId, turnId, flow).catch((error: unknown) => {
+        if (this.#designFlows.get(threadId) === flow) this.#failDesignFlow(threadId, error)
+      })
       return
     }
     throw new Error(`unexpected design phase ${flow.phase}`)
   }
 
   #finishDesignFlow(threadId: string, turnId: string, summary: string): void {
-    this.#clearDesignFlow(threadId)
+    this.#clearDesignFlow(threadId, true)
     this.#record(threadId, {
       type: 'item.completed',
       item: {
@@ -2114,7 +2899,20 @@ export class Orchestrator {
     flow: DesignFlow,
     plan: ReturnType<typeof parsePreviewPhaseOutput>,
   ): Promise<void> {
+    if (plan.kind === 'static') {
+      const workspace = realpathSync(flow.workspacePath)
+      const cwd = existingWorkspacePath(workspace, plan.cwd, true)
+      assertPublicWorkspaceFile(existingWorkspacePath(cwd, plan.entry, false))
+    }
     const preview = await startDesignPreview(flow.workspacePath, plan)
+    if (this.#designFlows.get(threadId) !== flow) {
+      await preview
+        .stop()
+        .catch((error: unknown) =>
+          this.#onLog(`[design] stale preview stop failed: ${errorMessage(error)}`),
+        )
+      return
+    }
     this.#designPreviews.set(threadId, preview)
     flow.previewPlan = plan
     flow.previewUrl = preview.url
@@ -2138,6 +2936,14 @@ export class Orchestrator {
     }
     if (!this.#designPreviews.has(threadId)) {
       const preview = await startDesignPreview(flow.workspacePath, flow.previewPlan)
+      if (this.#designFlows.get(threadId) !== flow) {
+        await preview
+          .stop()
+          .catch((error: unknown) =>
+            this.#onLog(`[design] stale preview stop failed: ${errorMessage(error)}`),
+          )
+        return
+      }
       this.#designPreviews.set(threadId, preview)
       flow.previewUrl = preview.url
     }
@@ -2145,6 +2951,7 @@ export class Orchestrator {
       flow.previewUrl,
       flow.previewPlan.viewports.map(({ width, height }) => ({ width, height })),
     )
+    if (this.#designFlows.get(threadId) !== flow) return
     if (!screenshots) {
       this.#finishWithoutVisualReview(threadId, turnId, flow, 'desktop capture is unavailable')
       return
@@ -2186,12 +2993,17 @@ export class Orchestrator {
   }
 
   #failDesignFlow(threadId: string, error: unknown): void {
+    for (const [turnId, owner] of this.#designTurns) {
+      if (owner === threadId) this.#completeDesignActivity(threadId, turnId, 'failed')
+    }
     this.#clearDesignFlow(threadId)
-    this.#record(threadId, {
-      type: 'thread.error',
-      threadId,
-      message: `Design mode failed: ${error instanceof Error ? error.message : String(error)}`,
-    })
+    const detail = error instanceof Error ? error.message : String(error)
+    // A raw JSON.parse message reads as gibberish in the transcript; name
+    // what actually happened before quoting it.
+    const message = /JSON|Unexpected token/i.test(detail)
+      ? `Design mode failed: the agent answered in prose instead of the structured report Harness expects. Running the design again usually recovers. (${detail})`
+      : `Design mode failed: ${detail}`
+    this.#record(threadId, { type: 'thread.error', threadId, message })
     // Prompts typed during the flow queued behind the design guard; every
     // other design exit drains, and this one stranding them meant a failed
     // design run left "queued" messages sitting until the user sent another.
@@ -2201,9 +3013,11 @@ export class Orchestrator {
   #queueDesignCorrection(threadId: string, flow: DesignFlow, error: unknown): string | undefined {
     if (flow.correcting) return undefined
     flow.correcting = true
-    const prompt = designPhaseCorrectionPrompt(
-      error instanceof Error ? error.message : String(error),
-    )
+    const detail = error instanceof Error ? error.message : String(error)
+    const prompt =
+      flow.phase === 'build' && error instanceof ExactBuildFilesError
+        ? designBuildCorrectionPrompt(detail)
+        : designPhaseCorrectionPrompt(detail)
     flow.pendingPrompt = prompt
     this.#saveDesignFlow(threadId)
     return prompt
@@ -2217,17 +3031,29 @@ export class Orchestrator {
    * which then makes removing that worktree fail with a git error the user
    * cannot act on.
    */
-  #stopDesignPreview(threadId: string): void {
+  async #stopDesignPreview(threadId: string): Promise<void> {
+    await this.#designPreviewTasks.get(threadId)
+    const stopping = this.#stoppingDesignPreviews.get(threadId)
+    if (stopping) return stopping
     const preview = this.#designPreviews.get(threadId)
     if (!preview) return
     this.#designPreviews.delete(threadId)
-    void preview.stop()
+    const stop = preview
+      .stop()
+      .catch((error: unknown) =>
+        this.#onLog(`[design] preview stop failed: ${errorMessage(error)}`),
+      )
+      .finally(() => {
+        if (this.#stoppingDesignPreviews.get(threadId) === stop) {
+          this.#stoppingDesignPreviews.delete(threadId)
+        }
+      })
+    this.#stoppingDesignPreviews.set(threadId, stop)
+    return stop
   }
 
-  #clearDesignFlow(threadId: string): void {
-    // The flow is over however it ended — completed, failed, or "not a design
-    // task". Its preview server has no owner left to stop it.
-    this.#stopDesignPreview(threadId)
+  #clearDesignFlow(threadId: string, keepPreview = false): void {
+    if (!keepPreview) void this.#stopDesignPreview(threadId)
     this.#designFlows.delete(threadId)
     this.#store.deleteDesignRun(threadId)
     const requestId = this.#designInputByThread.get(threadId)
@@ -2250,6 +3076,9 @@ export class Orchestrator {
 
   /** Drop per-project watch state when a project leaves the sidebar. */
   forgetProject(projectPath: string): void {
+    void this.#terminals
+      .closeThread(projectTerminalKey(projectPath))
+      .catch((error) => this.#onLog(`[terminal] project close failed: ${errorMessage(error)}`))
     this.#watchedSkillProjects.delete(projectPath)
     this.#watchedMcpProjects.delete(projectPath)
   }
@@ -2284,6 +3113,11 @@ export class Orchestrator {
     this.#threads.get(thread.id)?.session.dispose()
     this.#threads.set(thread.id, { thread, session, ...(worktree ? { worktree } : {}) })
     session.onMcpOAuth?.((result) => this.#onMcpOAuth(thread.provider, projectPath, result))
+    session.onUsageChanged?.(() => {
+      if (this.#threads.get(thread.id)?.session === session) {
+        this.#onUsageChanged(thread.provider)
+      }
+    })
     session.on('event', (event) => this.#handleSessionEvent(thread.id, event))
   }
 }

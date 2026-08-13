@@ -3,38 +3,50 @@ import {
   type DragEvent,
   type KeyboardEvent,
   type PointerEvent,
+  type ReactNode,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react'
-import type {
-  Account,
-  ProviderId,
-  ResultOf,
-  ThreadInboxStatus,
-  ThreadLifecycle,
-} from '@harness/contracts'
+import { createPortal } from 'react-dom'
+import type { Account, ProviderId, ThreadInboxStatus, ThreadLifecycle } from '@harness/contracts'
 import {
   Archive,
   Ellipsis,
   Folder,
   FolderOpen,
   FolderPen,
-  Gauge,
+  GitPullRequest,
   PanelLeftClose,
   Pencil,
   Pin,
   PinOff,
   Plus,
   Search,
+  Settings,
+  UserRound,
   X,
 } from 'lucide-react'
-import { isDesktop, isMacOS, revealPath } from '../bridge.js'
-import { SHORTCUTS, shortcutAria, shortcutLabel } from '../shortcuts.js'
+import { isDesktop, revealPath } from '../bridge.js'
+import {
+  appHapticsSupported,
+  performAppHaptic,
+  prepareAppHaptics,
+  readAppHaptics,
+  ResizeHaptics,
+  subscribeAppHaptics,
+} from '../haptics.js'
+import { sessionSourcePresentation } from '../provider-presentation.js'
+import { profileInitials, type ProfileIdentityPreferences } from '../profile-preferences.js'
+import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
-import { ShortcutHint } from './ShortcutHint.js'
+import { AccountLimits, type AccountLimitsState } from './AccountLimits.js'
+import { useDialogFocus } from './dialog-focus.js'
 import { InboxSidebar, type InboxActions } from './InboxSidebar.js'
+import { SourceIdentity } from './SourceIdentity.js'
 
 /**
  * The rail. Collapsible, searchable, and everything in it can be renamed.
@@ -69,8 +81,32 @@ export type Project = {
 type DropPosition = 'before' | 'after'
 
 const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
-const MIN_RAIL_WIDTH = 148
-const COLLAPSE_RAIL_WIDTH = 176
+/** Narrowest width at which the New chat row and the chat rows stay
+ *  roomy — the narrowest rail still looks deliberate, never squeezed. */
+const MIN_RAIL_WIDTH = 240
+/** Pulling the rail down to half its narrowest width reads as intent to
+ *  collapse. A ratio rather than a pixel overshoot, so it keeps meaning the
+ *  same thing when MIN_RAIL_WIDTH moves. */
+const COLLAPSE_WIDTH = Math.round(MIN_RAIL_WIDTH * 0.5)
+/** Mirrors --dur-slow: how long a fold or unfold takes to play out. */
+const RAIL_FOLD_MS = 260
+/** How far past the rail's own edge still counts as "at the rail" while it is
+ *  revealed. Generous on purpose: the pointer travels diagonally toward the
+ *  title bar toggle, and clipping that path retracted the rail mid-aim. */
+const REVEAL_KEEP_BUFFER = 96
+/** Grace before a revealed rail hides. Short, because position alone decides
+ *  whether to arm it at all: it never fires while the pointer is still at the
+ *  rail, so it no longer has to cover the walk to the toggle. */
+const REVEAL_GRACE_MS = 120
+/** Mirrors --dur-reveal: how long the retract itself takes. */
+const REVEAL_OUT_MS = 160
+/** Folding by drag leaves the pointer sitting on the very edge that reveals the
+ *  rail, so the release used to flash it straight back out. The reveal is held
+ *  off for this long; afterwards a pointer still at the edge reveals it as
+ *  usual, which is the behaviour someone parked there would expect. */
+const REVEAL_COOLDOWN_MS = 1250
+/** Matches the .rail__edge hit strip. */
+const REVEAL_EDGE_WIDTH = 6
 const MAX_RAIL_WIDTH = 420
 const COLLAPSED_PROJECT_SESSION_COUNT = 5
 
@@ -79,8 +115,10 @@ function SidebarComponent(props: {
   activeProjectPath: string | undefined
   activeSessionId: string | undefined
   account: Account | undefined
+  profileIdentity?: ProfileIdentityPreferences | undefined
   providerName: string
-  usageSummary?: ResultOf<'usage.summary'> | undefined
+  usageStates?: AccountLimitsState[] | undefined
+  onRetryUsage?: ((provider: ProviderId) => void) | undefined
   mode?: 'classic' | 'inbox'
   inbox?: InboxActions | undefined
   collapsed: boolean
@@ -97,6 +135,7 @@ function SidebarComponent(props: {
   onToggleSessionPin?: (id: string) => void
   onDeleteSession: (id: string) => void
   onArchiveProject: (sessionIds: string[]) => void
+  onReorderProject?: (sourcePath: string, targetPath: string, position: DropPosition) => void
   onReorderSession: (
     projectPath: string,
     sourceId: string,
@@ -104,13 +143,152 @@ function SidebarComponent(props: {
     position: DropPosition,
   ) => void
   onOpenSearch: (projectPath?: string) => void
-  onOpenSettings: () => void
+  pullRequestsActive?: boolean | undefined
+  onOpenPullRequests?: (() => void) | undefined
+  onOpenSettings: (section?: 'profile') => void
 }) {
+  const profileDisplayName = props.profileIdentity?.displayName.trim()
   const [edgeRevealed, setEdgeRevealed] = useState(false)
+  const slotRef = useRef<HTMLDivElement>(null)
+  /** Set by the resize handle when its release is what collapsed the rail. */
+  const foldedByDrag = useRef(false)
+  /** True while the edge is being dragged: widening a revealed rail carries the
+   *  pointer well clear of it, which must not read as leaving. */
+  const resizing = useRef(false)
+  /** Previous reveal state, so the hide direction can be told from the show. */
+  const wasRevealed = useRef(false)
+  /** Running while a just-folded rail refuses to reveal again. */
+  const [cooling, setCooling] = useState(false)
+  const coolDown = useRef<number | undefined>(undefined)
+  /** Where the pointer was last seen during that wait. */
+  const pointerX = useRef(Number.POSITIVE_INFINITY)
+
+  const endCooldown = () => {
+    if (coolDown.current !== undefined) clearTimeout(coolDown.current)
+    coolDown.current = undefined
+    setCooling(false)
+  }
+
+  const startCooldown = (releaseX: number) => {
+    pointerX.current = releaseX
+    if (coolDown.current !== undefined) clearTimeout(coolDown.current)
+    setCooling(true)
+    coolDown.current = window.setTimeout(() => {
+      coolDown.current = undefined
+      setCooling(false)
+      // The wait is over: a pointer still parked at the edge gets its reveal.
+      if (pointerX.current <= REVEAL_EDGE_WIDTH) setEdgeRevealed(true)
+    }, REVEAL_COOLDOWN_MS)
+  }
+
+  useEffect(() => endCooldown, [])
+
+  useEffect(() => {
+    if (!cooling) return
+    const onMove = (event: MouseEvent) => {
+      pointerX.current = event.clientX
+    }
+    window.addEventListener('mousemove', onMove)
+    return () => window.removeEventListener('mousemove', onMove)
+  }, [cooling])
+
+  /* Collapsing hands the rail to the absolute flyout, whose translate would
+     animate in from no transform at all — the rail appearing at full width
+     before sliding away. After a drag fold it is already gone, so that reads
+     as it flashing open and shut. This runs on React's commit, before the
+     browser paints, which is the only point where suppressing it is reliable;
+     the handle cannot do it, since collapsing unmounts the handle. */
+  useLayoutEffect(() => {
+    const slot = slotRef.current
+    // Expanding the rail by any other means ends the wait: it only exists to
+    // stop a just-folded rail from springing back out.
+    if (!props.collapsed) endCooldown()
+    if (!props.collapsed || !foldedByDrag.current || !slot) {
+      foldedByDrag.current = false
+      return
+    }
+    foldedByDrag.current = false
+    const shell = slot.closest<HTMLElement>('.shell')
+    if (!shell) return
+    // The stored width is restored here, not on release: the collapsed layout
+    // is already committed at this point, so the column reads 0 whatever
+    // --rail-w says. Written from the handler it landed a moment too early,
+    // while the collapsed class was still missing, and the column really was
+    // that wide for a frame — the jump right and back that survived every
+    // earlier attempt at this.
+    shell.dataset['resizing'] = ''
+    shell.style.setProperty('--rail-w', `${props.width}px`)
+    // Commit the collapsed layout while it still cannot animate.
+    void shell.offsetWidth
+    const frame = requestAnimationFrame(() => {
+      delete shell.dataset['resizing']
+    })
+    return () => cancelAnimationFrame(frame)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- width is read, not a trigger
+  }, [props.collapsed])
+  /* A reveal that retracts is its own motion, quicker than a deliberate
+     collapse. Removing the revealed class alone cannot express that: the
+     resulting state is plain "collapsed", identical to a real collapse. A
+     marker set on the same commit distinguishes them, and it has to be a
+     layout effect — after paint would be too late, the slow transition would
+     already be running. */
+  useLayoutEffect(() => {
+    const slot = slotRef.current
+    const retracting = wasRevealed.current && !edgeRevealed && props.collapsed
+    wasRevealed.current = edgeRevealed
+    if (!retracting || !slot) return
+    slot.classList.add('is-reveal-out')
+    const done = window.setTimeout(() => slot.classList.remove('is-reveal-out'), REVEAL_OUT_MS)
+    return () => clearTimeout(done)
+  }, [edgeRevealed, props.collapsed])
+
+  /* Hiding the reveal only after a grace period lets the pointer travel up to
+     the title bar toggle without the flyout flickering away underneath it. */
+  const revealHide = useRef<number | undefined>(undefined)
+  const cancelRevealHide = () => {
+    if (revealHide.current !== undefined) {
+      clearTimeout(revealHide.current)
+      revealHide.current = undefined
+    }
+  }
+  const scheduleRevealHide = () => {
+    // Never restarted. This is called from every mouse move outside the rail,
+    // and re-arming each time meant the grace only elapsed once the pointer
+    // came to a complete stop — so a rail left behind while the mouse kept
+    // moving stayed open for as long as the movement lasted.
+    if (revealHide.current !== undefined) return
+    revealHide.current = window.setTimeout(() => setEdgeRevealed(false), REVEAL_GRACE_MS)
+  }
+  useEffect(() => cancelRevealHide, [])
+
+  /* What keeps a revealed rail in place. The slot's own mouse events cannot
+     see the title bar above it, and that is exactly where someone aims to pin
+     the rail open — so the whole column counts as inside, plus a buffer past
+     its edge. Retracting while the user is still travelling toward the toggle
+     is what made the reveal feel like it snapped back on its own. */
+  useEffect(() => {
+    if (!edgeRevealed || !props.collapsed) return
+    const onMove = (event: MouseEvent) => {
+      if (resizing.current || event.clientX <= props.width + REVEAL_KEEP_BUFFER) cancelRevealHide()
+      else scheduleRevealHide()
+    }
+    // Pointer position decides, and only this listener decides: the slot's own
+    // mouseleave used to schedule the hide unconditionally, so travelling up
+    // into the title bar armed it — and if the pointer then came to rest, no
+    // further move arrived to disarm it and the rail folded away under the
+    // toggle the user was about to press.
+    window.addEventListener('mousemove', onMove)
+    // Leaving the window entirely produces no more moves, so it is its own signal.
+    document.addEventListener('mouseleave', scheduleRevealHide)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseleave', scheduleRevealHide)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the two schedulers are stable module-shape helpers
+  }, [edgeRevealed, props.collapsed, props.width])
   const [scope, setScope] = useState('')
-  const macOS = isMacOS()
+  const [bodyScrolled, setBodyScrolled] = useState(false)
   const inbox = props.mode === 'inbox' && props.inbox !== undefined
-  const limits = props.usageSummary?.limits ?? []
 
   const closeOnNarrowViewport = () => {
     if (globalThis.matchMedia?.('(max-width: 700px)').matches) props.onClose()
@@ -126,8 +304,25 @@ function SidebarComponent(props: {
     closeOnNarrowViewport()
   }
 
+  const openPullRequests = () => {
+    props.onOpenPullRequests?.()
+    closeOnNarrowViewport()
+  }
+
   useEffect(() => {
-    if (!props.collapsed) setEdgeRevealed(false)
+    if (props.collapsed) return
+    // Opening from the temporary reveal must dock in place: the flyout and
+    // the grid rail occupy the same pixels, so the column animation is
+    // suppressed for a frame — otherwise the rail visibly closed and
+    // re-opened on the toggle click.
+    const slot = slotRef.current
+    const shell = slot?.closest<HTMLElement>('.shell')
+    if (edgeRevealed && shell) {
+      shell.dataset['resizing'] = ''
+      requestAnimationFrame(() => requestAnimationFrame(() => delete shell.dataset['resizing']))
+    }
+    setEdgeRevealed(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reveal state is read, not a trigger
   }, [props.collapsed])
 
   useEffect(() => {
@@ -157,16 +352,37 @@ function SidebarComponent(props: {
       })),
     [props.projects],
   )
+  const [draggedProjectPath, setDraggedProjectPath] = useState<string>()
+  const [projectDropTarget, setProjectDropTarget] = useState<{
+    path: string
+    position: DropPosition
+  }>()
+
+  const endProjectDrag = () => {
+    setDraggedProjectPath(undefined)
+    setProjectDropTarget(undefined)
+  }
 
   return (
     <div
+      ref={slotRef}
       className={`rail-slot ${props.collapsed ? 'is-collapsed' : ''} ${
         edgeRevealed ? 'is-revealed' : ''
       }`}
-      onMouseLeave={() => setEdgeRevealed(false)}
+      onMouseEnter={cancelRevealHide}
     >
       {props.collapsed ? (
-        <div className="rail__edge" aria-hidden onMouseEnter={() => setEdgeRevealed(true)} />
+        <div
+          className="rail__edge"
+          aria-hidden
+          onMouseEnter={() => {
+            // A rail just folded by dragging stays folded, even though the
+            // pointer is still resting on this strip.
+            if (coolDown.current !== undefined) return
+            cancelRevealHide()
+            setEdgeRevealed(true)
+          }}
+        />
       ) : null}
 
       {!props.collapsed ? (
@@ -198,29 +414,42 @@ function SidebarComponent(props: {
             onToggleSessionPin={(id) => props.onToggleSessionPin?.(id)}
             onArchiveSession={props.onDeleteSession}
             onArchiveSessions={props.onArchiveProject}
+            pullRequestsActive={props.pullRequestsActive}
+            onOpenPullRequests={props.onOpenPullRequests ? openPullRequests : undefined}
           />
         ) : (
           <>
-            <div className="rail__actions">
-              <button
-                className="navitem"
-                aria-keyshortcuts={shortcutAria(SHORTCUTS.newChat)}
-                onClick={() => {
-                  const project =
-                    props.projects.find(
-                      (candidate) => candidate.path === props.activeProjectPath,
-                    ) ?? props.projects[0]
-                  if (project) newSession(project.path)
-                  else {
-                    props.onAddProject()
-                    closeOnNarrowViewport()
-                  }
-                }}
-              >
-                <Plus size={15} aria-hidden />
-                <span>New chat</span>
-                <ShortcutHint>{shortcutLabel(SHORTCUTS.newChat, macOS)}</ShortcutHint>
-              </button>
+            <div className={`rail__actions${bodyScrolled ? ' is-scrolled' : ''}`}>
+              <div className="rail__row">
+                <button
+                  className="navitem rail__new-chat"
+                  aria-keyshortcuts={shortcutAria(SHORTCUTS.newChat)}
+                  onClick={() => {
+                    const project =
+                      props.projects.find(
+                        (candidate) => candidate.path === props.activeProjectPath,
+                      ) ?? props.projects[0]
+                    if (project) newSession(project.path)
+                    else {
+                      props.onAddProject()
+                      closeOnNarrowViewport()
+                    }
+                  }}
+                >
+                  <Plus size={15} aria-hidden />
+                  <span>New chat</span>
+                </button>
+                <button
+                  type="button"
+                  className="rail__search"
+                  onClick={() => props.onOpenSearch()}
+                  aria-label="Search chats"
+                  title="Search chats"
+                  aria-keyshortcuts={shortcutAria(SHORTCUTS.searchSessions)}
+                >
+                  <Search size={15} aria-hidden />
+                </button>
+              </div>
               <button
                 className="navitem rail__new-project"
                 onClick={() => {
@@ -231,23 +460,24 @@ function SidebarComponent(props: {
               >
                 <FolderPen size={15} aria-hidden />
                 <span>New project</span>
-                <ShortcutHint>{shortcutLabel(SHORTCUTS.newProject, macOS)}</ShortcutHint>
               </button>
-              <div className="rail__utility-row">
+              {props.onOpenPullRequests ? (
                 <button
                   type="button"
-                  className="icon-btn icon-btn--always rail__search"
-                  onClick={() => props.onOpenSearch()}
-                  aria-label="Search chats"
-                  title={`Search chats (${shortcutLabel(SHORTCUTS.searchSessions, macOS)})`}
-                  aria-keyshortcuts={shortcutAria(SHORTCUTS.searchSessions)}
+                  className={`navitem rail__pull-requests${props.pullRequestsActive ? ' is-active' : ''}`}
+                  aria-current={props.pullRequestsActive ? 'page' : undefined}
+                  onClick={openPullRequests}
                 >
-                  <Search size={14} aria-hidden />
+                  <GitPullRequest size={15} aria-hidden />
+                  <span>Pull requests</span>
                 </button>
-              </div>
+              ) : null}
             </div>
 
-            <div className="rail__body">
+            <div
+              className="rail__body"
+              onScroll={(event) => setBodyScrolled(event.currentTarget.scrollTop > 0)}
+            >
               {pinnedSessions.length > 0 ? (
                 <>
                   <p className="section">Pinned</p>
@@ -275,7 +505,21 @@ function SidebarComponent(props: {
                   </ul>
                 </>
               ) : null}
-              <p className="section">Projects</p>
+              <div className="section section--row">
+                <span>Projects</span>
+                <button
+                  type="button"
+                  className="section__add"
+                  aria-label="New project"
+                  title="New project"
+                  onClick={() => {
+                    props.onAddProject()
+                    closeOnNarrowViewport()
+                  }}
+                >
+                  <Plus size={13} aria-hidden />
+                </button>
+              </div>
               {orderedProjects.length === 0 ? (
                 <p className="rail__hint">Nothing here yet.</p>
               ) : (
@@ -284,7 +528,52 @@ function SidebarComponent(props: {
                     {...props}
                     key={project.path}
                     project={project}
-                    forceOpen={false}
+                    active={project.path === props.activeProjectPath}
+                    reorderable={Boolean(props.onReorderProject)}
+                    dragging={project.path === draggedProjectPath}
+                    dropPosition={
+                      projectDropTarget?.path === project.path
+                        ? projectDropTarget.position
+                        : undefined
+                    }
+                    onProjectDragStart={(event) => {
+                      if (event.target !== event.currentTarget || !props.onReorderProject) return
+                      prepareAppHaptics()
+                      event.dataTransfer.effectAllowed = 'move'
+                      event.dataTransfer.setData('text/plain', project.path)
+                      setDraggedProjectPath(project.path)
+                    }}
+                    onProjectDragOver={(event) => {
+                      if (!draggedProjectPath || draggedProjectPath === project.path) return
+                      const source = orderedProjects.find(
+                        (candidate) => candidate.path === draggedProjectPath,
+                      )
+                      if (source?.pinned !== project.pinned) return
+                      event.preventDefault()
+                      event.dataTransfer.dropEffect = 'move'
+                      const bounds = event.currentTarget.getBoundingClientRect()
+                      const position: DropPosition =
+                        event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
+                      if (
+                        projectDropTarget?.path === project.path &&
+                        projectDropTarget.position === position
+                      )
+                        return
+                      setProjectDropTarget({ path: project.path, position })
+                      performAppHaptic('alignment')
+                    }}
+                    onProjectDrop={(event) => {
+                      event.preventDefault()
+                      if (draggedProjectPath && projectDropTarget?.path === project.path) {
+                        props.onReorderProject?.(
+                          draggedProjectPath,
+                          project.path,
+                          projectDropTarget.position,
+                        )
+                      }
+                      endProjectDrag()
+                    }}
+                    onProjectDragEnd={endProjectDrag}
                     onNewSession={(path) => newSession(path)}
                     onSelectSession={selectSession}
                   />
@@ -297,80 +586,76 @@ function SidebarComponent(props: {
         <div className="rail__foot">
           <Menu
             drop="up"
+            gap={14}
             label="Account"
             panelClassName="menu--settings"
+            panelRole="dialog"
+            panelLabel="Account and plan limits"
             trigger={() => (
               <span className="account">
                 <span className="account__avatar">
-                  {initial(props.account, props.providerName)}
+                  {props.profileIdentity?.avatarDataUrl ? (
+                    <img src={props.profileIdentity.avatarDataUrl} alt="" />
+                  ) : (
+                    profileInitials(
+                      profileDisplayName || props.account?.email || props.providerName,
+                    )
+                  )}
                 </span>
-                <span className="account__name">{props.providerName}</span>
+                <span className="account__name">{profileDisplayName || props.providerName}</span>
               </span>
             )}
           >
             {(close) => (
               <>
-                <div className="account-menu__usage">
-                  <div className="account-menu__usage-head">
-                    <Gauge size={14} aria-hidden />
-                    <span>Limits</span>
-                  </div>
-                  {limits.length > 0 ? (
-                    limits.map((limit) => (
-                      <div className="account-menu__limit" key={limit.label}>
-                        <div className="account-menu__limit-row">
-                          <span className="account-menu__limit-label">{limit.label}</span>
-                          <span>{Math.round(100 - limit.usedPercent)}% left</span>
-                        </div>
-                        <div
-                          className="account-menu__limit-bar"
-                          role="progressbar"
-                          aria-label={`${limit.label} left`}
-                          aria-valuenow={Math.round(100 - limit.usedPercent)}
-                          aria-valuemin={0}
-                          aria-valuemax={100}
-                        >
-                          <span
-                            style={{
-                              width: `${Math.min(100, Math.max(0, 100 - limit.usedPercent))}%`,
-                            }}
-                          />
-                        </div>
-                        {limit.resetsAt ? (
-                          <span className="account-menu__limit-reset">
-                            Resets {resetLabel(limit.resetsAt)}
-                          </span>
-                        ) : null}
-                      </div>
-                    ))
-                  ) : (
-                    // Honest, not vague: of the wired CLIs only Codex
-                    // answers with subscription windows today.
-                    <span className="account-menu__usage-note">
-                      {props.providerName} reports no limits
-                    </span>
-                  )}
-                </div>
-                <MenuItem
-                  title="Settings"
-                  shortcut={shortcutLabel(SHORTCUTS.settings, macOS)}
-                  shortcutAria={shortcutAria(SHORTCUTS.settings)}
+                {props.usageStates ? (
+                  <AccountLimits states={props.usageStates} onRetry={props.onRetryUsage ?? noop} />
+                ) : null}
+                <button
+                  type="button"
+                  className="menu__item"
+                  onClick={() => {
+                    props.onOpenSettings('profile')
+                    closeOnNarrowViewport()
+                    close()
+                  }}
+                >
+                  <DialogAction icon={<UserRound size={14} aria-hidden />} title="Profile" />
+                </button>
+                <button
+                  type="button"
+                  className="menu__item"
+                  aria-keyshortcuts={shortcutAria(SHORTCUTS.settings)}
                   onClick={() => {
                     props.onOpenSettings()
                     closeOnNarrowViewport()
                     close()
                   }}
-                />
+                >
+                  <DialogAction icon={<Settings size={14} aria-hidden />} title="Settings" />
+                </button>
               </>
             )}
           </Menu>
         </div>
       </nav>
-      {!props.collapsed ? (
+      {!props.collapsed || edgeRevealed ? (
         <RailResizeHandle
           width={props.width}
+          /* A revealed rail is already collapsed, so there is nothing to fold:
+             the drag only resizes it, and the new width is what the next
+             reveal and the next expand come back at. */
+          foldable={!props.collapsed}
           onWidthChange={props.onWidthChange}
-          onCollapse={props.onClose}
+          onResizingChange={(active) => {
+            resizing.current = active
+            if (active) cancelRevealHide()
+          }}
+          onCollapse={(releaseX) => {
+            foldedByDrag.current = true
+            startCooldown(releaseX)
+            props.onClose()
+          }}
         />
       ) : null}
     </div>
@@ -379,29 +664,92 @@ function SidebarComponent(props: {
 
 function RailResizeHandle(props: {
   width: number
+  /** False on a revealed rail: it is already collapsed, so the drag only sizes it. */
+  foldable: boolean
   onWidthChange: (width: number) => void
-  onCollapse: () => void
+  onResizingChange: (active: boolean) => void
+  onCollapse: (releaseX: number) => void
 }) {
-  const drag = useRef<{ startX: number; width: number; current: number } | undefined>(undefined)
+  const hapticsPreference = useSyncExternalStore(
+    subscribeAppHaptics,
+    readAppHaptics,
+    readAppHaptics,
+  )
+  const hapticsEnabled = appHapticsSupported() && hapticsPreference
+  const drag = useRef<
+    | {
+        startX: number
+        width: number
+        current: number
+        folded: boolean
+        haptics: ResizeHaptics | undefined
+      }
+    | undefined
+  >(undefined)
+
+  /** Set while a fold or unfold is playing out, so tracking does not cut the
+   *  animation off mid-flight on the next mouse move. */
+  const settling = useRef<number | undefined>(undefined)
+  useEffect(
+    () => () => {
+      if (settling.current !== undefined) clearTimeout(settling.current)
+    },
+    [],
+  )
 
   const preview = (target: HTMLElement, width: number) => {
     target.closest<HTMLElement>('.shell')?.style.setProperty('--rail-w', `${width}px`)
   }
 
-  const finish = (target: HTMLElement, width: number) => {
-    if (width <= COLLAPSE_RAIL_WIDTH) {
-      preview(target, props.width)
-      props.onCollapse()
-    } else {
-      props.onWidthChange(width)
+  /* The grid-column transition is for collapse and expand; while a pointer is
+     dragging it made the rail rubber-band behind the cursor. */
+  const setResizing = (target: HTMLElement, active: boolean) => {
+    const shell = target.closest<HTMLElement>('.shell')
+    if (!shell) return
+    if (active) {
+      shell.dataset['resizing'] = ''
+      return
     }
+    delete shell.dataset['resizing']
+    // Re-enabling the transition and changing the width inside one event can
+    // collapse into a single style recalculation that starts no animation —
+    // which is why unfolding mid-drag used to jump. Reading a layout value
+    // commits the transition-less state first, so the change animates.
+    void shell.offsetWidth
+  }
+
+  const holdTransition = () => {
+    if (settling.current !== undefined) clearTimeout(settling.current)
+    settling.current = window.setTimeout(() => {
+      settling.current = undefined
+    }, RAIL_FOLD_MS)
+  }
+
+  const cancelResize = (event: PointerEvent<HTMLButtonElement>) => {
+    const current = drag.current
+    if (!current) return
+    const target = event.currentTarget
+    drag.current = undefined
+    if (target.hasPointerCapture?.(event.pointerId)) {
+      target.releasePointerCapture?.(event.pointerId)
+    }
+    // A cancelled fold preview left --rail-w at zero even though React still
+    // considered the rail open. Restore the last real width before handing
+    // input back to the titlebar or the rest of the window.
+    preview(target, current.current)
+    setResizing(target, false)
+    props.onResizingChange(false)
+    props.onWidthChange(current.current)
   }
 
   const resizeWithKeyboard = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
     event.preventDefault()
-    const next = clampRailWidth(props.width + (event.key === 'ArrowLeft' ? -8 : 8))
-    finish(event.currentTarget, next)
+    if (event.key === 'ArrowLeft' && props.width <= MIN_RAIL_WIDTH) {
+      props.onCollapse(Number.POSITIVE_INFINITY)
+      return
+    }
+    props.onWidthChange(clampRailWidth(props.width + (event.key === 'ArrowLeft' ? -8 : 8)))
   }
 
   return (
@@ -415,23 +763,89 @@ function RailResizeHandle(props: {
       aria-valuemax={MAX_RAIL_WIDTH}
       aria-valuenow={props.width}
       onKeyDown={resizeWithKeyboard}
+      onPointerEnter={() => {
+        if (hapticsEnabled) prepareAppHaptics()
+      }}
       onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
+        if (hapticsEnabled) prepareAppHaptics()
         event.currentTarget.setPointerCapture?.(event.pointerId)
-        drag.current = { startX: event.clientX, width: props.width, current: props.width }
+        setResizing(event.currentTarget, true)
+        props.onResizingChange(true)
+        drag.current = {
+          startX: event.clientX,
+          width: props.width,
+          current: props.width,
+          folded: false,
+          haptics: hapticsEnabled
+            ? new ResizeHaptics({
+                startValue: props.width,
+                startTime: event.timeStamp,
+                minValue: MIN_RAIL_WIDTH,
+                maxValue: MAX_RAIL_WIDTH,
+              })
+            : undefined,
+        }
       }}
       onPointerMove={(event: PointerEvent<HTMLButtonElement>) => {
         if (!drag.current) return
-        const next = clampRailWidth(drag.current.width + event.clientX - drag.current.startX)
+        const raw = drag.current.width + event.clientX - drag.current.startX
+        // Well past the stop the rail folds shut as a preview — the drag stays
+        // alive, so pulling back right unfolds it again. Only releasing while
+        // folded makes the collapse real. Both the fold and the unfold run
+        // with the transition on; ordinary tracking keeps it off.
+        const folded = props.foldable && raw <= COLLAPSE_WIDTH
+        const next = clampRailWidth(raw)
+        const tracking = !folded && settling.current === undefined && next !== drag.current.current
+        const feedback = drag.current.haptics?.sample({
+          rawValue: raw,
+          value: next,
+          tracking,
+          time: event.timeStamp,
+        })
+        const foldChanged = folded !== drag.current.folded
+        if (foldChanged) performAppHaptic('generic')
+        else if (feedback) performAppHaptic(feedback)
+        if (foldChanged) {
+          drag.current.folded = folded
+          if (!folded) {
+            drag.current.current = next
+          }
+          setResizing(event.currentTarget, false)
+          holdTransition()
+          preview(event.currentTarget, folded ? 0 : drag.current.current)
+          return
+        }
+        if (folded) return
+        // Straight after a fold or unfold the transition stays on, so the rail
+        // eases into the cursor rather than snapping out of a half-played
+        // animation. Once it has settled, tracking is 1:1 again.
+        if (settling.current === undefined) setResizing(event.currentTarget, true)
         drag.current.current = next
         preview(event.currentTarget, next)
       }}
       onPointerUp={(event: PointerEvent<HTMLButtonElement>) => {
         if (!drag.current) return
-        const width = drag.current.current
+        const target = event.currentTarget
+        const { current: width, folded } = drag.current
         drag.current = undefined
-        event.currentTarget.releasePointerCapture?.(event.pointerId)
-        finish(event.currentTarget, width)
+        target.releasePointerCapture?.(event.pointerId)
+        props.onResizingChange(false)
+        if (folded) {
+          // The rail stays at the folded width here. Restoring the stored one
+          // is the Sidebar's job on the commit that adds the collapsed class,
+          // where the column reads 0 regardless; doing it now would widen the
+          // column for real, because that class does not exist yet.
+          // Suppression stays on and is cleared there too: this handle is
+          // unmounted by then and could not do it itself.
+          setResizing(target, true)
+          props.onCollapse(event.clientX)
+          return
+        }
+        setResizing(target, false)
+        props.onWidthChange(width)
       }}
+      onPointerCancel={cancelResize}
+      onLostPointerCapture={cancelResize}
     />
   )
 }
@@ -443,7 +857,14 @@ function clampRailWidth(width: number): number {
 function ProjectRow(props: {
   project: Project
   activeSessionId: string | undefined
-  forceOpen: boolean
+  active: boolean
+  reorderable: boolean
+  dragging: boolean
+  dropPosition: DropPosition | undefined
+  onProjectDragStart: (event: DragEvent<HTMLElement>) => void
+  onProjectDragOver: (event: DragEvent<HTMLElement>) => void
+  onProjectDrop: (event: DragEvent<HTMLElement>) => void
+  onProjectDragEnd: () => void
   onNewSession: (path: string) => void
   onSelectSession: (id: string) => void
   onRenameProject: (path: string, name: string) => void
@@ -460,7 +881,8 @@ function ProjectRow(props: {
     position: DropPosition,
   ) => void
 }) {
-  const [open, setOpen] = useState(true)
+  const count = props.project.sessions.length
+  const [open, setOpen] = useState(props.active)
   const [showAllSessions, setShowAllSessions] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState<'archive' | 'remove'>()
@@ -469,18 +891,27 @@ function ProjectRow(props: {
     id: string
     position: DropPosition
   }>()
+  const dropTargetRef = useRef<{ id: string; position: DropPosition } | undefined>(undefined)
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
-  const expanded = open || props.forceOpen
-  const count = props.project.sessions.length
+  const previousCount = useRef(count)
+  const expanded = open
   const hasMoreSessions = count > COLLAPSED_PROJECT_SESSION_COUNT
   const visibleSessions = showAllSessions
     ? props.project.sessions
     : props.project.sessions.slice(0, COLLAPSED_PROJECT_SESSION_COUNT)
-  const reorderable = !props.forceOpen
+  const reorderable = true
+
+  useEffect(() => {
+    if (previousCount.current === 0 && count > 0) setOpen(true)
+    previousCount.current = count
+  }, [count])
+
+  useEffect(() => setOpen(props.active), [props.active])
 
   const endDrag = () => {
     setDraggedSessionId(undefined)
     setDropTarget(undefined)
+    dropTargetRef.current = undefined
   }
 
   const dragOverSession = (event: DragEvent<HTMLLIElement>, targetId: string) => {
@@ -488,12 +919,27 @@ function ProjectRow(props: {
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
     const bounds = event.currentTarget.getBoundingClientRect()
-    const position = event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
-    setDropTarget({ id: targetId, position })
+    const position: DropPosition =
+      event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
+    const current = dropTargetRef.current
+    if (current?.id === targetId && current.position === position) return
+    const next = { id: targetId, position }
+    dropTargetRef.current = next
+    setDropTarget(next)
+    performAppHaptic('alignment')
   }
 
   return (
-    <section className="proj">
+    <section
+      className={`proj${props.dragging ? ' is-dragging' : ''}`}
+      data-open={expanded}
+      data-drop-position={props.dropPosition}
+      draggable={props.reorderable}
+      onDragStart={props.onProjectDragStart}
+      onDragOver={props.onProjectDragOver}
+      onDrop={props.onProjectDrop}
+      onDragEnd={props.onProjectDragEnd}
+    >
       <div className="proj__head">
         {renaming ? (
           <InlineRename
@@ -510,9 +956,14 @@ function ProjectRow(props: {
               ref={contextMenuTarget}
               className="proj__toggle"
               onClick={() => {
+                if (count === 0) {
+                  setOpen(!expanded)
+                  return
+                }
                 if (expanded) setShowAllSessions(false)
                 setOpen(!expanded)
               }}
+              aria-expanded={expanded}
               title={props.project.path}
             >
               <Folder className="proj__mark" size={12} aria-hidden />
@@ -623,8 +1074,9 @@ function ProjectRow(props: {
           the drawer's real height. The old per-row cap was double the actual
           row height, which spent half the duration moving nothing — the main
           reason the sidebar read as sluggish. */}
-      <div className="proj__drawer" data-open={expanded && count > 0}>
+      <div className="proj__drawer" data-open={expanded} aria-hidden={!expanded}>
         <ul className="proj__sessions">
+          {count === 0 ? <li className="rail__hint">No chats</li> : null}
           {visibleSessions.map((session) => (
             <SessionRow
               key={session.id}
@@ -639,6 +1091,7 @@ function ProjectRow(props: {
               dragging={session.id === draggedSessionId}
               dropPosition={dropTarget?.id === session.id ? dropTarget.position : undefined}
               onDragStart={(event) => {
+                prepareAppHaptics()
                 event.dataTransfer.effectAllowed = 'move'
                 event.dataTransfer.setData('text/plain', session.id)
                 setDraggedSessionId(session.id)
@@ -737,6 +1190,11 @@ function SessionRow(props: {
         title={sessionLabel(props.session)}
       >
         <span className="sess__title">{props.session.title}</span>
+        <SourceIdentity
+          className="sess__source"
+          presentation={sessionSourcePresentation(props.session.provider, props.session.agent)}
+          density="compact"
+        />
         <SessionStatus status={props.session.status} />
       </button>
 
@@ -819,10 +1277,18 @@ function SidebarConfirmDialog(props: {
   onConfirm: () => void
   onClose: () => void
 }) {
-  return (
-    <div className="sheet" role="dialog" aria-modal="true" aria-label={props.title}>
+  const dialog = useDialogFocus<HTMLDivElement>(props.onClose)
+
+  return createPortal(
+    <div
+      className="sheet"
+      role="dialog"
+      aria-modal="true"
+      aria-label={props.title}
+      onKeyDown={dialog.onKeyDown}
+    >
       <button className="sheet__scrim" onClick={props.onClose} aria-label="Cancel" />
-      <div className="sheet__panel sidebar-confirm">
+      <div className="sheet__panel sidebar-confirm" ref={dialog.panel} tabIndex={-1}>
         <header className="sheet__head">
           <h2 className="sheet__title">{props.title}</h2>
           <button className="icon-btn icon-btn--always" onClick={props.onClose} title="Close">
@@ -844,7 +1310,8 @@ function SidebarConfirmDialog(props: {
           </div>
         </section>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -871,23 +1338,24 @@ function SessionStatus(props: { status: Session['status'] }) {
 }
 
 function sessionLabel(session: Session): string {
+  const source = sessionSourcePresentation(session.provider, session.agent).label
   const branch = session.worktreeBranch ? `, isolated on ${session.worktreeBranch}` : ''
   switch (session.status) {
     case 'starting':
     case 'working':
-      return `${session.title}, working${branch}`
+      return `${session.title}, ${source}, working${branch}`
     case 'queued':
-      return `${session.title}, queued${branch}`
+      return `${session.title}, ${source}, queued${branch}`
     case 'approval':
-      return `${session.title}, waiting for approval${branch}`
+      return `${session.title}, ${source}, waiting for approval${branch}`
     case 'input':
-      return `${session.title}, needs attention${branch}`
+      return `${session.title}, ${source}, needs attention${branch}`
     case 'failed':
-      return `${session.title}, failed${branch}`
+      return `${session.title}, ${source}, failed${branch}`
     case 'ready':
-      return `${session.title}, ready${branch}`
+      return `${session.title}, ${source}, ready${branch}`
     default:
-      return `${session.title}${branch}`
+      return `${session.title}, ${source}${branch}`
   }
 }
 
@@ -935,22 +1403,18 @@ function basename(path: string): string {
   return parts[parts.length - 1] ?? path
 }
 
-/** A reset within the week reads as weekday and time; further out, as a date. */
-function resetLabel(at: number): string {
-  const date = new Date(at)
-  const withinWeek = at - Date.now() < 6 * 86_400_000
-  return date.toLocaleString(
-    undefined,
-    withinWeek
-      ? { weekday: 'short', hour: '2-digit', minute: '2-digit' }
-      : { month: 'short', day: 'numeric' },
+function DialogAction(props: { icon: ReactNode; title: string }) {
+  return (
+    <span className="menu__name">
+      <span className="menu__label">
+        {props.icon}
+        <span>{props.title}</span>
+      </span>
+    </span>
   )
 }
 
-function initial(account: Account | undefined, fallback: string): string {
-  const source = account?.email ?? fallback
-  return source.slice(0, 1).toUpperCase()
-}
+function noop() {}
 
 /**
  * Memoised: the app root re-renders on every streamed frame, and this subtree

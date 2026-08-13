@@ -104,6 +104,7 @@ export function createAnthropicMessagesTransport(options: AnthropicOptions): Api
             outputTokens,
             reasoningTokens: 0,
             totalTokens: inputTokens + outputTokens,
+            inputIncludesCached: false,
           },
         } satisfies ApiStreamEvent
         yield {

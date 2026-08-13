@@ -1,14 +1,24 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, memo } from 'react'
-import type { ApprovalMode, QueuedTurn, Usage } from '@harness/contracts'
+import {
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type DragEvent,
+} from 'react'
+import type { ApprovalMode, ProviderId, QueuedTurn, Usage } from '@harness/contracts'
 import type { ModelChoice } from '../model-catalog.js'
 import { BorderBeam } from 'border-beam'
 import {
-  ArrowDown,
   ArrowUp,
+  Box,
   CornerDownRight,
   File as FileIcon,
   Folder,
   GitBranch,
+  GripVertical,
   Image as ImageIcon,
   Laptop,
   LockOpen,
@@ -16,6 +26,7 @@ import {
   Pencil,
   Plus,
   ScanEye,
+  Server,
   ShieldCheck,
   ShieldQuestion,
   Square,
@@ -25,6 +36,7 @@ import {
 } from 'lucide-react'
 import { pickFiles, savePastedImage } from '../bridge.js'
 import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
+import type { Transport } from '../transport.js'
 import {
   describeMicrophoneError,
   formatRecordingDuration,
@@ -34,6 +46,13 @@ import {
 } from '../voice-recorder.js'
 import { ComposerVoiceButton } from './ComposerVoiceButton.js'
 import { ComposerVoiceRecorderBar } from './ComposerVoiceRecorderBar.js'
+import {
+  COMPOSER_RESOURCE_LIST_ID,
+  ComposerResourcePicker,
+  type ComposerResource,
+  type ComposerResourcePickerHandle,
+  type ComposerResourceTrigger,
+} from './ComposerResourcePicker.js'
 import { ImageViewer } from './ImageViewer.js'
 import { Menu, MenuItem } from './Menu.js'
 import { ModelSelector } from './ModelSelector.js'
@@ -96,9 +115,10 @@ const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i
 const COMPOSER_MIN_HEIGHT = 68
 const COMPOSER_MAX_HEIGHT = 242
 const COMPOSER_DOCK_ANIMATION_ID = 'harness-composer-dock'
-const COMPOSER_DOCK_MOTION_MS = 180
-const COMPOSER_DOCK_EASING = 'cubic-bezier(0.4, 0, 0.2, 1)'
-const SEND_MOTION_MS = 180
+const COMPOSER_DOCK_MOTION_MS = 320
+const COMPOSER_DOCK_EASING = 'cubic-bezier(0.23, 1, 0.32, 1)'
+const ATTACHMENTS_UNSUPPORTED = 'Attachments aren’t supported by this source.'
+const ATTACHMENTS_BLOCK_SEND = 'Remove attachments or switch to a source that supports them.'
 const PASTEABLE_IMAGE_TYPES = new Set([
   'image/png',
   'image/jpeg',
@@ -116,7 +136,32 @@ type ComposerAttachment = {
 
 type RunningSubmission = 'queue' | 'steer'
 
+export type SendAvailability = 'loading' | 'ready' | 'setup-required' | 'unavailable'
+
+export function composerResourceTriggerAt(
+  text: string,
+  cursor: number,
+): ComposerResourceTrigger | undefined {
+  const beforeCursor = text.slice(0, cursor)
+  const match = /(^|[\s([{])([$@])([\w.:-]*)$/.exec(beforeCursor)
+  if (!match) return undefined
+  const query = match[3] ?? ''
+  const start = cursor - query.length - 1
+  let end = cursor
+  while (end < text.length && /[\w.:-]/.test(text[end]!)) end += 1
+  return { marker: match[2] as '$' | '@', query, start, end }
+}
+
+export function composerPromptWithResources(text: string, resources: ComposerResource[]): string {
+  const references = resources.map((resource) => resource.token).join(' ')
+  const body = text.trim()
+  if (references && body) return `${references}\n\n${body}`
+  return references || body
+}
+
 function ComposerComponent(props: {
+  transport: Transport
+  provider: ProviderId
   projects: Project[]
   projectPath: string | undefined
   projectName: string | undefined
@@ -131,14 +176,18 @@ function ComposerComponent(props: {
   usage?: Usage | undefined
   approval: ApprovalMode
   autoReviewSupported: boolean
+  attachmentsSupported: boolean
   voiceAvailable: boolean
   disabled: boolean
+  sendAvailability: SendAvailability
   running: boolean
   newSession: boolean
   isolate: boolean
   designMode: boolean
   focusRequest: number
-  draftRequest?: { text: string; request: number } | undefined
+  draftRequest?: { text: string; attachments?: string[]; request: number } | undefined
+  onDraftChange?: ((text: string) => void) | undefined
+  onAttachmentsChange?: ((attachments: string[]) => void) | undefined
   queuedTurns: QueuedTurn[]
   canSteerQueue: boolean
   onModelChange: (id: string) => void
@@ -152,13 +201,14 @@ function ComposerComponent(props: {
   onProjectChange: (path: string) => void
   onBranchChange: (branch: string) => void
   onProjectRequired: () => void
+  onSetupProvider: () => void
   onSend: (text: string, attachments: string[]) => void
   onSteer: (text: string, attachments: string[]) => void
   onInterrupt: () => void
   /** An interrupt is sent and the turn has not ended yet. */
   stopping?: boolean | undefined
   onDeleteQueuedTurn: (id: string) => void
-  onMoveQueuedTurn: (id: string, direction: 'up' | 'down') => void
+  onMoveQueuedTurn: (id: string, direction: 'up' | 'down') => void | Promise<boolean | void>
   onSteerQueuedTurn: (id: string) => void
 }) {
   const [text, setText] = useState('')
@@ -168,25 +218,68 @@ function ComposerComponent(props: {
   const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle')
   const [voiceError, setVoiceError] = useState<string>()
   const [dragging, setDragging] = useState(false)
-  const [sending, setSending] = useState(false)
+  const [draggedQueueId, setDraggedQueueId] = useState<string>()
+  const [queueDropTarget, setQueueDropTarget] = useState<{
+    id: string
+    position: 'before' | 'after'
+  }>()
+  const [selectedResources, setSelectedResources] = useState<ComposerResource[]>([])
+  const [resourceTrigger, setResourceTrigger] = useState<ComposerResourceTrigger>()
   const area = useRef<HTMLTextAreaElement>(null)
+  const resourcePicker = useRef<ComposerResourcePickerHandle>(null)
   const voiceRequest = useRef<string | undefined>(undefined)
   const voiceOperation = useRef(0)
   const cancelVoiceRequest = useRef(props.onCancelVoice)
+  const sendAvailabilityRef = useRef(props.sendAvailability)
   const textRef = useRef(text)
+  const attachmentsSupportedRef = useRef(props.attachmentsSupported)
   const previewUrls = useRef(new Set<string>())
   const resizeFrame = useRef<number | undefined>(undefined)
-  const sendTimer = useRef<number | undefined>(undefined)
-  const transitionGroup = useRef<HTMLDivElement>(null)
   const composerAnchor = useRef<HTMLDivElement>(null)
   const previousNewSession = useRef(props.newSession)
   const previousComposerRect = useRef<DOMRect | null>(null)
   const dockAnimation = useRef<Animation | null>(null)
   const mounted = useRef(true)
   const recorder = useVoiceRecorder()
+  const selectedResourceKeys = useMemo(
+    () => new Set(selectedResources.map((resource) => resource.key)),
+    [selectedResources],
+  )
+
+  const endQueueDrag = () => {
+    setDraggedQueueId(undefined)
+    setQueueDropTarget(undefined)
+  }
+
+  const dropQueuedTurn = (event: DragEvent<HTMLDivElement>, targetId: string) => {
+    event.preventDefault()
+    if (!draggedQueueId || !queueDropTarget || draggedQueueId === targetId) {
+      endQueueDrag()
+      return
+    }
+    const sourceIndex = props.queuedTurns.findIndex((turn) => turn.id === draggedQueueId)
+    const remaining = props.queuedTurns.filter((turn) => turn.id !== draggedQueueId)
+    const targetIndex = remaining.findIndex((turn) => turn.id === targetId)
+    const destination = targetIndex + (queueDropTarget.position === 'after' ? 1 : 0)
+    if (sourceIndex >= 0 && targetIndex >= 0) {
+      const direction = destination < sourceIndex ? 'up' : 'down'
+      void (async () => {
+        for (let index = 0; index < Math.abs(destination - sourceIndex); index += 1) {
+          if ((await props.onMoveQueuedTurn(draggedQueueId, direction)) === false) break
+        }
+      })()
+    }
+    endQueueDrag()
+  }
 
   textRef.current = text
+  attachmentsSupportedRef.current = props.attachmentsSupported
   cancelVoiceRequest.current = props.onCancelVoice
+  sendAvailabilityRef.current = props.sendAvailability
+
+  useEffect(() => {
+    if (props.attachmentsSupported) setAttachmentError(undefined)
+  }, [props.attachmentsSupported])
 
   useEffect(() => {
     mounted.current = true
@@ -195,7 +288,6 @@ function ComposerComponent(props: {
       void recorder.cancel()
       if (voiceRequest.current) cancelVoiceRequest.current(voiceRequest.current)
       if (resizeFrame.current !== undefined) window.cancelAnimationFrame(resizeFrame.current)
-      if (sendTimer.current !== undefined) window.clearTimeout(sendTimer.current)
       dockAnimation.current?.cancel()
       for (const url of previewUrls.current) URL.revokeObjectURL(url)
       previewUrls.current.clear()
@@ -206,8 +298,8 @@ function ComposerComponent(props: {
   // composer was before send, render it in the docked layout, then animate only
   // that positional delta. This keeps focus and textarea state on one DOM tree.
   useLayoutEffect(() => {
-    const group = transitionGroup.current
-    const nextRect = composerAnchor.current?.getBoundingClientRect() ?? null
+    const group = composerAnchor.current
+    const nextRect = group?.getBoundingClientRect() ?? null
     const stateChanged = previousNewSession.current !== props.newSession
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 
@@ -241,6 +333,11 @@ function ComposerComponent(props: {
     if (props.focusRequest > 0 && !props.disabled) area.current?.focus()
   }, [props.focusRequest, props.disabled])
 
+  useEffect(() => {
+    setSelectedResources([])
+    setResourceTrigger(undefined)
+  }, [props.provider, props.projectPath])
+
   // A provider that cannot enumerate models shows nothing. Sitting on
   // "Loading models…" forever is the UI lying about what it is doing.
   const showModelPlaceholder = props.models.length === 0 && !props.modelsLoaded
@@ -263,8 +360,15 @@ function ComposerComponent(props: {
     })
   }
 
-  const setValue = (value: string) => {
+  const updateText = (value: string) => {
+    textRef.current = value
     setText(value)
+    props.onDraftChange?.(value)
+  }
+
+  const setValue = (value: string) => {
+    updateText(value)
+    setResourceTrigger(undefined)
     requestAnimationFrame(() => {
       area.current?.focus()
       grow()
@@ -272,7 +376,12 @@ function ComposerComponent(props: {
   }
 
   useEffect(() => {
-    if (props.draftRequest) setValue(props.draftRequest.text)
+    if (!props.draftRequest) return
+    setValue(props.draftRequest.text)
+    if (props.draftRequest.attachments !== undefined) {
+      clearAttachments()
+      addFiles(props.draftRequest.attachments)
+    }
   }, [props.draftRequest?.request])
 
   const addFiles = (paths: string[]) => {
@@ -286,6 +395,16 @@ function ComposerComponent(props: {
           .map((path) => ({ id: path, name: basename(path), path })),
       ]
     })
+  }
+
+  const attachFiles = (paths: string[]) => {
+    if (paths.length === 0) return
+    if (!attachmentsSupportedRef.current) {
+      setAttachmentError(ATTACHMENTS_UNSUPPORTED)
+      return
+    }
+    setAttachmentError(undefined)
+    addFiles(paths)
   }
 
   const addPastedImages = (files: File[]) => {
@@ -342,27 +461,33 @@ function ComposerComponent(props: {
     setAttachments([])
   }
 
+  useEffect(() => {
+    props.onAttachmentsChange?.(attachments.flatMap((attachment) => attachment.path ?? []))
+  }, [attachments, props.onAttachmentsChange])
+
   const sendContent = (content: string, submission: RunningSubmission = 'queue') => {
-    const trimmed = content.trim()
+    const trimmed = composerPromptWithResources(content, selectedResources)
     const paths = attachments.flatMap((attachment) => attachment.path ?? [])
-    if (trimmed === '' || paths.length !== attachments.length || props.disabled) return
+    if (
+      trimmed === '' ||
+      paths.length !== attachments.length ||
+      props.disabled ||
+      sendAvailabilityRef.current !== 'ready' ||
+      (!props.attachmentsSupported && attachments.length > 0)
+    )
+      return false
     if (!props.projectPath) {
       props.onProjectRequired()
-      return
+      return false
     }
     const el = area.current
     const currentHeight = el?.offsetHeight ?? COMPOSER_MIN_HEIGHT
     previousComposerRect.current = composerAnchor.current?.getBoundingClientRect() ?? null
-    if (sendTimer.current !== undefined) window.clearTimeout(sendTimer.current)
-    setSending(true)
-    sendTimer.current = window.setTimeout(() => {
-      sendTimer.current = undefined
-      setSending(false)
-    }, SEND_MOTION_MS)
     if (submission === 'steer') props.onSteer(trimmed, paths)
     else props.onSend(trimmed, paths)
-    textRef.current = ''
-    setText('')
+    updateText('')
+    setSelectedResources([])
+    setResourceTrigger(undefined)
     clearAttachments()
     if (el) {
       if (resizeFrame.current !== undefined) window.cancelAnimationFrame(resizeFrame.current)
@@ -374,6 +499,7 @@ function ComposerComponent(props: {
       })
       el.focus()
     }
+    return true
   }
 
   const submit = (submission: RunningSubmission = 'queue') => {
@@ -396,8 +522,8 @@ function ComposerComponent(props: {
   ) => {
     const inserted = insertTranscriptAtCursor(textRef.current, transcript, cursor)
     if (!inserted) return
-    textRef.current = inserted.text
-    setText(inserted.text)
+    updateText(inserted.text)
+    setResourceTrigger(undefined)
     requestAnimationFrame(() => {
       area.current?.focus()
       area.current?.setSelectionRange(inserted.cursor, inserted.cursor)
@@ -445,8 +571,7 @@ function ComposerComponent(props: {
       ) {
         const inserted = insertTranscriptAtCursor(textRef.current, transcript, cursor)
         if (inserted) {
-          if (sendAfter) sendContent(inserted.text)
-          else insertTranscript(transcript, cursor)
+          if (!sendAfter || !sendContent(inserted.text)) insertTranscript(transcript, cursor)
         }
       }
     } catch (error) {
@@ -494,20 +619,50 @@ function ComposerComponent(props: {
     if (!props.voiceAvailable && voiceStateRef.current !== 'idle') cancelVoice()
   }, [props.voiceAvailable])
 
-  const showStop = props.running && text.trim() === '' && attachments.length === 0
+  const showStop =
+    props.running &&
+    text.trim() === '' &&
+    attachments.length === 0 &&
+    selectedResources.length === 0
   const submitLabel = props.running ? 'Queue' : 'Send'
   const sendDisabled =
-    text.trim() === '' || attachments.some((attachment) => !attachment.path) || props.disabled
+    composerPromptWithResources(text, selectedResources) === '' ||
+    attachments.some((attachment) => !attachment.path) ||
+    props.disabled ||
+    props.sendAvailability !== 'ready' ||
+    (!props.attachmentsSupported && attachments.length > 0)
+  const visibleAttachmentError =
+    !props.attachmentsSupported && attachments.length > 0 ? ATTACHMENTS_BLOCK_SEND : attachmentError
+
+  const selectResource = (resource: ComposerResource) => {
+    const trigger = resourceTrigger
+    if (!trigger) return
+    setSelectedResources((current) =>
+      current.some((entry) => entry.key === resource.key) ? current : [...current, resource],
+    )
+
+    const before = textRef.current.slice(0, trigger.start)
+    let after = textRef.current.slice(trigger.end)
+    if ((before === '' || before.endsWith(' ')) && after.startsWith(' ')) after = after.slice(1)
+    const next = before + after
+    updateText(next)
+    setResourceTrigger(undefined)
+    requestAnimationFrame(() => {
+      area.current?.focus()
+      area.current?.setSelectionRange(trigger.start, trigger.start)
+      grow()
+    })
+  }
 
   return (
     <>
-      <div className={`composer${props.newSession ? ' is-new-session' : ''}`} ref={transitionGroup}>
+      <div className={`composer${props.newSession ? ' is-new-session' : ''}`}>
         <div
           ref={composerAnchor}
           className={`composer__box ${dragging ? 'is-dropping' : ''}`}
           onDragOver={(e) => {
             e.preventDefault()
-            setDragging(true)
+            if (props.attachmentsSupported) setDragging(true)
           }}
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => {
@@ -518,7 +673,7 @@ function ComposerComponent(props: {
             const paths = Array.from(e.dataTransfer.files)
               .map((file) => (file as File & { path?: string }).path)
               .filter((path): path is string => typeof path === 'string' && path !== '')
-            addFiles(paths)
+            attachFiles(paths)
           }}
         >
           {props.newSession ? (
@@ -605,25 +760,49 @@ function ComposerComponent(props: {
           {props.queuedTurns.length > 0 ? (
             <div className="composer__queue" aria-label="Queued prompts">
               {props.queuedTurns.map((queuedTurn, index) => (
-                <div className="queue-row" key={queuedTurn.id}>
-                  <div className="queue-row__order" aria-label={`Reorder ${queuedTurn.text}`}>
-                    <button
-                      type="button"
-                      onClick={() => props.onMoveQueuedTurn(queuedTurn.id, 'up')}
-                      disabled={index === 0}
-                      aria-label={`Move ${queuedTurn.text} up`}
-                    >
-                      <ArrowUp size={12} aria-hidden />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => props.onMoveQueuedTurn(queuedTurn.id, 'down')}
-                      disabled={index === props.queuedTurns.length - 1}
-                      aria-label={`Move ${queuedTurn.text} down`}
-                    >
-                      <ArrowDown size={12} aria-hidden />
-                    </button>
-                  </div>
+                <div
+                  className={`queue-row${draggedQueueId === queuedTurn.id ? ' is-dragging' : ''}`}
+                  data-drop-position={
+                    queueDropTarget?.id === queuedTurn.id ? queueDropTarget.position : undefined
+                  }
+                  key={queuedTurn.id}
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = 'move'
+                    event.dataTransfer.setData('text/plain', queuedTurn.id)
+                    setDraggedQueueId(queuedTurn.id)
+                  }}
+                  onDragOver={(event) => {
+                    if (!draggedQueueId || draggedQueueId === queuedTurn.id) return
+                    event.preventDefault()
+                    event.dataTransfer.dropEffect = 'move'
+                    const bounds = event.currentTarget.getBoundingClientRect()
+                    setQueueDropTarget({
+                      id: queuedTurn.id,
+                      position: event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after',
+                    })
+                  }}
+                  onDrop={(event) => dropQueuedTurn(event, queuedTurn.id)}
+                  onDragEnd={endQueueDrag}
+                >
+                  <button
+                    type="button"
+                    className="queue-row__handle"
+                    title="Drag to reorder"
+                    aria-label={`Drag ${queuedTurn.text} to reorder`}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+                      event.preventDefault()
+                      const direction = event.key === 'ArrowUp' ? 'up' : 'down'
+                      if (
+                        (direction === 'up' && index > 0) ||
+                        (direction === 'down' && index < props.queuedTurns.length - 1)
+                      )
+                        void props.onMoveQueuedTurn(queuedTurn.id, direction)
+                    }}
+                  >
+                    <GripVertical size={14} aria-hidden />
+                  </button>
                   <span className="queue-row__text" title={queuedTurn.text}>
                     {queuedTurn.text}
                   </span>
@@ -661,6 +840,16 @@ function ComposerComponent(props: {
             </div>
           ) : null}
 
+          <ComposerResourcePicker
+            ref={resourcePicker}
+            transport={props.transport}
+            provider={props.provider}
+            projectPath={props.projectPath}
+            trigger={resourceTrigger}
+            selectedKeys={selectedResourceKeys}
+            onSelect={selectResource}
+          />
+
           <BorderBeam
             className={`composer__design-beam${props.newSession ? ' is-shelved' : ''}`}
             size="md"
@@ -669,7 +858,6 @@ function ComposerComponent(props: {
             brightness={1.7}
             duration={2.4}
             active={props.designMode}
-            borderRadius={20}
           >
             <div className="composer__prompt">
               <div className="chips">
@@ -719,9 +907,36 @@ function ComposerComponent(props: {
                     </span>
                   ),
                 )}
-                {attachmentError ? (
+                {selectedResources.map((resource) => {
+                  const ResourceIcon = resource.kind === 'skill' ? Box : Server
+                  return (
+                    <span
+                      className="chip chip--resource"
+                      key={resource.key}
+                      title={`${resource.kind === 'skill' ? 'Skill' : 'MCP server'} · ${resource.description}`}
+                    >
+                      <ResourceIcon size={14} strokeWidth={1.7} aria-hidden />
+                      <span className="chip__label">{resource.name}</span>
+                      <button
+                        type="button"
+                        className="chip__x"
+                        onClick={() => {
+                          setSelectedResources((current) =>
+                            current.filter((entry) => entry.key !== resource.key),
+                          )
+                          area.current?.focus()
+                        }}
+                        title="Remove"
+                        aria-label={`Remove ${resource.name}`}
+                      >
+                        <X size={10} aria-hidden />
+                      </button>
+                    </span>
+                  )
+                })}
+                {visibleAttachmentError ? (
                   <span className="chip chip--error" role="alert">
-                    {attachmentError}
+                    {visibleAttachmentError}
                   </span>
                 ) : null}
               </div>
@@ -734,14 +949,43 @@ function ComposerComponent(props: {
                   spellCheck={false}
                   disabled={props.disabled}
                   aria-keyshortcuts={shortcutAria(SHORTCUTS.focusComposer)}
+                  aria-controls={resourceTrigger ? COMPOSER_RESOURCE_LIST_ID : undefined}
+                  aria-expanded={resourceTrigger !== undefined}
+                  aria-haspopup="listbox"
+                  aria-autocomplete="list"
                   onChange={(e) => {
-                    setText(e.target.value)
+                    const value = e.target.value
+                    updateText(value)
+                    setResourceTrigger(
+                      composerResourceTriggerAt(value, e.target.selectionStart ?? value.length),
+                    )
                     grow()
                   }}
                   onKeyDown={(e) => {
                     // IME users press Escape to dismiss the candidate window;
                     // that must never reach the shortcuts below (interrupt!).
                     if (e.nativeEvent.isComposing) return
+                    if (resourceTrigger) {
+                      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                        e.preventDefault()
+                        resourcePicker.current?.move(e.key === 'ArrowDown' ? 1 : -1)
+                        return
+                      }
+                      if (e.key === 'Tab') {
+                        if (resourcePicker.current?.selectActive()) e.preventDefault()
+                        return
+                      }
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        if (!resourcePicker.current?.selectActive()) setResourceTrigger(undefined)
+                        return
+                      }
+                      if (e.key === 'Escape') {
+                        e.preventDefault()
+                        setResourceTrigger(undefined)
+                        return
+                      }
+                    }
                     // Typing turns the orb into Queue, which made the agent
                     // unstoppable mid-draft. Esc stays the brake.
                     if (e.key === 'Escape' && props.running) {
@@ -758,6 +1002,13 @@ function ComposerComponent(props: {
                       )
                     }
                   }}
+                  onSelect={(e) => {
+                    const target = e.currentTarget
+                    setResourceTrigger(
+                      composerResourceTriggerAt(textRef.current, target.selectionStart ?? 0),
+                    )
+                  }}
+                  onBlur={() => setResourceTrigger(undefined)}
                   onPaste={(e) => {
                     const files = Array.from(e.clipboardData.files)
                     const images = files.filter((file) => PASTEABLE_IMAGE_TYPES.has(file.type))
@@ -767,7 +1018,11 @@ function ComposerComponent(props: {
                       .filter((path): path is string => typeof path === 'string' && path !== '')
                     if (images.length > 0 || paths.length > 0) {
                       e.preventDefault()
-                      addFiles(paths)
+                      if (!props.attachmentsSupported) {
+                        setAttachmentError(ATTACHMENTS_UNSUPPORTED)
+                        return
+                      }
+                      attachFiles(paths)
                       addPastedImages(images)
                     }
                   }}
@@ -775,22 +1030,36 @@ function ComposerComponent(props: {
                 />
               </div>
 
-              <div className="tools">
-                <button
-                  type="button"
-                  className="menutrigger composer__add"
-                  disabled={props.disabled}
-                  aria-label="Attach files"
-                  onClick={() => void pickFiles().then(addFiles)}
-                >
-                  <span className="tool tool--icon">
-                    <Plus size={15} aria-hidden />
+              {props.sendAvailability !== 'ready' && props.sendAvailability !== 'loading' ? (
+                <div className="composer__provider-state">
+                  <span role="status">
+                    {props.sendAvailability === 'setup-required'
+                      ? 'Provider setup required'
+                      : 'Provider unavailable'}
                   </span>
-                </button>
+                  <button className="ghost" type="button" onClick={props.onSetupProvider}>
+                    Set up a provider
+                  </button>
+                </div>
+              ) : null}
+
+              <div className="tools">
+                {props.attachmentsSupported ? (
+                  <button
+                    type="button"
+                    className="menutrigger composer__add"
+                    disabled={props.disabled}
+                    aria-label="Attach files"
+                    onClick={() => void pickFiles().then(attachFiles)}
+                  >
+                    <span className="tool tool--icon">
+                      <Plus size={15} aria-hidden />
+                    </span>
+                  </button>
+                ) : null}
 
                 <Menu
                   label="Permissions"
-                  disabled={props.running}
                   triggerClassName="composer__permission"
                   trigger={() => (
                     <span
@@ -833,7 +1102,6 @@ function ComposerComponent(props: {
                   strength={0.58}
                   duration={2.4}
                   active={props.designMode}
-                  borderRadius={10}
                 >
                   <button
                     type="button"
@@ -889,31 +1157,41 @@ function ComposerComponent(props: {
                     onSubmit={() => void transcribeVoice(true)}
                   />
                 ) : (
-                  <BorderBeam
-                    className="composer__send-beam"
-                    size="sm"
-                    colorVariant="ocean"
-                    strength={0.72}
-                    active={showStop}
-                    borderRadius={15}
-                  >
-                    <button
-                      className={`orb${showStop ? ' orb--stop' : ''}${sending ? ' is-sending' : ''}${
-                        showStop && props.stopping ? ' is-stopping' : ''
-                      }`}
-                      onClick={showStop ? props.onInterrupt : () => submit()}
-                      disabled={showStop ? Boolean(props.stopping) : sendDisabled}
-                      title={showStop ? (props.stopping ? 'Stopping…' : 'Stop') : submitLabel}
-                      aria-label={showStop ? (props.stopping ? 'Stopping…' : 'Stop') : submitLabel}
-                    >
-                      <span className="orb__icon orb__icon--send">
-                        <ArrowUp size={15} aria-hidden />
-                      </span>
-                      <span className="orb__icon orb__icon--stop">
-                        <Square size={9} fill="currentColor" strokeWidth={0} aria-hidden />
-                      </span>
-                    </button>
-                  </BorderBeam>
+                  <>
+                    {props.running && !showStop && props.canSteerQueue ? (
+                      <button
+                        type="button"
+                        className="menutrigger tool composer__steer"
+                        onClick={() => submit('steer')}
+                        disabled={sendDisabled}
+                        aria-label="Steer current draft"
+                        title="Steer now (Ctrl+Enter)"
+                      >
+                        <CornerDownRight size={14} aria-hidden />
+                        <span>Steer</span>
+                      </button>
+                    ) : null}
+                    <span className="composer__send-beam">
+                      <button
+                        className={`orb${showStop ? ' orb--stop' : ''}${
+                          showStop && props.stopping ? ' is-stopping' : ''
+                        }`}
+                        onClick={showStop ? props.onInterrupt : () => submit()}
+                        disabled={showStop ? Boolean(props.stopping) : sendDisabled}
+                        title={showStop ? (props.stopping ? 'Stopping…' : 'Stop') : submitLabel}
+                        aria-label={
+                          showStop ? (props.stopping ? 'Stopping…' : 'Stop') : submitLabel
+                        }
+                      >
+                        <span className="orb__icon orb__icon--send">
+                          <ArrowUp size={15} aria-hidden />
+                        </span>
+                        <span className="orb__icon orb__icon--stop">
+                          <Square size={9} fill="currentColor" strokeWidth={0} aria-hidden />
+                        </span>
+                      </button>
+                    </span>
+                  </>
                 )}
               </div>
             </div>

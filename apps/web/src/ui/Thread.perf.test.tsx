@@ -4,7 +4,7 @@ import { render, cleanup } from '@testing-library/react'
 import type { DomainEvent, Item } from '@harness/contracts'
 import { Thread, workLabel } from './Thread.js'
 import { makeFixtureThread } from './fixture.js'
-import { emptyThread, reduce } from '../thread-store.js'
+import { activeTurnIsSearching, emptyThread, reduce } from '../thread-store.js'
 
 /**
  * Performance budgets, enforced rather than aspired to.
@@ -204,5 +204,71 @@ describe('thread at scale', () => {
 
     expect(state.items).toHaveLength(1000)
     expect(elapsed).toBeLessThan(1000)
+  })
+
+  it('finds active search work without walking old transcript items', () => {
+    const history = makeFixtureThread(1_000)
+    const activeSearch: Item = {
+      id: 'active-search',
+      turnId: 'active-turn',
+      type: 'tool_call',
+      status: 'started',
+      text: 'search files',
+      createdAt: Date.now(),
+    }
+    const turnlessSteer: Item = {
+      id: 'local:steer',
+      turnId: '',
+      type: 'message',
+      role: 'user',
+      status: 'completed',
+      text: 'Keep going',
+      createdAt: Date.now(),
+    }
+    const activeTail: Item = {
+      id: 'active-tail',
+      turnId: activeSearch.turnId,
+      type: 'reasoning',
+      status: 'started',
+      text: 'Inspecting results',
+      createdAt: Date.now(),
+    }
+    let itemReads = 0
+    const items = new Proxy([...history, activeSearch, turnlessSteer, activeTail], {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && /^\d+$/.test(property)) itemReads += 1
+        return Reflect.get(target, property, receiver)
+      },
+    })
+
+    expect(activeTurnIsSearching(items, activeSearch.turnId)).toBe(true)
+    // Complexity budget: even a turnless steer between active items must not
+    // put the old history on the per-frame path. A forward scan reads 1,003.
+    expect(itemReads).toBeLessThan(10)
+  })
+
+  it('stops before history while the active turn has no canonical items', () => {
+    const history = makeFixtureThread(1_000)
+    const turnlessSteer: Item = {
+      id: 'local:steer',
+      turnId: '',
+      type: 'message',
+      role: 'user',
+      status: 'completed',
+      text: 'Keep going',
+      createdAt: Date.now(),
+    }
+    let itemReads = 0
+    const items = new Proxy([...history, turnlessSteer], {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && /^\d+$/.test(property)) itemReads += 1
+        return Reflect.get(target, property, receiver)
+      },
+    })
+
+    expect(activeTurnIsSearching(items, 'active-turn')).toBe(false)
+    // During the optimistic/canonical startup gap there is no active item to
+    // find. The previous turn must still bound this per-render lookup.
+    expect(itemReads).toBeLessThan(10)
   })
 })

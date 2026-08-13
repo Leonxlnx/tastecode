@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type {
   ApprovalDecision,
   ApprovalMode,
+  ApprovalRequest,
   Capabilities,
   DomainEvent,
   McpServerConfig,
@@ -24,6 +25,7 @@ export const OPENCODE_CAPABILITIES: Capabilities = {
 
 type Events = { event: [DomainEvent]; log: [string] }
 type OpenCodeProtocol = 'v1' | 'v2'
+type Spawn = typeof spawnCli
 
 export type OpenCodeStartOptions = {
   model?: string | undefined
@@ -135,6 +137,7 @@ export function openCodeMcpConfig(
 }
 
 export class OpenCodeAdapter extends EventEmitter<Events> {
+  readonly #spawn: Spawn
   readonly #configuredBaseUrl: string | undefined
   readonly #mcpServers: McpServerConfig[]
   readonly #mcpCredentials: Record<string, string>
@@ -153,7 +156,8 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   #mapper: OpenCodeEventMapper | undefined
   #eventController: AbortController | undefined
   #approval: ApprovalMode = 'ask'
-  #pendingApprovals = new Set<string>()
+  #pendingApprovals = new Map<string, { request: ApprovalRequest; surfaced: boolean }>()
+  #replyingApprovals = new Map<string, Promise<unknown>>()
   #model: string | undefined
   #effort: string | undefined
   #instructions: string | undefined
@@ -164,9 +168,11 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       baseUrl?: string
       mcpServers?: McpServerConfig[]
       mcpCredentials?: Record<string, string>
+      spawn?: Spawn
     } = {},
   ) {
     super()
+    this.#spawn = options.spawn ?? spawnCli
     this.#configuredBaseUrl = options.baseUrl
     this.#mcpServers = options.mcpServers ?? []
     this.#mcpCredentials = options.mcpCredentials ?? {}
@@ -188,7 +194,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
         this.#mcpServers.length > 0
           ? { mcp: openCodeMcpConfig(this.#mcpServers, this.#mcpCredentials) }
           : {}
-      const server = await launchOpenCodeServer(config)
+      const server = await launchOpenCodeServer(config, this.#spawn)
       this.#server = server
       this.#baseUrl = server.url
       this.#authorization = server.authorization
@@ -305,7 +311,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     const turnId = `${threadId}-turn-${++this.#turnCounter}`
     this.#turnId = turnId
     this.#turnSawActivity = false
-    this.#mapper = new OpenCodeEventMapper(turnId)
+    this.#mapper = new OpenCodeEventMapper(turnId, this.#model)
     this.emit('event', {
       type: 'turn.started',
       turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
@@ -348,36 +354,61 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   }
 
   respondToApproval(approvalId: string, decision: ApprovalDecision): void {
-    if (!this.#sessionId || !this.#pendingApprovals.has(approvalId)) return
-    this.#pendingApprovals.delete(approvalId)
+    const pending = this.#pendingApprovals.get(approvalId)
+    if (
+      !this.#sessionId ||
+      !pending ||
+      this.#replyingApprovals.has(approvalId) ||
+      (this.#protocol !== 'v2' && !this.#client)
+    )
+      return
     const response =
       decision === 'approve-session' ? 'always' : decision === 'approve' ? 'once' : 'reject'
-    if (this.#protocol === 'v2') {
-      void this.#v2Request(
-        `/api/session/${encodeURIComponent(this.#sessionId)}/permission/${encodeURIComponent(approvalId)}/reply`,
-        { method: 'POST', body: JSON.stringify({ reply: response }) },
-      )
-        .then(() => this.emit('event', { type: 'approval.resolved', id: approvalId }))
-        .catch(() => this.emit('log', 'OpenCode permission response failed'))
-      if (decision === 'abort') {
-        void this.interrupt(this.#threadId!).catch(() => this.emit('log', 'OpenCode abort failed'))
-      }
-      return
-    }
-    if (!this.#client) return
-    void this.#client
-      .postSessionIdPermissionsPermissionId({
-        path: { id: this.#sessionId, permissionID: approvalId },
-        body: { response },
-        throwOnError: true,
+    const reply =
+      this.#protocol === 'v2'
+        ? this.#v2Request(
+            `/api/session/${encodeURIComponent(this.#sessionId)}/permission/${encodeURIComponent(approvalId)}/reply`,
+            { method: 'POST', body: JSON.stringify({ reply: response }) },
+          )
+        : this.#client!.postSessionIdPermissionsPermissionId({
+            path: { id: this.#sessionId, permissionID: approvalId },
+            body: { response },
+            throwOnError: true,
+          })
+    this.#replyingApprovals.set(approvalId, reply)
+    void reply
+      .then(() => {
+        if (
+          this.#replyingApprovals.get(approvalId) === reply &&
+          this.#pendingApprovals.get(approvalId) === pending &&
+          this.#pendingApprovals.delete(approvalId)
+        )
+          this.emit('event', { type: 'approval.resolved', id: approvalId })
       })
-      .then(() => this.emit('event', { type: 'approval.resolved', id: approvalId }))
-      .catch(() => this.emit('log', 'OpenCode permission response failed'))
+      .catch(() => {
+        if (this.#replyingApprovals.get(approvalId) !== reply) return
+        this.#replyingApprovals.delete(approvalId)
+        if (this.#pendingApprovals.get(approvalId) === pending && !pending.surfaced) {
+          pending.surfaced = true
+          this.emit('event', { type: 'approval.requested', request: pending.request })
+        }
+        this.emit('log', 'OpenCode permission response failed')
+      })
+      .finally(() => {
+        if (this.#replyingApprovals.get(approvalId) === reply)
+          this.#replyingApprovals.delete(approvalId)
+      })
     if (decision === 'abort') {
       // The abort call can reject (server down, restarting); without a catch
       // that rejection escapes respondToApproval and kills the process.
       void this.interrupt(this.#threadId!).catch(() => this.emit('log', 'OpenCode abort failed'))
     }
+  }
+
+  /** Live access-level change; read again for every permission request. */
+  setApproval(approval: ApprovalMode): void {
+    this.#validateApproval(approval)
+    this.#approval = approval
   }
 
   async listModels(): Promise<Model[]> {
@@ -423,6 +454,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#effort = undefined
     this.#instructionsPending = false
     this.#pendingApprovals.clear()
+    this.#replyingApprovals.clear()
   }
 
   #newClient(directory?: string): OpencodeClient {
@@ -575,7 +607,16 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
         ? data.resources.filter((value): value is string => typeof value === 'string')
         : []
       const command = /bash|shell|command|execute/i.test(action)
-      this.#pendingApprovals.add(approvalId)
+      const request: ApprovalRequest = {
+        id: approvalId,
+        kind: command ? 'command' : 'file_change',
+        ...(command
+          ? { command: resources.join(' ') || action }
+          : { path: resources[0] || action }),
+        createdAt: event.created ?? Date.now(),
+      }
+      const surfaced = this.#approval === 'ask' || (this.#approval === 'auto' && command)
+      this.#pendingApprovals.set(approvalId, { request, surfaced })
       if (this.#approval === 'full' || (this.#approval === 'auto' && !command)) {
         this.respondToApproval(
           approvalId,
@@ -585,14 +626,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       }
       this.emit('event', {
         type: 'approval.requested',
-        request: {
-          id: approvalId,
-          kind: command ? 'command' : 'file_change',
-          ...(command
-            ? { command: resources.join(' ') || action }
-            : { path: resources[0] || action }),
-          createdAt: event.created ?? Date.now(),
-        },
+        request,
       })
       return
     }
@@ -623,23 +657,24 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     if (event.type === 'permission.updated') {
       const permission = event.properties
       const command = /bash|shell|command/i.test(permission.type)
-      if (this.#approval === 'full' || (this.#approval === 'auto' && !command)) {
-        this.#pendingApprovals.add(permission.id)
+      const request: ApprovalRequest = {
+        id: permission.id,
+        kind: command ? 'command' : 'file_change',
+        ...(command ? { command: permission.title } : { path: permission.title }),
+        createdAt: permission.time.created,
+      }
+      const autoReply = this.#approval === 'full' || (this.#approval === 'auto' && !command)
+      this.#pendingApprovals.set(permission.id, { request, surfaced: !autoReply })
+      if (autoReply) {
         this.respondToApproval(
           permission.id,
           this.#approval === 'full' ? 'approve-session' : 'approve',
         )
         return
       }
-      this.#pendingApprovals.add(permission.id)
       this.emit('event', {
         type: 'approval.requested',
-        request: {
-          id: permission.id,
-          kind: command ? 'command' : 'file_change',
-          ...(command ? { command: permission.title } : { path: permission.title }),
-          createdAt: permission.time.created,
-        },
+        request,
       })
       return
     }
@@ -670,7 +705,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     if (!this.#turnId) return
     const turnId = this.#turnId
     const finishEvents = this.#mapper?.finish() ?? []
-    const approvals = [...this.#pendingApprovals]
+    const approvals = [...this.#pendingApprovals.keys()]
     this.#pendingApprovals.clear()
     // Live-turn state clears before any emit: the orchestrator reacts to
     // `turn.completed` synchronously inside the emit (the design flow sends
@@ -691,7 +726,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     const failedTurnId = this.#turnId
     const threadId = this.#threadId
     const finishEvents = this.#mapper?.finish('failed') ?? []
-    const approvals = [...this.#pendingApprovals]
+    const approvals = [...this.#pendingApprovals.keys()]
     this.#pendingApprovals.clear()
     // Same ordering as #finishTurn: listeners may start the next turn inside
     // these emits, so the live-turn state must already be gone.
@@ -767,7 +802,10 @@ function openCodeV2Model(
   }
 }
 
-async function launchOpenCodeServer(config: Record<string, unknown>): Promise<{
+async function launchOpenCodeServer(
+  config: Record<string, unknown>,
+  spawn: Spawn = spawnCli,
+): Promise<{
   url: string
   authorization: string
   close(): void
@@ -778,7 +816,7 @@ async function launchOpenCodeServer(config: Record<string, unknown>): Promise<{
   const password = randomUUID()
   const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`
   return new Promise((resolve, reject) => {
-    const child = spawnCli('opencode', ['serve', '--hostname=127.0.0.1', '--port=0'], {
+    const child = spawn('opencode', ['serve', '--hostname=127.0.0.1', '--port=0'], {
       env: {
         OPENCODE_SERVER_USERNAME: username,
         OPENCODE_SERVER_PASSWORD: password,

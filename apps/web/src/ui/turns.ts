@@ -1,5 +1,9 @@
 import type { Item } from '@harness/contracts'
 
+export type TurnTiming = Readonly<Record<string, { startedAt?: number; completedAt?: number }>>
+
+const EMPTY_TURN_TIMING: TurnTiming = {}
+
 /**
  * Turn boundaries within the flat item list.
  *
@@ -16,15 +20,25 @@ export type TurnMark = {
   count: number
 }
 
+export type TurnActivityGroup = {
+  /** Consecutive operational items between two transcript messages. */
+  items: Item[]
+  /** Flat-list index where Thread anchors this disclosure. */
+  firstIndex: number
+  lastIndex: number
+}
+
 export type TurnPresentation = {
-  /** Ordered items shown inside the completed Worked disclosure. */
-  activity: Item[]
+  /** Chronological Worked disclosures, split wherever narration resumes. */
+  activityGroups: TurnActivityGroup[]
   responseText: string
-  firstActivityIndex: number | undefined
   firstResponseIndex: number | undefined
   finalAnswerIndex: number | undefined
   elapsedMs: number
   complete: boolean
+  /** Turns carrying a design:* phase marker tell their story through the
+   *  phase labels; raw provider activity stays out of the transcript. */
+  design: boolean
 }
 
 export type ThreadProjection = {
@@ -39,16 +53,23 @@ export type ThreadProjection = {
  * streamed-tail path without walking the transcript. A history replacement or
  * an out-of-order update misses that proof and takes the full, safe rebuild.
  */
-export function createThreadProjector(): (items: Item[]) => ThreadProjection {
+export function createThreadProjector(): (
+  items: Item[],
+  turnTiming?: TurnTiming,
+) => ThreadProjection {
   let previousItems: Item[] | undefined
+  let previousTurnTiming: TurnTiming | undefined
   let previousProjection: ThreadProjection | undefined
 
-  return (items) => {
-    if (items === previousItems && previousProjection) return previousProjection
+  return (items, turnTiming = EMPTY_TURN_TIMING) => {
+    if (items === previousItems && turnTiming === previousTurnTiming && previousProjection) {
+      return previousProjection
+    }
 
     if (
       previousItems &&
       previousProjection &&
+      turnTiming === previousTurnTiming &&
       isStartedAssistantTailTextUpdate(previousItems, items)
     ) {
       previousItems = items
@@ -56,9 +77,10 @@ export function createThreadProjector(): (items: Item[]) => ThreadProjection {
     }
 
     previousItems = items
+    previousTurnTiming = turnTiming
     previousProjection = {
       turns: findTurns(items),
-      presentations: presentTurns(items),
+      presentations: presentTurns(items, turnTiming),
     }
     return previousProjection
   }
@@ -86,20 +108,29 @@ export function findTurns(items: Item[]): TurnMark[] {
  * The compact, completed-turn view used by first-party agent apps.
  *
  * The provider may emit commentary messages before its final answer. Those
- * messages belong beside the useful work milestones inside the disclosure,
- * while the last completed assistant message remains the answer below it. The
- * indices let Thread keep one flat virtualised list while rendering each group
- * only once.
+ * messages stay in the transcript, so operational items are compacted only in
+ * contiguous groups between them. An explicit final-answer phase wins; older
+ * unphased histories safely fall back to their last completed assistant message.
  */
-export function presentTurns(items: Item[]): ReadonlyMap<string, TurnPresentation> {
+export function presentTurns(
+  items: Item[],
+  turnTiming: TurnTiming = EMPTY_TURN_TIMING,
+): ReadonlyMap<string, TurnPresentation> {
   const drafts = new Map<
     string,
     {
-      work: Array<{ item: Item; index: number }>
+      activityGroups: Array<{
+        entries: Array<{ item: Item; index: number }>
+        lastIndex: number
+      }>
+      answers: Array<{ item: Item; index: number }>
       firstResponseIndex?: number
       earliest: number
       latest: number
       hasRunningActivity: boolean
+      activityCount: number
+      onlyReasoning: boolean
+      design: boolean
     }
   >()
 
@@ -107,28 +138,41 @@ export function presentTurns(items: Item[]): ReadonlyMap<string, TurnPresentatio
     if (!item.turnId) return
 
     const draft = drafts.get(item.turnId) ?? {
-      work: [],
+      activityGroups: [],
+      answers: [],
       earliest: item.createdAt,
       latest: item.createdAt,
       hasRunningActivity: false,
+      activityCount: 0,
+      onlyReasoning: true,
+      design: false,
     }
 
     draft.earliest = Math.min(draft.earliest, item.createdAt)
     draft.latest = Math.max(draft.latest, item.createdAt)
+    draft.design ||= item.type === 'tool_call' && item.text?.startsWith('design:') === true
 
     if (item.type !== 'message' || item.role !== 'user') {
       draft.firstResponseIndex ??= index
     }
 
     if (isActivity(item)) {
-      draft.work.push({ item, index })
+      draft.activityCount += 1
+      draft.onlyReasoning &&= item.type === 'reasoning'
+      const lastGroup = draft.activityGroups.at(-1)
+      if (lastGroup?.lastIndex === index - 1) {
+        lastGroup.entries.push({ item, index })
+        lastGroup.lastIndex = index
+      } else {
+        draft.activityGroups.push({ entries: [{ item, index }], lastIndex: index })
+      }
       draft.hasRunningActivity ||= item.status === 'started'
     } else if (
       item.type === 'message' &&
       item.role === 'assistant' &&
       item.status === 'completed'
     ) {
-      draft.work.push({ item, index })
+      draft.answers.push({ item, index })
     }
 
     drafts.set(item.turnId, draft)
@@ -136,21 +180,30 @@ export function presentTurns(items: Item[]): ReadonlyMap<string, TurnPresentatio
 
   return new Map(
     [...drafts].map(([turnId, draft]) => {
-      const finalAnswer = draft.work.findLast(({ item }) => isAssistantMessage(item))
-      const activity = finalAnswer
-        ? draft.work.filter((entry) => entry !== finalAnswer)
-        : draft.work
+      const finalAnswer =
+        draft.answers.findLast(({ item }) => item.phase === 'final_answer') ??
+        draft.answers.findLast(({ item }) => item.phase === undefined)
+      const timing = turnTiming[turnId]
 
       return [
         turnId,
         {
-          activity: activity.map(({ item }) => item),
+          activityGroups: draft.activityGroups.map(({ entries, lastIndex }) => ({
+            items: entries.map(({ item }) => item),
+            firstIndex: entries[0]!.index,
+            lastIndex,
+          })),
           responseText: finalAnswer?.item.text ?? '',
-          firstActivityIndex: activity[0]?.index,
           firstResponseIndex: draft.firstResponseIndex,
           finalAnswerIndex: finalAnswer?.index,
-          elapsedMs: Math.max(0, draft.latest - draft.earliest),
-          complete: finalAnswer !== undefined && !draft.hasRunningActivity,
+          elapsedMs:
+            timing?.startedAt !== undefined && timing.completedAt !== undefined
+              ? Math.max(0, timing.completedAt - timing.startedAt)
+              : Math.max(0, draft.latest - draft.earliest),
+          complete:
+            !draft.hasRunningActivity &&
+            (finalAnswer !== undefined || (draft.activityCount > 1 && draft.onlyReasoning)),
+          design: draft.design,
         },
       ]
     }),
@@ -172,6 +225,7 @@ function isStartedAssistantTailTextUpdate(previous: Item[], next: Item[]): boole
     before.status === 'started' &&
     after?.type === before.type &&
     after.role === before.role &&
+    after.phase === before.phase &&
     after.status === before.status &&
     after.id === before.id &&
     after.turnId === before.turnId &&
@@ -188,10 +242,6 @@ function isStartedAssistantTailTextUpdate(previous: Item[], next: Item[]): boole
 
 function isActivity(item: Item): boolean {
   return item.type !== 'message' && item.type !== 'error'
-}
-
-function isAssistantMessage(item: Item): boolean {
-  return item.type === 'message' && item.role === 'assistant'
 }
 
 /**

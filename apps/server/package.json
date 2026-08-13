@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b",
-    "dev": "tsx watch src/main.ts",
+    "dev": "tsc -b && tsx watch src/main.ts",
     "start": "node dist/main.js",
     "test": "vitest run --passWithNoTests --testTimeout=20000"
   },
@@ -21,15 +21,16 @@
     "@harness/adapter-claude-code": "workspace:*",
     "@harness/adapter-codex": "workspace:*",
     "@harness/adapter-cursor": "workspace:*",
+    "@harness/adapter-grok": "workspace:*",
     "@harness/adapter-opencode": "workspace:*",
+    "@harness/adapter-pi": "workspace:*",
     "@harness/contracts": "workspace:*",
     "@harness/design-agent": "workspace:*",
     "@harness/proc": "workspace:*",
     "@napi-rs/keyring": "1.3.0",
-    "node-pty": "1.2.0-beta.12",
-    "ws": "^8.21.1",
-    "@harness/adapter-grok": "workspace:*",
-    "qrcode": "^1.5.4"
+    "node-pty": "1.2.0-beta.15",
+    "qrcode": "^1.5.4",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

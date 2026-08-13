@@ -1,11 +1,6 @@
-/**
- * One command to run the whole thing: core server, Vite, and Electron.
- *
- * Node rather than a shell script on purpose — we are a Windows + macOS team
- * and a .sh here would break one of us. See rules/code.md.
- */
+/** Run the core server, Vite, and Electron together. */
 import { execFile, spawn } from 'node:child_process'
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import path from 'node:path'
@@ -13,14 +8,12 @@ import net from 'node:net'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const VITE_URL = 'http://127.0.0.1:5183'
+const DEV_PORTS = new Set([4311, 4312, 5183])
 const isWin = process.platform === 'win32'
 const mobile = process.argv.includes('--mobile')
 const children = []
 const execFileAsync = promisify(execFile)
-const launcherId = createHash('sha256').update(root).digest('hex')
-const launcherControlPort = 20_000 + (Number.parseInt(launcherId.slice(0, 4), 16) % 20_000)
 let shuttingDown = false
-let launcherControlServer
 
 function run(name, packageDir, args, env = {}) {
   // npm/pnpm shims are .cmd files on Windows, which must go through cmd.exe.
@@ -28,33 +21,27 @@ function run(name, packageDir, args, env = {}) {
     ? spawn('cmd.exe', ['/d', '/s', '/c', 'pnpm', ...args], {
         cwd: path.join(root, packageDir),
         env: { ...process.env, ...env },
-        stdio: 'pipe',
+        stdio: 'inherit',
       })
     : spawn('pnpm', args, {
         cwd: path.join(root, packageDir),
         env: { ...process.env, ...env },
-        stdio: 'pipe',
+        stdio: 'inherit',
+        detached: true,
       })
 
-  const prefix = `[${name}]`
-  child.stdout.on('data', (d) => process.stdout.write(prefixLines(prefix, d.toString())))
-  child.stderr.on('data', (d) => process.stderr.write(prefixLines(prefix, d.toString())))
-  child.on('exit', (code, signal) => {
+  child.once('error', (error) => {
+    if (shuttingDown) return
+    console.error(`[${name}] ${error.message}`)
+    void shutdown(1)
+  })
+  child.once('exit', (code, signal) => {
     if (shuttingDown) return
     const reason = code === null ? `signal ${signal ?? 'unknown'}` : `code ${code}`
-    console.error(`${prefix} exited with ${reason}`)
-    shutdown(code ?? 1)
+    console.error(`[${name}] exited with ${reason}`)
+    void shutdown(code ?? 1)
   })
   children.push(child)
-  return child
-}
-
-function prefixLines(prefix, text) {
-  return text
-    .split('\n')
-    .filter((line) => line !== '')
-    .map((line) => `${prefix} ${line}\n`)
-    .join('')
 }
 
 function waitForPort(port, host = '127.0.0.1', timeoutMs = 30_000) {
@@ -76,202 +63,136 @@ function waitForPort(port, host = '127.0.0.1', timeoutMs = 30_000) {
   })
 }
 
-function portIsOpen(port, host) {
-  return new Promise((resolve) => {
-    const socket = net.connect(port, host)
-    let settled = false
-    const finish = (open) => {
-      if (settled) return
-      settled = true
-      socket.destroy()
-      resolve(open)
-    }
-    socket.once('connect', () => finish(true))
-    socket.once('error', () => finish(false))
-    socket.setTimeout(1_000, () => finish(false))
-  })
-}
+async function devPortListeners() {
+  const listeners = new Map()
+  const add = (port, pid) => {
+    if (!DEV_PORTS.has(port) || !Number.isInteger(pid) || pid <= 0) return
+    const pids = listeners.get(port) ?? new Set()
+    pids.add(pid)
+    listeners.set(port, pids)
+  }
 
-async function listenerPids(port) {
   if (isWin) {
     const { stdout } = await execFileAsync('netstat.exe', ['-ano', '-p', 'tcp'])
-    return stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim().split(/\s+/))
-      .filter(
-        (fields) =>
-          fields.length >= 5 &&
-          fields[0].toUpperCase() === 'TCP' &&
-          fields[1].endsWith(`:${port}`) &&
-          fields[3].toUpperCase() === 'LISTENING',
-      )
-      .map((fields) => Number.parseInt(fields[4], 10))
-      .filter((pid) => Number.isInteger(pid) && pid > 0)
+    for (const line of stdout.split(/\r?\n/)) {
+      const fields = line.trim().split(/\s+/)
+      if (fields.length < 5 || fields[0].toUpperCase() !== 'TCP') continue
+      if (fields[3].toUpperCase() !== 'LISTENING') continue
+      const port = Number.parseInt(fields[1].match(/:(\d+)$/)?.[1] ?? '', 10)
+      add(port, Number.parseInt(fields[4], 10))
+    }
+    return listeners
   }
 
+  let stdout
   try {
-    const { stdout } = await execFileAsync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'])
-    return stdout
-      .trim()
-      .split(/\s+/)
-      .map((pid) => Number.parseInt(pid, 10))
-      .filter((pid) => Number.isInteger(pid) && pid > 0)
+    ;({ stdout } = await execFileAsync('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-Fpn']))
   } catch (error) {
-    if (error?.code === 1) return []
+    if (error?.code === 1) return listeners
     throw error
   }
-}
-
-function processExists(pid) {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    if (error?.code === 'ESRCH') return false
-    if (error?.code === 'EPERM') return true
-    throw error
+  let pid
+  for (const field of stdout.split(/\r?\n/)) {
+    if (field.startsWith('p')) pid = Number.parseInt(field.slice(1), 10)
+    if (!field.startsWith('n')) continue
+    const port = Number.parseInt(field.match(/:(\d+)$/)?.[1] ?? '', 10)
+    add(port, pid)
   }
+  return listeners
 }
 
-async function stopPortOwner(pid, force = false) {
-  if (pid === process.pid) throw new Error('dev launcher unexpectedly owns an application port')
-
+async function processSnapshot() {
   if (isWin) {
     try {
-      await execFileAsync('taskkill.exe', ['/pid', String(pid), '/T', '/F'], {
-        windowsHide: true,
-      })
-    } catch (error) {
-      if (processExists(pid)) throw error
+      const { stdout } = await execFileAsync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          'Get-CimInstance Win32_Process | ' +
+            'Select-Object ProcessId, ParentProcessId, CommandLine | ConvertTo-Json -Compress',
+        ],
+        { windowsHide: true, maxBuffer: 10 * 1024 * 1024 },
+      )
+      return [JSON.parse(stdout)].flat().map((process) => ({
+        pid: Number(process.ProcessId),
+        ppid: Number(process.ParentProcessId),
+        command: process.CommandLine ?? '',
+      }))
+    } catch {
+      return []
     }
-    return
   }
 
+  const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,command='])
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/))
+    .filter((match) => match !== null)
+    .map((match) => ({
+      pid: Number.parseInt(match[1], 10),
+      ppid: Number.parseInt(match[2], 10),
+      command: match[3],
+    }))
+}
+
+function previousRunTarget(listenerPid, byPid) {
+  let candidate = byPid.get(listenerPid)
+  let target = listenerPid
+  while (candidate) {
+    if (/tools[\\/]scripts[\\/]dev\.js/.test(candidate.command)) return candidate.pid
+    if (/tsx\S*\s+watch\b|vite\S*(?:\s|$)/i.test(candidate.command)) target = candidate.pid
+    candidate = byPid.get(candidate.ppid)
+  }
+  return target
+}
+
+async function stopProcessTree(pid) {
+  if (isWin) {
+    await execFileAsync('taskkill.exe', ['/pid', String(pid), '/T', '/F'], {
+      windowsHide: true,
+    }).catch(() => undefined)
+    return
+  }
   try {
-    process.kill(pid, force ? 'SIGKILL' : 'SIGTERM')
+    process.kill(pid, 'SIGTERM')
   } catch (error) {
     if (error?.code !== 'ESRCH') throw error
   }
 }
 
-async function waitForPortsToClose(ports, host, timeoutMs = 5_000) {
+async function waitForDevPortsToClose(timeoutMs) {
   const deadline = Date.now() + timeoutMs
-  let occupied = ports
-  while (occupied.length > 0 && Date.now() < deadline) {
+  let listeners = await devPortListeners()
+  while (listeners.size > 0 && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 100))
-    const states = await Promise.all(occupied.map((port) => portIsOpen(port, host)))
-    occupied = occupied.filter((_, index) => states[index])
+    listeners = await devPortListeners()
   }
-  return occupied
+  return listeners
 }
 
-async function reclaimOccupiedPorts(host) {
-  const ports = [4311, 5183]
-  const states = await Promise.all(ports.map((port) => portIsOpen(port, host)))
-  const occupied = ports.filter((_, index) => states[index])
-  if (occupied.length === 0) return
+async function clearDevPorts() {
+  const listeners = await devPortListeners()
+  if (listeners.size === 0) return
 
-  const owners = new Set((await Promise.all(occupied.map(listenerPids))).flat())
-  if (owners.size === 0) {
-    const currentStates = await Promise.all(occupied.map((port) => portIsOpen(port, host)))
-    const remaining = occupied.filter((_, index) => currentStates[index])
-    if (remaining.length === 0) return
-    throw new Error(
-      `port${remaining.length === 1 ? '' : 's'} ${remaining.join(', ')} ` +
-        'still in use, but the owning process could not be identified',
-    )
-  }
-
-  console.log(
-    `[dev] port${occupied.length === 1 ? '' : 's'} ${occupied.join(', ')} already in use; ` +
-      `stopping process${owners.size === 1 ? '' : 'es'} ${[...owners].join(', ')}`,
+  const byPid = new Map((await processSnapshot()).map((process) => [process.pid, process]))
+  const targets = new Set(
+    [...listeners.values()].flatMap((pids) =>
+      [...pids].map((pid) => previousRunTarget(pid, byPid)),
+    ),
   )
-  await Promise.all([...owners].map(stopPortOwner))
+  console.log(`[dev] stopping previous run on ports ${[...listeners.keys()].join(', ')}`)
+  await Promise.all([...targets].map(stopProcessTree))
 
-  let remaining = await waitForPortsToClose(occupied, host, 2_000)
-  if (remaining.length > 0) {
-    const stubbornOwners = new Set((await Promise.all(remaining.map(listenerPids))).flat())
-    await Promise.all([...stubbornOwners].map((pid) => stopPortOwner(pid, true)))
-    remaining = await waitForPortsToClose(remaining, host, 3_000)
+  let remaining = await waitForDevPortsToClose(3_000)
+  if (remaining.size > 0) {
+    const pids = new Set([...remaining.values()].flatMap((listeners) => [...listeners]))
+    await Promise.all([...pids].map((pid) => stopProcessGroup(pid, 'SIGKILL')))
+    remaining = await waitForDevPortsToClose(2_000)
   }
-
-  if (remaining.length > 0) {
-    throw new Error(
-      `port${remaining.length === 1 ? '' : 's'} ${remaining.join(', ')} ` +
-        'did not close after stopping the owning process',
-    )
-  }
-}
-
-function requestLauncherShutdown() {
-  return new Promise((resolve, reject) => {
-    const socket = net.connect(launcherControlPort, '127.0.0.1')
-    let response = ''
-    let settled = false
-    const timeout = setTimeout(() => finish(new Error('shutdown request timed out')), 3_000)
-
-    const finish = (error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      socket.destroy()
-      if (error) reject(error)
-      else resolve()
-    }
-
-    socket.setEncoding('utf8')
-    socket.once('connect', () => socket.end(`stop:${launcherId}\n`))
-    socket.on('data', (chunk) => {
-      response += chunk
-    })
-    socket.once('end', () => {
-      if (response.trim() === `stopping:${launcherId}`) finish()
-      else finish(new Error('shutdown request was rejected'))
-    })
-    socket.once('error', finish)
-  })
-}
-
-function createLauncherControlServer() {
-  const server = net.createServer((socket) => {
-    socket.setEncoding('utf8')
-    let command = ''
-    socket.on('data', (chunk) => {
-      command += chunk
-      if (command.length > 1_000) socket.destroy()
-    })
-    socket.on('end', () => {
-      if (command.trim() !== `stop:${launcherId}`) {
-        socket.end('denied')
-        return
-      }
-      socket.end(`stopping:${launcherId}`, () => void shutdown(0))
-    })
-  })
-  return server
-}
-
-async function claimLauncher() {
-  while (true) {
-    const server = createLauncherControlServer()
-    try {
-      await new Promise((resolve, reject) => {
-        server.once('error', reject)
-        server.listen(launcherControlPort, '127.0.0.1', resolve)
-      })
-      launcherControlServer = server
-      return
-    } catch (error) {
-      if (error?.code !== 'EADDRINUSE') throw error
-    }
-
-    try {
-      await requestLauncherShutdown()
-    } catch (error) {
-      throw new Error(`launcher control port is owned by another application: ${error.message}`)
-    }
-    console.log('[dev] stopping previous Personal Harness dev process')
-    await new Promise((resolve) => setTimeout(resolve, 100))
+  if (remaining.size > 0) {
+    throw new Error(`dev ports did not close: ${[...remaining.keys()].join(', ')}`)
   }
 }
 
@@ -280,7 +201,7 @@ async function tailscaleIPv4() {
   if (process.platform === 'darwin') {
     candidates.push('/Applications/Tailscale.app/Contents/MacOS/Tailscale')
   }
-  if (process.platform === 'win32' && process.env['ProgramFiles']) {
+  if (isWin && process.env['ProgramFiles']) {
     candidates.push(path.join(process.env['ProgramFiles'], 'Tailscale', 'tailscale.exe'))
   }
 
@@ -293,53 +214,75 @@ async function tailscaleIPv4() {
       // Try the next normal installation location.
     }
   }
-
   throw new Error(
     'Tailscale is not running, or its CLI could not be found. Open Tailscale and try again.',
   )
 }
 
-function stopChild(child) {
-  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
+function processGroupExists(groupId) {
+  try {
+    process.kill(-groupId, 0)
+    return true
+  } catch (error) {
+    if (error?.code === 'ESRCH') return false
+    if (error?.code === 'EPERM') return true
+    throw error
+  }
+}
 
-  return new Promise((resolve) => {
-    let settled = false
-    const finish = () => {
-      if (settled) return
-      settled = true
-      resolve()
-    }
-    child.once('exit', finish)
+async function processGroupId(pid) {
+  const { stdout } = await execFileAsync('ps', ['-o', 'pgid=', '-p', String(pid)])
+  const groupId = Number.parseInt(stdout.trim(), 10)
+  return Number.isInteger(groupId) && groupId > 0 ? groupId : undefined
+}
 
-    if (isWin) {
-      const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/T', '/F'], {
-        stdio: 'ignore',
-        windowsHide: true,
-      })
-      killer.once('error', finish)
-      killer.once('exit', finish)
-    } else {
-      child.kill()
-    }
-    setTimeout(finish, 5_000).unref()
-  })
+async function stopProcessGroup(pid, signal) {
+  if (isWin) {
+    await stopProcessTree(pid)
+    return
+  }
+  const groupId = await processGroupId(pid).catch(() => undefined)
+  try {
+    process.kill(groupId ? -groupId : pid, signal)
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error
+  }
+}
+
+async function waitForProcessGroupToExit(groupId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (processGroupExists(groupId) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  return !processGroupExists(groupId)
+}
+
+async function stopChild(child) {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return
+  if (isWin) {
+    await stopProcessTree(child.pid)
+    return
+  }
+  await stopProcessGroup(child.pid, 'SIGTERM')
+  if (await waitForProcessGroupToExit(child.pid, 3_000)) return
+  await stopProcessGroup(child.pid, 'SIGKILL')
+  await waitForProcessGroupToExit(child.pid, 2_000)
 }
 
 async function shutdown(exitCode = 0) {
   if (shuttingDown) return
   shuttingDown = true
-  launcherControlServer?.close()
   await Promise.all(children.map(stopChild))
   process.exit(exitCode)
 }
+
 process.on('SIGINT', () => void shutdown(0))
 process.on('SIGTERM', () => void shutdown(0))
 
-await claimLauncher()
+await clearDevPorts()
 
 if (mobile) {
   const host = await tailscaleIPv4()
-  await reclaimOccupiedPorts(host)
   const accessToken = randomBytes(24).toString('base64url')
   const serverUrl = `ws://${host}:4311`
   const webUrl = `http://${host}:5183/#access_token=${accessToken}`
@@ -347,6 +290,7 @@ if (mobile) {
   run('server', 'apps/server', ['run', 'dev'], {
     HARNESS_HOST: host,
     HARNESS_ACCESS_TOKEN: accessToken,
+    HARNESS_WEB_DEV_SERVER: `http://${host}:5183`,
   })
   run('web', 'apps/web', ['run', 'dev', '--host', host], {
     VITE_HARNESS_SERVER_URL: serverUrl,
@@ -355,12 +299,8 @@ if (mobile) {
   await Promise.all([waitForPort(4311, host), waitForPort(5183, host)])
   console.log(`\nOpen on your Tailscale-connected phone:\n${webUrl}\n`)
 } else {
-  await reclaimOccupiedPorts('127.0.0.1')
-  run('server', 'apps/server', ['run', 'dev'])
+  run('server', 'apps/server', ['run', 'dev'], { HARNESS_WEB_DEV_SERVER: VITE_URL })
   run('web', 'apps/web', ['run', 'dev'])
-
-  // Electron must not load before Vite is serving, or it shows a blank window
-  // and the user thinks the app is broken.
   await waitForPort(5183)
   run('desktop', 'apps/desktop', ['run', 'start'], { HARNESS_DEV_SERVER: VITE_URL })
 }

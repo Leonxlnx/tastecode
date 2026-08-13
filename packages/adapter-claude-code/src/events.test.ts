@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { toDomainEvents, toUsage } from './events.js'
+import { toDomainEvents, toUsage, type ClaudeEvent } from './events.js'
 
 /**
  * Fixtures captured from claude-code 2.1.220's actual output.
@@ -41,6 +41,53 @@ describe('claude event translation', () => {
     )
     expect(events).toHaveLength(2)
     expect(events[1]).toMatchObject({ item: { type: 'command', command: 'node -v' } })
+  })
+
+  it('keeps item identities unique when separate blocks reuse a message id', () => {
+    // Captured from claude-code 2.1.222: it reused one message id for a
+    // narration envelope and a later tool-use envelope, both at block index 0.
+    const captured: ClaudeEvent[] = [
+      {
+        type: 'assistant',
+        message: {
+          id: 'msg_011CdwAM63bijViHvHrHysNR',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'I will inspect the fixture.' }],
+        },
+      },
+      {
+        type: 'assistant',
+        message: {
+          id: 'msg_011CdwAM63bijViHvHrHysNR',
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_018pJWfDcup4YmC285NtuAb5',
+              name: 'Read',
+              input: { file_path: 'inspection.txt' },
+            },
+          ],
+        },
+      },
+    ]
+
+    const translate = () => captured.flatMap((event) => toDomainEvents(event, 't1'))
+    const first = translate()
+    const replay = translate()
+    const completedItemIds = (events: ReturnType<typeof translate>) =>
+      events.flatMap((event) => (event.type === 'item.completed' ? [event.item.id] : []))
+    const itemIds = completedItemIds(first)
+
+    expect(itemIds).toEqual([
+      'msg_011CdwAM63bijViHvHrHysNR-text-0',
+      'toolu_018pJWfDcup4YmC285NtuAb5-call',
+    ])
+    expect(completedItemIds(replay)).toEqual(itemIds)
+    expect(first).toMatchObject([
+      { type: 'item.completed', item: { type: 'message', text: 'I will inspect the fixture.' } },
+      { type: 'item.completed', item: { type: 'tool_call', text: 'Read' } },
+    ])
   })
 
   it('reads an edit tool as a file change, not a generic tool call', () => {
@@ -137,6 +184,7 @@ describe('claude event translation', () => {
         reasoningTokens: 0,
         totalTokens: 5,
         costUsd: 0.04,
+        inputIncludesCached: false,
       },
     })
   })
