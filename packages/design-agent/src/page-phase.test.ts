@@ -85,10 +85,11 @@ describe('page phase', () => {
     expect(prompt).toContain('Compact reduces simultaneity, not content or capability')
     expect(prompt).toContain('Never use an em dash')
     expect(prompt).toContain('Omit eyebrow copy by default')
-    expect(prompt).toContain('Layout vocabulary is a decision aid, not a template library')
-    expect(prompt).toContain('corner_counterweight')
-    expect(prompt).toContain('transparent_to_surface')
-    expect(prompt).toContain('Animate spatial relationships or state changes')
+    expect(prompt).toContain('Use the following beta layout cases as the source material')
+    expect(prompt).toContain('Place the headline at the bottom left or bottom right')
+    expect(prompt).toContain('show a wide dashboard, product preview, interface')
+    expect(prompt).toContain('Place a list of destinations with icons and subheadings on the left')
+    expect(prompt).toContain('As the user scrolls, smoothly introduce the navigation background')
   })
 
   it('parses the final response through the page validator', () => {
