@@ -38,7 +38,13 @@ import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
 import { ThreadSearch } from './ThreadSearch.js'
 import { createThreadProjector, neighbourTurn, type TurnTiming } from './turns.js'
-import { isAtBottom, modeForNewTurn, shouldReleaseAnchor, type ScrollMode } from './scroll-mode.js'
+import {
+  activeTurnAnchor,
+  isAtBottom,
+  modeForNewTurn,
+  shouldReleaseAnchor,
+  type ScrollMode,
+} from './scroll-mode.js'
 import { useVirtualItemKey } from './use-virtual-item-key.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
@@ -95,7 +101,11 @@ export function Thread(props: {
 
   /** Index the current turn starts at, for anchor mode. */
   const anchorIndex = useRef(0)
-  const wasRunning = useRef(props.running)
+  const activeAnchor = useMemo(
+    () => activeTurnAnchor(props.items, props.activeTurn?.id),
+    [props.items, props.activeTurn?.id],
+  )
+  const anchoredTurn = useRef({ threadId: props.threadId, itemId: activeAnchor?.id })
   /**
    * Our own scrollTop writes fire scroll events too. Without telling them
    * apart from the user's, the handler cannot let a manual scroll take over
@@ -142,14 +152,26 @@ export function Thread(props: {
   })
 
   // A turn starting is the one moment the reading position should change.
+  // Watch its first item rather than the running boolean: a queued turn can
+  // start in the same render batch that the previous turn completes, leaving
+  // `running` true throughout. The submission id also survives the local ->
+  // durable handoff, so provider confirmation does not cause a second jump.
   useEffect(() => {
-    if (props.running && !wasRunning.current) {
-      const el = scroller.current
-      anchorIndex.current = Math.max(0, props.items.length - 1)
-      setMode(modeForNewTurn(el ? isAtBottom(el) : true))
+    if (anchoredTurn.current.threadId !== props.threadId) {
+      anchoredTurn.current = { threadId: props.threadId, itemId: activeAnchor?.id }
+      return
     }
-    wasRunning.current = props.running
-  }, [props.running, props.items.length])
+    if (!props.running) {
+      anchoredTurn.current.itemId = undefined
+      return
+    }
+    if (!activeAnchor || anchoredTurn.current.itemId === activeAnchor.id) return
+
+    anchoredTurn.current.itemId = activeAnchor.id
+    anchorIndex.current = activeAnchor.index
+    const el = scroller.current
+    setMode(modeForNewTurn(el ? isAtBottom(el) : true))
+  }, [props.running, props.threadId, activeAnchor])
 
   // Layout effect, not effect: this runs before paint, so the correction is
   // never visible as a jump.
