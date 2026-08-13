@@ -35,6 +35,40 @@ describe('semantic palette generation', () => {
     expect(result.value.themes.light?.roles.accent).toBe('#B92F2F')
   })
 
+  it('never repairs the selected accent seed', () => {
+    const result = generatePalette({
+      themes: {
+        light: { accentSeed: '#5581D4', neutralSeed: '#666666', surfaceContrast: 'quiet' },
+      },
+    })
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.value.themes.light?.roles.accent).toBe('#5581D4')
+  })
+
+  it('derives accent-dependent roles from an explicit accent lock', () => {
+    const withLock = generatePalette({
+      themes: {
+        light: { accentSeed: '#C1492E', neutralSeed: '#666666', surfaceContrast: 'quiet' },
+      },
+      locked: { light: { accent: '#315EA8' } },
+    })
+    const fromLockedSeed = generatePalette({
+      themes: {
+        light: { accentSeed: '#315EA8', neutralSeed: '#666666', surfaceContrast: 'quiet' },
+      },
+      locked: { light: { accent: '#315EA8' } },
+    })
+    expect(withLock.status).toBe('ready')
+    expect(fromLockedSeed.status).toBe('ready')
+    if (withLock.status !== 'ready' || fromLockedSeed.status !== 'ready') return
+    for (const role of ['accent', 'accentHover', 'onAccent', 'accentText', 'focusRing'] as const) {
+      expect(withLock.value.themes.light?.roles[role]).toBe(
+        fromLockedSeed.value.themes.light?.roles[role],
+      )
+    }
+  })
+
   it('blocks an inaccessible locked pair instead of changing it', () => {
     const result = generatePalette({
       ...request,
@@ -81,6 +115,12 @@ describe('semantic palette generation', () => {
       expect.objectContaining({
         status: 'blocked',
         issues: expect.arrayContaining([expect.objectContaining({ code: 'unknown-role' })]),
+      }),
+    )
+    expect(generatePalette({ ...request, locked: { ligth: { accent: '#FFFFFF' } } })).toEqual(
+      expect.objectContaining({
+        status: 'blocked',
+        issues: expect.arrayContaining([expect.objectContaining({ code: 'invalid-request' })]),
       }),
     )
   })

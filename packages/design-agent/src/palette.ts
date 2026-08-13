@@ -220,9 +220,9 @@ export function paletteColorRecords(system: ColorSystem): Array<{
     const palette = system.themes[theme]
     if (!palette) return []
     return PALETTE_ROLES.map((role) => ({
-      name: `${capitalize(theme)} ${splitRole(role)}`,
+      name: `${capitalize(theme)} ${capitalize(splitRole(role))}`,
       value: palette.roles[role],
-      usage: `${splitRole(role)} token in the ${theme} theme.`,
+      usage: `${roleBalance(role)} ${splitRole(role)} token in the ${theme} theme.`,
     }))
   })
 }
@@ -236,6 +236,12 @@ function parseRequest(input: unknown): { value: ParsedRequest } | { issues: Pale
   const issues: PaletteIssue[] = []
   const themes: ParsedRequest['themes'] = {}
   const locked: ParsedRequest['locked'] = {}
+
+  for (const name of Object.keys(input.themes)) {
+    if (!THEME_NAMES.includes(name as PaletteThemeName)) {
+      issues.push({ code: 'invalid-request', message: `${name} is not a palette theme` })
+    }
+  }
 
   for (const name of THEME_NAMES) {
     const raw = input.themes[name]
@@ -284,6 +290,11 @@ function parseRequest(input: unknown): { value: ParsedRequest } | { issues: Pale
     if (!isRecord(input.locked)) {
       issues.push({ code: 'invalid-request', message: 'palette locked roles must be an object' })
     } else {
+      for (const name of Object.keys(input.locked)) {
+        if (!THEME_NAMES.includes(name as PaletteThemeName)) {
+          issues.push({ code: 'invalid-request', message: `${name} is not a palette theme` })
+        }
+      }
       for (const name of THEME_NAMES) {
         const raw = input.locked[name]
         if (raw === undefined) continue
@@ -338,7 +349,8 @@ function buildTheme(
   direction: PaletteThemeDirection,
   locked: Partial<Record<PaletteRole, string>>,
 ): { theme: PaletteTheme; issues: PaletteIssue[] } {
-  const accent = toOklch(direction.accentSeed)
+  const effectiveAccent = locked.accent ?? direction.accentSeed
+  const accent = toOklch(effectiveAccent)
   const neutral = toOklch(direction.neutralSeed ?? direction.accentSeed)
   const hue = neutral.c > 0.001 ? neutral.h : accent.h
   const target = LIGHTNESS[name]
@@ -353,7 +365,7 @@ function buildTheme(
     textMuted: neutralColor(target.textMuted, 0.015),
     divider: neutralColor(target.divider[direction.surfaceContrast], 0.02),
     controlBorder: neutralColor(target.controlBorder, 0.025),
-    accent: direction.accentSeed,
+    accent: effectiveAccent,
     accentHover: accentColor(clamp(accent.l + (name === 'light' ? -0.07 : 0.07), 0.03, 0.97)),
     onAccent: '#FFFFFF',
     accentText: accentColor(name === 'light' ? 0.38 : 0.72, Math.min(accent.c, 0.16)),
@@ -362,10 +374,10 @@ function buildTheme(
 
   Object.assign(roles, locked)
   const lockedRoles = PALETTE_ROLES.filter((role) => locked[role] !== undefined)
-  const lockedSet = new Set(lockedRoles)
+  const immutable = new Set<PaletteRole>([...lockedRoles, 'accent'])
   const initial = auditPalette(roles)
   const conflicts = initial.checks.filter(
-    (check) => !check.pass && lockedSet.has(check.foreground) && lockedSet.has(check.background),
+    (check) => !check.pass && immutable.has(check.foreground) && immutable.has(check.background),
   )
   if (conflicts.length) {
     return {
@@ -388,7 +400,7 @@ function buildTheme(
         issues: [],
       }
     }
-    const candidate = bestRepair(roles, current.checks, lockedSet)
+    const candidate = bestRepair(roles, current.checks, immutable)
     if (!candidate) break
     const from = roles[candidate.role]
     roles[candidate.role] = candidate.color
@@ -596,4 +608,11 @@ function capitalize(value: string): string {
 
 function splitRole(value: string): string {
   return value.replace(/[A-Z]/gu, (letter) => ` ${letter.toLowerCase()}`)
+}
+
+function roleBalance(role: PaletteRole): string {
+  if (role === 'canvas' || role === 'surface') return 'Dominant.'
+  if (role === 'surfaceAlt') return 'Supporting.'
+  if (role === 'accent' || role === 'accentText') return 'Sparse accent.'
+  return 'Semantic.'
 }
