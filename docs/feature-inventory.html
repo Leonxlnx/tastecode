@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-13 4d57ad60</span>
+        <span class="meta">2026-08-13 e111ca32</span>
       </div>
     </div>
 
@@ -505,8 +505,9 @@
               ><input type="checkbox" /><span
                 >Signed-in detection through the CLI itself, sign out runs grok logout
                 <span class="d"
-                  >the provider exposes no account email, so Settings accepts a renderer-local
-                  address, masks it by default, and clears it after sign-out</span
+                  >successful login captures the exact provider-confirmed email; Settings otherwise
+                  reports only Signed in, uses a fixed-width privacy blur, and never asks the user to
+                  type an address</span
                 ></span
               ></label
             >
@@ -591,7 +592,8 @@
                 <span class="d"
                   >Codex, Claude Code, and Grok keep mark, identity, status, issue, and actions in
                   stable slots across loading, ready, setup, busy, and failure states; primary and
-                  secondary actions share the fixed right edge on desktop and narrow layouts;
+                  secondary actions share the fixed right edge on desktop and narrow layouts; CLI
+                  versions live in the provider-mark tooltip instead of widening account rows;
                   <a href="./screenshots/provider-settings-desktop.png">desktop</a> and
                   <a href="./screenshots/provider-settings-390.png">390 px</a> evidence</span
                 ></span
@@ -756,8 +758,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Hide single models or whole sources in Settings, with explicit all, mixed, and none
-                visibility states</span
+                >Include or exclude individual catalog models in Settings while every catalog choice
+                remains visible; provider-wide tri-state controls and visibility counts are omitted</span
               ></label
             >
           </li>
