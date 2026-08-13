@@ -5968,6 +5968,11 @@
   margin: 0;
 }
 
+.thread__row:has(> .said:hover),
+.thread__row:has(> .said:focus-within) {
+  padding-bottom: 31px;
+}
+
 .said:hover > .said__actions,
 .said:focus-within > .said__actions {
   opacity: 1;
