@@ -371,8 +371,6 @@ beforeEach(() => {
           },
           limits: [{ label: '5 hours', usedPercent: 25 }],
         })
-      case 'usage.history':
-        return Promise.resolve(profileHistoryResult())
       case 'pullRequests.list':
         return Promise.resolve({
           account: { available: true, authenticated: true, login: 'Blueemi' },
@@ -477,53 +475,6 @@ function cachedCodexChoice(): ModelChoice {
       defaultReasoningEffort: 'low',
       serviceTiers: [],
     },
-  }
-}
-
-function profileHistoryResult() {
-  const totals = {
-    uncachedInputTokens: 20,
-    cachedInputTokens: 80,
-    cacheWriteInputTokens: 0,
-    outputTokens: 10,
-    reasoningTokens: 0,
-    processedTokens: 110,
-    estimatedCostUsd: 0,
-    cacheSavingsUsd: 0,
-    providerReportedCostUsd: 0,
-    providerReportedTokens: 0,
-    pricedTokens: 0,
-    unpricedTokens: 110,
-  }
-  return {
-    range: 'all' as const,
-    startDate: '2026-08-09',
-    endDate: '2026-08-09',
-    generatedAt: 1,
-    sessionCount: 1,
-    activeDays: 1,
-    totals,
-    providers: [{ provider: 'codex' as const, sessionCount: 1, totals }],
-    models: [
-      {
-        provider: 'codex' as const,
-        model: 'gpt-5.6-sol',
-        sessionCount: 1,
-        pricing: 'unpriced' as const,
-        totals,
-      },
-    ],
-    daily: [
-      {
-        date: '2026-08-09',
-        sessionCount: 1,
-        totals,
-        providers: [{ provider: 'codex' as const, tokens: 110, estimatedCostUsd: 0 }],
-      },
-    ],
-    sources: [{ provider: 'codex' as const, available: true, sessionCount: 1 }],
-    scan: { status: 'idle' as const, filesProcessed: 1, filesTotal: 1 },
-    warnings: [],
   }
 }
 
@@ -2205,7 +2156,6 @@ describe('new chats', () => {
       'page',
     )
     expect(await screen.findByRole('heading', { name: 'Profile' })).toBeTruthy()
-    expect(transport.request).toHaveBeenCalledWith('usage.history', { range: 'all' })
   })
 
   it('persists inbox mode and bounded inactivity settings on the server', async () => {

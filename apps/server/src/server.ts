@@ -31,7 +31,6 @@ import { PullRequestService } from './pull-requests.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
-import { UsageHistoryService } from './usage-history.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
 import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { listWorkspaceDirectory, readWorkspaceTextFile } from './workspace-files.js'
@@ -129,12 +128,7 @@ export function startServer(
   const databasePath = storeLocation()
   const store = new Store(databasePath)
   store.recoverInterruptedThreads()
-  const usageHistory = new UsageHistoryService({
-    cacheFile: path.join(path.dirname(databasePath), 'usage-history.json'),
-    harnessUsage: () => store.usageEvents(),
-  })
   const pullRequests = new PullRequestService()
-  void usageHistory.startBackgroundRefresh()
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event, seq) => push.broadcast('thread.event', { threadId, event, seq }),
     onSideEvent: (threadId, event, seq) =>
@@ -870,15 +864,6 @@ export function startServer(
         )
       }
 
-      case 'usage.history': {
-        const p = params as ParamsOf<'usage.history'>
-        return usageHistory.history(p.range, p.refresh ?? false)
-      }
-
-      case 'usage.resetHistory':
-        await usageHistory.resetAndRefresh()
-        return { started: true as const }
-
       case 'sideChat.start': {
         const p = params as ParamsOf<'sideChat.start'>
         const thread = await orchestrator.startSideThread(p.parentThreadId, {
@@ -1075,7 +1060,6 @@ export function startServer(
     startPairing,
     close: async () => {
       clearInterval(lifecycleTimer)
-      usageHistory.dispose()
       const orchestratorClosed = orchestrator.disposeAll()
       for (const socket of wss.clients) socket.terminate()
       const results = await Promise.allSettled([

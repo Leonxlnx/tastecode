@@ -22,7 +22,7 @@ vi.mock('./InstallTerminal.js', () => ({
 
 function renderSettings(
   options: {
-    initialSection?: 'appearance' | 'data' | 'debug' | 'about'
+    initialSection?: 'appearance' | 'data' | 'about'
     onClose?: () => void
     onReset?: () => void
     transport?: Transport
