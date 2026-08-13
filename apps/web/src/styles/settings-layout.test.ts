@@ -23,6 +23,9 @@ describe('settings viewport CSS', () => {
 
   it('keeps a single provider action at the far edge on wide and narrow rows', () => {
     expect(appCss).toMatch(
+      /\.provider-row__primary:empty,\s*\.provider-row__secondary:empty \{[^}]*display: none;/s,
+    )
+    expect(appCss).toMatch(
       /\.provider-row__primary \{[^}]*grid-column: 6;[^}]*\}[\s\S]*?\.provider-row__secondary:has\(\+ \.provider-row__primary:empty\) \{[^}]*grid-column: 6;/s,
     )
     expect(appCss).toMatch(
