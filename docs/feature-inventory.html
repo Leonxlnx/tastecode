@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-13 f0acd80d</span>
+        <span class="meta">2026-08-13 0e9620ad</span>
       </div>
     </div>
 
@@ -324,7 +324,10 @@
             <label
               ><input type="checkbox" /><span
                 >Voice dictation in the composer
-                <span class="d">Codex-backed, the one approved provider exception</span></span
+                <span class="d"
+                  >Codex-backed, the one approved provider exception; the recorder bar can discard a
+                  capture locally without uploading or transcribing it</span
+                ></span
               ></label
             >
           </li>
@@ -689,7 +692,8 @@
                 >Auto-growing prompt field with ordered optimistic queued sends while a turn runs
                 <span class="d"
                   >Thread, New chat, and composer controls respond to their pane width rather than
-                  the whole window, remaining usable beside workspace tools down to 332 px</span
+                  the whole window, remaining usable beside workspace tools down to 332 px; each
+                  newly submitted queued turn gets a stable transcript anchor</span
                 ></span
               ></label
             >
@@ -704,8 +708,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Skills and MCP servers searchable from $ or @ with keyboard navigation and selected
-                resource chips</span
+                >Skills and MCP servers searchable from $ or @ with keyboard navigation, a compact
+                resource picker, and selected resource chips</span
               ></label
             >
           </li>
@@ -720,9 +724,9 @@
             <label
               ><input type="checkbox" /><span
                 >Model picker grouped by stable source identity with provider logos; flat and rail
-                layouts share full-catalog search, keyboard behavior, and selection preservation;
-                first-run visibility favors current Codex and Claude families while saved visibility
-                and future unknown models remain authoritative</span
+                layouts share full-catalog search, arrow-key entry into filtered results, and
+                selection preservation; first-run visibility favors current Codex and Claude
+                families while saved visibility and future unknown models remain authoritative</span
               ></label
             >
           </li>
@@ -797,7 +801,11 @@
             >
           </li>
           <li>
-            <label><input type="checkbox" /><span>Voice dictation with a recorder bar</span></label>
+            <label
+              ><input type="checkbox" /><span
+                >Voice dictation with a recorder bar and explicit local discard</span
+              ></label
+            >
           </li>
           <li>
             <label
@@ -1275,7 +1283,9 @@
         <ul class="check">
           <li>
             <label
-              ><input type="checkbox" /><span>Command palette with keyboard shortcuts</span></label
+              ><input type="checkbox" /><span
+                >Command palette with a reachable keyboard-shortcut reference</span
+              ></label
             >
           </li>
           <li>
@@ -1295,7 +1305,10 @@
             <label
               ><input type="checkbox" /><span
                 >Keyboard shortcuts with hints rendered in the UI
-                <span class="d">new chat, new project, settings, search</span></span
+                <span class="d"
+                  >new chat, new project, settings, search; Settings and modal dialogs retain
+                  keyboard ownership while visible</span
+                ></span
               ></label
             >
           </li>
@@ -1586,8 +1599,8 @@
                   >installs, sign-ins, session and registered-project terminals; shutdown waits for
                   native PTY exit before worktree cleanup, including Windows ConPTY; bounded 4 ms /
                   64 KiB output batching, true-color capability negotiation, Unicode 11 cell widths,
-                  deterministic JetBrains Mono metrics, and immediate WebGL rendering with SIXEL and
-                  inline image protocol support</span
+                  deterministic JetBrains Mono metrics, immediate WebGL rendering, and CSP-safe link
+                  detection without the WebAssembly image addon</span
                 ></span
               ></label
             >
