@@ -42,6 +42,15 @@ const page = {
     rhythm: 'Explanation alternates with proof.',
   },
   navigation: [],
+  navigationDesign: {
+    layout: 'Left logo, direct links, and the primary account action at the right.',
+    behavior: ['Gain a solid surface after leaving the hero.'],
+    transformation: {
+      compact: 'Logo and one menu trigger.',
+      medium: 'Logo, priority links, and account action.',
+      expanded: 'Full direct navigation.',
+    },
+  },
   sections: [
     {
       id: 'hero',
@@ -76,6 +85,10 @@ describe('page phase', () => {
     expect(prompt).toContain('Compact reduces simultaneity, not content or capability')
     expect(prompt).toContain('Never use an em dash')
     expect(prompt).toContain('Omit eyebrow copy by default')
+    expect(prompt).toContain('Layout vocabulary is a decision aid, not a template library')
+    expect(prompt).toContain('corner_counterweight')
+    expect(prompt).toContain('transparent_to_surface')
+    expect(prompt).toContain('Animate spatial relationships or state changes')
   })
 
   it('parses the final response through the page validator', () => {

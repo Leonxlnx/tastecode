@@ -12,6 +12,15 @@ const validBlueprint = {
     description: 'Small-batch coffee delivered without the ceremony.',
   },
   navigation: [{ label: 'Shop', target: '#shop' }],
+  navigationDesign: {
+    layout: 'Left logo with direct links and a right-side action.',
+    behavior: ['Become opaque after the hero.'],
+    transformation: {
+      compact: 'Logo and menu trigger.',
+      medium: 'Show priority links.',
+      expanded: 'Show every destination.',
+    },
+  },
   architecture: {
     contract: 'This page helps home brewers choose and buy a fresh roast.',
     mode: 'persuade_convert',
@@ -55,6 +64,7 @@ describe('page blueprint', () => {
     const blueprint = writePageBlueprint(workspace, validBlueprint)
 
     expect(blueprint.sections[0]?.id).toBe('hero')
+    expect(blueprint.navigationDesign?.transformation.compact).toContain('menu trigger')
     expect(JSON.parse(readFileSync(path.join(workspace, '.taste', 'page.json'), 'utf8'))).toEqual(
       blueprint,
     )
@@ -88,7 +98,11 @@ describe('page blueprint', () => {
   })
 
   it('keeps legacy page artifacts readable', () => {
-    const { architecture: _architecture, ...legacy } = validBlueprint
+    const {
+      architecture: _architecture,
+      navigationDesign: _navigationDesign,
+      ...legacy
+    } = validBlueprint
     const legacySection = { ...legacy.sections[0] }
     delete (legacySection as Partial<typeof legacySection>).userQuestion
     delete (legacySection as Partial<typeof legacySection>).stage

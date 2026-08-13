@@ -6,6 +6,16 @@ export interface PageLink {
   target: string
 }
 
+export interface PageNavigationDesign {
+  layout: string
+  behavior: string[]
+  transformation: {
+    compact: string
+    medium: string
+    expanded: string
+  }
+}
+
 export interface PageBlueprint {
   version: 1
   page: {
@@ -27,6 +37,7 @@ export interface PageBlueprint {
     rhythm: string
   }
   navigation: PageLink[]
+  navigationDesign?: PageNavigationDesign
   sections: Array<{
     id: string
     purpose: string
@@ -173,10 +184,27 @@ export function parsePageBlueprint(value: unknown): PageBlueprint {
           rhythm: 'Preserve the recorded section order.',
         },
     navigation: links(blueprint.navigation, 'navigation'),
+    ...(blueprint.navigationDesign === undefined
+      ? {}
+      : { navigationDesign: parseNavigationDesign(blueprint.navigationDesign) }),
     sections,
     responsive: strings(blueprint.responsive, 'responsive'),
     interactions: strings(blueprint.interactions, 'interactions'),
     acceptanceCriteria: strings(blueprint.acceptanceCriteria, 'acceptanceCriteria'),
+  }
+}
+
+function parseNavigationDesign(value: unknown): PageNavigationDesign {
+  const navigation = record(value, 'navigationDesign')
+  const responsive = record(navigation.transformation, 'navigationDesign.transformation')
+  return {
+    layout: string(navigation.layout, 'navigationDesign.layout'),
+    behavior: strings(navigation.behavior, 'navigationDesign.behavior'),
+    transformation: {
+      compact: string(responsive.compact, 'navigationDesign.transformation.compact'),
+      medium: string(responsive.medium, 'navigationDesign.transformation.medium'),
+      expanded: string(responsive.expanded, 'navigationDesign.transformation.expanded'),
+    },
   }
 }
 

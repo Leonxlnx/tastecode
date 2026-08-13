@@ -30,6 +30,7 @@ export {
   writePageBlueprint,
   type PageBlueprint,
   type PageLink,
+  type PageNavigationDesign,
 } from './page.js'
 export { designPagePrompt, parsePagePhaseOutput } from './page-phase.js'
 export {
