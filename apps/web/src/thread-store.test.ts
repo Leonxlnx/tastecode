@@ -135,6 +135,18 @@ describe('thread reducer', () => {
     expect(state.items[0]?.text).toBe('streamed')
   })
 
+  it('omits the retired Design approval warning from saved history', () => {
+    const state = reduce(emptyThread, {
+      type: 'item.completed',
+      item: item({
+        status: 'completed',
+        text: 'Heads up: this agent cannot ask for permission mid-run, so Ask-first may block its file writes during the build. Auto or Full approval works better for Design mode.',
+      }),
+    })
+
+    expect(state.items).toEqual([])
+  })
+
   it('replaces the exact optimistic user item with its durable completion', () => {
     const echoed = appendUserMessage(emptyThread, 'repeat this', 'submission-1')
     const state = reduce(echoed, {
