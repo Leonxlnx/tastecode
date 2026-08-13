@@ -327,6 +327,25 @@ describe('ModelSelector', () => {
     expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
   })
 
+  it('moves from model search into the matching results with arrow keys', () => {
+    renderSelector()
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    const search = screen.getByRole('searchbox', { name: 'Search models' })
+
+    fireEvent.change(search, { target: { value: 'mini' } })
+    fireEvent.keyDown(search, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Use GPT-5.6 Mini through Codex' }),
+    )
+
+    search.focus()
+    fireEvent.change(search, { target: { value: '' } })
+    fireEvent.keyDown(search, { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Use GPT-5.6 Mini through Codex' }),
+    )
+  })
+
   it('omits controls when the selected model declares none', () => {
     const plain = {
       ...MODELS[0]!,
@@ -472,6 +491,11 @@ describe('ModelSelector', () => {
     ).toBe('true')
 
     const claudeSearch = screen.getByRole('searchbox', { name: 'Search models' })
+    fireEvent.keyDown(claudeSearch, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Use Sonnet 5 through Claude Code' }),
+    )
+    claudeSearch.focus()
     fireEvent.keyDown(claudeSearch, { key: 'Escape' })
     expect((claudeSearch as HTMLInputElement).value).toBe('')
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()

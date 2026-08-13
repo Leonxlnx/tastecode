@@ -162,6 +162,7 @@ function ProviderModelList(props: {
   selectedChoice: ModelChoice | undefined
   onModelSelect: (choice: ModelChoice) => void
 }) {
+  const catalog = useRef<HTMLDivElement>(null)
   const groups = groupModelsBySource(props.models)
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
@@ -184,9 +185,10 @@ function ProviderModelList(props: {
   const filteredEntries = searching
     ? (filteredGroups.find((group) => group.key === visibleGroup?.key)?.entries ?? [])
     : (visibleGroup?.entries ?? [])
+  const focusResult = (edge: 'first' | 'last') => focusModelResult(catalog.current, edge)
 
   return (
-    <div className="model-selector__catalog">
+    <div className="model-selector__catalog" ref={catalog}>
       <div className="model-selector__providers" role="group" aria-label="Providers">
         {groups.map((group) => {
           const active = group.key === visibleGroup?.key
@@ -228,6 +230,7 @@ function ProviderModelList(props: {
                 label="Search models"
                 autoFocus
                 onChange={setQuery}
+                onNavigate={focusResult}
               />
             </div>
             {filteredEntries.length > 0 ? (
@@ -266,6 +269,7 @@ function FlatModelList(props: {
   selectedChoice: ModelChoice | undefined
   onModelSelect: (choice: ModelChoice) => void
 }) {
+  const list = useRef<HTMLDivElement>(null)
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
   const groups = groupModelsBySource(filterModelChoicesByQuery(props.models, deferredQuery))
@@ -275,6 +279,7 @@ function FlatModelList(props: {
       className="model-selector__models model-selector__models--flat"
       role="group"
       aria-label="Models"
+      ref={list}
     >
       <div className="model-selector__flat-head">
         <ModelSearchField
@@ -283,6 +288,7 @@ function FlatModelList(props: {
           label="Search models"
           autoFocus
           onChange={setQuery}
+          onNavigate={(edge) => focusModelResult(list.current, edge)}
         />
       </div>
       {groups.map((group) => (
@@ -318,6 +324,12 @@ function FlatModelList(props: {
       ) : null}
     </div>
   )
+}
+
+function focusModelResult(container: HTMLElement | null, edge: 'first' | 'last'): void {
+  const results = container?.querySelectorAll<HTMLButtonElement>('.model-selector__model')
+  const index = edge === 'first' ? 0 : (results?.length ?? 0) - 1
+  results?.[index]?.focus()
 }
 
 /** Carries fast *intent* across models whose fast tiers use different ids
