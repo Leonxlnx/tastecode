@@ -877,11 +877,17 @@ function ModelVisibilityGroup(props: {
   onModelVisibilityChange: (key: string, visible: boolean) => void
 }) {
   const [query, setQuery] = useState('')
+  const [showHidden, setShowHidden] = useState(false)
   const deferredQuery = useDeferredValue(query)
+  const modelsId = useId()
   const visibleCount = props.choices.filter((choice) => !props.hiddenModels.has(choice.key)).length
+  const hiddenCount = props.choices.length - visibleCount
   const allVisible = visibleCount === props.choices.length
   const mixedVisibility = visibleCount > 0 && !allVisible
-  const filteredChoices = filterModelChoicesByQuery(props.choices, deferredQuery)
+  const searching = deferredQuery.trim().length > 0
+  const filteredChoices = filterModelChoicesByQuery(props.choices, deferredQuery).filter(
+    (choice) => searching || showHidden || !props.hiddenModels.has(choice.key),
+  )
 
   return (
     <section className="model-visibility" aria-label={props.source}>
@@ -922,33 +928,48 @@ function ModelVisibilityGroup(props: {
       </header>
 
       <div className="model-visibility__models">
-        {filteredChoices.length > 0 ? (
-          filteredChoices.map((choice) => {
-            const visible = !props.hiddenModels.has(choice.key)
-            return (
-              <SettingsRow
-                className={`model-visibility__model${visible ? '' : ' is-hidden'}`}
-                key={choice.key}
-                title={choice.model.displayName}
-              >
-                <button
-                  className={`switch${visible ? ' is-on' : ''}`}
-                  type="button"
-                  role="switch"
-                  aria-label={`Show ${choice.model.displayName}`}
-                  aria-checked={visible}
-                  onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
+        <div id={modelsId}>
+          {filteredChoices.length > 0 ? (
+            filteredChoices.map((choice) => {
+              const visible = !props.hiddenModels.has(choice.key)
+              return (
+                <SettingsRow
+                  className={`model-visibility__model${visible ? '' : ' is-hidden'}`}
+                  key={choice.key}
+                  title={choice.model.displayName}
                 >
-                  <span className="switch__thumb" />
-                </button>
-              </SettingsRow>
-            )
-          })
-        ) : (
-          <p className="model-visibility__empty" role="status">
-            No matching models.
-          </p>
-        )}
+                  <button
+                    className={`switch${visible ? ' is-on' : ''}`}
+                    type="button"
+                    role="switch"
+                    aria-label={`Show ${choice.model.displayName}`}
+                    aria-checked={visible}
+                    onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
+                  >
+                    <span className="switch__thumb" />
+                  </button>
+                </SettingsRow>
+              )
+            })
+          ) : (
+            <p className="model-visibility__empty" role="status">
+              {searching ? 'No matching models.' : 'No models shown.'}
+            </p>
+          )}
+        </div>
+        {!searching && hiddenCount > 0 ? (
+          <button
+            className="model-visibility__hidden-toggle"
+            type="button"
+            aria-expanded={showHidden}
+            aria-controls={modelsId}
+            onClick={() => setShowHidden((visible) => !visible)}
+          >
+            {showHidden
+              ? 'Hide disabled models'
+              : `Show ${hiddenCount} disabled model${hiddenCount === 1 ? '' : 's'}`}
+          </button>
+        ) : null}
       </div>
     </section>
   )

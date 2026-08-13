@@ -3462,6 +3462,30 @@
   text-align: center;
 }
 
+.model-visibility__hidden-toggle {
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 16px;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--line);
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--t-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-visibility__hidden-toggle:hover {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.model-visibility__hidden-toggle:focus-visible {
+  outline: 1px solid var(--text-2);
+  outline-offset: -2px;
+}
+
 /* Errors never grow a second line: a red dot next to the row's control
    opens a bubble with the message and a tip on hover or focus. */
 .row-issue {
