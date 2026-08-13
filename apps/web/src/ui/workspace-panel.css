@@ -64,6 +64,10 @@
   transition-delay: 0s;
 }
 
+.workspace-panel:not(.is-open) {
+  overflow: hidden;
+}
+
 .workspace-panel.is-expanded {
   border-left: 0;
 }
