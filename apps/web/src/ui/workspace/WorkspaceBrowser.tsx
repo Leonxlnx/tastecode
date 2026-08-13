@@ -5,6 +5,7 @@ import {
   ExternalLink,
   Globe2,
   LoaderCircle,
+  Laptop,
   Monitor,
   RefreshCw,
   Smartphone,
@@ -21,7 +22,7 @@ import {
 
 const VIEWPORT_ICONS = {
   fluid: Monitor,
-  desktop: Monitor,
+  desktop: Laptop,
   tablet: Tablet,
   mobile: Smartphone,
 } satisfies Record<BrowserViewportId, typeof Monitor>
@@ -312,7 +313,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({ active }: { act
                 aria-pressed={viewport === option.id}
                 onClick={() => setViewport(option.id)}
               >
-                <Icon size={14} aria-hidden />
+                <Icon size={15} aria-hidden />
               </button>
             )
           })}

@@ -250,7 +250,7 @@ describe('TerminalPane', () => {
       cursorStyle: 'block',
       drawBoldTextInBrightColors: false,
       fontFamily: expect.stringContaining('JetBrainsMono Nerd Font Mono'),
-      fontSize: 17,
+      fontSize: 13,
       fontWeight: 400,
       fontWeightBold: 700,
       lineHeight: 1,

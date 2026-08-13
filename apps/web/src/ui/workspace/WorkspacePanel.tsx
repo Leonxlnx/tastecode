@@ -44,48 +44,37 @@ const WorkspaceSideChat = lazy(() =>
 
 export type WorkspaceTool = 'review' | 'terminal' | 'browser' | 'files' | 'side-chat'
 
-type WorkspaceTab = { id: WorkspaceTool; kind: WorkspaceTool }
+type WorkspaceTab = { id: string; kind: WorkspaceTool }
 
 const TOOLS: Array<{
   kind: WorkspaceTool
   title: string
-  description: string
   Icon: LucideIcon
-  shortcut?: string
 }> = [
   {
     kind: 'review',
     title: 'Review',
-    description: 'Inspect every changed line',
     Icon: FileDiff,
-    shortcut: '⇧⌘G',
   },
   {
     kind: 'terminal',
     title: 'Terminal',
-    description: 'Open the session shell',
     Icon: SquareTerminal,
   },
   {
     kind: 'browser',
     title: 'Browser',
-    description: 'Preview a page at any viewport',
     Icon: Globe2,
-    shortcut: '⌘T',
   },
   {
     kind: 'files',
     title: 'Files',
-    description: 'Browse and read the workspace',
     Icon: FolderOpen,
-    shortcut: '⌥⌘P',
   },
   {
     kind: 'side-chat',
     title: 'Side chat',
-    description: 'Fork the current chat without interrupting it',
     Icon: MessageCirclePlus,
-    shortcut: '⌥⌘S',
   },
 ]
 
@@ -109,13 +98,14 @@ export function WorkspacePanel(props: {
   onWidthChange: (width: number) => void
 }) {
   const [tabs, setTabs] = useState<WorkspaceTab[]>([])
-  const [activeId, setActiveId] = useState<WorkspaceTool>()
+  const [activeId, setActiveId] = useState<string>()
   const [addOpen, setAddOpen] = useState(false)
   const addWrap = useRef<HTMLDivElement>(null)
   const resizeCleanup = useRef<() => void>(() => {})
   const tabsRef = useRef(tabs)
   const onClose = useRef(props.onClose)
   const clearAfterClose = useRef(false)
+  const nextBrowserId = useRef(1)
   tabsRef.current = tabs
   onClose.current = props.onClose
 
@@ -123,10 +113,13 @@ export function WorkspacePanel(props: {
     (kind: WorkspaceTool) => {
       clearAfterClose.current = false
       props.onOpen()
+      const id = kind === 'browser' ? `browser-${nextBrowserId.current++}` : kind
       setTabs((current) =>
-        current.some((tab) => tab.kind === kind) ? current : [...current, { id: kind, kind }],
+        kind === 'browser' || !current.some((tab) => tab.kind === kind)
+          ? [...current, { id, kind }]
+          : current,
       )
-      setActiveId(kind)
+      setActiveId(kind === 'browser' ? id : kind)
       setAddOpen(false)
     },
     [props.onOpen],
@@ -184,11 +177,11 @@ export function WorkspacePanel(props: {
     [],
   )
 
-  const closeTab = useCallback((kind: WorkspaceTool) => {
+  const closeTab = useCallback((id: string) => {
     const current = tabsRef.current
-    const index = current.findIndex((tab) => tab.kind === kind)
+    const index = current.findIndex((tab) => tab.id === id)
     if (index < 0) return
-    const next = current.filter((tab) => tab.kind !== kind)
+    const next = current.filter((tab) => tab.id !== id)
     if (next.length === 0) {
       clearAfterClose.current = true
       onClose.current()
@@ -197,7 +190,7 @@ export function WorkspacePanel(props: {
     tabsRef.current = next
     setTabs(next)
     setActiveId((currentActive) =>
-      currentActive === kind ? (next[index]?.kind ?? next[index - 1]?.kind) : currentActive,
+      currentActive === id ? (next[index]?.id ?? next[index - 1]?.id) : currentActive,
     )
   }, [])
 
@@ -290,6 +283,12 @@ export function WorkspacePanel(props: {
               <div
                 className={`workspace-panel__tab-shell${activeId === tab.id ? ' is-active' : ''}`}
                 key={tab.id}
+                onAuxClick={(event) => {
+                  if (event.button === 1) {
+                    event.preventDefault()
+                    closeTab(tab.id)
+                  }
+                }}
               >
                 <button
                   type="button"
@@ -305,7 +304,7 @@ export function WorkspacePanel(props: {
                   type="button"
                   className="workspace-panel__tab-close"
                   aria-label={`Close ${tool.title}`}
-                  onClick={() => closeTab(tab.kind)}
+                  onClick={() => closeTab(tab.id)}
                 >
                   <X size={13} aria-hidden />
                 </button>
@@ -376,7 +375,7 @@ export function WorkspacePanel(props: {
                   sideChatParentStatus={props.sideChatParentStatus}
                   sideChatStartOptions={props.sideChatStartOptions}
                   sideChatPromptRequest={props.sideChatPromptRequest}
-                  onClose={() => closeTab(tab.kind)}
+                  onClose={() => closeTab(tab.id)}
                 />
               </Suspense>
             </div>
@@ -455,17 +454,9 @@ function WorkspaceSelector({ onOpen }: { onOpen: (kind: WorkspaceTool) => void }
     <div className="workspace-selector">
       <div className="workspace-selector__list">
         {TOOLS.map((tool) => {
-          const Icon = tool.Icon
           return (
             <button type="button" key={tool.kind} onClick={() => onOpen(tool.kind)}>
-              <span className="workspace-selector__icon">
-                <Icon size={16} aria-hidden />
-              </span>
-              <span className="workspace-selector__copy">
-                <strong>{tool.title}</strong>
-                <small>{tool.description}</small>
-              </span>
-              {tool.shortcut ? <kbd>{platformShortcut(tool.shortcut)}</kbd> : null}
+              <span>{tool.title}</span>
             </button>
           )
         })}
@@ -480,7 +471,6 @@ function ToolMenuItem({ tool, onOpen }: { tool: (typeof TOOLS)[number]; onOpen: 
     <button type="button" role="menuitem" onClick={onOpen}>
       <Icon size={15} aria-hidden />
       <span>{tool.title}</span>
-      {tool.shortcut ? <kbd>{platformShortcut(tool.shortcut)}</kbd> : null}
     </button>
   )
 }
@@ -491,10 +481,4 @@ function WorkspaceLoading() {
 
 function toolFor(kind: WorkspaceTool): (typeof TOOLS)[number] {
   return TOOLS.find((tool) => tool.kind === kind) ?? TOOLS[0]!
-}
-
-function platformShortcut(shortcut: string): string {
-  return typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac')
-    ? shortcut
-    : shortcut.replace('⌘', 'Ctrl+').replace('⌥', 'Alt+')
 }

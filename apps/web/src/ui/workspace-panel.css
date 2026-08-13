@@ -269,7 +269,7 @@
 
 .workspace-panel__add-menu button {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
+  grid-template-columns: 20px minmax(0, 1fr);
   min-height: 34px;
   align-items: center;
   gap: 8px;
@@ -1345,12 +1345,10 @@
 }
 
 .workspace-selector__list > button {
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) auto;
-  min-height: 50px;
+  display: flex;
+  min-height: 40px;
   align-items: center;
-  gap: 11px;
-  padding: 6px 12px;
+  padding: 0 14px;
   background: transparent;
   border: 0;
   color: var(--text-2);
@@ -1379,70 +1377,11 @@
   transform: translateY(1px);
 }
 
-.workspace-selector__icon {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  background: var(--chrome-recessed);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  color: var(--text-3);
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
-}
-
-.workspace-selector__list > button:is(:hover, :focus-visible) .workspace-selector__icon {
-  background: var(--chrome-raised);
-  border-color: var(--chrome-border);
-  box-shadow: var(--chrome-shadow);
-  color: var(--text-2);
-}
-
-.workspace-selector__copy {
-  display: grid;
-  min-width: 0;
-  gap: 1px;
-}
-
-.workspace-selector__copy strong {
+.workspace-selector__list > button > span {
   color: var(--text);
   font-size: var(--t-md);
   font-weight: 530;
   line-height: 1.25;
-}
-
-.workspace-selector__copy small {
-  overflow: hidden;
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-selector kbd {
-  min-width: 25px;
-  padding: 2px 6px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--t-xs);
-  line-height: 1.25;
-  text-align: center;
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
-}
-
-.workspace-selector__list > button:is(:hover, :focus-visible) kbd {
-  border-color: var(--line-strong);
-  color: var(--text-2);
 }
 
 @media (max-width: 900px) {

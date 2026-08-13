@@ -91,7 +91,7 @@ describe('WorkspacePanel', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /Terminal Open the session shell/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
     await waitFor(() => expect(screen.getByRole('tab', { name: 'Terminal' })).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: 'Close Terminal' }))
 
@@ -165,10 +165,41 @@ describe('WorkspacePanel', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /Terminal Open the session shell/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Exit terminal' }))
 
     expect(onClose).toHaveBeenCalledOnce()
     expect(screen.getByRole('tab', { name: 'Terminal' })).toBeTruthy()
+  })
+
+  it('opens independent browser tabs and closes one with the middle mouse button', async () => {
+    render(
+      <WorkspacePanel
+        open
+        expanded={false}
+        width={400}
+        transport={{} as Transport}
+        theme="dark"
+        sideChatParentStatus="idle"
+        sideChatStartOptions={{ approval: 'ask' }}
+        nativeSurfacesVisible
+        onOpen={vi.fn()}
+        onClose={vi.fn()}
+        onExpandedChange={vi.fn()}
+        onWidthChange={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Browser' }))
+    await waitFor(() => expect(screen.getAllByRole('tab', { name: 'Browser' })).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: 'Add workspace tab' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Browser' }))
+    await waitFor(() => expect(screen.getAllByRole('tab', { name: 'Browser' })).toHaveLength(2))
+
+    fireEvent(
+      screen.getAllByRole('tab', { name: 'Browser' })[0]!,
+      new MouseEvent('auxclick', { bubbles: true, button: 1 }),
+    )
+    expect(screen.getAllByRole('tab', { name: 'Browser' })).toHaveLength(1)
   })
 })

@@ -71,7 +71,7 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
       customGlyphs: true,
       drawBoldTextInBrightColors: !workspace,
       fontFamily: terminalFont(workspace ? 'workspace' : 'app'),
-      fontSize: workspace ? 17 : 12.5,
+      fontSize: workspace ? 13 : 12.5,
       fontWeight: workspace ? 400 : 'normal',
       fontWeightBold: workspace ? 700 : 'bold',
       letterSpacing: 0,
