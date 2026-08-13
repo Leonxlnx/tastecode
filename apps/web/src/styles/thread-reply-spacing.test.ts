@@ -47,4 +47,16 @@ describe('thread reply spacing', () => {
     expect(actions).not.toContain('bottom: 0')
     expect(activeRow).toContain('padding-bottom: 31px')
   })
+
+  it('reserves prompt action space while the message or its controls are active', () => {
+    const actions = css.match(/\.said__actions \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
+    const activeRow = css.match(
+      /\.thread__row:has\(> \.said:hover\),\n\.thread__row:has\(> \.said:focus-within\) \{(?<body>[\s\S]*?)\n\}/,
+    )?.groups?.['body']
+
+    expect(actions).toContain('top: 100%')
+    expect(actions).toContain('padding-top: 3px')
+    expect(actions).toContain('margin: 0')
+    expect(activeRow).toContain('padding-bottom: 31px')
+  })
 })
