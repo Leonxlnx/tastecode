@@ -966,8 +966,8 @@ function ModelVisibilityGroup(props: {
             onClick={() => setShowHidden((visible) => !visible)}
           >
             {showHidden
-              ? 'Hide disabled models'
-              : `Show ${hiddenCount} disabled model${hiddenCount === 1 ? '' : 's'}`}
+              ? 'Hide hidden models'
+              : `Show ${hiddenCount} hidden model${hiddenCount === 1 ? '' : 's'}`}
           </button>
         ) : null}
       </div>

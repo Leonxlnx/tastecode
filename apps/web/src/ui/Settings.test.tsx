@@ -647,7 +647,7 @@ describe('model settings', () => {
     expect(sourceHeading?.querySelector('svg')?.getAttribute('width')).toBe('15')
     expect(screen.getByLabelText('1 of 2 models visible').className).toBe('count-badge')
     expect(screen.queryByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Show 1 disabled model' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Show 1 hidden model' })).toBeTruthy()
     fireEvent.change(search, { target: { value: 'ling' } })
     expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
     fireEvent.change(search, { target: { value: 'qwen 3.8' } })
@@ -666,9 +666,9 @@ describe('model settings', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear Search OpenCode models' }))
     expect(screen.queryByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Show 1 disabled model' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show 1 hidden model' }))
     expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Hide disabled models' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Hide hidden models' })).toBeTruthy()
   })
 
   it('omits stored custom-model management from beta settings', () => {
