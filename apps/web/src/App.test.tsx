@@ -641,7 +641,7 @@ describe('web client', () => {
     render(<App />)
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
-    fireEvent.click(screen.getByRole('switch', { name: 'Show GPT-5.6 Sol' }))
+    fireEvent.click(screen.getByRole('switch', { name: 'Include GPT-5.6 Sol in model picker' }))
 
     await waitFor(() =>
       expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.6-sol"]'),
@@ -3099,7 +3099,9 @@ describe('new chats', () => {
     })
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'Show models from Codex' }))
+    fireEvent.click(
+      await screen.findByRole('switch', { name: 'Include GPT-5.6 Sol in model picker' }),
+    )
     fireEvent.click(screen.getByRole('button', { name: 'Back to app' }))
 
     await waitFor(() => {
@@ -3163,7 +3165,9 @@ describe('new chats', () => {
     })
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'Show models from Codex' }))
+    fireEvent.click(
+      await screen.findByRole('switch', { name: 'Include GPT-5.6 Sol in model picker' }),
+    )
     fireEvent.click(screen.getByRole('button', { name: 'Back to app' }))
 
     await waitFor(() => {
@@ -4645,7 +4649,9 @@ describe('reopening a session', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'Show models from Codex' }))
+    fireEvent.click(
+      await screen.findByRole('switch', { name: 'Include GPT-5.6 Sol in model picker' }),
+    )
     fireEvent.click(screen.getByRole('button', { name: 'Back to app' }))
 
     await waitFor(() => {
