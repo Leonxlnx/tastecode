@@ -212,6 +212,7 @@ export const ComposerResourcePicker = forwardRef<
           ? `No skills or MCP servers match “${props.trigger.query}”.`
           : 'No more skills or MCP servers are available.'
         : undefined
+  const message = error ?? status
 
   return (
     <div
@@ -248,7 +249,7 @@ export const ComposerResourcePicker = forwardRef<
                 if (resource.available) props.onSelect(resource)
               }}
             >
-              <Icon size={17} strokeWidth={1.7} aria-hidden />
+              <Icon size={15} strokeWidth={1.7} aria-hidden />
               <span className="composer-resource-picker__copy">
                 <span className="composer-resource-picker__name">{resource.name}</span>
                 <span className="composer-resource-picker__description">
@@ -257,23 +258,15 @@ export const ComposerResourcePicker = forwardRef<
                     : resource.description}
                 </span>
               </span>
-              <span className="composer-resource-picker__meta">
-                <span>{resource.kind === 'skill' ? 'Skill' : 'MCP'}</span>
-                <span>{resource.scope}</span>
-              </span>
             </button>
           )
         })}
-        {status ? (
+        {message ? (
           <p className="composer-resource-picker__status" role="status">
-            {status}
+            {message}
           </p>
         ) : null}
       </div>
-      <footer className="composer-resource-picker__footer">
-        <span>{error ?? '↑↓ navigate · Tab select · Esc close'}</span>
-        <span>Skills + MCP</span>
-      </footer>
     </div>
   )
 })
