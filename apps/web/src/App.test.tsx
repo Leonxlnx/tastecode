@@ -1167,7 +1167,7 @@ describe('web client', () => {
     fireEvent.keyDown(composer, { key: 'Enter' })
 
     expect((composer as HTMLTextAreaElement).value).toBe('Use what the UI shows')
-    expect(screen.getByRole('status').textContent).toContain('Checking providers')
+    expect(screen.queryByText('Checking providers…')).toBeNull()
     expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
     await act(async () => {
       releaseProviders()
