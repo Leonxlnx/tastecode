@@ -2604,7 +2604,7 @@ describe('new chats', () => {
     )
   })
 
-  it('opens an empty project from the sidebar', async () => {
+  it('toggles an empty project without leaving the current new chat', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -2625,10 +2625,21 @@ describe('new chats', () => {
     render(<App />)
     await screen.findByRole('heading', { name: 'What should we build in Personal Harness?' })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Another Project' }))
+    const anotherProject = screen.getByRole('button', { name: 'Another Project' })
+    fireEvent.click(anotherProject)
 
-    expect(screen.getByRole('heading').textContent).toBe('What should we build in Another Project?')
+    expect(anotherProject.getAttribute('aria-expanded')).toBe('true')
+    expect(within(anotherProject.closest('.proj')!).getByText('No chats')).toBeTruthy()
+    expect(screen.getByRole('heading').textContent).toBe(
+      'What should we build in Personal Harness?',
+    )
     expect(screen.getByPlaceholderText('Do anything')).toBeTruthy()
+
+    fireEvent.click(anotherProject)
+    expect(anotherProject.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByRole('heading').textContent).toBe(
+      'What should we build in Personal Harness?',
+    )
   })
 
   it('keeps an untouched session out of the sidebar until the first prompt', async () => {

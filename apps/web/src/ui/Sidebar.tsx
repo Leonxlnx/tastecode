@@ -127,7 +127,6 @@ function SidebarComponent(props: {
   onWidthChange: (width: number) => void
   onAddProject: () => void
   onNewSession: (projectPath?: string, chooseProject?: boolean) => void
-  onSelectProject?: ((path: string) => void) | undefined
   onSelectSession: (id: string) => void
   onRenameProject: (path: string, name: string) => void
   onRemoveProject: (path: string) => void
@@ -296,11 +295,6 @@ function SidebarComponent(props: {
 
   const selectSession = (id: string) => {
     props.onSelectSession(id)
-    closeOnNarrowViewport()
-  }
-
-  const selectProject = (path: string) => {
-    props.onSelectProject?.(path)
     closeOnNarrowViewport()
   }
 
@@ -577,7 +571,6 @@ function SidebarComponent(props: {
                     }}
                     onProjectDragEnd={endProjectDrag}
                     onNewSession={(path) => newSession(path)}
-                    onSelectProject={selectProject}
                     onSelectSession={selectSession}
                   />
                 ))
@@ -869,7 +862,6 @@ function ProjectRow(props: {
   onProjectDrop: (event: DragEvent<HTMLElement>) => void
   onProjectDragEnd: () => void
   onNewSession: (path: string) => void
-  onSelectProject?: ((path: string) => void) | undefined
   onSelectSession: (id: string) => void
   onRenameProject: (path: string, name: string) => void
   onRemoveProject: (path: string) => void
@@ -961,7 +953,6 @@ function ProjectRow(props: {
               className="proj__toggle"
               onClick={() => {
                 if (count === 0) {
-                  if (!expanded) props.onSelectProject?.(props.project.path)
                   setOpen(!expanded)
                   return
                 }

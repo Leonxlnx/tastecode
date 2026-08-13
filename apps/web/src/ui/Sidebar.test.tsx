@@ -37,8 +37,7 @@ const session = (id: string, title: string) => ({
 })
 
 describe('Sidebar chat actions', () => {
-  it('selects an empty project and shows its empty chat state', () => {
-    const onSelectProject = vi.fn()
+  it('toggles an empty project without leaving the current chat', () => {
     const onClose = vi.fn()
     vi.spyOn(window, 'matchMedia').mockImplementation(
       (query) => ({ matches: query === '(max-width: 700px)' }) as MediaQueryList,
@@ -56,7 +55,6 @@ describe('Sidebar chat actions', () => {
         onClose={onClose}
         onAddProject={vi.fn()}
         onNewSession={vi.fn()}
-        onSelectProject={onSelectProject}
         onSelectSession={vi.fn()}
         onRenameProject={vi.fn()}
         onRemoveProject={vi.fn()}
@@ -73,14 +71,13 @@ describe('Sidebar chat actions', () => {
     const projectButton = screen.getByRole('button', { name: 'Empty project' })
     expect(projectButton.getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(projectButton)
-    expect(onSelectProject).toHaveBeenCalledWith('/work/empty')
-    expect(onClose).toHaveBeenCalledOnce()
+    expect(onClose).not.toHaveBeenCalled()
     expect(screen.getByText('No chats')).toBeTruthy()
     expect(projectButton.getAttribute('aria-expanded')).toBe('true')
 
     fireEvent.click(projectButton)
     expect(projectButton.getAttribute('aria-expanded')).toBe('false')
-    expect(onSelectProject).toHaveBeenCalledOnce()
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('uses the classic account footer in the inbox sidebar', () => {

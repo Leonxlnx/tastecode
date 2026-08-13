@@ -3558,7 +3558,6 @@ export function App() {
           onWidthChange={resizeSidebar}
           onAddProject={addSidebarProject}
           onNewSession={startSidebarSession}
-          onSelectProject={selectProject}
           onSelectSession={selectSidebarSession}
           onRenameProject={renameSidebarProject}
           onRemoveProject={removeSidebarProject}
