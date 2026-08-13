@@ -109,7 +109,7 @@ export function WorkspacePanel(props: {
   const tabsRef = useRef(tabs)
   const onClose = useRef(props.onClose)
   const clearAfterClose = useRef(false)
-  const nextBrowserId = useRef(1)
+  const nextTabId = useRef(1)
   tabsRef.current = tabs
   onClose.current = props.onClose
 
@@ -117,13 +117,14 @@ export function WorkspacePanel(props: {
     (kind: WorkspaceTool) => {
       clearAfterClose.current = false
       props.onOpen()
-      const id = kind === 'browser' ? `browser-${nextBrowserId.current++}` : kind
+      const repeatable = kind === 'browser' || kind === 'terminal' || kind === 'files'
+      const id = repeatable ? `${kind}-${nextTabId.current++}` : kind
       setTabs((current) =>
-        kind === 'browser' || !current.some((tab) => tab.kind === kind)
+        repeatable || !current.some((tab) => tab.kind === kind)
           ? [...current, { id, kind }]
           : current,
       )
-      setActiveId(kind === 'browser' ? id : kind)
+      setActiveId(id)
       setAddOpen(false)
     },
     [props.onOpen],
