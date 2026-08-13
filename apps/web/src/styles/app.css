@@ -5578,10 +5578,7 @@
   border-top: 1px solid var(--line);
   border-left: 1px solid var(--line);
   border-top-left-radius: 10px;
-  /* StageHeader deliberately rises into the titlebar. Clip the in-flow
-     surface below instead, otherwise the title and workspace controls remain
-     in the accessibility tree while their pixels are cut off here. */
-  overflow: visible;
+  overflow: hidden;
   container: chat-stage / inline-size;
 }
 
