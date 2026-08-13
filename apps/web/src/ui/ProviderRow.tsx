@@ -25,14 +25,11 @@ export function ProviderRow(props: {
 }) {
   return (
     <div className="settings__row provider-row">
-      <div className="provider-row__mark">
+      <div className="provider-row__mark" title={props.provider.version}>
         <ProviderIcon mark={providerMark(props.provider.id)} size={18} />
       </div>
       <div className="provider-row__identity">
         <p className="settings__row-title">{props.provider.displayName}</p>
-        {props.provider.version ? (
-          <span className="provider-row__version">{props.provider.version}</span>
-        ) : null}
       </div>
       <div
         className="provider-row__status"

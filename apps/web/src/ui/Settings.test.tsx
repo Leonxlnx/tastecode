@@ -384,7 +384,10 @@ describe('provider authentication states', () => {
     const columns = (row: HTMLElement) => Array.from(row.children).map((child) => child.className)
     expect(columns(codex)).toEqual(columns(claude))
     expect(columns(claude)).toEqual(columns(grok))
-    expect(within(codex).getByText('codex-cli 1.4.0')).toBeTruthy()
+    expect(codex.querySelector('.provider-row__mark')?.getAttribute('title')).toBe(
+      'codex-cli 1.4.0',
+    )
+    expect(within(codex).queryByText('codex-cli 1.4.0')).toBeNull()
     for (const row of [codex, claude, grok]) {
       expect(row.querySelector('.provider-row__mark svg')?.getAttribute('width')).toBe('18')
     }
@@ -565,7 +568,7 @@ describe('paired device timestamps', () => {
 })
 
 describe('model settings', () => {
-  it('filters each provider locally and exposes mixed visibility honestly', () => {
+  it('keeps every model visible while toggling picker inclusion individually', () => {
     const models: ModelChoice[] = [
       {
         key: 'opencode:ling',
@@ -647,9 +650,18 @@ describe('model settings', () => {
     const sourceHeading = search.closest('.model-visibility')?.querySelector('.source-identity')
     expect(sourceHeading?.getAttribute('title')).toBe('OpenCode')
     expect(sourceHeading?.querySelector('svg')?.getAttribute('width')).toBe('15')
-    expect(screen.getByLabelText('1 of 2 models visible').className).toBe('count-badge')
-    expect(screen.queryByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Show 1 hidden model' })).toBeTruthy()
+    expect(screen.queryByText(/models visible/)).toBeNull()
+    expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
+    const ling = screen.getByRole('switch', {
+      name: 'Include OpenCode Zen · Ling-3.0-tiny Free in model picker',
+    })
+    const qwen = screen.getByRole('switch', {
+      name: 'Include OpenCode Go · Qwen3.8 Max in model picker',
+    })
+    expect(ling.getAttribute('aria-checked')).toBe('false')
+    expect(qwen.getAttribute('aria-checked')).toBe('true')
+    fireEvent.click(ling)
+    expect(onModelVisibilityChange).toHaveBeenCalledWith('opencode:ling', true)
     fireEvent.change(search, { target: { value: 'ling' } })
     expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
     fireEvent.change(search, { target: { value: 'qwen 3.8' } })
@@ -657,20 +669,11 @@ describe('model settings', () => {
     expect(screen.queryByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeNull()
     expect(screen.getByText('OpenCode Go · Qwen3.8 Max')).toBeTruthy()
 
-    const providerSwitch = screen.getByRole('checkbox', { name: 'Show models from OpenCode' })
-    expect(providerSwitch.getAttribute('aria-checked')).toBe('mixed')
-    expect(providerSwitch.classList.contains('is-mixed')).toBe(true)
-
-    fireEvent.click(providerSwitch)
-    expect(onModelVisibilityChange).toHaveBeenCalledTimes(2)
-    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'opencode:ling', true)
-    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'opencode:qwen', true)
+    expect(screen.queryByRole('checkbox', { name: 'Show models from OpenCode' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear Search OpenCode models' }))
-    expect(screen.queryByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Show 1 hidden model' }))
     expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Hide hidden models' })).toBeTruthy()
+    expect(screen.queryByText(/hidden model/)).toBeNull()
   })
 
   it('omits stored custom-model management from beta settings', () => {

@@ -99,7 +99,7 @@ import { ProfileSettings } from './ProfileSettings.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { renderQrSvg } from './qr-code.js'
 import { SourceIdentity } from './SourceIdentity.js'
-import { CountBadge, SettingsMeta, StateLabel } from './SettingsStatus.js'
+import { SettingsMeta, StateLabel } from './SettingsStatus.js'
 import { UsageSettings } from './UsageSettings.js'
 
 const InstallTerminal = lazy(() =>
@@ -832,20 +832,9 @@ function ModelSettings(props: {
   // provider-id editing is intentionally absent from beta settings.
   const catalogModels = props.models.filter((choice) => !isCustomModelChoice(choice))
   const sources = groupModelsBySource(catalogModels)
-  const visibleModelCount = catalogModels.filter(
-    (choice) => !props.hiddenModels.has(choice.key),
-  ).length
 
   return (
     <SettingsPanel title="Models" groupClassName="settings__group--plain model-settings">
-      {catalogModels.length > 0 ? (
-        <div className="model-settings__summary">
-          <span>
-            {visibleModelCount} of {catalogModels.length} visible
-          </span>
-        </div>
-      ) : null}
-
       {sources.length > 0 ? (
         <div className="model-settings__sources">
           {sources.map((group) => (
@@ -875,58 +864,28 @@ function ModelVisibilityGroup(props: {
   onModelVisibilityChange: (key: string, visible: boolean) => void
 }) {
   const [query, setQuery] = useState('')
-  const [showHidden, setShowHidden] = useState(false)
   const deferredQuery = useDeferredValue(query)
-  const modelsId = useId()
-  const visibleCount = props.choices.filter((choice) => !props.hiddenModels.has(choice.key)).length
-  const hiddenCount = props.choices.length - visibleCount
-  const allVisible = visibleCount === props.choices.length
-  const mixedVisibility = visibleCount > 0 && !allVisible
   const searching = deferredQuery.trim().length > 0
-  const filteredChoices = filterModelChoicesByQuery(props.choices, deferredQuery).filter(
-    (choice) => searching || showHidden || !props.hiddenModels.has(choice.key),
-  )
+  const filteredChoices = filterModelChoicesByQuery(props.choices, deferredQuery)
 
   return (
     <section className="model-visibility" aria-label={props.source}>
       <header className="model-visibility__source">
-        <div className="model-visibility__source-copy">
-          {props.choices[0] ? (
-            <h3>
-              <SourceIdentity presentation={{ label: props.source, mark: props.choices[0].mark }} />
-            </h3>
-          ) : null}
-          <CountBadge
-            value={`${visibleCount}/${props.choices.length}`}
-            label={`${visibleCount} of ${props.choices.length} models visible`}
-          />
-        </div>
+        {props.choices[0] ? (
+          <h3>
+            <SourceIdentity presentation={{ label: props.source, mark: props.choices[0].mark }} />
+          </h3>
+        ) : null}
         <ModelSearchField
           className="model-visibility__search"
           value={query}
           label={`Search ${props.source} models`}
           onChange={setQuery}
         />
-        <button
-          className={`switch switch--source${allVisible ? ' is-on' : ''}${mixedVisibility ? ' is-mixed' : ''}`}
-          type="button"
-          role="checkbox"
-          aria-label={`Show models from ${props.source}`}
-          aria-checked={mixedVisibility ? 'mixed' : allVisible}
-          onClick={() => {
-            // Mixed and off both converge to all visible; only a fully-on
-            // source turns off. The tri-state control never hides a model
-            // just because a sibling was already hidden.
-            for (const choice of props.choices)
-              props.onModelVisibilityChange(choice.key, !allVisible)
-          }}
-        >
-          <span className="switch__thumb" />
-        </button>
       </header>
 
       <div className="model-visibility__models">
-        <div id={modelsId}>
+        <div>
           {filteredChoices.length > 0 ? (
             filteredChoices.map((choice) => {
               const visible = !props.hiddenModels.has(choice.key)
@@ -940,7 +899,7 @@ function ModelVisibilityGroup(props: {
                     className={`switch${visible ? ' is-on' : ''}`}
                     type="button"
                     role="switch"
-                    aria-label={`Show ${choice.model.displayName}`}
+                    aria-label={`Include ${choice.model.displayName} in model picker`}
                     aria-checked={visible}
                     onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
                   >
@@ -955,19 +914,6 @@ function ModelVisibilityGroup(props: {
             </p>
           )}
         </div>
-        {!searching && hiddenCount > 0 ? (
-          <button
-            className="model-visibility__hidden-toggle"
-            type="button"
-            aria-expanded={showHidden}
-            aria-controls={modelsId}
-            onClick={() => setShowHidden((visible) => !visible)}
-          >
-            {showHidden
-              ? 'Hide hidden models'
-              : `Show ${hiddenCount} hidden model${hiddenCount === 1 ? '' : 's'}`}
-          </button>
-        ) : null}
       </div>
     </section>
   )

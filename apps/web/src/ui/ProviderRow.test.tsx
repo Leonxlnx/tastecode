@@ -32,7 +32,8 @@ describe('provider row grammar', () => {
       'provider-row__primary',
     ])
     expect(row.querySelector('.provider-row__mark svg')?.getAttribute('width')).toBe('18')
-    expect(within(row).getByText('codex-cli 1.4.0')).toBeTruthy()
+    expect(row.querySelector('.provider-row__mark')?.getAttribute('title')).toBe('codex-cli 1.4.0')
+    expect(within(row).queryByText('codex-cli 1.4.0')).toBeNull()
     expect(within(row).getByRole('status').getAttribute('aria-atomic')).toBe('true')
     const issue = within(row).getByRole('button', { name: 'Problem details' })
     expect(issue.getAttribute('aria-describedby')).toBe(within(row).getByRole('tooltip').id)
