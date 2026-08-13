@@ -290,7 +290,7 @@ The current version-one schema contains:
 - one `creativeDirection.signatureDevice`, its evidence status, and stable invariants;
 - one `creativeDirection.restraint`;
 - `creativeDirection.avoid`;
-- a `colorPalette` of name, value, and usage records;
+- a `colorPalette` of semantic light or dark role records with exact value and usage;
 - `typefaces` with family, source, roles, and numeric weights;
 - `interfaceDirection`;
 - `imageDirection` with summary, subjects, treatment, and avoid rules;
@@ -299,6 +299,14 @@ The current version-one schema contains:
 
 User-supplied colors or fonts remain evidence in `brief.json`. The Brand phase assigns their usable
 roles in `brand.json`. The Page phase consumes those roles rather than copying the palette.
+
+The Brand model returns a compact palette recipe rather than improvising every shade. The runtime
+turns its accent and neutral seeds into canvas, surface, text, control, focus, and accent roles;
+preserves role locks exactly; maps generated colors into opaque sRGB; and rejects required text or
+control pairs that miss WCAG 2.2 contrast. Light and dark directions are generated independently.
+The persisted `colorPalette` remains version-one compatible, so later phases need no parallel color
+framework. `60/30/10` is only loose composition guidance for dominant surfaces, supporting
+structure, and sparse accent use, never a palette formula or pixel quota.
 
 Signature-device status is deliberately conservative. Existing or newly proposed devices are not
 called validated unless the input includes real category-buyer attribution evidence. Visual

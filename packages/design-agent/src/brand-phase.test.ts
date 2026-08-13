@@ -73,9 +73,38 @@ describe('brand phase', () => {
     expect(prompt).toContain('Never replace a supplied logo, color, typeface')
     expect(prompt).toContain('Fill every supplied decision into its final destination')
     expect(prompt).toContain('A new or unmeasured device is a candidate, never validated')
+    expect(prompt).toContain('Do not map generic emotion labels to fixed hues')
+    expect(prompt).toContain('Treat 60/30/10 only as loose composition guidance')
   })
 
   it('parses fenced provider output through the brand validator', () => {
     expect(parseBrandPhaseOutput(`\`\`\`json\n${JSON.stringify(brand)}\n\`\`\``)).toEqual(brand)
+  })
+
+  it('turns a compact palette recipe into verified semantic color records', () => {
+    const { colorPalette: _, ...withoutPalette } = brand
+    const parsed = parseBrandPhaseOutput(
+      JSON.stringify({
+        ...withoutPalette,
+        paletteRecipe: {
+          themes: {
+            light: {
+              accentSeed: '#C1492E',
+              neutralSeed: '#665A50',
+              surfaceContrast: 'quiet',
+            },
+          },
+          locked: { light: { accent: '#B92F2F' } },
+        },
+      }),
+    )
+    expect(parsed.colorPalette).toHaveLength(12)
+    expect(parsed.colorPalette).toContainEqual(
+      expect.objectContaining({
+        name: 'Light Accent',
+        value: '#B92F2F',
+        usage: expect.stringContaining('Sparse accent.'),
+      }),
+    )
   })
 })
