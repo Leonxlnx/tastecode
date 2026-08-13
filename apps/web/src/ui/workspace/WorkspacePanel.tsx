@@ -454,8 +454,10 @@ function WorkspaceSelector({ onOpen }: { onOpen: (kind: WorkspaceTool) => void }
     <div className="workspace-selector">
       <div className="workspace-selector__list">
         {TOOLS.map((tool) => {
+          const Icon = tool.Icon
           return (
             <button type="button" key={tool.kind} onClick={() => onOpen(tool.kind)}>
+              <Icon size={18} aria-hidden />
               <span>{tool.title}</span>
             </button>
           )

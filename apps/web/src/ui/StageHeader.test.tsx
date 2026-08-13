@@ -59,13 +59,10 @@ describe('StageHeader', () => {
     expect(screen.getByRole('button', { name: 'Show workspace tools' })).toBeTruthy()
   })
 
-  it('keeps the workspace toggle in place and flips its action while open', () => {
+  it('leaves closing an open workspace to the panel chrome', () => {
     const stage = props()
     render(<StageHeader {...stage} workspacePanelOpen />)
 
-    const toggle = screen.getByRole('button', { name: 'Hide workspace tools' })
-    expect(toggle.getAttribute('aria-pressed')).toBe('true')
-    fireEvent.click(toggle)
-    expect(stage.onToggleWorkspace).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('button', { name: /workspace tools/i })).toBeNull()
   })
 })

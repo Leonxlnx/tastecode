@@ -777,11 +777,11 @@ describe('web client', () => {
     const launcher = await screen.findByRole('button', { name: 'Show workspace tools' })
     expect(launcher.closest('.titlebar')).toBeNull()
     fireEvent.click(launcher)
-    expect(
-      (await screen.findAllByRole('button', { name: 'Hide workspace tools' })).some((button) =>
-        button.closest('.stagehead'),
-      ),
-    ).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Show workspace tools' })).toBeNull()
+    const close = await screen.findByRole('button', { name: 'Hide workspace tools' })
+    expect(close.closest('.workspace-panel__controls')).toBeTruthy()
+    fireEvent.click(close)
+    expect(await screen.findByRole('button', { name: 'Show workspace tools' })).toBeTruthy()
   })
 
   it('routes /side with an inline prompt into an ephemeral Side chat', async () => {

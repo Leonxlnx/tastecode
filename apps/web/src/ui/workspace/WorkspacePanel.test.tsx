@@ -139,6 +139,9 @@ describe('WorkspacePanel', () => {
       />,
     )
 
+    for (const title of ['Review', 'Terminal', 'Browser', 'Files', 'Temporary chat']) {
+      expect(screen.getByRole('button', { name: title }).querySelector('svg')).toBeTruthy()
+    }
     fireEvent.click(screen.getByRole('button', { name: 'Expand workspace tools' }))
     fireEvent.click(screen.getByRole('button', { name: 'Hide workspace tools' }))
     expect(onExpandedChange).toHaveBeenCalledWith(true)

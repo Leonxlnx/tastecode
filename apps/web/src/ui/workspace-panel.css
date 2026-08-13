@@ -44,7 +44,6 @@
   visibility: hidden;
   overflow: visible;
   background: var(--bg);
-  border-top: 1px solid var(--line);
   border-left: 1px solid var(--line);
   opacity: 0;
   pointer-events: none;
@@ -75,7 +74,7 @@
   position: relative;
   z-index: 5;
   display: flex;
-  height: 38px;
+  height: 42px;
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
@@ -1213,21 +1212,21 @@
 
 .workspace-selector__list {
   display: grid;
-  width: min(100%, 520px);
-  overflow: hidden;
-  background: var(--bg-rail);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-card);
-  box-shadow: var(--chrome-shadow);
+  width: min(100%, 460px);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .workspace-selector__list > button {
-  display: flex;
-  min-height: 40px;
+  display: grid;
+  min-height: 64px;
+  grid-template-columns: 28px minmax(0, 1fr);
   align-items: center;
-  padding: 0 14px;
-  background: transparent;
-  border: 0;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-rail);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
@@ -1236,10 +1235,6 @@
     background var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out),
     transform var(--dur-press) var(--ease-out);
-}
-
-.workspace-selector__list > button + button {
-  border-top: 1px solid var(--line);
 }
 
 .workspace-selector__list > button:hover,
@@ -1252,6 +1247,10 @@
 .workspace-selector__list > button:active {
   background: var(--surface-3);
   transform: translateY(1px);
+}
+
+.workspace-selector__list > button > svg {
+  color: var(--text-3);
 }
 
 .workspace-selector__list > button > span {
