@@ -78,6 +78,9 @@ const TOOLS: Array<{
   },
 ]
 
+const MIN_PANEL_WIDTH = 360
+const MIN_CHAT_WIDTH = 360
+
 export function WorkspacePanel(props: {
   open: boolean
   expanded: boolean
@@ -202,12 +205,15 @@ export function WorkspacePanel(props: {
     resizeCleanup.current()
     const startX = event.clientX
     const startWidth = props.width
-    const maximum = Math.max(360, Math.floor(window.innerWidth * 0.78))
+    const layoutWidth =
+      event.currentTarget.closest<HTMLElement>('.workspace-layout')?.clientWidth ||
+      window.innerWidth
+    const maximum = Math.max(MIN_PANEL_WIDTH, layoutWidth - MIN_CHAT_WIDTH)
     const haptics = appHapticsEnabled()
       ? new ResizeHaptics({
           startValue: startWidth,
           startTime: event.timeStamp,
-          minValue: 360,
+          minValue: MIN_PANEL_WIDTH,
           maxValue: maximum,
         })
       : undefined
@@ -215,7 +221,7 @@ export function WorkspacePanel(props: {
     let active = true
     const move = (next: globalThis.PointerEvent) => {
       const rawWidth = startWidth + startX - next.clientX
-      const nextWidth = Math.min(maximum, Math.max(360, rawWidth))
+      const nextWidth = Math.min(maximum, Math.max(MIN_PANEL_WIDTH, rawWidth))
       const feedback = haptics?.sample({
         rawValue: rawWidth,
         value: nextWidth,

@@ -15,7 +15,7 @@
 }
 
 .workspace-layout.is-panel-open {
-  grid-template-columns: minmax(0, 1fr) var(--workspace-panel-w);
+  grid-template-columns: minmax(360px, 1fr) min(var(--workspace-panel-w), calc(100% - 360px));
 }
 
 .workspace-layout.is-panel-expanded {
@@ -44,6 +44,7 @@
   visibility: hidden;
   overflow: visible;
   background: var(--bg);
+  border-top: 1px solid var(--line);
   border-left: 1px solid var(--line);
   opacity: 0;
   pointer-events: none;
@@ -1219,10 +1220,10 @@
 
 .workspace-selector__list > button {
   display: grid;
-  min-height: 64px;
-  grid-template-columns: 28px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
+  min-height: 76px;
+  align-content: center;
+  justify-items: center;
+  gap: 7px;
   padding: 12px;
   background: var(--bg-rail);
   border: 1px solid var(--line);
@@ -1258,6 +1259,7 @@
   font-size: var(--t-md);
   font-weight: 530;
   line-height: 1.25;
+  text-align: center;
 }
 
 @media (max-width: 900px) {

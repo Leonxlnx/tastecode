@@ -34,7 +34,7 @@ afterEach(() => {
 describe('WorkspacePanel', () => {
   it('gives resize detents only while the panel is tracking', () => {
     const onWidthChange = vi.fn()
-    const { rerender } = render(
+    const { container } = render(
       <WorkspacePanel
         open
         expanded={false}
@@ -52,6 +52,8 @@ describe('WorkspacePanel', () => {
     )
 
     const handle = screen.getByRole('separator', { name: 'Resize workspace tools' })
+    container.className = 'workspace-layout'
+    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 900 })
     Object.defineProperty(handle, 'setPointerCapture', {
       configurable: true,
       value: vi.fn(),
@@ -62,6 +64,8 @@ describe('WorkspacePanel', () => {
     fireEvent.pointerMove(window, { clientX: 420, pointerId: 7 })
 
     expect(onWidthChange).toHaveBeenCalledWith(480)
+    fireEvent.pointerMove(window, { clientX: 0, pointerId: 7 })
+    expect(onWidthChange).toHaveBeenLastCalledWith(540)
     expect(haptics.prepareAppHaptics).toHaveBeenCalled()
     expect(haptics.performAppHaptic).toHaveBeenCalledWith('alignment')
 
