@@ -93,9 +93,9 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
     terminal.current = instance
     let disposed = false
 
-    // Start the renderer import independently so image protocol parsing and
-    // link detection can never delay GPU rendering. Context loss degrades to
-    // xterm's DOM renderer instead of taking the shell down.
+    // Start the renderer import independently so optional GPU initialization
+    // can never delay the shell. Context loss degrades to xterm's DOM renderer
+    // instead of taking the terminal down.
     void import('@xterm/addon-webgl')
       .then(({ WebglAddon }) => {
         if (disposed) return
@@ -111,6 +111,9 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
         console.warn('[terminal] WebGL addon unavailable; using DOM renderer', error)
       })
 
+    // The image addon instantiates WebAssembly internally, which the desktop
+    // CSP intentionally forbids. Keep link detection without weakening that
+    // boundary or leaving an unhandled rejection whenever a terminal opens.
     void import('@xterm/addon-web-links')
       .then(({ WebLinksAddon }) => {
         if (disposed) return
