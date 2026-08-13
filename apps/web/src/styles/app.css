@@ -5271,7 +5271,36 @@
 /* ---------- projects & sessions ---------- */
 
 .proj {
+  position: relative;
   margin-bottom: 2px;
+}
+
+.proj[draggable='true'] > .proj__head {
+  cursor: grab;
+}
+
+.proj.is-dragging {
+  opacity: 0.42;
+}
+
+.proj[data-drop-position]::before {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  right: 6px;
+  left: 6px;
+  height: 2px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.proj[data-drop-position='before']::before {
+  top: -2px;
+}
+
+.proj[data-drop-position='after']::before {
+  bottom: -2px;
 }
 
 .proj__head {
@@ -8848,8 +8877,7 @@
 .sidebar-confirm {
   display: flex;
   flex-direction: column;
-  width: min(210px, calc(100vw - 32px));
-  min-height: 174px;
+  width: min(520px, calc(100vw - 32px));
 }
 
 .sidebar-confirm .sheet__head {
@@ -8857,9 +8885,10 @@
 }
 
 .sidebar-confirm .sheet__section {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
   padding: 10px 12px 12px;
 }
 
@@ -8872,12 +8901,16 @@
 
 .sidebar-confirm__actions {
   display: flex;
-  /* The confirm target stays opposite the menu label, so the second click of
-     an accidental double-click cannot land on the destructive action. */
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
-  margin-top: auto;
-  padding-top: 16px;
+  white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+  .sidebar-confirm .sheet__section {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
 }
 
 .menu.is-positioned[data-input-modality='pointer'] {
