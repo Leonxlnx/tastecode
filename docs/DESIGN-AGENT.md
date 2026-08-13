@@ -384,12 +384,19 @@ The latest visual review contains:
 - a stable finding ID;
 - severity: blocking, major, or minor;
 - visible area or viewport;
+- evidence type: automated DOM evidence or visual inspection;
+- confidence: high, medium, low, or unknown;
 - concrete evidence;
 - a bounded repair instruction.
 
 A passing review cannot contain findings. A repair verdict must contain at least one finding in
 practice, and Harness stops after at most two Repair attempts. The final artifact is the latest
 review, not a history of every review iteration.
+
+This phase deliberately makes only claims supported by screenshots and attached DOM audits. It
+does not infer factual accuracy, working interactions, conversion, user comprehension, loading
+performance, or provenance. Those require source, runtime, user, analytics, or performance
+evidence outside the visual-review artifact.
 
 ## Runtime state and recovery
 
