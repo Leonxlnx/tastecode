@@ -279,6 +279,28 @@ describe('thread reducer', () => {
     })
   })
 
+  it('drops an impossible context window from older unmarked accounting', () => {
+    const replayed = reduceEventLog(emptyThread, [
+      {
+        seq: 1,
+        event: {
+          type: 'usage.updated',
+          usage: {
+            inputTokens: 1_338_252,
+            cachedInputTokens: 1_230_336,
+            outputTokens: 11_545,
+            reasoningTokens: 6_547,
+            totalTokens: 1_349_797,
+            contextWindow: 258_400,
+          },
+        },
+      },
+    ])
+
+    expect(replayed.usage?.contextWindow).toBeUndefined()
+    expect(replayed.usage?.totalTokens).toBe(1_349_797)
+  })
+
   it('preserves a cumulative context-only usage frame', () => {
     const usage = {
       inputTokens: 0,
