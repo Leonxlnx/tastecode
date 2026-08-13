@@ -358,6 +358,12 @@
   gap: 7px;
 }
 
+.account-menu__source + .account-menu__source {
+  margin-top: 3px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-strong);
+}
+
 .account-menu__source h3 {
   display: flex;
   align-items: center;
