@@ -820,7 +820,7 @@ function ProjectRow(props: {
     position: DropPosition,
   ) => void
 }) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(props.project.sessions.length > 0)
   const [showAllSessions, setShowAllSessions] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState<'archive' | 'remove'>()
@@ -838,6 +838,10 @@ function ProjectRow(props: {
     ? props.project.sessions
     : props.project.sessions.slice(0, COLLAPSED_PROJECT_SESSION_COUNT)
   const reorderable = !props.forceOpen
+
+  useEffect(() => {
+    if (count > 0) setOpen(true)
+  }, [count])
 
   const endDrag = () => {
     setDraggedSessionId(undefined)
@@ -879,8 +883,8 @@ function ProjectRow(props: {
               className="proj__toggle"
               onClick={() => {
                 if (count === 0) {
-                  props.onSelectProject?.(props.project.path)
-                  setOpen(true)
+                  if (!expanded) props.onSelectProject?.(props.project.path)
+                  setOpen(!expanded)
                   return
                 }
                 if (expanded) setShowAllSessions(false)
@@ -997,7 +1001,7 @@ function ProjectRow(props: {
           the drawer's real height. The old per-row cap was double the actual
           row height, which spent half the duration moving nothing — the main
           reason the sidebar read as sluggish. */}
-      <div className="proj__drawer" data-open={expanded}>
+      <div className="proj__drawer" data-open={expanded} aria-hidden={!expanded}>
         <ul className="proj__sessions">
           {count === 0 ? <li className="rail__hint">No chats</li> : null}
           {visibleSessions.map((session) => (

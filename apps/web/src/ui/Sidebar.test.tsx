@@ -70,11 +70,17 @@ describe('Sidebar chat actions', () => {
       />,
     )
 
-    expect(screen.getByText('No chats')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Empty project' }))
+    const projectButton = screen.getByRole('button', { name: 'Empty project' })
+    expect(projectButton.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(projectButton)
     expect(onSelectProject).toHaveBeenCalledWith('/work/empty')
     expect(onClose).toHaveBeenCalledOnce()
     expect(screen.getByText('No chats')).toBeTruthy()
+    expect(projectButton.getAttribute('aria-expanded')).toBe('true')
+
+    fireEvent.click(projectButton)
+    expect(projectButton.getAttribute('aria-expanded')).toBe('false')
+    expect(onSelectProject).toHaveBeenCalledOnce()
   })
 
   it('uses the classic account footer in the inbox sidebar', () => {
