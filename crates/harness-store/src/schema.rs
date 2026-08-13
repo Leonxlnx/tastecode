@@ -92,19 +92,6 @@ CREATE TABLE IF NOT EXISTS design_runs (
   payload   TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS app_settings (
-  key   TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS paired_devices (
-  id           TEXT PRIMARY KEY,
-  name         TEXT NOT NULL,
-  token_hash   TEXT NOT NULL UNIQUE,
-  created_at   INTEGER NOT NULL,
-  last_seen_at INTEGER NOT NULL
-);
-
 CREATE INDEX IF NOT EXISTS checkpoints_by_thread ON checkpoints (thread_id, seq);
 CREATE INDEX IF NOT EXISTS events_by_thread ON events (thread_id, seq);
 CREATE INDEX IF NOT EXISTS threads_by_project ON threads (project_path);

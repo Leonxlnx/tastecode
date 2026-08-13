@@ -882,32 +882,35 @@ describe('Sidebar chat actions', () => {
     const onClose = vi.fn()
     const onWidthChange = vi.fn()
     render(
-      <Sidebar
-        projects={[]}
-        activeProjectPath={undefined}
-        activeSessionId={undefined}
-        account={undefined}
-        providerName="Codex"
-        collapsed={false}
-        width={248}
-        onWidthChange={onWidthChange}
-        onClose={onClose}
-        onAddProject={vi.fn()}
-        onNewSession={vi.fn()}
-        onSelectSession={vi.fn()}
-        onRenameProject={vi.fn()}
-        onRemoveProject={vi.fn()}
-        onTogglePin={vi.fn()}
-        onRenameSession={vi.fn()}
-        onDeleteSession={vi.fn()}
-        onArchiveProject={vi.fn()}
-        onReorderSession={vi.fn()}
-        onOpenSearch={vi.fn()}
-        onOpenSettings={vi.fn()}
-      />,
+      <div className="shell">
+        <Sidebar
+          projects={[]}
+          activeProjectPath={undefined}
+          activeSessionId={undefined}
+          account={undefined}
+          providerName="Codex"
+          collapsed={false}
+          width={248}
+          onWidthChange={onWidthChange}
+          onClose={onClose}
+          onAddProject={vi.fn()}
+          onNewSession={vi.fn()}
+          onSelectSession={vi.fn()}
+          onRenameProject={vi.fn()}
+          onRemoveProject={vi.fn()}
+          onTogglePin={vi.fn()}
+          onRenameSession={vi.fn()}
+          onDeleteSession={vi.fn()}
+          onArchiveProject={vi.fn()}
+          onReorderSession={vi.fn()}
+          onOpenSearch={vi.fn()}
+          onOpenSettings={vi.fn()}
+        />
+      </div>,
     )
 
     const handle = screen.getByRole('separator', { name: 'Resize sidebar' })
+    const shell = handle.closest<HTMLElement>('.shell')
     fireEvent.keyDown(handle, { key: 'ArrowRight' })
     expect(onWidthChange).toHaveBeenCalledWith(256)
 
@@ -924,7 +927,10 @@ describe('Sidebar chat actions', () => {
     fireEvent.pointerDown(handle, { clientX: 248, pointerId: 2 })
     fireEvent.pointerMove(handle, { clientX: 80, pointerId: 2 })
     expect(onClose).not.toHaveBeenCalled()
+    expect(shell?.hasAttribute('data-rail-fold-preview')).toBe(true)
+    expect(shell?.style.getPropertyValue('--rail-w')).not.toBe('0px')
     fireEvent.pointerMove(handle, { clientX: 270, pointerId: 2 })
+    expect(shell?.hasAttribute('data-rail-fold-preview')).toBe(false)
     fireEvent.pointerUp(handle, { clientX: 270, pointerId: 2 })
     expect(onClose).not.toHaveBeenCalled()
     expect(onWidthChange).toHaveBeenCalledWith(270)
@@ -978,5 +984,46 @@ describe('Sidebar chat actions', () => {
 
     fireEvent.pointerMove(handle, { clientX: 400, pointerId: 7 })
     expect(onWidthChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears an active resize when the sidebar closes before pointer release', () => {
+    const view = (collapsed: boolean) => (
+      <div className="shell">
+        <Sidebar
+          projects={[]}
+          activeProjectPath={undefined}
+          activeSessionId={undefined}
+          account={undefined}
+          providerName="Codex"
+          collapsed={collapsed}
+          width={248}
+          onWidthChange={vi.fn()}
+          onClose={vi.fn()}
+          onAddProject={vi.fn()}
+          onNewSession={vi.fn()}
+          onSelectSession={vi.fn()}
+          onRenameProject={vi.fn()}
+          onRemoveProject={vi.fn()}
+          onTogglePin={vi.fn()}
+          onRenameSession={vi.fn()}
+          onDeleteSession={vi.fn()}
+          onArchiveProject={vi.fn()}
+          onReorderSession={vi.fn()}
+          onOpenSearch={vi.fn()}
+          onOpenSettings={vi.fn()}
+        />
+      </div>
+    )
+    const { rerender } = render(view(false))
+    const handle = screen.getByRole('separator', { name: 'Resize sidebar' })
+    const shell = handle.closest('.shell')
+
+    fireEvent.pointerDown(handle, { clientX: 248, pointerId: 8 })
+    fireEvent.pointerMove(handle, { clientX: 80, pointerId: 8 })
+    expect(shell?.hasAttribute('data-rail-fold-preview')).toBe(true)
+
+    rerender(view(true))
+    expect(shell?.hasAttribute('data-rail-fold-preview')).toBe(false)
+    expect(shell?.hasAttribute('data-resizing')).toBe(false)
   })
 })
