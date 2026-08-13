@@ -88,8 +88,8 @@ const MIN_RAIL_WIDTH = 240
  *  collapse. A ratio rather than a pixel overshoot, so it keeps meaning the
  *  same thing when MIN_RAIL_WIDTH moves. */
 const COLLAPSE_WIDTH = Math.round(MIN_RAIL_WIDTH * 0.5)
-/** Mirrors --dur-rail: how long a fold or unfold takes to play out. */
-const RAIL_FOLD_MS = 380
+/** Mirrors --dur-slow: how long a fold or unfold takes to play out. */
+const RAIL_FOLD_MS = 260
 /** How far past the rail's own edge still counts as "at the rail" while it is
  *  revealed. Generous on purpose: the pointer travels diagonally toward the
  *  title bar toggle, and clipping that path retracted the rail mid-aim. */

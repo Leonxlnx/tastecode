@@ -26,9 +26,10 @@
   display: grid;
   grid-template-columns: var(--rail-w) 1fr;
   min-height: 0;
-  /* Grid tracks animate cleanly, so collapsing the rail slides the thread out
-     to fill the window instead of snapping. */
-  transition: grid-template-columns var(--dur-rail) var(--ease-rail);
+  /* The stage follows the rail without making a frequent chrome action feel
+     slow. The rail itself moves independently below, so its contents never
+     get revealed by this shrinking track. */
+  transition: grid-template-columns var(--dur-slow) var(--ease-rail);
   /* Rail colour behind everything in this row: it is what shows through the
      stage's rounded top-left corner, so the notch reads as part of the rail. */
   background: var(--bg-rail);
@@ -90,37 +91,35 @@
 
 .rail-slot {
   position: relative;
+  z-index: 20;
   min-width: 0;
   min-height: 0;
 }
 
 .rail {
+  position: absolute;
+  inset: 0 auto 0 0;
   display: grid;
   grid-template-rows: auto 1fr auto;
+  width: var(--rail-w);
   height: 100%;
   min-height: 0;
   background: var(--bg-rail);
+  transform: translateX(0);
+  transition:
+    transform var(--dur-slow) var(--ease-rail),
+    box-shadow var(--dur-slow) var(--ease-rail);
   /* No border of its own: the stage's left hairline draws the column divider,
      so the line and the rounded corner belong to one element. */
 }
 
-.rail-slot.is-collapsed {
-  z-index: 20;
-}
-
 .rail-slot.is-collapsed .rail {
-  position: absolute;
-  inset: 0 auto 0 0;
   /* The temporary reveal is the real sidebar: same width as before the
      collapse and a proper frame of its own, not a bare slab. */
-  width: var(--rail-w);
   border: 1px solid var(--line);
   border-left: 0;
   border-radius: 0 var(--r-panel) var(--r-panel) 0;
   transform: translateX(-100%);
-  transition:
-    transform var(--dur-rail) var(--ease-rail),
-    box-shadow var(--dur-rail) var(--ease-rail);
 }
 
 .rail-slot.is-collapsed.is-revealed .rail {
@@ -129,7 +128,7 @@
 }
 
 /* Showing and retracting the flyout run at their own quicker pace; entering
-   the collapsed state for real keeps --dur-rail. is-reveal-out is set for the
+   the collapsed state for real keeps the deliberate fold. is-reveal-out is set for the
    length of the retract, since by then the revealed class is already gone. */
 .rail-slot.is-collapsed.is-revealed .rail,
 .rail-slot.is-collapsed.is-reveal-out .rail {
