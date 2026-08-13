@@ -3,6 +3,12 @@ import path from 'node:path'
 
 export interface BrandSystem {
   version: 1
+  foundation: {
+    strategy: 'preserve' | 'extend' | 'create'
+    existingAssets: string[]
+    lockedDecisions: string[]
+    assumptions: string[]
+  }
   creativeDirection: {
     summary: string
     keywords: string[]
@@ -41,6 +47,8 @@ export function parseBrandSystem(value: unknown): BrandSystem {
   const brand = record(value, 'brand system')
   if (brand.version !== 1) throw new Error('brand system version must be 1')
 
+  const foundation =
+    brand.foundation === undefined ? undefined : record(brand.foundation, 'foundation')
   const creativeDirection = record(brand.creativeDirection, 'creativeDirection')
   const imageDirection = record(brand.imageDirection, 'imageDirection')
   const motionDirection = record(brand.motionDirection, 'motionDirection')
@@ -48,6 +56,18 @@ export function parseBrandSystem(value: unknown): BrandSystem {
 
   return {
     version: 1,
+    foundation: foundation
+      ? {
+          strategy: member(
+            foundation.strategy,
+            ['preserve', 'extend', 'create'] as const,
+            'foundation.strategy',
+          ),
+          existingAssets: strings(foundation.existingAssets, 'foundation.existingAssets'),
+          lockedDecisions: strings(foundation.lockedDecisions, 'foundation.lockedDecisions'),
+          assumptions: strings(foundation.assumptions, 'foundation.assumptions'),
+        }
+      : { strategy: 'create', existingAssets: [], lockedDecisions: [], assumptions: [] },
     creativeDirection: {
       summary: string(creativeDirection.summary, 'creativeDirection.summary'),
       keywords: strings(creativeDirection.keywords, 'creativeDirection.keywords'),
@@ -144,4 +164,11 @@ function weights(value: unknown, field: string): number[] {
     throw new Error(`${field} must contain font weights between 1 and 1000`)
   }
   return normalized as number[]
+}
+
+function member<T extends string>(value: unknown, values: readonly T[], field: string): T {
+  if (typeof value !== 'string' || !values.includes(value as T)) {
+    throw new Error(`${field} must be one of ${values.join(', ')}`)
+  }
+  return value as T
 }

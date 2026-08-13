@@ -6,6 +6,12 @@ import { parseBrandSystem, readBrandSystem, writeBrandSystem } from './brand.js'
 
 const brand = {
   version: 1,
+  foundation: {
+    strategy: 'extend',
+    existingAssets: ['public/logo.svg'],
+    lockedDecisions: ['Keep the supplied logo and warm paper background.'],
+    assumptions: ['No documented motion direction exists.'],
+  },
   creativeDirection: {
     summary: 'Editorial coffee culture with tactile warmth.',
     keywords: ['warm', 'precise'],
@@ -65,5 +71,15 @@ describe('brand system handoff', () => {
         typefaces: [{ ...brand.typefaces[0], weights: ['400', '700'] }],
       }).typefaces[0]?.weights,
     ).toEqual([400, 700])
+  })
+
+  it('keeps older brand artifacts readable with a conservative foundation', () => {
+    const { foundation: _foundation, ...legacy } = brand
+    expect(parseBrandSystem(legacy).foundation).toEqual({
+      strategy: 'create',
+      existingAssets: [],
+      lockedDecisions: [],
+      assumptions: [],
+    })
   })
 })
