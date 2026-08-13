@@ -243,6 +243,19 @@ describe('Composer queue', () => {
     expect(screen.queryByText('Next message')).toBeNull()
   })
 
+  it('offers a visible Steer action while Enter still queues', () => {
+    const onSend = vi.fn()
+    const onSteer = vi.fn()
+    renderComposer(onSend, { running: true, canSteerQueue: true, onSteer })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: 'Use this direction now' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Steer' }))
+
+    expect(onSteer).toHaveBeenCalledWith('Use this direction now', [])
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
   it('offers drag reorder, steer, remove, and edit actions for queued prompts', async () => {
     const onDeleteQueuedTurn = vi.fn()
     const onMoveQueuedTurn = vi.fn()
