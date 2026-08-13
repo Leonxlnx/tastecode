@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { allowedOrigin, assertSafeBind, hasAccess } from './server.js'
+import { allowedOrigin, assertSafeBind, clientErrorMessage, hasAccess } from './server.js'
+
+describe('client error messages', () => {
+  it('replaces raw missing-path details without hiding other errors', () => {
+    expect(
+      clientErrorMessage(Object.assign(new Error('ENOENT: C:\\secret\\path'), { code: 'ENOENT' })),
+    ).toBe(
+      'This project folder or workspace item is unavailable. Choose another project or add the folder again.',
+    )
+    expect(clientErrorMessage(new Error('provider unavailable'))).toBe('provider unavailable')
+  })
+})
 
 describe('websocket origin gate', () => {
   it('admits our own surfaces, including non-browser clients', () => {

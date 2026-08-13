@@ -296,12 +296,11 @@ export function startServer(
       const result = await route(socket, method as MethodName, decoded.data, access)
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ id, result }))
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
       respondError(
         socket,
         id,
         error instanceof StaleDiffSnapshotError ? ErrorCode.STALE_SNAPSHOT : ErrorCode.INTERNAL,
-        message,
+        clientErrorMessage(error),
       )
     }
   }
@@ -1198,6 +1197,13 @@ function workspaceForRequest(
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+export function clientErrorMessage(error: unknown): string {
+  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+    return 'This project folder or workspace item is unavailable. Choose another project or add the folder again.'
+  }
+  return messageOf(error)
 }
 
 /**
