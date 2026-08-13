@@ -68,6 +68,36 @@
   border-left: 0;
 }
 
+.workspace-panel__launcher {
+  position: absolute;
+  z-index: 4;
+  top: 50%;
+  right: 0;
+  display: grid;
+  width: 30px;
+  height: 44px;
+  place-items: center;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-right: 0;
+  border-radius: var(--r-lg) 0 0 var(--r-lg);
+  color: var(--text-3);
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition:
+    width var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.workspace-panel__launcher:hover,
+.workspace-panel__launcher:focus-visible {
+  width: 34px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+
 .workspace-panel:not(.is-expanded)::before {
   position: absolute;
   /* Sit above the titlebar chrome so this bridge actually reaches the
@@ -92,7 +122,9 @@
   height: var(--titlebar-h);
   align-items: center;
   gap: 8px;
-  padding: 4px 66px 4px 8px;
+  padding: 4px
+    calc(6px + max(0px, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw))))
+    4px 8px;
   background: var(--bg-rail);
   -webkit-app-region: no-drag;
 }
@@ -103,6 +135,33 @@
   align-items: center;
   gap: 4px;
   overflow: visible;
+}
+
+.workspace-panel__controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.workspace-panel__controls button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.workspace-panel__controls button:hover,
+.workspace-panel__controls button:focus-visible {
+  background: var(--control-hover);
+  color: var(--text);
 }
 
 .workspace-panel__tab-shell {

@@ -3,7 +3,10 @@ import {
   FileDiff,
   FolderOpen,
   Globe2,
+  Maximize2,
   MessageCirclePlus,
+  Minimize2,
+  PanelRightClose,
   Plus,
   SquareTerminal,
   X,
@@ -112,11 +115,13 @@ export function WorkspacePanel(props: {
   const resizeCleanup = useRef<() => void>(() => {})
   const tabsRef = useRef(tabs)
   const onClose = useRef(props.onClose)
+  const clearAfterClose = useRef(false)
   tabsRef.current = tabs
   onClose.current = props.onClose
 
   const openTool = useCallback(
     (kind: WorkspaceTool) => {
+      clearAfterClose.current = false
       props.onOpen()
       setTabs((current) =>
         current.some((tab) => tab.kind === kind) ? current : [...current, { id: kind, kind }],
@@ -184,12 +189,16 @@ export function WorkspacePanel(props: {
     const index = current.findIndex((tab) => tab.kind === kind)
     if (index < 0) return
     const next = current.filter((tab) => tab.kind !== kind)
+    if (next.length === 0) {
+      clearAfterClose.current = true
+      onClose.current()
+      return
+    }
     tabsRef.current = next
     setTabs(next)
     setActiveId((currentActive) =>
       currentActive === kind ? (next[index]?.kind ?? next[index - 1]?.kind) : currentActive,
     )
-    if (next.length === 0) onClose.current()
   }, [])
 
   const beginResize = (event: PointerEvent<HTMLDivElement>) => {
@@ -246,6 +255,19 @@ export function WorkspacePanel(props: {
       aria-label="Workspace tools"
       aria-hidden={!props.open}
       inert={props.open ? undefined : true}
+      onTransitionEnd={(event) => {
+        if (
+          event.target !== event.currentTarget ||
+          event.propertyName !== 'transform' ||
+          props.open ||
+          !clearAfterClose.current
+        )
+          return
+        clearAfterClose.current = false
+        tabsRef.current = []
+        setTabs([])
+        setActiveId(undefined)
+      }}
     >
       <div
         className="workspace-panel__resize"
@@ -310,6 +332,23 @@ export function WorkspacePanel(props: {
               </div>
             ) : null}
           </div>
+        </div>
+        <div className="workspace-panel__controls">
+          <button
+            type="button"
+            aria-label={props.expanded ? 'Restore workspace width' : 'Expand workspace tools'}
+            aria-pressed={props.expanded}
+            onClick={() => props.onExpandedChange(!props.expanded)}
+          >
+            {props.expanded ? (
+              <Minimize2 size={14} aria-hidden />
+            ) : (
+              <Maximize2 size={14} aria-hidden />
+            )}
+          </button>
+          <button type="button" aria-label="Hide workspace tools" onClick={props.onClose}>
+            <PanelRightClose size={15} aria-hidden />
+          </button>
         </div>
       </header>
 

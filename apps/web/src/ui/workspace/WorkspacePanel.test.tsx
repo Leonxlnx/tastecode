@@ -34,7 +34,7 @@ afterEach(() => {
 describe('WorkspacePanel', () => {
   it('gives resize detents only while the panel is tracking', () => {
     const onWidthChange = vi.fn()
-    render(
+    const { rerender } = render(
       <WorkspacePanel
         open
         expanded={false}
@@ -73,7 +73,7 @@ describe('WorkspacePanel', () => {
 
   it('closes the sidebar when its final tab closes', async () => {
     const onClose = vi.fn()
-    render(
+    const { rerender } = render(
       <WorkspacePanel
         open
         expanded={false}
@@ -95,6 +95,53 @@ describe('WorkspacePanel', () => {
     await waitFor(() => expect(screen.getByRole('tab', { name: 'Terminal' })).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: 'Close Terminal' }))
 
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(screen.getByRole('tab', { name: 'Terminal' })).toBeTruthy()
+    rerender(
+      <WorkspacePanel
+        open={false}
+        expanded={false}
+        width={400}
+        transport={{} as Transport}
+        theme="dark"
+        sideChatParentStatus="idle"
+        sideChatStartOptions={{ approval: 'ask' }}
+        nativeSurfacesVisible
+        onOpen={vi.fn()}
+        onClose={onClose}
+        onExpandedChange={vi.fn()}
+        onWidthChange={vi.fn()}
+      />,
+    )
+    fireEvent.transitionEnd(document.querySelector('.workspace-panel')!, {
+      propertyName: 'transform',
+    })
+    expect(screen.queryByRole('tab', { name: 'Terminal' })).toBeNull()
+  })
+
+  it('keeps panel controls inside the workspace chrome', () => {
+    const onClose = vi.fn()
+    const onExpandedChange = vi.fn()
+    render(
+      <WorkspacePanel
+        open
+        expanded={false}
+        width={400}
+        transport={{} as Transport}
+        theme="dark"
+        sideChatParentStatus="idle"
+        sideChatStartOptions={{ approval: 'ask' }}
+        nativeSurfacesVisible
+        onOpen={vi.fn()}
+        onClose={onClose}
+        onExpandedChange={onExpandedChange}
+        onWidthChange={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand workspace tools' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Hide workspace tools' }))
+    expect(onExpandedChange).toHaveBeenCalledWith(true)
     expect(onClose).toHaveBeenCalledOnce()
   })
 
@@ -122,6 +169,6 @@ describe('WorkspacePanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Exit terminal' }))
 
     expect(onClose).toHaveBeenCalledOnce()
-    expect(screen.queryByRole('tab', { name: 'Terminal' })).toBeNull()
+    expect(screen.getByRole('tab', { name: 'Terminal' })).toBeTruthy()
   })
 })

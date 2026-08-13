@@ -771,6 +771,15 @@ describe('web client', () => {
     })
   })
 
+  it('opens workspace tools from the app surface instead of native window chrome', async () => {
+    render(<App />)
+
+    const launcher = await screen.findByRole('button', { name: 'Show workspace tools' })
+    expect(launcher.closest('.titlebar')).toBeNull()
+    fireEvent.click(launcher)
+    expect(await screen.findByRole('button', { name: 'Hide workspace tools' })).toBeTruthy()
+  })
+
   it('routes /side with an inline prompt into an ephemeral Side chat', async () => {
     localStorage.setItem('harness.models.cache', serializeModelCatalogCache([cachedCodexChoice()]))
     const fallback = transport.request.getMockImplementation()!

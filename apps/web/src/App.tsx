@@ -10,7 +10,7 @@ import {
   useSyncExternalStore,
 } from 'react'
 import type { CSSProperties } from 'react'
-import { LoaderCircle } from 'lucide-react'
+import { LoaderCircle, PanelRight } from 'lucide-react'
 import type {
   Account,
   ApprovalDecision,
@@ -3379,17 +3379,6 @@ export function App() {
     setWorkspacePanelOpen(false)
     setWorkspacePanelExpanded(false)
   }, [])
-  const toggleWorkspacePanel = useCallback(() => {
-    setWorkspacePanelOpen((open) => {
-      if (open) setWorkspacePanelExpanded(false)
-      return !open
-    })
-  }, [])
-  const toggleWorkspacePanelExpanded = useCallback(
-    () => setWorkspacePanelExpanded((expanded) => !expanded),
-    [],
-  )
-
   const active = useMemo(() => findSession(projects, activeId), [projects, activeId])
   const activeProject = useMemo(
     () => projects.find((project) => project.path === activePath),
@@ -3536,14 +3525,7 @@ export function App() {
       className={`shell ${collapsed ? 'is-narrow' : ''}`}
       style={{ '--rail-w': `${railWidth}px` } as CSSProperties}
     >
-      <TitleBar
-        collapsed={collapsed}
-        workspacePanelOpen={workspacePanelOpen}
-        workspacePanelExpanded={workspacePanelExpanded}
-        onToggleRail={toggleRail}
-        onToggleWorkspacePanel={toggleWorkspacePanel}
-        onToggleWorkspacePanelExpanded={toggleWorkspacePanelExpanded}
-      />
+      <TitleBar collapsed={collapsed} onToggleRail={toggleRail} />
       {isDesktop ? <ZoomHud /> : null}
 
       <div className="shell__body">
@@ -3709,6 +3691,18 @@ export function App() {
               </>
             )}
           </main>
+
+          {!workspacePanelOpen ? (
+            <button
+              type="button"
+              className="workspace-panel__launcher"
+              aria-label="Show workspace tools"
+              title="Workspace tools"
+              onClick={openWorkspacePanel}
+            >
+              <PanelRight size={15} aria-hidden />
+            </button>
+          ) : null}
 
           <Suspense fallback={null}>
             <WorkspacePanel
