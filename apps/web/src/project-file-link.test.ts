@@ -150,6 +150,19 @@ describe('project file links', () => {
     ).toEqual({ kind: 'safe', path: '/Users/blue/Developer/site/src/index.ts' })
   })
 
+  it('accepts files inside a stored home-relative macOS project', () => {
+    expect(
+      projectFileReference('/Users/blue/Developer/site/src/index.ts:42', '~/Developer/site'),
+    ).toEqual({ kind: 'safe', path: '/Users/blue/Developer/site/src/index.ts' })
+    expect(
+      projectFileReference('/Users/blue/Developer/other/secret.ts', '~/Developer/site'),
+    ).toEqual({
+      kind: 'blocked',
+      path: '/Users/blue/Developer/other/secret.ts',
+      reason: 'This file is outside the selected project',
+    })
+  })
+
   it('blocks traversal, sibling, drive, and network paths with useful reasons', () => {
     const root = 'E:\\randomtesting\\A_personalharness\\site'
     const references = [
