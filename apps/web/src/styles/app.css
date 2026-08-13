@@ -44,6 +44,17 @@
   grid-template-columns: 0 minmax(0, 1fr);
 }
 
+/* A drag fold keeps the rail at its real width while the column and rail move
+   closed together. Shrinking --rail-w to zero squeezed its text into a thin
+   visible strip until pointer release. */
+.shell[data-rail-fold-preview] .shell__body {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.shell[data-rail-fold-preview] .rail {
+  transform: translateX(-100%);
+}
+
 /* Nothing animates while the rail edge is being dragged, nor across the commit
    that turns a fold into a real collapse: the column has to track the pointer
    1:1, and the flyout must not slide out from full width afterwards.
@@ -8417,15 +8428,7 @@
 
 /* ---------- empty & notice ---------- */
 
-@container chat-stage (max-width: 480px) {
-  .thread__col {
-    padding-inline: 14px;
-  }
-
-  .composer {
-    padding-inline: 10px;
-  }
-
+@container chat-stage (max-width: 620px) {
   .tools {
     gap: 4px;
     padding-inline: 6px;
@@ -8447,7 +8450,20 @@
   }
 
   .composer__permission .tool > span,
-  .composer__design > span,
+  .composer__design > span {
+    display: none;
+  }
+}
+
+@container chat-stage (max-width: 480px) {
+  .thread__col {
+    padding-inline: 14px;
+  }
+
+  .composer {
+    padding-inline: 10px;
+  }
+
   .composer-resource-picker__description,
   .composer-resource-picker__meta span:last-child {
     display: none;

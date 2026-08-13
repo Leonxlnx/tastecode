@@ -12,5 +12,11 @@ describe('sidebar motion CSS', () => {
     expect(appCss).toMatch(
       /\.rail-slot\.is-collapsed \.rail \{[^}]*transform: translateX\(-100%\)/s,
     )
+    expect(appCss).toMatch(
+      /\.shell\[data-rail-fold-preview\] \.shell__body \{[^}]*grid-template-columns: 0 minmax\(0, 1fr\)/s,
+    )
+    expect(appCss).toMatch(
+      /\.shell\[data-rail-fold-preview\] \.rail \{[^}]*transform: translateX\(-100%\)/s,
+    )
   })
 })
