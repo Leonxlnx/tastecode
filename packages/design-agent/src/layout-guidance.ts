@@ -1,4 +1,4 @@
-export const PAGE_LAYOUT_GUIDANCE = `Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, and How It Works decisions. Select the case that best fits the content and brand, or lightly combine compatible cases. Keep the described composition recognizable instead of replacing it with an unrelated default layout.
+export const PAGE_LAYOUT_GUIDANCE = `Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, and Social Proof decisions. Select the case that best fits the content and brand, or lightly combine compatible cases. Keep the described composition recognizable instead of replacing it with an unrelated default layout.
 
 The layout case is only part of the result. Font choice and scale, brand colors, spacing, button placement and treatment, corner radii, navigation placement, media crop, and motion create much of the final feeling. Resolve all of them from the approved brand direction. Motion must fit the selected style and composition rather than being added as a generic effect.
 
@@ -106,4 +106,13 @@ How It Works layout cases:
 4. Reuse any compatible Feature layout when it explains the process more clearly than a dedicated step layout.
 5. Draw a winding or snake-like line through the center of the section. Alternate the numbered steps between the left and right sides of the line, giving each step a visualization, additional text, or both.
 
-The sequence, progress line, active state, dragging, arrow controls, looping, and scroll motion must remain understandable and functional. Their visual treatment follows the brand and may use the same open card language as Features.`
+The sequence, progress line, active state, dragging, arrow controls, looping, and scroll motion must remain understandable and functional. Their visual treatment follows the brand and may use the same open card language as Features.
+
+Trusted-company and Social Proof element:
+- Treat this as a small supporting element rather than a full section in most pages. Place it inside the Hero or between larger sections wherever it fits the composition.
+- Optionally place one short, fitting trust line above the logos. Use only a statement supported by the available evidence.
+- Use a simple continuously looping carousel of verified company logos moving from right to left.
+- The logos do not need to move. A static row of roughly five logos is equally valid.
+- When there are more logos, arrange them in a multi-row grid or logo-wall composition.
+- Present logos in color or in a restrained gray treatment according to the brand and surrounding design.
+- Use only real supplied or verified logos. Preserve their proportions and keep the carousel readable, smooth, and safe under reduced motion.`

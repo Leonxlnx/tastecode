@@ -86,7 +86,7 @@ describe('page phase', () => {
     expect(prompt).toContain('Never use an em dash')
     expect(prompt).toContain('Omit eyebrow copy by default')
     expect(prompt).toContain(
-      'Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, and How It Works',
+      'Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, and Social Proof',
     )
     expect(prompt).toContain('Place the headline at the bottom left or bottom right')
     expect(prompt).toContain('show a wide dashboard, product preview, interface')
@@ -112,6 +112,11 @@ describe('page phase', () => {
     expect(prompt).toContain('Place a vertical list of steps on the left')
     expect(prompt).toContain('Day 1 and Day 2')
     expect(prompt).toContain('Draw a winding or snake-like line through the center')
+    expect(prompt).toContain('Treat this as a small supporting element rather than a full section')
+    expect(prompt).toContain('company logos moving from right to left')
+    expect(prompt).toContain('A static row of roughly five logos is equally valid')
+    expect(prompt).toContain('multi-row grid or logo-wall composition')
+    expect(prompt).toContain('in color or in a restrained gray treatment')
   })
 
   it('parses the final response through the page validator', () => {
