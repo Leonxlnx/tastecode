@@ -1,8 +1,9 @@
 import path from 'node:path'
+import os from 'node:os'
 
 export function projectFilePath(value: unknown, projectRootValue: unknown): string {
   const file = safePath(value)
-  const projectRoot = safePath(projectRootValue)
+  const projectRoot = expandHomePath(safePath(projectRootValue))
   const flavor = windowsPath(projectRoot) ? path.win32 : path.posix
 
   if (!flavor.isAbsolute(projectRoot) || !flavor.isAbsolute(file)) {
@@ -19,6 +20,14 @@ export function projectFilePath(value: unknown, projectRootValue: unknown): stri
     throw new Error('File path is outside the selected project')
   }
   return candidate
+}
+
+function expandHomePath(value: string): string {
+  if (value === '~') return os.homedir()
+  if (value.startsWith('~/') || value.startsWith('~\\')) {
+    return path.join(os.homedir(), value.slice(2))
+  }
+  return value
 }
 
 function safePath(value: unknown): string {
