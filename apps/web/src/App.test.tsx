@@ -3429,6 +3429,27 @@ describe('global shortcuts', () => {
     )
   })
 
+  it('opens the keyboard shortcuts reference from the command palette as a modal', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    const search = screen.getByRole('textbox', { name: 'Search commands' })
+    fireEvent.change(search, { target: { value: 'keyboard' } })
+    fireEvent.keyDown(search, { key: 'Enter' })
+
+    const shortcuts = screen.getByRole('dialog', { name: 'Keyboard shortcuts' })
+    expect(shortcuts).toBeTruthy()
+    expect(within(shortcuts).getByText('Command palette')).toBeTruthy()
+    expect(within(shortcuts).getByText('⌘K')).toBeTruthy()
+
+    fireEvent.keyDown(shortcuts, { key: 'n', metaKey: true })
+    expect(screen.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeTruthy()
+
+    fireEvent.keyDown(shortcuts, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull()
+  })
+
   it('opens the project switcher directly without rendering a top project control', async () => {
     serverSidebarSettings.mode = 'classic'
     serverProjects = [
@@ -3492,6 +3513,10 @@ describe('global shortcuts', () => {
     composer.blur()
     fireEvent.keyDown(window, { key: ',', metaKey: true })
     expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy()
+
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy()
+    expect(screen.queryByRole('dialog', { name: 'Search all chats' })).toBeNull()
   })
 })
 
