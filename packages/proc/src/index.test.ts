@@ -41,6 +41,19 @@ describe('runCli', () => {
 })
 
 describe('spawnCli', () => {
+  it('runs an absolute Windows executable whose path contains spaces', async () => {
+    const child = spawnCli(process.execPath, ['-e', 'process.stdout.write("ready")'])
+    let output = ''
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => (output += chunk))
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.on('error', reject)
+      child.on('exit', resolve)
+    })
+    expect(code).toBe(0)
+    expect(output).toBe('ready')
+  })
+
   it('can replace the inherited environment for untrusted commands', async () => {
     process.env['HARNESS_HIDDEN'] = 'secret'
     try {

@@ -29,6 +29,7 @@ export function spawnCli(
   }
 
   if (process.platform === 'win32') {
+    if (/\.(?:exe|com)$/i.test(command)) return spawn(command, args, spawnOptions)
     return spawn('cmd.exe', ['/d', '/s', '/c', command, ...args], spawnOptions)
   }
   return spawn(command, args, spawnOptions)
