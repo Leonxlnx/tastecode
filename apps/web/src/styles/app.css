@@ -5579,6 +5579,7 @@
   border-left: 1px solid var(--line);
   border-top-left-radius: 10px;
   overflow: hidden;
+  container: chat-stage / inline-size;
 }
 
 .shell.is-narrow .stage {
@@ -7525,6 +7526,7 @@
 /* ---------- composer ---------- */
 
 .composer {
+  min-width: 0;
   padding: 4px 24px 8px;
 }
 
@@ -7534,6 +7536,8 @@
 
 .composer__box {
   position: relative;
+  width: 100%;
+  min-width: 0;
   max-width: var(--chat-w);
   margin: 0 auto;
   border-radius: var(--r-2xl);
@@ -10015,6 +10019,43 @@
 
 /* ---------- empty & notice ---------- */
 
+@container chat-stage (max-width: 480px) {
+  .thread__col {
+    padding-inline: 14px;
+  }
+
+  .composer {
+    padding-inline: 10px;
+  }
+
+  .tools {
+    gap: 4px;
+    padding-inline: 6px;
+  }
+
+  .tools .composer__permission,
+  .tools .composer__design-button-beam {
+    width: 34px;
+  }
+
+  .tools .composer__permission,
+  .tools .composer__design {
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .composer__permission .tool > span,
+  .composer__design > span,
+  .composer-resource-picker__description,
+  .composer-resource-picker__meta span:last-child {
+    display: none;
+  }
+
+  .composer-resource-picker__name {
+    max-width: 100%;
+  }
+}
+
 .empty {
   display: flex;
   flex-direction: column;
@@ -10022,6 +10063,7 @@
   justify-content: center;
   gap: 16px;
   min-height: 0;
+  min-width: 0;
   padding: 24px;
 }
 
