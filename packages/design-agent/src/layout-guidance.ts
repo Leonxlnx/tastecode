@@ -1,4 +1,4 @@
-export const PAGE_LAYOUT_GUIDANCE = `Use the following beta layout cases as the source material for Hero and Navigation decisions. Select the case that best fits the content and brand, or lightly combine compatible cases. Keep the described composition recognizable instead of replacing it with an unrelated default layout.
+export const PAGE_LAYOUT_GUIDANCE = `Use the following beta layout cases as the source material for Hero, Navigation, and About decisions. Select the case that best fits the content and brand, or lightly combine compatible cases. Keep the described composition recognizable instead of replacing it with an unrelated default layout.
 
 The layout case is only part of the result. Font choice and scale, brand colors, spacing, button placement and treatment, corner radii, navigation placement, media crop, and motion create much of the final feeling. Resolve all of them from the approved brand direction. Motion must fit the selected style and composition rather than being added as a generic effect.
 
@@ -41,4 +41,23 @@ Navigation layout cases:
 5. Begin with only the Hero content visible behind the navigation. As the user scrolls, smoothly introduce the navigation background or surface.
 6. Use only the logo at the top left and a small amount of information or a menu control at the top right. Opening the control reveals a small, clean card with the relevant destinations or information.
 
-All navigation dropdowns, cards, links, language controls, and buttons must actually work. Record the chosen layout and its disclosure or scroll behavior in navigationDesign, and record the real destinations in navigation. On smaller screens, preserve every necessary destination and action in a deliberate compact arrangement rather than squeezing the desktop layout. Use motion that matches the selected visual style and makes opening, closing, scrolling, and hierarchy feel smooth.`
+All navigation dropdowns, cards, links, language controls, and buttons must actually work. Record the chosen layout and its disclosure or scroll behavior in navigationDesign, and record the real destinations in navigation. On smaller screens, preserve every necessary destination and action in a deliberate compact arrangement rather than squeezing the desktop layout. Use motion that matches the selected visual style and makes opening, closing, scrolling, and hierarchy feel smooth.
+
+About section scope:
+- An About section may describe the company, the people who work there, or both.
+- Include it only when the page needs it. These are available layout cases, not sections that every page must use.
+
+About layout cases:
+1. Use a clean, very short, non-generic heading at the top. Arrange portraits of the people in an orderly grid, such as 2 by 5 or 4 by 3. Place an information card at the bottom inside each image with the person's name, role, and optionally one short description. The card may be inset from the image edges or extend cleanly across the full image width. Its corner radius may be rounded, square, or otherwise derived from the design.
+2. Place a "Who we are" heading at the top left. It may be large or small according to the style. Optionally place one sentence at the top right. Show one clean team image beneath it with a caption such as "The team," then optionally add one or two more images with their own descriptions below.
+3. Place a large heading at the top, aligned left, centered, or elsewhere according to the design. Build an open asymmetric image-and-text grid beneath it: for example, one large meaningful team image on the left with text below or near it, then a second image on the right shifted farther down with its description beside or beneath it. Scale the grid cells freely. A cell may contain an image, text, a clean brand asset, or a logo.
+4. For a smaller team, place the heading first, then the names above the corresponding images in a clean arrangement. For a larger team, the people may move from left to right through a smooth GSAP scroll treatment.
+5. Place an image of the team, workplace, or building on the left or right and put the company description on the opposite side.
+6. Place one image or a group of images in the center, with additional images arranged on the left and right.
+7. Create a more experimental checkerboard composition. Place portraits inside alternating square cells, reveal name cards on hover, leave selected cells empty, and use the opposite side for a short paragraph of company or team text.
+
+Text-led About cases:
+1. Use a heading with a block of company or team text. The text may reveal or fade in as the user scrolls, including with GSAP when that motion fits. Use clean typography; the type may be large or smaller according to the style. Place a small number of images beneath it.
+2. Use only a heading and a larger amount of text, displayed creatively. The copy may use normal paragraphs or another fitting editorial arrangement.
+
+About cards remain an open design surface: use any fitting card composition for people, facts, images, or company information rather than forcing one fixed card template. These cases may be refined later with fitting OriginKit components, but OriginKit must not replace the selected layout idea.`

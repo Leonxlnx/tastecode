@@ -85,11 +85,19 @@ describe('page phase', () => {
     expect(prompt).toContain('Compact reduces simultaneity, not content or capability')
     expect(prompt).toContain('Never use an em dash')
     expect(prompt).toContain('Omit eyebrow copy by default')
-    expect(prompt).toContain('Use the following beta layout cases as the source material')
+    expect(prompt).toContain(
+      'Use the following beta layout cases as the source material for Hero, Navigation, and About',
+    )
     expect(prompt).toContain('Place the headline at the bottom left or bottom right')
     expect(prompt).toContain('show a wide dashboard, product preview, interface')
     expect(prompt).toContain('Place a list of destinations with icons and subheadings on the left')
     expect(prompt).toContain('As the user scrolls, smoothly introduce the navigation background')
+    expect(prompt).toContain('An About section may describe the company, the people who work there')
+    expect(prompt).toContain('Arrange portraits of the people in an orderly grid')
+    expect(prompt).toContain('Build an open asymmetric image-and-text grid beneath it')
+    expect(prompt).toContain('move from left to right through a smooth GSAP scroll treatment')
+    expect(prompt).toContain('Create a more experimental checkerboard composition')
+    expect(prompt).toContain('The text may reveal or fade in as the user scrolls')
   })
 
   it('parses the final response through the page validator', () => {
