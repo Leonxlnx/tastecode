@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 import { isMacOS } from '../bridge.js'
 import { SHORTCUTS, shortcutLabel } from '../shortcuts.js'
+import { useDialogFocus } from './dialog-focus.js'
 
 const ROWS = [
   { shortcut: SHORTCUTS.commandPalette, label: 'Command palette' },
@@ -14,34 +14,20 @@ const ROWS = [
   { shortcut: SHORTCUTS.settings, label: 'Settings' },
 ] as const
 
-/** Every keyboard shortcut in one place, reachable from Help. */
+/** Every keyboard shortcut in one place, reachable from the command palette. */
 export function ShortcutsDialog(props: { onClose: () => void }) {
   const macOS = isMacOS()
-
-  // Focus moves into the dialog on open, so Tab cycles its controls instead
-  // of walking the app hidden behind the overlay.
-  const panel = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    panel.current?.focus()
-  }, [])
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') props.onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [props.onClose])
+  const dialog = useDialogFocus<HTMLDivElement>(props.onClose)
 
   return (
-    <div className="shortcuts-overlay" onClick={props.onClose}>
+    <div className="shortcuts-overlay" onClick={props.onClose} onKeyDown={dialog.onKeyDown}>
       <div
         className="shortcuts-dialog"
         role="dialog"
         aria-modal="true"
         aria-label="Keyboard shortcuts"
         onClick={(event) => event.stopPropagation()}
-        ref={panel}
+        ref={dialog.panel}
         tabIndex={-1}
       >
         <div className="shortcuts-dialog__head">

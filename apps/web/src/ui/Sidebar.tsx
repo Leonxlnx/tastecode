@@ -45,6 +45,7 @@ import { profileInitials, type ProfileIdentityPreferences } from '../profile-pre
 import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
 import { AccountLimits, type AccountLimitsState } from './AccountLimits.js'
+import { useDialogFocus } from './dialog-focus.js'
 import { InboxSidebar, type InboxActions } from './InboxSidebar.js'
 import { SourceIdentity } from './SourceIdentity.js'
 
@@ -1283,10 +1284,18 @@ function SidebarConfirmDialog(props: {
   onConfirm: () => void
   onClose: () => void
 }) {
+  const dialog = useDialogFocus<HTMLDivElement>(props.onClose)
+
   return createPortal(
-    <div className="sheet" role="dialog" aria-modal="true" aria-label={props.title}>
+    <div
+      className="sheet"
+      role="dialog"
+      aria-modal="true"
+      aria-label={props.title}
+      onKeyDown={dialog.onKeyDown}
+    >
       <button className="sheet__scrim" onClick={props.onClose} aria-label="Cancel" />
-      <div className="sheet__panel sidebar-confirm">
+      <div className="sheet__panel sidebar-confirm" ref={dialog.panel} tabIndex={-1}>
         <header className="sheet__head">
           <h2 className="sheet__title">{props.title}</h2>
           <button className="icon-btn icon-btn--always" onClick={props.onClose} title="Close">

@@ -1,4 +1,5 @@
 import { GitBranch, X } from 'lucide-react'
+import { useDialogFocus } from './dialog-focus.js'
 
 export function CheckoutDiscardDialog(props: {
   title: string
@@ -7,10 +8,18 @@ export function CheckoutDiscardDialog(props: {
   onDiscard: () => void
   onClose: () => void
 }) {
+  const dialog = useDialogFocus<HTMLDivElement>(props.onClose)
+
   return (
-    <div className="sheet" role="dialog" aria-modal="true" aria-label="Discard isolated checkout">
+    <div
+      className="sheet"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Discard isolated checkout"
+      onKeyDown={dialog.onKeyDown}
+    >
       <button className="sheet__scrim" onClick={props.onClose} aria-label="Keep session" />
-      <div className="sheet__panel checkout-discard">
+      <div className="sheet__panel checkout-discard" ref={dialog.panel} tabIndex={-1}>
         <header className="sheet__head">
           <div>
             <h2 className="sheet__title">This checkout has uncommitted work</h2>
