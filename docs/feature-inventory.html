@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-13 bbf685b2</span>
+        <span class="meta">2026-08-13 0799cf84</span>
       </div>
     </div>
 
@@ -1051,7 +1051,8 @@
                 <span class="d"
                   >project loading and failures remain explicit; Retry and the no-project action use
                   the existing folder picker; selecting an empty project opens No chats with the
-                  composer still available;
+                  composer still available; compact folder rows align directly below Projects and
+                  expanded Show more actions have no extra leading spacer;
                   <a href="./screenshots/empty-project.png">production evidence</a></span
                 ></span
               ></label
@@ -1170,9 +1171,9 @@
                   detection, independent Browser tabs with middle-click closing and distinct
                   desktop/tablet/mobile controls, lazy file tree and side chat; New chat terminals
                   use the selected project's current checkout, while active chats use their exact
-                  session checkout; missing workspace items fail without raw paths, panel controls
-                  stay inside the app, and closed panel chrome cannot create horizontal overflow in
-                  a 390 px window</span
+                  session checkout; one fixed in-chat toggle opens and closes the panel, its
+                  square-edged tab bar stays below native window chrome, missing workspace items
+                  fail without raw paths, and 390 px layouts do not overflow</span
                 ></span
               ></label
             >
@@ -1182,11 +1183,12 @@
               ><input type="checkbox" /><span
                 >Ephemeral Temporary chat seeded from the active conversation
                 <span class="d"
-                  >normal Thread presentation without duplicate parent-status chrome;
-                  Codex-compatible /side and /btw commands, hidden point-in-time parent context,
-                  independent streaming, approvals and structured input across every provider;
-                  startup fails visibly after 30 seconds instead of spinning forever, and closing it
-                  disposes the provider session and erases its temporary transcript</span
+                  >normal Thread presentation and matching composer without duplicate parent-status
+                  chrome or a full-panel startup spinner; Codex-compatible /side and /btw commands,
+                  hidden point-in-time parent context, independent streaming, approvals and
+                  structured input across every provider; startup fails visibly after 30 seconds
+                  instead of spinning forever, and closing it disposes the provider session and
+                  erases its temporary transcript</span
                 ></span
               ></label
             >
