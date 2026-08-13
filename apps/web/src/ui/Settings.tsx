@@ -9,7 +9,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
@@ -38,8 +37,6 @@ import {
   ChevronDown,
   Copy,
   Database,
-  Eye,
-  EyeOff,
   Info,
   Boxes,
   KeyRound,
@@ -68,6 +65,7 @@ import {
   installKey,
   installState,
   loginKey,
+  signedInEmail,
   subscribeInstalls,
   type InstallTarget,
 } from '../provider-install.js'
@@ -1974,6 +1972,8 @@ function CliSignInRow(props: {
     if (login?.phase === 'succeeded') {
       if (!notifiedLogin.current) {
         notifiedLogin.current = true
+        const email = signedInEmail(login.log)
+        if (email) localStorage.setItem(providerEmailKey(props.provider.id), email)
         clearInstall(key)
         onSignedIn()
       }
@@ -2095,93 +2095,28 @@ function ProviderTerminal(props: { transport: Transport; installKey: string }) {
  * omitting it — "not supported yet" and "not installed" must stay
  * distinguishable, and the roadmap belongs in the product, not a doc.
  */
-function maskEmail(email: string): string {
-  const at = email.indexOf('@')
-  if (at <= 1) return email
-  return `${email[0]}${'*'.repeat(at - 1)}${email.slice(at)}`
-}
-
 function providerEmailKey(provider: ProviderId): string {
   return `harness.providerEmail.${provider}`
 }
 
 function AccountIdentity(props: { provider: ProviderId; account: Account }) {
-  const [savedEmail, setSavedEmail] = useState(() =>
-    localStorage.getItem(providerEmailKey(props.provider)),
-  )
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState('')
+  const [savedEmail] = useState(() => localStorage.getItem(providerEmailKey(props.provider)))
   const email = props.account.email ?? savedEmail
-
-  const save = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const next = draft.trim()
-    localStorage.setItem(providerEmailKey(props.provider), next)
-    setSavedEmail(next)
-    setEditing(false)
-  }
 
   return (
     <>
-      {email ? (
-        <AccountEmail email={email} />
-      ) : editing ? (
-        <form className="provider-row__email-form" onSubmit={save}>
-          <input
-            type="email"
-            required
-            autoFocus
-            aria-label="Account email"
-            autoComplete="email"
-            placeholder="you@example.com"
-            value={draft}
-            onChange={(event) => setDraft(event.currentTarget.value)}
-          />
-          <button type="submit">Save</button>
-          <button type="button" onClick={() => setEditing(false)}>
-            Cancel
-          </button>
-        </form>
-      ) : (
-        <button className="provider-row__email-add" type="button" onClick={() => setEditing(true)}>
-          Add email
-        </button>
-      )}
+      {email ? <AccountEmail email={email} /> : 'Signed in'}
       {props.account.plan ? ' · ' : null}
       {props.account.plan}
     </>
   )
 }
 
-/**
- * Privacy by default: the address stays masked until explicitly revealed.
- * Both forms render stacked in one grid cell so the row never shifts when
- * the longer full address appears.
- */
+/** Privacy by default: reveal the fixed-width blurred address only on intent. */
 function AccountEmail(props: { email: string }) {
-  const [revealed, setRevealed] = useState(false)
-
   return (
-    <span className={`settings__email${revealed ? ' is-revealed' : ''}`}>
-      <span
-        className="settings__email-toggle"
-        aria-label={revealed ? 'Hide account email' : 'Show account email'}
-        tabIndex={0}
-        onMouseEnter={() => setRevealed(true)}
-        onMouseLeave={() => setRevealed(false)}
-        onFocus={() => setRevealed(true)}
-        onBlur={() => setRevealed(false)}
-      >
-        {revealed ? <EyeOff size={12} aria-hidden /> : <Eye size={12} aria-hidden />}
-      </span>
-      <span className="settings__email-value" aria-live="polite">
-        <span className="settings__email-masked" aria-hidden={revealed}>
-          {maskEmail(props.email)}
-        </span>
-        <span className="settings__email-full" aria-hidden={!revealed}>
-          {props.email}
-        </span>
-      </span>
+    <span className="settings__email" tabIndex={0} title={props.email}>
+      <span className="settings__email-value">{props.email}</span>
     </span>
   )
 }

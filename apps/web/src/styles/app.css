@@ -3015,37 +3015,6 @@
   color: var(--error);
 }
 
-.provider-row__email-add,
-.provider-row__email-form button {
-  padding: 0;
-  background: none;
-  border: 0;
-  color: var(--text-2);
-  cursor: pointer;
-  font: inherit;
-  text-decoration: underline;
-  text-decoration-color: var(--line-strong);
-  text-underline-offset: 3px;
-}
-
-.provider-row__email-form {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-}
-
-.provider-row__email-form input {
-  width: min(150px, 100%);
-  height: 28px;
-  padding: 0 7px;
-  background: var(--bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  color: var(--text);
-  font: inherit;
-}
-
 @container (max-width: 514px) {
   .provider-row {
     grid-template-areas:
@@ -3527,53 +3496,34 @@
   white-space: nowrap;
 }
 
-/* The text forms stack in one grid cell so the full address reserves its
-   width while the explicit eye control reveals or masks it. */
 .settings__email {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  display: inline-block;
+  width: min(180px, 100%);
+  overflow: hidden;
+  border-radius: var(--r-sm);
   vertical-align: bottom;
 }
 
-.settings__email-toggle {
-  display: inline-grid;
-  flex: none;
-  width: 14px;
-  height: 14px;
-  padding: 0;
-  place-items: center;
-  background: none;
-  border: 0;
-  border-radius: var(--r-sm);
-  color: inherit;
-  cursor: default;
-}
-
-.settings__email-toggle:focus-visible {
+.settings__email:focus-visible {
   outline: 1px solid currentColor;
   outline-offset: 1px;
 }
 
 .settings__email-value {
-  display: inline-grid;
-}
-
-.settings__email-value > span {
-  grid-area: 1 / 1;
+  display: block;
+  overflow: hidden;
+  filter: blur(5px);
+  text-overflow: clip;
+  transition: filter 0s;
+  user-select: none;
   white-space: nowrap;
 }
 
-.settings__email-full {
-  visibility: hidden;
-}
-
-.settings__email.is-revealed .settings__email-full {
-  visibility: visible;
-}
-
-.settings__email.is-revealed .settings__email-masked {
-  visibility: hidden;
+.settings__email:hover .settings__email-value,
+.settings__email:focus .settings__email-value {
+  filter: none;
+  transition-delay: 700ms;
+  user-select: text;
 }
 
 .settings__row-control {

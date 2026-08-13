@@ -109,7 +109,19 @@ export async function beginLogin(
 export function firstAuthUrl(log: string): string | undefined {
   const printable = log.replace(ANSI, '')
   const match = /(https?:\/\/[^\s'"<>)]+)[\s'"<>)]/.exec(printable)
-  return match?.[1]
+  if (!match?.[1]) return undefined
+  const url = new URL(match[1])
+  const userCode = url.searchParams.get('user_code')
+  const codePattern = url.hostname === 'accounts.x.ai' ? /^[A-Z0-9]{4}-[A-Z0-9]{4}/ : undefined
+  const exactCode = codePattern?.exec(userCode ?? '')?.[0]
+  if (userCode && exactCode && userCode !== exactCode) url.searchParams.set('user_code', exactCode)
+  return url.toString()
+}
+
+export function signedInEmail(log: string): string | undefined {
+  return /\bsigned in as\s+([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b/i.exec(
+    log.replace(ANSI, ''),
+  )?.[1]
 }
 
 /**

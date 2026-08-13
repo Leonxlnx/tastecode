@@ -10,6 +10,7 @@ import {
   lastPrintableLine,
   loginKey,
   resetInstalls,
+  signedInEmail,
 } from './provider-install.js'
 
 afterEach(() => {
@@ -197,5 +198,20 @@ describe('firstAuthUrl', () => {
 
   it('is empty when the CLI has not printed a link yet', () => {
     expect(firstAuthUrl('warming up...')).toBeUndefined()
+  })
+
+  it('keeps terminal text out of an xAI device code', () => {
+    expect(
+      firstAuthUrl('https://accounts.x.ai/oauth2/device?user_code=XCG6-Q2QCConfirm this code\r\n'),
+    ).toBe('https://accounts.x.ai/oauth2/device?user_code=XCG6-Q2QC')
+  })
+})
+
+describe('signedInEmail', () => {
+  it('reads the account confirmed by the provider CLI', () => {
+    expect(signedInEmail(`${ESC}[32m✓ Signed in as grok.user@example.com${ESC}[0m`)).toBe(
+      'grok.user@example.com',
+    )
+    expect(signedInEmail('Waiting for authorization...')).toBeUndefined()
   })
 })

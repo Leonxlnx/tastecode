@@ -347,7 +347,9 @@ describe('provider authentication states', () => {
     expect(issue.getAttribute('aria-describedby')).toBe(within(row).getByRole('tooltip').id)
     expect(within(row).queryByRole('button', { name: 'Sign in' })).toBeNull()
     fireEvent.click(action(row, 'Retry'))
-    await waitFor(() => within(row).getByRole('button', { name: 'Add email' }))
+    await waitFor(() =>
+      expect(row.querySelector('.provider-row__status')?.textContent).toBe('Signed in'),
+    )
     expect(reads).toBe(2)
   })
   it('uses one provider row grammar with honest actions and normalized marks', async () => {
@@ -377,7 +379,7 @@ describe('provider authentication states', () => {
     const claude = providerRow('Claude Code')
     const grok = providerRow('Grok')
     await waitFor(() =>
-      expect(within(codex).getByRole('button', { name: 'Add email' })).toBeTruthy(),
+      expect(codex.querySelector('.provider-row__status')?.textContent).toBe('Signed in'),
     )
     const columns = (row: HTMLElement) => Array.from(row.children).map((child) => child.className)
     expect(columns(codex)).toEqual(columns(claude))
@@ -1065,7 +1067,7 @@ describe('provider settings', () => {
     expect(screen.queryByRole('button', { name: 'Add custom harness' })).toBeNull()
   })
 
-  it('stores a provider email locally when its CLI cannot report one', async () => {
+  it('shows an honest signed-in fallback instead of asking for an email', async () => {
     renderProviders([installedProvider('grok', 'Grok')], (method) => {
       if (method === 'auth.status') return { signedIn: true }
       if (method === 'auth.signOut') return {}
@@ -1073,17 +1075,10 @@ describe('provider settings', () => {
     })
 
     const grok = providerRow('Grok')
-    fireEvent.click(await within(grok).findByRole('button', { name: 'Add email' }))
-    fireEvent.click(within(grok).getByRole('button', { name: 'Cancel' }))
-    expect(localStorage.getItem('harness.providerEmail.grok')).toBeNull()
-    fireEvent.click(within(grok).getByRole('button', { name: 'Add email' }))
-    fireEvent.change(within(grok).getByRole('textbox', { name: 'Account email' }), {
-      target: { value: 'grok.user@example.com' },
-    })
-    fireEvent.click(within(grok).getByRole('button', { name: 'Save' }))
-
-    expect(localStorage.getItem('harness.providerEmail.grok')).toBe('grok.user@example.com')
-    expect(within(grok).getByText('g********@example.com')).toBeTruthy()
+    await waitFor(() =>
+      expect(grok.querySelector('.provider-row__status')?.textContent).toBe('Signed in'),
+    )
+    expect(within(grok).queryByRole('button', { name: 'Add email' })).toBeNull()
 
     fireEvent.click(within(grok).getByRole('button', { name: 'Sign out' }))
     await waitFor(() => expect(localStorage.getItem('harness.providerEmail.grok')).toBeNull())
@@ -1244,17 +1239,10 @@ describe('provider settings', () => {
 
     const codexRow = screen.getByText('Codex').closest<HTMLElement>('.settings__row')
     if (!codexRow) throw new Error('Codex provider row missing')
-    expect(within(codexRow).getByText('p******@example.com')).toBeTruthy()
     const email = within(codexRow).getByText('private@example.com')
-    expect(email.getAttribute('aria-hidden')).toBe('true')
-    const eye = within(codexRow).getByLabelText('Show account email')
-    fireEvent.click(eye)
-    expect(email.getAttribute('aria-hidden')).toBe('true')
-    fireEvent.mouseEnter(eye)
-    expect(email.getAttribute('aria-hidden')).toBe('false')
-    expect(within(codexRow).getByLabelText('Hide account email')).toBeTruthy()
-    fireEvent.mouseLeave(eye)
-    expect(email.getAttribute('aria-hidden')).toBe('true')
+    expect(email.className).toBe('settings__email-value')
+    expect(email.closest('.settings__email')?.getAttribute('title')).toBe('private@example.com')
+    expect(within(codexRow).queryByText(/\*+@example\.com/)).toBeNull()
 
     // Beta scope: agent rows and the API-connection form stay out entirely,
     // even when the server still reports agents.
@@ -1265,7 +1253,7 @@ describe('provider settings', () => {
 
     const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
     const grokRow = screen.getByText('Grok').closest<HTMLElement>('.settings__row')
-    expect(claudeRow?.querySelector('.provider-row__status')?.textContent).toBe('Add email · pro')
+    expect(claudeRow?.querySelector('.provider-row__status')?.textContent).toBe('Signed in · pro')
     if (!claudeRow || !grokRow) throw new Error('provider row missing')
     fireEvent.click(within(claudeRow).getByRole('button', { name: 'Sign out' }))
     await waitFor(() =>
@@ -1421,10 +1409,11 @@ describe('provider settings', () => {
 
   it('signs in to provider-CLI-managed logins in an in-app terminal, not a docs page', async () => {
     const channels = new Map<string, Set<(data: unknown) => void>>()
+    let signedIn = false
     const transport = {
       request: vi.fn(async (method: string) => {
         if (method === 'providers.launch') return { terminalId: 'term-login-3' }
-        if (method === 'auth.status') return { signedIn: false }
+        if (method === 'auth.status') return { signedIn }
         throw new Error(`unexpected ${method}`)
       }),
       on: vi.fn((channel: string, listener: (data: unknown) => void) => {
@@ -1532,9 +1521,15 @@ describe('provider settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Details' }))
     await waitFor(() => expect(screen.getByTestId('install-terminal')).toBeTruthy())
 
+    emit('terminal.output', {
+      terminalId: 'term-login-3',
+      data: '\u001b[32m✓ Signed in as grok.user@example.com\u001b[0m\r\n',
+    })
+    signedIn = true
     emit('terminal.exit', { terminalId: 'term-login-3', exitCode: 0 })
     await waitFor(() => expect(screen.queryByTestId('install-terminal')).toBeNull())
-    expect(within(grokRow).getByRole('button', { name: 'Sign in' })).toBeTruthy()
+    await waitFor(() => expect(providerRow('Grok').textContent).toContain('grok.user@example.com'))
+    expect(localStorage.getItem('harness.providerEmail.grok')).toBe('grok.user@example.com')
 
     // Beta scope: agent rows never render, even when the server reports one.
     expect(screen.queryByText('Kimi CLI')).toBeNull()
