@@ -4109,7 +4109,8 @@
 }
 
 .session-search__panel {
-  width: min(700px, 100%);
+  width: min(520px, 100%);
+  border-radius: var(--r-xl);
 }
 
 /* Search is a direct action, so its entry should settle faster than the
@@ -4122,33 +4123,33 @@
 .session-search__filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 10px;
+  padding: 7px 10px;
   border-bottom: 1px solid var(--line);
 }
 
 .session-search__filters label {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   color: var(--text-3);
   font-size: var(--t-xs);
 }
 
 .session-search__filters .app-select {
-  max-width: 180px;
+  max-width: 150px;
 }
 
 .session-search__filters .app-select__trigger {
   min-height: 26px;
   height: auto;
-  padding: 4px 6px 4px 7px;
-  background: var(--chrome-raised);
+  padding: 3px 6px 3px 7px;
+  background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   color: var(--text-2);
   font: inherit;
-  box-shadow: var(--chrome-shadow);
+  box-shadow: none;
 }
 
 .session-search__results {
