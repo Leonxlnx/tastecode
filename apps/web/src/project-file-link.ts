@@ -123,6 +123,7 @@ export function projectFileReference(
   const candidate = stripSourceLocation(decoded.path)
   if (isWindowsRoot(projectPath)) return windowsReference(candidate, projectPath)
   if (projectPath.startsWith('/')) return posixReference(candidate, projectPath)
+  if (projectPath.startsWith('~/')) return homeRelativePosixReference(candidate, projectPath)
   return { kind: 'blocked', path: candidate, reason: 'The selected project path is invalid' }
 }
 
@@ -212,6 +213,23 @@ function posixReference(candidate: string, projectPath: string): ProjectFileRefe
     return { kind: 'blocked', path: candidate, reason: 'This file is outside the selected project' }
   }
   return { kind: 'safe', path }
+}
+
+function homeRelativePosixReference(candidate: string, projectPath: string): ProjectFileReference {
+  if (!candidate.startsWith('/')) {
+    return { kind: 'blocked', path: candidate, reason: 'This file link is not absolute' }
+  }
+
+  const path = normalizePosix(candidate)
+  const suffix = normalizePosix(projectPath.slice(1))
+  const nestedBoundary = `${suffix}/`
+  const suffixIndex = path === suffix ? 0 : path.indexOf(nestedBoundary)
+  if (suffixIndex < 0) {
+    return { kind: 'blocked', path: candidate, reason: 'This file is outside the selected project' }
+  }
+
+  const root = path.slice(0, suffixIndex + suffix.length)
+  return posixReference(path, root)
 }
 
 function normalizePosix(value: string): string {
