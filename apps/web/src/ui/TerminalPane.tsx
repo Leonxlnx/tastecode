@@ -111,23 +111,16 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
         console.warn('[terminal] WebGL addon unavailable; using DOM renderer', error)
       })
 
-    void Promise.all([import('@xterm/addon-image'), import('@xterm/addon-web-links')])
-      .then(([{ ImageAddon }, { WebLinksAddon }]) => {
+    void import('@xterm/addon-web-links')
+      .then(({ WebLinksAddon }) => {
         if (disposed) return
-        const images = new ImageAddon({
-          pixelLimit: 16_777_216,
-          storageLimit: 96,
-          sixelSizeLimit: 25_000_000,
-          iipSizeLimit: 20_000_000,
-        })
         const links = new WebLinksAddon((_event, uri) => {
           window.open(uri, '_blank', 'noopener,noreferrer')
         })
-        instance.loadAddon(images)
         instance.loadAddon(links)
       })
       .catch((error: unknown) => {
-        console.warn('[terminal] image or link addon unavailable', error)
+        console.warn('[terminal] link addon unavailable', error)
       })
 
     let terminalId: string | undefined
