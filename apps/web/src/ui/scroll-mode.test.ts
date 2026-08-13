@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isAtBottom, modeForNewTurn, shouldReleaseAnchor } from './scroll-mode.js'
+import { activeTurnAnchor, isAtBottom, modeForNewTurn, shouldReleaseAnchor } from './scroll-mode.js'
 
 describe('scroll mode', () => {
   it('treats a small gap from the bottom as being at the bottom', () => {
@@ -13,6 +13,36 @@ describe('scroll mode', () => {
     expect(modeForNewTurn(true)).toBe('anchor-turn')
     // Someone reading older output must not be yanked to a new turn.
     expect(modeForNewTurn(false)).toBe('free')
+  })
+
+  it('keeps one anchor through confirmation and advances for a queued turn', () => {
+    const optimistic = [{ id: 'submission-1', turnId: '', type: 'message', role: 'user' }]
+    expect(activeTurnAnchor(optimistic, 'local-turn:1')).toEqual({
+      id: 'submission-1',
+      index: 0,
+    })
+
+    const confirmed = [
+      { id: 'submission-1', turnId: 'turn-1', type: 'message', role: 'user' },
+      { id: 'answer-1', turnId: 'turn-1', type: 'message', role: 'assistant' },
+    ]
+    expect(activeTurnAnchor(confirmed, 'turn-1')).toEqual({ id: 'submission-1', index: 0 })
+
+    const dequeued = [
+      ...confirmed,
+      { id: 'submission-2', turnId: 'turn-2', type: 'message', role: 'user' },
+    ]
+    expect(activeTurnAnchor(dequeued, 'turn-2')).toEqual({ id: 'submission-2', index: 2 })
+  })
+
+  it('does not move a turn anchor when a steer appends another user message', () => {
+    const steered = [
+      { id: 'submission-1', turnId: 'turn-1', type: 'message', role: 'user' },
+      { id: 'answer-1', turnId: 'turn-1', type: 'message', role: 'assistant' },
+      { id: 'steer-1', turnId: 'turn-1', type: 'message', role: 'user' },
+    ]
+
+    expect(activeTurnAnchor(steered, 'turn-1')).toEqual({ id: 'submission-1', index: 0 })
   })
 
   it('releases the anchor once the turn is taller than the viewport', () => {

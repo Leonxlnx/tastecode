@@ -49,6 +49,7 @@ import { RollbackDialog, type Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchHost.js'
 import { Settings, type SettingsSection } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
+import { ShortcutsDialog } from './ui/ShortcutsDialog.js'
 import { StageHeader } from './ui/StageHeader.js'
 import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
@@ -475,6 +476,7 @@ export function App() {
   const accountRequestRevision = useRef(0)
   const [voiceAvailable, setVoiceAvailable] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('providers')
   const [sidebarSettings, setSidebarSettings] = useState(DEFAULT_SIDEBAR_SETTINGS)
@@ -3094,14 +3096,8 @@ export function App() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat) return
+      if (shortcutsOpen) return
 
-      if (matchesShortcut(event, SHORTCUTS.searchSessions)) {
-        event.preventDefault()
-        setSettingsOpen(false)
-        setPaletteScope(null)
-        sessionSearch.current?.open()
-        return
-      }
       // The Settings sheet owns the keyboard. Without this, Ctrl+N started a
       // chat underneath it. Its own shortcut still closes it; everything else waits.
       if (settingsOpen) {
@@ -3109,6 +3105,12 @@ export function App() {
           event.preventDefault()
           setSettingsOpen(false)
         }
+        return
+      }
+      if (matchesShortcut(event, SHORTCUTS.searchSessions)) {
+        event.preventDefault()
+        setPaletteScope(null)
+        sessionSearch.current?.open()
         return
       }
       if (isEditableTarget(event.target)) return
@@ -3156,7 +3158,7 @@ export function App() {
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [activePath, addProject, provider, startNewChat, settingsOpen])
+  }, [activePath, addProject, provider, shortcutsOpen, startNewChat, settingsOpen])
 
   const sidebarInbox = useMemo(
     () => ({
@@ -3478,6 +3480,14 @@ export function App() {
         group: 'Actions',
         run: () => openSettings(),
       },
+      {
+        id: 'keyboard-shortcuts',
+        title: 'Keyboard shortcuts',
+        detail: 'View every app shortcut',
+        group: 'Actions',
+        keywords: 'help hotkeys key bindings',
+        run: () => setShortcutsOpen(true),
+      },
       ...projects.map((project): PaletteCommand => ({
         id: `project-${encodeURIComponent(project.path)}`,
         title: displayName(project),
@@ -3726,7 +3736,11 @@ export function App() {
               sideChatStartOptions={sideChatStartOptions}
               sideChatPromptRequest={sideChatPromptRequest}
               nativeSurfacesVisible={
-                !settingsOpen && paletteScope === null && !rollbackOpen && !checkoutDelete
+                !settingsOpen &&
+                !shortcutsOpen &&
+                paletteScope === null &&
+                !rollbackOpen &&
+                !checkoutDelete
               }
               onOpen={openWorkspacePanel}
               onClose={closeWorkspacePanel}
@@ -3777,6 +3791,8 @@ export function App() {
           onClose={closeSettings}
         />
       ) : null}
+
+      {shortcutsOpen ? <ShortcutsDialog onClose={() => setShortcutsOpen(false)} /> : null}
 
       {paletteScope ? (
         <CommandPalette

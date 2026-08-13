@@ -258,10 +258,13 @@ function withoutIncompatibleContextWindow(usage: Usage): Usage {
     usage.cachedInputTokens !== 0 ||
     usage.outputTokens !== 0 ||
     usage.reasoningTokens !== 0
-  if (usage.contextWindow === undefined || usage.cumulative !== true || !hasAccountingBreakdown)
-    return usage
+  if (usage.contextWindow === undefined) return usage
+  const impossibleOccupancy = usage.totalTokens > usage.contextWindow
+  if (!impossibleOccupancy && (usage.cumulative !== true || !hasAccountingBreakdown)) return usage
 
   // Cumulative category totals measure accounting, not current context.
+  // Older Codex events did not carry the cumulative marker, but an amount
+  // larger than the model window is still unambiguously accounting data.
   const { contextWindow: _contextWindow, ...accounting } = usage
   return accounting
 }

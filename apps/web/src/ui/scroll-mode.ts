@@ -38,6 +38,36 @@ export function modeForNewTurn(userAtBottom: boolean): ScrollMode {
   return userAtBottom ? 'anchor-turn' : 'free'
 }
 
+export function activeTurnAnchor(
+  items: ReadonlyArray<{
+    id: string
+    turnId: string
+    type: string
+    role?: string | undefined
+  }>,
+  activeTurnId: string | undefined,
+): { id: string; index: number } | undefined {
+  if (!activeTurnId) return undefined
+
+  const durableIndex = items.findIndex((item) => item.turnId === activeTurnId)
+  if (durableIndex >= 0) {
+    const item = items[durableIndex]
+    return item ? { id: item.id, index: durableIndex } : undefined
+  }
+
+  // A local send starts rendering before the provider assigns its durable
+  // turn id. Track the optimistic user item by its stable submission id so
+  // that local -> durable reconciliation is not mistaken for another turn.
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]
+    if (item?.turnId === '' && item.type === 'message' && item.role === 'user') {
+      return { id: item.id, index }
+    }
+  }
+
+  return undefined
+}
+
 /**
  * A turn that outgrows the viewport can no longer be read from its start, so
  * anchoring stops being useful and following the output is better.
