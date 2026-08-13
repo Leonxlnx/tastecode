@@ -43,6 +43,7 @@ gpui = "=0.2.2"
 gpui-component = { version = "=0.5.1", features = ["tree-sitter-languages"] }
 headless_chrome = { version = "=1.0.22", default-features = false, features = ["offline"] }
 html5ever = "=0.27.0"
+if-addrs = "0.15.0"
 keyring = "4.1.6"
 libc = "0.2.189"
 markdown = "1.0.0"
@@ -55,6 +56,7 @@ objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
   "NSWorkspace",
 ] }
 portable-pty = "=0.9.0"
+qrcode = { version = "0.14.1", default-features = false }
 raw-window-handle = "0.6.2"
 rusqlite = { version = "=0.39.0", default-features = false, features = ["bundled", "cache"] }
 reqwest = { version = "0.13.4", features = ["blocking", "json"] }

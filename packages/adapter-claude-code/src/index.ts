@@ -7,3 +7,4 @@ export {
   type ClaudeLimitSource,
 } from './limits.js'
 export { toDomainEvents, toUsage, type ClaudeEvent } from './events.js'
+export { readClaudeUsageHistory } from './usage-history.js'

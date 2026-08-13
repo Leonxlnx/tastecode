@@ -6,7 +6,8 @@ pub use checkpoints::{NewCheckpoint, RestoreUndo, StoredCheckpoint};
 pub use events::{SearchOptions, UsageSummary};
 
 use harness_protocol::{
-    DiffDecision, ProviderId, SettleReason, SidebarMode, SidebarSettings, ThreadLifecycle,
+    DiffDecision, PairedDevice, ProviderId, SettleReason, SidebarMode, SidebarSettings,
+    ThreadLifecycle,
 };
 use rusqlite::{Connection, OptionalExtension as _, Row, params};
 use serde_json::Value;
@@ -14,6 +15,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
+use uuid::Uuid;
 
 use schema::{ADDED_COLUMNS, SCHEMA};
 
@@ -131,6 +133,101 @@ impl Store {
         self.connection
             .close()
             .map_err(|(_connection, error)| StoreError::Sql(error))
+    }
+
+    pub fn mobile_access_enabled(&self) -> Result<bool> {
+        let value = self
+            .connection
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = 'mobile_access_enabled'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        Ok(value.as_deref() == Some("true"))
+    }
+
+    pub fn set_mobile_access_enabled(&self, enabled: bool) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('mobile_access_enabled', ?1)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            [if enabled { "true" } else { "false" }],
+        )?;
+        Ok(())
+    }
+
+    pub fn pair_device(&self, name: &str, token_hash: &str) -> Result<PairedDevice> {
+        self.pair_device_at(name, token_hash, as_u64(now_ms()?))
+    }
+
+    pub fn pair_device_at(&self, name: &str, token_hash: &str, at: u64) -> Result<PairedDevice> {
+        let device = PairedDevice {
+            id: Uuid::new_v4().to_string(),
+            name: name.into(),
+            created_at: at,
+            last_seen_at: at,
+        };
+        self.connection.execute(
+            "INSERT INTO paired_devices (id, name, token_hash, created_at, last_seen_at)
+             VALUES (?1, ?2, ?3, ?4, ?4)",
+            params![
+                device.id,
+                device.name,
+                token_hash,
+                as_i64(device.created_at)
+            ],
+        )?;
+        Ok(device)
+    }
+
+    pub fn paired_devices(&self) -> Result<Vec<PairedDevice>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, name, created_at, last_seen_at FROM paired_devices ORDER BY created_at",
+        )?;
+        statement
+            .query_map([], row_to_paired_device)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    pub fn has_paired_device(&self, id: &str) -> Result<bool> {
+        self.connection
+            .query_row("SELECT 1 FROM paired_devices WHERE id = ?1", [id], |_| {
+                Ok(())
+            })
+            .optional()
+            .map(|row| row.is_some())
+            .map_err(Into::into)
+    }
+
+    pub fn paired_device_for_token_hash(&self, token_hash: &str) -> Result<Option<PairedDevice>> {
+        self.connection
+            .query_row(
+                "SELECT id, name, created_at, last_seen_at
+                 FROM paired_devices WHERE token_hash = ?1",
+                [token_hash],
+                row_to_paired_device,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn touch_paired_device(&self, id: &str) -> Result<()> {
+        self.touch_paired_device_at(id, as_u64(now_ms()?))
+    }
+
+    pub fn touch_paired_device_at(&self, id: &str, at: u64) -> Result<()> {
+        self.connection.execute(
+            "UPDATE paired_devices SET last_seen_at = ?1 WHERE id = ?2",
+            params![as_i64(at), id],
+        )?;
+        Ok(())
+    }
+
+    pub fn revoke_paired_device(&self, id: &str) -> Result<()> {
+        self.connection
+            .execute("DELETE FROM paired_devices WHERE id = ?1", [id])?;
+        Ok(())
     }
 
     fn migrate(&self) -> Result<()> {
@@ -675,6 +772,15 @@ fn row_to_project(row: &Row<'_>) -> rusqlite::Result<StoredProject> {
     })
 }
 
+fn row_to_paired_device(row: &Row<'_>) -> rusqlite::Result<PairedDevice> {
+    Ok(PairedDevice {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        created_at: as_u64(row.get(2)?),
+        last_seen_at: as_u64(row.get(3)?),
+    })
+}
+
 fn row_to_thread(row: &Row<'_>) -> rusqlite::Result<Result<StoredThread>> {
     let provider: String = row.get(2)?;
     let lifecycle_state: String = row.get(10)?;
@@ -805,6 +911,10 @@ fn bool_i64(value: bool) -> i64 {
 
 fn as_u64(value: i64) -> u64 {
     value.max(0) as u64
+}
+
+fn as_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
 }
 
 fn now_ms() -> Result<i64> {

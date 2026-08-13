@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { serverBaseUrl } from './server-url.js'
+import { serverUrl } from './server-url.js'
 
-describe('serverBaseUrl', () => {
-  it('uses an explicit development URL when provided', () => {
-    expect(serverBaseUrl('ws://127.0.0.1:4400')).toBe('ws://127.0.0.1:4400')
+describe('serverUrl', () => {
+  it('adds the access token from the URL fragment', () => {
+    expect(serverUrl('ws://100.64.0.1:4311', '#access_token=phone-secret')).toBe(
+      'ws://100.64.0.1:4311/?token=phone-secret',
+    )
   })
 
-  it('defaults to the loopback control socket', () => {
-    expect(serverBaseUrl(undefined)).toBe('ws://127.0.0.1:4311')
+  it('keeps the normal loopback URL unchanged', () => {
+    expect(serverUrl('ws://127.0.0.1:4311', '')).toBe('ws://127.0.0.1:4311')
   })
 })

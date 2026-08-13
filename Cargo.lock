@@ -3050,6 +3050,7 @@ dependencies = [
  "harness-store",
  "harness-terminal",
  "harness-workspace",
+ "if-addrs",
  "reqwest",
  "serde",
  "serde_json",
@@ -3118,6 +3119,7 @@ dependencies = [
  "markdown",
  "markup5ever_rcdom",
  "objc2-app-kit",
+ "qrcode",
  "raw-window-handle",
  "serde",
  "serde_json",
@@ -3524,6 +3526,16 @@ checksum = "cb68373c0d6620ef8105e855e7745e18b0d00d3bdb07fb532e434244cdb9a714"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
+]
+
+[[package]]
+name = "if-addrs"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0a05c691e1fae256cf7013d99dad472dc52d5543322761f83ec8d47eab40d2b"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5276,6 +5288,12 @@ checksum = "7f6d64c71eb498fe9eae14ce4ec935c555749aef511cca85b5568910d6e48001"
 dependencies = [
  "bytemuck",
 ]
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
 name = "quick-error"

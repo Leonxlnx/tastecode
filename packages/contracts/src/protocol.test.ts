@@ -19,6 +19,7 @@ import {
   SkillCapabilitiesSchema,
   SkillSchema,
   ThreadLifecycleSchema,
+  UsageHistoryResultSchema,
 } from './protocol.js'
 
 describe('domain events', () => {
@@ -164,6 +165,55 @@ describe('domain events', () => {
 describe('protocol envelopes', () => {
   it('validates a request envelope', () => {
     expect(RequestSchema.parse({ id: '1', method: 'system.info', params: {} })).toBeTruthy()
+  })
+
+  it('keeps usage estimates paired with their pricing coverage', () => {
+    const totals = {
+      uncachedInputTokens: 100,
+      cachedInputTokens: 200,
+      cacheWriteInputTokens: 10,
+      outputTokens: 20,
+      reasoningTokens: 5,
+      processedTokens: 330,
+      estimatedCostUsd: 0.01,
+      cacheSavingsUsd: 0.02,
+      providerReportedCostUsd: 0,
+      providerReportedTokens: 0,
+      pricedTokens: 300,
+      unpricedTokens: 30,
+    }
+    const result = {
+      range: '30d' as const,
+      startDate: '2026-07-10',
+      endDate: '2026-08-08',
+      generatedAt: 1,
+      sessionCount: 1,
+      activeDays: 1,
+      totals,
+      providers: [{ provider: 'codex' as const, sessionCount: 1, totals }],
+      models: [
+        {
+          provider: 'codex' as const,
+          model: 'gpt-5.6-sol',
+          sessionCount: 1,
+          pricing: 'exact' as const,
+          totals,
+        },
+      ],
+      daily: [
+        {
+          date: '2026-08-08',
+          sessionCount: 1,
+          totals,
+          providers: [{ provider: 'codex' as const, tokens: 330, estimatedCostUsd: 0.01 }],
+        },
+      ],
+      sources: [{ provider: 'codex' as const, available: true, sessionCount: 1 }],
+      scan: { status: 'idle' as const, filesProcessed: 1, filesTotal: 1 },
+      warnings: [],
+    }
+
+    expect(UsageHistoryResultSchema.parse(result)).toEqual(result)
   })
 
   it('requires a sequence on every push so clients can detect gaps', () => {
@@ -387,6 +437,21 @@ describe('protocol envelopes', () => {
     })
     expect(projects.projects[0]?.sessions[0]?.worktreeBranch).toBe('harness/th1')
     expect(projects.projects[0]?.sessions[0]?.pinned).toBe(true)
+    const directory = methods['projects.browse'].result.parse({
+      path: '/Users/me',
+      name: 'me',
+      entries: [
+        {
+          path: '/Users/me/Developer',
+          name: 'Developer',
+          kind: 'directory',
+          modifiedAt: 1_000,
+        },
+      ],
+    })
+    expect(directory.entries[0]?.kind).toBe('directory')
+    expect(methods['projects.browse'].params.parse({})).toEqual({})
+    expect(() => methods['projects.browse'].params.parse({ path: '' })).toThrow()
     expect(methods['thread.pin'].params.parse({ threadId: 'th1', pinned: true })).toEqual({
       threadId: 'th1',
       pinned: true,
@@ -394,6 +459,76 @@ describe('protocol envelopes', () => {
     expect(
       methods['workspace.switchBranch'].params.parse({ path: 'D:\\x', branch: 'feature/shelf' }),
     ).toEqual({ path: 'D:\\x', branch: 'feature/shelf' })
+  })
+
+  it('keeps durable device credentials out of pairing offers', () => {
+    const offer = methods['connections.startPairing'].result.parse({
+      enabled: true,
+      serverName: 'Studio Mac',
+      port: 4312,
+      addresses: [
+        {
+          kind: 'tailscale',
+          label: 'Tailscale 100.101.22.33',
+          url: 'ws://100.101.22.33:4312',
+        },
+      ],
+      devices: [],
+      webUrls: ['http://100.101.22.33:4312/#access_token=stable-web-token'],
+      pairingUri: 'harness://pair?payload=short-lived-ticket',
+      expiresAt: Date.now() + 300_000,
+    })
+
+    expect(offer.pairingUri).toContain('harness://pair')
+    expect('deviceToken' in offer).toBe(false)
+    expect(() => methods['connections.claim'].params.parse({ name: '' })).toThrow()
+    expect(
+      ResponseSchema.parse({
+        id: 'device-request',
+        error: { code: ErrorCode.FORBIDDEN, message: 'This device cannot perform that action' },
+      }),
+    ).toMatchObject({ error: { code: 'forbidden' } })
+  })
+
+  it('only exposes the web-app URLs on the admin status surface', () => {
+    const status = methods['connections.status'].result.parse({
+      enabled: true,
+      serverName: 'Studio Mac',
+      port: 4312,
+      addresses: [{ kind: 'lan', label: 'en0 192.168.1.44', url: 'ws://192.168.1.44:4312' }],
+      devices: [],
+      webUrls: ['http://192.168.1.44:4312/#access_token=stable-web-token'],
+    })
+    expect(status.webUrls[0]).toBe('http://192.168.1.44:4312/#access_token=stable-web-token')
+
+    // The device-facing shape deliberately carries no app URLs: a paired
+    // device must not learn the long-lived web token.
+    expect(
+      methods['connections.deviceStatus'].result.parse({
+        serverName: 'Studio Mac',
+        addresses: [{ kind: 'lan', label: 'en0 192.168.1.44', url: 'ws://192.168.1.44:4312' }],
+      }),
+    ).toEqual({
+      serverName: 'Studio Mac',
+      addresses: [{ kind: 'lan', label: 'en0 192.168.1.44', url: 'ws://192.168.1.44:4312' }],
+    })
+  })
+
+  it('validates remote attachment materialization requests', () => {
+    expect(
+      methods['attachments.saveFile'].params.parse({
+        name: 'reference.pdf',
+        mimeType: 'application/pdf',
+        data: 'cGRm',
+      }),
+    ).toEqual({ name: 'reference.pdf', mimeType: 'application/pdf', data: 'cGRm' })
+    expect(() =>
+      methods['attachments.saveFile'].params.parse({
+        name: '',
+        mimeType: 'application/pdf',
+        data: 'cGRm',
+      }),
+    ).toThrow()
   })
 
   it('reports every panic-stop target as interrupted or failed', () => {

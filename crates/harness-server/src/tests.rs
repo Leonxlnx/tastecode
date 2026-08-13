@@ -1,4 +1,6 @@
 use super::*;
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use harness_agent::{
     AgentError, AgentHandlers, AgentResult, AgentRuntime, AgentSession, CancellationToken,
     ControlHandlers, CredentialValues, LoginEvent, McpOAuthEvent, ProviderControl, StartOptions,
@@ -15,6 +17,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, TcpStream};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
@@ -25,6 +28,14 @@ use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket, connect};
 
 type ClientSocket = WebSocket<MaybeTlsStream<TcpStream>>;
+
+fn test_mobile_addresses() -> Vec<harness_protocol::ConnectionAddress> {
+    vec![harness_protocol::ConnectionAddress {
+        kind: harness_protocol::ConnectionAddressKind::Lan,
+        label: "Test loopback 127.0.0.1".into(),
+        url: "ws://127.0.0.1:0".into(),
+    }]
+}
 
 fn start_test_server(
     access_token: Option<&str>,
@@ -37,13 +48,30 @@ fn start_test_server(
     store.close().unwrap();
     let server = start(ServerConfig {
         address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        mobile_port: Some(0),
+        mobile_addresses: Some(test_mobile_addresses()),
         access_token: access_token.map(str::to_owned),
         mcp_config_path: directory.path().join("mcp.json"),
         providers_config_path: directory.path().join("providers.json"),
         store_path,
+        project_browser_home: Some(directory.path().to_path_buf()),
     })
     .unwrap();
     (directory, server)
+}
+
+fn start_test_server_in(directory: &std::path::Path, mobile_port: u16) -> ServerHandle {
+    start(ServerConfig {
+        address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        mobile_port: Some(mobile_port),
+        mobile_addresses: Some(test_mobile_addresses()),
+        access_token: None,
+        mcp_config_path: directory.join("mcp.json"),
+        providers_config_path: directory.join("providers.json"),
+        store_path: directory.join("harness.db"),
+        project_browser_home: Some(directory.to_path_buf()),
+    })
+    .unwrap()
 }
 
 fn start_test_server_with_runtimes(
@@ -64,10 +92,13 @@ fn start_test_server_with_runtimes_and_seed(
     let server = start_with_runtimes(
         ServerConfig {
             address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            mobile_port: Some(0),
+            mobile_addresses: Some(test_mobile_addresses()),
             access_token: None,
             mcp_config_path: directory.path().join("mcp.json"),
             providers_config_path: directory.path().join("providers.json"),
             store_path,
+            project_browser_home: Some(directory.path().to_path_buf()),
         },
         runtimes,
     )
@@ -85,10 +116,13 @@ fn start_test_server_with_services(
     let server = start_with_services(
         ServerConfig {
             address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            mobile_port: Some(0),
+            mobile_addresses: Some(test_mobile_addresses()),
             access_token: None,
             mcp_config_path: directory.path().join("mcp.json"),
             providers_config_path: directory.path().join("providers.json"),
             store_path,
+            project_browser_home: Some(directory.path().to_path_buf()),
         },
         runtimes,
         credentials,
@@ -110,10 +144,13 @@ fn start_native_server_in(
 ) -> ServerHandle {
     let config = ServerConfig {
         address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        mobile_port: Some(0),
+        mobile_addresses: Some(test_mobile_addresses()),
         access_token: None,
         store_path: directory.join("harness.db"),
         mcp_config_path: directory.join("mcp.json"),
         providers_config_path: directory.join("providers.json"),
+        project_browser_home: Some(directory.to_path_buf()),
     };
     Store::open(&config.store_path).unwrap().close().unwrap();
     let credential_store: Arc<dyn CredentialStore> = credentials.clone();
@@ -161,13 +198,27 @@ impl CredentialStore for MemoryCredentials {
 }
 
 fn connect_native(server: &ServerHandle, suffix: &str) -> ClientSocket {
-    let (mut socket, _) = connect(format!("ws://{}{}", server.address(), suffix)).unwrap();
+    connect_address(server.address(), suffix)
+}
+
+fn connect_address(address: SocketAddr, suffix: &str) -> ClientSocket {
+    let (mut socket, _) = connect(format!("ws://{address}{suffix}")).unwrap();
     if let MaybeTlsStream::Plain(stream) = socket.get_mut() {
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
     }
     socket
+}
+
+fn pairing_ticket(pairing_uri: &str) -> String {
+    let url = url::Url::parse(pairing_uri).unwrap();
+    let payload = url
+        .query_pairs()
+        .find_map(|(key, value)| (key == "payload").then(|| value.into_owned()))
+        .unwrap();
+    let payload: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap();
+    payload["ticket"].as_str().unwrap().into()
 }
 
 fn read_value(socket: &mut ClientSocket) -> Value {
@@ -396,6 +447,167 @@ fn wait_for_sent_count(session: &FakeSession, expected: usize) {
         "expected {expected} sent turns, got {}",
         session.sent_texts.lock().unwrap().len()
     );
+}
+
+#[test]
+fn remote_project_browsing_and_attachment_uploads_match_the_mobile_contract() {
+    let (directory, server) = start_test_server(None, |_| {});
+    let developer = directory.path().join("Developer");
+    fs::create_dir(&developer).unwrap();
+    fs::create_dir(developer.join("project10")).unwrap();
+    fs::create_dir(developer.join("project2")).unwrap();
+    fs::write(developer.join("notes.txt"), b"notes").unwrap();
+    fs::write(developer.join(".secret"), b"hidden").unwrap();
+    let mut socket = connect_native(&server, "");
+    assert_welcome(&mut socket);
+
+    send_request(
+        &mut socket,
+        "browse",
+        "projects.browse",
+        json!({ "path": developer.to_string_lossy() }),
+    );
+    let listing = read_value(&mut socket);
+    assert_eq!(
+        listing["result"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["notes.txt", "project2", "project10"]
+    );
+
+    send_request(
+        &mut socket,
+        "upload",
+        "attachments.saveFile",
+        json!({
+            "name": "../references\\design notes.txt",
+            "mimeType": "text/plain",
+            "data": "aGVsbG8="
+        }),
+    );
+    let uploaded = read_value(&mut socket);
+    let uploaded_path = PathBuf::from(uploaded["result"]["path"].as_str().unwrap());
+    assert_eq!(fs::read_to_string(&uploaded_path).unwrap(), "hello");
+    assert!(
+        uploaded_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .ends_with("-design notes.txt")
+    );
+    fs::remove_file(uploaded_path).unwrap();
+
+    socket.close(None).unwrap();
+    server.close().unwrap();
+}
+
+#[test]
+fn mobile_listener_keeps_pairing_bootstrap_only_and_devices_out_of_administration() {
+    let (_directory, server) = start_test_server(None, |_| {});
+    let mut admin = connect_native(&server, "");
+    assert_welcome(&mut admin);
+    send_request(&mut admin, "pair", "connections.startPairing", json!({}));
+    let offer = read_value(&mut admin);
+    let port = offer["result"]["port"].as_u64().unwrap() as u16;
+    let ticket = pairing_ticket(offer["result"]["pairingUri"].as_str().unwrap());
+
+    let mut bootstrap = connect_address(
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+        &format!("/?pairing_ticket={ticket}"),
+    );
+    assert_welcome(&mut bootstrap);
+    send_request(&mut bootstrap, "denied", "projects.list", json!({}));
+    assert_eq!(read_value(&mut bootstrap)["error"]["code"], "forbidden");
+    send_request(
+        &mut bootstrap,
+        "claim",
+        "connections.claim",
+        json!({ "name": "Test phone" }),
+    );
+    let claimed = read_value(&mut bootstrap);
+    let device_id = claimed["result"]["deviceId"].as_str().unwrap().to_owned();
+    let device_token = claimed["result"]["deviceToken"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    bootstrap.close(None).unwrap();
+
+    let mut device = connect_address(
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+        &format!("/?token={device_token}"),
+    );
+    assert_welcome(&mut device);
+    send_request(&mut device, "projects", "projects.list", json!({}));
+    assert_eq!(read_value(&mut device)["result"]["projects"], json!([]));
+    send_request(&mut device, "admin", "connections.status", json!({}));
+    assert_eq!(read_value(&mut device)["error"]["code"], "forbidden");
+
+    send_request(
+        &mut admin,
+        "revoke",
+        "connections.revoke",
+        json!({ "deviceId": device_id }),
+    );
+    assert_eq!(read_value(&mut admin)["result"], json!({}));
+    assert!(matches!(device.read(), Err(_) | Ok(Message::Close(_))));
+
+    send_request(&mut admin, "stop", "connections.stop", json!({}));
+    assert_eq!(read_value(&mut admin)["result"], json!({}));
+    send_request(
+        &mut admin,
+        "pair-again",
+        "connections.startPairing",
+        json!({}),
+    );
+    assert_eq!(read_value(&mut admin)["result"]["enabled"], true);
+
+    admin.close(None).unwrap();
+    server.close().unwrap();
+}
+
+#[test]
+fn mobile_listener_and_saved_device_restore_after_server_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = start_test_server_in(directory.path(), 0);
+    let mut admin = connect_native(&first, "");
+    assert_welcome(&mut admin);
+    send_request(&mut admin, "pair", "connections.startPairing", json!({}));
+    let offer = read_value(&mut admin);
+    let port = offer["result"]["port"].as_u64().unwrap() as u16;
+    let ticket = pairing_ticket(offer["result"]["pairingUri"].as_str().unwrap());
+    let mut bootstrap = connect_address(
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+        &format!("/?pairing_ticket={ticket}"),
+    );
+    assert_welcome(&mut bootstrap);
+    send_request(
+        &mut bootstrap,
+        "claim",
+        "connections.claim",
+        json!({ "name": "Persistent phone" }),
+    );
+    let claimed = read_value(&mut bootstrap);
+    let token = claimed["result"]["deviceToken"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    bootstrap.close(None).unwrap();
+    admin.close(None).unwrap();
+    first.close().unwrap();
+
+    let second = start_test_server_in(directory.path(), port);
+    let mut restored = connect_address(
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+        &format!("/?token={token}"),
+    );
+    assert_welcome(&mut restored);
+    send_request(&mut restored, "projects", "projects.list", json!({}));
+    assert_eq!(read_value(&mut restored)["result"]["projects"], json!([]));
+    restored.close(None).unwrap();
+    second.close().unwrap();
 }
 
 #[test]

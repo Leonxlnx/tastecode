@@ -28,7 +28,7 @@ import {
 } from './pull-requests.js'
 
 /**
- * The wire protocol between the desktop renderer, web client, and local core
+ * The wire protocol between any client (desktop renderer, web, later mobile)
  * and the local core server.
  *
  * Two shapes only:
@@ -59,6 +59,35 @@ export const ErrorCodeSchema = z.enum([
   ErrorCode.INTERNAL,
 ])
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>
+
+export const ConnectionAddressSchema = z.object({
+  kind: z.enum(['tailscale', 'lan']),
+  label: z.string().min(1),
+  url: z.string().regex(/^wss?:\/\//i, 'expected a WebSocket URL'),
+})
+export type ConnectionAddress = z.infer<typeof ConnectionAddressSchema>
+
+export const PairedDeviceSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(80),
+  createdAt: z.number().int().nonnegative(),
+  lastSeenAt: z.number().int().nonnegative(),
+})
+export type PairedDevice = z.infer<typeof PairedDeviceSchema>
+
+export const ConnectionsStatusSchema = z.object({
+  /** Whether the listener currently accepts native-app connections. */
+  enabled: z.boolean(),
+  serverName: z.string().min(1),
+  port: z.number().int().min(0).max(65_535),
+  addresses: z.array(ConnectionAddressSchema),
+  devices: z.array(PairedDeviceSchema),
+  /** Stable, bookmarkable URLs for the full web app on a phone (one per
+   * reachable address, Tailscale first). Each carries the long-lived web
+   * token in the hash. Admin-only: never returned to devices. */
+  webUrls: z.array(z.string().regex(/^https?:\/\//i, 'expected an HTTP app URL')),
+})
+export type ConnectionsStatus = z.infer<typeof ConnectionsStatusSchema>
 
 // ---------------------------------------------------------------------------
 // Requests
@@ -470,6 +499,85 @@ export const SessionDiffSchema = z.object({
   files: z.array(DiffFileSchema),
 })
 export type SessionDiff = z.infer<typeof SessionDiffSchema>
+
+export const UsageHistoryRangeSchema = z.enum(['7d', '30d', '90d', '365d', 'all'])
+export type UsageHistoryRange = z.infer<typeof UsageHistoryRangeSchema>
+
+export const UsageHistoryTotalsSchema = z.object({
+  uncachedInputTokens: z.number().int().nonnegative(),
+  cachedInputTokens: z.number().int().nonnegative(),
+  cacheWriteInputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  reasoningTokens: z.number().int().nonnegative(),
+  processedTokens: z.number().int().nonnegative(),
+  estimatedCostUsd: z.number().nonnegative(),
+  cacheSavingsUsd: z.number().nonnegative(),
+  providerReportedCostUsd: z.number().nonnegative(),
+  providerReportedTokens: z.number().int().nonnegative(),
+  pricedTokens: z.number().int().nonnegative(),
+  unpricedTokens: z.number().int().nonnegative(),
+})
+export type UsageHistoryTotals = z.infer<typeof UsageHistoryTotalsSchema>
+
+export const UsageHistoryProviderSchema = z.object({
+  provider: ProviderIdSchema,
+  sessionCount: z.number().int().nonnegative(),
+  totals: UsageHistoryTotalsSchema,
+})
+export type UsageHistoryProvider = z.infer<typeof UsageHistoryProviderSchema>
+
+export const UsageHistoryModelSchema = z.object({
+  provider: ProviderIdSchema,
+  model: z.string().min(1),
+  sessionCount: z.number().int().nonnegative(),
+  pricing: z.enum(['exact', 'family', 'unpriced']),
+  totals: UsageHistoryTotalsSchema,
+})
+export type UsageHistoryModel = z.infer<typeof UsageHistoryModelSchema>
+
+export const UsageHistoryDaySchema = z.object({
+  date: z.string().date(),
+  sessionCount: z.number().int().nonnegative(),
+  totals: UsageHistoryTotalsSchema,
+  providers: z.array(
+    z.object({
+      provider: ProviderIdSchema,
+      tokens: z.number().int().nonnegative(),
+      estimatedCostUsd: z.number().nonnegative(),
+    }),
+  ),
+})
+export type UsageHistoryDay = z.infer<typeof UsageHistoryDaySchema>
+
+export const UsageHistoryScanSchema = z.object({
+  status: z.enum(['idle', 'scanning']),
+  filesProcessed: z.number().int().nonnegative(),
+  filesTotal: z.number().int().nonnegative(),
+})
+export type UsageHistoryScan = z.infer<typeof UsageHistoryScanSchema>
+
+export const UsageHistoryResultSchema = z.object({
+  range: UsageHistoryRangeSchema,
+  startDate: z.string().date(),
+  endDate: z.string().date(),
+  generatedAt: z.number().int().nonnegative(),
+  sessionCount: z.number().int().nonnegative(),
+  activeDays: z.number().int().nonnegative(),
+  totals: UsageHistoryTotalsSchema,
+  providers: z.array(UsageHistoryProviderSchema),
+  models: z.array(UsageHistoryModelSchema),
+  daily: z.array(UsageHistoryDaySchema),
+  sources: z.array(
+    z.object({
+      provider: ProviderIdSchema,
+      available: z.boolean(),
+      sessionCount: z.number().int().nonnegative(),
+    }),
+  ),
+  scan: UsageHistoryScanSchema,
+  warnings: z.array(z.string()),
+})
+export type UsageHistoryResult = z.infer<typeof UsageHistoryResultSchema>
 
 export const ProviderLimitSchema = z.object({
   label: z.string().min(1).max(120),
@@ -887,6 +995,46 @@ export const methods = {
     params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
     result: z.object({ models: z.array(ModelSchema) }),
   },
+  /** Reports the mobile listener: native-app acceptance, reachable routes and
+   * the stable web-app URLs. */
+  'connections.status': {
+    params: z.object({}),
+    result: ConnectionsStatusSchema,
+  },
+  /** Starts remote access and creates a short-lived, single-use pairing ticket. */
+  'connections.startPairing': {
+    params: z.object({}),
+    result: ConnectionsStatusSchema.extend({
+      pairingUri: z.string().startsWith('harness://pair?'),
+      expiresAt: z.number().int().nonnegative(),
+    }),
+  },
+  'connections.stop': {
+    params: z.object({}),
+    result: z.object({}),
+  },
+  'connections.revoke': {
+    params: z.object({ deviceId: z.string().min(1) }),
+    result: z.object({}),
+  },
+  /** Lets a paired device refresh routes without receiving the admin device list. */
+  'connections.deviceStatus': {
+    params: z.object({}),
+    result: z.object({
+      serverName: z.string().min(1),
+      addresses: z.array(ConnectionAddressSchema),
+    }),
+  },
+  /** The only method available to a one-time pairing connection. */
+  'connections.claim': {
+    params: z.object({ name: z.string().trim().min(1).max(80) }),
+    result: z.object({
+      deviceId: z.string().min(1),
+      deviceToken: z.string().min(1),
+      serverName: z.string().min(1),
+      addresses: z.array(ConnectionAddressSchema),
+    }),
+  },
   /**
    * Whether this provider can accept a recorded clip. Availability is account-
    * and binary-specific, so the renderer asks instead of inferring it from a mic API.
@@ -984,6 +1132,23 @@ export const methods = {
       ),
     }),
   },
+  /** Browse the server user's home directory when choosing a project remotely. */
+  'projects.browse': {
+    params: z.object({ path: z.string().min(1).optional() }),
+    result: z.object({
+      path: z.string().min(1),
+      name: z.string().min(1),
+      parent: z.string().min(1).optional(),
+      entries: z.array(
+        z.object({
+          path: z.string().min(1),
+          name: z.string().min(1),
+          kind: z.enum(['directory', 'file']),
+          modifiedAt: z.number().nonnegative(),
+        }),
+      ),
+    }),
+  },
   'projects.add': {
     params: z.object({ path: z.string(), name: z.string().optional() }),
     result: z.object({
@@ -1029,6 +1194,15 @@ export const methods = {
   'attachments.saveImage': {
     params: z.object({
       mimeType: z.string(),
+      data: z.string().max(34_952_536),
+    }),
+    result: z.object({ path: z.string() }),
+  },
+  /** Materialize a remote-client attachment where local agents can read it. */
+  'attachments.saveFile': {
+    params: z.object({
+      name: z.string().trim().min(1).max(255),
+      mimeType: z.string().trim().min(1).max(255),
       data: z.string().max(34_952_536),
     }),
     result: z.object({ path: z.string() }),
@@ -1107,6 +1281,23 @@ export const methods = {
   'usage.summary': {
     params: z.union([z.object({ threadId: z.string() }), z.object({ provider: ProviderIdSchema })]),
     result: UsageSummaryResultSchema,
+  },
+  /**
+   * Local, model-attributed usage history. Dollar values are API-equivalent
+   * estimates, and pricing coverage is returned with the estimate so clients
+   * can show when a model could not be priced.
+   */
+  'usage.history': {
+    params: z.object({
+      range: UsageHistoryRangeSchema,
+      refresh: z.boolean().optional(),
+    }),
+    result: UsageHistoryResultSchema,
+  },
+  /** Clears the generated local usage index and starts a cold background scan. */
+  'usage.resetHistory': {
+    params: z.object({}),
+    result: z.object({ started: z.literal(true) }),
   },
   /** Start a temporary conversation forked from the current main chat. */
   'sideChat.start': {

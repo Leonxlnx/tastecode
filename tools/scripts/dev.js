@@ -1,5 +1,6 @@
 /** Run the core server, Vite, and Electron together. */
 import { execFile, spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import path from 'node:path'
@@ -7,8 +8,9 @@ import net from 'node:net'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const VITE_URL = 'http://127.0.0.1:5183'
-const DEV_PORTS = new Set([4311, 5183])
+const DEV_PORTS = new Set([4311, 4312, 5183])
 const isWin = process.platform === 'win32'
+const mobile = process.argv.includes('--mobile')
 const children = []
 const execFileAsync = promisify(execFile)
 let shuttingDown = false
@@ -194,6 +196,29 @@ async function clearDevPorts() {
   }
 }
 
+async function tailscaleIPv4() {
+  const candidates = ['tailscale']
+  if (process.platform === 'darwin') {
+    candidates.push('/Applications/Tailscale.app/Contents/MacOS/Tailscale')
+  }
+  if (isWin && process.env['ProgramFiles']) {
+    candidates.push(path.join(process.env['ProgramFiles'], 'Tailscale', 'tailscale.exe'))
+  }
+
+  for (const command of candidates) {
+    try {
+      const { stdout } = await execFileAsync(command, ['ip', '-4'])
+      const address = stdout.trim().split(/\s+/)[0]
+      if (address && net.isIPv4(address)) return address
+    } catch {
+      // Try the next normal installation location.
+    }
+  }
+  throw new Error(
+    'Tailscale is not running, or its CLI could not be found. Open Tailscale and try again.',
+  )
+}
+
 function processGroupExists(groupId) {
   try {
     process.kill(-groupId, 0)
@@ -256,7 +281,26 @@ process.on('SIGTERM', () => void shutdown(0))
 
 await clearDevPorts()
 
-run('server', 'apps/server', ['run', 'dev'])
-run('web', 'apps/web', ['run', 'dev'])
-await waitForPort(5183)
-run('desktop', 'apps/desktop', ['run', 'start'], { HARNESS_DEV_SERVER: VITE_URL })
+if (mobile) {
+  const host = await tailscaleIPv4()
+  const accessToken = randomBytes(24).toString('base64url')
+  const serverUrl = `ws://${host}:4311`
+  const webUrl = `http://${host}:5183/#access_token=${accessToken}`
+
+  run('server', 'apps/server', ['run', 'dev'], {
+    HARNESS_HOST: host,
+    HARNESS_ACCESS_TOKEN: accessToken,
+    HARNESS_WEB_DEV_SERVER: `http://${host}:5183`,
+  })
+  run('web', 'apps/web', ['run', 'dev', '--host', host], {
+    VITE_HARNESS_SERVER_URL: serverUrl,
+  })
+
+  await Promise.all([waitForPort(4311, host), waitForPort(5183, host)])
+  console.log(`\nOpen on your Tailscale-connected phone:\n${webUrl}\n`)
+} else {
+  run('server', 'apps/server', ['run', 'dev'], { HARNESS_WEB_DEV_SERVER: VITE_URL })
+  run('web', 'apps/web', ['run', 'dev'])
+  await waitForPort(5183)
+  run('desktop', 'apps/desktop', ['run', 'start'], { HARNESS_DEV_SERVER: VITE_URL })
+}

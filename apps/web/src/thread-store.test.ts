@@ -174,13 +174,13 @@ describe('thread reducer', () => {
     ])
   })
 
-  it('echoes a message when randomUUID is unavailable in an insecure browser context', () => {
+  it('echoes a message when randomUUID is unavailable in an insecure mobile context', () => {
     vi.stubGlobal('crypto', {})
 
-    const first = appendUserMessage(emptyThread, 'sent from browser')
+    const first = appendUserMessage(emptyThread, 'sent from mobile')
     const second = appendUserMessage(first, 'sent again')
 
-    expect(second.items.map((entry) => entry.text)).toEqual(['sent from browser', 'sent again'])
+    expect(second.items.map((entry) => entry.text)).toEqual(['sent from mobile', 'sent again'])
     expect(second.items[0]?.id).toMatch(/^local:/)
     expect(second.items[1]?.id).not.toBe(second.items[0]?.id)
   })

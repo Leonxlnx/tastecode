@@ -193,6 +193,50 @@ fn lifecycle_and_sidebar_settings_survive_reopen() {
 }
 
 #[test]
+fn mobile_access_and_paired_devices_survive_reopen_and_revocation() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("harness.db");
+    let store = Store::open(&path).unwrap();
+
+    assert!(!store.mobile_access_enabled().unwrap());
+    store.set_mobile_access_enabled(true).unwrap();
+    let phone = store
+        .pair_device_at("Phone", "phone-token-hash", 10)
+        .unwrap();
+    let tablet = store
+        .pair_device_at("Tablet", "tablet-token-hash", 12)
+        .unwrap();
+    store.touch_paired_device_at(&phone.id, 20).unwrap();
+    assert_eq!(
+        store
+            .paired_device_for_token_hash("phone-token-hash")
+            .unwrap()
+            .unwrap()
+            .last_seen_at,
+        20
+    );
+    assert_eq!(
+        store
+            .paired_devices()
+            .unwrap()
+            .iter()
+            .map(|device| device.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Phone", "Tablet"]
+    );
+    store.close().unwrap();
+
+    let reopened = Store::open(&path).unwrap();
+    assert!(reopened.mobile_access_enabled().unwrap());
+    assert!(reopened.has_paired_device(&phone.id).unwrap());
+    reopened.revoke_paired_device(&phone.id).unwrap();
+    assert!(!reopened.has_paired_device(&phone.id).unwrap());
+    assert!(reopened.has_paired_device(&tablet.id).unwrap());
+    reopened.set_mobile_access_enabled(false).unwrap();
+    assert!(!reopened.mobile_access_enabled().unwrap());
+}
+
+#[test]
 fn lifecycle_updates_preserve_wake_and_unread_semantics() {
     let store = Store::memory().unwrap();
     store.add_project("/repo", None).unwrap();

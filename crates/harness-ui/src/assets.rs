@@ -135,6 +135,7 @@ impl AssetSource for HarnessAssets {
             }
             "icons/folder.svg" => Some(include_bytes!("../assets/icons/folder.svg")),
             "icons/laptop.svg" => Some(include_bytes!("../assets/icons/laptop.svg")),
+            "icons/smartphone.svg" => Some(include_bytes!("../assets/icons/smartphone.svg")),
             "icons/gauge.svg" => Some(include_bytes!("../assets/icons/gauge.svg")),
             "icons/octagon-x.svg" => Some(include_bytes!("../assets/icons/octagon-x.svg")),
             "icons/panels-top-left.svg" => {

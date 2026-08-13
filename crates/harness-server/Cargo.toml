@@ -26,6 +26,7 @@ harness-providers = { path = "../harness-providers" }
 harness-store = { path = "../harness-store" }
 harness-terminal = { path = "../harness-terminal" }
 harness-workspace = { path = "../harness-workspace" }
+if-addrs.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

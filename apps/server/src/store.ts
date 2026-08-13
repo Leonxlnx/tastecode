@@ -5,6 +5,7 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite'
 import type {
   DiffDecision,
   DomainEvent,
+  PairedDevice,
   ProviderId,
   SidebarSettings,
   SessionSearchResult,
@@ -277,6 +278,14 @@ CREATE TABLE IF NOT EXISTS app_settings (
   value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS paired_devices (
+  id           TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  token_hash   TEXT NOT NULL UNIQUE,
+  created_at   INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS checkpoints_by_thread ON checkpoints (thread_id, seq);
 CREATE INDEX IF NOT EXISTS events_by_thread ON events (thread_id, seq);
 CREATE INDEX IF NOT EXISTS queued_turn_events_by_thread
@@ -399,6 +408,66 @@ export class Store {
     const key = Buffer.from(row.value, 'base64url')
     if (key.length !== 32) throw new Error('Search result identity key is invalid.')
     return key
+  }
+
+  // ---- mobile connections -----------------------------------------------
+
+  mobileAccessEnabled(): boolean {
+    const row = this.#db
+      .prepare(`SELECT value FROM app_settings WHERE key = ?`)
+      .get('mobile_access_enabled') as { value: string } | undefined
+    return row?.value === 'true'
+  }
+
+  setMobileAccessEnabled(enabled: boolean): void {
+    this.#db
+      .prepare(
+        `INSERT INTO app_settings (key, value) VALUES (?, ?)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+      )
+      .run('mobile_access_enabled', String(enabled))
+  }
+
+  pairDevice(name: string, tokenHash: string, at = Date.now()): PairedDevice {
+    const device: PairedDevice = {
+      id: randomUUID(),
+      name,
+      createdAt: at,
+      lastSeenAt: at,
+    }
+    this.#db
+      .prepare(
+        `INSERT INTO paired_devices (id, name, token_hash, created_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(device.id, device.name, tokenHash, device.createdAt, device.lastSeenAt)
+    return device
+  }
+
+  pairedDevices(): PairedDevice[] {
+    return this.#db
+      .prepare(`SELECT id, name, created_at, last_seen_at FROM paired_devices ORDER BY created_at`)
+      .all()
+      .map(toPairedDevice)
+  }
+
+  hasPairedDevice(id: string): boolean {
+    return this.#db.prepare(`SELECT 1 FROM paired_devices WHERE id = ?`).get(id) !== undefined
+  }
+
+  pairedDeviceForTokenHash(tokenHash: string): PairedDevice | undefined {
+    const row = this.#db
+      .prepare(`SELECT id, name, created_at, last_seen_at FROM paired_devices WHERE token_hash = ?`)
+      .get(tokenHash)
+    return row ? toPairedDevice(row) : undefined
+  }
+
+  touchPairedDevice(id: string, at = Date.now()): void {
+    this.#db.prepare(`UPDATE paired_devices SET last_seen_at = ? WHERE id = ?`).run(at, id)
+  }
+
+  revokePairedDevice(id: string): void {
+    this.#db.prepare(`DELETE FROM paired_devices WHERE id = ?`).run(id)
   }
 
   // ---- projects ----------------------------------------------------------
@@ -1942,5 +2011,20 @@ function toThread(row: unknown): StoredThread {
     lastActiveAt: Number(r.last_active_at),
     ephemeral: r.ephemeral === 1,
     ...(r.parent_thread_id === null ? {} : { parentThreadId: r.parent_thread_id }),
+  }
+}
+
+function toPairedDevice(row: unknown): PairedDevice {
+  const device = row as {
+    id: string
+    name: string
+    created_at: number
+    last_seen_at: number
+  }
+  return {
+    id: device.id,
+    name: device.name,
+    createdAt: Number(device.created_at),
+    lastSeenAt: Number(device.last_seen_at),
   }
 }
