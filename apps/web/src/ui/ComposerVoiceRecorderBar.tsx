@@ -18,6 +18,19 @@ export function ComposerVoiceRecorderBar(props: {
 
       <span className="composer-voice-bar__duration">{props.durationLabel}</span>
 
+      {!props.isTranscribing ? (
+        <button
+          type="button"
+          className="composer-voice-bar__button composer-voice-bar__button--stop"
+          aria-label="Discard voice note"
+          title="Discard voice note"
+          disabled={props.disabled}
+          onClick={props.onCancel}
+        >
+          <X size={13} aria-hidden />
+        </button>
+      ) : null}
+
       <button
         type="button"
         className="composer-voice-bar__button composer-voice-bar__button--stop"
