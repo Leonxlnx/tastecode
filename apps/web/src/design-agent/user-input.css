@@ -122,6 +122,7 @@
 
 .brief-input__option--custom {
   position: relative;
+  padding: 4px 4px 4px 10px;
   cursor: text;
 }
 
@@ -129,7 +130,7 @@
 .brief-input__option > .brief-input__custom-preview {
   min-width: 0;
   flex: 1;
-  min-height: 28px;
+  min-height: 32px;
   padding: 5px 8px;
   line-height: 16px;
 }
