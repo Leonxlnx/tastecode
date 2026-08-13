@@ -3363,7 +3363,7 @@ describe('global shortcuts', () => {
     ]
 
     render(<App />)
-    await screen.findByRole('button', { name: /^Polish the sidebar,/ })
+    await screen.findByRole('button', { name: 'Another Project' })
     fireEvent.keyDown(window, { key: 'k', metaKey: true })
 
     expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeTruthy()

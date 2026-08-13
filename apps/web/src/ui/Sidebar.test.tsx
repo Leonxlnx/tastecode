@@ -399,6 +399,44 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
   })
 
+  it('starts with only the active project expanded', () => {
+    render(
+      <Sidebar
+        projects={[
+          { path: '/work/active', name: 'Active', sessions: [session('active-1', 'Active chat')] },
+          { path: '/work/quiet', name: 'Quiet', sessions: [session('quiet-1', 'Quiet chat')] },
+        ]}
+        activeProjectPath="/work/active"
+        activeSessionId="active-1"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Active' }).getAttribute('aria-expanded')).toBe(
+      'true',
+    )
+    expect(screen.getByRole('button', { name: 'Quiet' }).getAttribute('aria-expanded')).toBe(
+      'false',
+    )
+  })
+
   it('reorders chats when one is dragged between sidebar rows', () => {
     const onReorderSession = vi.fn()
 

@@ -14,6 +14,7 @@ import {
 import type { Account, ProviderId, ThreadInboxStatus, ThreadLifecycle } from '@harness/contracts'
 import {
   Archive,
+  ChevronRight,
   Ellipsis,
   Folder,
   FolderOpen,
@@ -517,7 +518,7 @@ function SidebarComponent(props: {
                     {...props}
                     key={project.path}
                     project={project}
-                    forceOpen={false}
+                    active={project.path === props.activeProjectPath}
                     onNewSession={(path) => newSession(path)}
                     onSelectProject={selectProject}
                     onSelectSession={selectSession}
@@ -802,7 +803,7 @@ function clampRailWidth(width: number): number {
 function ProjectRow(props: {
   project: Project
   activeSessionId: string | undefined
-  forceOpen: boolean
+  active: boolean
   onNewSession: (path: string) => void
   onSelectProject?: ((path: string) => void) | undefined
   onSelectSession: (id: string) => void
@@ -820,7 +821,8 @@ function ProjectRow(props: {
     position: DropPosition,
   ) => void
 }) {
-  const [open, setOpen] = useState(props.project.sessions.length > 0)
+  const count = props.project.sessions.length
+  const [open, setOpen] = useState(props.active)
   const [showAllSessions, setShowAllSessions] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState<'archive' | 'remove'>()
@@ -831,17 +833,20 @@ function ProjectRow(props: {
   }>()
   const dropTargetRef = useRef<{ id: string; position: DropPosition } | undefined>(undefined)
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
-  const expanded = open || props.forceOpen
-  const count = props.project.sessions.length
+  const previousCount = useRef(count)
+  const expanded = open
   const hasMoreSessions = count > COLLAPSED_PROJECT_SESSION_COUNT
   const visibleSessions = showAllSessions
     ? props.project.sessions
     : props.project.sessions.slice(0, COLLAPSED_PROJECT_SESSION_COUNT)
-  const reorderable = !props.forceOpen
+  const reorderable = true
 
   useEffect(() => {
-    if (count > 0) setOpen(true)
+    if (previousCount.current === 0 && count > 0) setOpen(true)
+    previousCount.current = count
   }, [count])
+
+  useEffect(() => setOpen(props.active), [props.active])
 
   const endDrag = () => {
     setDraggedSessionId(undefined)
@@ -865,7 +870,7 @@ function ProjectRow(props: {
   }
 
   return (
-    <section className="proj">
+    <section className="proj" data-open={expanded}>
       <div className="proj__head">
         {renaming ? (
           <InlineRename
@@ -893,6 +898,7 @@ function ProjectRow(props: {
               aria-expanded={expanded}
               title={props.project.path}
             >
+              <ChevronRight className="proj__chevron" size={12} aria-hidden />
               <Folder className="proj__mark" size={12} aria-hidden />
               <span className="proj__name">{displayName(props.project)}</span>
             </button>

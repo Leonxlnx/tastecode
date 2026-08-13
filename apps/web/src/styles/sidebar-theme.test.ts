@@ -33,4 +33,11 @@ describe('sidebar theme CSS', () => {
       /@media \(max-width: 700px\) \{[\s\S]*?\.sess__source \{[^}]*max-width: 68px/s,
     )
   })
+
+  it('keeps project hierarchy compact and visibly nested', () => {
+    expect(appCss).toMatch(/\.proj__chevron \{[^}]*transform/s)
+    expect(appCss).toMatch(/\.proj\[data-open='true'\] \.proj__chevron \{[^}]*rotate\(90deg\)/s)
+    expect(appCss).toMatch(/\.proj__sessions \{[^}]*margin: 1px 0 6px 20px;[^}]*border-left/s)
+    expect(appCss).toMatch(/\.pinned-sessions \{[^}]*border-left: 0;/s)
+  })
 })
