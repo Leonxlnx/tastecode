@@ -315,13 +315,17 @@ is not the intended final quality path.
 The current version-one blueprint contains:
 
 - page title, route, and description;
+- a page contract, dominant page mode, novelty tolerance, base grid, signature composition rule,
+  and rhythm;
 - navigation labels and targets;
 - ordered sections with unique IDs;
 - each section's purpose;
+- the user question, decision stage, prior-section dependencies, and real evidence for each section;
 - final eyebrow, heading, body copy, and calls to action;
 - layout direction;
 - component needs;
 - asset needs;
+- explicit compact, medium, and expanded transformations per section;
 - page-level responsive rules;
 - meaningful interactions;
 - acceptance criteria.

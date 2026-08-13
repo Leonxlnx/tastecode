@@ -33,15 +33,32 @@ const brand = {
 const page = {
   version: 1,
   page: { title: 'Northstar', route: '/', description: 'Fresh coffee delivered.' },
+  architecture: {
+    contract: 'This page helps home brewers choose a fresh subscription.',
+    mode: 'persuade_convert',
+    novelty: 'medium',
+    grid: 'A narrow copy rail with product breakouts.',
+    signatureRule: 'Product evidence breaks the right page edge.',
+    rhythm: 'Explanation alternates with proof.',
+  },
   navigation: [],
   sections: [
     {
       id: 'hero',
       purpose: 'Introduce the offer.',
+      userQuestion: 'What can I subscribe to?',
+      stage: 'orient',
+      dependencies: [],
+      evidence: [],
       copy: { heading: 'Fresh by design.', body: [], callsToAction: [] },
       layout: 'Editorial split.',
       componentNeeds: [],
       assetNeeds: [],
+      transformation: {
+        compact: 'Copy before product media.',
+        medium: 'Compact split.',
+        expanded: 'Editorial split.',
+      },
     },
   ],
   responsive: [],
@@ -55,6 +72,8 @@ describe('page phase', () => {
     expect(prompt).toContain('<design-brief>')
     expect(prompt).toContain('<brand-system>')
     expect(prompt).toContain('Do not choose new colors or typefaces')
+    expect(prompt).toContain('order sections by information dependencies')
+    expect(prompt).toContain('Compact reduces simultaneity, not content or capability')
   })
 
   it('parses the final response through the page validator', () => {
