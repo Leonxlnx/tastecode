@@ -1649,7 +1649,9 @@ describe('new chats', () => {
     fireEvent.keyDown(composer, { key: 'Enter' })
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
 
-    expect(await screen.findByRole('button', { name: 'Stopping…' })).toBeTruthy()
+    expect(
+      ((await screen.findByRole('button', { name: 'Send' })) as HTMLButtonElement).disabled,
+    ).toBe(true)
     expect(transport.request).not.toHaveBeenCalledWith('thread.interrupt', expect.anything())
 
     await act(async () => releaseStart?.())
@@ -3866,7 +3868,7 @@ describe('live sessions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
     expect(transport.request).toHaveBeenCalledWith('thread.interrupt', { threadId: 'thread-1' })
 
-    expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
     expect(screen.queryByText('Working')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Stopping…' })).toBeNull()
 

@@ -2595,7 +2595,7 @@ export function App() {
   // The turn ending — however it ended — clears the pending state. Switching
   // sessions does too: the badge belongs to the thread, not to the composer.
   const stopping = stoppingThreadId !== undefined && stoppingThreadId === activeId && thread.running
-  const visibleRunning = thread.running && (!stopping || activeId?.startsWith('pending:'))
+  const visibleRunning = thread.running && !stopping
   useEffect(() => {
     if (stoppingThreadId && !thread.running && stoppingThreadId === activeId) {
       setStoppingThreadId(undefined)
@@ -3673,7 +3673,7 @@ export function App() {
                     autoReviewSupported={autoReviewSupported}
                     attachmentsSupported={attachmentsSupported}
                     voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
-                    disabled={false}
+                    disabled={stopping}
                     sendAvailability={sendAvailability}
                     running={visibleRunning}
                     newSession={!activeId}
