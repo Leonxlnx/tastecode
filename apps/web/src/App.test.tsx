@@ -3164,6 +3164,40 @@ describe('new chats', () => {
 })
 
 describe('sidebar chat ordering', () => {
+  it('persists the order chosen by dragging a project row', async () => {
+    serverProjects = [
+      { path: '/work/first', name: 'First', pinned: false, createdAt: 0, sessions: [] },
+      { path: '/work/second', name: 'Second', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+
+    const source = (await screen.findByRole('button', { name: 'First' })).closest('section')!
+    const target = screen.getByRole('button', { name: 'Second' }).closest('section')!
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+      bottom: 80,
+      height: 30,
+      left: 0,
+      right: 200,
+      top: 50,
+      width: 200,
+      x: 0,
+      y: 50,
+      toJSON: () => ({}),
+    })
+    const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
+
+    fireEvent.dragStart(source, { dataTransfer })
+    fireEvent.dragOver(target, { clientY: 75, dataTransfer })
+    fireEvent.drop(target, { clientY: 75, dataTransfer })
+
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('harness.projectOrder') ?? '[]')).toEqual([
+        '/work/second',
+        '/work/first',
+      ])
+    })
+  })
+
   it('persists the order chosen by dragging a chat row', async () => {
     serverProjects = [
       {

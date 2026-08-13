@@ -131,6 +131,7 @@ const DIRECT_PROVIDER_IDS = PROVIDER_IDS.filter((id) => id !== 'acp' && id !== '
 const AGENT_KEY = 'harness.acpAgent'
 const AGENT_NAME_KEY = 'harness.acpAgentName'
 const PROJECTS_KEY = 'harness.projects'
+const PROJECT_ORDER_KEY = 'harness.projectOrder'
 const SESSION_ORDER_KEY = 'harness.sessionOrder'
 const MODEL_KEY = 'harness.model'
 const MODEL_CATALOG_KEY = 'harness.modelCatalog.v1'
@@ -1454,7 +1455,7 @@ export function App() {
   const refreshProjects = useCallback(async () => {
     const { projects: list } = await transport.request('projects.list', {})
     const savedOrder = loadSessionOrder()
-    setProjects(
+    const nextProjects = applyProjectOrder(
       list.map((project) => ({
         path: project.path,
         name: project.name,
@@ -1480,8 +1481,10 @@ export function App() {
           savedOrder,
         ),
       })),
+      loadProjectOrder(),
     )
-    setActivePath((current) => current ?? list[0]?.path)
+    setProjects(nextProjects)
+    setActivePath((current) => current ?? nextProjects[0]?.path)
     return list
   }, [transport])
 
@@ -1822,7 +1825,10 @@ export function App() {
   }, [refreshProjects])
 
   useEffect(() => {
-    if (projects.length > 0) saveSessionOrder(projects)
+    if (projects.length > 0) {
+      saveProjectOrder(projects)
+      saveSessionOrder(projects)
+    }
   }, [projects])
 
   useEffect(() => {
@@ -3296,6 +3302,21 @@ export function App() {
     },
     [],
   )
+  const reorderSidebarProject = useCallback(
+    (sourcePath: string, targetPath: string, position: 'before' | 'after') => {
+      setProjects((current) => {
+        const sourceIndex = current.findIndex((project) => project.path === sourcePath)
+        if (sourceIndex < 0) return current
+        const next = [...current]
+        const [moved] = next.splice(sourceIndex, 1)
+        const targetIndex = next.findIndex((project) => project.path === targetPath)
+        if (!moved || targetIndex < 0 || moved.pinned !== next[targetIndex]?.pinned) return current
+        next.splice(targetIndex + (position === 'after' ? 1 : 0), 0, moved)
+        return next
+      })
+    },
+    [],
+  )
   const openSidebarSearch = useCallback((projectPath?: string) => {
     sessionSearch.current?.open(projectPath)
   }, [])
@@ -3549,6 +3570,7 @@ export function App() {
           onToggleSessionPin={toggleSidebarSessionPin}
           onDeleteSession={deleteSidebarSession}
           onArchiveProject={archiveSidebarProject}
+          onReorderProject={reorderSidebarProject}
           onReorderSession={reorderSidebarSession}
           onOpenSearch={openSidebarSearch}
           onOpenPullRequests={openPullRequests}
@@ -4074,6 +4096,35 @@ function renameSession(projects: Project[], threadId: string, title: string): Pr
 }
 
 type SessionOrder = Record<string, string[]>
+
+function loadProjectOrder(): string[] {
+  try {
+    const parsed = JSON.parse(readSetting(PROJECT_ORDER_KEY) ?? '[]') as unknown
+    return Array.isArray(parsed) && parsed.every((path) => typeof path === 'string') ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function applyProjectOrder(projects: Project[], order: string[]): Project[] {
+  const byPath = new Map(projects.map((project) => [project.path, project]))
+  const known = order.flatMap((path) => {
+    const project = byPath.get(path)
+    if (!project) return []
+    byPath.delete(path)
+    return [project]
+  })
+  return [...byPath.values(), ...known]
+}
+
+let lastSavedProjectOrder: string | undefined
+
+function saveProjectOrder(projects: Project[]): void {
+  const serialized = JSON.stringify(projects.map((project) => project.path))
+  if (serialized === lastSavedProjectOrder) return
+  lastSavedProjectOrder = serialized
+  writeSetting(PROJECT_ORDER_KEY, serialized)
+}
 
 function loadSessionOrder(): SessionOrder {
   try {

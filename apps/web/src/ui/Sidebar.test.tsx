@@ -300,6 +300,9 @@ describe('Sidebar chat actions', () => {
       ),
     ).toBeTruthy()
     const removeButton = screen.getByRole('button', { name: 'Remove project' })
+    expect(screen.getByRole('dialog', { name: 'Remove project?' }).parentElement).toBe(
+      document.body,
+    )
     expect(removeButton.classList.contains('btn--danger')).toBe(true)
     expect(document.activeElement?.textContent).toBe('Cancel')
     fireEvent.click(removeButton)
@@ -501,6 +504,60 @@ describe('Sidebar chat actions', () => {
     fireEvent.drop(target, { clientY: 80, dataTransfer })
 
     expect(onReorderSession).toHaveBeenCalledWith('/work/harness', 'thread-1', 'thread-2', 'after')
+  })
+
+  it('reorders projects when one is dragged between sidebar rows', () => {
+    const onReorderProject = vi.fn()
+    render(
+      <Sidebar
+        projects={[
+          { path: '/work/first', name: 'First', sessions: [] },
+          { path: '/work/second', name: 'Second', sessions: [] },
+        ]}
+        activeProjectPath="/work/first"
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderProject={onReorderProject}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    const source = screen.getByRole('button', { name: 'First' }).closest('section')!
+    const target = screen.getByRole('button', { name: 'Second' }).closest('section')!
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+      bottom: 80,
+      height: 30,
+      left: 0,
+      right: 200,
+      top: 50,
+      width: 200,
+      x: 0,
+      y: 50,
+      toJSON: () => ({}),
+    })
+    const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
+
+    fireEvent.dragStart(source, { dataTransfer })
+    fireEvent.dragOver(target, { clientY: 75, dataTransfer })
+    fireEvent.drop(target, { clientY: 75, dataTransfer })
+
+    expect(onReorderProject).toHaveBeenCalledWith('/work/first', '/work/second', 'after')
   })
 
   it('closes an open sidebar from the mobile backdrop', () => {

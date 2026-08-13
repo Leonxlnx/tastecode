@@ -11,6 +11,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
+import { createPortal } from 'react-dom'
 import type { Account, ProviderId, ThreadInboxStatus, ThreadLifecycle } from '@harness/contracts'
 import {
   Archive,
@@ -135,6 +136,7 @@ function SidebarComponent(props: {
   onToggleSessionPin?: (id: string) => void
   onDeleteSession: (id: string) => void
   onArchiveProject: (sessionIds: string[]) => void
+  onReorderProject?: (sourcePath: string, targetPath: string, position: DropPosition) => void
   onReorderSession: (
     projectPath: string,
     sourceId: string,
@@ -355,6 +357,16 @@ function SidebarComponent(props: {
       })),
     [props.projects],
   )
+  const [draggedProjectPath, setDraggedProjectPath] = useState<string>()
+  const [projectDropTarget, setProjectDropTarget] = useState<{
+    path: string
+    position: DropPosition
+  }>()
+
+  const endProjectDrag = () => {
+    setDraggedProjectPath(undefined)
+    setProjectDropTarget(undefined)
+  }
 
   return (
     <div
@@ -519,6 +531,51 @@ function SidebarComponent(props: {
                     key={project.path}
                     project={project}
                     active={project.path === props.activeProjectPath}
+                    reorderable={Boolean(props.onReorderProject)}
+                    dragging={project.path === draggedProjectPath}
+                    dropPosition={
+                      projectDropTarget?.path === project.path
+                        ? projectDropTarget.position
+                        : undefined
+                    }
+                    onProjectDragStart={(event) => {
+                      if (event.target !== event.currentTarget || !props.onReorderProject) return
+                      prepareAppHaptics()
+                      event.dataTransfer.effectAllowed = 'move'
+                      event.dataTransfer.setData('text/plain', project.path)
+                      setDraggedProjectPath(project.path)
+                    }}
+                    onProjectDragOver={(event) => {
+                      if (!draggedProjectPath || draggedProjectPath === project.path) return
+                      const source = orderedProjects.find(
+                        (candidate) => candidate.path === draggedProjectPath,
+                      )
+                      if (source?.pinned !== project.pinned) return
+                      event.preventDefault()
+                      event.dataTransfer.dropEffect = 'move'
+                      const bounds = event.currentTarget.getBoundingClientRect()
+                      const position: DropPosition =
+                        event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
+                      if (
+                        projectDropTarget?.path === project.path &&
+                        projectDropTarget.position === position
+                      )
+                        return
+                      setProjectDropTarget({ path: project.path, position })
+                      performAppHaptic('alignment')
+                    }}
+                    onProjectDrop={(event) => {
+                      event.preventDefault()
+                      if (draggedProjectPath && projectDropTarget?.path === project.path) {
+                        props.onReorderProject?.(
+                          draggedProjectPath,
+                          project.path,
+                          projectDropTarget.position,
+                        )
+                      }
+                      endProjectDrag()
+                    }}
+                    onProjectDragEnd={endProjectDrag}
                     onNewSession={(path) => newSession(path)}
                     onSelectProject={selectProject}
                     onSelectSession={selectSession}
@@ -804,6 +861,13 @@ function ProjectRow(props: {
   project: Project
   activeSessionId: string | undefined
   active: boolean
+  reorderable: boolean
+  dragging: boolean
+  dropPosition: DropPosition | undefined
+  onProjectDragStart: (event: DragEvent<HTMLElement>) => void
+  onProjectDragOver: (event: DragEvent<HTMLElement>) => void
+  onProjectDrop: (event: DragEvent<HTMLElement>) => void
+  onProjectDragEnd: () => void
   onNewSession: (path: string) => void
   onSelectProject?: ((path: string) => void) | undefined
   onSelectSession: (id: string) => void
@@ -870,7 +934,16 @@ function ProjectRow(props: {
   }
 
   return (
-    <section className="proj" data-open={expanded}>
+    <section
+      className={`proj${props.dragging ? ' is-dragging' : ''}`}
+      data-open={expanded}
+      data-drop-position={props.dropPosition}
+      draggable={props.reorderable}
+      onDragStart={props.onProjectDragStart}
+      onDragOver={props.onProjectDragOver}
+      onDrop={props.onProjectDrop}
+      onDragEnd={props.onProjectDragEnd}
+    >
       <div className="proj__head">
         {renaming ? (
           <InlineRename
@@ -1210,7 +1283,7 @@ function SidebarConfirmDialog(props: {
   onConfirm: () => void
   onClose: () => void
 }) {
-  return (
+  return createPortal(
     <div className="sheet" role="dialog" aria-modal="true" aria-label={props.title}>
       <button className="sheet__scrim" onClick={props.onClose} aria-label="Cancel" />
       <div className="sheet__panel sidebar-confirm">
@@ -1235,7 +1308,8 @@ function SidebarConfirmDialog(props: {
           </div>
         </section>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
