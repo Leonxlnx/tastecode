@@ -200,6 +200,12 @@ function SidebarComponent(props: {
      the handle cannot do it, since collapsing unmounts the handle. */
   useLayoutEffect(() => {
     const slot = slotRef.current
+    const shell = slot?.closest<HTMLElement>('.shell')
+    if (props.collapsed && shell) {
+      delete shell.dataset['railFoldPreview']
+      delete shell.dataset['resizing']
+      resizing.current = false
+    }
     // Expanding the rail by any other means ends the wait: it only exists to
     // stop a just-folded rail from springing back out.
     if (!props.collapsed) endCooldown()
@@ -208,7 +214,6 @@ function SidebarComponent(props: {
       return
     }
     foldedByDrag.current = false
-    const shell = slot.closest<HTMLElement>('.shell')
     if (!shell) return
     // The stored width is restored here, not on release: the collapsed layout
     // is already committed at this point, so the column reads 0 whatever
@@ -701,6 +706,13 @@ function RailResizeHandle(props: {
     target.closest<HTMLElement>('.shell')?.style.setProperty('--rail-w', `${width}px`)
   }
 
+  const previewFold = (target: HTMLElement, folded: boolean) => {
+    const shell = target.closest<HTMLElement>('.shell')
+    if (!shell) return
+    if (folded) shell.dataset['railFoldPreview'] = ''
+    else delete shell.dataset['railFoldPreview']
+  }
+
   /* The grid-column transition is for collapse and expand; while a pointer is
      dragging it made the rail rubber-band behind the cursor. */
   const setResizing = (target: HTMLElement, active: boolean) => {
@@ -733,9 +745,9 @@ function RailResizeHandle(props: {
     if (target.hasPointerCapture?.(event.pointerId)) {
       target.releasePointerCapture?.(event.pointerId)
     }
-    // A cancelled fold preview left --rail-w at zero even though React still
-    // considered the rail open. Restore the last real width before handing
-    // input back to the titlebar or the rest of the window.
+    previewFold(target, false)
+    // Restore the last real width before handing input back to the titlebar or
+    // the rest of the window.
     preview(target, current.current)
     setResizing(target, false)
     props.onResizingChange(false)
@@ -768,6 +780,7 @@ function RailResizeHandle(props: {
       }}
       onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
         if (hapticsEnabled) prepareAppHaptics()
+        previewFold(event.currentTarget, false)
         event.currentTarget.setPointerCapture?.(event.pointerId)
         setResizing(event.currentTarget, true)
         props.onResizingChange(true)
@@ -812,7 +825,8 @@ function RailResizeHandle(props: {
           }
           setResizing(event.currentTarget, false)
           holdTransition()
-          preview(event.currentTarget, folded ? 0 : drag.current.current)
+          previewFold(event.currentTarget, folded)
+          if (!folded) preview(event.currentTarget, drag.current.current)
           return
         }
         if (folded) return
