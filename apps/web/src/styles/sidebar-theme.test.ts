@@ -40,4 +40,15 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(/\.proj__sessions \{[^}]*margin: 1px 0 6px 20px;[^}]*border-left/s)
     expect(appCss).toMatch(/\.pinned-sessions \{[^}]*border-left: 0;/s)
   })
+
+  it('tightens only closed project rows', () => {
+    expect(appCss).toMatch(/\.proj\[data-open='false'\] \{[^}]*margin-bottom: 0;/s)
+    expect(appCss).toMatch(
+      /\.proj\[data-open='false'\] :is\(\.proj__head, \.proj__toggle\) \{[^}]*min-height: 26px;/s,
+    )
+    expect(appCss).toMatch(
+      /\.proj__drawer\[data-open='false'\] > \.proj__sessions \{[^}]*margin-block: 0;/s,
+    )
+    expect(appCss).toMatch(/\.proj__head \{[^}]*min-height: 30px;/s)
+  })
 })

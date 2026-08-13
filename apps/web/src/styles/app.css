@@ -5188,6 +5188,14 @@
   margin-bottom: 2px;
 }
 
+.proj[data-open='false'] {
+  margin-bottom: 0;
+}
+
+.proj[data-open='false'] :is(.proj__head, .proj__toggle) {
+  min-height: 26px;
+}
+
 .proj[draggable='true'] > .proj__head {
   cursor: grab;
 }
@@ -5301,6 +5309,10 @@
 
 .proj__drawer[data-open='false'] {
   opacity: 0;
+}
+
+.proj__drawer[data-open='false'] > .proj__sessions {
+  margin-block: 0;
 }
 
 .proj__drawer > .proj__sessions {
