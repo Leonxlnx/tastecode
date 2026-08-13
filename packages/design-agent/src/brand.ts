@@ -82,7 +82,7 @@ export function parseBrandSystem(value: unknown): BrandSystem {
           assetActions:
             foundation.assetActions === undefined
               ? []
-              : array(foundation.assetActions, 'foundation.assetActions').map((value, index) => {
+              : list(foundation.assetActions, 'foundation.assetActions').map((value, index) => {
                   const item = record(value, `foundation.assetActions[${index}]`)
                   return {
                     asset: string(item.asset, `foundation.assetActions[${index}].asset`),
@@ -220,6 +220,11 @@ function array(value: unknown, field: string): unknown[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error(`${field} must be a non-empty array`)
   }
+  return value
+}
+
+function list(value: unknown, field: string): unknown[] {
+  if (!Array.isArray(value)) throw new Error(`${field} must be an array`)
   return value
 }
 

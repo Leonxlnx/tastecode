@@ -108,4 +108,13 @@ describe('brand system handoff', () => {
     }
     expect(parseBrandSystem(legacy).creativeDirection.signatureDevice.status).toBe('candidate')
   })
+
+  it('allows a new brand to have no existing asset decisions', () => {
+    expect(
+      parseBrandSystem({
+        ...brand,
+        foundation: { ...brand.foundation, assetActions: [] },
+      }).foundation.assetActions,
+    ).toEqual([])
+  })
 })
