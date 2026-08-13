@@ -34,21 +34,19 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('keeps project hierarchy compact and visibly nested', () => {
-    expect(appCss).toMatch(/\.proj__chevron \{[^}]*transform/s)
-    expect(appCss).toMatch(/\.proj\[data-open='true'\] \.proj__chevron \{[^}]*rotate\(90deg\)/s)
+  it('keeps project hierarchy calm and visibly nested', () => {
+    expect(appCss).not.toContain('.proj__chevron')
+    expect(appCss).toMatch(/\.proj__toggle \{[^}]*padding: 5px 12px;/s)
     expect(appCss).toMatch(/\.proj__sessions \{[^}]*margin: 1px 0 6px 20px;[^}]*border-left/s)
     expect(appCss).toMatch(/\.pinned-sessions \{[^}]*border-left: 0;/s)
   })
 
-  it('tightens only closed project rows', () => {
-    expect(appCss).toMatch(/\.proj\[data-open='false'\] \{[^}]*margin-bottom: 0;/s)
-    expect(appCss).toMatch(
-      /\.proj\[data-open='false'\] :is\(\.proj__head, \.proj__toggle\) \{[^}]*min-height: 26px;/s,
-    )
+  it('gives project rows a consistent readable rhythm', () => {
+    expect(appCss).toMatch(/\.proj \{[^}]*margin-bottom: 0;/s)
     expect(appCss).toMatch(
       /\.proj__drawer\[data-open='false'\] > \.proj__sessions \{[^}]*margin-block: 0;/s,
     )
-    expect(appCss).toMatch(/\.proj__head \{[^}]*min-height: 30px;/s)
+    expect(appCss).toMatch(/\.proj__head \{[^}]*min-height: 36px;/s)
+    expect(appCss).toMatch(/\.proj__toggle \{[^}]*min-height: 36px;/s)
   })
 })

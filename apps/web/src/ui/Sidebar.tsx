@@ -15,7 +15,6 @@ import { createPortal } from 'react-dom'
 import type { Account, ProviderId, ThreadInboxStatus, ThreadLifecycle } from '@harness/contracts'
 import {
   Archive,
-  ChevronRight,
   Ellipsis,
   Folder,
   FolderOpen,
@@ -972,7 +971,6 @@ function ProjectRow(props: {
               aria-expanded={expanded}
               title={props.project.path}
             >
-              <ChevronRight className="proj__chevron" size={12} aria-hidden />
               <Folder className="proj__mark" size={12} aria-hidden />
               <span className="proj__name">{displayName(props.project)}</span>
             </button>
