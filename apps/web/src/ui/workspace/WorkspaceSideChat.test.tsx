@@ -66,7 +66,9 @@ describe('WorkspaceSideChat', () => {
         expect.objectContaining({ threadId: 'side-1', text: 'Explain the failure' }),
       ),
     )
-    expect(screen.getByText('Main working')).toBeTruthy()
+    expect(screen.queryByText('Main working')).toBeNull()
+    expect(screen.queryByText('From main chat')).toBeNull()
+    expect(screen.getByLabelText('Message temporary chat')).toBeTruthy()
     expect(screen.getByTestId('side-thread').textContent).toContain('Explain the failure')
 
     sideEvent?.({
@@ -95,7 +97,7 @@ describe('WorkspaceSideChat', () => {
     )
   })
 
-  it('does not allow a Side chat before the main conversation exists', () => {
+  it('does not allow a temporary chat before the main conversation exists', () => {
     render(
       <WorkspaceSideChat
         active

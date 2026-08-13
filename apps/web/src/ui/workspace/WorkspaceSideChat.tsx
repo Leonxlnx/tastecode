@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ApprovalDecision, ApprovalMode, DomainEvent } from '@harness/contracts'
-import { ArrowUp, CircleAlert, LoaderCircle, MessageCirclePlus, Square } from 'lucide-react'
+import { ArrowUp, CircleAlert, LoaderCircle, Square } from 'lucide-react'
 import { parseSideChatCommand } from '../../side-chat-command.js'
 import {
   beginOptimisticTurn,
@@ -239,11 +239,11 @@ export function WorkspaceSideChat(props: {
       if (!text) return
       if (threadRef.current.running) {
         setDraft((current) => (current.trim() ? `${current.trimEnd()}\n${text}` : text))
-        setError('Side chat is still working. Your message is ready to send when it finishes.')
+        setError('Temporary chat is still working. Your message is ready when it finishes.')
         return
       }
       if (parseSideChatCommand(text)) {
-        setError('You are already in Side chat. Nested side chats are not available.')
+        setError('You are already in a temporary chat. Nested temporary chats are not available.')
         return
       }
 
@@ -324,7 +324,7 @@ export function WorkspaceSideChat(props: {
       <WorkspaceEmptyState
         kind="chat"
         title="Start a chat first"
-        detail="Side chat forks from the active conversation without interrupting it."
+        detail="Temporary chat uses the active conversation without interrupting it."
       />
     )
   }
@@ -333,19 +333,6 @@ export function WorkspaceSideChat(props: {
 
   return (
     <div className="workspace-side-chat">
-      <header>
-        <span className="workspace-side-chat__mark">
-          <MessageCirclePlus size={14} aria-hidden />
-        </span>
-        <span className="workspace-side-chat__heading">
-          <strong>Side chat</strong>
-          <small title={props.projectName}>From main chat</small>
-        </span>
-        <span className={`workspace-side-chat__parent is-${props.parentStatus}`}>
-          {parentStatusLabel(props.parentStatus)}
-        </span>
-      </header>
-
       <div className="workspace-side-chat__conversation" aria-live="polite">
         {error ? (
           <div className="workspace-side-chat__error" role="alert">
@@ -356,7 +343,7 @@ export function WorkspaceSideChat(props: {
         {starting && !hasConversation ? (
           <div className="workspace-side-chat__starting">
             <LoaderCircle className="spinner" size={15} aria-hidden />
-            Forking the current chat…
+            Starting temporary chat…
           </div>
         ) : hasConversation && props.active ? (
           <Thread
@@ -378,8 +365,8 @@ export function WorkspaceSideChat(props: {
         ) : !hasConversation ? (
           <WorkspaceEmptyState
             kind="chat"
-            title="Ask on the side"
-            detail="This chat starts with the current conversation as hidden context and leaves the main task running."
+            title="Start a temporary chat"
+            detail="It uses the current conversation as hidden context and is erased when this tab closes."
           />
         ) : null}
       </div>
@@ -389,8 +376,8 @@ export function WorkspaceSideChat(props: {
           ref={textarea}
           rows={3}
           value={draft}
-          aria-label="Message side chat"
-          placeholder="Ask a follow-up…"
+          aria-label="Message temporary chat"
+          placeholder="Message temporary chat…"
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
@@ -400,7 +387,7 @@ export function WorkspaceSideChat(props: {
         />
         <button
           type="button"
-          aria-label={thread.running ? 'Stop side chat' : 'Send message'}
+          aria-label={thread.running ? 'Stop temporary chat' : 'Send message'}
           disabled={thread.running ? !sideThreadId || stopping : !draft.trim() || starting}
           onClick={thread.running ? interrupt : submit}
         >
@@ -413,12 +400,4 @@ export function WorkspaceSideChat(props: {
       </div>
     </div>
   )
-}
-
-function parentStatusLabel(status: SideChatParentStatus): string {
-  if (status === 'working') return 'Main working'
-  if (status === 'approval') return 'Main needs approval'
-  if (status === 'input') return 'Main needs input'
-  if (status === 'failed') return 'Main failed'
-  return 'Main ready'
 }

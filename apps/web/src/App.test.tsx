@@ -834,7 +834,8 @@ describe('web client', () => {
         expect.objectContaining({ threadId: 'side-1', text: 'why did it fail?' }),
       ),
     )
-    expect(screen.getAllByText('Side chat')).toHaveLength(2)
+    expect(screen.getByRole('tab', { name: 'Temporary chat' })).toBeTruthy()
+    expect(screen.queryByText('From main chat')).toBeNull()
   })
 
   it('discovers a custom Pi source and binds new sessions to its harness id', async () => {

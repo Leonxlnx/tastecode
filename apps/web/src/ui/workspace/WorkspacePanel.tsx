@@ -73,7 +73,7 @@ const TOOLS: Array<{
   },
   {
     kind: 'side-chat',
-    title: 'Side chat',
+    title: 'Temporary chat',
     Icon: MessageCirclePlus,
   },
 ]
