@@ -2212,7 +2212,7 @@ describe('new chats', () => {
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
 
     const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
-    expect(inbox.getAttribute('aria-checked')).toBe('true')
+    await waitFor(() => expect(inbox.getAttribute('aria-checked')).toBe('true'))
     fireEvent.click(screen.getByRole('radio', { name: 'V1 Classic' }))
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Auto-settle days' }), {
       target: { value: '7' },
