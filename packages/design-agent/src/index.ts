@@ -7,6 +7,24 @@ export {
 export { parseBrandSystem, readBrandSystem, writeBrandSystem, type BrandSystem } from './brand.js'
 export { designBrandPrompt, parseBrandPhaseOutput } from './brand-phase.js'
 export {
+  auditPalette,
+  generatePalette,
+  paletteColorRecords,
+  paletteCssVariables,
+  PALETTE_ROLES,
+  type ColorSystem,
+  type PaletteBuildResult,
+  type PaletteContrastCheck,
+  type PaletteIssue,
+  type PaletteRepair,
+  type PaletteRequest,
+  type PaletteRole,
+  type PaletteRoles,
+  type PaletteTheme,
+  type PaletteThemeDirection,
+  type PaletteThemeName,
+} from './palette.js'
+export {
   parsePageBlueprint,
   readPageBlueprint,
   writePageBlueprint,
