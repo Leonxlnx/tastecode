@@ -37,6 +37,47 @@ const session = (id: string, title: string) => ({
 })
 
 describe('Sidebar chat actions', () => {
+  it('shows a divider below the fixed actions only after the project list scrolls', () => {
+    render(
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    const actions = document.querySelector('.rail__actions')
+    const body = document.querySelector<HTMLElement>('.rail__body')
+    expect(actions?.classList.contains('is-scrolled')).toBe(false)
+    if (!body) throw new Error('Missing sidebar body')
+
+    body.scrollTop = 12
+    fireEvent.scroll(body)
+    expect(actions?.classList.contains('is-scrolled')).toBe(true)
+
+    body.scrollTop = 0
+    fireEvent.scroll(body)
+    expect(actions?.classList.contains('is-scrolled')).toBe(false)
+  })
+
   it('toggles an empty project without leaving the current chat', () => {
     const onClose = vi.fn()
     vi.spyOn(window, 'matchMedia').mockImplementation(

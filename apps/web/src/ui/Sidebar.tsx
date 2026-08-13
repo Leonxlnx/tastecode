@@ -287,6 +287,7 @@ function SidebarComponent(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the two schedulers are stable module-shape helpers
   }, [edgeRevealed, props.collapsed, props.width])
   const [scope, setScope] = useState('')
+  const [bodyScrolled, setBodyScrolled] = useState(false)
   const inbox = props.mode === 'inbox' && props.inbox !== undefined
 
   const closeOnNarrowViewport = () => {
@@ -418,7 +419,7 @@ function SidebarComponent(props: {
           />
         ) : (
           <>
-            <div className="rail__actions">
+            <div className={`rail__actions${bodyScrolled ? ' is-scrolled' : ''}`}>
               <div className="rail__row">
                 <button
                   className="navitem rail__new-chat"
@@ -473,7 +474,10 @@ function SidebarComponent(props: {
               ) : null}
             </div>
 
-            <div className="rail__body">
+            <div
+              className="rail__body"
+              onScroll={(event) => setBodyScrolled(event.currentTarget.scrollTop > 0)}
+            >
               {pinnedSessions.length > 0 ? (
                 <>
                   <p className="section">Pinned</p>

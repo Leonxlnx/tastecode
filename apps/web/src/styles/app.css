@@ -188,6 +188,11 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
+  border-bottom: 1px solid transparent;
+}
+
+.rail__actions.is-scrolled {
+  border-bottom-color: var(--line-strong);
 }
 
 /* New chat and search share one row: the search icon rides on the right,
