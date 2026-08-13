@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { Ellipsis, GitBranch, PanelRightOpen, SquareTerminal } from 'lucide-react'
+import { Ellipsis, GitBranch, PanelRightClose, PanelRightOpen, SquareTerminal } from 'lucide-react'
 import { isDesktop, revealPath } from '../bridge.js'
 import { Menu, MenuItem } from './Menu.js'
 
@@ -12,8 +12,9 @@ function StageHeaderComponent(props: {
   checkpointCount: number
   worktreeBranch: string | undefined
   terminalOpen: boolean
+  workspacePanelOpen: boolean
   onOpenRollback: () => void
-  onOpenWorkspace: () => void
+  onToggleWorkspace: () => void
   onToggleTerminal: () => void
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin: (id: string) => void
@@ -128,11 +129,16 @@ function StageHeaderComponent(props: {
         <button
           type="button"
           className="stagehead__action"
-          aria-label="Open workspace tools"
+          aria-label={props.workspacePanelOpen ? 'Hide workspace tools' : 'Show workspace tools'}
+          aria-pressed={props.workspacePanelOpen}
           title="Workspace tools"
-          onClick={props.onOpenWorkspace}
+          onClick={props.onToggleWorkspace}
         >
-          <PanelRightOpen size={16} aria-hidden />
+          {props.workspacePanelOpen ? (
+            <PanelRightClose size={16} aria-hidden />
+          ) : (
+            <PanelRightOpen size={16} aria-hidden />
+          )}
         </button>
         {props.sessionId ? (
           <button

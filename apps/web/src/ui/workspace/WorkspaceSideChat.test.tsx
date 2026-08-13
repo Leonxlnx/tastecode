@@ -116,4 +116,30 @@ describe('WorkspaceSideChat', () => {
 
     expect(screen.getByText('Start a chat first')).toBeTruthy()
   })
+
+  it('keeps the normal composer visible while the temporary chat starts', async () => {
+    render(
+      <WorkspaceSideChat
+        active
+        parentThreadId="main-1"
+        parentStatus="idle"
+        transport={
+          {
+            on: () => () => {},
+            onState: () => () => {},
+            onSequenceGap: () => () => {},
+            request: vi.fn(() => new Promise(() => {})),
+          } as unknown as Transport
+        }
+        startOptions={{ approval: 'ask' }}
+      />,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message temporary chat').getAttribute('placeholder')).toBe(
+        'Starting temporary chat…',
+      ),
+    )
+    expect(document.querySelector('.workspace-side-chat__starting')).toBeNull()
+  })
 })

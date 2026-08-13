@@ -14,8 +14,9 @@ function props() {
     checkpointCount: 2,
     worktreeBranch: 'codex/landing',
     terminalOpen: false,
+    workspacePanelOpen: false,
     onOpenRollback: vi.fn(),
-    onOpenWorkspace: vi.fn(),
+    onToggleWorkspace: vi.fn(),
     onToggleTerminal: vi.fn(),
     onRenameSession: vi.fn(),
     onToggleSessionPin: vi.fn(),
@@ -40,9 +41,9 @@ describe('StageHeader', () => {
     fireEvent.keyDown(rename, { key: 'Enter' })
     expect(stage.onRenameSession).toHaveBeenCalledWith('thread-1', 'Polished landing page')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open workspace tools' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show workspace tools' }))
     fireEvent.click(screen.getByRole('button', { name: 'Open terminal' }))
-    expect(stage.onOpenWorkspace).toHaveBeenCalledOnce()
+    expect(stage.onToggleWorkspace).toHaveBeenCalledOnce()
     expect(stage.onToggleTerminal).toHaveBeenCalledOnce()
   })
 
@@ -55,6 +56,16 @@ describe('StageHeader', () => {
     expect(screen.getByText('New chat')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Options for/ })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Open terminal' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Open workspace tools' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Show workspace tools' })).toBeTruthy()
+  })
+
+  it('keeps the workspace toggle in place and flips its action while open', () => {
+    const stage = props()
+    render(<StageHeader {...stage} workspacePanelOpen />)
+
+    const toggle = screen.getByRole('button', { name: 'Hide workspace tools' })
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(toggle)
+    expect(stage.onToggleWorkspace).toHaveBeenCalledOnce()
   })
 })

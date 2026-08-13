@@ -10,7 +10,7 @@ import {
   useSyncExternalStore,
 } from 'react'
 import type { CSSProperties } from 'react'
-import { LoaderCircle, PanelRight } from 'lucide-react'
+import { LoaderCircle } from 'lucide-react'
 import type {
   Account,
   ApprovalDecision,
@@ -3593,8 +3593,9 @@ export function App() {
                   checkpointCount={thread.running ? 0 : checkpoints.length}
                   worktreeBranch={active?.session.worktreeBranch}
                   terminalOpen={terminalOpen}
+                  workspacePanelOpen={workspacePanelOpen}
                   onOpenRollback={openRollback}
-                  onOpenWorkspace={openWorkspacePanel}
+                  onToggleWorkspace={workspacePanelOpen ? closeWorkspacePanel : openWorkspacePanel}
                   onToggleTerminal={toggleTerminal}
                   onRenameSession={renameSidebarSession}
                   onToggleSessionPin={toggleSidebarSessionPin}
@@ -3709,18 +3710,6 @@ export function App() {
               </>
             )}
           </main>
-
-          {!workspacePanelOpen ? (
-            <button
-              type="button"
-              className="workspace-panel__launcher"
-              aria-label="Show workspace tools"
-              title="Workspace tools"
-              onClick={openWorkspacePanel}
-            >
-              <PanelRight size={15} aria-hidden />
-            </button>
-          ) : null}
 
           <Suspense fallback={null}>
             <WorkspacePanel

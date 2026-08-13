@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ApprovalDecision, ApprovalMode, DomainEvent } from '@harness/contracts'
-import { ArrowUp, CircleAlert, LoaderCircle, Square } from 'lucide-react'
+import { ArrowUp, CircleAlert, Square } from 'lucide-react'
 import { parseSideChatCommand } from '../../side-chat-command.js'
 import {
   beginOptimisticTurn,
@@ -340,12 +340,7 @@ export function WorkspaceSideChat(props: {
             <span>{error}</span>
           </div>
         ) : null}
-        {starting && !hasConversation ? (
-          <div className="workspace-side-chat__starting">
-            <LoaderCircle className="spinner" size={15} aria-hidden />
-            Starting temporary chat…
-          </div>
-        ) : hasConversation && props.active ? (
+        {hasConversation && props.active ? (
           <Thread
             items={thread.items}
             running={thread.running}
@@ -362,7 +357,7 @@ export function WorkspaceSideChat(props: {
             onDecide={decide}
             onAnswerUserInput={answer}
           />
-        ) : !hasConversation ? (
+        ) : !hasConversation && !starting ? (
           <WorkspaceEmptyState
             kind="chat"
             title="Start a temporary chat"
@@ -377,7 +372,7 @@ export function WorkspaceSideChat(props: {
           rows={3}
           value={draft}
           aria-label="Message temporary chat"
-          placeholder="Message temporary chat…"
+          placeholder={starting ? 'Starting temporary chat…' : 'Do anything'}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return

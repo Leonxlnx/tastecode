@@ -5139,8 +5139,8 @@
   font: inherit;
   font-size: var(--t-sm);
   font-weight: 520;
-  min-height: 36px;
-  padding: 5px 12px;
+  min-height: 32px;
+  padding: 4px 8px;
   text-align: left;
 }
 
@@ -5206,7 +5206,7 @@
 .proj__sessions-toggle {
   width: 100%;
   height: 28px;
-  padding: 0 8px 0 32px;
+  padding: 0 8px;
   background: none;
   border: 0;
   border-radius: var(--r-md);
