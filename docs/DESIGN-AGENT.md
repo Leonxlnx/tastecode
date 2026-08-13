@@ -282,8 +282,13 @@ around JSON is rejected.
 
 The current version-one schema contains:
 
+- `foundation.strategy`, verified `existingAssets`, evidence-based `assetActions`, locked
+  decisions, and assumptions;
 - `creativeDirection.summary`;
-- `creativeDirection.keywords`;
+- bounded `creativeDirection.traits`;
+- `creativeDirection.productiveTension`;
+- one `creativeDirection.signatureDevice`, its evidence status, and stable invariants;
+- one `creativeDirection.restraint`;
 - `creativeDirection.avoid`;
 - a `colorPalette` of name, value, and usage records;
 - `typefaces` with family, source, roles, and numeric weights;
@@ -294,6 +299,11 @@ The current version-one schema contains:
 
 User-supplied colors or fonts remain evidence in `brief.json`. The Brand phase assigns their usable
 roles in `brand.json`. The Page phase consumes those roles rather than copying the palette.
+
+Signature-device status is deliberately conservative. Existing or newly proposed devices are not
+called validated unless the input includes real category-buyer attribution evidence. Visual
+novelty, internal preference, and competitor distance can justify a candidate, but do not prove
+brand recognition.
 
 The current Brand prompt may inspect existing project brand files and may use any design or brand
 skill exposed by the selected provider. It does not assume a specific skill name or private API.

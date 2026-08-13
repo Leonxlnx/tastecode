@@ -25,10 +25,24 @@ const brand = {
   foundation: {
     strategy: 'extend',
     existingAssets: ['public/logo.svg'],
+    assetActions: [
+      { asset: 'public/logo.svg', action: 'protect', reason: 'Supplied official mark.' },
+    ],
     lockedDecisions: ['Keep the supplied logo.'],
     assumptions: [],
   },
-  creativeDirection: { summary: 'Warm precision.', keywords: ['tactile'], avoid: ['rustic'] },
+  creativeDirection: {
+    summary: 'Warm precision.',
+    traits: [{ quality: 'tactile', boundary: 'not rustic' }],
+    productiveTension: 'Warm craft with precise utility.',
+    signatureDevice: {
+      description: 'A cropped circular roast mark.',
+      status: 'existing',
+      invariants: ['Circular silhouette'],
+    },
+    restraint: 'Use the roast mark once per major surface.',
+    avoid: ['rustic'],
+  },
   colorPalette: [{ name: 'Ink', value: '#171512', usage: 'Primary text' }],
   typefaces: [{ family: 'Geist', source: 'Project dependency', roles: ['UI'], weights: [500] }],
   interfaceDirection: 'Compact editorial commerce.',
@@ -58,6 +72,7 @@ describe('brand phase', () => {
     expect(prompt).toContain('explicit user requirements')
     expect(prompt).toContain('Never replace a supplied logo, color, typeface')
     expect(prompt).toContain('Fill every supplied decision into its final destination')
+    expect(prompt).toContain('A new or unmeasured device is a candidate, never validated')
   })
 
   it('parses fenced provider output through the brand validator', () => {
