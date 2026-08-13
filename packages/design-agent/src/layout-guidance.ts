@@ -1,4 +1,4 @@
-export const PAGE_LAYOUT_GUIDANCE = `Use the following beta layout cases as the source material for Hero, Navigation, and About decisions. Select the case that best fits the content and brand, or lightly combine compatible cases. Keep the described composition recognizable instead of replacing it with an unrelated default layout.
+export const PAGE_LAYOUT_GUIDANCE = `Use the following beta layout cases as the source material for Hero, Navigation, About, and Feature decisions. Select the case that best fits the content and brand, or lightly combine compatible cases. Keep the described composition recognizable instead of replacing it with an unrelated default layout.
 
 The layout case is only part of the result. Font choice and scale, brand colors, spacing, button placement and treatment, corner radii, navigation placement, media crop, and motion create much of the final feeling. Resolve all of them from the approved brand direction. Motion must fit the selected style and composition rather than being added as a generic effect.
 
@@ -60,4 +60,36 @@ Text-led About cases:
 1. Use a heading with a block of company or team text. The text may reveal or fade in as the user scrolls, including with GSAP when that motion fits. Use clean typography; the type may be large or smaller according to the style. Place a small number of images beneath it.
 2. Use only a heading and a larger amount of text, displayed creatively. The copy may use normal paragraphs or another fitting editorial arrangement.
 
-About cards remain an open design surface: use any fitting card composition for people, facts, images, or company information rather than forcing one fixed card template. These cases may be refined later with fitting OriginKit components, but OriginKit must not replace the selected layout idea.`
+About cards remain an open design surface: use any fitting card composition for people, facts, images, or company information rather than forcing one fixed card template. These cases may be refined later with fitting OriginKit components, but OriginKit must not replace the selected layout idea.
+
+Feature section scope:
+- Treat Features as one of the most open section types. These layouts may also fit a How It Works, Showcase, product explanation, or another later section when the content has the same structural needs.
+- Use only the number of features the page actually needs. A layout may contain two, three, four, or five items; avoid placing so many in one row that each item loses clarity.
+
+Feature heading cases:
+1. Align the heading in the center, left, or even right according to the design and the page's established alignment logic.
+2. Center the heading with one short centered description beneath it.
+3. Place the heading on the left and the description on the right.
+4. Reverse that relationship: description on the left and heading on the right.
+5. Place the heading and description together on the left in a clean stack.
+6. Use only the heading when no description is necessary.
+
+Feature grid and card cases:
+1. Use one horizontal row of three cards. Place an SVG, animation, or image in the upper part of each card and its feature description beneath it.
+2. Use three larger rows stacked from top to bottom when each feature needs more content. Place text and description on one side and a visualization on the other. Alternate the sides when appropriate. The visualizations may become progressively wider from one row to the next, creating a stair-step composition. This may also use two, four, or five rows when the content requires it.
+3. Use a bento or another grid arrangement. Bento geometry may vary widely: four cards above and three below; one long and one short card above with the proportions reversed below; two-by-two or repeated pairs; or another arrangement that fits the content.
+4. Inside a grid or bento card, include a feature heading and, when needed, one explanatory sentence. The sentence may highlight important keywords. Add a fitting visualization: an image, a creative product visual, a SaaS or dashboard mockup, or another relevant designed representation.
+5. Feature cards may use colored surfaces, images, or background gradients. Use brand colors deliberately. A later gradient generator may provide fitting card backgrounds, but the gradient must serve the selected feature design.
+6. A feature visualization does not need to be an image. It may be a designed SVG or another graphic that responds on hover or animates in a fitting way.
+
+Timed and changing Feature case:
+- Present roughly two to five features with a timed progress line. One feature begins active while its line advances; when the interval completes, activate the next feature and replace or transform the visualization.
+- The text labels may sit together in one horizontal line and loop through their active states, or each feature may have its own individually animated presentation.
+- Place the visualization wherever the chosen composition needs it: left, right, above, or below. GSAP may drive the transition when appropriate.
+
+Large and spatial Feature cases:
+1. Use a background image with large feature cards. Let the cards move from left to right through GSAP, horizontal scroll, or direct dragging when that interaction fits. Each large card contains a heading and the extra explanatory text it needs.
+2. Give roughly two thirds of the screen to a group of images or visualizations on the left and use the right side to explain them continuously. Mirror the layout when the design works better in the opposite direction.
+3. Create a more immersive feature section. Place the text in the center, left, or right according to the composition. As the user scrolls, move images, assets, or visualizations through the scene: they may rise from bottom to top, new elements may enter or fall into the viewport, or the elements may move in a controlled swirl. Use GSAP when appropriate. A later OriginKit component may help implement the effect, but it must preserve this selected layout and movement idea.
+
+Feature cards and visualizations remain an open design surface. Their font scale, spacing, radius, surface, image treatment, brand color, hover behavior, and motion must follow the approved style rather than one universal card design.`

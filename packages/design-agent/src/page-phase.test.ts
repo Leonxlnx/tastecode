@@ -86,7 +86,7 @@ describe('page phase', () => {
     expect(prompt).toContain('Never use an em dash')
     expect(prompt).toContain('Omit eyebrow copy by default')
     expect(prompt).toContain(
-      'Use the following beta layout cases as the source material for Hero, Navigation, and About',
+      'Use the following beta layout cases as the source material for Hero, Navigation, About, and Feature',
     )
     expect(prompt).toContain('Place the headline at the bottom left or bottom right')
     expect(prompt).toContain('show a wide dashboard, product preview, interface')
@@ -98,6 +98,14 @@ describe('page phase', () => {
     expect(prompt).toContain('move from left to right through a smooth GSAP scroll treatment')
     expect(prompt).toContain('Create a more experimental checkerboard composition')
     expect(prompt).toContain('The text may reveal or fade in as the user scrolls')
+    expect(prompt).toContain('Treat Features as one of the most open section types')
+    expect(prompt).toContain('Place the heading on the left and the description on the right')
+    expect(prompt).toContain('Use one horizontal row of three cards')
+    expect(prompt).toContain('creating a stair-step composition')
+    expect(prompt).toContain('four cards above and three below')
+    expect(prompt).toContain('Present roughly two to five features with a timed progress line')
+    expect(prompt).toContain('through GSAP, horizontal scroll, or direct dragging')
+    expect(prompt).toContain('move in a controlled swirl')
   })
 
   it('parses the final response through the page validator', () => {
