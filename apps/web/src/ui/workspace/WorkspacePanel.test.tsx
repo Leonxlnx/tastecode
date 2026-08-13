@@ -32,6 +32,37 @@ afterEach(() => {
 })
 
 describe('WorkspacePanel', () => {
+  it('finishes closing immediately when reduced motion removes the transition', async () => {
+    const onClosed = vi.fn()
+    const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query) =>
+        ({
+          matches: query === '(prefers-reduced-motion: reduce)',
+        }) as MediaQueryList,
+    )
+
+    render(
+      <WorkspacePanel
+        open={false}
+        expanded={false}
+        width={400}
+        transport={{} as Transport}
+        theme="dark"
+        sideChatParentStatus="idle"
+        sideChatStartOptions={{ approval: 'ask' }}
+        nativeSurfacesVisible
+        onOpen={vi.fn()}
+        onClose={vi.fn()}
+        onClosed={onClosed}
+        onExpandedChange={vi.fn()}
+        onWidthChange={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => expect(onClosed).toHaveBeenCalledOnce())
+    matchMedia.mockRestore()
+  })
+
   it('gives resize detents only while the panel is tracking', () => {
     const onWidthChange = vi.fn()
     const { container } = render(
