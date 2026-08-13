@@ -15,6 +15,12 @@ export {
 } from './page.js'
 export { designPagePrompt, parsePagePhaseOutput } from './page-phase.js'
 export {
+  assertPageCopy,
+  lintPageCopy,
+  type CopyLintFinding,
+  type CopyLintSeverity,
+} from './copywriting.js'
+export {
   parseAssetManifest,
   readAssetManifest,
   writeAssetManifest,

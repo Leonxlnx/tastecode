@@ -74,6 +74,8 @@ describe('page phase', () => {
     expect(prompt).toContain('Do not choose new colors or typefaces')
     expect(prompt).toContain('order sections by information dependencies')
     expect(prompt).toContain('Compact reduces simultaneity, not content or capability')
+    expect(prompt).toContain('Never use an em dash')
+    expect(prompt).toContain('Omit eyebrow copy by default')
   })
 
   it('parses the final response through the page validator', () => {

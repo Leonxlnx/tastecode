@@ -330,6 +330,12 @@ The current version-one blueprint contains:
 - meaningful interactions;
 - acceptance criteria.
 
+Generated page copy passes an internal quality gate before the artifact is accepted. Em dashes,
+unsupported objective claims, and `click here` fail validation. Formulaic copy, generic CTA labels,
+collision-prone generated names, decorative eyebrows, and ornamental section numbering are
+contextual review signals rather than an AI-authorship score. Eyebrows are omitted by default and
+numbers such as `01 / 02 / 03` are reserved for real sequence or navigation meaning.
+
 The Page phase writes actual concise copy before implementation. It must use the approved brand
 system and must not choose replacement colors, fonts, or sources.
 
