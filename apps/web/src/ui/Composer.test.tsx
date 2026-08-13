@@ -243,7 +243,7 @@ describe('Composer queue', () => {
     expect(screen.queryByText('Next message')).toBeNull()
   })
 
-  it('offers reorder, steer, remove, and edit actions for queued prompts', () => {
+  it('offers drag reorder, steer, remove, and edit actions for queued prompts', async () => {
     const onDeleteQueuedTurn = vi.fn()
     const onMoveQueuedTurn = vi.fn()
     const onSteerQueuedTurn = vi.fn()
@@ -263,6 +263,12 @@ describe('Composer queue', () => {
           attachments: [],
           createdAt: 2,
         },
+        {
+          id: 'queued-3',
+          text: 'Ship the build',
+          attachments: [],
+          createdAt: 3,
+        },
       ],
       onDeleteQueuedTurn,
       onMoveQueuedTurn,
@@ -273,8 +279,33 @@ describe('Composer queue', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Steer' })[0]!)
     expect(onSteerQueuedTurn).toHaveBeenCalledWith('queued-1')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Move Run the tests up' }))
-    expect(onMoveQueuedTurn).toHaveBeenCalledWith('queued-2', 'up')
+    const source = screen.getByText('Polish the queue').closest('.queue-row')!
+    const target = screen.getByText('Ship the build').closest('.queue-row')!
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+      bottom: 138,
+      height: 38,
+      left: 0,
+      right: 400,
+      top: 100,
+      width: 400,
+      x: 0,
+      y: 100,
+      toJSON: () => ({}),
+    })
+    const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
+    fireEvent.dragStart(source, { dataTransfer })
+    fireEvent.dragOver(target, { clientY: 4, dataTransfer })
+    expect(target.getAttribute('data-drop-position')).toBe('after')
+    fireEvent.drop(target, { clientY: 4, dataTransfer })
+    await waitFor(() => expect(onMoveQueuedTurn).toHaveBeenCalledTimes(2))
+    expect(onMoveQueuedTurn).toHaveBeenNthCalledWith(1, 'queued-1', 'down')
+    expect(onMoveQueuedTurn).toHaveBeenNthCalledWith(2, 'queued-1', 'down')
+    expect(screen.queryByRole('button', { name: /Move .* (up|down)/ })).toBeNull()
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Drag Run the tests to reorder' }), {
+      key: 'ArrowUp',
+    })
+    expect(onMoveQueuedTurn).toHaveBeenCalledTimes(3)
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit Polish the queue' }))
     expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(

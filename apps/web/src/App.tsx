@@ -2638,10 +2638,14 @@ export function App() {
 
   const moveQueuedTurn = useCallback(
     (queuedTurnId: string, direction: 'up' | 'down') => {
-      if (!activeId) return
-      void transport
+      if (!activeId) return Promise.resolve(false)
+      return transport
         .request('thread.moveQueuedTurn', { threadId: activeId, queuedTurnId, direction })
-        .catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
+        .then(() => true)
+        .catch((error) => {
+          setNotice(error instanceof Error ? error.message : String(error))
+          return false
+        })
     },
     [transport, activeId],
   )

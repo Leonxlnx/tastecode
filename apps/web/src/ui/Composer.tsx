@@ -6,18 +6,19 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type DragEvent,
 } from 'react'
 import type { ApprovalMode, ProviderId, QueuedTurn, Usage } from '@harness/contracts'
 import type { ModelChoice } from '../model-catalog.js'
 import { BorderBeam } from 'border-beam'
 import {
-  ArrowDown,
   ArrowUp,
   Box,
   CornerDownRight,
   File as FileIcon,
   Folder,
   GitBranch,
+  GripVertical,
   Image as ImageIcon,
   Laptop,
   LockOpen,
@@ -207,7 +208,7 @@ function ComposerComponent(props: {
   /** An interrupt is sent and the turn has not ended yet. */
   stopping?: boolean | undefined
   onDeleteQueuedTurn: (id: string) => void
-  onMoveQueuedTurn: (id: string, direction: 'up' | 'down') => void
+  onMoveQueuedTurn: (id: string, direction: 'up' | 'down') => void | Promise<boolean | void>
   onSteerQueuedTurn: (id: string) => void
 }) {
   const [text, setText] = useState('')
@@ -217,6 +218,11 @@ function ComposerComponent(props: {
   const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle')
   const [voiceError, setVoiceError] = useState<string>()
   const [dragging, setDragging] = useState(false)
+  const [draggedQueueId, setDraggedQueueId] = useState<string>()
+  const [queueDropTarget, setQueueDropTarget] = useState<{
+    id: string
+    position: 'before' | 'after'
+  }>()
   const [selectedResources, setSelectedResources] = useState<ComposerResource[]>([])
   const [resourceTrigger, setResourceTrigger] = useState<ComposerResourceTrigger>()
   const area = useRef<HTMLTextAreaElement>(null)
@@ -239,6 +245,32 @@ function ComposerComponent(props: {
     () => new Set(selectedResources.map((resource) => resource.key)),
     [selectedResources],
   )
+
+  const endQueueDrag = () => {
+    setDraggedQueueId(undefined)
+    setQueueDropTarget(undefined)
+  }
+
+  const dropQueuedTurn = (event: DragEvent<HTMLDivElement>, targetId: string) => {
+    event.preventDefault()
+    if (!draggedQueueId || !queueDropTarget || draggedQueueId === targetId) {
+      endQueueDrag()
+      return
+    }
+    const sourceIndex = props.queuedTurns.findIndex((turn) => turn.id === draggedQueueId)
+    const remaining = props.queuedTurns.filter((turn) => turn.id !== draggedQueueId)
+    const targetIndex = remaining.findIndex((turn) => turn.id === targetId)
+    const destination = targetIndex + (queueDropTarget.position === 'after' ? 1 : 0)
+    if (sourceIndex >= 0 && targetIndex >= 0) {
+      const direction = destination < sourceIndex ? 'up' : 'down'
+      void (async () => {
+        for (let index = 0; index < Math.abs(destination - sourceIndex); index += 1) {
+          if ((await props.onMoveQueuedTurn(draggedQueueId, direction)) === false) break
+        }
+      })()
+    }
+    endQueueDrag()
+  }
 
   textRef.current = text
   attachmentsSupportedRef.current = props.attachmentsSupported
@@ -728,25 +760,49 @@ function ComposerComponent(props: {
           {props.queuedTurns.length > 0 ? (
             <div className="composer__queue" aria-label="Queued prompts">
               {props.queuedTurns.map((queuedTurn, index) => (
-                <div className="queue-row" key={queuedTurn.id}>
-                  <div className="queue-row__order" aria-label={`Reorder ${queuedTurn.text}`}>
-                    <button
-                      type="button"
-                      onClick={() => props.onMoveQueuedTurn(queuedTurn.id, 'up')}
-                      disabled={index === 0}
-                      aria-label={`Move ${queuedTurn.text} up`}
-                    >
-                      <ArrowUp size={12} aria-hidden />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => props.onMoveQueuedTurn(queuedTurn.id, 'down')}
-                      disabled={index === props.queuedTurns.length - 1}
-                      aria-label={`Move ${queuedTurn.text} down`}
-                    >
-                      <ArrowDown size={12} aria-hidden />
-                    </button>
-                  </div>
+                <div
+                  className={`queue-row${draggedQueueId === queuedTurn.id ? ' is-dragging' : ''}`}
+                  data-drop-position={
+                    queueDropTarget?.id === queuedTurn.id ? queueDropTarget.position : undefined
+                  }
+                  key={queuedTurn.id}
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = 'move'
+                    event.dataTransfer.setData('text/plain', queuedTurn.id)
+                    setDraggedQueueId(queuedTurn.id)
+                  }}
+                  onDragOver={(event) => {
+                    if (!draggedQueueId || draggedQueueId === queuedTurn.id) return
+                    event.preventDefault()
+                    event.dataTransfer.dropEffect = 'move'
+                    const bounds = event.currentTarget.getBoundingClientRect()
+                    setQueueDropTarget({
+                      id: queuedTurn.id,
+                      position: event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after',
+                    })
+                  }}
+                  onDrop={(event) => dropQueuedTurn(event, queuedTurn.id)}
+                  onDragEnd={endQueueDrag}
+                >
+                  <button
+                    type="button"
+                    className="queue-row__handle"
+                    title="Drag to reorder"
+                    aria-label={`Drag ${queuedTurn.text} to reorder`}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+                      event.preventDefault()
+                      const direction = event.key === 'ArrowUp' ? 'up' : 'down'
+                      if (
+                        (direction === 'up' && index > 0) ||
+                        (direction === 'down' && index < props.queuedTurns.length - 1)
+                      )
+                        void props.onMoveQueuedTurn(queuedTurn.id, direction)
+                    }}
+                  >
+                    <GripVertical size={14} aria-hidden />
+                  </button>
                   <span className="queue-row__text" title={queuedTurn.text}>
                     {queuedTurn.text}
                   </span>
