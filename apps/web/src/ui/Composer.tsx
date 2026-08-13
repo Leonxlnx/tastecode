@@ -1164,6 +1164,7 @@ function ComposerComponent(props: {
                         className="menutrigger tool composer__steer"
                         onClick={() => submit('steer')}
                         disabled={sendDisabled}
+                        aria-label="Steer current draft"
                         title="Steer now (Ctrl+Enter)"
                       >
                         <CornerDownRight size={14} aria-hidden />

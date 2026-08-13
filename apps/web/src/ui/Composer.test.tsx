@@ -250,7 +250,7 @@ describe('Composer queue', () => {
     const composer = screen.getByPlaceholderText('Do anything')
 
     fireEvent.change(composer, { target: { value: 'Use this direction now' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Steer' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Steer current draft' }))
 
     expect(onSteer).toHaveBeenCalledWith('Use this direction now', [])
     expect(onSend).not.toHaveBeenCalled()
