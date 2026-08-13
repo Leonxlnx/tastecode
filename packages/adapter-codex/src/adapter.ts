@@ -77,6 +77,7 @@ import {
 
 const CLIENT_NAME = 'personal-harness'
 const CONTROL_READ_TIMEOUT_MS = 10_000
+const THREAD_START_TIMEOUT_MS = 30_000
 
 /** Provider state Harness either does not expose or already derives from shared events. */
 export function isIgnorableCodexNotification(method: string): boolean {
@@ -787,14 +788,18 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       ...(options.effort ? { model_reasoning_effort: options.effort } : {}),
       ...(Object.keys(this.#mcpServers).length ? { mcp_servers: this.#mcpServers } : {}),
     }
-    const response = await this.#call<ThreadStartResponse>('thread/start', {
-      cwd: workspacePath,
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
-      ...(options.instructions ? { developerInstructions: options.instructions } : {}),
-      ...(Object.keys(config).length ? { config } : {}),
-      ...(approval ?? {}),
-    })
+    const response = await this.#call<ThreadStartResponse>(
+      'thread/start',
+      {
+        cwd: workspacePath,
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
+        ...(options.instructions ? { developerInstructions: options.instructions } : {}),
+        ...(Object.keys(config).length ? { config } : {}),
+        ...(approval ?? {}),
+      },
+      THREAD_START_TIMEOUT_MS,
+    )
     this.#threadModels.set(response.thread.id, response.model)
     return {
       id: response.thread.id,

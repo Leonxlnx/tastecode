@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-type Call = { method: string; params: unknown }
+type Call = { method: string; params: unknown; timeoutMs?: number }
 
 const fake = vi.hoisted(() => ({
   calls: [] as Call[],
@@ -19,8 +19,8 @@ vi.mock('@harness/proc', () => ({
     notify(): void {}
     dispose(): void {}
 
-    request(method: string, params: unknown): Promise<unknown> {
-      fake.calls.push({ method, params })
+    request(method: string, params: unknown, options?: { timeoutMs?: number }): Promise<unknown> {
+      fake.calls.push({ method, params, timeoutMs: options?.timeoutMs })
       if (method === 'thread/start') {
         return Promise.resolve({ thread: { id: 'thread-1' }, model: 'gpt-5.6' })
       }
@@ -39,6 +39,7 @@ describe('Codex prompt transport', () => {
     const adapter = new CodexAdapter()
     await adapter.start()
     const thread = await adapter.startThread('C:\\repo')
+    expect(fake.calls.find((call) => call.method === 'thread/start')?.timeoutMs).toBe(30_000)
 
     await adapter.sendTurn(thread.id, text)
 
