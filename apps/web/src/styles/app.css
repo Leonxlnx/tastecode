@@ -6006,27 +6006,28 @@
 .composer-resource-picker {
   position: absolute;
   z-index: 50;
-  right: 0;
   bottom: calc(100% + 8px);
   left: 0;
+  width: min(380px, 100%);
   overflow: hidden;
   background: var(--menu-bg);
   border: 1px solid var(--menu-line);
-  border-radius: var(--r-panel);
+  border-radius: var(--r-xl);
   box-shadow: var(--shadow-flyout);
   color: var(--text);
+  transform-origin: bottom left;
   animation: composer-resource-picker-in var(--dur-fast) var(--ease-out) both;
 }
 
 @keyframes composer-resource-picker-in {
   from {
     opacity: 0;
-    transform: translateY(2px);
+    transform: translateY(3px) scale(0.985);
   }
 }
 
 .composer-resource-picker__list {
-  max-height: min(320px, calc(100vh - 170px));
+  max-height: min(240px, calc(100vh - 170px));
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 5px;
@@ -6099,7 +6100,7 @@
 
 .composer-resource-picker__status {
   display: grid;
-  min-height: 64px;
+  min-height: 48px;
   margin: 0;
   padding: 14px;
   place-items: center;
