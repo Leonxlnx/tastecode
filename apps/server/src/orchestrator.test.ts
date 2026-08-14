@@ -566,7 +566,7 @@ describe('durable turn timing', () => {
       session.emit({ type: 'turn.completed', turnId: 'queued', status: 'completed' })
 
       now.mockReturnValue(11_000)
-      await orchestrator.sendTurn(thread.id, 'Design', [DESIGN_BRIEF_ATTACHMENT])
+      await orchestrator.sendTurn(thread.id, 'Design', ['personal-harness://design-brief-v1'])
       now.mockReturnValue(13_000)
       session.emit({
         type: 'turn.started',

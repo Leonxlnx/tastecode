@@ -29,6 +29,7 @@ import {
   designRepairPrompt,
   designReviewPrompt,
   enforceDomAuditFindings,
+  isDesignBriefAttachment,
   parseAssetPhaseOutput,
   parseBrandPhaseOutput,
   parseBriefingOutput,
@@ -1103,7 +1104,7 @@ export class Orchestrator {
       if (panicGeneration !== this.#panicGeneration) {
         throw new Error('turn cancelled by panic stop')
       }
-      const design = attachments.includes(DESIGN_BRIEF_ATTACHMENT)
+      const design = attachments.some(isDesignBriefAttachment)
       if (design) {
         await this.#stopDesignPreview(threadId)
         // The flow keeps the user's own options; only brief-phase turns force
@@ -1128,7 +1129,7 @@ export class Orchestrator {
           turnId = await this.#sendDesignTurn(
             threadId,
             designBriefingPrompt(text),
-            attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT),
+            attachments.filter((path) => !isDesignBriefAttachment(path)),
             this.#designTurnOptions(flow),
             pendingStart,
           )
@@ -1760,7 +1761,7 @@ export class Orchestrator {
     return {
       id: item.id,
       text: item.text,
-      attachments: item.attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT),
+      attachments: item.attachments.filter((path) => !isDesignBriefAttachment(path)),
       createdAt: item.createdAt,
     }
   }
