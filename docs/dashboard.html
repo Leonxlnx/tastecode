@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-14 main 4ab5a269</span>
+        <span class="meta">2026-08-14 main f1138d94</span>
       </div>
     </div>
 
@@ -467,10 +467,10 @@
                 <span
                   >Actionable empty and error states
                   <span class="d"
-                    >project loading failures offer Retry, the first-project prompt opens the folder
-                    picker, empty project drawers show No chats without replacing the current chat,
-                    and a true zero-turn thread keeps the composer available;
-                    <a href="./screenshots/empty-project.png">project</a> and
+                    >project loading failures offer Retry and recover automatically after reconnect;
+                    the first-project prompt opens the folder picker, empty project drawers show No
+                    chats without replacing the current chat, and a true zero-turn thread keeps the
+                    composer available; <a href="./screenshots/empty-project.png">project</a> and
                     <a href="./screenshots/empty-thread.png">thread</a> evidence</span
                   >
                 </span>
@@ -499,7 +499,8 @@
                 <span
                   >Model and source coherence
                   <span class="d"
-                    >catalog recovery keeps the selected provider, model, effort, and tier; source
+                    >catalog recovery keeps the selected provider, model, effort, and tier; failed
+                    discovery retries after reconnect while a valid catalog remains usable; source
                     names and marks stay consistent; flat and rail pickers share search; Settings
                     keeps the short catalog lists search-free while every model and its switch
                     remain picker inclusion; the flat list is the first-run layout, current Codex
