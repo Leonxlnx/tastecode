@@ -31,6 +31,10 @@ type Bridge = {
   performHaptic?: (pattern: NativeHapticPattern) => void
   capturePreview: (request: PreviewCaptureRequest) => Promise<PreviewCaptureResult>
   openExternal: (url: string) => Promise<void>
+  getDiagnosticsEnabled?: () => Promise<boolean>
+  setDiagnosticsEnabled?: (enabled: boolean) => Promise<boolean>
+  openDiagnostics?: () => Promise<boolean>
+  reportRendererError?: (message: string) => void
   getUpdateState?: () => Promise<AppUpdateState>
   checkForUpdates?: () => Promise<AppUpdateState>
   installUpdate?: () => Promise<boolean>
@@ -150,6 +154,23 @@ export async function capturePreview(
 export function openExternalUrl(url: string): Promise<void> {
   if (!url) return Promise.resolve()
   return bridge?.openExternal(url) ?? Promise.resolve()
+}
+
+export function localDiagnosticsEnabled(): Promise<boolean> {
+  return bridge?.getDiagnosticsEnabled?.() ?? Promise.resolve(false)
+}
+
+export function setLocalDiagnosticsEnabled(enabled: boolean): Promise<boolean> {
+  return bridge?.setDiagnosticsEnabled?.(enabled) ?? Promise.resolve(false)
+}
+
+export function openLocalDiagnostics(): Promise<boolean> {
+  return bridge?.openDiagnostics?.() ?? Promise.resolve(false)
+}
+
+export function reportRendererError(cause: unknown): void {
+  const message = cause instanceof Error ? cause.stack || cause.message : String(cause)
+  bridge?.reportRendererError?.(message.slice(0, 4_000))
 }
 
 const unsupportedUpdate: AppUpdateState = {

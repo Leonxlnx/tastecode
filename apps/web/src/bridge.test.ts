@@ -72,6 +72,32 @@ describe('external URL bridge', () => {
   })
 })
 
+describe('local diagnostics bridge', () => {
+  it('is off and inert in the browser', async () => {
+    const bridge = await import('./bridge.js')
+
+    await expect(bridge.localDiagnosticsEnabled()).resolves.toBe(false)
+    await expect(bridge.setLocalDiagnosticsEnabled(true)).resolves.toBe(false)
+    expect(() => bridge.reportRendererError(new Error('test'))).not.toThrow()
+  })
+
+  it('delegates the preference and redacted error source to the desktop', async () => {
+    const setDiagnosticsEnabled = vi.fn().mockResolvedValue(true)
+    const reportRendererError = vi.fn()
+    ;(globalThis as { harness?: unknown }).harness = {
+      isDesktop: true,
+      setDiagnosticsEnabled,
+      reportRendererError,
+    }
+    const bridge = await import('./bridge.js')
+
+    await expect(bridge.setLocalDiagnosticsEnabled(true)).resolves.toBe(true)
+    bridge.reportRendererError(new Error('renderer failed'))
+    expect(setDiagnosticsEnabled).toHaveBeenCalledWith(true)
+    expect(reportRendererError).toHaveBeenCalledWith(expect.stringContaining('renderer failed'))
+  })
+})
+
 describe('app update bridge', () => {
   it('stays unsupported in the browser', async () => {
     const bridge = await import('./bridge.js')
