@@ -14,7 +14,7 @@ describe('client error messages', () => {
 
 describe('websocket origin gate', () => {
   it('admits our own surfaces, including non-browser clients', () => {
-    // No Origin at all: the CLI, tests, a native mobile client.
+    // No Origin at all: the CLI and other non-browser clients.
     expect(allowedOrigin(undefined)).toBe(true)
     // The packaged Electron renderer loads from file:.
     expect(allowedOrigin('file://')).toBe(true)
@@ -38,8 +38,7 @@ describe('websocket origin gate', () => {
   })
 
   it('admits an external page only when the access token is the boundary', () => {
-    // The dev:mobile flow binds to a Tailscale/LAN host and protects it with a
-    // token, so the phone page served from that same host must pass the gate.
+    // A deliberately remote development surface must carry an access token.
     expect(allowedOrigin('http://100.101.169.28:5183', 'secret')).toBe(true)
     expect(allowedOrigin('http://192.168.1.20:5183', 'secret')).toBe(true)
     // Without a token the external surface stays closed.
