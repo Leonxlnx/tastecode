@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import {
   StoredModelConnectionSchema,
@@ -8,13 +7,13 @@ import {
   type StoredModelConnection,
 } from '@harness/contracts'
 import { hasCredential, removeCredential, writeCredential } from './credentials.js'
+import { configFile } from './product-paths.js'
 
 type ConfigFile = { version: 1; connections: StoredModelConnection[] }
 const EMPTY_CONFIG: ConfigFile = { version: 1, connections: [] }
 
 function defaultLocation(): string {
-  const root = process.env['HARNESS_CONFIG_DIR'] ?? path.join(os.homedir(), '.personalharness')
-  return path.join(root, 'providers.json')
+  return configFile('providers.json')
 }
 
 function parseConfig(raw: string): ConfigFile {

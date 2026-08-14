@@ -8,7 +8,6 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import {
   McpServerConfigSchema,
@@ -16,6 +15,7 @@ import {
   type McpServerConfig,
   type ProviderId,
 } from '@harness/contracts'
+import { configFile } from './product-paths.js'
 
 type ConfigFile = {
   version: 1
@@ -29,8 +29,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 function defaultLocation(): string {
-  const root = process.env['HARNESS_CONFIG_DIR'] ?? path.join(os.homedir(), '.personalharness')
-  return path.join(root, 'mcp.json')
+  return configFile('mcp.json')
 }
 
 function canonicalProjectPath(projectPath: string): string {
