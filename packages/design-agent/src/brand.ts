@@ -68,6 +68,21 @@ export function parseBrandSystem(value: unknown): BrandSystem {
   const imageDirection = record(brand.imageDirection, 'imageDirection')
   const motionDirection = record(brand.motionDirection, 'motionDirection')
   const voice = record(brand.voice, 'voice')
+  const typefaces = array(brand.typefaces, 'typefaces').map((value, index) => {
+    const typeface = record(value, `typefaces[${index}]`)
+    return {
+      family: string(typeface.family, `typefaces[${index}].family`),
+      source: string(typeface.source, `typefaces[${index}].source`),
+      roles: strings(typeface.roles, `typefaces[${index}].roles`),
+      weights: weights(typeface.weights, `typefaces[${index}].weights`),
+    }
+  })
+  if (typefaces.length > 2) throw new Error('brand system must use at most two typeface families')
+  for (const { family } of typefaces) {
+    if (/^(?:archivo|ibm plex mono)(?:\s|$)/iu.test(family.trim())) {
+      throw new Error(`brand system typeface ${family} is not allowed`)
+    }
+  }
 
   return {
     version: 1,
@@ -145,15 +160,7 @@ export function parseBrandSystem(value: unknown): BrandSystem {
         usage: string(color.usage, `colorPalette[${index}].usage`),
       }
     }),
-    typefaces: array(brand.typefaces, 'typefaces').map((value, index) => {
-      const typeface = record(value, `typefaces[${index}]`)
-      return {
-        family: string(typeface.family, `typefaces[${index}].family`),
-        source: string(typeface.source, `typefaces[${index}].source`),
-        roles: strings(typeface.roles, `typefaces[${index}].roles`),
-        weights: weights(typeface.weights, `typefaces[${index}].weights`),
-      }
-    }),
+    typefaces,
     interfaceDirection: string(brand.interfaceDirection, 'interfaceDirection'),
     imageDirection: {
       summary: string(imageDirection.summary, 'imageDirection.summary'),

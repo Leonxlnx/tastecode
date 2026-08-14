@@ -77,6 +77,10 @@ describe('brand phase', () => {
     expect(prompt).toContain('The only valid locked role keys are canvas, surface, surfaceAlt')
     expect(prompt).toContain('Leave locked empty when no exact color is supplied')
     expect(prompt).toContain('Treat 60/30/10 only as loose composition guidance')
+    expect(prompt).toContain('Use at most two typeface families')
+    expect(prompt).toContain('Never choose IBM Plex Mono, Archivo')
+    expect(prompt).toContain('colored left-edge accent rails')
+    expect(prompt).toContain('prefer relevant supplied, generated, or properly sourced photographs')
   })
 
   it('parses fenced provider output through the brand validator', () => {
@@ -108,5 +112,33 @@ describe('brand phase', () => {
         usage: expect.stringContaining('Sparse accent.'),
       }),
     )
+  })
+
+  it.each(['IBM Plex Mono', 'Archivo', 'Archivo Narrow'])(
+    'rejects the banned typeface %s',
+    (family) => {
+      expect(() =>
+        parseBrandPhaseOutput(
+          JSON.stringify({
+            ...brand,
+            typefaces: [{ ...brand.typefaces[0], family }],
+          }),
+        ),
+      ).toThrow('is not allowed')
+    },
+  )
+
+  it('rejects more than two typeface families', () => {
+    expect(() =>
+      parseBrandPhaseOutput(
+        JSON.stringify({
+          ...brand,
+          typefaces: ['Geist', 'Newsreader', 'Inter'].map((family) => ({
+            ...brand.typefaces[0],
+            family,
+          })),
+        }),
+      ),
+    ).toThrow('at most two typeface families')
   })
 })
