@@ -1,4 +1,7 @@
 import { EventEmitter } from 'node:events'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type {
   ApprovalDecision,
   ApprovalMode,
@@ -18,6 +21,7 @@ import {
   type NewSessionResult,
   type PermissionOptionKind,
   type PromptResult,
+  type ContentBlock,
   type RequestPermissionParams,
   type SessionNotification,
 } from './protocol.js'
@@ -58,6 +62,35 @@ type AcpLaunchSpec = Pick<
   AcpAgentSpec,
   'id' | 'name' | 'command' | 'args' | 'supportedVersion' | 'modelArg' | 'modelConfigId'
 >
+
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  '.gif': 'image/gif',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+}
+
+export function acpPromptContent(
+  text: string,
+  attachments: string[] = [],
+  images = false,
+): ContentBlock[] {
+  if (attachments.length > 0 && !images) throw new Error('ACP agent does not support images')
+  return [
+    { type: 'text', text },
+    ...attachments.map((file) => {
+      const mimeType = IMAGE_MIME_TYPES[path.extname(file).toLowerCase()]
+      if (!mimeType) throw new Error(`ACP image type is not supported: ${path.extname(file)}`)
+      return {
+        type: 'image',
+        data: readFileSync(file).toString('base64'),
+        mimeType,
+        uri: pathToFileURL(file).href,
+      }
+    }),
+  ]
+}
 
 export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   #spec: AcpLaunchSpec
@@ -174,7 +207,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     }
   }
 
-  async sendTurn(threadId: string, text: string): Promise<string> {
+  async sendTurn(threadId: string, text: string, attachments: string[] = []): Promise<string> {
     const rpc = this.#rpc
     if (!rpc || !this.#sessionId) throw new Error('session not started')
 
@@ -200,7 +233,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     void rpc
       .request<PromptResult>('session/prompt', {
         sessionId: this.#sessionId,
-        prompt: [{ type: 'text', text: prompt }],
+        prompt: acpPromptContent(prompt, attachments, this.#images),
       })
       .then((result) => this.#finishTurn(threadId, turnId, result, streamer))
       .catch((error: unknown) => {
