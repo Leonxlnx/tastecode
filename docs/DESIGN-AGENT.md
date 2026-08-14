@@ -330,11 +330,12 @@ The current version-one blueprint contains:
 - a page contract, dominant page mode, novelty tolerance, base grid, signature composition rule,
   and rhythm;
 - navigation labels and targets;
+- the selected navigation layout case;
 - ordered sections with unique IDs;
 - each section's purpose;
 - the user question, decision stage, prior-section dependencies, and real evidence for each section;
 - final eyebrow, heading, body copy, and calls to action;
-- layout direction;
+- one beta layout family, the exact selected case IDs, and a content-specific layout direction;
 - component needs;
 - asset needs;
 - explicit compact, medium, and expanded transformations per section;
@@ -350,6 +351,14 @@ numbers such as `01 / 02 / 03` are reserved for real sequence or navigation mean
 
 The Page phase writes actual concise copy before implementation. It must use the approved brand
 system and must not choose replacement colors, fonts, or sources.
+
+New Page-phase outputs must map every section to Hero, About, Feature, How It Works, Social Proof,
+Stats, FAQ, CTA, Pricing, Contact, or Footer and select the exact human-authored beta cases they
+apply. A custom-named section such as Showcase may reuse the compatible Feature family. Unknown,
+cross-family, missing, duplicated, and directly repeated compositions fail the Page phase before
+Build. Build treats the family, cases, layout direction, and responsive transformations as hard
+composition requirements; Review compares visible geometry against the same decisions. Older
+version-one artifacts without these additive fields remain readable.
 
 ### Current `assets.json`
 
@@ -620,8 +629,10 @@ them.
 ### Page gaps
 
 The blueprint records visitor questions, decision stages, information dependencies, final copy,
-responsive behavior, interactions, and acceptance criteria. Per-section motion roles remain
-implicit. Add them only after the Motion rules prove that Build and Review need persisted values.
+selected beta layout cases, responsive behavior, interactions, and acceptance criteria. The current
+catalog covers the human-reviewed website section cases but still needs evidence from varied real
+builds. Per-section motion roles remain implicit. Add them only after the Motion rules prove that
+Build and Review need persisted values.
 
 ### Asset gaps
 
@@ -652,7 +663,8 @@ relies primarily on provider-reported checks and screenshots.
 
 1. Finish compact Brand, Page, Asset, Build, and Review rules inside `packages/design-agent`.
 2. Build and test deterministic type, spacing, gradient, asset, and objective QA tools.
-3. Finish layout, component, imagery, and motion judgment with real reference cases.
+3. Test the beta layout catalog on varied real briefs, then finish component, imagery, and motion
+   judgment with real reference cases.
 4. Add provider-independent fixtures proving every phase output parses into the same artifacts.
 5. Define artifact migration before changing persisted schema versions.
 
