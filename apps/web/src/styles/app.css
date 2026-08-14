@@ -5749,11 +5749,11 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  /* The working rail's full footprint: the 36px summary line plus the gap to
+  /* The working rail's full footprint: the 30px summary line plus the gap to
      the response below it. The rail itself is absolutely positioned so it can
      stay mounted for the whole turn; is-rail-anchor and .thread__rail-spacer
      reserve exactly this much space for it to overlay. */
-  --working-rail-h: 54px;
+  --working-rail-h: 42px;
 }
 
 /* Holds the full scroll height while only the visible rows exist. */
@@ -5898,23 +5898,44 @@
   margin-left: auto;
   background: var(--surface-2);
   border-radius: var(--r-xl);
-  padding: 9px 13px;
+  padding: 7px 11px;
+  font-size: var(--t-md);
+  line-height: 1.45;
+}
+
+/* The prompt row always owns the action strip's height, so revealing it never
+   changes a measured virtual row. The transparent tail also lets a pointer
+   enter from just below a short bubble. */
+.thread__row:has(> .said) {
+  padding-bottom: 27px;
+}
+
+.said::after {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  top: 100%;
+  right: 0;
+  width: max(100%, 76px);
+  height: 25px;
 }
 
 /* Padding, not offset, bridges bubble and buttons: with a gap between them
    the pointer left .said on the way down and the actions vanished mid-reach. */
 .said__actions {
   position: absolute;
+  z-index: 1;
   top: 100%;
   right: 0;
-  padding-top: 3px;
+  padding-top: 1px;
+  gap: 2px;
   justify-content: flex-end;
   margin: 0;
 }
 
-.thread__row:has(> .said:hover),
-.thread__row:has(> .said:focus-within) {
-  padding-bottom: 31px;
+.response-actions.said__actions button {
+  width: 24px;
+  height: 24px;
 }
 
 .said:hover > .said__actions,
@@ -5935,14 +5956,14 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 36px;
-  padding: 1px 2px 9px;
+  min-height: 30px;
+  padding: 0 2px 4px;
   background: none;
   border: 0;
   color: var(--text-3);
   cursor: pointer;
   font: inherit;
-  font-size: var(--t-lg);
+  font-size: var(--t-md);
   letter-spacing: -0.012em;
   list-style: none;
   text-align: left;
@@ -6072,8 +6093,8 @@
 .activity__body {
   display: flex;
   flex-direction: column;
-  gap: 22px;
-  margin: 21px 0 6px;
+  gap: 10px;
+  margin: 4px 0;
 }
 
 .activity__message {
@@ -6085,12 +6106,12 @@
 .activity__file-change {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  min-height: 24px;
+  min-height: 20px;
   color: var(--text-3);
   font-family: var(--font-ui);
-  font-size: var(--t-lg);
+  font-size: var(--t-md);
   letter-spacing: -0.012em;
 }
 
@@ -6101,7 +6122,7 @@
 .activity__detail {
   max-height: 180px;
   overflow: auto;
-  margin: 7px 0 0 25px;
+  margin: 5px 0 0 21px;
   color: var(--text-2);
   font-family: var(--font-mono);
   font-size: var(--t-sm);
@@ -6110,7 +6131,7 @@
 
 .reply > .activity {
   display: block;
-  margin-bottom: 18px;
+  margin-bottom: 8px;
 }
 
 /* ---------- rendered markdown ---------- */
@@ -6592,17 +6613,11 @@
 }
 
 .reply > .response-actions {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  z-index: 1;
-  padding-top: 3px;
+  position: static;
+  padding-top: 2px;
   margin: 0;
-}
-
-.thread__row:has(> .reply:hover),
-.thread__row:has(> .reply:focus-within) {
-  padding-bottom: 31px;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .response-actions {
@@ -6617,12 +6632,6 @@
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--dur-fast) var(--ease-out);
-}
-
-.reply:hover > .response-actions,
-.reply:focus-within > .response-actions {
-  opacity: 1;
-  pointer-events: auto;
 }
 
 .response-actions button {

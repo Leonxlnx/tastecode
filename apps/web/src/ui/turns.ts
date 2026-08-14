@@ -26,6 +26,8 @@ export type TurnActivityGroup = {
   /** Flat-list index where Thread anchors this disclosure. */
   firstIndex: number
   lastIndex: number
+  /** Time spent after the previous message and before the next one. */
+  elapsedMs: number
 }
 
 export type TurnPresentation = {
@@ -35,6 +37,9 @@ export type TurnPresentation = {
   firstResponseIndex: number | undefined
   finalAnswerIndex: number | undefined
   elapsedMs: number
+  /** The current work interval restarts whenever the agent emits a message. */
+  workStartedAt: number
+  prompt: Item | undefined
   complete: boolean
   /** Turns carrying a design:* phase marker tell their story through the
    *  phase labels; raw provider activity stays out of the transcript. */
@@ -122,11 +127,17 @@ export function presentTurns(
       activityGroups: Array<{
         entries: Array<{ item: Item; index: number }>
         lastIndex: number
+        startedAt: number
+        startsTurn: boolean
+        completedAt?: number
       }>
       answers: Array<{ item: Item; index: number }>
+      prompt?: Item
       firstResponseIndex?: number
       earliest: number
       latest: number
+      latestOutputAt?: number
+      latestAssistantOutputAt?: number
       hasRunningActivity: boolean
       activityCount: number
       onlyReasoning: boolean
@@ -164,15 +175,24 @@ export function presentTurns(
         lastGroup.entries.push({ item, index })
         lastGroup.lastIndex = index
       } else {
-        draft.activityGroups.push({ entries: [{ item, index }], lastIndex: index })
+        draft.activityGroups.push({
+          entries: [{ item, index }],
+          lastIndex: index,
+          startedAt: draft.latestOutputAt ?? item.createdAt,
+          startsTurn: draft.latestAssistantOutputAt === undefined,
+        })
       }
       draft.hasRunningActivity ||= item.status === 'started'
-    } else if (
-      item.type === 'message' &&
-      item.role === 'assistant' &&
-      item.status === 'completed'
-    ) {
-      draft.answers.push({ item, index })
+    } else {
+      const openGroup = draft.activityGroups.at(-1)
+      if (openGroup && openGroup.completedAt === undefined) openGroup.completedAt = item.createdAt
+      draft.latestOutputAt = item.createdAt
+
+      if (item.type === 'message' && item.role === 'user') draft.prompt ??= item
+      if (item.type === 'message' && item.role === 'assistant') {
+        draft.latestAssistantOutputAt = item.createdAt
+        if (item.status === 'completed') draft.answers.push({ item, index })
+      }
     }
 
     drafts.set(item.turnId, draft)
@@ -188,11 +208,18 @@ export function presentTurns(
       return [
         turnId,
         {
-          activityGroups: draft.activityGroups.map(({ entries, lastIndex }) => ({
-            items: entries.map(({ item }) => item),
-            firstIndex: entries[0]!.index,
-            lastIndex,
-          })),
+          activityGroups: draft.activityGroups.map(
+            ({ entries, lastIndex, startedAt, startsTurn, completedAt }) => ({
+              items: entries.map(({ item }) => item),
+              firstIndex: entries[0]!.index,
+              lastIndex,
+              elapsedMs: Math.max(
+                0,
+                (completedAt ?? timing?.completedAt ?? draft.latest) -
+                  (startsTurn ? (timing?.startedAt ?? startedAt) : startedAt),
+              ),
+            }),
+          ),
           responseText: finalAnswer?.item.text ?? '',
           firstResponseIndex: draft.firstResponseIndex,
           finalAnswerIndex: finalAnswer?.index,
@@ -200,6 +227,8 @@ export function presentTurns(
             timing?.startedAt !== undefined && timing.completedAt !== undefined
               ? Math.max(0, timing.completedAt - timing.startedAt)
               : Math.max(0, draft.latest - draft.earliest),
+          workStartedAt: draft.latestAssistantOutputAt ?? timing?.startedAt ?? draft.earliest,
+          prompt: draft.prompt,
           complete:
             !draft.hasRunningActivity &&
             (finalAnswer !== undefined || (draft.activityCount > 1 && draft.onlyReasoning)),

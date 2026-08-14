@@ -12,7 +12,7 @@ add a change-log row.
 typed WebSocket protocol.**
 
 ```
-desktop renderer · web · mobile          thin clients
+desktop renderer · web                   thin clients
         │  WebSocket, typed contracts
         │  req/res { id, method, params } · push { channel, sequence, data }
    core server (Node, local, long-lived)
@@ -23,7 +23,6 @@ desktop renderer · web · mobile          thin clients
 Why not just do it in Electron's main process:
 
 - **Agents survive the UI.** Close the window, the turn keeps running.
-- **Mobile becomes a client, not a rewrite.**
 - The web client is nearly free.
 - The server is headless, so orchestration is testable without booting Electron.
 
@@ -34,7 +33,7 @@ envelopes carry a monotonic `sequence` per connection so clients detect gaps and
 Client transport is an explicit state machine (`connecting → open → reconnecting → closed`)
 that queues outbound requests while disconnected.
 
-_Rejected:_ everything in Electron main (forecloses mobile/web). tRPC on the wire (ties us
+_Rejected:_ everything in Electron main (forecloses the web client). tRPC on the wire (ties us
 to a TypeScript client).
 
 ---
@@ -342,3 +341,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-08-12 | Added user-owned, protocol-compatible harness commands and Pi RPC.      |
 | 2026-08-12 | Defined provider-neutral ephemeral Side chat sessions.                  |
 | 2026-08-12 | Standardized Electron browser previews on sandboxed `<webview>` guests. |
+| 2026-08-14 | Removed phone and remote-client support from active product scope.      |

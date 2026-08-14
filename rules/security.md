@@ -15,9 +15,8 @@
 No prompt, no file path, no key, no source code goes to any server we control. Ever.
 
 If we ever add telemetry it is opt-in, aggregate-only, documented in the README, and off by
-default. This is a public promise and it constrains future product decisions — including any
-cloud, team, or mobile-relay feature. Accept that now, or renegotiate it explicitly with
-users later.
+default. This is a public promise and it constrains future cloud or team product decisions.
+Accept that now, or renegotiate it explicitly with users later.
 
 ## Loopback is not a trust boundary
 
@@ -27,9 +26,9 @@ site the user happens to be visiting can open `ws://127.0.0.1:4311` and speak ou
 Everything the UI can do — enumerate projects, start a thread with `full` approval, open a
 terminal — it could do too.
 
-The gate is the `Origin` header. Allowed: absent (non-browser clients — the CLI, tests, a
-native mobile client), `file://` (the packaged renderer), and loopback origins (the dev
-server and our own web UI). Anything else is refused with 1008.
+The gate is the `Origin` header. Allowed: absent (non-browser clients — the CLI and tests),
+`file://` (the packaged renderer), and loopback origins (the dev server and our own web UI).
+Anything else is refused with 1008.
 
 **`null` is not allowed, and must never be added back.** A page cannot forge an arbitrary
 origin, but it can always mint the _opaque_ one — `<iframe sandbox="allow-scripts" srcdoc=…>`

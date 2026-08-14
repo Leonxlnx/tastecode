@@ -269,7 +269,9 @@ describe('completed activity disclosure', () => {
       />,
     )
 
-    const disclosure = screen.getByRole('button', { name: 'Worked for 3s' })
+    const disclosure = screen.getByRole('button', {
+      name: 'Worked for 2s · ran a command',
+    })
     const reveal = container.querySelector('.activity__reveal')
     expect(disclosure.getAttribute('aria-expanded')).toBe('false')
     expect(reveal?.getAttribute('data-open')).toBe('false')
@@ -309,16 +311,15 @@ describe('completed activity disclosure', () => {
     ]
     renderCompleted(items)
 
-    const disclosures = screen.getAllByRole('button', { name: 'Worked for 1s' })
-    expect(disclosures).toHaveLength(2)
-    disclosures.forEach((disclosure) => fireEvent.click(disclosure))
+    fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s · ran a command' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
 
     const firstNarration = screen.getByText('I found the cause.')
-    const command = screen.getByText('pnpm test')
+    const command = screen.getByText(/pnpm test/)
     const secondNarration = screen.getByText('The focused test passes.')
     const file = screen.getByText('Edited files')
     const answer = screen.getByText('Fixed.')
-    expect(screen.getByText('12 passed')).toBeTruthy()
+    expect(screen.getByText(/12 passed/)).toBeTruthy()
     expect(screen.getByText(/src\/chat\.ts\s+2 lines added/)).toBeTruthy()
     expect(
       firstNarration.compareDocumentPosition(command) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -347,10 +348,10 @@ describe('completed activity disclosure', () => {
     ]
     renderCompleted(items.map((entry) => ({ ...entry })))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s · ran a command' }))
     expect(screen.getByText('Thinking')).toBeTruthy()
     expect(screen.getByText('Inspecting state')).toBeTruthy()
-    expect(screen.getByText('pnpm test')).toBeTruthy()
+    expect(screen.getByText(/pnpm test/)).toBeTruthy()
     expect(screen.getByText('Searched 4 files')).toBeTruthy()
     expect(screen.getByText('Building the website')).toBeTruthy()
   })
@@ -493,7 +494,38 @@ describe('completed activity disclosure', () => {
     expect(screen.getAllByRole('button', { name: 'Copy response' })).toHaveLength(1)
   })
 
-  it('hides response actions while a later turn is running', () => {
+  it('puts the turn revert beside the completed response', () => {
+    const onRevertCheckpoint = vi.fn()
+    const checkpoint = { id: 9, seq: 1, label: 'Fix it', createdAt: 0 }
+    render(
+      <Thread
+        items={[
+          turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
+          turnItem('answer-1', 2, {
+            role: 'assistant',
+            phase: 'final_answer',
+            text: 'Fixed.',
+          }),
+        ]}
+        running={false}
+        activeTurn={undefined}
+        plan={[]}
+        diff={undefined}
+        approvals={[]}
+        userInputs={[]}
+        reviews={[]}
+        checkpoints={[checkpoint]}
+        onRevertCheckpoint={onRevertCheckpoint}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Revert to before response' }))
+    expect(onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
+  })
+
+  it('keeps completed response actions visible while a later turn is running', () => {
     render(
       <Thread
         items={[
@@ -522,7 +554,7 @@ describe('completed activity disclosure', () => {
       />,
     )
 
-    expect(screen.queryByRole('button', { name: 'Copy response' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Copy response' })).toBeTruthy()
   })
 })
 
@@ -563,13 +595,13 @@ describe('collapsed row disclosure', () => {
       />,
     )
 
-    const disclosure = screen.getByRole('button', { name: 'pnpm test' })
+    const disclosure = screen.getByRole('button', { name: 'Ran a command' })
     const reveal = container.querySelector('.aux__reveal')
     expect(disclosure.getAttribute('aria-expanded')).toBe('false')
     expect(reveal?.getAttribute('data-open')).toBe('false')
     expect(reveal?.getAttribute('aria-hidden')).toBe('true')
     expect(reveal?.hasAttribute('inert')).toBe(true)
-    expect(container.querySelector('.aux__out')?.textContent).toBe('1 failed, 12 passed')
+    expect(container.querySelector('.aux__out')?.textContent).toBe('pnpm test\n1 failed, 12 passed')
 
     fireEvent.click(disclosure)
 

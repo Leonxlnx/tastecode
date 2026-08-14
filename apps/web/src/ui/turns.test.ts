@@ -144,6 +144,35 @@ describe('turn boundaries', () => {
     })
   })
 
+  it('restarts work timing after each assistant message', () => {
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', text: 'Fix it.', createdAt: 1_000 },
+      { ...item('thinking', 't1'), type: 'reasoning', createdAt: 2_000 },
+      {
+        ...item('update', 't1'),
+        role: 'assistant',
+        phase: 'commentary',
+        text: 'I found the cause.',
+        createdAt: 5_000,
+      },
+      { ...item('command', 't1'), type: 'command', command: 'pnpm test', createdAt: 6_000 },
+      {
+        ...item('answer', 't1'),
+        role: 'assistant',
+        phase: 'final_answer',
+        text: 'Fixed.',
+        createdAt: 13_000,
+      },
+    ]
+
+    const presentation = presentTurns(items, {
+      t1: { startedAt: 1_000, completedAt: 14_000 },
+    }).get('t1')
+
+    expect(presentation?.activityGroups.map(({ elapsedMs }) => elapsedMs)).toEqual([4_000, 8_000])
+    expect(presentation?.workStartedAt).toBe(13_000)
+  })
+
   it('prefers the explicit final-answer phase over a later commentary message', () => {
     const items: Item[] = [
       { ...item('user', 't1'), role: 'user', text: 'Fix it.' },
