@@ -22,8 +22,8 @@ The intended experience is:
 3. Harness records a validated brief before any website implementation begins.
 4. The internal Design Agent makes explicit brand, copy, layout, asset, and motion decisions.
 5. The normal selected agent implements those decisions in the user's existing project.
-6. Harness starts the real local site, captures representative viewports, reviews the visible
-   output, and performs bounded repairs.
+6. Harness starts the real local site, opens it in a dedicated Browser tab, captures representative
+   viewports in a separate deterministic renderer, reviews the output, and performs bounded repairs.
 7. The user receives normal project files, inspectable `.taste` artifacts, and a clear final
    result inside the existing Harness thread.
 
@@ -96,8 +96,10 @@ Build in the existing project
         v
 Validated local preview plan --> 127.0.0.1 server
         |
+        +--> dedicated sidebar Browser tab
+        |
         v
-Desktop + mobile captures
+Isolated desktop + mobile captures
         |
         v
 Visual review --> pass --------------------------+
@@ -150,7 +152,10 @@ Implemented mechanics:
 - phase-specific activity items and human labels;
 - direct API workspace tools with path and credential boundaries;
 - an allowlisted local preview runner;
-- a capability-negotiated Electron screenshot bridge;
+- one dedicated sidebar Browser tab that opens on capture and reloads for repair passes;
+- a serialized, capability-negotiated Electron screenshot bridge that settles animations, fonts,
+  and images before capture;
+- negotiated ACP image prompt blocks for screenshot-capable ACP agents;
 - visual review and at most two repair attempts;
 - queue release after success and failure;
 - cleanup of the preview process when the flow or thread ends.
@@ -383,7 +388,7 @@ The parser rejects:
 - missing explicit ports;
 - shell expressions and path-like executable names;
 - absolute or parent-escaping working directories;
-- duplicate viewport names;
+- duplicate viewport names or dimensions;
 - viewport dimensions outside bounded ranges.
 
 ### Current `review.json`
@@ -465,33 +470,26 @@ The architecture is provider-neutral: Design Mode uses `AgentSession.sendTurn`, 
 state, normal domain events, and declared capabilities. No shared phase branches on a provider
 name.
 
-The current product surface is not yet universally available, however.
+The current product surface is provider-neutral for briefing but capability-gated for visual review.
 
-| Provider path      | Briefing UI today        | Visual review today | Important detail                                                                       |
-| ------------------ | ------------------------ | ------------------- | -------------------------------------------------------------------------------------- |
-| Codex app-server   | Available                | Available           | Declares structured input and images; accepts screenshot attachments.                  |
-| Claude Code CLI    | Blocked by renderer gate | Skipped             | Declares neither shared structured input nor images.                                   |
-| Cursor CLI         | Blocked by renderer gate | Skipped             | Rejects attachments.                                                                   |
-| Native OpenCode    | Blocked by renderer gate | Skipped             | Rejects attachments.                                                                   |
-| Direct API runtime | Blocked by renderer gate | Skipped             | Workspace tools exist, but attachments are not implemented.                            |
-| ACP                | Blocked by renderer gate | Potentially unsafe  | May declare image capability, but its current `sendTurn` path sends text-only prompts. |
+| Provider path      | Briefing UI today | Visual review today       | Important detail                                                               |
+| ------------------ | ----------------- | ------------------------- | ------------------------------------------------------------------------------ |
+| Codex app-server   | Available         | Available                 | Accepts native screenshot attachments.                                         |
+| Claude Code CLI    | Available         | Available                 | Accepts native image attachments.                                              |
+| Grok CLI           | Available         | Available                 | Accepts native image attachments.                                              |
+| Cursor CLI         | Available         | Skipped                   | Does not declare image input.                                                  |
+| Native OpenCode    | Available         | Skipped                   | Does not declare image input.                                                  |
+| Direct API runtime | Available         | Skipped                   | Workspace tools exist, but image attachments are not implemented.              |
+| ACP                | Available         | Available when negotiated | Sends ACP image blocks only when the agent advertised image prompt capability. |
 
-The renderer currently allows Design Mode submission only when the selected provider advertises
-`capabilities.userInput`. Design briefing questions are actually Harness-owned and are answered by
-`Orchestrator.respondToUserInput`, so this gate unnecessarily couples Design Mode to an adapter
-feature it does not need. In the current code, Codex is the practical working path.
+Harness-owned Design questions need only an ordinary text turn and do not depend on an adapter's
+provider-originated structured-input capability. Provider-originated questions still use the
+adapter's declared `userInput` support.
 
-This should be fixed by separating two concepts:
-
-1. provider-originated structured input, which really is an adapter capability; and
-2. Harness-originated Design Mode questions, which work above adapters and should be available to
-   every provider that can complete ordinary text turns.
-
-Image support also needs truthful end-to-end capability reporting. ACP currently derives its image
-capability from initialization, but `AcpSession.sendTurn` ignores attachment arguments and creates
-a text-only ACP prompt. Until ACP image prompt blocks are implemented and captured against a real
-agent, ACP must report images as unsupported. Otherwise a screenshot path string can be reviewed as
-if the model saw the image, producing a false pass.
+Image support remains truthful end to end. ACP derives its capability from initialization and
+serializes screenshot files as ACP image content blocks only when
+`promptCapabilities.image` was negotiated. Unsupported ACP agents reject image attachments, and
+shared orchestration degrades the Review phase instead of pretending the model saw a path string.
 
 Providers without real image input currently finish after Preview with an explicit message that
 visual review was skipped. This is honest degradation, but it does not satisfy M4's full definition
@@ -534,24 +532,31 @@ The server:
 - stops the process when the flow ends or the thread closes.
 
 The renderer advertises `previewCapture` on every WebSocket connection. The server chooses one
-connected capable client and sends a typed capture request. The Electron main process validates the
-request and opens an invisible hardened BrowserWindow with context isolation, no Node integration,
-sandboxing, denied permissions, denied new windows, and same-origin navigation enforcement.
+connected capable client and serializes capture requests so one request owns the shared capture
+session at a time.
 
-Capture waits for animation settlement, fonts, and two animation frames, but races a 30-second hard
-deadline. It captures each unique requested size, writes private temporary PNGs, destroys the
-window, clears its session storage, removes failed captures, and sweeps capture directories older
-than one day.
+The same typed capture request opens or focuses one dedicated sidebar Browser tab. A new request ID
+reloads the requested URL after the Electron guest reports `dom-ready`, so repair passes refresh
+even when the URL is unchanged. Manual Browser input normalizes `localhost` and IPv6 loopback to
+`127.0.0.1` for reliable Windows loading. This visible guest is for user inspection; a separate
+hidden BrowserWindow remains the authority for exact review screenshots.
+
+The Electron main process validates the request, denies permission checks and requests, denies new
+windows, confines navigation and redirects to the preview origin, and verifies the final URL. It
+waits, within a 30-second deadline, for bounded animation settlement, fonts, image load and decode,
+and two final animation frames. It captures each requested size, writes private temporary PNGs,
+destroys the window, clears its session storage, removes failed captures, and sweeps capture
+directories older than one day.
 
 Current preview risks that still need explicit work:
 
-- the non-Windows stop path signals only the wrapper process and does not wait for a descendant
-  package-manager server to exit; validate and harden the real macOS process tree;
+- POSIX process-group shutdown is implemented but still needs a real macOS process-tree smoke run;
 - the preview command executes a script already declared by the opened project without a separate
   Design Mode approval; confirm this trust model is intended or route it through the normal command
   approval surface;
-- when several desktop clients are connected, the coordinator uses the first capable socket rather
-  than selecting the client that owns the active thread;
+- when several desktop clients are connected, the coordinator uses the first capable socket and the
+  capture request has no thread owner, so a concurrent run can open in the wrong visible workspace;
+- captures cover the requested viewport from the top of the page, not a durable full-page iteration;
 - screenshot files are temporary evidence, not a durable iteration history.
 
 ## OriginKit
@@ -632,18 +637,13 @@ relies primarily on provider-reported checks and screenshots.
 
 ### Critical correctness gaps
 
-1. **Remove the provider `userInput` gate from Harness-owned briefing.** The current renderer blocks
-   Design Mode for most providers even though the server owns the questions.
-2. **Make image capabilities end-to-end truthful.** Implement ACP image prompt blocks or report
-   images as unsupported. Add attachment support to other adapters only after real protocol capture.
-3. **Do not force low effort for every phase.** The initial Design request currently stores
-   `{ effort: "low" }` in the flow, so Brand, Page, Build, Review, and Repair inherit the fast
-   briefing setting. Use low effort only for qualification and briefing, then restore the user's
-   selected effort or define explicit phase policy.
-4. **Invalidate async Preview and Capture work on panic stop.** A panic can happen after the
+1. **Invalidate async Preview and Capture work on panic stop.** A panic can happen after the
    provider turn has completed while preview startup or capture is awaiting. Those continuations
    must not launch Review after an emergency stop.
-5. **Harden macOS preview-tree shutdown.** Stop the real descendant server and wait for exit.
+2. **Prove preview-tree shutdown on macOS.** POSIX process-group termination and exit waiting are
+   implemented, but the real package-manager descendant path still needs a macOS smoke run.
+3. **Route capture to its owning task and desktop client.** The current typed request has no
+   `threadId`; the first capable socket is correct only under the single-active-desktop assumption.
 
 ### Missing internal judgment and tool work
 
@@ -655,7 +655,7 @@ relies primarily on provider-reported checks and screenshots.
 
 ### Missing M4 product surfaces
 
-- a visible live preview pane with hot reload;
+- persistent hot-reload and manual iteration controls beyond capture-triggered Browser reloads;
 - a direction gallery with real rendered choices before committing to one direction;
 - a design-token editor;
 - a reference and anti-reference board;
@@ -670,12 +670,11 @@ relies primarily on provider-reported checks and screenshots.
 Keep each step in its own small PR. Do not combine schema changes, provider correctness, internal
 judgment rules, and UI design.
 
-### 1. Restore provider-neutral mechanics
+### 1. Finish provider verification
 
-- remove the renderer's `userInput` dependency for Design-owned questions;
-- separate briefing effort from later phase effort;
-- make ACP image capability truthful;
-- add tests with a direct API session and a non-Codex adapter;
+- add real Design fixtures for a direct API session and non-Codex adapters;
+- capture one negotiated ACP image-review run against a real ACP agent;
+- add image attachments to another adapter only after its real protocol is captured;
 - verify that a future adapter works through capabilities without a provider-name branch.
 
 ### 2. Close lifecycle safety gaps
@@ -712,7 +711,7 @@ judgment rules, and UI design.
 
 ### 6. Finish M4 surfaces
 
-- visible preview and iteration controls;
+- persistent hot-reload and manual preview iteration controls;
 - token editor;
 - reference board;
 - asset production and provenance UX;
@@ -736,26 +735,29 @@ The implementation should not silently decide these product questions:
 
 ## Implementation map
 
-| Area                                                    | Files                                                             |
-| ------------------------------------------------------- | ----------------------------------------------------------------- |
-| Artifact types, parsers, writers, phase prompts         | `packages/design-agent/src/`                                      |
-| Design flow state, phase routing, recovery, corrections | `apps/server/src/orchestrator.ts`                                 |
-| Preview plan execution and command safety               | `apps/server/src/design-preview-runner.ts`                        |
-| Desktop capture coordination                            | `apps/server/src/preview-capture.ts`, `apps/server/src/server.ts` |
-| Typed capture and structured-input protocol             | `packages/contracts/src/`                                         |
-| Desktop hidden capture window                           | `apps/desktop/src/main.ts`, `apps/desktop/src/preload.ts`         |
-| Design attachment and briefing UI                       | `apps/web/src/design-agent/`                                      |
-| Design toggle and capability gate                       | `apps/web/src/App.tsx`, `apps/web/src/ui/Composer.tsx`            |
-| Persisted renderer questions                            | `apps/web/src/thread-store.ts`, `apps/web/src/ui/Thread.tsx`      |
-| Activity presentation                                   | `apps/web/src/ui/Thread.tsx`                                      |
-| Client capture relay                                    | `apps/web/src/bridge.ts`, `apps/web/src/transport.ts`             |
-| Direct API workspace tools                              | `apps/server/src/api-workspace-tools.ts`                          |
-| Durable product scope                                   | `docs/ROADMAP.md`, `docs/FEATURES.md`, this document              |
+| Area                                                    | Files                                                                                    |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Artifact types, parsers, writers, phase prompts         | `packages/design-agent/src/`                                                             |
+| Design flow state, phase routing, recovery, corrections | `apps/server/src/orchestrator.ts`                                                        |
+| Preview plan execution and command safety               | `apps/server/src/design-preview-runner.ts`                                               |
+| Desktop capture coordination                            | `apps/server/src/preview-capture.ts`, `apps/server/src/server.ts`                        |
+| Typed capture and structured-input protocol             | `packages/contracts/src/`                                                                |
+| Desktop hidden capture window                           | `apps/desktop/src/main.ts`, `apps/desktop/src/preload.ts`                                |
+| Visible Design preview routing                          | `apps/web/src/ui/workspace/WorkspacePanel.tsx`, `WorkspaceBrowser.tsx`, `browser-url.ts` |
+| Design attachment and briefing UI                       | `apps/web/src/design-agent/`                                                             |
+| Design toggle and capability gate                       | `apps/web/src/App.tsx`, `apps/web/src/ui/Composer.tsx`                                   |
+| Persisted renderer questions                            | `apps/web/src/thread-store.ts`, `apps/web/src/ui/Thread.tsx`                             |
+| Activity presentation                                   | `apps/web/src/ui/Thread.tsx`                                                             |
+| Client capture relay                                    | `apps/web/src/bridge.ts`, `apps/web/src/transport.ts`                                    |
+| ACP screenshot prompt blocks                            | `packages/adapter-acp/src/`                                                              |
+| Direct API workspace tools                              | `apps/server/src/api-workspace-tools.ts`                                                 |
+| Durable product scope                                   | `docs/ROADMAP.md`, `docs/FEATURES.md`, this document                                     |
 
 Tests are colocated with each package or application. Important coverage includes artifact parser
 tests, phase-prompt parsing, briefing continuation, question navigation, thread-store persistence,
 orchestrator phase progression and restart recovery, preview plan validation, preview process
-execution, capture coordination, Electron navigation restrictions, and adapter capability behavior.
+execution, Browser auto-open and same-URL repair reload, serialized capture coordination, Electron
+navigation and settle behavior, ACP image prompt blocks, and adapter capability behavior.
 
 ## Rules for future implementation
 
@@ -795,5 +797,5 @@ M4 is complete only when:
 - the direction gallery, token editor, reference board, and asset workflow are usable;
 - Personal Harness's own landing page passes the automated rubric and human design review.
 
-Until then, the current system should be described as an implemented end-to-end Design Mode
-skeleton with a working Codex proof run, not as a finished cross-provider Design Mode.
+Until then, the current system should be described as an implemented provider-neutral Design Mode
+skeleton with capability-gated visual review, not as a finished cross-provider Design Mode.
