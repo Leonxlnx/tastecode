@@ -118,6 +118,37 @@ describe('WorkspaceBrowser', () => {
     expect(nativeBrowser.openExternal).toHaveBeenCalledWith('https://example.com/docs')
   })
 
+  it('opens a design preview and reloads the same URL for a later review pass', async () => {
+    const first = {
+      requestId: '00000000-0000-4000-8000-000000000001',
+      url: 'http://127.0.0.1:4173/',
+    }
+    const { rerender } = render(<WorkspaceBrowser active navigation={first} />)
+    const view = guests[0]!
+
+    await waitFor(() => expect(view.loadURL).toHaveBeenCalledWith(first.url))
+    expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe(first.url)
+
+    rerender(
+      <WorkspaceBrowser
+        active
+        navigation={{ ...first, requestId: '00000000-0000-4000-8000-000000000002' }}
+      />,
+    )
+    await waitFor(() => expect(view.loadURL).toHaveBeenCalledTimes(2))
+
+    rerender(
+      <WorkspaceBrowser
+        active
+        navigation={{
+          requestId: '00000000-0000-4000-8000-000000000003',
+          url: 'http://127.0.0.1:5183/',
+        }}
+      />,
+    )
+    await waitFor(() => expect(view.loadURL).toHaveBeenLastCalledWith('http://127.0.0.1:5183/'))
+  })
+
   it('shows invalid input instead of sending privileged URLs to Chromium', () => {
     render(<WorkspaceBrowser active />)
     const view = guests[0]!
