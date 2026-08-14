@@ -102,6 +102,7 @@
   align-items: center;
   gap: 4px;
   margin-left: auto;
+  margin-right: 34px;
 }
 
 .workspace-panel__controls button {

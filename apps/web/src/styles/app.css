@@ -4109,6 +4109,13 @@
   flex: none;
 }
 
+.stagehead__action--workspace {
+  position: fixed;
+  z-index: 9;
+  top: calc(var(--titlebar-h) + 7px);
+  right: 8px;
+}
+
 .zoom-hud {
   position: fixed;
   z-index: 40;

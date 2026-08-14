@@ -6,7 +6,6 @@ import {
   Maximize2,
   MessageCirclePlus,
   Minimize2,
-  PanelRightClose,
   Plus,
   SquareTerminal,
   X,
@@ -359,9 +358,6 @@ export function WorkspacePanel(props: {
             ) : (
               <Maximize2 size={14} aria-hidden />
             )}
-          </button>
-          <button type="button" aria-label="Hide workspace tools" onClick={props.onClose}>
-            <PanelRightClose size={15} aria-hidden />
           </button>
         </div>
       </header>

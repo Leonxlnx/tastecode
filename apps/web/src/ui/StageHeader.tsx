@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { Ellipsis, GitBranch, PanelRightOpen, SquareTerminal } from 'lucide-react'
+import { Ellipsis, GitBranch, PanelRightClose, PanelRightOpen, SquareTerminal } from 'lucide-react'
 import { isDesktop, revealPath } from '../bridge.js'
 import { Menu, MenuItem } from './Menu.js'
 
@@ -126,18 +126,20 @@ function StageHeaderComponent(props: {
       </div>
 
       <div className="stagehead__tools">
-        {!props.workspacePanelOpen ? (
-          <button
-            type="button"
-            className="stagehead__action"
-            aria-label="Show workspace tools"
-            aria-pressed={false}
-            title="Workspace tools"
-            onClick={props.onToggleWorkspace}
-          >
+        <button
+          type="button"
+          className="stagehead__action stagehead__action--workspace"
+          aria-label={props.workspacePanelOpen ? 'Hide workspace tools' : 'Show workspace tools'}
+          aria-pressed={props.workspacePanelOpen}
+          title="Workspace tools"
+          onClick={props.onToggleWorkspace}
+        >
+          {props.workspacePanelOpen ? (
+            <PanelRightClose size={16} aria-hidden />
+          ) : (
             <PanelRightOpen size={16} aria-hidden />
-          </button>
-        ) : null}
+          )}
+        </button>
         {props.sessionId ? (
           <button
             type="button"
