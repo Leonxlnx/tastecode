@@ -6,6 +6,7 @@ import {
   app,
   BrowserWindow,
   clipboard,
+  crashReporter,
   dialog,
   ipcMain,
   Menu,
@@ -28,6 +29,7 @@ import { shouldHideWindowOnClose } from './background-lifecycle.js'
 import { clipboardText } from './clipboard-text.js'
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
+import { LocalDiagnostics } from './local-diagnostics.js'
 import { allowsMicrophoneRequest } from './media-permissions.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
 import { pastedFile } from './pasted-file.js'
@@ -95,6 +97,7 @@ let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
+let diagnostics: LocalDiagnostics | undefined
 const macOSHaptics = new MacOSHaptics()
 
 if (!ownsSingleInstance) {
@@ -200,6 +203,7 @@ function createWindow(): void {
   window.on('show', () => restoreMainWindowPresence(process.platform, app, window))
   window.on('unresponsive', () => {
     console.error('[desktop] main window renderer became unresponsive')
+    void diagnostics?.record('renderer', 'Main window became unresponsive')
   })
   window.on('responsive', () => {
     console.info('[desktop] main window renderer recovered')
@@ -208,6 +212,7 @@ function createWindow(): void {
     console.error(
       `[desktop] main window renderer exited: ${details.reason} (code ${details.exitCode})`,
     )
+    void diagnostics?.record('renderer crash', `${details.reason} (code ${details.exitCode})`)
   })
 
   // Avoid the white flash before React paints.
@@ -292,6 +297,29 @@ ipcMain.handle('harness:setZoom', (event, action: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window) throw new Error('No window for zoom action')
   applyZoom(window, action)
+})
+
+ipcMain.handle('harness:getDiagnosticsEnabled', (event) => {
+  requireOwnRenderer(event.sender)
+  return diagnostics?.isEnabled() ?? false
+})
+
+ipcMain.handle('harness:setDiagnosticsEnabled', (event, enabled: unknown) => {
+  requireOwnRenderer(event.sender)
+  if (typeof enabled !== 'boolean') throw new Error('Invalid diagnostics preference')
+  return diagnostics?.setEnabled(enabled) ?? false
+})
+
+ipcMain.handle('harness:openDiagnostics', async (event) => {
+  requireOwnRenderer(event.sender)
+  if (!diagnostics) return false
+  await mkdir(diagnostics.directory, { recursive: true, mode: 0o700 })
+  return (await shell.openPath(diagnostics.directory)) === ''
+})
+
+ipcMain.on('harness:reportRendererError', (event, value: unknown) => {
+  if (!isOwnRenderer(event.sender) || typeof value !== 'string') return
+  void diagnostics?.record('renderer', value)
 })
 
 ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
@@ -525,7 +553,21 @@ if (ownsSingleInstance) {
     tray = undefined
   })
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
+    const diagnosticsDirectory = path.join(app.getPath('userData'), 'diagnostics')
+    diagnostics = new LocalDiagnostics(diagnosticsDirectory, () => {
+      app.setPath('crashDumps', diagnosticsDirectory)
+      crashReporter.start({
+        productName: 'TasteCode',
+        companyName: 'TasteCode',
+        submitURL: 'https://tastecode.dev/crash-reports-disabled',
+        uploadToServer: false,
+        compress: true,
+      })
+    })
+    process.on('uncaughtExceptionMonitor', (error) => void diagnostics?.record('main crash', error))
+    process.on('unhandledRejection', (error) => void diagnostics?.record('main rejection', error))
+    await diagnostics.initialize()
     if (process.platform === 'darwin') app.dock?.setIcon(productIconPath)
     startOwnedServer()
     configureMediaPermissions()

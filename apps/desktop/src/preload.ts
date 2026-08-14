@@ -32,6 +32,13 @@ const api = {
   capturePreview: (request: PreviewCaptureRequest): Promise<PreviewCaptureResult> =>
     ipcRenderer.invoke('harness:capturePreview', request),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('harness:openExternal', url),
+  getDiagnosticsEnabled: (): Promise<boolean> =>
+    ipcRenderer.invoke('harness:getDiagnosticsEnabled'),
+  setDiagnosticsEnabled: (enabled: boolean): Promise<boolean> =>
+    ipcRenderer.invoke('harness:setDiagnosticsEnabled', enabled),
+  openDiagnostics: (): Promise<boolean> => ipcRenderer.invoke('harness:openDiagnostics'),
+  reportRendererError: (message: string): void =>
+    ipcRenderer.send('harness:reportRendererError', message.slice(0, 4_000)),
   onZoomChange: (listener: (factor: number) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, factor: unknown) => {
       if (typeof factor === 'number' && Number.isFinite(factor)) listener(factor)

@@ -47,7 +47,12 @@ import {
   type ModelChoice,
   type ProviderMark,
 } from '../model-catalog.js'
-import { isDesktop } from '../bridge.js'
+import {
+  isDesktop,
+  localDiagnosticsEnabled,
+  openLocalDiagnostics,
+  setLocalDiagnosticsEnabled,
+} from '../bridge.js'
 import {
   beginInstall,
   beginLogin,
@@ -1104,10 +1109,53 @@ function ThemePicker(props: {
 
 function DataSettings(props: { projectCount: number; onReset: () => void }) {
   const [confirming, setConfirming] = useState(false)
+  const [diagnosticsEnabled, setDiagnosticsEnabled] = useState(false)
+  const [diagnosticsError, setDiagnosticsError] = useState<string>()
   const projectLabel = `${props.projectCount} ${props.projectCount === 1 ? 'project' : 'projects'} on this machine`
+
+  useEffect(() => {
+    void localDiagnosticsEnabled().then(setDiagnosticsEnabled)
+  }, [])
+
+  const toggleDiagnostics = async () => {
+    setDiagnosticsError(undefined)
+    try {
+      setDiagnosticsEnabled(await setLocalDiagnosticsEnabled(!diagnosticsEnabled))
+    } catch (cause) {
+      setDiagnosticsError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
 
   return (
     <SettingsPanel title="Data & privacy">
+      {isDesktop ? (
+        <SettingsRow
+          title="Local diagnostics"
+          note="Off by default. Stores app errors and crash dumps only on this device. Nothing is uploaded. Turning it off fully applies after restart."
+          className="settings__row--roomy"
+        >
+          {diagnosticsError ? <RowIssue message={diagnosticsError} /> : null}
+          {diagnosticsEnabled ? (
+            <button
+              className="settings__action"
+              type="button"
+              onClick={() => void openLocalDiagnostics()}
+            >
+              Open folder
+            </button>
+          ) : null}
+          <button
+            className={`switch${diagnosticsEnabled ? ' is-on' : ''}`}
+            type="button"
+            role="switch"
+            aria-label="Local diagnostics"
+            aria-checked={diagnosticsEnabled}
+            onClick={() => void toggleDiagnostics()}
+          >
+            <span className="switch__thumb" />
+          </button>
+        </SettingsRow>
+      ) : null}
       <SettingsRow
         title={projectLabel}
         note="Reset only clears this renderer’s preferences. It does not delete projects, workspaces, files, chat history, or provider credentials."
