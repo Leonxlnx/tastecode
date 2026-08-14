@@ -7,17 +7,17 @@ import { Composer } from './Composer.js'
 
 const bridge = vi.hoisted(() => ({
   pickFiles: vi.fn(),
-  savePastedImage: vi.fn(),
+  savePastedFile: vi.fn(),
 }))
 
 vi.mock('../bridge.js', () => ({
   pickFiles: bridge.pickFiles,
-  savePastedImage: bridge.savePastedImage,
+  savePastedFile: bridge.savePastedFile,
 }))
 
 beforeEach(() => {
   bridge.pickFiles.mockResolvedValue([])
-  bridge.savePastedImage.mockResolvedValue('/tmp/pasted-image.png')
+  bridge.savePastedFile.mockResolvedValue('/tmp/pasted-image.png')
   Object.defineProperty(URL, 'createObjectURL', {
     configurable: true,
     value: vi.fn(() => 'blob:pasted-image'),
@@ -100,7 +100,7 @@ describe('Composer image paste', () => {
     fireEvent.paste(composer, { clipboardData: { files: [image] } })
 
     expect(screen.getByRole('button', { name: 'Open Screenshot.png' })).toBeTruthy()
-    expect(bridge.savePastedImage).toHaveBeenCalledWith(image)
+    expect(bridge.savePastedFile).toHaveBeenCalledWith(image)
     fireEvent.change(composer, { target: { value: 'What is in this image?' } })
     await waitFor(() =>
       expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
@@ -159,13 +159,38 @@ describe('Composer image paste', () => {
 
     fireEvent.paste(composer, { clipboardData: { files: [image] } })
 
-    expect(bridge.savePastedImage).not.toHaveBeenCalled()
+    expect(bridge.savePastedFile).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: 'Open Screenshot.png' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Attach files' })).toBeNull()
     expect(screen.getByRole('alert').textContent).toBe(
       'Attachments aren’t supported by this source.',
     )
     expect(composer.value).toBe('Keep this draft')
+  })
+
+  it.each([
+    ['application/pdf', 'brief.pdf', '/tmp/brief.pdf'],
+    ['video/mp4', 'walkthrough.mp4', '/tmp/walkthrough.mp4'],
+  ])('materializes a pasted %s file and sends its path', async (type, name, path) => {
+    bridge.savePastedFile.mockResolvedValueOnce(path)
+    const onSend = vi.fn()
+    renderComposer(onSend)
+    const composer = screen.getByPlaceholderText('Do anything')
+    const file = new File(['file bytes'], name, { type })
+
+    fireEvent.paste(composer, { clipboardData: { files: [file] } })
+
+    expect(await screen.findByText(name)).toBeTruthy()
+    expect(bridge.savePastedFile).toHaveBeenCalledWith(file)
+    fireEvent.change(composer, { target: { value: 'Inspect this attachment' } })
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    )
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).toHaveBeenCalledWith('Inspect this attachment', [path])
   })
 })
 
