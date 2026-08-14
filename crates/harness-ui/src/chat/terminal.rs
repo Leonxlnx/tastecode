@@ -651,7 +651,8 @@ impl ChatView {
                 self.terminal_ui.opening = false;
                 self.terminal_ui.terminal_id = None;
                 self.terminal_ui.status = TerminalStatus::Error;
-                self.terminal_ui.status_message = Some("The TasteCode server is unavailable.".into());
+                self.terminal_ui.status_message =
+                    Some("The TasteCode server is unavailable.".into());
                 self.terminal_ui.blink_generation += 1;
             }
         }

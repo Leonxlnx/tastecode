@@ -46,7 +46,7 @@ output.
 
 ## Responsibility boundary
 
-| TasteCode runtime owns                           | Internal design-agent package owns                    |
+| TasteCode runtime owns                         | Internal design-agent package owns                    |
 | ---------------------------------------------- | ----------------------------------------------------- |
 | Design Mode entry and provider sessions        | Brief, Brand, Page, Asset, Build, and Review prompts  |
 | Question transport and briefing UI             | Artifact contracts and trust-boundary parsers         |
@@ -207,7 +207,7 @@ and decisions that later phases must respect.
 | `constraints`     | Technical, legal, accessibility, content, timing, or design constraints.       |
 | `brandInputs`     | User-supplied names, colors, fonts, references, assets, or visual preferences. |
 | `creativeControl` | How much the user wants the agent to decide.                                   |
-| `explicitAnswers` | Every question and resolved answer collected by TasteCode.                       |
+| `explicitAnswers` | Every question and resolved answer collected by TasteCode.                     |
 | `assumptions`     | Reasonable decisions the agent made, including safe `Decide for me` choices.   |
 | `unresolved`      | Non-blocking details intentionally left for later.                             |
 

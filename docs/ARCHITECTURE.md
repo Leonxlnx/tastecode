@@ -87,21 +87,21 @@ Linux.
 The TypeScript workspace remains beside this target during migration. It is reference code,
 not a second implementation to maintain after native parity.
 
-|                    |                                              |                                                                                                                        |
-| ------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Language / runtime | Rust stable, pinned by the workspace         | One native runtime for the client, server and adapters                                                                 |
-| Monorepo           | Cargo workspace                              | Crates keep protocol, UI, orchestration and adapters independently testable                                            |
-| UI                 | GPUI 0.2.2, exact pin                        | One GPU-rendered element tree through Metal and DirectX                                                                |
-| Chat list          | Custom end-anchored virtual GPUI element     | Variable-height streaming rows need stable keys, cached measurement and explicit anchor control                        |
-| Markdown           | Incremental parser + native highlighter      | Incomplete streamed blocks stay cheap; completed blocks become immutable                                               |
-| Styling            | Typed TasteCode tokens                         | The current CSS values are migrated exactly, including every theme and density state                                   |
-| Components         | TasteCode-owned GPUI primitives                | Focus, menus, sheets and inputs preserve current behavior without importing another visual language                    |
-| Motion             | GPUI frame animations                        | Existing easing and durations are the contract; reduced motion remains first-class                                     |
-| State              | GPUI entities + event-derived read models    | Deltas update the live tail without invalidating the whole application tree                                            |
-| DB                 | SQLite, WAL, FTS5                            | Append-only events and rebuildable read models remain unchanged                                                        |
-| PTY                | Rust ConPTY / Unix PTY abstraction           | Process-tree termination and intentional-exit semantics remain cross-platform requirements                             |
+|                    |                                              |                                                                                                                          |
+| ------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Language / runtime | Rust stable, pinned by the workspace         | One native runtime for the client, server and adapters                                                                   |
+| Monorepo           | Cargo workspace                              | Crates keep protocol, UI, orchestration and adapters independently testable                                              |
+| UI                 | GPUI 0.2.2, exact pin                        | One GPU-rendered element tree through Metal and DirectX                                                                  |
+| Chat list          | Custom end-anchored virtual GPUI element     | Variable-height streaming rows need stable keys, cached measurement and explicit anchor control                          |
+| Markdown           | Incremental parser + native highlighter      | Incomplete streamed blocks stay cheap; completed blocks become immutable                                                 |
+| Styling            | Typed TasteCode tokens                       | The current CSS values are migrated exactly, including every theme and density state                                     |
+| Components         | TasteCode-owned GPUI primitives              | Focus, menus, sheets and inputs preserve current behavior without importing another visual language                      |
+| Motion             | GPUI frame animations                        | Existing easing and durations are the contract; reduced motion remains first-class                                       |
+| State              | GPUI entities + event-derived read models    | Deltas update the live tail without invalidating the whole application tree                                              |
+| DB                 | SQLite, WAL, FTS5                            | Append-only events and rebuildable read models remain unchanged                                                          |
+| PTY                | Rust ConPTY / Unix PTY abstraction           | Process-tree termination and intentional-exit semantics remain cross-platform requirements                               |
 | Terminal state     | `alacritty_terminal` 0.26.0                  | ANSI parsing mutates a bounded cell grid incrementally, while TasteCode retains ownership of PTY lifecycle and transport |
-| Tests              | Rust unit, protocol fixture and render tests | Real provider captures and platform screenshots remain the final contract                                              |
+| Tests              | Rust unit, protocol fixture and render tests | Real provider captures and platform screenshots remain the final contract                                                |
 
 **On Effect-TS:** T3 Code uses it throughout and it genuinely fits this problem. We don't
 adopt it for v1 — the learning curve colors every signature and with two developers the

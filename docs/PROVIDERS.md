@@ -12,15 +12,15 @@ implementation details out of shared contracts and components.
 
 ## Integration matrix
 
-| User-facing option     | Integration                                        | Shared implementation                            |
-| ---------------------- | -------------------------------------------------- | ------------------------------------------------ |
-| Codex subscription     | Codex app-server                                   | Existing native adapter                          |
-| Claude subscription    | Claude Code structured CLI                         | Existing CLI adapter                             |
-| ACP agents             | Agent Client Protocol                              | Existing ACP adapter                             |
-| Cursor                 | `cursor-agent --print --output-format stream-json` | Structured CLI adapter                           |
-| OpenCode               | Local server and generated TypeScript SDK          | Native HTTP/SSE adapter                          |
-| Kimi Code              | Verified `kimi acp` surface                        | Shared ACP adapter                               |
-| GLM / Z.ai coding plan | Provider configured inside OpenCode or Claude Code | Existing OpenCode or Claude Code adapter         |
+| User-facing option     | Integration                                        | Shared implementation                              |
+| ---------------------- | -------------------------------------------------- | -------------------------------------------------- |
+| Codex subscription     | Codex app-server                                   | Existing native adapter                            |
+| Claude subscription    | Claude Code structured CLI                         | Existing CLI adapter                               |
+| ACP agents             | Agent Client Protocol                              | Existing ACP adapter                               |
+| Cursor                 | `cursor-agent --print --output-format stream-json` | Structured CLI adapter                             |
+| OpenCode               | Local server and generated TypeScript SDK          | Native HTTP/SSE adapter                            |
+| Kimi Code              | Verified `kimi acp` surface                        | Shared ACP adapter                                 |
+| GLM / Z.ai coding plan | Provider configured inside OpenCode or Claude Code | Existing OpenCode or Claude Code adapter           |
 | OpenAI API             | Responses API                                      | TasteCode API runtime + native OpenAI transport    |
 | Anthropic API          | Messages API                                       | TasteCode API runtime + native Anthropic transport |
 | OpenRouter             | OpenAI-compatible API                              | TasteCode API runtime + compatible transport       |

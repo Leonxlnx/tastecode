@@ -2554,16 +2554,12 @@ describe('new chats', () => {
 
     expect(anotherProject.getAttribute('aria-expanded')).toBe('true')
     expect(within(anotherProject.closest('.proj')!).getByText('No chats')).toBeTruthy()
-    expect(screen.getByRole('heading').textContent).toBe(
-      'What should we build in TasteCode?',
-    )
+    expect(screen.getByRole('heading').textContent).toBe('What should we build in TasteCode?')
     expect(screen.getByPlaceholderText('Do anything')).toBeTruthy()
 
     fireEvent.click(anotherProject)
     expect(anotherProject.getAttribute('aria-expanded')).toBe('false')
-    expect(screen.getByRole('heading').textContent).toBe(
-      'What should we build in TasteCode?',
-    )
+    expect(screen.getByRole('heading').textContent).toBe('What should we build in TasteCode?')
   })
 
   it('keeps an untouched session out of the sidebar until the first prompt', async () => {

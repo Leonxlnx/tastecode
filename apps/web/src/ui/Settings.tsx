@@ -1201,8 +1201,8 @@ function ResetConfirmation(props: { onCancel: () => void; onConfirm: () => void 
         <section className="sheet__section">
           <p className="checkout-discard__copy" id={descriptionId}>
             This clears renderer-local preferences, including appearance, model choices, hidden
-            models, layout, and recent UI selections, then reloads TasteCode. Projects,
-            workspaces, files, chat history, and provider credentials are not deleted.
+            models, layout, and recent UI selections, then reloads TasteCode. Projects, workspaces,
+            files, chat history, and provider credentials are not deleted.
           </p>
           <div className="checkout-discard__actions">
             <button className="ghost" type="button" data-reset-cancel onClick={props.onCancel}>

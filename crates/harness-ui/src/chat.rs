@@ -9244,9 +9244,7 @@ fn materialize_pasted_image(image: &Image) -> anyhow::Result<PathBuf> {
     if image.bytes().is_empty() || image.bytes().len() > MAX_PASTED_IMAGE_BYTES {
         anyhow::bail!("pasted image is empty or too large");
     }
-    let directory = std::env::temp_dir()
-        .join("TasteCode")
-        .join("pasted-images");
+    let directory = std::env::temp_dir().join("TasteCode").join("pasted-images");
     std::fs::create_dir_all(&directory)?;
     #[cfg(unix)]
     {
