@@ -2776,7 +2776,7 @@ impl HarnessApp {
             });
         });
         let source: SettingsAction = Rc::new(|cx| {
-            cx.open_url("https://github.com/Leonxlnx/personalharness");
+            cx.open_url("https://github.com/Leonxlnx/tastecode");
         });
         let update_controls = div()
             .flex()

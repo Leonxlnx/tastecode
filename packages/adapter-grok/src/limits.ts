@@ -181,7 +181,7 @@ async function readGrokBilling(): Promise<unknown> {
       rpc.request('initialize', {
         protocolVersion: 1,
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-        clientInfo: { name: 'personal-harness', version: '0.0.0' },
+        clientInfo: { name: 'tastecode', version: '0.0.0' },
       }),
     )
     return await bounded(rpc.request('_x.ai/billing', {}))

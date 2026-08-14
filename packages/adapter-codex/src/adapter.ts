@@ -75,7 +75,7 @@ import {
  * any other credential. The binary authenticates itself. See rules/security.md.
  */
 
-const CLIENT_NAME = 'personal-harness'
+const CLIENT_NAME = 'tastecode'
 const CONTROL_READ_TIMEOUT_MS = 10_000
 const THREAD_START_TIMEOUT_MS = 30_000
 

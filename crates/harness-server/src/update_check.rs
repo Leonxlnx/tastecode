@@ -5,7 +5,7 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const LATEST_URL: &str = "https://api.github.com/repos/Leonxlnx/personalharness/commits/main";
+const LATEST_URL: &str = "https://api.github.com/repos/Leonxlnx/tastecode/commits/main";
 const UNREACHABLE: &str = "Could not reach GitHub.";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(8);
 const GIT_TIMEOUT: Duration = Duration::from_secs(10);

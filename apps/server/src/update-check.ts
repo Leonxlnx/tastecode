@@ -13,7 +13,7 @@ import type { ResultOf } from '@harness/contracts'
  * throwing.
  */
 
-const REPO = 'Leonxlnx/personalharness'
+const REPO = 'Leonxlnx/tastecode'
 
 type Probe = {
   head(): Promise<string | undefined>

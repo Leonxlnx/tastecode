@@ -120,7 +120,7 @@ approval or a real user decision blocks the selected provider.
 ## Current implementation status
 
 The first end-to-end implementation shipped in pull request
-[#314](https://github.com/Leonxlnx/personalharness/pull/314). GitHub records 45 commits, 56 changed
+[#314](https://github.com/Leonxlnx/tastecode/pull/314). GitHub records 45 commits, 56 changed
 files, 4,189 additions, and 99 deletions. The pull request was merged as `a41aa85` after its stacked
 predecessor pull requests were superseded.
 

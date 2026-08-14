@@ -12,7 +12,7 @@ describe('embedded browser guest', () => {
   it('strips Electron product markers without damaging the Chromium user agent', () => {
     expect(
       browserUserAgent(
-        'Mozilla/5.0 Chrome/150.0.0.0 Safari/537.36 Electron/43.4.0 PersonalHarness/1.0.0',
+        'Mozilla/5.0 Chrome/150.0.0.0 Safari/537.36 Electron/43.4.0 TasteCode/1.0.0',
       ),
     ).toBe('Mozilla/5.0 Chrome/150.0.0.0 Safari/537.36')
   })

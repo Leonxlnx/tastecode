@@ -1280,11 +1280,7 @@ function AboutSettings(props: { transport: Transport }) {
           className="settings__action"
           type="button"
           onClick={() =>
-            window.open(
-              'https://github.com/Leonxlnx/personalharness',
-              '_blank',
-              'noopener,noreferrer',
-            )
+            window.open('https://github.com/Leonxlnx/tastecode', '_blank', 'noopener,noreferrer')
           }
         >
           GitHub

@@ -548,7 +548,7 @@ fn connect(
                 "clientCapabilities": {
                     "fs": { "readTextFile": false, "writeTextFile": false }
                 },
-                "clientInfo": { "name": "personal-harness", "version": "0.0.0" }
+                "clientInfo": { "name": "tastecode", "version": "0.0.0" }
             }),
             HANDSHAKE_TIMEOUT,
         )
