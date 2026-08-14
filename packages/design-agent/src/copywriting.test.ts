@@ -75,23 +75,35 @@ describe('page copy lint', () => {
     expect(findings).toContainEqual(expect.objectContaining({ rule: 'copy/generic-phrase' }))
   })
 
-  it('flags decorative eyebrow systems but allows genuine process numbering', () => {
+  it('blocks every eyebrow, including process numbering', () => {
     const section = page.sections[0]!
-    const decorative = [1, 2, 3].map((value) => ({
-      ...section,
-      id: `section_${value}`,
-      copy: { ...section.copy, eyebrow: `0${value}` },
-    }))
-    expect(lintPageCopy({ ...page, sections: decorative })).toContainEqual(
-      expect.objectContaining({ rule: 'copy/decorative-numbering' }),
-    )
-    const process = decorative.map((item) => ({
-      ...item,
-      purpose: `Explain process step ${item.copy.eyebrow}.`,
-    }))
-    expect(lintPageCopy({ ...page, sections: process })).not.toContainEqual(
-      expect.objectContaining({ rule: 'copy/decorative-numbering' }),
-    )
+    expect(() =>
+      assertPageCopy({
+        ...page,
+        sections: [{ ...section, copy: { ...section.copy, eyebrow: '01' } }],
+      }),
+    ).toThrow('copy/decorative-eyebrow')
+  })
+
+  it('blocks internal placeholders and overlong heading stacks', () => {
+    const section = page.sections[0]!
+    expect(() =>
+      assertPageCopy({
+        ...page,
+        sections: [
+          {
+            ...section,
+            layoutFamily: 'hero',
+            copy: {
+              ...section.copy,
+              heading:
+                'A deliberately overlong heading that cannot remain concise across normal responsive layouts',
+              body: ['Primary support.', 'Sample data. To be supplied.'],
+            },
+          },
+        ],
+      }),
+    ).toThrow(/copy\/(?:heading-length|hero-body-stack|internal-placeholder)/u)
   })
 
   it('reviews saturated generated-name patterns without blocking user-owned names', () => {

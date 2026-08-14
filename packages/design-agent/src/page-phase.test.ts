@@ -89,7 +89,7 @@ describe('page phase', () => {
     expect(prompt).toContain('Treat the selected layout cases as composition requirements')
     expect(prompt).toContain('Never collapse a selected case into the default centered heading')
     expect(prompt).toContain('Never use an em dash')
-    expect(prompt).toContain('Omit eyebrow copy by default')
+    expect(prompt).toContain('Do not write eyebrow copy')
     expect(prompt).toContain(
       'Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, Social Proof, Stats, FAQ, CTA, Pricing, Contact, and Footer',
     )
