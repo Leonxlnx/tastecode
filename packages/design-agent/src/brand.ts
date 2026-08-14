@@ -3,9 +3,30 @@ import path from 'node:path'
 
 export interface BrandSystem {
   version: 1
+  foundation: {
+    strategy: 'preserve' | 'extend' | 'create'
+    existingAssets: string[]
+    assetActions: Array<{
+      asset: string
+      action: 'protect' | 'preserve' | 'evolve' | 'retire' | 'create'
+      reason: string
+    }>
+    lockedDecisions: string[]
+    assumptions: string[]
+  }
   creativeDirection: {
     summary: string
-    keywords: string[]
+    traits: Array<{
+      quality: string
+      boundary: string
+    }>
+    productiveTension: string
+    signatureDevice: {
+      description: string
+      status: 'existing' | 'candidate' | 'validated'
+      invariants: string[]
+    }
+    restraint: string
     avoid: string[]
   }
   colorPalette: Array<{
@@ -41,6 +62,8 @@ export function parseBrandSystem(value: unknown): BrandSystem {
   const brand = record(value, 'brand system')
   if (brand.version !== 1) throw new Error('brand system version must be 1')
 
+  const foundation =
+    brand.foundation === undefined ? undefined : record(brand.foundation, 'foundation')
   const creativeDirection = record(brand.creativeDirection, 'creativeDirection')
   const imageDirection = record(brand.imageDirection, 'imageDirection')
   const motionDirection = record(brand.motionDirection, 'motionDirection')
@@ -48,9 +71,70 @@ export function parseBrandSystem(value: unknown): BrandSystem {
 
   return {
     version: 1,
+    foundation: foundation
+      ? {
+          strategy: member(
+            foundation.strategy,
+            ['preserve', 'extend', 'create'] as const,
+            'foundation.strategy',
+          ),
+          existingAssets: strings(foundation.existingAssets, 'foundation.existingAssets'),
+          assetActions:
+            foundation.assetActions === undefined
+              ? []
+              : list(foundation.assetActions, 'foundation.assetActions').map((value, index) => {
+                  const item = record(value, `foundation.assetActions[${index}]`)
+                  return {
+                    asset: string(item.asset, `foundation.assetActions[${index}].asset`),
+                    action: member(
+                      item.action,
+                      ['protect', 'preserve', 'evolve', 'retire', 'create'] as const,
+                      `foundation.assetActions[${index}].action`,
+                    ),
+                    reason: string(item.reason, `foundation.assetActions[${index}].reason`),
+                  }
+                }),
+          lockedDecisions: strings(foundation.lockedDecisions, 'foundation.lockedDecisions'),
+          assumptions: strings(foundation.assumptions, 'foundation.assumptions'),
+        }
+      : {
+          strategy: 'create',
+          existingAssets: [],
+          assetActions: [],
+          lockedDecisions: [],
+          assumptions: [],
+        },
     creativeDirection: {
       summary: string(creativeDirection.summary, 'creativeDirection.summary'),
-      keywords: strings(creativeDirection.keywords, 'creativeDirection.keywords'),
+      traits:
+        creativeDirection.traits === undefined
+          ? strings(creativeDirection.keywords, 'creativeDirection.keywords').map((quality) => ({
+              quality,
+              boundary: `not an exaggerated or generic version of ${quality}`,
+            }))
+          : array(creativeDirection.traits, 'creativeDirection.traits').map((value, index) => {
+              const trait = record(value, `creativeDirection.traits[${index}]`)
+              return {
+                quality: string(trait.quality, `creativeDirection.traits[${index}].quality`),
+                boundary: string(trait.boundary, `creativeDirection.traits[${index}].boundary`),
+              }
+            }),
+      productiveTension:
+        creativeDirection.productiveTension === undefined
+          ? 'Coherent and distinctive'
+          : string(creativeDirection.productiveTension, 'creativeDirection.productiveTension'),
+      signatureDevice:
+        creativeDirection.signatureDevice === undefined
+          ? {
+              description: 'No signature device recorded',
+              status: 'candidate',
+              invariants: [],
+            }
+          : parseSignatureDevice(creativeDirection.signatureDevice),
+      restraint:
+        creativeDirection.restraint === undefined
+          ? 'Use the signature device only where it supports recognition or hierarchy.'
+          : string(creativeDirection.restraint, 'creativeDirection.restraint'),
       avoid: strings(creativeDirection.avoid, 'creativeDirection.avoid'),
     },
     colorPalette: array(brand.colorPalette, 'colorPalette').map((value, index) => {
@@ -86,6 +170,19 @@ export function parseBrandSystem(value: unknown): BrandSystem {
       summary: string(voice.summary, 'voice.summary'),
       avoid: strings(voice.avoid, 'voice.avoid'),
     },
+  }
+}
+
+function parseSignatureDevice(value: unknown): BrandSystem['creativeDirection']['signatureDevice'] {
+  const device = record(value, 'creativeDirection.signatureDevice')
+  return {
+    description: string(device.description, 'creativeDirection.signatureDevice.description'),
+    status: member(
+      device.status,
+      ['existing', 'candidate', 'validated'] as const,
+      'creativeDirection.signatureDevice.status',
+    ),
+    invariants: strings(device.invariants, 'creativeDirection.signatureDevice.invariants'),
   }
 }
 
@@ -126,6 +223,11 @@ function array(value: unknown, field: string): unknown[] {
   return value
 }
 
+function list(value: unknown, field: string): unknown[] {
+  if (!Array.isArray(value)) throw new Error(`${field} must be an array`)
+  return value
+}
+
 function strings(value: unknown, field: string): string[] {
   if (!Array.isArray(value) || !value.every((item) => typeof item === 'string' && item.trim())) {
     throw new Error(`${field} must be a string array`)
@@ -144,4 +246,11 @@ function weights(value: unknown, field: string): number[] {
     throw new Error(`${field} must contain font weights between 1 and 1000`)
   }
   return normalized as number[]
+}
+
+function member<T extends string>(value: unknown, values: readonly T[], field: string): T {
+  if (typeof value !== 'string' || !values.includes(value as T)) {
+    throw new Error(`${field} must be one of ${values.join(', ')}`)
+  }
+  return value as T
 }

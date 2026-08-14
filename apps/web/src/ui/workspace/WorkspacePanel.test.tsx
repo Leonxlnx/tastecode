@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Transport } from '../../transport.js'
 
@@ -25,6 +25,8 @@ vi.mock('./WorkspaceTerminal.js', () => ({
 
 import { WorkspacePanel } from './WorkspacePanel.js'
 
+const idleTransport = { on: () => () => undefined } as unknown as Transport
+
 afterEach(() => {
   cleanup()
   haptics.performAppHaptic.mockClear()
@@ -32,6 +34,37 @@ afterEach(() => {
 })
 
 describe('WorkspacePanel', () => {
+  it('finishes closing immediately when reduced motion removes the transition', async () => {
+    const onClosed = vi.fn()
+    const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query) =>
+        ({
+          matches: query === '(prefers-reduced-motion: reduce)',
+        }) as MediaQueryList,
+    )
+
+    render(
+      <WorkspacePanel
+        open={false}
+        expanded={false}
+        width={400}
+        transport={idleTransport}
+        theme="dark"
+        sideChatParentStatus="idle"
+        sideChatStartOptions={{ approval: 'ask' }}
+        nativeSurfacesVisible
+        onOpen={vi.fn()}
+        onClose={vi.fn()}
+        onClosed={onClosed}
+        onExpandedChange={vi.fn()}
+        onWidthChange={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => expect(onClosed).toHaveBeenCalledOnce())
+    matchMedia.mockRestore()
+  })
+
   it('gives resize detents only while the panel is tracking', () => {
     const onWidthChange = vi.fn()
     const { container } = render(
@@ -39,7 +72,7 @@ describe('WorkspacePanel', () => {
         open
         expanded={false}
         width={400}
-        transport={{} as Transport}
+        transport={idleTransport}
         theme="dark"
         sideChatParentStatus="idle"
         sideChatStartOptions={{ approval: 'ask' }}
@@ -82,7 +115,7 @@ describe('WorkspacePanel', () => {
         open
         expanded={false}
         width={400}
-        transport={{} as Transport}
+        transport={idleTransport}
         projectPath="/workspace/project"
         theme="dark"
         sideChatParentStatus="idle"
@@ -106,7 +139,7 @@ describe('WorkspacePanel', () => {
         open={false}
         expanded={false}
         width={400}
-        transport={{} as Transport}
+        transport={idleTransport}
         theme="dark"
         sideChatParentStatus="idle"
         sideChatStartOptions={{ approval: 'ask' }}
@@ -124,20 +157,19 @@ describe('WorkspacePanel', () => {
   })
 
   it('keeps panel controls inside the workspace chrome', () => {
-    const onClose = vi.fn()
     const onExpandedChange = vi.fn()
     render(
       <WorkspacePanel
         open
         expanded={false}
         width={400}
-        transport={{} as Transport}
+        transport={idleTransport}
         theme="dark"
         sideChatParentStatus="idle"
         sideChatStartOptions={{ approval: 'ask' }}
         nativeSurfacesVisible
         onOpen={vi.fn()}
-        onClose={onClose}
+        onClose={vi.fn()}
         onExpandedChange={onExpandedChange}
         onWidthChange={vi.fn()}
       />,
@@ -147,9 +179,8 @@ describe('WorkspacePanel', () => {
       expect(screen.getByRole('button', { name: title }).querySelector('svg')).toBeTruthy()
     }
     fireEvent.click(screen.getByRole('button', { name: 'Expand workspace tools' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Hide workspace tools' }))
     expect(onExpandedChange).toHaveBeenCalledWith(true)
-    expect(onClose).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('button', { name: 'Hide workspace tools' })).toBeNull()
   })
 
   it('routes a workspace shell exit through the terminal tab close path', async () => {
@@ -159,7 +190,7 @@ describe('WorkspacePanel', () => {
         open
         expanded={false}
         width={400}
-        transport={{} as Transport}
+        transport={idleTransport}
         projectPath="/workspace/project"
         theme="dark"
         sideChatParentStatus="idle"
@@ -179,34 +210,86 @@ describe('WorkspacePanel', () => {
     expect(screen.getByRole('tab', { name: 'Terminal' })).toBeTruthy()
   })
 
-  it('opens independent browser tabs and closes one with the middle mouse button', async () => {
+  it.each(['Browser', 'Terminal', 'Files'] as const)(
+    'opens independent %s tabs and closes one with the middle mouse button',
+    async (tool) => {
+      render(
+        <WorkspacePanel
+          open
+          expanded={false}
+          width={400}
+          transport={idleTransport}
+          theme="dark"
+          sideChatParentStatus="idle"
+          sideChatStartOptions={{ approval: 'ask' }}
+          nativeSurfacesVisible
+          onOpen={vi.fn()}
+          onClose={vi.fn()}
+          onExpandedChange={vi.fn()}
+          onWidthChange={vi.fn()}
+        />,
+      )
+
+      fireEvent.click(screen.getByRole('button', { name: tool }))
+      await waitFor(() => expect(screen.getAllByRole('tab', { name: tool })).toHaveLength(1))
+      fireEvent.click(screen.getByRole('button', { name: 'Add workspace tab' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: tool }))
+      await waitFor(() => expect(screen.getAllByRole('tab', { name: tool })).toHaveLength(2))
+
+      fireEvent(
+        screen.getAllByRole('tab', { name: tool })[0]!,
+        new MouseEvent('auxclick', { bubbles: true, button: 1 }),
+      )
+      expect(screen.getAllByRole('tab', { name: tool })).toHaveLength(1)
+    },
+  )
+
+  it('opens one reusable Browser tab for design preview captures', async () => {
+    let captureListener: ((value: unknown) => void) | undefined
+    const transport = {
+      on: vi.fn((channel: string, listener: (value: unknown) => void) => {
+        if (channel === 'preview.captureRequested') captureListener = listener
+        return () => undefined
+      }),
+    } as unknown as Transport
+    const onOpen = vi.fn()
     render(
       <WorkspacePanel
         open
         expanded={false}
         width={400}
-        transport={{} as Transport}
+        transport={transport}
         theme="dark"
         sideChatParentStatus="idle"
         sideChatStartOptions={{ approval: 'ask' }}
         nativeSurfacesVisible
-        onOpen={vi.fn()}
+        onOpen={onOpen}
         onClose={vi.fn()}
         onExpandedChange={vi.fn()}
         onWidthChange={vi.fn()}
       />,
     )
+    await waitFor(() => expect(captureListener).toBeDefined())
 
-    fireEvent.click(screen.getByRole('button', { name: 'Browser' }))
-    await waitFor(() => expect(screen.getAllByRole('tab', { name: 'Browser' })).toHaveLength(1))
-    fireEvent.click(screen.getByRole('button', { name: 'Add workspace tab' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Browser' }))
-    await waitFor(() => expect(screen.getAllByRole('tab', { name: 'Browser' })).toHaveLength(2))
-
-    fireEvent(
-      screen.getAllByRole('tab', { name: 'Browser' })[0]!,
-      new MouseEvent('auxclick', { bubbles: true, button: 1 }),
+    act(() =>
+      captureListener?.({
+        requestId: '00000000-0000-4000-8000-000000000001',
+        url: 'https://example.com/',
+        viewports: [{ width: 1_280, height: 800 }],
+      }),
     )
+    expect(screen.queryByRole('tab', { name: 'Browser' })).toBeNull()
+
+    const request = (requestId: string) => ({
+      requestId,
+      url: 'http://127.0.0.1:4173/',
+      viewports: [{ width: 1_280, height: 800 }],
+    })
+    act(() => captureListener?.(request('00000000-0000-4000-8000-000000000001')))
+    await waitFor(() => expect(screen.getAllByRole('tab', { name: 'Browser' })).toHaveLength(1))
+
+    act(() => captureListener?.(request('00000000-0000-4000-8000-000000000002')))
     expect(screen.getAllByRole('tab', { name: 'Browser' })).toHaveLength(1)
+    expect(onOpen).toHaveBeenCalledTimes(2)
   })
 })

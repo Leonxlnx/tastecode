@@ -5115,19 +5115,19 @@
   position: absolute;
   z-index: 2;
   right: 6px;
-  left: 6px;
+  left: 26px;
   height: 2px;
   border-radius: var(--r-pill);
-  background: var(--accent);
+  background: var(--light);
   pointer-events: none;
 }
 
 .proj[data-drop-position='before']::before {
-  top: -2px;
+  top: -1px;
 }
 
 .proj[data-drop-position='after']::before {
-  bottom: -2px;
+  bottom: -1px;
 }
 
 .proj__head {
@@ -5146,6 +5146,12 @@
 
 .proj__head:hover .icon-btn {
   opacity: 1;
+}
+
+.proj__head > .icon-btn {
+  width: 26px;
+  height: 26px;
+  margin-right: 4px;
 }
 
 .proj__toggle {
@@ -5214,9 +5220,8 @@
 
 .proj__sessions {
   list-style: none;
-  margin: 1px 0 6px 20px;
-  padding: 0 0 0 7px;
-  border-left: 1px solid var(--line);
+  margin: 1px 0 6px;
+  padding: 0;
   /* THE truncation fix. As a grid item the list defaults to min-width auto,
      so a long nowrap title made it wider than the drawer and the overflow
      clip cut rows hard at the rail edge — the title's own ellipsis boundary
@@ -5281,8 +5286,6 @@
 
 .pinned-sessions {
   margin: 0 0 8px;
-  padding: 0;
-  border-left: 0;
 }
 
 .sessrow.is-pinned .sess {
@@ -5577,6 +5580,13 @@
   gap: 8px;
   margin-left: auto;
   flex: none;
+}
+
+.stagehead__action--workspace {
+  position: fixed;
+  z-index: 9;
+  top: calc(var(--titlebar-h) + 7px);
+  right: 8px;
 }
 
 .zoom-hud {
@@ -7469,27 +7479,28 @@
 .composer-resource-picker {
   position: absolute;
   z-index: 50;
-  right: 0;
   bottom: calc(100% + 8px);
   left: 0;
+  width: min(380px, 100%);
   overflow: hidden;
   background: var(--menu-bg);
   border: 1px solid var(--menu-line);
-  border-radius: var(--r-panel);
+  border-radius: var(--r-xl);
   box-shadow: var(--shadow-flyout);
   color: var(--text);
+  transform-origin: bottom left;
   animation: composer-resource-picker-in var(--dur-fast) var(--ease-out) both;
 }
 
 @keyframes composer-resource-picker-in {
   from {
     opacity: 0;
-    transform: translateY(2px);
+    transform: translateY(3px) scale(0.985);
   }
 }
 
 .composer-resource-picker__list {
-  max-height: min(320px, calc(100vh - 170px));
+  max-height: min(240px, calc(100vh - 170px));
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 5px;
@@ -7562,7 +7573,7 @@
 
 .composer-resource-picker__status {
   display: grid;
-  min-height: 64px;
+  min-height: 48px;
   margin: 0;
   padding: 14px;
   place-items: center;
@@ -9977,12 +9988,11 @@
      an error raised while one of them is open must still be visible. */
   z-index: 110;
   bottom: 18px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 18px;
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: 620px;
+  max-width: min(420px, calc(100vw - 36px));
   background: var(--surface-2);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-card);
@@ -9995,6 +10005,18 @@
   bottom: 62px;
   border-color: color-mix(in srgb, var(--attention) 55%, var(--line-strong));
   color: var(--text-2);
+}
+
+@media (max-width: 700px) {
+  .notice {
+    right: 12px;
+    bottom: 12px;
+    max-width: calc(100vw - 24px);
+  }
+
+  .notice--offline {
+    bottom: 56px;
+  }
 }
 
 .notice__text {

@@ -6,9 +6,28 @@ import { parseBrandSystem, readBrandSystem, writeBrandSystem } from './brand.js'
 
 const brand = {
   version: 1,
+  foundation: {
+    strategy: 'extend',
+    existingAssets: ['public/logo.svg'],
+    assetActions: [
+      { asset: 'public/logo.svg', action: 'protect', reason: 'Supplied official mark.' },
+    ],
+    lockedDecisions: ['Keep the supplied logo and warm paper background.'],
+    assumptions: ['No documented motion direction exists.'],
+  },
   creativeDirection: {
     summary: 'Editorial coffee culture with tactile warmth.',
-    keywords: ['warm', 'precise'],
+    traits: [
+      { quality: 'warm', boundary: 'not rustic' },
+      { quality: 'precise', boundary: 'not sterile' },
+    ],
+    productiveTension: 'Warm craft with precise utility.',
+    signatureDevice: {
+      description: 'A cropped circular roast mark.',
+      status: 'existing',
+      invariants: ['Circular silhouette', 'Off-center crop'],
+    },
+    restraint: 'Use the roast mark once per major surface.',
     avoid: ['Generic startup styling'],
   },
   colorPalette: [
@@ -65,5 +84,37 @@ describe('brand system handoff', () => {
         typefaces: [{ ...brand.typefaces[0], weights: ['400', '700'] }],
       }).typefaces[0]?.weights,
     ).toEqual([400, 700])
+  })
+
+  it('keeps older brand artifacts readable with a conservative foundation', () => {
+    const { foundation: _foundation, ...legacy } = brand
+    expect(parseBrandSystem(legacy).foundation).toEqual({
+      strategy: 'create',
+      existingAssets: [],
+      assetActions: [],
+      lockedDecisions: [],
+      assumptions: [],
+    })
+  })
+
+  it('keeps legacy creative direction readable while marking its device as unproven', () => {
+    const legacy = {
+      ...brand,
+      creativeDirection: {
+        summary: brand.creativeDirection.summary,
+        keywords: ['warm', 'precise'],
+        avoid: brand.creativeDirection.avoid,
+      },
+    }
+    expect(parseBrandSystem(legacy).creativeDirection.signatureDevice.status).toBe('candidate')
+  })
+
+  it('allows a new brand to have no existing asset decisions', () => {
+    expect(
+      parseBrandSystem({
+        ...brand,
+        foundation: { ...brand.foundation, assetActions: [] },
+      }).foundation.assetActions,
+    ).toEqual([])
   })
 })

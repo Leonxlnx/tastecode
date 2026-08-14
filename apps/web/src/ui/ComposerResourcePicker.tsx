@@ -29,7 +29,7 @@ export type ComposerResource = {
 }
 
 export type ComposerResourceTrigger = {
-  marker: '$' | '@'
+  marker: '/' | '$' | '@'
   query: string
   start: number
   end: number
@@ -140,8 +140,12 @@ export const ComposerResourcePicker = forwardRef<
 
   const resources = useMemo(
     () => [
-      ...(skills?.capabilities.inventory ? skills.skills.map(skillResource) : []),
-      ...(mcp?.capabilities.inventory ? mcp.servers.map(mcpResource) : []),
+      ...(skills?.capabilities.inventory
+        ? skills.skills.filter((skill) => skill.scope === 'project').map(skillResource)
+        : []),
+      ...(mcp?.capabilities.inventory
+        ? mcp.servers.filter((server) => server.scope === 'project').map(mcpResource)
+        : []),
     ],
     [skills, mcp],
   )

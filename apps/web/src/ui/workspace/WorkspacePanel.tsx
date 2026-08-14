@@ -6,12 +6,12 @@ import {
   Maximize2,
   MessageCirclePlus,
   Minimize2,
-  PanelRightClose,
   Plus,
   SquareTerminal,
   X,
   type LucideIcon,
 } from 'lucide-react'
+import { PreviewCaptureRequestSchema } from '@harness/contracts'
 import {
   appHapticsEnabled,
   performAppHaptic,
@@ -24,6 +24,7 @@ import type {
   SideChatPromptRequest,
   SideChatStartOptions,
 } from './WorkspaceSideChat.js'
+import type { BrowserNavigationRequest } from './WorkspaceBrowser.js'
 import '../workspace-panel.css'
 
 const WorkspaceReview = lazy(() =>
@@ -80,6 +81,7 @@ const TOOLS: Array<{
 
 const MIN_PANEL_WIDTH = 360
 const MIN_CHAT_WIDTH = 360
+const DESIGN_PREVIEW_TAB_ID = 'design-preview'
 
 export function WorkspacePanel(props: {
   open: boolean
@@ -97,18 +99,20 @@ export function WorkspacePanel(props: {
   nativeSurfacesVisible: boolean
   onOpen: () => void
   onClose: () => void
+  onClosed?: () => void
   onExpandedChange: (expanded: boolean) => void
   onWidthChange: (width: number) => void
 }) {
   const [tabs, setTabs] = useState<WorkspaceTab[]>([])
   const [activeId, setActiveId] = useState<string>()
+  const [designPreview, setDesignPreview] = useState<BrowserNavigationRequest>()
   const [addOpen, setAddOpen] = useState(false)
   const addWrap = useRef<HTMLDivElement>(null)
   const resizeCleanup = useRef<() => void>(() => {})
   const tabsRef = useRef(tabs)
   const onClose = useRef(props.onClose)
   const clearAfterClose = useRef(false)
-  const nextBrowserId = useRef(1)
+  const nextTabId = useRef(1)
   tabsRef.current = tabs
   onClose.current = props.onClose
 
@@ -116,13 +120,14 @@ export function WorkspacePanel(props: {
     (kind: WorkspaceTool) => {
       clearAfterClose.current = false
       props.onOpen()
-      const id = kind === 'browser' ? `browser-${nextBrowserId.current++}` : kind
+      const repeatable = kind === 'browser' || kind === 'terminal' || kind === 'files'
+      const id = repeatable ? `${kind}-${nextTabId.current++}` : kind
       setTabs((current) =>
-        kind === 'browser' || !current.some((tab) => tab.kind === kind)
+        repeatable || !current.some((tab) => tab.kind === kind)
           ? [...current, { id, kind }]
           : current,
       )
-      setActiveId(kind === 'browser' ? id : kind)
+      setActiveId(id)
       setAddOpen(false)
     },
     [props.onOpen],
@@ -155,6 +160,24 @@ export function WorkspacePanel(props: {
     openTool('side-chat')
   }, [openTool, props.sideChatPromptRequest])
 
+  useEffect(
+    () =>
+      props.transport.on('preview.captureRequested', (value) => {
+        const request = PreviewCaptureRequestSchema.safeParse(value)
+        if (!request.success) return
+        clearAfterClose.current = false
+        props.onOpen()
+        setTabs((current) =>
+          current.some((tab) => tab.id === DESIGN_PREVIEW_TAB_ID)
+            ? current
+            : [...current, { id: DESIGN_PREVIEW_TAB_ID, kind: 'browser' }],
+        )
+        setActiveId(DESIGN_PREVIEW_TAB_ID)
+        setDesignPreview({ requestId: request.data.requestId, url: request.data.url })
+      }),
+    [props.onOpen, props.transport],
+  )
+
   useEffect(() => {
     if (!addOpen) return
     const dismiss = (event: globalThis.PointerEvent) => {
@@ -179,6 +202,12 @@ export function WorkspacePanel(props: {
     },
     [],
   )
+
+  useEffect(() => {
+    if (!props.open && globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      props.onClosed?.()
+    }
+  }, [props.open, props.onClosed])
 
   const closeTab = useCallback((id: string) => {
     const current = tabsRef.current
@@ -258,10 +287,11 @@ export function WorkspacePanel(props: {
         if (
           event.target !== event.currentTarget ||
           event.propertyName !== 'transform' ||
-          props.open ||
-          !clearAfterClose.current
+          props.open
         )
           return
+        props.onClosed?.()
+        if (!clearAfterClose.current) return
         clearAfterClose.current = false
         tabsRef.current = []
         setTabs([])
@@ -351,9 +381,6 @@ export function WorkspacePanel(props: {
               <Maximize2 size={14} aria-hidden />
             )}
           </button>
-          <button type="button" aria-label="Hide workspace tools" onClick={props.onClose}>
-            <PanelRightClose size={15} aria-hidden />
-          </button>
         </div>
       </header>
 
@@ -381,6 +408,7 @@ export function WorkspacePanel(props: {
                   sideChatParentStatus={props.sideChatParentStatus}
                   sideChatStartOptions={props.sideChatStartOptions}
                   sideChatPromptRequest={props.sideChatPromptRequest}
+                  browserNavigation={tab.id === DESIGN_PREVIEW_TAB_ID ? designPreview : undefined}
                   onClose={() => closeTab(tab.id)}
                 />
               </Suspense>
@@ -406,6 +434,7 @@ function WorkspaceToolSurface(props: {
   sideChatParentStatus: SideChatParentStatus
   sideChatStartOptions: SideChatStartOptions
   sideChatPromptRequest?: SideChatPromptRequest | undefined
+  browserNavigation?: BrowserNavigationRequest | undefined
   onClose: () => void
 }) {
   if (props.kind === 'review') {
@@ -431,7 +460,9 @@ function WorkspaceToolSurface(props: {
       />
     )
   }
-  if (props.kind === 'browser') return <WorkspaceBrowser active={props.active} />
+  if (props.kind === 'browser') {
+    return <WorkspaceBrowser active={props.active} navigation={props.browserNavigation} />
+  }
   if (props.kind === 'files') {
     return (
       <WorkspaceFiles

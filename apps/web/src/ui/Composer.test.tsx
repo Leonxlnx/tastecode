@@ -7,17 +7,17 @@ import { Composer } from './Composer.js'
 
 const bridge = vi.hoisted(() => ({
   pickFiles: vi.fn(),
-  savePastedImage: vi.fn(),
+  savePastedFile: vi.fn(),
 }))
 
 vi.mock('../bridge.js', () => ({
   pickFiles: bridge.pickFiles,
-  savePastedImage: bridge.savePastedImage,
+  savePastedFile: bridge.savePastedFile,
 }))
 
 beforeEach(() => {
   bridge.pickFiles.mockResolvedValue([])
-  bridge.savePastedImage.mockResolvedValue('/tmp/pasted-image.png')
+  bridge.savePastedFile.mockResolvedValue('/tmp/pasted-image.png')
   Object.defineProperty(URL, 'createObjectURL', {
     configurable: true,
     value: vi.fn(() => 'blob:pasted-image'),
@@ -100,7 +100,7 @@ describe('Composer image paste', () => {
     fireEvent.paste(composer, { clipboardData: { files: [image] } })
 
     expect(screen.getByRole('button', { name: 'Open Screenshot.png' })).toBeTruthy()
-    expect(bridge.savePastedImage).toHaveBeenCalledWith(image)
+    expect(bridge.savePastedFile).toHaveBeenCalledWith(image)
     fireEvent.change(composer, { target: { value: 'What is in this image?' } })
     await waitFor(() =>
       expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
@@ -159,13 +159,38 @@ describe('Composer image paste', () => {
 
     fireEvent.paste(composer, { clipboardData: { files: [image] } })
 
-    expect(bridge.savePastedImage).not.toHaveBeenCalled()
+    expect(bridge.savePastedFile).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: 'Open Screenshot.png' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Attach files' })).toBeNull()
     expect(screen.getByRole('alert').textContent).toBe(
       'Attachments aren’t supported by this source.',
     )
     expect(composer.value).toBe('Keep this draft')
+  })
+
+  it.each([
+    ['application/pdf', 'brief.pdf', '/tmp/brief.pdf'],
+    ['video/mp4', 'walkthrough.mp4', '/tmp/walkthrough.mp4'],
+  ])('materializes a pasted %s file and sends its path', async (type, name, path) => {
+    bridge.savePastedFile.mockResolvedValueOnce(path)
+    const onSend = vi.fn()
+    renderComposer(onSend)
+    const composer = screen.getByPlaceholderText('Do anything')
+    const file = new File(['file bytes'], name, { type })
+
+    fireEvent.paste(composer, { clipboardData: { files: [file] } })
+
+    expect(await screen.findByText(name)).toBeTruthy()
+    expect(bridge.savePastedFile).toHaveBeenCalledWith(file)
+    fireEvent.change(composer, { target: { value: 'Inspect this attachment' } })
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    )
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).toHaveBeenCalledWith('Inspect this attachment', [path])
   })
 })
 
@@ -339,19 +364,31 @@ describe('Composer prompts', () => {
     expect(screen.queryByRole('menu')).toBeNull()
   })
 
-  it('sends slash-prefixed text without offering built-in commands', () => {
+  it('keeps the built-in side-chat slash commands out of the resource picker', () => {
     const onSend = vi.fn()
-    renderComposer(onSend)
-
-    expect(screen.queryByText('Commands')).toBeNull()
-    expect(screen.queryByText('/review')).toBeNull()
+    renderComposer(onSend, { transport: populatedResourceTransport() })
 
     const composer = screen.getByPlaceholderText('Do anything')
-    fireEvent.change(composer, { target: { value: '/review' } })
+    fireEvent.change(composer, { target: { value: '/side' } })
     expect(screen.queryByRole('listbox')).toBeNull()
     fireEvent.keyDown(composer, { key: 'Enter' })
 
-    expect(onSend).toHaveBeenCalledWith('/review', [])
+    expect(onSend).toHaveBeenCalledWith('/side', [])
+  })
+
+  it('opens the resource picker from slash and invokes the selected skill canonically', async () => {
+    const onSend = vi.fn()
+    renderComposer(onSend, { transport: populatedResourceTransport() })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: '/air', selectionStart: 4 } })
+    await screen.findByRole('option', { name: /Airtable CLI/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(screen.getByText('Airtable CLI').closest('.chip--resource')).toBeTruthy()
+    expect((composer as HTMLTextAreaElement).value).toBe('')
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('$airtable-cli', [])
   })
 
   it('opens skills and MCP servers from dollar and selects the active row with Tab', async () => {
@@ -395,6 +432,43 @@ describe('Composer prompts', () => {
     expect(chip?.querySelector('svg')).toBeTruthy()
     fireEvent.keyDown(composer, { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith('$airtable-cli', [])
+  })
+
+  it('does not offer provider-global resources as project resources', async () => {
+    const transport = createResourceTransport(async (method) => {
+      if (method === 'skills.list') {
+        return {
+          capabilities: { inventory: true, configure: true, install: true },
+          skills: [
+            {
+              id: '/skills/global/SKILL.md',
+              name: 'global-skill',
+              displayName: 'Global skill',
+              source: { type: 'provider' },
+              scope: 'system',
+              enabled: true,
+              dependencyErrors: [],
+            },
+          ],
+          errors: [],
+        }
+      }
+      if (method === 'mcp.list') {
+        return {
+          capabilities: { inventory: true },
+          servers: [{ id: 'global-docs', scope: 'global', enabled: true }],
+        }
+      }
+      throw new Error(`Unexpected request: ${method}`)
+    })
+    renderComposer(vi.fn(), { transport })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: '$', selectionStart: 1 } })
+
+    await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
+    expect(screen.getByText('No more skills or MCP servers are available.')).toBeTruthy()
+    expect(screen.queryByText('Global skill')).toBeNull()
   })
 
   it('closes the resource picker before Escape interrupts a running turn', async () => {
@@ -706,7 +780,7 @@ function populatedResourceTransport(): Transport {
             displayName: 'Airtable CLI',
             description: 'Inspect Airtable bases, schemas, and records',
             source: { type: 'folder', path: '/skills/airtable-cli/SKILL.md' },
-            scope: 'user',
+            scope: 'project',
             enabled: true,
             dependencyErrors: [],
           },
@@ -730,7 +804,7 @@ function populatedResourceTransport(): Transport {
             id: 'officialDocs',
             displayName: 'Official Docs',
             description: 'Search official product documentation',
-            scope: 'global',
+            scope: 'project',
             enabled: true,
             auth: { status: 'not_required' },
             startup: { state: 'ready' },

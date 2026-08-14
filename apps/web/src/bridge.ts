@@ -11,7 +11,7 @@ type Bridge = {
   pickFiles: () => Promise<string[]>
   revealPath: (path: string) => Promise<void>
   revealProjectFile?: (path: string, projectPath: string) => Promise<void>
-  savePastedImage: (image: { type: string; bytes: ArrayBuffer }) => Promise<string>
+  savePastedFile: (file: { name: string; type: string; bytes: ArrayBuffer }) => Promise<string>
   writeClipboardText?: (text: string) => Promise<void>
   setZoom: (action: ZoomAction) => Promise<void>
   setTheme: (preference: AppThemePreference) => Promise<void>
@@ -62,9 +62,13 @@ export function revealProjectFile(path: string, projectPath: string): Promise<vo
   return bridge?.revealProjectFile?.(path, projectPath) ?? Promise.resolve()
 }
 
-export async function savePastedImage(file: File): Promise<string | undefined> {
+export async function savePastedFile(file: File): Promise<string | undefined> {
   if (!bridge) return undefined
-  return bridge.savePastedImage({ type: file.type, bytes: await file.arrayBuffer() })
+  return bridge.savePastedFile({
+    name: file.name,
+    type: file.type,
+    bytes: await file.arrayBuffer(),
+  })
 }
 
 export async function writeClipboardText(text: string): Promise<void> {

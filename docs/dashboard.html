@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-13 main 33869f67</span>
+        <span class="meta">2026-08-14 main 4cf1bba1</span>
       </div>
     </div>
 
@@ -350,7 +350,10 @@
                 <i class="tick">✓</i>
                 <span
                   >Claude Code plan
-                  <span class="d">models with effort per the docs, resume, permission modes</span>
+                  <span class="d"
+                    >models with effort per the docs, resume, permission modes, pasted and selected
+                    image input, selected file references</span
+                  >
                 </span>
               </li>
               <li>
@@ -361,7 +364,8 @@
                     >streaming, reasoning, effort, resume, sign in and out; explicit Stop reaches
                     one interrupted terminal state and restores sending; provider-owned billing
                     source with honest unavailable and error states; successful sign-in captures the
-                    provider-confirmed email without manual entry</span
+                    provider-confirmed email without manual entry; pasted and selected images plus
+                    selected file resources reach the CLI through ACP prompt blocks</span
                   >
                 </span>
               </li>
@@ -374,10 +378,12 @@
                     Ctrl/Command+Enter-to-steer, reconnect, deduplicated design phases, idle-only
                     git refreshes, stable anchors for newly queued turns, denser assistant
                     typography, pane-aware Thread, New chat, and composer layouts down to a 332 px
-                    workspace split; permission and Design actions compact before a narrow toolbar
-                    can overlap; plus an in-pane session header with shared rename, pin, archive,
-                    checkpoint, Workspace, and Terminal actions; Stop immediately restores the idle
-                    presentation while provider interruption finishes in the background</span
+                    workspace split; selected files, drag/drop, and immediate Ctrl/Command+V image
+                    chips follow each source's declared capability; permission and Design actions
+                    compact before a narrow toolbar can overlap; plus an in-pane session header with
+                    shared rename, pin, archive, checkpoint, Workspace, and Terminal actions; Stop
+                    immediately restores the idle presentation while provider interruption finishes
+                    in the background</span
                   >
                 </span>
               </li>
@@ -396,12 +402,15 @@
                 <span
                   >Workspace tools
                   <span class="d"
-                    >resizable Review, CSP-safe compact terminal with link detection, independent
-                    middle-click-closeable Browser tabs with distinct viewport controls, lazy file
-                    tree, and Temporary chat use the active session checkout; Temporary chat
-                    presents the normal thread and composer without a duplicate parent-status header
-                    and erases its transcript when closed; one in-chat toggle opens a
-                    2-by-2-plus-one icon launcher and the panel chrome owns closing, aligned
+                    >resizable Review, independent middle-click-closeable Terminal, Browser, and
+                    Files tabs, CSP-safe compact terminals with link detection, distinct Browser
+                    viewport controls, and Design captures open or reuse one dedicated Browser tab;
+                    repair captures reload that tab after the guest is ready, and HTTP loopback
+                    input normalizes to 127.0.0.1. Lazy file trees and Temporary chat use the active
+                    session checkout; Temporary chat presents the normal thread and composer without
+                    a duplicate parent-status header and erases its transcript when closed; one
+                    fixed in-chat toggle opens a 2-by-2-plus-one icon launcher and swaps its icon in
+                    place to close; it stays visible throughout the closing transition. Aligned
                     dividers stay square, resizing preserves a 360 px center chat with or without
                     the left sidebar, missing workspace items fail without exposing raw paths,
                     startup is bounded, and 390 px layouts do not overflow</span
@@ -476,9 +485,12 @@
                     its contents, including while a drag is held past the fold threshold; active
                     resize state clears when another control closes it, it settles in 260 ms,
                     remains interruptible during rapid toggles, and uses chevron-free 36 px project
-                    rows aligned on the folder mark; the fixed New chat, New project, and Pull
-                    requests block gains a strong divider only while the list below is scrolled; new
-                    profiles start on V1 Classic with three-day settling enabled</span
+                    rows aligned on the folder mark; project chats use the full row width without a
+                    decorative nesting rail, while the larger project add action stays clear of the
+                    scrollbar; project and chat reordering share the same inset drop-line feedback;
+                    the fixed New chat, New project, and Pull requests block gains a strong divider
+                    only while the list below is scrolled; new profiles start on V1 Classic with
+                    three-day settling enabled</span
                   >
                 </span>
               </li>
@@ -628,7 +640,8 @@
                     background-prefetched limits open from the lifted account menu without a fresh
                     request; clear dividers separate provider groups, while loading, unavailable,
                     successful-empty, and failure states preserve usable values through Retry; roomy
-                    Data and Debug rows, short-window scrolling, contained keyboard focus, and a
+                    Data and Debug rows; app-level failures use a compact bottom-right notice
+                    without an accent rail; short-window scrolling, contained keyboard focus, and a
                     scoped confirmation before resetting renderer preferences preserve projects,
                     files, history, and credentials;
                     <a href="./screenshots/provider-density-after.png">compact provider</a>,
@@ -666,9 +679,11 @@
                 <span
                   >MCP and Skills, kept simple
                   <span class="d"
-                    >add, enable, per-project scope, reconnect recovery, null-safe legacy inventory,
-                    and provider capability status instead of misleading project-name copy. Stays
-                    this size for the beta</span
+                    >project views start empty until the user explicitly adds or imports a resource;
+                    add, enable, per-project scope, reconnect recovery, null-safe legacy inventory,
+                    and provider capability status instead of misleading project-name copy. The
+                    compact composer picker invokes them directly from /, $, or @. Stays this size
+                    for the beta</span
                   >
                 </span>
               </li>
@@ -704,9 +719,13 @@
                     package-manager previews stay in the selected workspace, and build reports must
                     match the exact changed-file set; rendered preview audits require exactly one h1
                     and mobile interaction targets of at least 44 by 44 CSS pixels before visual
-                    review can pass; successful previews remain reachable until their owning thread
-                    closes or starts a replacement, and a completed queued Design turn stays idle
-                    even when its provider start promise resolves late</span
+                    review can pass; serialized hidden capture remains the review authority, waits
+                    for bounded animation, font, and image settlement, confines navigation and
+                    redirects to the preview origin, and verifies the final URL; negotiated ACP
+                    image prompts receive the screenshots, and shared browser storage and cache are
+                    cleared before the next capture; successful previews remain reachable until
+                    their owning thread closes or starts a replacement, and a completed queued
+                    Design turn stays idle even when its provider start promise resolves late</span
                   >
                 </span>
               </li>

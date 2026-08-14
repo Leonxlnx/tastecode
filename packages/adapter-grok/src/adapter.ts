@@ -1,8 +1,9 @@
 import { EventEmitter } from 'node:events'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { killTree, readNdjson } from '@harness/proc'
 
@@ -48,7 +49,36 @@ export const GROK_CAPABILITIES: Capabilities = {
   interrupt: true,
   reasoningItems: true,
   approvals: false,
-  images: false,
+  images: true,
+}
+
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  '.gif': 'image/gif',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+}
+
+export function grokPromptJson(text: string, attachments: string[]): string {
+  return JSON.stringify([
+    { type: 'text', text },
+    ...attachments.map((file) => {
+      const mimeType = IMAGE_MIME_TYPES[path.extname(file).toLowerCase()]
+      return mimeType
+        ? {
+            type: 'image',
+            data: readFileSync(file).toString('base64'),
+            mimeType,
+            uri: pathToFileURL(file).href,
+          }
+        : {
+            type: 'resource_link',
+            name: path.basename(file),
+            uri: pathToFileURL(file).href,
+          }
+    }),
+  ])
 }
 
 /** Model-specific reasoning levels published for Grok 4.5. The CLI's global
@@ -202,7 +232,6 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     attachments: string[] = [],
     options: GrokTurnOptions = {},
   ): Promise<string> {
-    if (attachments.length) throw new Error('Grok attachments are not supported yet')
     this.#options = applyGrokTurnOptions(this.#options, options)
     const turnId = `${threadId}-turn-${++this.#turnCounter}`
     const prompt =
@@ -211,9 +240,13 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         : text
     this.#instructionsPending = false
     const promptDirectory = mkdtempSync(path.join(tmpdir(), 'harness-grok-'))
-    const promptFile = path.join(promptDirectory, 'prompt.md')
+    const promptFile = path.join(promptDirectory, attachments.length ? 'prompt.json' : 'prompt.md')
     try {
-      writeFileSync(promptFile, prompt, 'utf8')
+      writeFileSync(
+        promptFile,
+        attachments.length ? grokPromptJson(prompt, attachments) : prompt,
+        'utf8',
+      )
     } catch (error) {
       rmSync(promptDirectory, { recursive: true, force: true })
       throw error

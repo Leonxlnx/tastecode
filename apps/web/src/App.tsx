@@ -3421,7 +3421,9 @@ export function App() {
   }, [])
   const toggleTerminal = useCallback(() => setTerminalOpen((open) => !open), [])
   const closeTerminal = useCallback(() => setTerminalOpen(false), [])
-  const openWorkspacePanel = useCallback(() => setWorkspacePanelOpen(true), [])
+  const openWorkspacePanel = useCallback(() => {
+    setWorkspacePanelOpen(true)
+  }, [])
   const closeWorkspacePanel = useCallback(() => {
     setWorkspacePanelOpen(false)
     setWorkspacePanelExpanded(false)

@@ -15,6 +15,7 @@ import {
   shell,
   systemPreferences,
   Tray,
+  type Event as ElectronEvent,
   type WebContents,
 } from 'electron'
 import {
@@ -29,9 +30,12 @@ import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { allowsMicrophoneRequest } from './media-permissions.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
+import { pastedFile } from './pasted-file.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PREVIEW_DOM_AUDIT_SCRIPT } from './preview-dom-audit.js'
+import { clearPreviewSession } from './preview-session.js'
+import { PREVIEW_SETTLE_SCRIPT } from './preview-settle.js'
 import { ServerSupervisor } from './server-supervisor.js'
 import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
@@ -69,13 +73,6 @@ const devServer = process.env['HARNESS_DEV_SERVER']
  *  "the app's windows" must not count them. */
 const captureWindows = new Set<BrowserWindow>()
 const MAX_PASTED_IMAGE_BYTES = 25 * 1024 * 1024
-const CAPTURE_SETTLE_SCRIPT = `new Promise(resolve => requestAnimationFrame(resolve))
-  .then(() => Promise.race([
-    Promise.allSettled(document.getAnimations().map(animation => animation.finished)),
-    new Promise(resolve => setTimeout(resolve, 1000)),
-  ]))
-  .then(() => document.fonts?.ready)
-  .then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))`
 // Windows' native occlusion tracker can wrongly decide the window is fully
 // covered and stick there: the page keeps running with visibilityState
 // 'hidden' while the window shows nothing but its background colour — the
@@ -379,14 +376,16 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
     },
   })
   captureWindows.add(preview)
+  const previewSession = preview.webContents.session
 
-  preview.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
-    callback(false),
-  )
+  previewSession.setPermissionCheckHandler(() => false)
+  previewSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   preview.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  preview.webContents.on('will-navigate', (event, url) => {
+  const restrictNavigation = (event: ElectronEvent, url: string) => {
     if (!allowsPreviewNavigation(request.url, url)) event.preventDefault()
-  })
+  }
+  preview.webContents.on('will-navigate', restrictNavigation)
+  preview.webContents.on('will-redirect', restrictNavigation)
 
   // A pending webfont or a throttled hidden renderer can stall the settle
   // script forever; the whole capture races a hard deadline instead of
@@ -402,6 +401,9 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
   try {
     await mkdir(directory, { recursive: true, mode: 0o700 })
     await Promise.race([preview.loadURL(request.url), deadline])
+    if (!allowsPreviewNavigation(request.url, preview.webContents.getURL())) {
+      throw new Error('preview navigated outside its local origin')
+    }
     const screenshots = []
     // Duplicate viewports would collide on the wx-flagged filename and fail
     // the entire request.
@@ -411,7 +413,7 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
       if (seen.has(key)) continue
       seen.add(key)
       preview.setContentSize(viewport.width, viewport.height)
-      await Promise.race([preview.webContents.executeJavaScript(CAPTURE_SETTLE_SCRIPT), deadline])
+      await Promise.race([preview.webContents.executeJavaScript(PREVIEW_SETTLE_SCRIPT), deadline])
       const domAudit = PreviewDomAuditSchema.parse(
         await Promise.race([
           preview.webContents.executeJavaScriptInIsolatedWorld(1001, [
@@ -440,12 +442,11 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
     clearTimeout(deadlineTimer)
     // The closed-last-window handler may have destroyed us already; touching
     // a destroyed webContents throws, which would eat a successful result.
-    if (!preview.isDestroyed() && !preview.webContents.isDestroyed()) {
-      const previewSession = preview.webContents.session
-      preview.destroy()
-      void previewSession.clearStorageData().catch(() => undefined)
-    }
+    if (!preview.isDestroyed() && !preview.webContents.isDestroyed()) preview.destroy()
     captureWindows.delete(preview)
+    // The fixed partition is shared by every capture, so the IPC must not
+    // resolve until both browser storage and the HTTP cache are clean.
+    await clearPreviewSession(previewSession)
   }
 }
 
@@ -506,13 +507,13 @@ ipcMain.handle('harness:revealProjectFile', (event, value: unknown, projectRootV
   shell.showItemInFolder(projectFilePath(value, projectRootValue))
 })
 
-ipcMain.handle('harness:savePastedImage', async (event, payload: unknown) => {
+ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
   requireOwnRenderer(event.sender)
-  const image = pastedImage(payload)
-  const directory = path.join(app.getPath('temp'), 'Personal Harness', 'pasted-images')
+  const file = pastedFile(payload)
+  const directory = path.join(app.getPath('temp'), 'Personal Harness', 'pasted-files')
   await mkdir(directory, { recursive: true, mode: 0o700 })
-  const destination = path.join(directory, `pasted-${randomUUID()}${image.extension}`)
-  await writeFile(destination, image.bytes, { flag: 'wx', mode: 0o600 })
+  const destination = path.join(directory, `${randomUUID()}-${file.name}`)
+  await writeFile(destination, file.bytes, { flag: 'wx', mode: 0o600 })
   return destination
 })
 
@@ -598,53 +599,3 @@ app.on('window-all-closed', () => {
   // The core server belongs to the application lifecycle, not to a renderer
   // window. A real app quit still tears down the process and its mobile socket.
 })
-
-function pastedImage(payload: unknown): { bytes: Buffer; extension: string } {
-  if (!payload || typeof payload !== 'object') throw new Error('Invalid pasted image')
-
-  const candidate = payload as { type?: unknown; bytes?: unknown }
-  if (typeof candidate.type !== 'string') throw new Error('Invalid pasted image type')
-
-  const bytes =
-    candidate.bytes instanceof ArrayBuffer
-      ? Buffer.from(candidate.bytes)
-      : ArrayBuffer.isView(candidate.bytes)
-        ? Buffer.from(
-            candidate.bytes.buffer,
-            candidate.bytes.byteOffset,
-            candidate.bytes.byteLength,
-          )
-        : undefined
-
-  if (!bytes || bytes.length === 0 || bytes.length > MAX_PASTED_IMAGE_BYTES) {
-    throw new Error('Pasted image is empty or too large')
-  }
-
-  const extension = imageExtension(candidate.type, bytes)
-
-  if (!extension) throw new Error('Unsupported pasted image')
-  return { bytes, extension }
-}
-
-function imageExtension(type: string, bytes: Buffer): string | undefined {
-  if (type === 'image/png' && hasPrefix(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) {
-    return '.png'
-  }
-  if (type === 'image/jpeg' && hasPrefix(bytes, [0xff, 0xd8, 0xff])) return '.jpg'
-  if (type === 'image/gif' && /^GIF8[79]a$/.test(bytes.subarray(0, 6).toString('ascii'))) {
-    return '.gif'
-  }
-  if (
-    type === 'image/webp' &&
-    bytes.subarray(0, 4).toString('ascii') === 'RIFF' &&
-    bytes.subarray(8, 12).toString('ascii') === 'WEBP'
-  ) {
-    return '.webp'
-  }
-  if (type === 'image/bmp' && bytes.subarray(0, 2).toString('ascii') === 'BM') return '.bmp'
-  return undefined
-}
-
-function hasPrefix(bytes: Buffer, prefix: number[]): boolean {
-  return prefix.every((byte, index) => bytes[index] === byte)
-}

@@ -1056,7 +1056,7 @@ function ProjectRow(props: {
               onClick={() => props.onNewSession(props.project.path)}
               title="New chat here"
             >
-              <Plus size={13} aria-hidden />
+              <Plus size={15} aria-hidden />
             </button>
           </>
         )}

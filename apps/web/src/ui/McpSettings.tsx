@@ -294,6 +294,8 @@ export function McpSettings(props: {
     context.projectPath === props.projectPath
   const currentInventory = contextMatches(inventoryContext.current) ? inventory : undefined
   const currentError = currentInventory || contextMatches(errorContext.current) ? error : undefined
+  const projectServers =
+    currentInventory?.servers.filter((server) => server.scope === 'project') ?? []
   const providerStatus = !props.projectPath
     ? 'Select a project to check MCP support.'
     : currentError && !currentInventory
@@ -309,8 +311,8 @@ export function McpSettings(props: {
         ? undefined
         : !currentInventory.capabilities.inventory
           ? `${props.providerName} does not expose MCP servers here yet.`
-          : currentInventory.servers.length === 0
-            ? 'No MCP servers are configured for this project.'
+          : projectServers.length === 0
+            ? 'No MCP servers have been added to this project.'
             : undefined
 
   return (
@@ -363,9 +365,9 @@ export function McpSettings(props: {
           onSubmit={(event) => void save(event)}
         />
       ) : null}
-      {currentInventory?.capabilities.inventory && currentInventory.servers.length ? (
+      {currentInventory?.capabilities.inventory && projectServers.length ? (
         <div className="settings__group">
-          {currentInventory.servers.map((server) => (
+          {projectServers.map((server) => (
             <ServerRow
               key={server.id}
               server={server}

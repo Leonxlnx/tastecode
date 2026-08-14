@@ -18,6 +18,9 @@ export const PROTOCOL_VERSION = 1
 export type ContentBlock = {
   type?: string
   text?: string
+  data?: string
+  mimeType?: string
+  uri?: string
 }
 
 export type InitializeResult = {

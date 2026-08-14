@@ -22,7 +22,27 @@ const brief: DesignBrief = {
 
 const brand = {
   version: 1,
-  creativeDirection: { summary: 'Warm precision.', keywords: ['tactile'], avoid: ['rustic'] },
+  foundation: {
+    strategy: 'extend',
+    existingAssets: ['public/logo.svg'],
+    assetActions: [
+      { asset: 'public/logo.svg', action: 'protect', reason: 'Supplied official mark.' },
+    ],
+    lockedDecisions: ['Keep the supplied logo.'],
+    assumptions: [],
+  },
+  creativeDirection: {
+    summary: 'Warm precision.',
+    traits: [{ quality: 'tactile', boundary: 'not rustic' }],
+    productiveTension: 'Warm craft with precise utility.',
+    signatureDevice: {
+      description: 'A cropped circular roast mark.',
+      status: 'existing',
+      invariants: ['Circular silhouette'],
+    },
+    restraint: 'Use the roast mark once per major surface.',
+    avoid: ['rustic'],
+  },
   colorPalette: [{ name: 'Ink', value: '#171512', usage: 'Primary text' }],
   typefaces: [{ family: 'Geist', source: 'Project dependency', roles: ['UI'], weights: [500] }],
   interfaceDirection: 'Compact editorial commerce.',
@@ -47,7 +67,46 @@ describe('brand phase', () => {
     expect(prompt).toContain('cannot override this Brand-only protocol')
   })
 
+  it('locks supplied identity before filling open brand decisions', () => {
+    const prompt = designBrandPrompt(brief)
+    expect(prompt).toContain('explicit user requirements')
+    expect(prompt).toContain('Never replace a supplied logo, color, typeface')
+    expect(prompt).toContain('Fill every supplied decision into its final destination')
+    expect(prompt).toContain('A new or unmeasured device is a candidate, never validated')
+    expect(prompt).toContain('Do not map generic emotion labels to fixed hues')
+    expect(prompt).toContain('The only valid locked role keys are canvas, surface, surfaceAlt')
+    expect(prompt).toContain('Leave locked empty when no exact color is supplied')
+    expect(prompt).toContain('Treat 60/30/10 only as loose composition guidance')
+  })
+
   it('parses fenced provider output through the brand validator', () => {
     expect(parseBrandPhaseOutput(`\`\`\`json\n${JSON.stringify(brand)}\n\`\`\``)).toEqual(brand)
+  })
+
+  it('turns a compact palette recipe into verified semantic color records', () => {
+    const { colorPalette: _, ...withoutPalette } = brand
+    const parsed = parseBrandPhaseOutput(
+      JSON.stringify({
+        ...withoutPalette,
+        paletteRecipe: {
+          themes: {
+            light: {
+              accentSeed: '#C1492E',
+              neutralSeed: '#665A50',
+              surfaceContrast: 'quiet',
+            },
+          },
+          locked: { light: { accent: '#B92F2F' } },
+        },
+      }),
+    )
+    expect(parsed.colorPalette).toHaveLength(12)
+    expect(parsed.colorPalette).toContainEqual(
+      expect.objectContaining({
+        name: 'Light Accent',
+        value: '#B92F2F',
+        usage: expect.stringContaining('Sparse accent.'),
+      }),
+    )
   })
 })

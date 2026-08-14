@@ -97,6 +97,14 @@ describe('design activity rows', () => {
         createdAt: 2,
       },
       { id: 'think-1', turnId: 'turn-m1', type: 'reasoning', status: 'completed', createdAt: 3 },
+      {
+        id: 'error-1',
+        turnId: 'turn-m1',
+        type: 'error',
+        status: 'completed',
+        text: 'Exit code 1',
+        createdAt: 4,
+      },
     ]
     render(
       <Thread
@@ -114,6 +122,7 @@ describe('design activity rows', () => {
     )
     expect(screen.queryByText(/Get-ChildItem/)).toBeNull()
     expect(screen.queryByText('Thinking')).toBeNull()
+    expect(screen.queryByText('Exit code 1')).toBeNull()
     // The rail names the phase even while a tool runs inside the turn.
     expect(workLabel(items, 'turn-m1', false)).toBe('Building the website')
   })
