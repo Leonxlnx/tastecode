@@ -138,38 +138,44 @@ function applyClaudeTurnOptions(
   return merged
 }
 
-/** One stream-json stdin line: how the prompt reaches the CLI, never argv. */
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  '.gif': 'image/gif',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+}
+
+/** One stream-json stdin line: how the prompt and attachments reach the CLI, never argv. */
 export function claudeUserMessage(text: string, attachments: string[] = []): string {
+  const files = attachments.filter((file) => !IMAGE_MIME_TYPES[path.extname(file).toLowerCase()])
+  const prompt = files.length
+    ? `${text}\n\nAttached file paths:\n${files.map((file) => `- ${JSON.stringify(file)}`).join('\n')}`
+    : text
   return `${JSON.stringify({
     type: 'user',
     message: {
       role: 'user',
       content: [
-        { type: 'text', text },
-        ...attachments.map((attachment) => ({
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: imageMediaType(attachment),
-            data: readFileSync(attachment).toString('base64'),
-          },
-        })),
+        { type: 'text', text: prompt },
+        ...attachments.flatMap((file) => {
+          const mediaType = IMAGE_MIME_TYPES[path.extname(file).toLowerCase()]
+          return mediaType
+            ? [
+                {
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: mediaType,
+                    data: readFileSync(file).toString('base64'),
+                  },
+                },
+              ]
+            : []
+        }),
       ],
     },
   })}\n`
-}
-
-function imageMediaType(file: string): string {
-  const mediaType = {
-    '.gif': 'image/gif',
-    '.jpeg': 'image/jpeg',
-    '.jpg': 'image/jpeg',
-    '.png': 'image/png',
-    '.webp': 'image/webp',
-  }[path.extname(file).toLowerCase()]
-  if (!mediaType)
-    throw new Error(`Claude Code does not support attachment type ${path.extname(file)}`)
-  return mediaType
 }
 
 /**
@@ -305,8 +311,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     attachments: string[] = [],
     options: ClaudeTurnOptions = {},
   ): Promise<string> {
-    const userMessage = claudeUserMessage(text, attachments)
     this.#options = applyClaudeTurnOptions(this.#options, options)
+    const userMessage = claudeUserMessage(text, attachments)
     if ('model' in options) this.#reportedModel = this.#options.model
     const turnId = `${threadId}-turn-${++this.#turnCounter}`
     const args = claudeTurnArgs(this.#options, this.#sessionId, this.#instructionsFile)

@@ -127,7 +127,6 @@ function SidebarComponent(props: {
   onWidthChange: (width: number) => void
   onAddProject: () => void
   onNewSession: (projectPath?: string, chooseProject?: boolean) => void
-  onSelectProject?: ((path: string) => void) | undefined
   onSelectSession: (id: string) => void
   onRenameProject: (path: string, name: string) => void
   onRemoveProject: (path: string) => void
@@ -201,6 +200,12 @@ function SidebarComponent(props: {
      the handle cannot do it, since collapsing unmounts the handle. */
   useLayoutEffect(() => {
     const slot = slotRef.current
+    const shell = slot?.closest<HTMLElement>('.shell')
+    if (props.collapsed && shell) {
+      delete shell.dataset['railFoldPreview']
+      delete shell.dataset['resizing']
+      resizing.current = false
+    }
     // Expanding the rail by any other means ends the wait: it only exists to
     // stop a just-folded rail from springing back out.
     if (!props.collapsed) endCooldown()
@@ -209,7 +214,6 @@ function SidebarComponent(props: {
       return
     }
     foldedByDrag.current = false
-    const shell = slot.closest<HTMLElement>('.shell')
     if (!shell) return
     // The stored width is restored here, not on release: the collapsed layout
     // is already committed at this point, so the column reads 0 whatever
@@ -288,6 +292,7 @@ function SidebarComponent(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the two schedulers are stable module-shape helpers
   }, [edgeRevealed, props.collapsed, props.width])
   const [scope, setScope] = useState('')
+  const [bodyScrolled, setBodyScrolled] = useState(false)
   const inbox = props.mode === 'inbox' && props.inbox !== undefined
 
   const closeOnNarrowViewport = () => {
@@ -296,11 +301,6 @@ function SidebarComponent(props: {
 
   const selectSession = (id: string) => {
     props.onSelectSession(id)
-    closeOnNarrowViewport()
-  }
-
-  const selectProject = (path: string) => {
-    props.onSelectProject?.(path)
     closeOnNarrowViewport()
   }
 
@@ -424,7 +424,7 @@ function SidebarComponent(props: {
           />
         ) : (
           <>
-            <div className="rail__actions">
+            <div className={`rail__actions${bodyScrolled ? ' is-scrolled' : ''}`}>
               <div className="rail__row">
                 <button
                   className="navitem rail__new-chat"
@@ -479,7 +479,10 @@ function SidebarComponent(props: {
               ) : null}
             </div>
 
-            <div className="rail__body">
+            <div
+              className="rail__body"
+              onScroll={(event) => setBodyScrolled(event.currentTarget.scrollTop > 0)}
+            >
               {pinnedSessions.length > 0 ? (
                 <>
                   <p className="section">Pinned</p>
@@ -577,7 +580,6 @@ function SidebarComponent(props: {
                     }}
                     onProjectDragEnd={endProjectDrag}
                     onNewSession={(path) => newSession(path)}
-                    onSelectProject={selectProject}
                     onSelectSession={selectSession}
                   />
                 ))
@@ -704,6 +706,13 @@ function RailResizeHandle(props: {
     target.closest<HTMLElement>('.shell')?.style.setProperty('--rail-w', `${width}px`)
   }
 
+  const previewFold = (target: HTMLElement, folded: boolean) => {
+    const shell = target.closest<HTMLElement>('.shell')
+    if (!shell) return
+    if (folded) shell.dataset['railFoldPreview'] = ''
+    else delete shell.dataset['railFoldPreview']
+  }
+
   /* The grid-column transition is for collapse and expand; while a pointer is
      dragging it made the rail rubber-band behind the cursor. */
   const setResizing = (target: HTMLElement, active: boolean) => {
@@ -736,9 +745,9 @@ function RailResizeHandle(props: {
     if (target.hasPointerCapture?.(event.pointerId)) {
       target.releasePointerCapture?.(event.pointerId)
     }
-    // A cancelled fold preview left --rail-w at zero even though React still
-    // considered the rail open. Restore the last real width before handing
-    // input back to the titlebar or the rest of the window.
+    previewFold(target, false)
+    // Restore the last real width before handing input back to the titlebar or
+    // the rest of the window.
     preview(target, current.current)
     setResizing(target, false)
     props.onResizingChange(false)
@@ -771,6 +780,7 @@ function RailResizeHandle(props: {
       }}
       onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
         if (hapticsEnabled) prepareAppHaptics()
+        previewFold(event.currentTarget, false)
         event.currentTarget.setPointerCapture?.(event.pointerId)
         setResizing(event.currentTarget, true)
         props.onResizingChange(true)
@@ -815,7 +825,8 @@ function RailResizeHandle(props: {
           }
           setResizing(event.currentTarget, false)
           holdTransition()
-          preview(event.currentTarget, folded ? 0 : drag.current.current)
+          previewFold(event.currentTarget, folded)
+          if (!folded) preview(event.currentTarget, drag.current.current)
           return
         }
         if (folded) return
@@ -869,7 +880,6 @@ function ProjectRow(props: {
   onProjectDrop: (event: DragEvent<HTMLElement>) => void
   onProjectDragEnd: () => void
   onNewSession: (path: string) => void
-  onSelectProject?: ((path: string) => void) | undefined
   onSelectSession: (id: string) => void
   onRenameProject: (path: string, name: string) => void
   onRemoveProject: (path: string) => void
@@ -961,7 +971,6 @@ function ProjectRow(props: {
               className="proj__toggle"
               onClick={() => {
                 if (count === 0) {
-                  if (!expanded) props.onSelectProject?.(props.project.path)
                   setOpen(!expanded)
                   return
                 }

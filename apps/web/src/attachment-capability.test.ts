@@ -27,20 +27,20 @@ describe('source attachment capability', () => {
         displayName: 'Claude Code',
         installed: true,
         auth: 'authenticated',
-        capabilities: capabilities(false),
+        capabilities: capabilities(true),
       },
       {
         id: 'grok',
         displayName: 'Grok',
         installed: true,
         auth: 'authenticated',
-        capabilities: capabilities(false),
+        capabilities: capabilities(true),
       },
     ]
 
     expect(sourceSupportsAttachments({ provider: 'codex' }, providers, [])).toBe(true)
-    expect(sourceSupportsAttachments({ provider: 'claude-code' }, providers, [])).toBe(false)
-    expect(sourceSupportsAttachments({ provider: 'grok' }, providers, [])).toBe(false)
+    expect(sourceSupportsAttachments({ provider: 'claude-code' }, providers, [])).toBe(true)
+    expect(sourceSupportsAttachments({ provider: 'grok' }, providers, [])).toBe(true)
     expect(sourceSupportsAttachments({ provider: 'acp', agentId: 'gemini' }, providers, [])).toBe(
       false,
     )

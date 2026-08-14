@@ -1,13 +1,13 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { Account, ConnectionsStatus, ProviderId, ResultOf } from '@harness/contracts'
+import type { Account, ProviderId, ResultOf } from '@harness/contracts'
 import { customModelChoice, type ModelChoice } from '../model-catalog.js'
 import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker-layout.js'
 import { resetInstalls } from '../provider-install.js'
 import { HAPTICS_KEY, writeAppHaptics } from '../haptics.js'
 import type { Transport } from '../transport.js'
-import { formatDeviceNote, ProviderSettings, Settings } from './Settings.js'
+import { ProviderSettings, Settings } from './Settings.js'
 
 type ProviderStatus = ResultOf<'providers.list'>['providers'][number]
 
@@ -22,7 +22,7 @@ vi.mock('./InstallTerminal.js', () => ({
 
 function renderSettings(
   options: {
-    initialSection?: 'appearance' | 'data' | 'debug' | 'about'
+    initialSection?: 'appearance' | 'data' | 'about'
     onClose?: () => void
     onReset?: () => void
     transport?: Transport
@@ -468,75 +468,6 @@ describe('provider authentication states', () => {
   })
 })
 
-function connectionsStatus(enabled: boolean): ConnectionsStatus {
-  return {
-    enabled,
-    serverName: 'Studio Mac',
-    port: 4312,
-    addresses: [],
-    devices: [],
-    webUrls: [],
-  }
-}
-
-function mobileTransport(
-  status: ConnectionsStatus,
-  request?: (method: string) => unknown,
-): Transport {
-  return {
-    request: vi.fn((method: string) => {
-      if (method === 'connections.status') return Promise.resolve(status)
-      if (request) return request(method)
-      throw new Error(`unexpected ${method}`)
-    }),
-    on: vi.fn(() => () => {}),
-  } as unknown as Transport
-}
-
-function mobileAccessSettings(transport: Transport) {
-  return (
-    <Settings
-      provider="codex"
-      providerName="Codex"
-      transport={transport}
-      projectPath={undefined}
-      projectName={undefined}
-      account={undefined}
-      providerStatuses={[]}
-      acpAgents={[]}
-      modelConnections={[]}
-      models={[]}
-      hiddenModels={new Set()}
-      onModelVisibilityChange={() => {}}
-      onConnectionsChanged={() => {}}
-      projectCount={0}
-      sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
-      onSidebarSettingsChange={() => {}}
-      themePreference="system"
-      onThemePreferenceChange={() => {}}
-      fontPreference="geist"
-      onFontPreferenceChange={() => {}}
-      accentPreference="neutral"
-      onAccentPreferenceChange={() => {}}
-      backdropPreference="default"
-      onBackdropPreferenceChange={() => {}}
-      sidebarGlass={0}
-      onSidebarGlassChange={() => {}}
-      showMacOSFontSmoothing={false}
-      macOSFontSmoothing={true}
-      onMacOSFontSmoothingChange={() => {}}
-      onAccountChange={() => {}}
-      initialSection="mobile"
-      onReset={() => {}}
-      onClose={() => {}}
-    />
-  )
-}
-
-function renderMobileAccess(transport: Transport) {
-  return render(mobileAccessSettings(transport))
-}
-
 describe('app haptic setting', () => {
   it('shows only on supported desktop Macs and persists the toggle', () => {
     const unsupported = renderAppearanceSettings()
@@ -552,18 +483,6 @@ describe('app haptic setting', () => {
 
     expect(toggle.getAttribute('aria-checked')).toBe('true')
     expect(localStorage.getItem(HAPTICS_KEY)).toBe('true')
-  })
-})
-
-describe('paired device timestamps', () => {
-  it.each([
-    [0, 'Seen just now'],
-    [37 * 60_000, 'Seen 37m ago'],
-    [3 * 60 * 60_000, 'Seen 3h ago'],
-    [2_272 * 60_000, 'Seen 1d ago'],
-  ])('formats an age of %i milliseconds', (age, expected) => {
-    const now = Date.now()
-    expect(formatDeviceNote(now - age, now)).toBe(expected)
   })
 })
 
@@ -646,11 +565,10 @@ describe('model settings', () => {
     expect(within(categories).getAllByRole('button')[0]?.textContent).toBe('General')
 
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
-    const search = screen.getByRole('searchbox', { name: 'Search OpenCode models' })
-    const sourceHeading = search.closest('.model-visibility')?.querySelector('.source-identity')
+    const sourceHeading = screen.getByText('OpenCode').closest('.source-identity')
     expect(sourceHeading?.getAttribute('title')).toBe('OpenCode')
     expect(sourceHeading?.querySelector('svg')?.getAttribute('width')).toBe('15')
-    expect(screen.queryByText(/models visible/)).toBeNull()
+    expect(screen.queryByRole('searchbox')).toBeNull()
     expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
     const ling = screen.getByRole('switch', {
       name: 'Include OpenCode Zen · Ling-3.0-tiny Free in model picker',
@@ -662,18 +580,7 @@ describe('model settings', () => {
     expect(qwen.getAttribute('aria-checked')).toBe('true')
     fireEvent.click(ling)
     expect(onModelVisibilityChange).toHaveBeenCalledWith('opencode:ling', true)
-    fireEvent.change(search, { target: { value: 'ling' } })
-    expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
-    fireEvent.change(search, { target: { value: 'qwen 3.8' } })
-
-    expect(screen.queryByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeNull()
     expect(screen.getByText('OpenCode Go · Qwen3.8 Max')).toBeTruthy()
-
-    expect(screen.queryByRole('checkbox', { name: 'Show models from OpenCode' })).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Clear Search OpenCode models' }))
-    expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
-    expect(screen.queryByText(/hidden model/)).toBeNull()
   })
 
   it('omits stored custom-model management from beta settings', () => {
@@ -802,264 +709,6 @@ describe('model settings', () => {
   })
 })
 
-describe('mobile access settings', () => {
-  it('starts a fresh status read when the transport changes', async () => {
-    const staleStatus = deferred<ConnectionsStatus>()
-    const previousTransport = {
-      request: vi.fn((method: string) => {
-        if (method === 'connections.status') return staleStatus.promise
-        throw new Error(`unexpected ${method}`)
-      }),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport
-    const currentTransport = {
-      request: vi.fn((method: string) => {
-        if (method === 'connections.status') return Promise.resolve(connectionsStatus(false))
-        throw new Error(`unexpected ${method}`)
-      }),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport
-
-    const view = renderMobileAccess(previousTransport)
-    expect(previousTransport.request).toHaveBeenCalledWith('connections.status', {})
-
-    view.rerender(mobileAccessSettings(currentTransport))
-    await waitFor(() =>
-      expect(currentTransport.request).toHaveBeenCalledWith('connections.status', {}),
-    )
-    expect(screen.getByText('Not accepting mobile connections')).toBeTruthy()
-    expect(screen.getByLabelText('Unavailable').className).toContain('is-unavailable')
-
-    await act(async () => {
-      staleStatus.reject(new Error('previous transport closed'))
-      await staleStatus.promise.catch(() => {})
-    })
-
-    expect(screen.getByText('Not accepting mobile connections')).toBeTruthy()
-    expect(screen.queryByRole('alert')).toBeNull()
-  })
-
-  it('ignores a pairing completion from a replaced transport', async () => {
-    const stalePairing = deferred<ResultOf<'connections.startPairing'>>()
-    const previousTransport = mobileTransport(connectionsStatus(false), (method) => {
-      if (method === 'connections.startPairing') return stalePairing.promise
-      throw new Error(`unexpected ${method}`)
-    })
-    const currentTransport = mobileTransport(connectionsStatus(false))
-
-    const view = renderMobileAccess(previousTransport)
-    await waitFor(() => expect(screen.getByText('Not accepting mobile connections')).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: 'Generate pairing code' }))
-    await waitFor(() =>
-      expect(previousTransport.request).toHaveBeenCalledWith('connections.startPairing', {}),
-    )
-
-    view.rerender(mobileAccessSettings(currentTransport))
-    await waitFor(() =>
-      expect(currentTransport.request).toHaveBeenCalledWith('connections.status', {}),
-    )
-    expect(
-      screen.getByRole('button', { name: 'Generate pairing code' }).getAttribute('disabled'),
-    ).toBeNull()
-
-    await act(async () => {
-      stalePairing.resolve({
-        ...connectionsStatus(true),
-        pairingUri: 'harness://pair?payload=stale-ticket',
-        expiresAt: Date.now() + 300_000,
-      })
-      await stalePairing.promise
-    })
-
-    expect(screen.getByText('Not accepting mobile connections')).toBeTruthy()
-    expect(screen.queryByText('Available to paired devices')).toBeNull()
-  })
-
-  it('ignores a mutation error from a replaced transport', async () => {
-    const staleStop = deferred<Record<string, never>>()
-    const previousTransport = mobileTransport(connectionsStatus(true), (method) => {
-      if (method === 'connections.stop') return staleStop.promise
-      throw new Error(`unexpected ${method}`)
-    })
-    const currentTransport = mobileTransport(connectionsStatus(false))
-
-    const view = renderMobileAccess(previousTransport)
-    await waitFor(() => expect(screen.getByText('Available to paired devices')).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: 'Stop accepting connections' }))
-    await waitFor(() =>
-      expect(previousTransport.request).toHaveBeenCalledWith('connections.stop', {}),
-    )
-
-    view.rerender(mobileAccessSettings(currentTransport))
-    await waitFor(() => expect(screen.getByText('Not accepting mobile connections')).toBeTruthy())
-
-    await act(async () => {
-      staleStop.reject(new Error('previous transport closed'))
-      await staleStop.promise.catch(() => {})
-    })
-
-    expect(screen.getByText('Not accepting mobile connections')).toBeTruthy()
-    expect(screen.queryByRole('alert')).toBeNull()
-  })
-
-  it('does not refresh through a replaced transport after disconnecting a device', async () => {
-    const staleRevoke = deferred<Record<string, never>>()
-    const previousStatus = {
-      ...connectionsStatus(true),
-      devices: [
-        {
-          id: 'device-1',
-          name: 'Studio iPhone',
-          createdAt: Date.now() - 60_000,
-          lastSeenAt: Date.now(),
-        },
-      ],
-    }
-    const previousTransport = mobileTransport(previousStatus, (method) => {
-      if (method === 'connections.revoke') return staleRevoke.promise
-      throw new Error(`unexpected ${method}`)
-    })
-    const currentTransport = mobileTransport(connectionsStatus(false))
-
-    const view = renderMobileAccess(previousTransport)
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Disconnect' })).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
-    await waitFor(() =>
-      expect(previousTransport.request).toHaveBeenCalledWith('connections.revoke', {
-        deviceId: 'device-1',
-      }),
-    )
-
-    view.rerender(mobileAccessSettings(currentTransport))
-    await waitFor(() => expect(screen.getByText('Not accepting mobile connections')).toBeTruthy())
-
-    await act(async () => {
-      staleRevoke.resolve({})
-      await staleRevoke.promise
-    })
-
-    expect(previousTransport.request).toHaveBeenCalledTimes(2)
-    expect(screen.getByText('Not accepting mobile connections')).toBeTruthy()
-  })
-
-  it('deduplicates interval ticks while a slow status read is pending', async () => {
-    vi.useFakeTimers()
-    const slowStatus = deferred<ConnectionsStatus>()
-    let statusRequests = 0
-    const transport = {
-      request: vi.fn((method: string) => {
-        if (method === 'connections.status') {
-          statusRequests += 1
-          return slowStatus.promise
-        }
-        throw new Error(`unexpected ${method}`)
-      }),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport
-
-    renderMobileAccess(transport)
-    expect(statusRequests).toBe(1)
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(6_000)
-    })
-    expect(statusRequests).toBe(1)
-
-    await act(async () => {
-      slowStatus.resolve(connectionsStatus(true))
-      await slowStatus.promise
-    })
-    expect(screen.getByText('Available to paired devices')).toBeTruthy()
-    expect(screen.getByLabelText('Ready').className).toContain('is-ready')
-  })
-
-  it('keeps a pairing offer newer than an in-flight status response', async () => {
-    const staleStatus = deferred<ConnectionsStatus>()
-    const offer = {
-      ...connectionsStatus(true),
-      pairingUri: 'harness://pair?payload=new-ticket',
-      expiresAt: Date.now() + 300_000,
-    }
-    const transport = {
-      request: vi.fn((method: string) => {
-        if (method === 'connections.status') return staleStatus.promise
-        if (method === 'connections.startPairing') return Promise.resolve(offer)
-        throw new Error(`unexpected ${method}`)
-      }),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport
-
-    renderMobileAccess(transport)
-    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('connections.status', {}))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Generate pairing code' }))
-    await waitFor(() => expect(screen.getByText('Available to paired devices')).toBeTruthy())
-
-    await act(async () => {
-      staleStatus.resolve(connectionsStatus(false))
-      await staleStatus.promise
-    })
-
-    expect(screen.getByText('Available to paired devices')).toBeTruthy()
-    expect(screen.queryByText('Not accepting mobile connections')).toBeNull()
-  })
-
-  it('runs one authoritative refresh after stop while an older poll is pending', async () => {
-    vi.useFakeTimers()
-    const stalePoll = deferred<ConnectionsStatus>()
-    const postStopStatus = deferred<ConnectionsStatus>()
-    let statusRequests = 0
-    const transport = {
-      request: vi.fn((method: string) => {
-        if (method === 'connections.status') {
-          statusRequests += 1
-          if (statusRequests === 1) return Promise.resolve(connectionsStatus(true))
-          if (statusRequests === 2) return stalePoll.promise
-          if (statusRequests === 3) return postStopStatus.promise
-          return Promise.reject(new Error('later poll failed'))
-        }
-        if (method === 'connections.stop') return Promise.resolve({})
-        throw new Error(`unexpected ${method}`)
-      }),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport
-
-    renderMobileAccess(transport)
-    await act(async () => {
-      await Promise.resolve()
-    })
-    expect(screen.getByText('Available to paired devices')).toBeTruthy()
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2_000)
-    })
-    expect(statusRequests).toBe(2)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Stop accepting connections' }))
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(statusRequests).toBe(3)
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2_000)
-    })
-    expect(statusRequests).toBe(3)
-
-    await act(async () => {
-      postStopStatus.resolve(connectionsStatus(false))
-      await postStopStatus.promise
-      stalePoll.resolve(connectionsStatus(true))
-      await stalePoll.promise
-    })
-
-    expect(screen.getByText('Not accepting mobile connections')).toBeTruthy()
-    expect(screen.queryByText('Available to paired devices')).toBeNull()
-    expect(screen.queryByRole('alert')).toBeNull()
-  })
-})
-
 describe('provider settings', () => {
   it('keeps custom harness controls out of the public beta', () => {
     renderProviders([], () => {
@@ -1105,51 +754,12 @@ describe('provider settings', () => {
         }
         if (method === 'auth.signOut') return {}
         if (method === 'providers.install') return { terminalId: 'term-install-1' }
-        if (method === 'connections.status') {
-          return {
-            enabled: true,
-            serverName: 'Studio Mac',
-            port: 4312,
-            addresses: [
-              { kind: 'tailscale', label: 'Tailscale 100.101.2.3', url: 'ws://100.101.2.3:4312' },
-            ],
-            devices: [
-              {
-                id: 'phone-1',
-                name: 'Blueemi’s iPhone',
-                createdAt: Date.now() - 60_000,
-                lastSeenAt: Date.now(),
-              },
-            ],
-            webUrls: ['http://100.101.2.3:4312/#access_token=test-web-token'],
-          }
-        }
-        if (method === 'connections.revoke') return {}
-        if (method === 'connections.startPairing') {
-          return {
-            enabled: true,
-            serverName: 'Studio Mac',
-            port: 4312,
-            addresses: [
-              { kind: 'tailscale', label: 'Tailscale 100.101.2.3', url: 'ws://100.101.2.3:4312' },
-            ],
-            devices: [],
-            webUrls: ['http://100.101.2.3:4312/#access_token=test-web-token'],
-            pairingUri: 'harness://pair?payload=test-ticket',
-            expiresAt: Date.now() + 300_000,
-          }
-        }
         throw new Error(`unexpected ${method}`)
       }),
       on: vi.fn(() => () => {}),
     } as unknown as Transport
     const onAccountChange = vi.fn()
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
-    const writeText = vi.fn(async () => undefined)
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText },
-    })
 
     render(
       <Settings
@@ -1268,38 +878,6 @@ describe('provider settings', () => {
     // Grok signs in through its own CLI: the row offers the guided card flow.
     expect(within(grokRow).getByRole('button', { name: 'Sign in' })).toBeTruthy()
     expect(open).not.toHaveBeenCalled()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Mobile access' }))
-    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('connections.status', {}))
-
-    // The full web app for a phone is the primary link, with copy and a QR.
-    const webUrl = 'http://100.101.2.3:4312/#access_token=test-web-token'
-    const webRow = screen.getByText(webUrl).closest<HTMLElement>('.settings__console-url')
-    if (!webRow) throw new Error('web app URL row missing')
-    expect(webRow).toBeTruthy()
-    await waitFor(() => expect(screen.getByRole('img', { name: 'App QR code' })).toBeTruthy())
-    fireEvent.click(within(webRow).getByRole('button', { name: 'Copy' }))
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(webUrl))
-    expect(within(webRow).getByRole('button', { name: 'Copied' })).toBeTruthy()
-
-    const phoneRow = screen.getByText('Blueemi’s iPhone').closest<HTMLElement>('.settings__row')
-    if (!phoneRow) throw new Error('paired phone row missing')
-    fireEvent.click(within(phoneRow).getByRole('button', { name: 'Disconnect' }))
-    await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('connections.revoke', {
-        deviceId: 'phone-1',
-      }),
-    )
-    fireEvent.click(screen.getByRole('button', { name: 'Generate pairing code' }))
-    await waitFor(() => expect(screen.getByRole('img', { name: 'Pairing QR code' })).toBeTruthy())
-    expect(screen.getByText('Tailscale 100.101.2.3')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Copy pairing link' }))
-    await waitFor(() =>
-      expect(writeText).toHaveBeenCalledWith('harness://pair?payload=test-ticket'),
-    )
-    const pairingPanel = document.querySelector('.settings__pairing')
-    if (!pairingPanel) throw new Error('pairing panel missing')
-    expect(within(pairingPanel as HTMLElement).getByRole('button', { name: 'Copied' })).toBeTruthy()
   })
 
   it('runs installs in the background and refreshes once the install exits cleanly', async () => {
@@ -1528,11 +1106,13 @@ describe('provider settings', () => {
       terminalId: 'term-login-3',
       data: '\u001b[32m✓ Signed in as grok.user@example.com\u001b[0m\r\n',
     })
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.providerEmail.grok')).toBe('grok.user@example.com'),
+    )
     signedIn = true
     emit('terminal.exit', { terminalId: 'term-login-3', exitCode: 0 })
     await waitFor(() => expect(screen.queryByTestId('install-terminal')).toBeNull())
     await waitFor(() => expect(providerRow('Grok').textContent).toContain('grok.user@example.com'))
-    expect(localStorage.getItem('harness.providerEmail.grok')).toBe('grok.user@example.com')
 
     // Beta scope: agent rows never render, even when the server reports one.
     expect(screen.queryByText('Kimi CLI')).toBeNull()

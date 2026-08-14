@@ -32,9 +32,40 @@ afterEach(() => {
 })
 
 describe('WorkspacePanel', () => {
+  it('finishes closing immediately when reduced motion removes the transition', async () => {
+    const onClosed = vi.fn()
+    const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query) =>
+        ({
+          matches: query === '(prefers-reduced-motion: reduce)',
+        }) as MediaQueryList,
+    )
+
+    render(
+      <WorkspacePanel
+        open={false}
+        expanded={false}
+        width={400}
+        transport={{} as Transport}
+        theme="dark"
+        sideChatParentStatus="idle"
+        sideChatStartOptions={{ approval: 'ask' }}
+        nativeSurfacesVisible
+        onOpen={vi.fn()}
+        onClose={vi.fn()}
+        onClosed={onClosed}
+        onExpandedChange={vi.fn()}
+        onWidthChange={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => expect(onClosed).toHaveBeenCalledOnce())
+    matchMedia.mockRestore()
+  })
+
   it('gives resize detents only while the panel is tracking', () => {
     const onWidthChange = vi.fn()
-    const { rerender } = render(
+    const { container } = render(
       <WorkspacePanel
         open
         expanded={false}
@@ -52,6 +83,8 @@ describe('WorkspacePanel', () => {
     )
 
     const handle = screen.getByRole('separator', { name: 'Resize workspace tools' })
+    container.className = 'workspace-layout'
+    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 900 })
     Object.defineProperty(handle, 'setPointerCapture', {
       configurable: true,
       value: vi.fn(),
@@ -62,6 +95,8 @@ describe('WorkspacePanel', () => {
     fireEvent.pointerMove(window, { clientX: 420, pointerId: 7 })
 
     expect(onWidthChange).toHaveBeenCalledWith(480)
+    fireEvent.pointerMove(window, { clientX: 0, pointerId: 7 })
+    expect(onWidthChange).toHaveBeenLastCalledWith(540)
     expect(haptics.prepareAppHaptics).toHaveBeenCalled()
     expect(haptics.performAppHaptic).toHaveBeenCalledWith('alignment')
 
@@ -139,6 +174,9 @@ describe('WorkspacePanel', () => {
       />,
     )
 
+    for (const title of ['Review', 'Terminal', 'Browser', 'Files', 'Temporary chat']) {
+      expect(screen.getByRole('button', { name: title }).querySelector('svg')).toBeTruthy()
+    }
     fireEvent.click(screen.getByRole('button', { name: 'Expand workspace tools' }))
     fireEvent.click(screen.getByRole('button', { name: 'Hide workspace tools' }))
     expect(onExpandedChange).toHaveBeenCalledWith(true)
@@ -172,34 +210,37 @@ describe('WorkspacePanel', () => {
     expect(screen.getByRole('tab', { name: 'Terminal' })).toBeTruthy()
   })
 
-  it('opens independent browser tabs and closes one with the middle mouse button', async () => {
-    render(
-      <WorkspacePanel
-        open
-        expanded={false}
-        width={400}
-        transport={{} as Transport}
-        theme="dark"
-        sideChatParentStatus="idle"
-        sideChatStartOptions={{ approval: 'ask' }}
-        nativeSurfacesVisible
-        onOpen={vi.fn()}
-        onClose={vi.fn()}
-        onExpandedChange={vi.fn()}
-        onWidthChange={vi.fn()}
-      />,
-    )
+  it.each(['Browser', 'Terminal', 'Files'] as const)(
+    'opens independent %s tabs and closes one with the middle mouse button',
+    async (tool) => {
+      render(
+        <WorkspacePanel
+          open
+          expanded={false}
+          width={400}
+          transport={{} as Transport}
+          theme="dark"
+          sideChatParentStatus="idle"
+          sideChatStartOptions={{ approval: 'ask' }}
+          nativeSurfacesVisible
+          onOpen={vi.fn()}
+          onClose={vi.fn()}
+          onExpandedChange={vi.fn()}
+          onWidthChange={vi.fn()}
+        />,
+      )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Browser' }))
-    await waitFor(() => expect(screen.getAllByRole('tab', { name: 'Browser' })).toHaveLength(1))
-    fireEvent.click(screen.getByRole('button', { name: 'Add workspace tab' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Browser' }))
-    await waitFor(() => expect(screen.getAllByRole('tab', { name: 'Browser' })).toHaveLength(2))
+      fireEvent.click(screen.getByRole('button', { name: tool }))
+      await waitFor(() => expect(screen.getAllByRole('tab', { name: tool })).toHaveLength(1))
+      fireEvent.click(screen.getByRole('button', { name: 'Add workspace tab' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: tool }))
+      await waitFor(() => expect(screen.getAllByRole('tab', { name: tool })).toHaveLength(2))
 
-    fireEvent(
-      screen.getAllByRole('tab', { name: 'Browser' })[0]!,
-      new MouseEvent('auxclick', { bubbles: true, button: 1 }),
-    )
-    expect(screen.getAllByRole('tab', { name: 'Browser' })).toHaveLength(1)
-  })
+      fireEvent(
+        screen.getAllByRole('tab', { name: tool })[0]!,
+        new MouseEvent('auxclick', { bubbles: true, button: 1 }),
+      )
+      expect(screen.getAllByRole('tab', { name: tool })).toHaveLength(1)
+    },
+  )
 })

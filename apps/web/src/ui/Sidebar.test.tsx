@@ -37,8 +37,48 @@ const session = (id: string, title: string) => ({
 })
 
 describe('Sidebar chat actions', () => {
-  it('selects an empty project and shows its empty chat state', () => {
-    const onSelectProject = vi.fn()
+  it('shows a divider below the fixed actions only after the project list scrolls', () => {
+    render(
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    const actions = document.querySelector('.rail__actions')
+    const body = document.querySelector<HTMLElement>('.rail__body')
+    expect(actions?.classList.contains('is-scrolled')).toBe(false)
+    if (!body) throw new Error('Missing sidebar body')
+
+    body.scrollTop = 12
+    fireEvent.scroll(body)
+    expect(actions?.classList.contains('is-scrolled')).toBe(true)
+
+    body.scrollTop = 0
+    fireEvent.scroll(body)
+    expect(actions?.classList.contains('is-scrolled')).toBe(false)
+  })
+
+  it('toggles an empty project without leaving the current chat', () => {
     const onClose = vi.fn()
     vi.spyOn(window, 'matchMedia').mockImplementation(
       (query) => ({ matches: query === '(max-width: 700px)' }) as MediaQueryList,
@@ -56,7 +96,6 @@ describe('Sidebar chat actions', () => {
         onClose={onClose}
         onAddProject={vi.fn()}
         onNewSession={vi.fn()}
-        onSelectProject={onSelectProject}
         onSelectSession={vi.fn()}
         onRenameProject={vi.fn()}
         onRemoveProject={vi.fn()}
@@ -73,14 +112,13 @@ describe('Sidebar chat actions', () => {
     const projectButton = screen.getByRole('button', { name: 'Empty project' })
     expect(projectButton.getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(projectButton)
-    expect(onSelectProject).toHaveBeenCalledWith('/work/empty')
-    expect(onClose).toHaveBeenCalledOnce()
+    expect(onClose).not.toHaveBeenCalled()
     expect(screen.getByText('No chats')).toBeTruthy()
     expect(projectButton.getAttribute('aria-expanded')).toBe('true')
 
     fireEvent.click(projectButton)
     expect(projectButton.getAttribute('aria-expanded')).toBe('false')
-    expect(onSelectProject).toHaveBeenCalledOnce()
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('uses the classic account footer in the inbox sidebar', () => {
@@ -844,32 +882,35 @@ describe('Sidebar chat actions', () => {
     const onClose = vi.fn()
     const onWidthChange = vi.fn()
     render(
-      <Sidebar
-        projects={[]}
-        activeProjectPath={undefined}
-        activeSessionId={undefined}
-        account={undefined}
-        providerName="Codex"
-        collapsed={false}
-        width={248}
-        onWidthChange={onWidthChange}
-        onClose={onClose}
-        onAddProject={vi.fn()}
-        onNewSession={vi.fn()}
-        onSelectSession={vi.fn()}
-        onRenameProject={vi.fn()}
-        onRemoveProject={vi.fn()}
-        onTogglePin={vi.fn()}
-        onRenameSession={vi.fn()}
-        onDeleteSession={vi.fn()}
-        onArchiveProject={vi.fn()}
-        onReorderSession={vi.fn()}
-        onOpenSearch={vi.fn()}
-        onOpenSettings={vi.fn()}
-      />,
+      <div className="shell">
+        <Sidebar
+          projects={[]}
+          activeProjectPath={undefined}
+          activeSessionId={undefined}
+          account={undefined}
+          providerName="Codex"
+          collapsed={false}
+          width={248}
+          onWidthChange={onWidthChange}
+          onClose={onClose}
+          onAddProject={vi.fn()}
+          onNewSession={vi.fn()}
+          onSelectSession={vi.fn()}
+          onRenameProject={vi.fn()}
+          onRemoveProject={vi.fn()}
+          onTogglePin={vi.fn()}
+          onRenameSession={vi.fn()}
+          onDeleteSession={vi.fn()}
+          onArchiveProject={vi.fn()}
+          onReorderSession={vi.fn()}
+          onOpenSearch={vi.fn()}
+          onOpenSettings={vi.fn()}
+        />
+      </div>,
     )
 
     const handle = screen.getByRole('separator', { name: 'Resize sidebar' })
+    const shell = handle.closest<HTMLElement>('.shell')
     fireEvent.keyDown(handle, { key: 'ArrowRight' })
     expect(onWidthChange).toHaveBeenCalledWith(256)
 
@@ -886,7 +927,10 @@ describe('Sidebar chat actions', () => {
     fireEvent.pointerDown(handle, { clientX: 248, pointerId: 2 })
     fireEvent.pointerMove(handle, { clientX: 80, pointerId: 2 })
     expect(onClose).not.toHaveBeenCalled()
+    expect(shell?.hasAttribute('data-rail-fold-preview')).toBe(true)
+    expect(shell?.style.getPropertyValue('--rail-w')).not.toBe('0px')
     fireEvent.pointerMove(handle, { clientX: 270, pointerId: 2 })
+    expect(shell?.hasAttribute('data-rail-fold-preview')).toBe(false)
     fireEvent.pointerUp(handle, { clientX: 270, pointerId: 2 })
     expect(onClose).not.toHaveBeenCalled()
     expect(onWidthChange).toHaveBeenCalledWith(270)
@@ -940,5 +984,46 @@ describe('Sidebar chat actions', () => {
 
     fireEvent.pointerMove(handle, { clientX: 400, pointerId: 7 })
     expect(onWidthChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears an active resize when the sidebar closes before pointer release', () => {
+    const view = (collapsed: boolean) => (
+      <div className="shell">
+        <Sidebar
+          projects={[]}
+          activeProjectPath={undefined}
+          activeSessionId={undefined}
+          account={undefined}
+          providerName="Codex"
+          collapsed={collapsed}
+          width={248}
+          onWidthChange={vi.fn()}
+          onClose={vi.fn()}
+          onAddProject={vi.fn()}
+          onNewSession={vi.fn()}
+          onSelectSession={vi.fn()}
+          onRenameProject={vi.fn()}
+          onRemoveProject={vi.fn()}
+          onTogglePin={vi.fn()}
+          onRenameSession={vi.fn()}
+          onDeleteSession={vi.fn()}
+          onArchiveProject={vi.fn()}
+          onReorderSession={vi.fn()}
+          onOpenSearch={vi.fn()}
+          onOpenSettings={vi.fn()}
+        />
+      </div>
+    )
+    const { rerender } = render(view(false))
+    const handle = screen.getByRole('separator', { name: 'Resize sidebar' })
+    const shell = handle.closest('.shell')
+
+    fireEvent.pointerDown(handle, { clientX: 248, pointerId: 8 })
+    fireEvent.pointerMove(handle, { clientX: 80, pointerId: 8 })
+    expect(shell?.hasAttribute('data-rail-fold-preview')).toBe(true)
+
+    rerender(view(true))
+    expect(shell?.hasAttribute('data-rail-fold-preview')).toBe(false)
+    expect(shell?.hasAttribute('data-resizing')).toBe(false)
   })
 })

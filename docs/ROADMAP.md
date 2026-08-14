@@ -113,7 +113,7 @@ CODE_OF_CONDUCT, CONTRIBUTING, templates, dependency license audit. Launch: GitH
 → _Public, with signed installers and the landing page already live. Never announce into an
 empty repo._
 
-### M8 — Mobile
+### M8 — Mobile (nightly only)
 
 Native SwiftUI app reusing the same protocol. Pairing, project and session browsing,
 attachments, read, approve, steer and diff review are implemented; push notifications and voice
@@ -121,13 +121,8 @@ finish the milestone. Connection over Tailscale/LAN first — a relay only later
 end-to-end encrypted.
 → _Approve a diff from your phone._
 
-**Shipped ahead of the milestone:** the full web app on a phone — the same UI as the
-harness desktop, served by the server from the built web client at
-`http://<tailscale-ip>:4312/#access_token=…` (stable across restarts, bookmarked once).
-The page derives its socket from its own origin, so no per-machine URL is baked in. A
-management console is deliberately not a web page — device management (see devices, copy
-URLs and pairing codes, revoke) lives in the desktop app's Settings under Mobile access.
-The web surface stays reachable while the server runs; native-app access toggles separately.
+The implemented native client and access stack live on `nightly`; `main` carries none of the
+mobile app, pairing, remote listener, or phone web surface until M8 is ready for release QA.
 
 ---
 
@@ -152,7 +147,6 @@ The web surface stays reachable while the server runs; native-app access toggles
 3. **Any commercial intent, ever?** Decides the license, and it's irreversible once outside
    contributors arrive.
 4. **What is the final TasteSkill v2 runtime contract?** M4 depends on it.
-5. **Web / self-host surface at launch?** The web app for phones is shipped (stable URL,
-   full harness UI over Tailscale/LAN); device management lives in the desktop app, not on
-   a web page. Full app hosting — serving the whole UI to any browser — still nearly free
-   architecturally, but doubles the support and security surface.
+5. **Web / self-host surface at launch?** The nightly branch has a phone web prototype over
+   Tailscale/LAN. Bringing it to `main` doubles the support and security surface, so that remains
+   a release decision.

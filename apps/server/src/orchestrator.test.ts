@@ -863,6 +863,12 @@ describe('provider-neutral design briefing', () => {
         presentTurns(reduceEventLog(emptyThread, history).items).get('design-turn')?.design,
       ).toBe(true)
       expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(true)
+      expect(
+        history.some(
+          ({ event }) =>
+            event.type === 'item.completed' && event.item.text.includes('Ask-first may block'),
+        ),
+      ).toBe(false)
     } finally {
       await orchestrator.disposeAll()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
@@ -2576,11 +2582,11 @@ describe('several sessions at once', () => {
     await vi.waitFor(() => expect(orchestrator.isTurnRunning(thread.id)).toBe(true))
     const stopping = orchestrator.interrupt(thread.id)
 
+    await expect(stopping).resolves.toBeUndefined()
     expect(sessions[0]!.interrupted).toBe(false)
     releaseCheckpoint({ commit: 'checkpoint', clean: true })
     await expect(sending).resolves.toMatchObject({ queued: false })
-    await expect(stopping).resolves.toBeUndefined()
-    expect(sessions[0]!.interrupted).toBe(true)
+    await vi.waitFor(() => expect(sessions[0]!.interrupted).toBe(true))
   })
 
   it('routes each session events to its own thread', async () => {

@@ -93,13 +93,14 @@ function settleLiveItems(state: ThreadState): ThreadState {
  * trip feels broken — but it has to be reconciled when the real item arrives.
  */
 const OPTIMISTIC_PREFIX = 'local:'
+const LEGACY_DESIGN_APPROVAL_WARNING =
+  'Heads up: this agent cannot ask for permission mid-run, so Ask-first may block its file writes during the build. Auto or Full approval works better for Design mode.'
 let localIdSequence = 0
 
 /**
- * randomUUID is restricted to secure contexts, while the mobile development
- * client is served over plain HTTP on a private Tailscale address. These ids
- * only identify renderer-local rows, so a timestamp and counter are a safe
- * fallback when the browser deliberately withholds that API.
+ * randomUUID is restricted to secure contexts. These ids only identify
+ * renderer-local rows, so a timestamp and counter are a safe fallback when a
+ * browser deliberately withholds that API.
  */
 function localId(prefix = ''): string {
   const uuid = globalThis.crypto?.randomUUID?.()
@@ -233,6 +234,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
 
     case 'item.completed': {
       state = settleLiveItems(state)
+      if (event.item.text === LEGACY_DESIGN_APPROVAL_WARNING) return state
       const index = state.items.findIndex((i) => i.id === event.item.id)
       if (index === -1) return { ...state, items: [...state.items, event.item] }
       const items = state.items.slice()

@@ -12,8 +12,9 @@ function StageHeaderComponent(props: {
   checkpointCount: number
   worktreeBranch: string | undefined
   terminalOpen: boolean
+  workspacePanelOpen: boolean
   onOpenRollback: () => void
-  onOpenWorkspace: () => void
+  onToggleWorkspace: () => void
   onToggleTerminal: () => void
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin: (id: string) => void
@@ -125,15 +126,18 @@ function StageHeaderComponent(props: {
       </div>
 
       <div className="stagehead__tools">
-        <button
-          type="button"
-          className="stagehead__action"
-          aria-label="Open workspace tools"
-          title="Workspace tools"
-          onClick={props.onOpenWorkspace}
-        >
-          <PanelRightOpen size={16} aria-hidden />
-        </button>
+        {!props.workspacePanelOpen ? (
+          <button
+            type="button"
+            className="stagehead__action"
+            aria-label="Show workspace tools"
+            aria-pressed={false}
+            title="Workspace tools"
+            onClick={props.onToggleWorkspace}
+          >
+            <PanelRightOpen size={16} aria-hidden />
+          </button>
+        ) : null}
         {props.sessionId ? (
           <button
             type="button"

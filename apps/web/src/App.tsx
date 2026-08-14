@@ -10,7 +10,7 @@ import {
   useSyncExternalStore,
 } from 'react'
 import type { CSSProperties } from 'react'
-import { LoaderCircle, PanelRight } from 'lucide-react'
+import { LoaderCircle } from 'lucide-react'
 import type {
   Account,
   ApprovalDecision,
@@ -54,7 +54,7 @@ import { StageHeader } from './ui/StageHeader.js'
 import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { ZoomHud } from './ui/ZoomHud.js'
-import { serverBaseUrl, serverUrl } from './server-url.js'
+import { serverBaseUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
 import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-recorder.js'
@@ -152,7 +152,7 @@ const TERMINAL_OPEN_KEY = 'harness.terminal.open'
 const TERMINAL_HEIGHT_KEY = 'harness.terminal.height'
 const RAIL_WIDTH_KEY = 'harness.rail.width'
 const WORKSPACE_PANEL_WIDTH_KEY = 'harness.workspacePanel.width'
-const DEFAULT_SIDEBAR_SETTINGS: SidebarSettings = { mode: 'inbox', autoSettleDays: 3 }
+const DEFAULT_SIDEBAR_SETTINGS: SidebarSettings = { mode: 'classic', autoSettleDays: 3 }
 const TerminalPane = lazy(() =>
   import('./ui/TerminalPane.js').then((module) => ({ default: module.TerminalPane })),
 )
@@ -298,8 +298,7 @@ function latestSequence(
 }
 
 export function App() {
-  const [connectionUrl, setConnectionUrl] = useState(() => serverUrl(SERVER_BASE_URL))
-  const transport = useMemo(() => new Transport(connectionUrl), [connectionUrl])
+  const transport = useMemo(() => new Transport(SERVER_BASE_URL), [])
   // StrictMode replays effect cleanup against this same memoized instance.
   const usageController = useMemo(
     () => new UsageLimitsController((params) => transport.request('usage.summary', params)),
@@ -528,6 +527,7 @@ export function App() {
   const [terminalOpen, setTerminalOpen] = useState(() => readSetting(TERMINAL_OPEN_KEY) === 'true')
   const [terminalHeight, setTerminalHeight] = useState(readTerminalHeight)
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false)
+  const [workspacePanelClosing, setWorkspacePanelClosing] = useState(false)
   const [workspacePanelExpanded, setWorkspacePanelExpanded] = useState(false)
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(readWorkspacePanelWidth)
   const [sideChatPromptRequest, setSideChatPromptRequest] = useState<SideChatPromptRequest>()
@@ -659,12 +659,6 @@ export function App() {
   // Syntax grammars load in the background from the first frame, so the first
   // code block an agent produces is already coloured.
   useEffect(warmHighlighter, [])
-
-  useEffect(() => {
-    const reconnectWithCurrentToken = () => setConnectionUrl(serverUrl(SERVER_BASE_URL))
-    window.addEventListener('hashchange', reconnectWithCurrentToken)
-    return () => window.removeEventListener('hashchange', reconnectWithCurrentToken)
-  }, [])
 
   useEffect(() => {
     const checkConnection = () => void transport.ensureHealthy()
@@ -2595,6 +2589,7 @@ export function App() {
   // The turn ending — however it ended — clears the pending state. Switching
   // sessions does too: the badge belongs to the thread, not to the composer.
   const stopping = stoppingThreadId !== undefined && stoppingThreadId === activeId && thread.running
+  const visibleRunning = thread.running && !stopping
   useEffect(() => {
     if (stoppingThreadId && !thread.running && stoppingThreadId === activeId) {
       setStoppingThreadId(undefined)
@@ -3376,11 +3371,16 @@ export function App() {
   }, [])
   const toggleTerminal = useCallback(() => setTerminalOpen((open) => !open), [])
   const closeTerminal = useCallback(() => setTerminalOpen(false), [])
-  const openWorkspacePanel = useCallback(() => setWorkspacePanelOpen(true), [])
+  const openWorkspacePanel = useCallback(() => {
+    setWorkspacePanelClosing(false)
+    setWorkspacePanelOpen(true)
+  }, [])
   const closeWorkspacePanel = useCallback(() => {
+    setWorkspacePanelClosing(true)
     setWorkspacePanelOpen(false)
     setWorkspacePanelExpanded(false)
   }, [])
+  const finishWorkspacePanelClose = useCallback(() => setWorkspacePanelClosing(false), [])
   const active = useMemo(() => findSession(projects, activeId), [projects, activeId])
   const activeProject = useMemo(
     () => projects.find((project) => project.path === activePath),
@@ -3557,7 +3557,6 @@ export function App() {
           onWidthChange={resizeSidebar}
           onAddProject={addSidebarProject}
           onNewSession={startSidebarSession}
-          onSelectProject={selectProject}
           onSelectSession={selectSidebarSession}
           onRenameProject={renameSidebarProject}
           onRemoveProject={removeSidebarProject}
@@ -3592,8 +3591,9 @@ export function App() {
                   checkpointCount={thread.running ? 0 : checkpoints.length}
                   worktreeBranch={active?.session.worktreeBranch}
                   terminalOpen={terminalOpen}
+                  workspacePanelOpen={workspacePanelOpen || workspacePanelClosing}
                   onOpenRollback={openRollback}
-                  onOpenWorkspace={openWorkspacePanel}
+                  onToggleWorkspace={workspacePanelOpen ? closeWorkspacePanel : openWorkspacePanel}
                   onToggleTerminal={toggleTerminal}
                   onRenameSession={renameSidebarSession}
                   onToggleSessionPin={toggleSidebarSessionPin}
@@ -3611,7 +3611,7 @@ export function App() {
                       itemVersion={thread.itemVersion}
                       liveStart={thread.liveStart}
                       projectPath={activePath}
-                      running={thread.running}
+                      running={visibleRunning}
                       searching={searching}
                       activeTurn={thread.activeTurn}
                       turnTiming={thread.turnTiming}
@@ -3672,9 +3672,9 @@ export function App() {
                     autoReviewSupported={autoReviewSupported}
                     attachmentsSupported={attachmentsSupported}
                     voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
-                    disabled={false}
+                    disabled={stopping}
                     sendAvailability={sendAvailability}
-                    running={thread.running}
+                    running={visibleRunning}
                     newSession={!activeId}
                     isolate={active?.session.worktreeBranch ? true : isolateSession}
                     designMode={designMode}
@@ -3709,18 +3709,6 @@ export function App() {
             )}
           </main>
 
-          {!workspacePanelOpen ? (
-            <button
-              type="button"
-              className="workspace-panel__launcher"
-              aria-label="Show workspace tools"
-              title="Workspace tools"
-              onClick={openWorkspacePanel}
-            >
-              <PanelRight size={15} aria-hidden />
-            </button>
-          ) : null}
-
           <Suspense fallback={null}>
             <WorkspacePanel
               open={workspacePanelOpen}
@@ -3744,6 +3732,7 @@ export function App() {
               }
               onOpen={openWorkspacePanel}
               onClose={closeWorkspacePanel}
+              onClosed={finishWorkspacePanelClose}
               onExpandedChange={setWorkspacePanelExpanded}
               onWidthChange={setWorkspacePanelWidth}
             />

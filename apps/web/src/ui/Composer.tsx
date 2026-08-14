@@ -1157,24 +1157,41 @@ function ComposerComponent(props: {
                     onSubmit={() => void transcribeVoice(true)}
                   />
                 ) : (
-                  <span className="composer__send-beam">
-                    <button
-                      className={`orb${showStop ? ' orb--stop' : ''}${
-                        showStop && props.stopping ? ' is-stopping' : ''
-                      }`}
-                      onClick={showStop ? props.onInterrupt : () => submit()}
-                      disabled={showStop ? Boolean(props.stopping) : sendDisabled}
-                      title={showStop ? (props.stopping ? 'Stopping…' : 'Stop') : submitLabel}
-                      aria-label={showStop ? (props.stopping ? 'Stopping…' : 'Stop') : submitLabel}
-                    >
-                      <span className="orb__icon orb__icon--send">
-                        <ArrowUp size={15} aria-hidden />
-                      </span>
-                      <span className="orb__icon orb__icon--stop">
-                        <Square size={9} fill="currentColor" strokeWidth={0} aria-hidden />
-                      </span>
-                    </button>
-                  </span>
+                  <>
+                    {props.running && !showStop && props.canSteerQueue ? (
+                      <button
+                        type="button"
+                        className="menutrigger tool composer__steer"
+                        onClick={() => submit('steer')}
+                        disabled={sendDisabled}
+                        aria-label="Steer current draft"
+                        title="Steer now (Ctrl+Enter)"
+                      >
+                        <CornerDownRight size={14} aria-hidden />
+                        <span>Steer</span>
+                      </button>
+                    ) : null}
+                    <span className="composer__send-beam">
+                      <button
+                        className={`orb${showStop ? ' orb--stop' : ''}${
+                          showStop && props.stopping ? ' is-stopping' : ''
+                        }`}
+                        onClick={showStop ? props.onInterrupt : () => submit()}
+                        disabled={showStop ? Boolean(props.stopping) : sendDisabled}
+                        title={showStop ? (props.stopping ? 'Stopping…' : 'Stop') : submitLabel}
+                        aria-label={
+                          showStop ? (props.stopping ? 'Stopping…' : 'Stop') : submitLabel
+                        }
+                      >
+                        <span className="orb__icon orb__icon--send">
+                          <ArrowUp size={15} aria-hidden />
+                        </span>
+                        <span className="orb__icon orb__icon--stop">
+                          <Square size={9} fill="currentColor" strokeWidth={0} aria-hidden />
+                        </span>
+                      </button>
+                    </span>
+                  </>
                 )}
               </div>
             </div>

@@ -14,6 +14,10 @@ afterEach(() => {
 })
 
 describe('model picker layout preference', () => {
+  it('uses the flat list when no preference has been saved', () => {
+    expect(readModelPickerLayout()).toBe('list')
+  })
+
   it('keeps the new session value when persistent storage rejects the write', () => {
     localStorage.setItem(MODEL_PICKER_LAYOUT_KEY, 'list')
     vi.spyOn(localStorage, 'setItem').mockImplementation(() => {

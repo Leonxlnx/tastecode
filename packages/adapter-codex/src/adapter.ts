@@ -478,6 +478,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #mcpInventory = new Map<string, McpServer[]>()
   #mcpInventoryLoads = new Map<string, Promise<void>>()
   #threadModels = new Map<string, string>()
+  #activeTurns = new Map<string, string>()
   #mcpServers: Record<string, JsonValue>
   #mcpEnvironment: NodeJS.ProcessEnv
   #mcpLogins = new Map<string, string>()
@@ -864,7 +865,9 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   }
 
   async interrupt(threadId: string): Promise<void> {
-    await this.#call('turn/interrupt', { threadId })
+    const turnId = this.#activeTurns.get(threadId)
+    if (!turnId) throw new Error('there is no running Codex turn to interrupt')
+    await this.#call('turn/interrupt', { threadId, turnId })
   }
 
   /**
@@ -907,8 +910,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
   /** Inject input without restarting the turn. Codex is one of the few engines that can. */
   async steer(threadId: string, text: string, attachments: string[] = []): Promise<void> {
+    const expectedTurnId = this.#activeTurns.get(threadId)
+    if (!expectedTurnId) throw new Error('there is no running Codex turn to steer')
     await this.#call('turn/steer', {
       threadId,
+      expectedTurnId,
       input: [
         { type: 'text', text, text_elements: [] },
         ...attachments.map((path) =>
@@ -928,6 +934,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#mcpInventory.clear()
     this.#mcpInventoryLoads.clear()
     this.#threadModels.clear()
+    this.#activeTurns.clear()
     // Held responders close over the dead transport; answering one after
     // disposal would write into nothing. Drop them with the process.
     this.#approvals.clear()
@@ -1009,6 +1016,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'turn/started': {
         const p = params as TurnStartedNotification
+        this.#activeTurns.set(p.threadId, p.turn.id)
         emit({
           type: 'turn.started',
           turn: {
@@ -1023,6 +1031,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'turn/completed': {
         const p = params as TurnCompletedNotification
+        if (this.#activeTurns.get(p.threadId) === p.turn.id) this.#activeTurns.delete(p.threadId)
         // A turn that ends with unanswered approvals must not leave the
         // thread pinned to 'approval' forever — the request is durably in
         // the event log, so without a resolved event even a restart keeps

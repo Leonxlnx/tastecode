@@ -24,7 +24,10 @@ describe('radius system', () => {
 
     expect(appCss).toMatch(/\.rail__search \{[^}]*border-radius: var\(--r-md\)/s)
     expect(appCss).toMatch(
-      /\.session-search__filters \.app-select__trigger \{[^}]*border-radius: var\(--r-xl\)/s,
+      /\.session-search__filters \.app-select__trigger \{[^}]*border-radius: var\(--r-md\)/s,
+    )
+    expect(appCss).toMatch(
+      /\.session-search__panel \{[^}]*width: min\(520px, 100%\);[^}]*border-radius: var\(--r-xl\)/s,
     )
     expect(appCss).toMatch(/\.inbox-card \{[^}]*border-radius: var\(--r-card\)/s)
     expect(appCss).toMatch(/\.command-palette__panel \{[^}]*border-radius: var\(--r-dialog\)/s)

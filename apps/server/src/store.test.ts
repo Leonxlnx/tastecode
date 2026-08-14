@@ -497,27 +497,6 @@ describe('projects', () => {
   })
 })
 
-describe('paired mobile devices', () => {
-  it('persists only token digests and revokes a device by deleting its verifier', () => {
-    store.setMobileAccessEnabled(true)
-    const paired = store.pairDevice("Karol's iPhone", 'sha256-verifier', 1_000)
-
-    expect(store.mobileAccessEnabled()).toBe(true)
-    expect(store.pairedDeviceForTokenHash('sha256-verifier')).toMatchObject({
-      id: paired.id,
-      name: "Karol's iPhone",
-    })
-    expect(store.pairedDeviceForTokenHash('plaintext-token')).toBeUndefined()
-
-    store.touchPairedDevice(paired.id, 2_000)
-    expect(store.pairedDevices()[0]?.lastSeenAt).toBe(2_000)
-
-    store.revokePairedDevice(paired.id)
-    expect(store.hasPairedDevice(paired.id)).toBe(false)
-    expect(store.pairedDeviceForTokenHash('sha256-verifier')).toBeUndefined()
-  })
-})
-
 describe('threads', () => {
   beforeEach(() => {
     store.addProject('/repo')
@@ -628,6 +607,10 @@ describe('threads', () => {
       reopened.close()
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('starts new profiles with the classic sidebar and three-day settling', () => {
+    expect(store.sidebarSettings()).toEqual({ mode: 'classic', autoSettleDays: 3 })
   })
 })
 

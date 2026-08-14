@@ -3,7 +3,6 @@ import {
   memo,
   Suspense,
   useCallback,
-  useDeferredValue,
   useEffect,
   useId,
   useRef,
@@ -15,8 +14,6 @@ import {
 import { createPortal } from 'react-dom'
 import type {
   Account,
-  ConnectionAddress,
-  ConnectionsStatus,
   DataOf,
   ModelConnection,
   ModelConnectionPreset,
@@ -28,14 +25,10 @@ import type {
 } from '@harness/contracts'
 import {
   ArrowLeft,
-  BarChart3,
-  Bug,
   CircleAlert,
   CircleUserRound,
   Blocks,
-  Check,
   ChevronDown,
-  Copy,
   Database,
   Info,
   Boxes,
@@ -44,19 +37,17 @@ import {
   Palette,
   PanelLeft,
   RotateCcw,
-  Smartphone,
   UserRound,
 } from 'lucide-react'
 import {
   agentMark,
   connectionMark,
-  filterModelChoicesByQuery,
   isCustomModelChoice,
   providerMark,
   type ModelChoice,
   type ProviderMark,
 } from '../model-catalog.js'
-import { isDesktop, writeClipboardText } from '../bridge.js'
+import { isDesktop } from '../bridge.js'
 import {
   beginInstall,
   beginLogin,
@@ -90,17 +81,14 @@ import {
 } from '../haptics.js'
 import { McpSettings } from './McpSettings.js'
 import { Menu, MenuItem } from './Menu.js'
-import { ModelSearchField } from './ModelSearchField.js'
 import { groupModelsBySource } from './ModelSelector.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { ProviderRow, type ProviderAction } from './ProviderRow.js'
 import { ProfileSettings } from './ProfileSettings.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
-import { renderQrSvg } from './qr-code.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
-import { UsageSettings } from './UsageSettings.js'
 
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
@@ -113,11 +101,8 @@ export type SettingsSection =
   | 'mcp'
   | 'skills'
   | 'workflows'
-  | 'mobile'
-  | 'usage'
   | 'appearance'
   | 'data'
-  | 'debug'
   | 'about'
 
 const THEME_OPTIONS = [
@@ -315,28 +300,10 @@ function SettingsComponent(props: {
             onClick={() => setSection('skills')}
           />
           <SettingsNavItem
-            active={section === 'mobile'}
-            icon={<Smartphone size={15} aria-hidden />}
-            label="Mobile access"
-            onClick={() => setSection('mobile')}
-          />
-          <SettingsNavItem
-            active={section === 'usage'}
-            icon={<BarChart3 size={15} aria-hidden />}
-            label="Usage"
-            onClick={() => setSection('usage')}
-          />
-          <SettingsNavItem
             active={section === 'data'}
             icon={<Database size={15} aria-hidden />}
             label="Data & privacy"
             onClick={() => setSection('data')}
-          />
-          <SettingsNavItem
-            active={section === 'debug'}
-            icon={<Bug size={15} aria-hidden />}
-            label="Debug"
-            onClick={() => setSection('debug')}
           />
           <SettingsNavItem
             active={section === 'about'}
@@ -349,11 +316,10 @@ function SettingsComponent(props: {
 
       <main className="settings__main">
         <div
-          className={`settings__content${section === 'profile' ? ' settings__content--profile' : ''}${section === 'usage' ? ' settings__content--usage' : ''}`}
+          className={`settings__content${section === 'profile' ? ' settings__content--profile' : ''}`}
         >
           {section === 'profile' ? (
             <ProfileSettings
-              transport={props.transport}
               account={props.account}
               providerName={props.providerName}
               identity={props.profileIdentity}
@@ -365,11 +331,8 @@ function SettingsComponent(props: {
           {section === 'mcp' ? <McpSettings {...props} /> : null}
           {section === 'skills' ? <SkillsSettings {...props} /> : null}
           {section === 'workflows' ? <WorkflowSettings {...props} /> : null}
-          {section === 'mobile' ? <MobileAccessSettings transport={props.transport} /> : null}
-          {section === 'usage' ? <UsageSettings transport={props.transport} /> : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
           {section === 'data' ? <DataSettings {...props} /> : null}
-          {section === 'debug' ? <DebugSettings transport={props.transport} /> : null}
           {section === 'about' ? <AboutSettings transport={props.transport} /> : null}
         </div>
       </main>
@@ -863,11 +826,6 @@ function ModelVisibilityGroup(props: {
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
 }) {
-  const [query, setQuery] = useState('')
-  const deferredQuery = useDeferredValue(query)
-  const searching = deferredQuery.trim().length > 0
-  const filteredChoices = filterModelChoicesByQuery(props.choices, deferredQuery)
-
   return (
     <section className="model-visibility" aria-label={props.source}>
       <header className="model-visibility__source">
@@ -876,413 +834,35 @@ function ModelVisibilityGroup(props: {
             <SourceIdentity presentation={{ label: props.source, mark: props.choices[0].mark }} />
           </h3>
         ) : null}
-        <ModelSearchField
-          className="model-visibility__search"
-          value={query}
-          label={`Search ${props.source} models`}
-          onChange={setQuery}
-        />
       </header>
 
       <div className="model-visibility__models">
         <div>
-          {filteredChoices.length > 0 ? (
-            filteredChoices.map((choice) => {
-              const visible = !props.hiddenModels.has(choice.key)
-              return (
-                <SettingsRow
-                  className={`model-visibility__model${visible ? '' : ' is-hidden'}`}
-                  key={choice.key}
-                  title={choice.model.displayName}
+          {props.choices.map((choice) => {
+            const visible = !props.hiddenModels.has(choice.key)
+            return (
+              <SettingsRow
+                className={`model-visibility__model${visible ? '' : ' is-hidden'}`}
+                key={choice.key}
+                title={choice.model.displayName}
+              >
+                <button
+                  className={`switch${visible ? ' is-on' : ''}`}
+                  type="button"
+                  role="switch"
+                  aria-label={`Include ${choice.model.displayName} in model picker`}
+                  aria-checked={visible}
+                  onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
                 >
-                  <button
-                    className={`switch${visible ? ' is-on' : ''}`}
-                    type="button"
-                    role="switch"
-                    aria-label={`Include ${choice.model.displayName} in model picker`}
-                    aria-checked={visible}
-                    onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
-                  >
-                    <span className="switch__thumb" />
-                  </button>
-                </SettingsRow>
-              )
-            })
-          ) : (
-            <p className="model-visibility__empty" role="status">
-              {searching ? 'No matching models.' : 'No models shown.'}
-            </p>
-          )}
+                  <span className="switch__thumb" />
+                </button>
+              </SettingsRow>
+            )
+          })}
         </div>
       </div>
     </section>
   )
-}
-
-function MobileAccessSettings(props: { transport: Transport }) {
-  const [status, setStatus] = useState<ConnectionsStatus>()
-  const [pairing, setPairing] = useState<ResultOf<'connections.startPairing'>>()
-  const [qrSvg, setQrSvg] = useState<string>()
-  const [webQrSvg, setWebQrSvg] = useState<string>()
-  const [error, setError] = useState<string>()
-  const [busy, setBusy] = useState<'pair' | 'stop' | string>()
-  const [copiedPairingUri, setCopiedPairingUri] = useState<string>()
-  const [copiedWebUrl, setCopiedWebUrl] = useState<string>()
-  const [now, setNow] = useState(Date.now)
-  const transportEpoch = useRef(0)
-  const statusMutationEpoch = useRef(0)
-  const statusRequest = useRef<Promise<void> | undefined>(undefined)
-
-  const refresh = useCallback(() => {
-    if (statusRequest.current) return statusRequest.current
-
-    const mutationEpoch = statusMutationEpoch.current
-    const request = (async () => {
-      try {
-        const nextStatus = await props.transport.request('connections.status', {})
-        if (mutationEpoch !== statusMutationEpoch.current) return
-        setStatus(nextStatus)
-        setError(undefined)
-      } catch (cause) {
-        if (mutationEpoch !== statusMutationEpoch.current) return
-        setError(cause instanceof Error ? cause.message : String(cause))
-      }
-    })()
-    statusRequest.current = request
-    void request.then(() => {
-      if (statusRequest.current === request) statusRequest.current = undefined
-    })
-    return request
-  }, [props.transport])
-
-  const invalidateStatusReads = () => {
-    statusMutationEpoch.current += 1
-    statusRequest.current = undefined
-  }
-
-  useEffect(() => {
-    setBusy(undefined)
-    void refresh()
-    const timer = window.setInterval(() => {
-      setNow(Date.now())
-      void refresh()
-    }, 2_000)
-    return () => {
-      window.clearInterval(timer)
-      transportEpoch.current += 1
-      invalidateStatusReads()
-    }
-  }, [refresh])
-
-  useEffect(() => {
-    if (!pairing || pairing.expiresAt <= Date.now()) {
-      setQrSvg(undefined)
-      return
-    }
-    let cancelled = false
-    void renderQrSvg(pairing.pairingUri)
-      .then((svg) => {
-        if (!cancelled) setQrSvg(svg)
-      })
-      .catch((cause) => {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [pairing])
-
-  const primaryWebUrl = status?.webUrls?.[0]
-  useEffect(() => {
-    if (!primaryWebUrl) {
-      setWebQrSvg(undefined)
-      return
-    }
-    let cancelled = false
-    void renderQrSvg(primaryWebUrl)
-      .then((svg) => {
-        if (!cancelled) setWebQrSvg(svg)
-      })
-      .catch(() => {
-        // QR rendering is a convenience; a broken one must not block the panel.
-        if (!cancelled) setWebQrSvg(undefined)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [primaryWebUrl])
-
-  const startPairing = async () => {
-    const requestTransportEpoch = transportEpoch.current
-    setBusy('pair')
-    try {
-      const offer = await props.transport.request('connections.startPairing', {})
-      if (requestTransportEpoch !== transportEpoch.current) return
-      invalidateStatusReads()
-      setStatus(offer)
-      setPairing(offer)
-      setNow(Date.now())
-      setError(undefined)
-    } catch (cause) {
-      if (requestTransportEpoch !== transportEpoch.current) return
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      if (requestTransportEpoch === transportEpoch.current) setBusy(undefined)
-    }
-  }
-
-  const stop = async () => {
-    const requestTransportEpoch = transportEpoch.current
-    setBusy('stop')
-    try {
-      await props.transport.request('connections.stop', {})
-      if (requestTransportEpoch !== transportEpoch.current) return
-      invalidateStatusReads()
-      setPairing(undefined)
-      await refresh()
-    } catch (cause) {
-      if (requestTransportEpoch !== transportEpoch.current) return
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      if (requestTransportEpoch === transportEpoch.current) setBusy(undefined)
-    }
-  }
-
-  const disconnectDevice = async (deviceId: string) => {
-    const requestTransportEpoch = transportEpoch.current
-    setBusy(deviceId)
-    try {
-      await props.transport.request('connections.revoke', { deviceId })
-      if (requestTransportEpoch !== transportEpoch.current) return
-      invalidateStatusReads()
-      await refresh()
-    } catch (cause) {
-      if (requestTransportEpoch !== transportEpoch.current) return
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      if (requestTransportEpoch === transportEpoch.current) setBusy(undefined)
-    }
-  }
-
-  const copyPairingLink = async (pairingUri: string) => {
-    try {
-      await writeClipboardText(pairingUri)
-      setCopiedPairingUri(pairingUri)
-      setError(undefined)
-    } catch (cause) {
-      setCopiedPairingUri(undefined)
-      const message = cause instanceof Error ? cause.message : String(cause)
-      setError(`Could not copy pairing link: ${message}`)
-    }
-  }
-
-  const copyWebUrl = async (url: string) => {
-    try {
-      await writeClipboardText(url)
-      setCopiedWebUrl(url)
-      setError(undefined)
-    } catch (cause) {
-      setCopiedWebUrl(undefined)
-      const message = cause instanceof Error ? cause.message : String(cause)
-      setError(`Could not copy the app link: ${message}`)
-    }
-  }
-
-  const activePairing = pairing && pairing.expiresAt > now ? pairing : undefined
-
-  return (
-    <SettingsPanel title="Mobile access">
-      <SettingsRow
-        title={status?.enabled ? 'Available to paired devices' : 'Not accepting mobile connections'}
-        note={
-          status?.enabled
-            ? `${status.serverName} is listening on port ${status.port}.`
-            : 'Generate a one-time code to accept the native app again. The web app stays available.'
-        }
-      >
-        <StateLabel state={status?.enabled ? 'ready' : 'unavailable'} />
-      </SettingsRow>
-
-      {(status?.webUrls?.length ?? 0) > 0 ? (
-        <div className="settings__mobile-block">
-          <div className="settings__web-access">
-            <div className="settings__web-access-qr">
-              {webQrSvg ? (
-                <div
-                  className="settings__qr"
-                  role="img"
-                  aria-label="App QR code"
-                  dangerouslySetInnerHTML={{ __html: webQrSvg }}
-                />
-              ) : (
-                <div className="settings__qr" aria-hidden>
-                  Generating QR…
-                </div>
-              )}
-              <p className="settings__qr-caption">Scan to open it on your phone</p>
-            </div>
-            <div className="settings__web-access-main">
-              <p className="settings__row-title">App on your phone — bookmark this</p>
-              <p className="settings__row-note">
-                The URL stays the same across restarts. Open it on your phone to use the whole
-                harness — the same UI as this desktop.
-              </p>
-              <div className="settings__console-urls">
-                {status?.webUrls.map((url, index) => (
-                  <UrlRow
-                    url={url}
-                    key={url}
-                    primary={index === 0}
-                    copied={copiedWebUrl === url}
-                    onCopy={() => void copyWebUrl(url)}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {status?.addresses.length ? (
-        <div className="settings__mobile-block">
-          <p className="settings__row-title">Reachable addresses</p>
-          <p className="settings__row-note">
-            Prefer Tailscale. Use a LAN route only on a private network you trust.
-          </p>
-          <div className="settings__mobile-routes">
-            {status.addresses.map((address) => (
-              <AddressPill address={address} key={`${address.kind}-${address.url}`} />
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      <div className="settings__mobile-actions">
-        <button
-          className="settings__action"
-          type="button"
-          disabled={busy !== undefined}
-          onClick={() => void startPairing()}
-        >
-          {busy === 'pair' ? 'Generating...' : 'Generate pairing code'}
-        </button>
-        {status?.enabled ? (
-          <button
-            className="settings__action is-danger"
-            type="button"
-            disabled={busy !== undefined}
-            onClick={() => void stop()}
-          >
-            {busy === 'stop' ? 'Stopping...' : 'Stop accepting connections'}
-          </button>
-        ) : null}
-      </div>
-
-      {error ? (
-        <p className="settings__mobile-error" role="alert">
-          {error}
-        </p>
-      ) : null}
-
-      {activePairing ? (
-        <div className="settings__pairing">
-          <div className="settings__qr">
-            {qrSvg ? (
-              <div
-                role="img"
-                aria-label="Pairing QR code"
-                dangerouslySetInnerHTML={{ __html: qrSvg }}
-              />
-            ) : (
-              <span>Generating QR...</span>
-            )}
-          </div>
-          <div>
-            <p className="settings__row-title">Scan from Harness Mobile</p>
-            <p className="settings__row-note">
-              Expires in {formatCountdown(activePairing.expiresAt - now)} and works once.
-            </p>
-            <button
-              className="settings__action"
-              type="button"
-              onClick={() => void copyPairingLink(activePairing.pairingUri)}
-            >
-              {copiedPairingUri === activePairing.pairingUri ? 'Copied' : 'Copy pairing link'}
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      <h2 className="settings__group-title settings__group-title--inside">Paired devices</h2>
-      {status?.devices.length ? (
-        status.devices.map((device) => (
-          <SettingsRow
-            key={device.id}
-            title={device.name}
-            note={formatDeviceNote(device.lastSeenAt, now)}
-          >
-            <button
-              className="settings__action is-danger"
-              type="button"
-              disabled={busy !== undefined}
-              onClick={() => void disconnectDevice(device.id)}
-            >
-              {busy === device.id ? 'Disconnecting...' : 'Disconnect'}
-            </button>
-          </SettingsRow>
-        ))
-      ) : (
-        <p className="settings__mobile-empty">No paired devices.</p>
-      )}
-    </SettingsPanel>
-  )
-}
-
-function UrlRow(props: { url: string; primary: boolean; copied: boolean; onCopy: () => void }) {
-  return (
-    <div className="settings__console-url">
-      <code className="settings__console-url-code" title={props.url}>
-        {props.url}
-      </code>
-      {props.primary ? (
-        <span className="settings__console-primary" title="The QR above encodes this URL">
-          QR
-        </span>
-      ) : null}
-      <button
-        className={`settings__console-copy${props.copied ? ' is-copied' : ''}`}
-        type="button"
-        onClick={props.onCopy}
-      >
-        {props.copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />}
-        {props.copied ? 'Copied' : 'Copy'}
-      </button>
-    </div>
-  )
-}
-
-function AddressPill(props: { address: ConnectionAddress }) {
-  return (
-    <span className="settings__mobile-route" title={props.address.url}>
-      <strong>{props.address.kind === 'tailscale' ? 'Tailscale' : 'LAN'}</strong>
-      {props.address.label}
-    </span>
-  )
-}
-
-function formatCountdown(ms: number): string {
-  const seconds = Math.max(0, Math.ceil(ms / 1_000))
-  return seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`
-}
-
-export function formatDeviceNote(lastSeenAt: number, now: number): string {
-  const minutes = Math.max(0, Math.floor((now - lastSeenAt) / 60_000))
-  if (minutes === 0) return 'Seen just now'
-  if (minutes < 60) return `Seen ${minutes}m ago`
-
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `Seen ${hours}h ago`
-  return `Seen ${Math.floor(hours / 24)}d ago`
 }
 
 function AppearanceSettings(props: {
@@ -1639,47 +1219,6 @@ function ResetConfirmation(props: { onCancel: () => void; onConfirm: () => void 
   )
 }
 
-export function DebugSettings(props: { transport: Transport }) {
-  const [state, setState] = useState<'idle' | 'resetting' | 'started' | 'error'>('idle')
-  const [error, setError] = useState<string>()
-
-  const resetUsage = async () => {
-    setState('resetting')
-    setError(undefined)
-    try {
-      await props.transport.request('usage.resetHistory', {})
-      setState('started')
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-      setState('error')
-    }
-  }
-
-  return (
-    <SettingsPanel title="Debug">
-      <SettingsRow
-        title="Usage history index"
-        note="Clears the generated cache and reparses every local provider history. Sessions and Harness data are not deleted."
-        className="settings__row--roomy"
-      >
-        {state === 'started' ? <StateLabel state="checking" detail="Scan started" live /> : null}
-        {state === 'error' && error ? (
-          <RowIssue message={error} tip="Restart the app, then try the reset again." />
-        ) : null}
-        <button
-          className="settings__action"
-          type="button"
-          disabled={state === 'resetting'}
-          onClick={() => void resetUsage()}
-        >
-          <RotateCcw size={13} aria-hidden />
-          <span>{state === 'resetting' ? 'Resetting…' : 'Reset and rescan'}</span>
-        </button>
-      </SettingsRow>
-    </SettingsPanel>
-  )
-}
-
 function AboutSettings(props: { transport: Transport }) {
   const [checking, setChecking] = useState(false)
   const [result, setResult] = useState<ResultOf<'system.updateCheck'>>()
@@ -1914,12 +1453,15 @@ function CliSignInRow(props: {
   // parent render, and firing more than once per success is the seed of the
   // refresh loop fixed there.
   const notifiedLogin = useRef(false)
+  const confirmedEmail = signedInEmail(login?.log ?? '')
+  useEffect(() => {
+    if (confirmedEmail) localStorage.setItem(providerEmailKey(props.provider.id), confirmedEmail)
+  }, [confirmedEmail, props.provider.id])
+
   useEffect(() => {
     if (login?.phase === 'succeeded') {
       if (!notifiedLogin.current) {
         notifiedLogin.current = true
-        const email = signedInEmail(login.log)
-        if (email) localStorage.setItem(providerEmailKey(props.provider.id), email)
         clearInstall(key)
         onSignedIn()
       }

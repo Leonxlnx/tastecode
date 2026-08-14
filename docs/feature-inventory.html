@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-13 e111ca32</span>
+        <span class="meta">2026-08-14 450c3b17</span>
       </div>
     </div>
 
@@ -249,8 +249,6 @@
         <a href="#appearance">Appearance</a>
         <a href="#settings">Settings</a>
         <a href="#shell">Desktop shell and security</a>
-        <a href="#mobile">Native mobile</a>
-        <a href="#web-access">Web access</a>
       </div>
 
       <section id="providers">
@@ -290,7 +288,7 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Steer mid-turn, fork a thread, interrupt, streamed reasoning</span
+                >Steer and interrupt the exact active turn, fork a thread, streamed reasoning</span
               ></label
             >
           </li>
@@ -314,8 +312,9 @@
               ><input type="checkbox" /><span
                 >Rate limit windows in the account popup
                 <span class="d"
-                  >5 hour and weekly, with reset times; non-ChatGPT accounts are honestly
-                  unavailable and malformed provider responses stay errors</span
+                  >clear dividers separate provider groups without splitting their windows; 5 hour
+                  and weekly reset times; non-ChatGPT accounts are honestly unavailable and
+                  malformed provider responses stay errors</span
                 ></span
               ></label
             >
@@ -505,9 +504,9 @@
               ><input type="checkbox" /><span
                 >Signed-in detection through the CLI itself, sign out runs grok logout
                 <span class="d"
-                  >successful login captures the exact provider-confirmed email; Settings otherwise
-                  reports only Signed in, uses a fixed-width privacy blur, and never asks the user
-                  to type an address</span
+                  >successful login retains the exact provider-confirmed email as soon as the CLI
+                  reports it; Settings otherwise reports only Signed in, uses a fixed-width privacy
+                  blur, and never asks the user to type an address</span
                 ></span
               ></label
             >
@@ -591,9 +590,11 @@
                 >One fixed setup and account row grammar
                 <span class="d"
                   >Codex, Claude Code, and Grok keep mark, identity, status, issue, and actions in
-                  stable slots across loading, ready, setup, busy, and failure states; primary and
-                  secondary actions share the fixed right edge on desktop and narrow layouts; CLI
-                  versions live in the provider-mark tooltip instead of widening account rows;
+                  stable slots across loading, ready, setup, busy, and failure states; empty action
+                  slots do not create a second grid row, keeping signed-in rows at 46 px; primary
+                  and secondary actions share the fixed right edge on desktop and narrow layouts;
+                  CLI versions live in the provider-mark tooltip instead of widening account rows;
+                  <a href="./screenshots/provider-density-after.png">compact evidence</a>,
                   <a href="./screenshots/provider-settings-desktop.png">desktop</a> and
                   <a href="./screenshots/provider-settings-390.png">390 px</a> evidence</span
                 ></span
@@ -694,10 +695,11 @@
                 >Auto-growing prompt field with ordered optimistic queued sends while a turn runs
                 <span class="d"
                   >Thread, New chat, and composer controls respond to their pane width rather than
-                  the whole window, remaining usable beside workspace tools down to 332 px; the
-                  in-pane header names the current session or New chat and exposes the shared
-                  session menu plus direct Workspace and Terminal controls; each newly submitted
-                  queued turn gets a stable transcript anchor</span
+                  the whole window, remaining usable beside workspace tools down to 332 px;
+                  permission and Design labels compact at a 620 px chat pane before toolbar controls
+                  can overlap; the in-pane header names the current session or New chat and exposes
+                  the shared session menu plus direct Workspace and Terminal controls; each newly
+                  submitted queued turn gets a stable transcript anchor</span
                 ></span
               ></label
             >
@@ -720,18 +722,23 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Steer mid-turn where the engine supports it</span
+                >Steer mid-turn where the engine supports it
+                <span class="d"
+                  >Enter queues while an agent runs; Ctrl/Command+Enter and the visible Steer
+                  control redirect the current turn; every queued row can also steer
+                  immediately</span
+                ></span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Model picker grouped by stable source identity with provider logos; flat and rail
-                layouts share full-catalog search, arrow-key entry into filtered results, and
-                selection preservation; new-chat source changes keep readiness checks silent;
-                first-run visibility favors current Codex and Claude families while saved visibility
-                and future unknown models remain authoritative</span
+                >Model picker grouped by stable source identity with provider logos; the flat list
+                is the first-run layout, while both layouts share full-catalog search, arrow-key
+                entry into filtered results, and selection preservation; new-chat source changes
+                keep readiness checks silent; first-run visibility favors current Codex and Claude
+                families while saved visibility and future unknown models remain authoritative</span
               ></label
             >
           </li>
@@ -801,8 +808,10 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Image attachments gated by declared source capability, with rejected sends
-                restoring the original draft and attachment set</span
+                >Selected files, drag/drop, and immediate Ctrl/Command+V image attachments gated by
+                declared source capability; Codex, Claude Code, and Grok receive their native image
+                and file-reference formats, while rejected sends restore the original draft and
+                attachment set</span
               ></label
             >
           </li>
@@ -824,12 +833,13 @@
                   startup events immediately own the Design phase, while a 30-second start-only
                   watchdog fails silent starts visibly without timing out running work; terminal
                   provider errors end briefing activity, remain visible, and cannot idle a newer
-                  turn; recoverable preview startup retries once; package-manager selectors cannot
-                  escape the selected workspace; exact-file build reports are checked against the
-                  bounded before-and-after tree; Harness-owned static previews reject occupied ports
-                  and clean up child trees; rendered Chromium audits require exactly one h1 and at
-                  least 44 by 44 CSS-pixel mobile interaction targets, and model review cannot erase
-                  those findings; a successful preview remains reachable until thread close or a
+                  turn; retired approval warnings are omitted from new and saved transcripts;
+                  recoverable preview startup retries once; package-manager selectors cannot escape
+                  the selected workspace; exact-file build reports are checked against the bounded
+                  before-and-after tree; Harness-owned static previews reject occupied ports and
+                  clean up child trees; rendered Chromium audits require exactly one h1 and at least
+                  44 by 44 CSS-pixel mobile interaction targets, and model review cannot erase those
+                  findings; a successful preview remains reachable until thread close or a
                   replacement Design run, with process and port release awaited before cleanup;
                   completed queued phases remain idle when their provider promise settles late</span
                 ></span
@@ -940,7 +950,8 @@
                   >new tasks show the user row plus exactly one stable Working and Stop surface
                   before the next paint; a reopened 1,513-event Desktop trace captured the same
                   stable state at +87 ms without reload flashes, duplicate status, timer restarts,
-                  or limit-induced layout shifts</span
+                  or limit-induced layout shifts; Stop immediately restores Send and removes live
+                  Working/Stopping presentation while the provider interrupt finishes</span
                 ></span
               ></label
             >
@@ -1041,9 +1052,10 @@
                 >Add project by folder, multiple projects at once
                 <span class="d"
                   >project loading and failures remain explicit; Retry and the no-project action use
-                  the existing folder picker; selecting an empty project opens No chats with the
-                  composer still available;
-                  <a href="./screenshots/empty-project.png">production evidence</a></span
+                  the existing folder picker; opening an empty project's drawer reveals No chats
+                  without replacing or collapsing the current chat; compact folder rows align
+                  directly below Projects and expanded Show more actions have no extra leading
+                  spacer; <a href="./screenshots/empty-project.png">production evidence</a></span
                 ></span
               ></label
             >
@@ -1134,11 +1146,10 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Persistent per-session and per-day usage accounting
+                >Per-session and per-day usage summaries
                 <span class="d"
-                  >malformed or parser-stale generated caches trigger a cold rebuild; failed
-                  background scans back off, while Profile and Usage polling recovers from transient
-                  request failures; money only when the provider reports real cost</span
+                  >provider-neutral server-owned totals feed the live session and today summaries;
+                  money only appears when the provider reports real cost</span
                 ></span
               ></label
             >
@@ -1157,13 +1168,16 @@
               ><input type="checkbox" /><span
                 >Resizable right-side workspace with persistent tool tabs
                 <span class="d"
-                  >compact single-line tool chooser, Review, CSP-safe compact terminal with link
-                  detection, independent Browser tabs with middle-click closing and distinct
-                  desktop/tablet/mobile controls, lazy file tree and side chat; New chat terminals
-                  use the selected project's current checkout, while active chats use their exact
-                  session checkout; missing workspace items fail without raw paths, panel controls
-                  stay inside the app, and closed panel chrome cannot create horizontal overflow in
-                  a 390 px window</span
+                  >compact 2-by-2-plus-one icon launcher, Review, independent Terminal, Browser, and
+                  Files tabs with middle-click closing, CSP-safe compact terminals with link
+                  detection, distinct desktop/tablet/mobile Browser controls, lazy file trees and
+                  side chat; New chat terminals use the selected project's current checkout, while
+                  active chats use their exact session checkout; one fixed in-chat toggle opens the
+                  panel, its chrome owns closing, and the outside opener returns only after that
+                  transition settles. Aligned square dividers stay below native window chrome,
+                  resizing keeps at least 360 px for the center chat with or without the left
+                  sidebar, missing workspace items fail without raw paths, and 390 px layouts do not
+                  overflow</span
                 ></span
               ></label
             >
@@ -1173,11 +1187,12 @@
               ><input type="checkbox" /><span
                 >Ephemeral Temporary chat seeded from the active conversation
                 <span class="d"
-                  >normal Thread presentation without duplicate parent-status chrome;
-                  Codex-compatible /side and /btw commands, hidden point-in-time parent context,
-                  independent streaming, approvals and structured input across every provider;
-                  startup fails visibly after 30 seconds instead of spinning forever, and closing it
-                  disposes the provider session and erases its temporary transcript</span
+                  >normal Thread presentation and matching composer without duplicate parent-status
+                  chrome or a full-panel startup spinner; Codex-compatible /side and /btw commands,
+                  hidden point-in-time parent context, independent streaming, approvals and
+                  structured input across every provider; startup fails visibly after 30 seconds
+                  instead of spinning forever, and closing it disposes the provider session and
+                  erases its temporary transcript</span
                 ></span
               ></label
             >
@@ -1186,7 +1201,10 @@
             <label
               ><input type="checkbox" /><span
                 >Two versions switchable in Settings
-                <span class="d">V1 Classic and V2 Inbox with auto-settle after N days</span></span
+                <span class="d"
+                  >V1 Classic and V2 Inbox with auto-settle after N days; new profiles start on
+                  Classic with three-day settling enabled</span
+                ></span
               ></label
             >
           </li>
@@ -1195,7 +1213,10 @@
               ><input type="checkbox" /><span
                 >Projects with sessions, both renameable inline
                 <span class="d"
-                  >open and closed groups use the same chevron-free 36 px row rhythm</span
+                  >open and closed groups use the same chevron-free 36 px row rhythm; scrolling the
+                  list reveals a strong divider below the fixed New chat, New project, and Pull
+                  requests actions without shifting them; drag-folding moves the intact rail and
+                  grid closed together, even before pointer release</span
                 ></span
               ></label
             >
@@ -1301,10 +1322,11 @@
               ><input type="checkbox" /><span
                 >Cross-session title and full-text search with project and agent filters
                 <span class="d"
-                  >prefix ranking, highlighted snippets, keyboard navigation, and stable pagination
-                  over an immutable ranked server snapshot with indexed range seeks; opaque result
-                  identities retain selection and DOM focus across inserts, and closing search
-                  restores an available opener or composer</span
+                  >compact 520 px panel with flat filter controls; prefix ranking, highlighted
+                  snippets, keyboard navigation, and stable pagination over an immutable ranked
+                  server snapshot with indexed range seeks; opaque result identities retain
+                  selection and DOM focus across inserts, and closing search restores an available
+                  opener or composer</span
                 ></span
               ></label
             >
@@ -1369,7 +1391,7 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Workflows section: sidebar version switch and inbox auto-settle</span
+                >General section: sidebar version switch and inbox auto-settle</span
               ></label
             >
           </li>
@@ -1473,10 +1495,10 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Twelve sections
+                >Nine sections
                 <span class="d"
-                  >General, Profile, and Appearance first, then Providers, Models, MCP, Skills,
-                  Mobile access, Usage, Data &amp; privacy, Debug, About</span
+                  >General, Profile, and Appearance first, then Providers, Models, MCP, Skills, Data
+                  &amp; privacy, About</span
                 ></span
               ></label
             >
@@ -1484,9 +1506,7 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Profile: renderer-local display name and validated PNG, JPEG, or WebP avatar plus
-                lifetime stats, streaks, token heatmap with per-day provider breakdowns, and model
-                insights</span
+                >Profile: renderer-local display name and validated PNG, JPEG, or WebP avatar</span
               ></label
             >
           </li>
@@ -1498,11 +1518,13 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Models: active defaults first, with hidden models behind a compact disclosure
+                >Models: compact search-free Settings lists keep every catalog model and individual
+                visibility switch visible
                 <span class="d"
-                  >search still reaches the full catalog; first-run defaults wait for complete
+                  >composer pickers retain full-catalog search; first-run defaults wait for complete
                   installed-provider discovery; stored custom entries remain usable while creation
-                  controls are parked</span
+                  controls are parked;
+                  <a href="./screenshots/model-settings-no-search.png">desktop evidence</a></span
                 ></span
               ></label
             >
@@ -1638,118 +1660,6 @@
             <label
               ><input type="checkbox" /><span
                 >Vendor sign-in and setup live in Settings, never a launch gate</span
-              ></label
-            >
-          </li>
-        </ul>
-      </section>
-
-      <section id="mobile">
-        <header>
-          <h2>Native mobile <span class="pill-parked">parked for the beta</span></h2>
-          <span class="count"></span>
-        </header>
-        <ul class="check">
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Native SwiftUI iPhone client generated with XcodeGen
-                <span class="d">iOS 26, Swift 6 strict concurrency</span></span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >One-time QR or deep-link pairing over Tailscale or a trusted private LAN</span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Paired credentials stored in Keychain with reconnect and revocation support</span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Browse and add remote projects, search sessions, and manage thread lifecycle</span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Start and continue turns with provider, model, effort, approval, mode and
-                attachment controls</span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Stream transcripts, answer approvals, steer queued turns, interrupt and review
-                diffs</span
-              ></label
-            >
-          </li>
-        </ul>
-      </section>
-
-      <section id="web-access">
-        <header>
-          <h2>Web access</h2>
-          <span class="count"></span>
-        </header>
-        <ul class="check">
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >The full harness web app on a phone — same UI as the desktop, served by the server
-                from the built web client at <code>/</code> on the mobile port
-                <span class="d"
-                  >no Vite needed in packaged builds; the dev stack serves the live Vite source
-                  instead of the built client</span
-                ></span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Stable, bookmarkable app URL — long-lived admin token in the OS credential store,
-                unchanged across restarts
-                <span class="d"
-                  >fixed port + Tailscale address + persistent token in the hash</span
-                ></span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >The phone page derives its WebSocket from its own origin
-                (<code>ws://&lt;host&gt;/ws</code>); loopback stays on
-                <code>ws://127.0.0.1:4311</code></span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Web surfaces reachable whenever the server runs; native-app access toggled
-                separately</span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >The desktop app is the management console: Settings → Mobile access shows the app
-                URL with explicit copy states and its adjacent scan QR, generates pairing codes,
-                lists paired devices and revokes them</span
               ></label
             >
           </li>

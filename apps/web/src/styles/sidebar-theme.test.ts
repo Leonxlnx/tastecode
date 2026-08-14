@@ -36,7 +36,8 @@ describe('sidebar theme CSS', () => {
 
   it('keeps project hierarchy calm and visibly nested', () => {
     expect(appCss).not.toContain('.proj__chevron')
-    expect(appCss).toMatch(/\.proj__toggle \{[^}]*padding: 5px 12px;/s)
+    expect(appCss).toMatch(/\.proj__toggle \{[^}]*padding: 4px 8px;/s)
+    expect(appCss).toMatch(/\.proj__sessions-toggle \{[^}]*padding: 0 8px;/s)
     expect(appCss).toMatch(/\.proj__sessions \{[^}]*margin: 1px 0 6px 20px;[^}]*border-left/s)
     expect(appCss).toMatch(/\.pinned-sessions \{[^}]*border-left: 0;/s)
   })
@@ -47,6 +48,6 @@ describe('sidebar theme CSS', () => {
       /\.proj__drawer\[data-open='false'\] > \.proj__sessions \{[^}]*margin-block: 0;/s,
     )
     expect(appCss).toMatch(/\.proj__head \{[^}]*min-height: 36px;/s)
-    expect(appCss).toMatch(/\.proj__toggle \{[^}]*min-height: 36px;/s)
+    expect(appCss).toMatch(/\.proj__toggle \{[^}]*min-height: 32px;/s)
   })
 })

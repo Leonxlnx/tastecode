@@ -36,7 +36,7 @@ describe('MCP settings', () => {
             {
               id: 'docs',
               displayName: 'Developer Docs',
-              scope: 'global',
+              scope: 'project',
               enabled: true,
               auth: { status: 'sign_in_required', method: 'oauth' },
               startup: { state: 'failed', message: 'OAuth token expired' },
@@ -106,7 +106,7 @@ describe('MCP settings', () => {
       servers: [
         {
           id: 'legacy-server',
-          scope: 'global',
+          scope: 'project',
           enabled: true,
           tools: [],
           resources: [],
@@ -126,6 +126,45 @@ describe('MCP settings', () => {
 
     expect(await screen.findByText('legacy-server')).toBeTruthy()
     expect(screen.getByText('status unavailable')).toBeTruthy()
+  })
+
+  it('starts empty when the provider only reports global servers', async () => {
+    const transport = client(async () => ({
+      capabilities: {
+        inventory: true,
+        add: true,
+        update: true,
+        remove: true,
+        reload: false,
+        startOAuth: false,
+        cancelOAuth: false,
+      },
+      servers: [
+        {
+          id: 'provider-global',
+          scope: 'global',
+          enabled: true,
+          auth: { status: 'not_required' },
+          startup: { state: 'ready' },
+          tools: [],
+          resources: [],
+          resourceTemplates: [],
+        },
+      ],
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect(await screen.findByText('No MCP servers have been added to this project.')).toBeTruthy()
+    expect(screen.queryByText('provider-global')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Add server' })).toBeTruthy()
   })
 
   it('shows no controls for unsupported providers', async () => {
@@ -243,7 +282,7 @@ describe('MCP settings', () => {
     act(() => onState?.('reconnecting'))
     act(() => onState?.('open'))
 
-    expect(await screen.findByText('No MCP servers are configured for this project.')).toBeTruthy()
+    expect(await screen.findByText('No MCP servers have been added to this project.')).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
@@ -303,7 +342,7 @@ describe('MCP settings', () => {
       servers: [
         {
           id: 'docs',
-          scope: 'global' as const,
+          scope: 'project' as const,
           enabled: true,
           auth: { status: 'not_required' as const },
           startup: { state: 'ready' as const },
@@ -370,7 +409,7 @@ describe('MCP settings', () => {
             servers: [
               {
                 id: 'docs',
-                scope: 'global',
+                scope: 'project',
                 enabled: true,
                 auth: { status: 'sign_in_required', method: 'oauth' },
                 startup: { state: 'ready' },
@@ -466,7 +505,7 @@ describe('MCP settings', () => {
             servers: [
               {
                 id: 'docs',
-                scope: 'global',
+                scope: 'project',
                 enabled: true,
                 auth: { status: 'sign_in_required', method: 'oauth' },
                 startup: { state: 'ready' },
@@ -521,6 +560,7 @@ describe('MCP settings', () => {
   })
 
   it('ignores a completed change after switching projects', async () => {
+    Object.defineProperty(window, 'confirm', { configurable: true, value: () => true })
     let finishChange: (() => void) | undefined
     const change = new Promise<void>((resolve) => {
       finishChange = resolve
@@ -538,7 +578,7 @@ describe('MCP settings', () => {
       servers: [
         {
           id,
-          scope: 'global',
+          scope: 'project',
           enabled: true,
           auth: { status: 'not_required' },
           startup: { state: 'ready' },
@@ -551,7 +591,7 @@ describe('MCP settings', () => {
     const transport = client(async (method, params) => {
       const projectPath = (params as { projectPath: string }).projectPath
       if (method === 'mcp.list') return inventory(projectPath === '/work/alpha' ? 'alpha' : 'beta')
-      if (method === 'mcp.add') return change
+      if (method === 'mcp.remove') return change
       throw new Error(`unexpected ${method}`)
     })
     const view = render(
@@ -565,7 +605,7 @@ describe('MCP settings', () => {
     )
 
     expect(await screen.findByText('alpha')).toBeTruthy()
-    fireEvent.click(screen.getByRole('switch', { name: 'Disable alpha for this project' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
     view.rerender(
       <McpSettings
         transport={transport}
@@ -592,7 +632,8 @@ describe('MCP settings', () => {
     ).toHaveLength(1)
   })
 
-  it('adds a project server and disables an inherited server', async () => {
+  it('adds and removes project servers', async () => {
+    Object.defineProperty(window, 'confirm', { configurable: true, value: () => true })
     const transport = client(async (method) => {
       if (method === 'mcp.list') {
         return {
@@ -608,7 +649,7 @@ describe('MCP settings', () => {
           servers: [
             {
               id: 'github',
-              scope: 'global',
+              scope: 'project',
               enabled: true,
               auth: { status: 'not_required' },
               startup: { state: 'ready' },
@@ -619,7 +660,7 @@ describe('MCP settings', () => {
           ],
         }
       }
-      if (method === 'mcp.add' || method === 'mcp.reload') return {}
+      if (method === 'mcp.add' || method === 'mcp.reload' || method === 'mcp.remove') return {}
       throw new Error(`unexpected ${method}`)
     })
     render(
@@ -652,12 +693,12 @@ describe('MCP settings', () => {
       })
     })
 
-    fireEvent.click(screen.getByRole('switch', { name: 'Disable github for this project' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
     await waitFor(() => {
-      expect(transport.request).toHaveBeenCalledWith('mcp.add', {
+      expect(transport.request).toHaveBeenCalledWith('mcp.remove', {
         provider: 'codex',
         projectPath: '/work/project',
-        server: { id: 'github', enabled: false },
+        serverId: 'github',
       })
     })
   })

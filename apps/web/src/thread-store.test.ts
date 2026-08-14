@@ -135,6 +135,18 @@ describe('thread reducer', () => {
     expect(state.items[0]?.text).toBe('streamed')
   })
 
+  it('omits the retired Design approval warning from saved history', () => {
+    const state = reduce(emptyThread, {
+      type: 'item.completed',
+      item: item({
+        status: 'completed',
+        text: 'Heads up: this agent cannot ask for permission mid-run, so Ask-first may block its file writes during the build. Auto or Full approval works better for Design mode.',
+      }),
+    })
+
+    expect(state.items).toEqual([])
+  })
+
   it('replaces the exact optimistic user item with its durable completion', () => {
     const echoed = appendUserMessage(emptyThread, 'repeat this', 'submission-1')
     const state = reduce(echoed, {
@@ -162,13 +174,13 @@ describe('thread reducer', () => {
     ])
   })
 
-  it('echoes a message when randomUUID is unavailable in an insecure mobile context', () => {
+  it('echoes a message when randomUUID is unavailable in an insecure browser context', () => {
     vi.stubGlobal('crypto', {})
 
-    const first = appendUserMessage(emptyThread, 'sent from mobile')
+    const first = appendUserMessage(emptyThread, 'sent from browser')
     const second = appendUserMessage(first, 'sent again')
 
-    expect(second.items.map((entry) => entry.text)).toEqual(['sent from mobile', 'sent again'])
+    expect(second.items.map((entry) => entry.text)).toEqual(['sent from browser', 'sent again'])
     expect(second.items[0]?.id).toMatch(/^local:/)
     expect(second.items[1]?.id).not.toBe(second.items[0]?.id)
   })

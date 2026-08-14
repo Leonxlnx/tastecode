@@ -78,6 +78,9 @@ const TOOLS: Array<{
   },
 ]
 
+const MIN_PANEL_WIDTH = 360
+const MIN_CHAT_WIDTH = 360
+
 export function WorkspacePanel(props: {
   open: boolean
   expanded: boolean
@@ -94,6 +97,7 @@ export function WorkspacePanel(props: {
   nativeSurfacesVisible: boolean
   onOpen: () => void
   onClose: () => void
+  onClosed?: () => void
   onExpandedChange: (expanded: boolean) => void
   onWidthChange: (width: number) => void
 }) {
@@ -105,7 +109,7 @@ export function WorkspacePanel(props: {
   const tabsRef = useRef(tabs)
   const onClose = useRef(props.onClose)
   const clearAfterClose = useRef(false)
-  const nextBrowserId = useRef(1)
+  const nextTabId = useRef(1)
   tabsRef.current = tabs
   onClose.current = props.onClose
 
@@ -113,13 +117,14 @@ export function WorkspacePanel(props: {
     (kind: WorkspaceTool) => {
       clearAfterClose.current = false
       props.onOpen()
-      const id = kind === 'browser' ? `browser-${nextBrowserId.current++}` : kind
+      const repeatable = kind === 'browser' || kind === 'terminal' || kind === 'files'
+      const id = repeatable ? `${kind}-${nextTabId.current++}` : kind
       setTabs((current) =>
-        kind === 'browser' || !current.some((tab) => tab.kind === kind)
+        repeatable || !current.some((tab) => tab.kind === kind)
           ? [...current, { id, kind }]
           : current,
       )
-      setActiveId(kind === 'browser' ? id : kind)
+      setActiveId(id)
       setAddOpen(false)
     },
     [props.onOpen],
@@ -177,6 +182,12 @@ export function WorkspacePanel(props: {
     [],
   )
 
+  useEffect(() => {
+    if (!props.open && globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      props.onClosed?.()
+    }
+  }, [props.open, props.onClosed])
+
   const closeTab = useCallback((id: string) => {
     const current = tabsRef.current
     const index = current.findIndex((tab) => tab.id === id)
@@ -202,12 +213,15 @@ export function WorkspacePanel(props: {
     resizeCleanup.current()
     const startX = event.clientX
     const startWidth = props.width
-    const maximum = Math.max(360, Math.floor(window.innerWidth * 0.78))
+    const layoutWidth =
+      event.currentTarget.closest<HTMLElement>('.workspace-layout')?.clientWidth ||
+      window.innerWidth
+    const maximum = Math.max(MIN_PANEL_WIDTH, layoutWidth - MIN_CHAT_WIDTH)
     const haptics = appHapticsEnabled()
       ? new ResizeHaptics({
           startValue: startWidth,
           startTime: event.timeStamp,
-          minValue: 360,
+          minValue: MIN_PANEL_WIDTH,
           maxValue: maximum,
         })
       : undefined
@@ -215,7 +229,7 @@ export function WorkspacePanel(props: {
     let active = true
     const move = (next: globalThis.PointerEvent) => {
       const rawWidth = startWidth + startX - next.clientX
-      const nextWidth = Math.min(maximum, Math.max(360, rawWidth))
+      const nextWidth = Math.min(maximum, Math.max(MIN_PANEL_WIDTH, rawWidth))
       const feedback = haptics?.sample({
         rawValue: rawWidth,
         value: nextWidth,
@@ -252,10 +266,11 @@ export function WorkspacePanel(props: {
         if (
           event.target !== event.currentTarget ||
           event.propertyName !== 'transform' ||
-          props.open ||
-          !clearAfterClose.current
+          props.open
         )
           return
+        props.onClosed?.()
+        if (!clearAfterClose.current) return
         clearAfterClose.current = false
         tabsRef.current = []
         setTabs([])
@@ -454,8 +469,10 @@ function WorkspaceSelector({ onOpen }: { onOpen: (kind: WorkspaceTool) => void }
     <div className="workspace-selector">
       <div className="workspace-selector__list">
         {TOOLS.map((tool) => {
+          const Icon = tool.Icon
           return (
             <button type="button" key={tool.kind} onClick={() => onOpen(tool.kind)}>
+              <Icon size={18} aria-hidden />
               <span>{tool.title}</span>
             </button>
           )

@@ -5,6 +5,7 @@ type Call = { method: string; params: unknown; timeoutMs?: number }
 const fake = vi.hoisted(() => ({
   calls: [] as Call[],
   spawnArgs: [] as string[],
+  notification: undefined as ((method: string, params: unknown) => void) | undefined,
 }))
 
 vi.mock('@harness/proc', () => ({
@@ -14,7 +15,9 @@ vi.mock('@harness/proc', () => ({
   }),
   StdioJsonRpc: class {
     onStderr(): void {}
-    onNotification(): void {}
+    onNotification(handler: (method: string, params: unknown) => void): void {
+      fake.notification = handler
+    }
     onServerRequest(): void {}
     notify(): void {}
     dispose(): void {}
@@ -49,6 +52,31 @@ describe('Codex prompt transport', () => {
       input: [{ type: 'text', text, text_elements: [] }],
     })
     expect(fake.spawnArgs.join(' ')).not.toContain(text)
+    adapter.dispose()
+  })
+
+  it('sends the active turn precondition when steering or interrupting', async () => {
+    fake.calls = []
+    fake.notification = undefined
+    const adapter = new CodexAdapter()
+    await adapter.start()
+    const thread = await adapter.startThread('C:\\repo')
+    fake.notification?.('turn/started', {
+      threadId: thread.id,
+      turn: { id: 'turn-live' },
+    })
+
+    await adapter.steer(thread.id, 'Change direction')
+    await adapter.interrupt(thread.id)
+
+    expect(fake.calls.find((call) => call.method === 'turn/steer')?.params).toMatchObject({
+      threadId: thread.id,
+      expectedTurnId: 'turn-live',
+    })
+    expect(fake.calls.find((call) => call.method === 'turn/interrupt')?.params).toEqual({
+      threadId: thread.id,
+      turnId: 'turn-live',
+    })
     adapter.dispose()
   })
 })
