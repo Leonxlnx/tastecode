@@ -23,6 +23,10 @@ type Bridge = {
   setDiagnosticsEnabled?: (enabled: boolean) => Promise<boolean>
   openDiagnostics?: () => Promise<boolean>
   reportRendererError?: (message: string) => void
+  getUpdateState?: () => Promise<AppUpdateState>
+  checkForUpdates?: () => Promise<AppUpdateState>
+  installUpdate?: () => Promise<boolean>
+  onUpdateState?: (listener: (state: AppUpdateState) => void) => () => void
   onZoomChange: (listener: (factor: number) => void) => () => void
   isDesktop: true
 }
@@ -31,6 +35,13 @@ export type ZoomAction = 'in' | 'out' | 'reset'
 export type AppTheme = 'light' | 'dark'
 export type AppThemePreference = AppTheme | 'system'
 export type NativeHapticPattern = 'alignment' | 'generic'
+export type AppUpdateState = {
+  status: 'unsupported' | 'idle' | 'checking' | 'downloading' | 'current' | 'ready' | 'error'
+  currentVersion: string
+  version?: string
+  progress?: number
+  error?: string
+}
 
 const bridge = (globalThis as { harness?: Bridge }).harness
 
@@ -138,5 +149,26 @@ export function openLocalDiagnostics(): Promise<boolean> {
 export function reportRendererError(cause: unknown): void {
   const message = cause instanceof Error ? cause.stack || cause.message : String(cause)
   bridge?.reportRendererError?.(message.slice(0, 4_000))
+}
+
+const unsupportedUpdate: AppUpdateState = {
+  status: 'unsupported',
+  currentVersion: 'pre-release',
+}
+
+export function appUpdateState(): Promise<AppUpdateState> {
+  return bridge?.getUpdateState?.() ?? Promise.resolve(unsupportedUpdate)
+}
+
+export function checkForAppUpdates(): Promise<AppUpdateState> {
+  return bridge?.checkForUpdates?.() ?? Promise.resolve(unsupportedUpdate)
+}
+
+export function installAppUpdate(): Promise<boolean> {
+  return bridge?.installUpdate?.() ?? Promise.resolve(false)
+}
+
+export function onAppUpdateState(listener: (state: AppUpdateState) => void): () => void {
+  return bridge?.onUpdateState?.(listener) ?? (() => undefined)
 }
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
+import type { AppUpdateState } from './app-updater.js'
 import { clipboardText } from './clipboard-text.js'
 
 /**
@@ -39,6 +40,16 @@ const api = {
   openDiagnostics: (): Promise<boolean> => ipcRenderer.invoke('harness:openDiagnostics'),
   reportRendererError: (message: string): void =>
     ipcRenderer.send('harness:reportRendererError', message.slice(0, 4_000)),
+  getUpdateState: (): Promise<AppUpdateState> => ipcRenderer.invoke('harness:getUpdateState'),
+  checkForUpdates: (): Promise<AppUpdateState> => ipcRenderer.invoke('harness:checkForUpdates'),
+  installUpdate: (): Promise<boolean> => ipcRenderer.invoke('harness:installUpdate'),
+  onUpdateState: (listener: (state: AppUpdateState) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, state: unknown) => {
+      if (isAppUpdateState(state)) listener(state)
+    }
+    ipcRenderer.on('harness:updateState', handler)
+    return () => ipcRenderer.removeListener('harness:updateState', handler)
+  },
   onZoomChange: (listener: (factor: number) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, factor: unknown) => {
       if (typeof factor === 'number' && Number.isFinite(factor)) listener(factor)
@@ -54,3 +65,23 @@ contextBridge.exposeInMainWorld('harness', api)
 export type HarnessBridge = typeof api
 
 type NativeHapticPattern = 'alignment' | 'generic'
+
+const updateStatuses = new Set<AppUpdateState['status']>([
+  'unsupported',
+  'idle',
+  'checking',
+  'downloading',
+  'current',
+  'ready',
+  'error',
+])
+
+function isAppUpdateState(value: unknown): value is AppUpdateState {
+  if (!value || typeof value !== 'object') return false
+  const state = value as Partial<AppUpdateState>
+  return (
+    typeof state.status === 'string' &&
+    updateStatuses.has(state.status as AppUpdateState['status']) &&
+    typeof state.currentVersion === 'string'
+  )
+}

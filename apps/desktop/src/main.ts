@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import {
   app,
@@ -19,6 +20,7 @@ import {
   type Event as ElectronEvent,
   type WebContents,
 } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import {
   PreviewDomAuditSchema,
   PreviewCaptureRequestSchema,
@@ -26,6 +28,11 @@ import {
   type PreviewCaptureResult,
 } from '@harness/contracts'
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
+import {
+  createAppUpdateController,
+  type AppUpdateController,
+  type AppUpdateState,
+} from './app-updater.js'
 import { clipboardText } from './clipboard-text.js'
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
@@ -53,6 +60,7 @@ import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './z
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url))
+const require = createRequire(import.meta.url)
 const productIconPath = path.join(here, '../assets/tastecode-icon.png')
 
 function isWebUrl(value: string): boolean {
@@ -98,6 +106,7 @@ let tray: Tray | undefined
 let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
 let diagnostics: LocalDiagnostics | undefined
+let appUpdater: AppUpdateController | undefined
 const macOSHaptics = new MacOSHaptics()
 
 if (!ownsSingleInstance) {
@@ -117,7 +126,9 @@ if (!ownsSingleInstance) {
  */
 function startOwnedServer(): void {
   if (devServer || serverSupervisor) return
-  const serverEntry = path.join(here, '../../server/dist/main.js')
+  const serverEntry = app.isPackaged
+    ? require.resolve('@harness/server')
+    : path.join(here, '../../server/dist/main.js')
   serverSupervisor = new ServerSupervisor({
     command: process.execPath,
     args: [serverEntry],
@@ -256,7 +267,11 @@ function createWindow(): void {
   if (devServer) {
     void window.loadURL(devServer)
   } else {
-    void window.loadFile(path.join(here, '../../web/dist/index.html'))
+    void window.loadFile(
+      app.isPackaged
+        ? path.join(process.resourcesPath, 'web', 'index.html')
+        : path.join(here, '../../web/dist/index.html'),
+    )
   }
 }
 
@@ -320,6 +335,26 @@ ipcMain.handle('harness:openDiagnostics', async (event) => {
 ipcMain.on('harness:reportRendererError', (event, value: unknown) => {
   if (!isOwnRenderer(event.sender) || typeof value !== 'string') return
   void diagnostics?.record('renderer', value)
+})
+
+ipcMain.handle('harness:getUpdateState', (event): AppUpdateState => {
+  requireOwnRenderer(event.sender)
+  return (
+    appUpdater?.state() ?? {
+      status: 'unsupported',
+      currentVersion: app.getVersion(),
+    }
+  )
+})
+
+ipcMain.handle('harness:checkForUpdates', (event) => {
+  requireOwnRenderer(event.sender)
+  return appUpdater?.check()
+})
+
+ipcMain.handle('harness:installUpdate', (event) => {
+  requireOwnRenderer(event.sender)
+  return appUpdater?.install() ?? false
 })
 
 ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
@@ -546,6 +581,8 @@ if (ownsSingleInstance) {
     appIsQuitting = true
   })
   app.on('will-quit', () => {
+    appUpdater?.dispose()
+    appUpdater = undefined
     macOSHaptics.stop()
     serverSupervisor?.stop()
     serverSupervisor = undefined
@@ -568,6 +605,17 @@ if (ownsSingleInstance) {
     process.on('uncaughtExceptionMonitor', (error) => void diagnostics?.record('main crash', error))
     process.on('unhandledRejection', (error) => void diagnostics?.record('main rejection', error))
     await diagnostics.initialize()
+
+    appUpdater = createAppUpdateController({
+      updater: autoUpdater,
+      currentVersion: app.getVersion(),
+      enabled: app.isPackaged,
+    })
+    appUpdater.subscribe((state) => {
+      const window = mainWindow
+      if (window && !window.isDestroyed()) window.webContents.send('harness:updateState', state)
+    })
+    appUpdater.start()
     if (process.platform === 'darwin') app.dock?.setIcon(productIconPath)
     startOwnedServer()
     configureMediaPermissions()
