@@ -1,3 +1,5 @@
+<img src="apps/desktop/assets/tastecode-icon.png" alt="TasteCode" width="96" />
+
 # TasteCode
 
 > A beautiful, adaptive control panel for AI coding agents.

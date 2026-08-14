@@ -22,6 +22,7 @@
     "vitest": "^4.1.10"
   },
   "build": {
+    "icon": "assets/tastecode-icon.png",
     "mac": {
       "extendInfo": {
         "NSMicrophoneUsageDescription": "TasteCode uses your microphone to record dictation that you choose to send to OpenAI for transcription."
