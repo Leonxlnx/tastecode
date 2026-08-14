@@ -15,6 +15,7 @@ import {
   shell,
   systemPreferences,
   Tray,
+  type Event as ElectronEvent,
   type WebContents,
 } from 'electron'
 import {
@@ -379,13 +380,16 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
   })
   captureWindows.add(preview)
 
+  preview.webContents.session.setPermissionCheckHandler(() => false)
   preview.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
     callback(false),
   )
   preview.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  preview.webContents.on('will-navigate', (event, url) => {
+  const restrictNavigation = (event: ElectronEvent, url: string) => {
     if (!allowsPreviewNavigation(request.url, url)) event.preventDefault()
-  })
+  }
+  preview.webContents.on('will-navigate', restrictNavigation)
+  preview.webContents.on('will-redirect', restrictNavigation)
 
   // A pending webfont or a throttled hidden renderer can stall the settle
   // script forever; the whole capture races a hard deadline instead of
@@ -401,6 +405,9 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
   try {
     await mkdir(directory, { recursive: true, mode: 0o700 })
     await Promise.race([preview.loadURL(request.url), deadline])
+    if (!allowsPreviewNavigation(request.url, preview.webContents.getURL())) {
+      throw new Error('preview navigated outside its local origin')
+    }
     const screenshots = []
     // Duplicate viewports would collide on the wx-flagged filename and fail
     // the entire request.
