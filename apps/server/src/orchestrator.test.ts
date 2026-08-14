@@ -1482,7 +1482,7 @@ describe('provider-neutral design briefing', () => {
           message(
             JSON.stringify({
               status: 'complete',
-              summary: 'Implemented the studio page.',
+              summary: 'Verify before publishing: confirm the representative studio address.',
               files: ['src/page.tsx'],
               checks: ['pnpm typecheck — passed'],
             }),
@@ -1564,7 +1564,7 @@ describe('provider-neutral design briefing', () => {
               ({ event }) =>
                 event.type === 'item.completed' &&
                 event.item.text ===
-                  'Website built. Preview ready at http://127.0.0.1:5173/. Visual review passed after 1 repair attempt.',
+                  'Website built. Preview ready at http://127.0.0.1:5173/. Visual review passed after 1 repair attempt. Verify before publishing: confirm the representative studio address.',
             ),
           ).toBe(true),
         )
