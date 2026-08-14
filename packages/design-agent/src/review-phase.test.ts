@@ -27,6 +27,8 @@ const review = {
       id: 'hero_mobile_clip',
       severity: 'major' as const,
       area: 'Hero at 390px',
+      evidenceType: 'visual_inspection' as const,
+      confidence: 'high' as const,
       evidence: 'The primary action is clipped by the image.',
       repair: 'Stack the image after the action below 720px.',
     },
@@ -114,5 +116,18 @@ describe('review and repair phases', () => {
         },
       ]),
     ).toEqual(review)
+  })
+
+  it('keeps older review findings readable with conservative evidence metadata', () => {
+    const legacy = {
+      ...review,
+      findings: review.findings.map(
+        ({ evidenceType: _type, confidence: _confidence, ...finding }) => finding,
+      ),
+    }
+    expect(parseReviewPhaseOutput(JSON.stringify(legacy)).findings[0]).toMatchObject({
+      evidenceType: 'visual_inspection',
+      confidence: 'medium',
+    })
   })
 })

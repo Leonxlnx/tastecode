@@ -61,6 +61,12 @@ export function parsePreviewPlan(value: unknown): PreviewPlan {
   if (new Set(viewports.map((viewport) => viewport.name)).size !== viewports.length) {
     throw new Error('preview viewport names must be unique')
   }
+  if (
+    new Set(viewports.map((viewport) => `${viewport.width}x${viewport.height}`)).size !==
+    viewports.length
+  ) {
+    throw new Error('preview viewport dimensions must be unique')
+  }
 
   const shared = {
     version: 1,

@@ -1,8 +1,9 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { parseAcpThreadId } from './adapter.js'
+import { acpPromptContent, parseAcpThreadId } from './adapter.js'
 import {
   LISTED_AGENTS,
   acpAccount,
@@ -51,6 +52,33 @@ describe('ACP persisted sessions', () => {
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
+  })
+})
+
+describe('ACP image prompts', () => {
+  it('encodes negotiated images in the official content block shape', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'harness-acp-image-'))
+    const image = join(directory, 'preview.png')
+    try {
+      writeFileSync(image, Buffer.from([1, 2, 3]))
+      expect(acpPromptContent('Review this page.', [image], true)).toEqual([
+        { type: 'text', text: 'Review this page.' },
+        {
+          type: 'image',
+          data: 'AQID',
+          mimeType: 'image/png',
+          uri: pathToFileURL(image).href,
+        },
+      ])
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed when the ACP agent did not negotiate image input', () => {
+    expect(() => acpPromptContent('Review this page.', ['preview.png'], false)).toThrow(
+      'does not support images',
+    )
   })
 })
 

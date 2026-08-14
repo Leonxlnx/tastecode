@@ -388,8 +388,8 @@ export function Thread(props: {
                 // thinking would drown that story in noise.
                 (presentation?.design === true &&
                   !compactedActivity &&
-                  isActivity(item) &&
-                  !designPhaseLabel(toolText(item)))
+                  ((isActivity(item) && !designPhaseLabel(toolText(item))) ||
+                    item.type === 'error'))
               const settling = settledTurnId === item.turnId
               const railAnchor = live && presentation?.firstResponseIndex === row.index
               return (

@@ -105,4 +105,16 @@ describe('preview plan', () => {
       }),
     ).toThrow('between one and four')
   })
+
+  it('rejects duplicate capture dimensions before the desktop request', () => {
+    expect(() =>
+      parsePreviewPlan({
+        ...plan,
+        viewports: [
+          { name: 'desktop', width: 1440, height: 1000 },
+          { name: 'same-size', width: 1440, height: 1000 },
+        ],
+      }),
+    ).toThrow('viewport dimensions must be unique')
+  })
 })

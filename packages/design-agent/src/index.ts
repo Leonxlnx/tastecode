@@ -7,13 +7,38 @@ export {
 export { parseBrandSystem, readBrandSystem, writeBrandSystem, type BrandSystem } from './brand.js'
 export { designBrandPrompt, parseBrandPhaseOutput } from './brand-phase.js'
 export {
+  auditPalette,
+  generatePalette,
+  paletteColorRecords,
+  paletteCssVariables,
+  PALETTE_ROLES,
+  type ColorSystem,
+  type PaletteBuildResult,
+  type PaletteContrastCheck,
+  type PaletteIssue,
+  type PaletteRepair,
+  type PaletteRequest,
+  type PaletteRole,
+  type PaletteRoles,
+  type PaletteTheme,
+  type PaletteThemeDirection,
+  type PaletteThemeName,
+} from './palette.js'
+export {
   parsePageBlueprint,
   readPageBlueprint,
   writePageBlueprint,
   type PageBlueprint,
   type PageLink,
+  type PageNavigationDesign,
 } from './page.js'
 export { designPagePrompt, parsePagePhaseOutput } from './page-phase.js'
+export {
+  assertPageCopy,
+  lintPageCopy,
+  type CopyLintFinding,
+  type CopyLintSeverity,
+} from './copywriting.js'
 export {
   parseAssetManifest,
   readAssetManifest,

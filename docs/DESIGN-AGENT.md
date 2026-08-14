@@ -1,9 +1,9 @@
 # Design agent
 
-This document is the durable implementation guide for Personal Harness Design Mode and its
-TasteSkill integration. It explains the product goal, the current runtime, the artifact
-contracts, what shipped in the first end-to-end implementation, and what remains before M4 is
-complete.
+This document is the durable implementation guide for Personal Harness Design Mode and the
+internal `packages/design-agent` implementation. It explains the product goal, the current
+runtime, the artifact contracts, what shipped in the first end-to-end implementation, and what
+remains before M4 is complete.
 
 It is not a live ownership tracker. Before changing code, read `AGENTS.md`, the linked rules,
 `docs/ARCHITECTURE.md`, and the current GitHub issues and pull requests.
@@ -20,10 +20,10 @@ The intended experience is:
 2. Harness extracts everything it can and asks only questions whose answers materially affect
    the result. It asks as many questions as necessary.
 3. Harness records a validated brief before any website implementation begins.
-4. TasteSkill makes explicit brand, copy, layout, asset, and motion decisions.
+4. The internal Design Agent makes explicit brand, copy, layout, asset, and motion decisions.
 5. The normal selected agent implements those decisions in the user's existing project.
-6. Harness starts the real local site, captures representative viewports, reviews the visible
-   output, and performs bounded repairs.
+6. Harness starts the real local site, opens it in a dedicated Browser tab, captures representative
+   viewports in a separate deterministic renderer, reviews the output, and performs bounded repairs.
 7. The user receives normal project files, inspectable `.taste` artifacts, and a clear final
    result inside the existing Harness thread.
 
@@ -39,27 +39,26 @@ Design Mode does not create a second agent framework, a second session model, or
 system. It uses the same provider adapters, server-owned thread, event log, approvals, workspace,
 checkpoints, tools, and renderer as every other Harness turn.
 
-Harness is not the source of creative taste. It owns orchestration, validated boundaries,
-persistence, safety, preview, and recovery. TasteSkill owns the judgment that prevents a capable
-model from converging on generic output.
+The server runtime is not the source of creative taste. It owns orchestration, persistence,
+safety, preview, and recovery. The internal design-agent package owns the phase contracts,
+creative rules, and deterministic checks that keep a capable model from converging on generic
+output.
 
 ## Responsibility boundary
 
-| Personal Harness owns                              | TasteSkill owns                                        |
-| -------------------------------------------------- | ------------------------------------------------------ |
-| Design Mode entry and request qualification        | Creative direction and visual thesis                   |
-| Question transport and briefing UI                 | Brand, typography, palette, image, and motion judgment |
-| Durable `.taste` artifact writes                   | Anti-slop and anti-reference rules                     |
-| Artifact parsing and rejection of malformed output | Copywriting and narrative quality                      |
-| Phase order and server recovery                    | Layout and component judgment                          |
-| Provider-neutral session orchestration             | Objective design checks supplied by skill tools        |
-| Safe project tools and command boundaries          | Rules for when and how those tools should be used      |
-| Local preview lifecycle and screenshot capture     | Visual critique rubric and repair priorities           |
-| Bounded retry budgets and honest degradation       | Deterministic palette, type, gradient, and QA helpers  |
+| Harness runtime owns                           | Internal design-agent package owns                    |
+| ---------------------------------------------- | ----------------------------------------------------- |
+| Design Mode entry and provider sessions        | Brief, Brand, Page, Asset, Build, and Review prompts  |
+| Question transport and briefing UI             | Artifact contracts and trust-boundary parsers         |
+| Durable `.taste` writes and flow recovery      | Creative direction and visual thesis rules            |
+| Provider-neutral orchestration and permissions | Copy, layout, component, image, and motion judgment   |
+| Safe project tools and command boundaries      | Deterministic palette and objective quality checks    |
+| Preview lifecycle and screenshot capture       | Visual critique rubric and repair priorities          |
+| Retry budgets and honest degradation           | Rules for when generated design output must be denied |
 
-The integration contract must preserve this split. Copying TasteSkill prose into server prompts
-would make Harness a second, stale fork of the skill. Moving orchestration into TasteSkill would
-make Design Mode provider-specific and bypass Harness recovery and safety.
+The boundary must preserve this split. Creative rules and deterministic design helpers belong in
+`packages/design-agent`, not duplicated in server orchestration or provider adapters. The package
+does not own sessions, recovery, tools, preview, or completion.
 
 ## Intended workflow
 
@@ -83,7 +82,7 @@ Final optional note
 .taste/brief.json
         |
         v
-Brand / TasteSkill judgment --> .taste/brand.json
+Internal brand judgment --> .taste/brand.json
         |
         v
 Page blueprint and final copy --> .taste/page.json
@@ -97,8 +96,10 @@ Build in the existing project
         v
 Validated local preview plan --> 127.0.0.1 server
         |
+        +--> dedicated sidebar Browser tab
+        |
         v
-Desktop + mobile captures
+Isolated desktop + mobile captures
         |
         v
 Visual review --> pass --------------------------+
@@ -151,12 +152,15 @@ Implemented mechanics:
 - phase-specific activity items and human labels;
 - direct API workspace tools with path and credential boundaries;
 - an allowlisted local preview runner;
-- a capability-negotiated Electron screenshot bridge;
+- one dedicated sidebar Browser tab that opens on capture and reloads for repair passes;
+- a serialized, capability-negotiated Electron screenshot bridge that waits within fixed deadlines
+  for animations, fonts, and images before capture;
+- negotiated ACP image prompt blocks for screenshot-capable ACP agents;
 - visual review and at most two repair attempts;
 - queue release after success and failure;
 - cleanup of the preview process when the flow or thread ends.
 
-The workflow skeleton is real. The final TasteSkill v2 judgment contract and several provider
+The workflow skeleton is real. Some internal judgment rules, deterministic tools, and provider
 truthfulness issues are not finished. The section `Known gaps and risks` is normative and must be
 read before claiming universal support.
 
@@ -268,7 +272,7 @@ may consume earlier artifacts but never silently rewrite them.
 | Artifact      | Owns                                                           | Consumes                                            |
 | ------------- | -------------------------------------------------------------- | --------------------------------------------------- |
 | `brief.json`  | User intent, facts, constraints, answers, assumptions          | Request and briefing answers                        |
-| `brand.json`  | Derived visual and verbal system                               | Brief, project brand evidence, TasteSkill           |
+| `brand.json`  | Derived visual and verbal system                               | Brief, project evidence, internal brand rules       |
 | `page.json`   | Page story, copy, composition, responsive and interaction plan | Brief and brand                                     |
 | `assets.json` | Asset needs, real sources, provenance, status, destinations    | Brief, brand, page, project files, optional sources |
 | `review.json` | Latest visual verdict and actionable findings                  | Brief, brand, page, rendered screenshots            |
@@ -282,10 +286,15 @@ around JSON is rejected.
 
 The current version-one schema contains:
 
+- `foundation.strategy`, verified `existingAssets`, evidence-based `assetActions`, locked
+  decisions, and assumptions;
 - `creativeDirection.summary`;
-- `creativeDirection.keywords`;
+- bounded `creativeDirection.traits`;
+- `creativeDirection.productiveTension`;
+- one `creativeDirection.signatureDevice`, its evidence status, and stable invariants;
+- one `creativeDirection.restraint`;
 - `creativeDirection.avoid`;
-- a `colorPalette` of name, value, and usage records;
+- a `colorPalette` of semantic light or dark role records with exact value and usage;
 - `typefaces` with family, source, roles, and numeric weights;
 - `interfaceDirection`;
 - `imageDirection` with summary, subjects, treatment, and avoid rules;
@@ -295,26 +304,48 @@ The current version-one schema contains:
 User-supplied colors or fonts remain evidence in `brief.json`. The Brand phase assigns their usable
 roles in `brand.json`. The Page phase consumes those roles rather than copying the palette.
 
-The current Brand prompt may inspect existing project brand files and may use any design or brand
-skill exposed by the selected provider. It does not assume a specific skill name or private API.
-Without a skill it asks the base model to produce the same schema. That fallback is functional but
-is not the intended final quality path.
+The Brand model returns a compact palette recipe rather than improvising every shade. The runtime
+turns its accent and neutral seeds into canvas, surface, text, control, focus, and accent roles;
+preserves role locks exactly; maps generated colors into opaque sRGB; and rejects required text or
+control pairs that miss WCAG 2.2 contrast. Light and dark directions are generated independently.
+The persisted `colorPalette` remains version-one compatible, so later phases need no parallel color
+framework. `60/30/10` is only loose composition guidance for dominant surfaces, supporting
+structure, and sparse accent use, never a palette formula or pixel quota.
+
+Signature-device status is deliberately conservative. Existing or newly proposed devices are not
+called validated unless the input includes real category-buyer attribution evidence. Visual
+novelty, internal preference, and competitor distance can justify a candidate, but do not prove
+brand recognition.
+
+The current Brand prompt may inspect existing project brand files. Provider-exposed design tools
+may contribute optional evidence, but the required rules, schemas, and deterministic checks live
+in `packages/design-agent` and require no particular skill, model, provider, or private API.
 
 ### Current `page.json`
 
 The current version-one blueprint contains:
 
 - page title, route, and description;
+- a page contract, dominant page mode, novelty tolerance, base grid, signature composition rule,
+  and rhythm;
 - navigation labels and targets;
 - ordered sections with unique IDs;
 - each section's purpose;
+- the user question, decision stage, prior-section dependencies, and real evidence for each section;
 - final eyebrow, heading, body copy, and calls to action;
 - layout direction;
 - component needs;
 - asset needs;
+- explicit compact, medium, and expanded transformations per section;
 - page-level responsive rules;
 - meaningful interactions;
 - acceptance criteria.
+
+Generated page copy passes an internal quality gate before the artifact is accepted. Em dashes,
+unsupported objective claims, and `click here` fail validation. Formulaic copy, generic CTA labels,
+collision-prone generated names, decorative eyebrows, and ornamental section numbering are
+contextual review signals rather than an AI-authorship score. Eyebrows are omitted by default and
+numbers such as `01 / 02 / 03` are reserved for real sequence or navigation meaning.
 
 The Page phase writes actual concise copy before implementation. It must use the approved brand
 system and must not choose replacement colors, fonts, or sources.
@@ -357,7 +388,7 @@ The parser rejects:
 - missing explicit ports;
 - shell expressions and path-like executable names;
 - absolute or parent-escaping working directories;
-- duplicate viewport names;
+- duplicate viewport names or dimensions;
 - viewport dimensions outside bounded ranges.
 
 ### Current `review.json`
@@ -370,12 +401,19 @@ The latest visual review contains:
 - a stable finding ID;
 - severity: blocking, major, or minor;
 - visible area or viewport;
+- evidence type: automated DOM evidence or visual inspection;
+- confidence: high, medium, low, or unknown;
 - concrete evidence;
 - a bounded repair instruction.
 
 A passing review cannot contain findings. A repair verdict must contain at least one finding in
 practice, and Harness stops after at most two Repair attempts. The final artifact is the latest
 review, not a history of every review iteration.
+
+This phase deliberately makes only claims supported by screenshots and attached DOM audits. It
+does not infer factual accuracy, working interactions, conversion, user comprehension, loading
+performance, or provenance. Those require source, runtime, user, analytics, or performance
+evidence outside the visual-review artifact.
 
 ## Runtime state and recovery
 
@@ -432,33 +470,28 @@ The architecture is provider-neutral: Design Mode uses `AgentSession.sendTurn`, 
 state, normal domain events, and declared capabilities. No shared phase branches on a provider
 name.
 
-The current product surface is not yet universally available, however.
+The current product surface is provider-neutral for briefing but capability-gated for visual review.
 
-| Provider path      | Briefing UI today        | Visual review today | Important detail                                                                       |
-| ------------------ | ------------------------ | ------------------- | -------------------------------------------------------------------------------------- |
-| Codex app-server   | Available                | Available           | Declares structured input and images; accepts screenshot attachments.                  |
-| Claude Code CLI    | Blocked by renderer gate | Skipped             | Declares neither shared structured input nor images.                                   |
-| Cursor CLI         | Blocked by renderer gate | Skipped             | Rejects attachments.                                                                   |
-| Native OpenCode    | Blocked by renderer gate | Skipped             | Rejects attachments.                                                                   |
-| Direct API runtime | Blocked by renderer gate | Skipped             | Workspace tools exist, but attachments are not implemented.                            |
-| ACP                | Blocked by renderer gate | Potentially unsafe  | May declare image capability, but its current `sendTurn` path sends text-only prompts. |
+| Provider path      | Briefing UI today | Visual review today       | Important detail                                                               |
+| ------------------ | ----------------- | ------------------------- | ------------------------------------------------------------------------------ |
+| Codex app-server   | Available         | Available                 | Accepts native screenshot attachments.                                         |
+| Claude Code CLI    | Available         | Available                 | Accepts native image attachments.                                              |
+| Grok CLI           | Available         | Available                 | Accepts native image attachments.                                              |
+| Cursor CLI         | Available         | Skipped                   | Does not declare image input.                                                  |
+| Native OpenCode    | Available         | Skipped                   | Does not declare image input.                                                  |
+| Antigravity CLI    | Available         | Skipped                   | Does not declare image input.                                                  |
+| Pi RPC             | Available         | Skipped                   | Does not declare image input.                                                  |
+| Direct API runtime | Available         | Skipped                   | Workspace tools exist, but image attachments are not implemented.              |
+| ACP                | Available         | Available when negotiated | Sends ACP image blocks only when the agent advertised image prompt capability. |
 
-The renderer currently allows Design Mode submission only when the selected provider advertises
-`capabilities.userInput`. Design briefing questions are actually Harness-owned and are answered by
-`Orchestrator.respondToUserInput`, so this gate unnecessarily couples Design Mode to an adapter
-feature it does not need. In the current code, Codex is the practical working path.
+Harness-owned Design questions need only an ordinary text turn and do not depend on an adapter's
+provider-originated structured-input capability. Provider-originated questions still use the
+adapter's declared `userInput` support.
 
-This should be fixed by separating two concepts:
-
-1. provider-originated structured input, which really is an adapter capability; and
-2. Harness-originated Design Mode questions, which work above adapters and should be available to
-   every provider that can complete ordinary text turns.
-
-Image support also needs truthful end-to-end capability reporting. ACP currently derives its image
-capability from initialization, but `AcpSession.sendTurn` ignores attachment arguments and creates
-a text-only ACP prompt. Until ACP image prompt blocks are implemented and captured against a real
-agent, ACP must report images as unsupported. Otherwise a screenshot path string can be reviewed as
-if the model saw the image, producing a false pass.
+Image support remains truthful end to end. ACP derives its capability from initialization and
+serializes screenshot files as ACP image content blocks only when
+`promptCapabilities.image` was negotiated. Unsupported ACP agents reject image attachments, and
+shared orchestration degrades the Review phase instead of pretending the model saw a path string.
 
 Providers without real image input currently finish after Preview with an explicit message that
 visual review was skipped. This is honest degradation, but it does not satisfy M4's full definition
@@ -501,24 +534,31 @@ The server:
 - stops the process when the flow ends or the thread closes.
 
 The renderer advertises `previewCapture` on every WebSocket connection. The server chooses one
-connected capable client and sends a typed capture request. The Electron main process validates the
-request and opens an invisible hardened BrowserWindow with context isolation, no Node integration,
-sandboxing, denied permissions, denied new windows, and same-origin navigation enforcement.
+connected capable client and serializes capture requests so one request owns the shared capture
+session at a time.
 
-Capture waits for animation settlement, fonts, and two animation frames, but races a 30-second hard
-deadline. It captures each unique requested size, writes private temporary PNGs, destroys the
-window, clears its session storage, removes failed captures, and sweeps capture directories older
-than one day.
+The same typed capture request opens or focuses one dedicated sidebar Browser tab. A new request ID
+reloads the requested URL after the Electron guest reports `dom-ready`, so repair passes refresh
+even when the URL is unchanged. Manual Browser input normalizes HTTP `localhost` and IPv6 loopback
+addresses to `127.0.0.1` for reliable Windows loading. This visible guest is for user inspection; a
+separate hidden BrowserWindow remains the authority for exact review screenshots.
+
+The Electron main process validates the request, denies permission checks and requests, denies new
+windows, confines navigation and redirects to the preview origin, and verifies the final URL. It
+waits, within a 30-second deadline, for bounded animation settlement, fonts, image load and decode,
+and two final animation frames. It captures each requested size, writes private temporary PNGs,
+destroys the window, clears its session storage and HTTP cache, removes failed captures, and sweeps
+capture directories older than one day. Cleanup finishes before the next serialized capture starts.
 
 Current preview risks that still need explicit work:
 
-- the non-Windows stop path signals only the wrapper process and does not wait for a descendant
-  package-manager server to exit; validate and harden the real macOS process tree;
+- POSIX process-group shutdown is implemented but still needs a real macOS process-tree smoke run;
 - the preview command executes a script already declared by the opened project without a separate
   Design Mode approval; confirm this trust model is intended or route it through the normal command
   approval surface;
-- when several desktop clients are connected, the coordinator uses the first capable socket rather
-  than selecting the client that owns the active thread;
+- when several desktop clients are connected, the coordinator uses the first capable socket and the
+  capture request has no thread owner, so a concurrent run can open in the wrong visible workspace;
+- captures cover the requested viewport from the top of the page, not a durable full-page iteration;
 - screenshot files are temporary evidence, not a durable iteration history.
 
 ## OriginKit
@@ -543,119 +583,82 @@ Before stronger OriginKit support ships, decide:
 OriginKit must never become the foundation for shared Design Mode behavior. Existing dependencies
 and local implementation remain the fallback.
 
-## TasteSkill v2 source and intended structure
+## Internal design-agent judgment and tools
 
-TasteSkill v2 is authored separately and should remain an installable skill. Its current plan uses:
+`packages/design-agent` is the v2 judgment boundary. It owns concise phase instructions, artifact
+schemas and parsers, reusable creative rules, and deterministic checks. Provider-exposed design
+skills, MCP servers, and tools may add evidence or assets, but none is required for the shared
+workflow. The server remains the sole authority for sessions, phase order, recovery, permissions,
+preview, and completion.
 
-```text
-taste/
-|-- SKILL.md
-|-- agents/openai.yaml
-|-- references/
-|   |-- brief.md
-|   |-- brand.md
-|   |-- page.md
-|   |-- assets.md
-|   |-- build.md
-|   `-- review.md
-`-- scripts/
-    |-- workflow.mjs
-    |-- palette.mjs
-    |-- type-system.mjs
-    |-- gradient.mjs
-    |-- asset-manifest.mjs
-    `-- taste-check.mjs
-```
+The dependency-light tool order is:
 
-The external source also contains research and rules for branding, copywriting, anti-slop,
-animations, and components. Do not bulk-copy that repository into Personal Harness. Review the
-installable skill contract and integrate through the existing Agent Skills path.
-
-The planned tool order is:
-
-1. workflow and artifact gating;
-2. semantic palette and contrast output;
+1. workflow and artifact gates;
+2. semantic palette generation and contrast evidence;
 3. responsive typography and spacing scales;
-4. controlled gradients;
-5. asset manifest validation;
-6. objective taste checks for assets, overflow, focus, contrast, reduced motion, and unsafe
-   animation.
+4. controlled gradient generation;
+5. asset-manifest validation;
+6. objective checks for assets, overflow, focus, contrast, reduced motion, and unsafe animation.
 
-There is deliberate overlap between the external `workflow` and `asset-manifest` ideas and the
-current Harness validators. Do not create two competing sources of workflow truth. Harness remains
-the orchestration authority. TasteSkill scripts may validate or generate phase data, but their
-output must match the Harness artifact contract and they must not own session phase, recovery, or
-completion.
+Only fragile or repeatable calculations become tools. Contextual choices such as art direction,
+layout composition, imagery, and motion intent remain model judgment bounded by the artifacts and
+review rules.
 
-## Schema gaps against the TasteSkill plan
+## Remaining artifact and verification gaps
 
-The current schemas were intentionally compact scaffolding. They need a deliberate v2 contract
-review before the skill is integrated.
+The schemas are intentionally compact. Add a field only when a later phase consumes it or it
+prevents a known failure; do not turn artifacts into reasoning transcripts.
 
 ### Brand gaps
 
-The external plan also expects brand name, product, audience, personality, visual thesis, spacing,
-layout language, surface treatment, icon direction, accessibility requirements, references, and
-supplied assets. Some evidence currently lives in `brief.json`; several decisions have no explicit
-home in `brand.json`.
-
-Do not add every possible design-system property. Add only information that a later Page, Build,
-or Review phase actually consumes. Likely high-value additions are semantic color roles, type and
-spacing scales, layout and surface principles, icon direction, and accessibility constraints.
+Semantic palette roles now derive from a compact recipe and persist in the existing
+`colorPalette`. Type and spacing scales, layout and surface principles, icon direction, and
+accessibility constraints still need explicit homes only where Page, Build, or Review will consume
+them.
 
 ### Page gaps
 
-The current blueprint contains final copy, ordered sections, responsive behavior, interactions,
-and acceptance criteria. It does not explicitly record visitor questions, per-section motion roles,
-or the reasoning that connects content order to those questions. Decide whether those fields improve
-Build and Review enough to justify persistence.
+The blueprint records visitor questions, decision stages, information dependencies, final copy,
+responsive behavior, interactions, and acceptance criteria. Per-section motion roles remain
+implicit. Add them only after the Motion rules prove that Build and Review need persisted values.
 
 ### Asset gaps
 
-Asset requirements are currently free-form strings. The external plan expects known section,
-purpose, aspect ratio, composition, dimensions, output path, source, and usage status before raster
-generation. Add typed fields where they prevent bad generation or wrong cropping.
+Asset requirements are currently free-form strings. Add typed section, purpose, aspect ratio,
+composition, dimensions, output path, source, and usage fields where they prevent bad generation,
+wrong cropping, or lost provenance.
 
 ### Token and verification gaps
 
-There is no separate token artifact. Tokens may belong inside `brand.json` if they are genuine
-brand decisions, while generated CSS variables remain project output. There is also no independent
-Harness verification that the production build, important interactions, overflow, contrast, and
-reduced-motion checks succeeded; Review currently relies primarily on provider-reported checks and
-screenshots.
+There is no separate token artifact. Genuine brand decisions may live in `brand.json`, while
+generated CSS variables remain project output. Harness still needs independent verification of the
+production build, important interactions, overflow, contrast, and reduced motion; Review currently
+relies primarily on provider-reported checks and screenshots.
 
 ## Known gaps and risks
 
 ### Critical correctness gaps
 
-1. **Remove the provider `userInput` gate from Harness-owned briefing.** The current renderer blocks
-   Design Mode for most providers even though the server owns the questions.
-2. **Make image capabilities end-to-end truthful.** Implement ACP image prompt blocks or report
-   images as unsupported. Add attachment support to other adapters only after real protocol capture.
-3. **Do not force low effort for every phase.** The initial Design request currently stores
-   `{ effort: "low" }` in the flow, so Brand, Page, Build, Review, and Repair inherit the fast
-   briefing setting. Use low effort only for qualification and briefing, then restore the user's
-   selected effort or define explicit phase policy.
-4. **Invalidate async Preview and Capture work on panic stop.** A panic can happen after the
+1. **Invalidate async Preview and Capture work on panic stop.** A panic can happen after the
    provider turn has completed while preview startup or capture is awaiting. Those continuations
    must not launch Review after an emergency stop.
-5. **Harden macOS preview-tree shutdown.** Stop the real descendant server and wait for exit.
+2. **Prove preview-tree shutdown on macOS.** POSIX process-group termination and exit waiting are
+   implemented, but the real package-manager descendant path still needs a macOS smoke run.
+3. **Route capture to its owning task and desktop client.** The current typed request has no
+   `threadId`; the first capable socket is correct only under the single-active-desktop assumption.
 
-### Missing TasteSkill work
+### Missing internal judgment and tool work
 
-1. Freeze the version-one artifact contract jointly with the TasteSkill source.
-2. Decide how the standard installed skill is selected or required for Design Mode.
-3. Replace fallback Brand, Page, Asset, Build, and Review judgment prompts with phase instructions
-   that invoke the installable TasteSkill contract.
-4. Build and test the deterministic palette, type, spacing, gradient, asset, and objective QA tools.
-5. Integrate branding, copywriting, anti-slop, animation, and component rules without duplicating
-   them in Harness.
-6. Add fixture-based contract tests proving TasteSkill outputs parse in Harness.
-7. Define artifact version migration before changing persisted schemas.
+1. Finish compact Brand, Page, Asset, Build, and Review rules inside `packages/design-agent`.
+2. Build and test deterministic type, spacing, gradient, asset, and objective QA tools.
+3. Finish layout, component, imagery, and motion judgment with real reference cases.
+4. Add provider-independent fixtures proving every phase output parses into the same artifacts.
+5. Define artifact migration before changing persisted schema versions.
 
 ### Missing M4 product surfaces
 
-- a visible live preview pane with hot reload;
+- persistent hot reload and Design-specific iteration history beyond capture-triggered Browser
+  reloads;
 - a direction gallery with real rendered choices before committing to one direction;
 - a design-token editor;
 - a reference and anti-reference board;
@@ -667,15 +670,14 @@ screenshots.
 
 ## Recommended continuation order
 
-Keep each step in its own small PR. Do not combine schema changes, provider correctness, skill
-content, and UI design.
+Keep each step in its own small PR. Do not combine schema changes, provider correctness, internal
+judgment rules, and UI design.
 
-### 1. Restore provider-neutral mechanics
+### 1. Finish provider verification
 
-- remove the renderer's `userInput` dependency for Design-owned questions;
-- separate briefing effort from later phase effort;
-- make ACP image capability truthful;
-- add tests with a direct API session and a non-Codex adapter;
+- add real Design fixtures for a direct API session and non-Codex adapters;
+- capture one negotiated ACP image-review run against a real ACP agent;
+- add image attachments to another adapter only after its real protocol is captured;
 - verify that a future adapter works through capabilities without a provider-name branch.
 
 ### 2. Close lifecycle safety gaps
@@ -685,22 +687,20 @@ content, and UI design.
 - decide the preview command approval boundary;
 - ensure restart, failure, panic, close, and queued prompts all terminate cleanly.
 
-### 3. Freeze artifacts with TasteSkill
+### 3. Finish artifact contracts
 
-- compare the current schemas with the external plan;
 - agree on the smallest implementation-useful additions;
 - version parsers and fixtures;
 - keep `brief.json` factual, `brand.json` decisional, `page.json` compositional, and
   `assets.json` provenance-focused;
 - do not create `.taste/run.json` while Harness already persists run state.
 
-### 4. Integrate the real installable skill
+### 4. Strengthen the internal judgment layer
 
-- use the existing Agent Skills discovery and enablement path;
-- avoid hardcoding Codex, Claude, model IDs, or a private tool API;
-- define what happens when TasteSkill is missing: block high-quality mode, offer installation, or
-  run an explicitly labeled fallback;
+- keep required rules, schemas, and checks in `packages/design-agent`;
 - make each judgment phase consume and produce the agreed artifacts;
+- keep all behavior provider-neutral without model IDs or private tool APIs;
+- use provider-exposed design tools only as optional evidence or asset sources;
 - keep deterministic tools dependency-light and project-relative.
 
 ### 5. Raise visual quality with evidence
@@ -714,7 +714,7 @@ content, and UI design.
 
 ### 6. Finish M4 surfaces
 
-- visible preview and iteration controls;
+- persistent hot reload and Design-specific preview iteration history;
 - token editor;
 - reference board;
 - asset production and provenance UX;
@@ -726,7 +726,7 @@ content, and UI design.
 The implementation should not silently decide these product questions:
 
 1. Is Design Mode a per-turn action or a persistent composer mode?
-2. Must TasteSkill be installed, bundled, or offered as an optional quality layer?
+2. Which decisions require deterministic enforcement instead of model judgment?
 3. Should the user choose among visual directions before Brand is locked?
 4. Which Brand fields are editable and which remain agent-owned?
 5. Should preview commands require a visible approval even in autonomous mode?
@@ -738,26 +738,29 @@ The implementation should not silently decide these product questions:
 
 ## Implementation map
 
-| Area                                                    | Files                                                             |
-| ------------------------------------------------------- | ----------------------------------------------------------------- |
-| Artifact types, parsers, writers, phase prompts         | `packages/design-agent/src/`                                      |
-| Design flow state, phase routing, recovery, corrections | `apps/server/src/orchestrator.ts`                                 |
-| Preview plan execution and command safety               | `apps/server/src/design-preview-runner.ts`                        |
-| Desktop capture coordination                            | `apps/server/src/preview-capture.ts`, `apps/server/src/server.ts` |
-| Typed capture and structured-input protocol             | `packages/contracts/src/`                                         |
-| Desktop hidden capture window                           | `apps/desktop/src/main.ts`, `apps/desktop/src/preload.ts`         |
-| Design attachment and briefing UI                       | `apps/web/src/design-agent/`                                      |
-| Design toggle and capability gate                       | `apps/web/src/App.tsx`, `apps/web/src/ui/Composer.tsx`            |
-| Persisted renderer questions                            | `apps/web/src/thread-store.ts`, `apps/web/src/ui/Thread.tsx`      |
-| Activity presentation                                   | `apps/web/src/ui/Thread.tsx`                                      |
-| Client capture relay                                    | `apps/web/src/bridge.ts`, `apps/web/src/transport.ts`             |
-| Direct API workspace tools                              | `apps/server/src/api-workspace-tools.ts`                          |
-| Durable product scope                                   | `docs/ROADMAP.md`, `docs/FEATURES.md`, this document              |
+| Area                                                    | Files                                                                                    |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Artifact types, parsers, writers, phase prompts         | `packages/design-agent/src/`                                                             |
+| Design flow state, phase routing, recovery, corrections | `apps/server/src/orchestrator.ts`                                                        |
+| Preview plan execution and command safety               | `apps/server/src/design-preview-runner.ts`                                               |
+| Desktop capture coordination                            | `apps/server/src/preview-capture.ts`, `apps/server/src/server.ts`                        |
+| Typed capture and structured-input protocol             | `packages/contracts/src/`                                                                |
+| Desktop hidden capture window                           | `apps/desktop/src/main.ts`, `apps/desktop/src/preload.ts`                                |
+| Visible Design preview routing                          | `apps/web/src/ui/workspace/WorkspacePanel.tsx`, `WorkspaceBrowser.tsx`, `browser-url.ts` |
+| Design attachment and briefing UI                       | `apps/web/src/design-agent/`                                                             |
+| Design toggle and capability gate                       | `apps/web/src/App.tsx`, `apps/web/src/ui/Composer.tsx`                                   |
+| Persisted renderer questions                            | `apps/web/src/thread-store.ts`, `apps/web/src/ui/Thread.tsx`                             |
+| Activity presentation                                   | `apps/web/src/ui/Thread.tsx`                                                             |
+| Client capture relay                                    | `apps/web/src/bridge.ts`, `apps/web/src/transport.ts`                                    |
+| ACP screenshot prompt blocks                            | `packages/adapter-acp/src/`                                                              |
+| Direct API workspace tools                              | `apps/server/src/api-workspace-tools.ts`                                                 |
+| Durable product scope                                   | `docs/ROADMAP.md`, `docs/FEATURES.md`, this document                                     |
 
 Tests are colocated with each package or application. Important coverage includes artifact parser
 tests, phase-prompt parsing, briefing continuation, question navigation, thread-store persistence,
 orchestrator phase progression and restart recovery, preview plan validation, preview process
-execution, capture coordination, Electron navigation restrictions, and adapter capability behavior.
+execution, Browser auto-open and same-URL repair reload, serialized capture coordination, Electron
+navigation and settle behavior, ACP image prompt blocks, and adapter capability behavior.
 
 ## Rules for future implementation
 
@@ -772,7 +775,8 @@ execution, capture coordination, Electron navigation restrictions, and adapter c
 - Reuse the project's framework, dependencies, package manager, and design system.
 - Preserve unrelated user changes.
 - Validate every trust-boundary object before persisting or executing it.
-- Keep creative rules in TasteSkill and deterministic runtime rules in Harness.
+- Keep creative rules and deterministic design helpers in `packages/design-agent`; do not
+  duplicate them in server orchestration or provider adapters.
 - Treat a skipped visual review as degraded completion, not proof of visual quality.
 - Use human design review as the final quality authority.
 
@@ -782,7 +786,8 @@ M4 is complete only when:
 
 - Design Mode works through every supported provider path that can perform ordinary text turns;
 - briefing asks only useful questions and produces a complete validated brief;
-- the jointly authored TasteSkill contract drives Brand, Page, Assets, Build, and Review;
+- the internal design-agent contracts drive Brand, Page, Assets, Build, and Review across
+  providers;
 - the artifact schemas carry every decision consumed by implementation and review without becoming
   process narration;
 - the real project builds through its existing stack;
@@ -795,5 +800,5 @@ M4 is complete only when:
 - the direction gallery, token editor, reference board, and asset workflow are usable;
 - Personal Harness's own landing page passes the automated rubric and human design review.
 
-Until then, the current system should be described as an implemented end-to-end Design Mode
-skeleton with a working Codex proof run, not as a finished universal Taste Agent.
+Until then, the current system should be described as an implemented provider-neutral Design Mode
+skeleton with capability-gated visual review, not as a finished cross-provider Design Mode.

@@ -7,6 +7,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import {
   ClaudeCodeAdapter,
+  CLAUDE_CAPABILITIES,
   CLAUDE_MODELS,
   claudeTurnArgs,
   claudeUserMessage,
@@ -167,6 +168,9 @@ describe('Claude Code turn invocation', () => {
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
+  })
+  it('declares image support after the stream-json wire is verified', () => {
+    expect(CLAUDE_CAPABILITIES.images).toBe(true)
   })
 })
 

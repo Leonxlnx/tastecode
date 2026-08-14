@@ -7,7 +7,8 @@ describe('browserUrl', () => {
   })
 
   it('keeps local development addresses on HTTP', () => {
-    expect(browserUrl('localhost:4311')).toBe('http://localhost:4311/')
+    expect(browserUrl('localhost:4311')).toBe('http://127.0.0.1:4311/')
+    expect(browserUrl('http://[::1]:4311')).toBe('http://127.0.0.1:4311/')
     expect(browserUrl('127.0.0.1:5183/preview')).toBe('http://127.0.0.1:5183/preview')
   })
 

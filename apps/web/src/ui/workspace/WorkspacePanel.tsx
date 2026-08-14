@@ -11,6 +11,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
+import { PreviewCaptureRequestSchema } from '@harness/contracts'
 import {
   appHapticsEnabled,
   performAppHaptic,
@@ -23,6 +24,7 @@ import type {
   SideChatPromptRequest,
   SideChatStartOptions,
 } from './WorkspaceSideChat.js'
+import type { BrowserNavigationRequest } from './WorkspaceBrowser.js'
 import '../workspace-panel.css'
 
 const WorkspaceReview = lazy(() =>
@@ -79,6 +81,7 @@ const TOOLS: Array<{
 
 const MIN_PANEL_WIDTH = 360
 const MIN_CHAT_WIDTH = 360
+const DESIGN_PREVIEW_TAB_ID = 'design-preview'
 
 export function WorkspacePanel(props: {
   open: boolean
@@ -102,6 +105,7 @@ export function WorkspacePanel(props: {
 }) {
   const [tabs, setTabs] = useState<WorkspaceTab[]>([])
   const [activeId, setActiveId] = useState<string>()
+  const [designPreview, setDesignPreview] = useState<BrowserNavigationRequest>()
   const [addOpen, setAddOpen] = useState(false)
   const addWrap = useRef<HTMLDivElement>(null)
   const resizeCleanup = useRef<() => void>(() => {})
@@ -155,6 +159,24 @@ export function WorkspacePanel(props: {
     if (!props.sideChatPromptRequest) return
     openTool('side-chat')
   }, [openTool, props.sideChatPromptRequest])
+
+  useEffect(
+    () =>
+      props.transport.on('preview.captureRequested', (value) => {
+        const request = PreviewCaptureRequestSchema.safeParse(value)
+        if (!request.success) return
+        clearAfterClose.current = false
+        props.onOpen()
+        setTabs((current) =>
+          current.some((tab) => tab.id === DESIGN_PREVIEW_TAB_ID)
+            ? current
+            : [...current, { id: DESIGN_PREVIEW_TAB_ID, kind: 'browser' }],
+        )
+        setActiveId(DESIGN_PREVIEW_TAB_ID)
+        setDesignPreview({ requestId: request.data.requestId, url: request.data.url })
+      }),
+    [props.onOpen, props.transport],
+  )
 
   useEffect(() => {
     if (!addOpen) return
@@ -386,6 +408,7 @@ export function WorkspacePanel(props: {
                   sideChatParentStatus={props.sideChatParentStatus}
                   sideChatStartOptions={props.sideChatStartOptions}
                   sideChatPromptRequest={props.sideChatPromptRequest}
+                  browserNavigation={tab.id === DESIGN_PREVIEW_TAB_ID ? designPreview : undefined}
                   onClose={() => closeTab(tab.id)}
                 />
               </Suspense>
@@ -411,6 +434,7 @@ function WorkspaceToolSurface(props: {
   sideChatParentStatus: SideChatParentStatus
   sideChatStartOptions: SideChatStartOptions
   sideChatPromptRequest?: SideChatPromptRequest | undefined
+  browserNavigation?: BrowserNavigationRequest | undefined
   onClose: () => void
 }) {
   if (props.kind === 'review') {
@@ -436,7 +460,9 @@ function WorkspaceToolSurface(props: {
       />
     )
   }
-  if (props.kind === 'browser') return <WorkspaceBrowser active={props.active} />
+  if (props.kind === 'browser') {
+    return <WorkspaceBrowser active={props.active} navigation={props.browserNavigation} />
+  }
   if (props.kind === 'files') {
     return (
       <WorkspaceFiles

@@ -47,7 +47,7 @@ vi.mock('@harness/proc', () => ({
       if (method === 'initialize') {
         return Promise.resolve({
           protocolVersion: 1,
-          agentCapabilities: { loadSession: false, promptCapabilities: {} },
+          agentCapabilities: { loadSession: false, promptCapabilities: { image: true } },
         })
       }
       if (method === 'session/new') return Promise.resolve({ sessionId: 'sess-1' })
@@ -94,6 +94,18 @@ function requestPermission(kind: string): Promise<unknown> {
 }
 
 describe('ACP approval lifecycle', () => {
+  it('does not start a turn when attachment preparation fails', async () => {
+    const adapter = new AcpAdapter('gemini')
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    await adapter.startThread('C:\\repo')
+
+    await expect(
+      adapter.sendTurn('acp-gemini-sess-1', 'review', ['preview.png']),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(events).toEqual([])
+  })
+
   it('answers an abandoned approval with cancelled when the turn ends', async () => {
     const { events, turnId } = await startedAdapter('ask')
     const answered = requestPermission('execute')
