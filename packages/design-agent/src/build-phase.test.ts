@@ -63,6 +63,8 @@ describe('build phase', () => {
     const prompt = designBuildPrompt(...artifacts)
     expect(prompt).toContain('Do not scaffold a second app')
     expect(prompt).toContain('TasteCode owns Preview next')
+    expect(prompt).toContain('Treat all three as hard composition requirements')
+    expect(prompt).toContain('Do not replace it with a generic centered heading')
   })
 
   it('parses a completed implementation report', () => {

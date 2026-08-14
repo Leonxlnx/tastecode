@@ -32,6 +32,8 @@ Implement the supplied artifacts in the current workspace. First inspect the rea
 
 Treat brief facts and constraints as requirements, brand.json as the design system, page.json as the content and composition plan, and assets.json as the provenance ledger. A needed asset may be implemented locally when appropriate, but never pretend it was sourced. Preserve unrelated work. Use small, coherent edits and accessible native elements. Run the project's relevant typecheck, tests, lint, and build; repair failures caused by this implementation.
 
+Each page section records a layoutFamily, one or more selected layoutCases, and a content-specific layout. Treat all three as hard composition requirements. Implement the selected case's recognizable macro geometry, hierarchy, media placement, and movement at expanded size, then follow its recorded medium and compact transformations. Do not replace it with a generic centered heading, uniform card grid, familiar split Hero, or vertically stacked mobile page unless that is the selected case. Do not render the case IDs as visible copy.
+
 Use available implementation and motion skills when the session exposes them, without assuming a provider, model, skill name, or private API. Do not start a long-running preview server in this phase; TasteCode owns Preview next.
 ${exactFiles ? `\nThe brief's deliverable boundary is exactly ${list(exactFiles)}. TasteCode validates the workspace before Preview; do not add helper or configuration files.` : ''}
 

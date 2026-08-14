@@ -6,7 +6,24 @@ export interface PageLink {
   target: string
 }
 
+export const PAGE_LAYOUT_FAMILIES = [
+  'hero',
+  'about',
+  'feature',
+  'how_it_works',
+  'social_proof',
+  'stats',
+  'faq',
+  'cta',
+  'pricing',
+  'contact',
+  'footer',
+] as const
+
+export type PageLayoutFamily = (typeof PAGE_LAYOUT_FAMILIES)[number]
+
 export interface PageNavigationDesign {
+  layoutCase?: string
   layout: string
   behavior: string[]
   transformation: {
@@ -40,6 +57,8 @@ export interface PageBlueprint {
   navigationDesign?: PageNavigationDesign
   sections: Array<{
     id: string
+    layoutFamily?: PageLayoutFamily
+    layoutCases?: string[]
     purpose: string
     userQuestion: string
     stage: 'orient' | 'qualify' | 'evaluate' | 'prove' | 'explain' | 'de_risk' | 'act' | 'continue'
@@ -79,6 +98,18 @@ export function parsePageBlueprint(value: unknown): PageBlueprint {
     const copy = record(section.copy, `sections[${index}].copy`)
     return {
       id: string(section.id, `sections[${index}].id`),
+      ...(section.layoutFamily === undefined
+        ? {}
+        : {
+            layoutFamily: member(
+              section.layoutFamily,
+              PAGE_LAYOUT_FAMILIES,
+              `sections[${index}].layoutFamily`,
+            ),
+          }),
+      ...(section.layoutCases === undefined
+        ? {}
+        : { layoutCases: strings(section.layoutCases, `sections[${index}].layoutCases`) }),
       purpose: string(section.purpose, `sections[${index}].purpose`),
       userQuestion:
         section.userQuestion === undefined
@@ -198,6 +229,9 @@ function parseNavigationDesign(value: unknown): PageNavigationDesign {
   const navigation = record(value, 'navigationDesign')
   const responsive = record(navigation.transformation, 'navigationDesign.transformation')
   return {
+    ...(navigation.layoutCase === undefined
+      ? {}
+      : { layoutCase: string(navigation.layoutCase, 'navigationDesign.layoutCase') }),
     layout: string(navigation.layout, 'navigationDesign.layout'),
     behavior: strings(navigation.behavior, 'navigationDesign.behavior'),
     transformation: {
