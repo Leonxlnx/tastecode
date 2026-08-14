@@ -113,17 +113,6 @@ CODE_OF_CONDUCT, CONTRIBUTING, templates, dependency license audit. Launch: GitH
 → _Public, with signed installers and the landing page already live. Never announce into an
 empty repo._
 
-### M8 — Mobile (nightly only)
-
-Native SwiftUI app reusing the same protocol. Pairing, project and session browsing,
-attachments, read, approve, steer and diff review are implemented; push notifications and voice
-finish the milestone. Connection over Tailscale/LAN first — a relay only later, opt-in, and
-end-to-end encrypted.
-→ _Approve a diff from your phone._
-
-The implemented native client and access stack live on `nightly`; `main` carries none of the
-mobile app, pairing, remote listener, or phone web surface until M8 is ready for release QA.
-
 ---
 
 ## Who does what
@@ -147,6 +136,3 @@ mobile app, pairing, remote listener, or phone web surface until M8 is ready for
 3. **Any commercial intent, ever?** Decides the license, and it's irreversible once outside
    contributors arrive.
 4. **What is the final TasteSkill v2 runtime contract?** M4 depends on it.
-5. **Web / self-host surface at launch?** The nightly branch has a phone web prototype over
-   Tailscale/LAN. Bringing it to `main` doubles the support and security surface, so that remains
-   a release decision.
