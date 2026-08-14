@@ -33,6 +33,7 @@ import { allowsPreviewNavigation } from './preview-navigation.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PREVIEW_DOM_AUDIT_SCRIPT } from './preview-dom-audit.js'
+import { PREVIEW_SETTLE_SCRIPT } from './preview-settle.js'
 import { ServerSupervisor } from './server-supervisor.js'
 import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
@@ -69,13 +70,6 @@ const devServer = process.env['HARNESS_DEV_SERVER']
  *  "the app's windows" must not count them. */
 const captureWindows = new Set<BrowserWindow>()
 const MAX_PASTED_IMAGE_BYTES = 25 * 1024 * 1024
-const CAPTURE_SETTLE_SCRIPT = `new Promise(resolve => requestAnimationFrame(resolve))
-  .then(() => Promise.race([
-    Promise.allSettled(document.getAnimations().map(animation => animation.finished)),
-    new Promise(resolve => setTimeout(resolve, 1000)),
-  ]))
-  .then(() => document.fonts?.ready)
-  .then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))`
 // Windows' native occlusion tracker can wrongly decide the window is fully
 // covered and stick there: the page keeps running with visibilityState
 // 'hidden' while the window shows nothing but its background colour — the
@@ -417,7 +411,7 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
       if (seen.has(key)) continue
       seen.add(key)
       preview.setContentSize(viewport.width, viewport.height)
-      await Promise.race([preview.webContents.executeJavaScript(CAPTURE_SETTLE_SCRIPT), deadline])
+      await Promise.race([preview.webContents.executeJavaScript(PREVIEW_SETTLE_SCRIPT), deadline])
       const domAudit = PreviewDomAuditSchema.parse(
         await Promise.race([
           preview.webContents.executeJavaScriptInIsolatedWorld(1001, [
