@@ -29,7 +29,7 @@ export type ComposerResource = {
 }
 
 export type ComposerResourceTrigger = {
-  marker: '$' | '@'
+  marker: '/' | '$' | '@'
   query: string
   start: number
   end: number

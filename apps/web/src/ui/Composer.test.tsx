@@ -364,19 +364,31 @@ describe('Composer prompts', () => {
     expect(screen.queryByRole('menu')).toBeNull()
   })
 
-  it('sends slash-prefixed text without offering built-in commands', () => {
+  it('keeps the built-in side-chat slash commands out of the resource picker', () => {
     const onSend = vi.fn()
-    renderComposer(onSend)
-
-    expect(screen.queryByText('Commands')).toBeNull()
-    expect(screen.queryByText('/review')).toBeNull()
+    renderComposer(onSend, { transport: populatedResourceTransport() })
 
     const composer = screen.getByPlaceholderText('Do anything')
-    fireEvent.change(composer, { target: { value: '/review' } })
+    fireEvent.change(composer, { target: { value: '/side' } })
     expect(screen.queryByRole('listbox')).toBeNull()
     fireEvent.keyDown(composer, { key: 'Enter' })
 
-    expect(onSend).toHaveBeenCalledWith('/review', [])
+    expect(onSend).toHaveBeenCalledWith('/side', [])
+  })
+
+  it('opens the resource picker from slash and invokes the selected skill canonically', async () => {
+    const onSend = vi.fn()
+    renderComposer(onSend, { transport: populatedResourceTransport() })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: '/air', selectionStart: 4 } })
+    await screen.findByRole('option', { name: /Airtable CLI/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(screen.getByText('Airtable CLI').closest('.chip--resource')).toBeTruthy()
+    expect((composer as HTMLTextAreaElement).value).toBe('')
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('$airtable-cli', [])
   })
 
   it('opens skills and MCP servers from dollar and selects the active row with Tab', async () => {

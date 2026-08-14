@@ -144,13 +144,14 @@ export function composerResourceTriggerAt(
   cursor: number,
 ): ComposerResourceTrigger | undefined {
   const beforeCursor = text.slice(0, cursor)
-  const match = /(^|[\s([{])([$@])([\w.:-]*)$/.exec(beforeCursor)
+  const match = /(^|[\s([{])([/$@])([\w.:-]*)$/.exec(beforeCursor)
   if (!match) return undefined
   const query = match[3] ?? ''
+  if (match[2] === '/' && /^(?:side|btw)$/i.test(query)) return undefined
   const start = cursor - query.length - 1
   let end = cursor
   while (end < text.length && /[\w.:-]/.test(text[end]!)) end += 1
-  return { marker: match[2] as '$' | '@', query, start, end }
+  return { marker: match[2] as '/' | '$' | '@', query, start, end }
 }
 
 export function composerPromptWithResources(text: string, resources: ComposerResource[]): string {
