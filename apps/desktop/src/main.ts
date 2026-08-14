@@ -46,9 +46,8 @@ import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './z
  * Electron shell. Deliberately thin: it opens a window and nothing else.
  *
  * All privileged work — spawning agents, filesystem, credentials — lives in the
- * core server. The renderer talks to that over WebSocket, exactly like the web
- * and (later) mobile clients do. That is what keeps those surfaces from being a
- * rewrite. See docs/ARCHITECTURE.md.
+ * core server. The renderer talks to that over WebSocket, which keeps the
+ * browser and desktop surfaces on the same protocol. See docs/ARCHITECTURE.md.
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -597,5 +596,5 @@ function isOwnRenderer(webContents: WebContents): boolean {
 
 app.on('window-all-closed', () => {
   // The core server belongs to the application lifecycle, not to a renderer
-  // window. A real app quit still tears down the process and its mobile socket.
+  // window. A real app quit still tears down the server process.
 })

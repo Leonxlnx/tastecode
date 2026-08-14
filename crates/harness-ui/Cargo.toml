@@ -23,7 +23,6 @@ harness-protocol = { path = "../harness-protocol" }
 harness-state = { path = "../harness-state" }
 markdown.workspace = true
 markup5ever_rcdom.workspace = true
-qrcode.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tree-sitter-javascript.workspace = true

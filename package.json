@@ -9,11 +9,6 @@
   "scripts": {
     "dev": "node tools/scripts/dev.js",
     "harness": "tsc -b apps/server && node apps/server/dist/cli.js",
-    "dev:mobile": "node tools/scripts/dev.js --mobile",
-    "mobile:ios": "node tools/scripts/mobile-ios.js",
-    "mobile:ios:device": "node tools/scripts/mobile-ios.js --device",
-    "mobile:ios:build": "node tools/scripts/mobile-ios.js --build",
-    "mobile:ios:test": "node tools/scripts/mobile-ios.js --test",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",

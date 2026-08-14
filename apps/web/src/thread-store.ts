@@ -98,10 +98,9 @@ const LEGACY_DESIGN_APPROVAL_WARNING =
 let localIdSequence = 0
 
 /**
- * randomUUID is restricted to secure contexts, while the mobile development
- * client is served over plain HTTP on a private Tailscale address. These ids
- * only identify renderer-local rows, so a timestamp and counter are a safe
- * fallback when the browser deliberately withholds that API.
+ * randomUUID is restricted to secure contexts. These ids only identify
+ * renderer-local rows, so a timestamp and counter are a safe fallback when a
+ * browser deliberately withholds that API.
  */
 function localId(prefix = ''): string {
   const uuid = globalThis.crypto?.randomUUID?.()

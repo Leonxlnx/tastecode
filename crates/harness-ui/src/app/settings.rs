@@ -3,7 +3,7 @@ use super::provider_terminal::{
 };
 use super::{HarnessApp, MCP_TRANSPORT_MIN_HEIGHT, McpTransportResizeDrag};
 use crate::chrome;
-use crate::client_state::{AuthTarget, MobileBusy, ProviderTerminalKind};
+use crate::client_state::{AuthTarget, ProviderTerminalKind};
 use crate::model_selection::filter_model_choices_by_query;
 use crate::motion_icon::motion_icon;
 use crate::preferences::{FontPreference, NativePreferences, ThemePreference};
@@ -15,24 +15,23 @@ use crate::theme::{Accent, Backdrop, Theme, ThemeMode};
 use crate::tracked_text::tracked_text;
 use crate::zoom::px;
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, Bounds, ClipboardItem, Context, ElementId, Entity,
+    Animation, AnimationExt, AnyElement, App, ClipboardItem, Context, ElementId, Entity,
     FocusHandle, Focusable, FontWeight, Hsla, IntoElement, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, PathPromptOptions, Pixels, PromptButton, PromptLevel, Render,
-    RenderOnce, Rgba, SharedString, Window, canvas, deferred, div, fill, linear_color_stop,
-    linear_gradient, point, prelude::*, relative, size,
+    MouseDownEvent, MouseMoveEvent, PathPromptOptions, PromptButton, PromptLevel, Render,
+    RenderOnce, Rgba, SharedString, Window, deferred, div, linear_color_stop, linear_gradient,
+    prelude::*, relative,
 };
 use gpui_component::Sizable as _;
 use gpui_component::input::{Input, InputEvent, InputState};
 use harness_protocol::{
-    ConnectionAddress, ConnectionAddressKind, McpAuth, McpAuthMethod, McpConfigValue, McpServer,
-    McpServerConfig, McpStartupStatus, McpTransport, ModelConnectionInput, ModelConnectionPreset,
-    ModelTransport, PairedDevice, PairingOffer, ProviderAuth, ProviderId, ProviderLogin,
-    SidebarMode, SidebarSettings, Skill, SkillScope, SkillSource, UpdateCheckResult,
+    McpAuth, McpAuthMethod, McpConfigValue, McpServer, McpServerConfig, McpStartupStatus,
+    McpTransport, ModelConnectionInput, ModelConnectionPreset, ModelTransport, ProviderAuth,
+    ProviderId, ProviderLogin, SidebarMode, SidebarSettings, Skill, SkillScope, SkillSource,
+    UpdateCheckResult,
 };
-use qrcode::{Color as QrColor, QrCode};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 const SETTINGS_CONTENT_WIDTH: f32 = 840.0;
 const SETTINGS_SECTION_GAP: f32 = 30.0;
@@ -85,20 +84,18 @@ pub(super) enum SettingsSection {
     Mcp,
     Skills,
     Workflows,
-    Mobile,
     Appearance,
     Data,
     About,
 }
 
 impl SettingsSection {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 8] = [
         Self::Providers,
         Self::Models,
         Self::Mcp,
         Self::Skills,
         Self::Workflows,
-        Self::Mobile,
         Self::Appearance,
         Self::Data,
         Self::About,
@@ -111,7 +108,6 @@ impl SettingsSection {
             Self::Mcp => "MCP",
             Self::Skills => "Skills",
             Self::Workflows => "Workflows",
-            Self::Mobile => "Mobile access",
             Self::Appearance => "Appearance",
             Self::Data => "Data",
             Self::About => "About",
@@ -125,7 +121,6 @@ impl SettingsSection {
             Self::Mcp => "icons/network.svg",
             Self::Skills => "icons/blocks.svg",
             Self::Workflows => "icons/panel-left.svg",
-            Self::Mobile => "icons/smartphone.svg",
             Self::Appearance => "icons/palette.svg",
             Self::Data => "icons/database.svg",
             Self::About => "icons/info.svg",
@@ -163,7 +158,6 @@ impl HarnessApp {
 
     pub(super) fn close_settings(&mut self, cx: &mut Context<Self>) {
         self.settings_open = false;
-        self.mobile_poll_generation = self.mobile_poll_generation.wrapping_add(1);
         self.settings_focus_pending = false;
         self.model_settings_searches.clear();
         self.mcp_editor = None;
@@ -340,7 +334,6 @@ impl HarnessApp {
             SettingsSection::Mcp => self.mcp_settings(window, cx),
             SettingsSection::Skills => self.skills_settings(cx),
             SettingsSection::Workflows => self.workflow_settings(cx),
-            SettingsSection::Mobile => self.mobile_access_settings(cx),
             SettingsSection::Appearance => self.appearance_settings(cx),
             SettingsSection::Data => self.data_settings(cx),
             SettingsSection::About => self.about_settings(cx),
@@ -2534,252 +2527,6 @@ impl HarnessApp {
         )
     }
 
-    fn mobile_access_settings(&self, cx: &mut Context<Self>) -> gpui::Div {
-        let theme = self.theme;
-        let interface_font = self.interface_font();
-        let now = current_time_ms();
-        let status = self.state.mobile_status.clone();
-        let pairing = self
-            .state
-            .mobile_pairing
-            .clone()
-            .filter(|offer| offer.expires_at > now);
-        let busy = self.state.mobile_busy.clone();
-        let enabled = status.as_ref().is_some_and(|status| status.enabled);
-        let mut rows = vec![settings_row(
-            0,
-            if enabled {
-                "Available to paired devices"
-            } else {
-                "Not accepting mobile connections"
-            },
-            status.as_ref().filter(|status| status.enabled).map_or_else(
-                || {
-                    "Generate a one-time code to start the private listener and pair a device."
-                        .to_owned()
-                },
-                |status| {
-                    format!(
-                        "{} is listening on port {}.",
-                        status.server_name, status.port
-                    )
-                },
-            ),
-            mobile_status_pill(if enabled { "On" } else { "Off" }, enabled, theme),
-            theme,
-        )];
-
-        if let Some(status) = &status
-            && !status.addresses.is_empty()
-        {
-            rows.push(mobile_addresses_block(
-                &status.addresses,
-                theme,
-                interface_font,
-            ));
-        }
-
-        let pair_view = cx.weak_entity();
-        let pair: SettingsAction = Rc::new(move |cx| {
-            let _ = pair_view.update(cx, |this, cx| {
-                this.copied_mobile_pairing_uri = None;
-                let update = this.state.start_mobile_pairing();
-                this.apply_client_update(update, cx);
-            });
-        });
-        let mut actions = vec![mobile_action_button(
-            "mobile-generate-pairing".into(),
-            if matches!(busy.as_ref(), Some(MobileBusy::Pair)) {
-                "Generating..."
-            } else {
-                "Generate pairing code"
-            },
-            false,
-            busy.is_none(),
-            theme,
-            pair,
-        )];
-        if enabled {
-            let stop_view = cx.weak_entity();
-            let stop: SettingsAction = Rc::new(move |cx| {
-                let _ = stop_view.update(cx, |this, cx| {
-                    let update = this.state.stop_mobile_access();
-                    this.apply_client_update(update, cx);
-                });
-            });
-            actions.push(mobile_action_button(
-                "mobile-stop-access".into(),
-                if matches!(busy.as_ref(), Some(MobileBusy::Stop)) {
-                    "Stopping..."
-                } else {
-                    "Stop mobile access"
-                },
-                true,
-                busy.is_none(),
-                theme,
-                stop,
-            ));
-        }
-        rows.push(
-            div()
-                .w_full()
-                .flex()
-                .flex_wrap()
-                .gap(px(8.0))
-                .px(px(16.0))
-                .py(px(14.0))
-                .border_t_1()
-                .border_color(theme.line.hsla())
-                .children(actions)
-                .into_any_element(),
-        );
-
-        if let Some(error) = self.state.mobile_error.clone() {
-            rows.push(
-                div()
-                    .w_full()
-                    .px(px(16.0))
-                    .py(px(14.0))
-                    .border_t_1()
-                    .border_color(theme.line.hsla())
-                    .text_size(px(12.5))
-                    .line_height(relative(1.45))
-                    .text_color(theme.error.hsla())
-                    .child(error)
-                    .into_any_element(),
-            );
-        }
-
-        if let Some(pairing) = pairing {
-            rows.push(self.mobile_pairing_block(pairing, now, cx));
-        }
-
-        rows.push(settings_inside_title("Paired devices", theme));
-        let devices = status.map_or_else(Vec::new, |status| status.devices);
-        if devices.is_empty() {
-            rows.push(
-                div()
-                    .w_full()
-                    .px(px(16.0))
-                    .py(px(14.0))
-                    .border_t_1()
-                    .border_color(theme.line.hsla())
-                    .text_size(px(12.5))
-                    .text_color(theme.text_3.hsla())
-                    .child("No paired devices.")
-                    .into_any_element(),
-            );
-        } else {
-            for (index, device) in devices.into_iter().enumerate() {
-                let disconnecting = matches!(
-                    busy.as_ref(),
-                    Some(MobileBusy::Revoke(device_id)) if device_id == &device.id
-                );
-                let device_id = device.id.clone();
-                let device_note = format_device_note(&device, now);
-                let disconnect_view = cx.weak_entity();
-                let disconnect: SettingsAction = Rc::new(move |cx| {
-                    let device_id = device_id.clone();
-                    let _ = disconnect_view.update(cx, |this, cx| {
-                        let update = this.state.revoke_mobile_device(device_id);
-                        this.apply_client_update(update, cx);
-                    });
-                });
-                rows.push(settings_row(
-                    index,
-                    device.name,
-                    device_note,
-                    mobile_action_button(
-                        format!("mobile-disconnect:{index}").into(),
-                        if disconnecting {
-                            "Disconnecting..."
-                        } else {
-                            "Disconnect"
-                        },
-                        true,
-                        busy.is_none(),
-                        theme,
-                        disconnect,
-                    ),
-                    theme,
-                ));
-            }
-        }
-
-        settings_panel(
-            "Mobile access",
-            vec![settings_group("", rows, theme)],
-            theme,
-        )
-    }
-
-    fn mobile_pairing_block(
-        &self,
-        pairing: PairingOffer,
-        now: u64,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let theme = self.theme;
-        let pairing_uri = pairing.pairing_uri.clone();
-        let copied = self.copied_mobile_pairing_uri.as_deref() == Some(pairing_uri.as_str());
-        let copy_uri = pairing_uri.clone();
-        let copy_view = cx.weak_entity();
-        let copy: SettingsAction = Rc::new(move |cx| {
-            cx.write_to_clipboard(ClipboardItem::new_string(copy_uri.clone()));
-            let copied_uri = copy_uri.clone();
-            let _ = copy_view.update(cx, |this, cx| {
-                this.copied_mobile_pairing_uri = Some(copied_uri);
-                this.state.mobile_error = None;
-                cx.notify();
-            });
-        });
-        div()
-            .w_full()
-            .flex()
-            .items_center()
-            .gap(px(20.0))
-            .p(px(16.0))
-            .border_t_1()
-            .border_color(theme.line.hsla())
-            .child(pairing_qr(&pairing_uri, theme))
-            .child(
-                div()
-                    .min_w(px(0.0))
-                    .flex_1()
-                    .child(
-                        div()
-                            .text_size(px(13.5))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.text.hsla())
-                            .child("Scan from Harness Mobile"),
-                    )
-                    .child(
-                        div()
-                            .mt(px(2.0))
-                            .text_size(px(12.5))
-                            .line_height(relative(1.45))
-                            .text_color(theme.text_3.hsla())
-                            .child(format!(
-                                "Expires in {} and works once.",
-                                format_countdown(pairing.expires_at.saturating_sub(now))
-                            )),
-                    )
-                    .child(div().mt(px(12.0)).child(mobile_action_button(
-                        "mobile-copy-pairing-link".into(),
-                        if copied {
-                            "Copied"
-                        } else {
-                            "Copy pairing link"
-                        },
-                        false,
-                        true,
-                        theme,
-                        copy,
-                    ))),
-            )
-            .into_any_element()
-    }
-
     fn appearance_settings(&self, cx: &mut Context<Self>) -> gpui::Div {
         let theme = self.theme;
         let mut blocks = Vec::new();
@@ -3088,11 +2835,6 @@ impl HarnessApp {
     }
 
     fn refresh_settings_inventory(&mut self, cx: &mut Context<Self>) {
-        if self.settings_section == SettingsSection::Mobile {
-            self.start_mobile_access_poll(cx);
-            return;
-        }
-        self.mobile_poll_generation = self.mobile_poll_generation.wrapping_add(1);
         let Some((provider, project_path)) = self.settings_scope() else {
             cx.notify();
             return;
@@ -3106,34 +2848,6 @@ impl HarnessApp {
             }
         };
         self.apply_client_update(update, cx);
-    }
-
-    fn start_mobile_access_poll(&mut self, cx: &mut Context<Self>) {
-        self.mobile_poll_generation = self.mobile_poll_generation.wrapping_add(1);
-        let generation = self.mobile_poll_generation;
-        let update = self.state.request_mobile_status();
-        self.apply_client_update(update, cx);
-        cx.spawn(async move |view, cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_secs(2)).await;
-                let result = view.update(cx, |this, cx| {
-                    if !this.settings_open
-                        || this.settings_section != SettingsSection::Mobile
-                        || this.mobile_poll_generation != generation
-                    {
-                        return false;
-                    }
-                    let update = this.state.request_mobile_status();
-                    this.apply_client_update(update, cx);
-                    cx.notify();
-                    true
-                });
-                if !matches!(result, Ok(true)) {
-                    break;
-                }
-            }
-        })
-        .detach();
     }
 
     fn settings_scope(&self) -> Option<(ProviderId, String)> {
@@ -3392,252 +3106,6 @@ fn settings_panel_with_gap(
                 .gap(px(section_gap))
                 .children(blocks),
         )
-}
-
-fn mobile_status_pill(label: &'static str, on: bool, theme: Theme) -> AnyElement {
-    div()
-        .flex_none()
-        .px(px(8.0))
-        .py(px(3.0))
-        .rounded_full()
-        .border_1()
-        .border_color(if on {
-            theme.attention.hsla().opacity(0.28)
-        } else {
-            theme.line.hsla()
-        })
-        .text_size(px(11.5))
-        .text_color(if on {
-            theme.text.hsla()
-        } else {
-            theme.text_3.hsla()
-        })
-        .child(label)
-        .into_any_element()
-}
-
-fn mobile_addresses_block(
-    addresses: &[ConnectionAddress],
-    theme: Theme,
-    interface_font: &'static str,
-) -> AnyElement {
-    div()
-        .w_full()
-        .px(px(16.0))
-        .py(px(14.0))
-        .border_t_1()
-        .border_color(theme.line.hsla())
-        .child(
-            div()
-                .text_size(px(13.5))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(theme.text.hsla())
-                .child("Reachable addresses"),
-        )
-        .child(
-            div()
-                .mt(px(2.0))
-                .text_size(px(12.5))
-                .line_height(relative(1.45))
-                .text_color(theme.text_3.hsla())
-                .child("Prefer Tailscale. Use a LAN route only on a private network you trust."),
-        )
-        .child(
-            div().mt(px(10.0)).flex().flex_wrap().gap(px(8.0)).children(
-                addresses
-                    .iter()
-                    .map(|address| mobile_address_pill(address, theme, interface_font)),
-            ),
-        )
-        .into_any_element()
-}
-
-fn mobile_address_pill(
-    address: &ConnectionAddress,
-    theme: Theme,
-    interface_font: &'static str,
-) -> AnyElement {
-    div()
-        .min_w(px(0.0))
-        .max_w(px(360.0))
-        .flex()
-        .items_center()
-        .gap(px(8.0))
-        .px(px(9.0))
-        .py(px(6.0))
-        .overflow_hidden()
-        .rounded(px(crate::RADIUS_MD))
-        .border_1()
-        .border_color(theme.line.hsla())
-        .bg(chrome::recessed(theme))
-        .font_family("Geist Mono")
-        .text_size(px(11.5))
-        .text_color(theme.text_2.hsla())
-        .child(
-            div()
-                .flex_none()
-                .font_family(interface_font)
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(theme.text_3.hsla())
-                .child(match address.kind {
-                    ConnectionAddressKind::Tailscale => "Tailscale",
-                    ConnectionAddressKind::Lan => "LAN",
-                }),
-        )
-        .child(div().min_w(px(0.0)).truncate().child(address.label.clone()))
-        .into_any_element()
-}
-
-fn mobile_action_button(
-    id: SharedString,
-    label: impl Into<SharedString>,
-    destructive: bool,
-    enabled: bool,
-    theme: Theme,
-    action: SettingsAction,
-) -> AnyElement {
-    let hover_group: SharedString = format!("{id}:hover").into();
-    div()
-        .id(ElementId::Name(id))
-        .group(hover_group.clone())
-        .relative()
-        .h(px(30.0))
-        .flex()
-        .items_center()
-        .px(px(10.0))
-        .rounded(px(crate::RADIUS_MD))
-        .border_1()
-        .border_color(chrome::border(theme))
-        .bg(chrome::raised(theme))
-        .shadow(chrome::shadows(theme))
-        .child(chrome::interactive_top_highlight(
-            theme,
-            hover_group.clone(),
-            true,
-        ))
-        .child(chrome::interactive_inset_shade(theme, hover_group))
-        .text_size(px(12.5))
-        .text_color(if destructive {
-            theme.error.hsla()
-        } else {
-            theme.text_2.hsla()
-        })
-        .opacity(if enabled { 1.0 } else { 0.5 })
-        .when(enabled, |button| {
-            button
-                .cursor_pointer()
-                .hover(move |style| {
-                    style.bg(theme.surface_3.hsla()).text_color(if destructive {
-                        theme.error.hsla()
-                    } else {
-                        theme.text.hsla()
-                    })
-                })
-                .active(|style| style.top(px(1.0)).shadow(Vec::new()))
-                .on_click(move |_event, _window, cx| action(cx))
-        })
-        .child(label.into())
-        .into_any_element()
-}
-
-fn pairing_qr(pairing_uri: &str, theme: Theme) -> AnyElement {
-    let code = QrCode::new(pairing_uri.as_bytes());
-    let contents = match code {
-        Ok(code) => {
-            let width = code.width();
-            let colors = code.to_colors();
-            let mut runs = Vec::new();
-            for row in 0..width {
-                let mut column = 0;
-                while column < width {
-                    if colors[row * width + column] != QrColor::Dark {
-                        column += 1;
-                        continue;
-                    }
-                    let start = column;
-                    while column < width && colors[row * width + column] == QrColor::Dark {
-                        column += 1;
-                    }
-                    runs.push((row, start, column - start));
-                }
-            }
-            canvas(
-                |_, _, _| {},
-                move |bounds, _, window, _| paint_pairing_qr(bounds, width, &runs, window),
-            )
-            .size_full()
-            .into_any_element()
-        }
-        Err(_) => div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_size(px(11.5))
-            .text_color(gpui::rgb(0x333333))
-            .child("Generating QR...")
-            .into_any_element(),
-    };
-    div()
-        .size(px(176.0))
-        .flex_none()
-        .p(px(10.0))
-        .rounded(px(crate::RADIUS_LG))
-        .border_1()
-        .border_color(theme.line.hsla())
-        .bg(gpui::white())
-        .child(contents)
-        .into_any_element()
-}
-
-fn paint_pairing_qr(
-    bounds: Bounds<Pixels>,
-    width: usize,
-    runs: &[(usize, usize, usize)],
-    window: &mut Window,
-) {
-    const QUIET_ZONE: f32 = 4.0;
-    let available = f32::from(bounds.size.width).min(f32::from(bounds.size.height));
-    let module = available / (width as f32 + QUIET_ZONE * 2.0);
-    let symbol_size = module * width as f32;
-    let origin_x = bounds.origin.x + px((f32::from(bounds.size.width) - symbol_size) / 2.0);
-    let origin_y = bounds.origin.y + px((f32::from(bounds.size.height) - symbol_size) / 2.0);
-    for &(row, start, length) in runs {
-        window.paint_quad(fill(
-            Bounds {
-                origin: point(
-                    origin_x + px(start as f32 * module),
-                    origin_y + px(row as f32 * module),
-                ),
-                size: size(px(length as f32 * module), px(module)),
-            },
-            gpui::black(),
-        ));
-    }
-}
-
-fn current_time_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_millis() as u64)
-}
-
-fn format_countdown(milliseconds: u64) -> String {
-    let seconds = milliseconds.saturating_add(999) / 1_000;
-    if seconds >= 60 {
-        format!("{}m {}s", seconds / 60, seconds % 60)
-    } else {
-        format!("{seconds}s")
-    }
-}
-
-fn format_device_note(device: &PairedDevice, now: u64) -> String {
-    let minutes = now.saturating_sub(device.last_seen_at) / 60_000;
-    if minutes == 0 {
-        "Seen just now".into()
-    } else {
-        format!("Seen {minutes}m ago")
-    }
 }
 
 fn inventory_settings_panel(
@@ -5862,33 +5330,6 @@ mod tests {
     #[test]
     fn public_beta_keeps_parked_provider_surfaces_hidden() {
         assert!(!parked_provider_surfaces_visible());
-    }
-
-    #[test]
-    fn mobile_access_keeps_the_web_navigation_position_and_time_copy() {
-        assert_eq!(SettingsSection::ALL[5], SettingsSection::Mobile);
-        assert_eq!(SettingsSection::Mobile.label(), "Mobile access");
-        assert_eq!(format_countdown(59_001), "1m 0s");
-        assert_eq!(format_countdown(61_001), "1m 2s");
-        assert_eq!(
-            format_device_note(
-                &PairedDevice {
-                    id: "phone".into(),
-                    name: "iPhone".into(),
-                    created_at: 0,
-                    last_seen_at: 119_999,
-                },
-                120_000,
-            ),
-            "Seen just now"
-        );
-    }
-
-    #[test]
-    fn mobile_pairing_uri_encodes_as_a_native_qr_matrix() {
-        let code = QrCode::new(b"harness://pair?payload=abc").expect("pairing URI should encode");
-        assert!(code.width() > 0);
-        assert!(code.to_colors().contains(&QrColor::Dark));
     }
 
     #[test]

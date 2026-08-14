@@ -37,10 +37,8 @@ describe('clipboard bridge', () => {
     ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, writeClipboardText }
     const bridge = await import('./bridge.js')
 
-    await expect(bridge.writeClipboardText('harness://pair?payload=test-ticket')).resolves.toBe(
-      undefined,
-    )
-    expect(writeClipboardText).toHaveBeenCalledWith('harness://pair?payload=test-ticket')
+    await expect(bridge.writeClipboardText('copied text')).resolves.toBe(undefined)
+    expect(writeClipboardText).toHaveBeenCalledWith('copied text')
   })
 })
 
