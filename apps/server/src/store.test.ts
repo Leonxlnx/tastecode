@@ -668,7 +668,7 @@ describe('events', () => {
 
 describe('cross-session search', () => {
   beforeEach(() => {
-    store.addProject('/repo', 'Harness')
+    store.addProject('/repo', 'TasteCode')
     store.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'Search work' })
   })
 

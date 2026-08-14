@@ -25,9 +25,9 @@ pub struct ItemContext<'a> {
     pub created_at: f64,
 }
 
-/// Translate a Codex `ThreadItem` into the provider-neutral Harness model.
+/// Translate a Codex `ThreadItem` into the provider-neutral TasteCode model.
 ///
-/// The app-server union changes independently of Harness. Unknown and partial
+/// The app-server union changes independently of TasteCode. Unknown and partial
 /// variants therefore remain visible as `unknown` items instead of being
 /// dropped or terminating the provider session.
 pub fn map_thread_item(raw: &Value, context: ItemContext<'_>) -> Item {

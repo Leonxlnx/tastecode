@@ -31,7 +31,7 @@ personalization, and none of them is competing on design quality at all.
 
 ## The product
 
-**Personal Harness** is a desktop control panel that sits above the agents.
+**TasteCode** is a desktop control panel that sits above the agents.
 
 One window. Every agent you have. Every subscription you pay for, plus your own keys.
 Threads that stay instant at 500 messages. Real diff review. Parallel agents in isolated
@@ -114,7 +114,5 @@ take.
 
 ## Naming
 
-`personalharness` is the working repo name. The product name is undecided. Renaming a
-GitHub repo is a one-click operation that preserves redirects, so this does not block
-anything. Candidate criteria: pronounceable, one word, `.dev` or `.app` domain available,
-no trademark collision in developer tools.
+The product and repository are named **TasteCode**. The canonical website is
+[`tastecode.dev`](https://tastecode.dev).

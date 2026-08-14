@@ -25,15 +25,15 @@ Existing app: {"version":1,"kind":"command","command":"pnpm","args":["dev","--ho
 Static files: {"version":1,"kind":"static","entry":"index.html","cwd":".","url":"http://127.0.0.1:4173/","viewports":[{"name":"desktop","width":1440,"height":1000},{"name":"mobile","width":390,"height":844}]}`
 
 export function designPreviewPrompt(): string {
-  return `You are running the Preview Setup phase of Personal Harness Design Mode.
+  return `You are running the Preview Setup phase of TasteCode Design Mode.
 
 Inspect the implemented project's real package scripts and configuration. Choose the existing development or preview command that serves the built page on 127.0.0.1 with an explicit port. Do not install dependencies, start the server yourself, use a shell string, or choose a remote URL. The command is an executable name and args is its argv array. cwd is relative to the current workspace.
 
-For an existing app, use kind command. Personal Harness executes only these commands: bun, node, npm, pnpm, yarn. Anything else — npx, python, deno, a path to a binary — is rejected. A package-manager command must run a script that exists in the workspace's package.json; a node command must point at a script file inside the workspace.
+For an existing app, use kind command. TasteCode executes only these commands: bun, node, npm, pnpm, yarn. Anything else — npx, python, deno, a path to a binary — is rejected. A package-manager command must run a script that exists in the workspace's package.json; a node command must point at a script file inside the workspace.
 
-For a static-file project with no existing preview script, use kind static and name its HTML entry file. Harness serves static projects itself. Do not create a server script or package manifest.
+For a static-file project with no existing preview script, use kind static and name its HTML entry file. TasteCode serves static projects itself. Do not create a server script or package manifest.
 
-Include one representative desktop viewport and one representative mobile viewport. Use readyPattern only when the command has a stable output fragment that indicates readiness. Personal Harness will validate and execute this plan.
+Include one representative desktop viewport and one representative mobile viewport. Use readyPattern only when the command has a stable output fragment that indicates readiness. TasteCode will validate and execute this plan.
 
 ${PREVIEW_PROTOCOL}`
 }

@@ -1497,7 +1497,7 @@ mod tests {
         let page = SessionSearchPage {
             results: vec![SessionSearchResult {
                 project_path: "/repo".into(),
-                project_name: "Harness".into(),
+                project_name: "TasteCode".into(),
                 thread_id: "thread-1".into(),
                 thread_title: "Find regression".into(),
                 turn_id: "turn-1".into(),
@@ -1522,7 +1522,7 @@ mod tests {
             json!({
                 "results": [{
                     "projectPath": "/repo",
-                    "projectName": "Harness",
+                    "projectName": "TasteCode",
                     "threadId": "thread-1",
                     "threadTitle": "Find regression",
                     "turnId": "turn-1",

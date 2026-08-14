@@ -620,7 +620,7 @@ describe('thread error surface', () => {
         turnId: 'turn-1',
         type: 'error',
         status: 'completed',
-        text: 'Turn interrupted: Personal Harness restarted. Send a new message to continue.',
+        text: 'Turn interrupted: TasteCode restarted. Send a new message to continue.',
         createdAt: 1,
       },
     ]
@@ -642,7 +642,7 @@ describe('thread error surface', () => {
     // A thread-level failure is a statement: the alert and the reason, not an
     // operational row with a disclosure affordance.
     expect(container.querySelector('.turn-error__text')?.textContent).toBe(
-      'Turn interrupted: Personal Harness restarted. Send a new message to continue.',
+      'Turn interrupted: TasteCode restarted. Send a new message to continue.',
     )
     expect(screen.queryByRole('button')).toBeNull()
     expect(container.querySelector('.aux')).toBeNull()

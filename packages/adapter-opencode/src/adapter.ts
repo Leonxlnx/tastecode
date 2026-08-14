@@ -81,7 +81,7 @@ export function openCodeReasoningEfforts(model: unknown): string[] {
 }
 
 /**
- * Harness MCP config as the `mcp` block of an opencode config. Credential
+ * TasteCode MCP config as the `mcp` block of an opencode config. Credential
  * references resolve here — the reference, never the secret, is what crossed
  * the protocol. Verified against opencode 1.x: `OPENCODE_CONFIG_CONTENT`
  * accepts `{ mcp: { name: { type: 'local'|'remote', ... } } }`.
@@ -218,7 +218,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       const result = await this.#v2Request<{ data: OpenCodeV2Session }>('/api/session', {
         method: 'POST',
         body: JSON.stringify({
-          title: 'Personal Harness',
+          title: 'TasteCode',
           location: { directory: workspacePath },
           ...(model ? { model } : {}),
         }),
@@ -232,7 +232,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#client = this.#newClient(workspacePath)
     await this.#subscribe()
     const { data: session } = await this.#client.session.create({
-      body: { title: 'Personal Harness' },
+      body: { title: 'TasteCode' },
       throwOnError: true,
     })
     this.#sessionId = session.id

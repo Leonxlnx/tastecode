@@ -62,7 +62,7 @@ describe('build phase', () => {
   it('requires the existing architecture and leaves preview to the harness', () => {
     const prompt = designBuildPrompt(...artifacts)
     expect(prompt).toContain('Do not scaffold a second app')
-    expect(prompt).toContain('Personal Harness owns Preview next')
+    expect(prompt).toContain('TasteCode owns Preview next')
   })
 
   it('parses a completed implementation report', () => {

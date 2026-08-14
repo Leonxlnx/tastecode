@@ -718,7 +718,7 @@ describe('web client', () => {
 
     render(<App />)
 
-    expect(screen.queryByText('Set up Personal Harness')).toBeNull()
+    expect(screen.queryByText('Set up TasteCode')).toBeNull()
     expect(document.querySelector('.shell')).not.toBeNull()
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('auth.status', { provider: 'codex' })
@@ -1773,7 +1773,7 @@ describe('new chats', () => {
   })
 
   it('sends the design brief through a provider without structured input', async () => {
-    // Briefing questions are Harness-owned and answered by the server, so a
+    // Briefing questions are TasteCode-owned and answered by the server, so a
     // provider that never declares `userInput` must still be able to submit.
     localStorage.setItem('harness.provider', 'claude-code')
     serverProviders = [
@@ -2496,7 +2496,7 @@ describe('new chats', () => {
     serverProjects = [
       {
         path: '/work/project',
-        name: 'Personal Harness',
+        name: 'TasteCode',
         pinned: false,
         createdAt: 0,
         sessions: [],
@@ -2513,7 +2513,7 @@ describe('new chats', () => {
     render(<App />)
 
     expect((await screen.findByRole('heading')).textContent).toContain(
-      'What should we build in Personal Harness?',
+      'What should we build in TasteCode?',
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
@@ -2532,7 +2532,7 @@ describe('new chats', () => {
     serverProjects = [
       {
         path: '/work/project',
-        name: 'Personal Harness',
+        name: 'TasteCode',
         pinned: false,
         createdAt: 0,
         sessions: [],
@@ -2547,7 +2547,7 @@ describe('new chats', () => {
     ]
 
     render(<App />)
-    await screen.findByRole('heading', { name: 'What should we build in Personal Harness?' })
+    await screen.findByRole('heading', { name: 'What should we build in TasteCode?' })
 
     const anotherProject = screen.getByRole('button', { name: 'Another Project' })
     fireEvent.click(anotherProject)
@@ -2555,14 +2555,14 @@ describe('new chats', () => {
     expect(anotherProject.getAttribute('aria-expanded')).toBe('true')
     expect(within(anotherProject.closest('.proj')!).getByText('No chats')).toBeTruthy()
     expect(screen.getByRole('heading').textContent).toBe(
-      'What should we build in Personal Harness?',
+      'What should we build in TasteCode?',
     )
     expect(screen.getByPlaceholderText('Do anything')).toBeTruthy()
 
     fireEvent.click(anotherProject)
     expect(anotherProject.getAttribute('aria-expanded')).toBe('false')
     expect(screen.getByRole('heading').textContent).toBe(
-      'What should we build in Personal Harness?',
+      'What should we build in TasteCode?',
     )
   })
 
@@ -3347,7 +3347,7 @@ describe('global shortcuts', () => {
     serverProjects = [
       {
         path: '/work/project',
-        name: 'Personal Harness',
+        name: 'TasteCode',
         pinned: false,
         createdAt: 0,
         sessions: [{ id: 'thread-1', title: 'Fix keyboard flow', running: false }],

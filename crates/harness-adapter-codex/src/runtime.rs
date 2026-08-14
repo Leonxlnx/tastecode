@@ -180,7 +180,7 @@ impl CodexAdapter {
             json!({
                 "clientInfo": {
                     "name": CLIENT_NAME,
-                    "title": "Personal Harness",
+                    "title": "TasteCode",
                     "version": "0.0.0"
                 }
             }),

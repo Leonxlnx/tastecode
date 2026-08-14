@@ -35,7 +35,7 @@ impl RealProbe {
         let mut response = client
             .get(LATEST_URL)
             .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-            .header(reqwest::header::USER_AGENT, "Personal Harness")
+            .header(reqwest::header::USER_AGENT, "TasteCode")
             .send()
             .ok()?;
         if !response.status().is_success()

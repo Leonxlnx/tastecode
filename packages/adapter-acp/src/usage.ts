@@ -15,7 +15,7 @@ export type AcpSessionUsageUpdate = {
   cost?: { amount?: number; currency?: string } | null
 }
 
-/** Maps the optional ACP end-turn usage extension onto Harness accounting. */
+/** Maps the optional ACP end-turn usage extension onto TasteCode accounting. */
 export function acpTurnUsage(
   value: AcpTurnTokenUsage | null | undefined,
   model?: string,

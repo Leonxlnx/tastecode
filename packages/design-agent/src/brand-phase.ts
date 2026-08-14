@@ -7,7 +7,7 @@ const BRAND_PROTOCOL = `Return the final brand system as JSON only, without Mark
 {"version":1,"foundation":{"strategy":"preserve|extend|create","existingAssets":[],"assetActions":[{"asset":"...","action":"protect|preserve|evolve|retire|create","reason":"..."}],"lockedDecisions":[],"assumptions":[]},"creativeDirection":{"summary":"...","traits":[{"quality":"...","boundary":"not ..."}],"productiveTension":"...","signatureDevice":{"description":"...","status":"existing|candidate|validated","invariants":[]},"restraint":"...","avoid":[]},"paletteRecipe":{"themes":{"light":{"accentSeed":"#C1492E","neutralSeed":"#665A50","surfaceContrast":"quiet|defined"}},"locked":{"light":{"accent":"#C1492E"}}},"typefaces":[{"family":"...","source":"...","roles":[],"weights":[]}],"interfaceDirection":"...","imageDirection":{"summary":"...","subjects":[],"treatment":"...","avoid":[]},"motionDirection":{"summary":"...","principles":[],"avoid":[]},"voice":{"summary":"...","avoid":[]}}`
 
 export function designBrandPrompt(brief: DesignBrief): string {
-  return `You are running the Brand phase of Personal Harness Design Mode.
+  return `You are running the Brand phase of TasteCode Design Mode.
 
 Turn the validated design brief into a compact, usable brand system. This phase makes visual and verbal decisions; it does not plan page sections, source assets, install dependencies, or edit website files.
 

@@ -1,4 +1,4 @@
-//! Native Personal Harness core transport.
+//! Native TasteCode core transport.
 //!
 //! The server owns persistence and protocol ordering. Provider-specific behavior
 //! stays behind adapters as it is ported; this transport never branches on a
@@ -140,7 +140,7 @@ pub enum ServerError {
     MissingDataDirectory,
     #[error("the operating system did not provide a home directory for MCP configuration")]
     MissingConfigDirectory,
-    #[error("the Harness server thread panicked")]
+    #[error("the TasteCode server thread panicked")]
     ThreadPanicked,
 }
 

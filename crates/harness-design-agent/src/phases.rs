@@ -43,7 +43,7 @@ If a real blocker remains after reasonable repair attempts:
 pub fn design_brand_prompt(brief: &DesignBrief) -> String {
     let brief = pretty(brief);
     format!(
-        r#"You are running the Brand phase of Personal Harness Design Mode.
+        r#"You are running the Brand phase of TasteCode Design Mode.
 
 Turn the validated design brief into a compact, usable brand system. This phase makes visual and verbal decisions; it does not plan page sections, source assets, install dependencies, or edit website files.
 
@@ -69,7 +69,7 @@ pub fn design_page_prompt(brief: &DesignBrief, brand: &BrandSystem) -> String {
     let brief = pretty(brief);
     let brand = pretty(brand);
     format!(
-        r#"You are running the Page Blueprint phase of Personal Harness Design Mode.
+        r#"You are running the Page Blueprint phase of TasteCode Design Mode.
 
 Turn the validated brief and brand system into one implementation-ready page plan. Write the actual concise page copy, order sections into a persuasive story, name layout and component needs, and specify only meaningful interactions and responsive behavior.
 
@@ -104,7 +104,7 @@ pub fn design_asset_prompt(
     let brand = pretty(brand);
     let page = pretty(page);
     format!(
-        r#"You are running the Asset phase of Personal Harness Design Mode.
+        r#"You are running the Asset phase of TasteCode Design Mode.
 
 Resolve the page blueprint's asset and component needs into a compact manifest. Inspect the project first and reuse suitable existing files and dependencies. Keep IDs identical to the page blueprint. Mark a need as ready only when its source is real and its project destination is known; otherwise leave it needed with actionable requirements.
 
@@ -145,13 +145,13 @@ pub fn design_build_prompt(
     let page = compact(page);
     let assets = compact(assets);
     format!(
-        r#"You are running the Build phase of Personal Harness Design Mode.
+        r#"You are running the Build phase of TasteCode Design Mode.
 
 Implement the supplied artifacts in the current workspace. First inspect the real project entry points, architecture, scripts, styles, dependencies, and existing user changes. Reuse them. Do not scaffold a second app or replace the project's framework, package manager, design system, or build pipeline.
 
 Treat brief facts and constraints as requirements, brand.json as the design system, page.json as the content and composition plan, and assets.json as the provenance ledger. A needed asset may be implemented locally when appropriate, but never pretend it was sourced. Preserve unrelated work. Use small, coherent edits and accessible native elements. Run the project's relevant typecheck, tests, lint, and build; repair failures caused by this implementation.
 
-Use available implementation and motion skills when the session exposes them, without assuming a provider, model, skill name, or private API. Do not start a long-running preview server in this phase; Personal Harness owns Preview next.
+Use available implementation and motion skills when the session exposes them, without assuming a provider, model, skill name, or private API. Do not start a long-running preview server in this phase; TasteCode owns Preview next.
 
 {BUILD_PROTOCOL}
 

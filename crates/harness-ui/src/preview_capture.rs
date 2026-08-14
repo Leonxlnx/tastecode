@@ -293,7 +293,7 @@ fn remaining(deadline: Instant) -> Result<Duration> {
 
 fn capture_root() -> PathBuf {
     std::env::temp_dir()
-        .join("Personal Harness")
+        .join("TasteCode")
         .join("preview-captures")
 }
 

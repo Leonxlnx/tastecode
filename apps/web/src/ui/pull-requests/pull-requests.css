@@ -1,4 +1,4 @@
-/* Pull requests is intentionally self-contained: the feature borrows Harness's
+/* Pull requests is intentionally self-contained: the feature borrows TasteCode's
    existing chrome and semantic tokens without leaking a second design system. */
 
 .pr-workspace {

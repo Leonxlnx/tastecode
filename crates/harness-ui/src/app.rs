@@ -170,8 +170,8 @@ pub fn run_with_endpoint_and_shell(
             cx.bind_keys([KeyBinding::new("cmd-q", QuitApp, None)]);
             cx.on_action(|_: &QuitApp, cx| cx.quit());
             cx.set_menus(vec![Menu {
-                name: "Personal Harness".into(),
-                items: vec![MenuItem::action("Quit Personal Harness", QuitApp)],
+                name: "TasteCode".into(),
+                items: vec![MenuItem::action("Quit TasteCode", QuitApp)],
             }]);
         }
 
@@ -180,7 +180,7 @@ pub fn run_with_endpoint_and_shell(
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(720.0), px(520.0))),
             titlebar: Some(TitlebarOptions {
-                title: Some("Personal Harness".into()),
+                title: Some("TasteCode".into()),
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(12.0), px(11.0))),
             }),
@@ -190,7 +190,7 @@ pub fn run_with_endpoint_and_shell(
 
         let window_handle = cx
             .open_window(options, move |window, cx| {
-                window.set_window_title("Personal Harness");
+                window.set_window_title("TasteCode");
                 #[cfg(any(target_os = "macos", target_os = "windows"))]
                 window.on_window_should_close(cx, |window, cx| {
                     hide_main_window(window, cx);
@@ -199,12 +199,12 @@ pub fn run_with_endpoint_and_shell(
                 let app = cx.new(|cx| HarnessApp::new(endpoint, window, cx));
                 cx.new(|cx| Root::new(app, window, cx))
             })
-            .expect("failed to open the Harness window");
+            .expect("failed to open the TasteCode window");
         *main_window.borrow_mut() = Some(window_handle);
 
         #[cfg(target_os = "windows")]
         install_windows_tray(shell_sender.clone(), cx)
-            .expect("failed to create the Harness background tray");
+            .expect("failed to create the TasteCode background tray");
         #[cfg(not(target_os = "windows"))]
         drop(shell_sender);
 
@@ -311,16 +311,16 @@ fn install_windows_tray(
     const OPEN_ID: &str = "harness.open";
     const QUIT_ID: &str = "harness.quit";
 
-    let open = TrayMenuItem::with_id(OPEN_ID, "Open Harness", true, None);
+    let open = TrayMenuItem::with_id(OPEN_ID, "Open TasteCode", true, None);
     let separator = tray_icon::menu::PredefinedMenuItem::separator();
-    let quit = TrayMenuItem::with_id(QUIT_ID, "Quit Harness", true, None);
+    let quit = TrayMenuItem::with_id(QUIT_ID, "Quit TasteCode", true, None);
     let menu = TrayMenu::with_items(&[&open, &separator, &quit])?;
     let icon = Icon::from_rgba(tray_icon_rgba(), 20, 20)?;
     let tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
         .with_menu_on_right_click(true)
-        .with_tooltip("Harness")
+        .with_tooltip("TasteCode")
         .with_icon(icon)
         .build()?;
     let tray_id = tray.id().clone();
@@ -2806,7 +2806,7 @@ impl Render for HarnessApp {
         let provider_name = self
             .selected_model_choice()
             .map(|choice| choice.source_name.clone())
-            .unwrap_or_else(|| "Personal Harness".into());
+            .unwrap_or_else(|| "TasteCode".into());
         let account_email = account_target
             .as_ref()
             .and_then(|target| self.state.accounts.get(target))

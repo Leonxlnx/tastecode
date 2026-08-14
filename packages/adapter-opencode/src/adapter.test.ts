@@ -442,7 +442,7 @@ async function serveOpenCode(): Promise<{
     id: 'session-1',
     projectID: 'project-1',
     directory: 'C:\\repo',
-    title: 'Harness session',
+    title: 'TasteCode session',
     version: '1.18.11',
     time: { created: 100, updated: 100 },
   }
@@ -539,7 +539,7 @@ async function serveOpenCodeV2(
   let heldPermissionReply: ServerResponse | undefined
   const session = {
     id: 'session-v2',
-    title: 'Harness v2 session',
+    title: 'TasteCode v2 session',
     time: { created: 100 },
   }
   const server = createServer(async (request, response) => {

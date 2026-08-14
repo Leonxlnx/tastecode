@@ -394,7 +394,7 @@ async function probeCustomHarnessProtocol(
         label,
         status: advertisesStreaming ? 'passed' : 'warning',
         detail: advertisesStreaming
-          ? 'The CLI advertises the stream-json transport Harness uses.'
+          ? 'The CLI advertises the stream-json transport TasteCode uses.'
           : 'The CLI runs, but its help does not advertise stream-json; the first turn may still fail.',
       }
     }
@@ -444,7 +444,7 @@ function modelProbeCheck(
     : {
         label,
         status: 'warning',
-        detail: `${success}, but no models were reported. Harness will use the provider default.`,
+        detail: `${success}, but no models were reported. TasteCode will use the provider default.`,
       }
 }
 

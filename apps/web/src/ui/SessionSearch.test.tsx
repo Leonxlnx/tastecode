@@ -7,7 +7,7 @@ import { SessionSearch } from './SessionSearch.js'
 
 const RESULT: SessionSearchResult = {
   projectPath: 'D:\\repo',
-  projectName: 'Harness',
+  projectName: 'TasteCode',
   threadId: 'thread-1',
   threadTitle: 'Fix regression',
   turnId: 'turn-2',
@@ -23,7 +23,7 @@ const RESULT: SessionSearchResult = {
 const PROJECTS = [
   {
     path: 'D:\\repo',
-    name: 'Harness',
+    name: 'TasteCode',
     sessions: [
       {
         id: 'title-thread',
@@ -95,7 +95,7 @@ describe('cross-session search', () => {
     )
 
     fireEvent.click(screen.getByRole('combobox', { name: 'Project' }))
-    fireEvent.click(screen.getByRole('option', { name: 'Harness' }))
+    fireEvent.click(screen.getByRole('option', { name: 'TasteCode' }))
     fireEvent.click(screen.getByRole('combobox', { name: 'Agent' }))
     expect(screen.getByRole('option', { name: 'Codex' })).toBeTruthy()
     expect(screen.getByRole('option', { name: 'Grok' })).toBeTruthy()

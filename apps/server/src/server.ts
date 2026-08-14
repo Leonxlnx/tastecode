@@ -85,7 +85,7 @@ export function startServer(
   wss.on('error', (error: NodeJS.ErrnoException) => {
     if (error.code === 'EADDRINUSE') {
       console.error(
-        `[server] port ${port} is already in use — another Personal Harness server is ` +
+        `[server] port ${port} is already in use — another TasteCode server is ` +
           `probably still running. Stop it, or set HARNESS_PORT to a free port.`,
       )
       process.exit(1)

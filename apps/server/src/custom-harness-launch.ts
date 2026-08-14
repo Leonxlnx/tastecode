@@ -194,7 +194,7 @@ function resolveExecutable(command: string, cwd: string, environment: NodeJS.Pro
     }
   }
   throw new Error(
-    `Executable "${command}" was not found in Harness's PATH. Shell aliases and functions are unavailable; use an absolute path or an executable shim.`,
+    `Executable "${command}" was not found in TasteCode's PATH. Shell aliases and functions are unavailable; use an absolute path or an executable shim.`,
   )
 }
 

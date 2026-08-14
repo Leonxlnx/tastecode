@@ -1,6 +1,6 @@
 # Licensing status
 
-Personal Harness does not currently grant a project license. The repository is private and
+TasteCode does not currently grant a project license. The repository is private and
 the license choice remains an explicit product decision; adding a `LICENSE` file before
 that decision would be misleading.
 

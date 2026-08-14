@@ -328,7 +328,7 @@ const UNSUPPORTED_MCP_CAPABILITIES: McpCapabilities = {
   startOAuth: false,
   cancelOAuth: false,
 }
-/** Harness-managed project servers only: no vendor inventory, no OAuth. */
+/** TasteCode-managed project servers only: no vendor inventory, no OAuth. */
 const OPENCODE_MCP_MANAGEMENT_CAPABILITIES: McpCapabilities = {
   inventory: false,
   add: true,
@@ -2240,7 +2240,7 @@ export class Orchestrator {
 
     const runtime = this.#runtimeFor(stored.provider, this.#onLog)
     if (!runtime.resume) {
-      throw new Error(`${stored.provider} sessions cannot resume after Harness restarts yet`)
+      throw new Error(`${stored.provider} sessions cannot resume after TasteCode restarts yet`)
     }
     const workspacePath = stored.worktreePath ?? resolveWorkspacePath(stored.projectPath)
     const result = await runtime.resume(threadId, workspacePath, {
@@ -3001,7 +3001,7 @@ export class Orchestrator {
     // A raw JSON.parse message reads as gibberish in the transcript; name
     // what actually happened before quoting it.
     const message = /JSON|Unexpected token/i.test(detail)
-      ? `Design mode failed: the agent answered in prose instead of the structured report Harness expects. Running the design again usually recovers. (${detail})`
+      ? `Design mode failed: the agent answered in prose instead of the structured report TasteCode expects. Running the design again usually recovers. (${detail})`
       : `Design mode failed: ${detail}`
     this.#record(threadId, { type: 'thread.error', threadId, message })
     // Prompts typed during the flow queued behind the design guard; every

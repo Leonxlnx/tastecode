@@ -681,9 +681,9 @@ function renderComposer(
     <Composer
       transport={transport}
       provider="codex"
-      projects={[{ path: '/work/harness', name: 'Harness', sessions: [] }]}
+      projects={[{ path: '/work/harness', name: 'TasteCode', sessions: [] }]}
       projectPath="/work/harness"
-      projectName="Harness"
+      projectName="TasteCode"
       branch="main"
       branches={['main']}
       models={[]}

@@ -19,7 +19,7 @@ describe('provider-neutral briefing workflow', () => {
     const prompt = designBriefingPrompt('Create a modern studio website.')
     expect(prompt).toContain('There is no total question limit')
     expect(prompt).toContain('materially changes the result')
-    expect(prompt).toContain('Personal Harness presents them one at a time')
+    expect(prompt).toContain('TasteCode presents them one at a time')
     expect(prompt).toContain('Do not include the final open-ended check yourself')
     expect(prompt).toContain('Create a modern studio website.')
     // The UI always offers a free-text answer and never renders label tags,

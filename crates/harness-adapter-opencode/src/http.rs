@@ -70,7 +70,7 @@ impl OpenCodeHttp {
         let value = self.request_json(
             Method::POST,
             &["session"],
-            Some(serde_json::json!({ "title": "Personal Harness" })),
+            Some(serde_json::json!({ "title": "TasteCode" })),
         )?;
         parse_session(value)
     }

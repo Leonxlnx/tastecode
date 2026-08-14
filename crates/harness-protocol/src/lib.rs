@@ -1,4 +1,4 @@
-//! Rust representation of Harness protocol v2.
+//! Rust representation of TasteCode protocol v2.
 //!
 //! The TypeScript contracts remain the wire oracle during the migration. These
 //! types deliberately preserve their field names and discriminants so a native
