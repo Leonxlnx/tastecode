@@ -1436,9 +1436,21 @@ describe('provider-neutral design briefing', () => {
               version: 1,
               page: { title: 'Studio', route: '/', description: 'Studio services' },
               navigation: [{ label: 'Work', target: '#work' }],
+              navigationDesign: {
+                layoutCase: 'navigation-1',
+                layout: 'Direct links with the primary action at the right.',
+                behavior: [],
+                transformation: {
+                  compact: 'Logo and menu trigger.',
+                  medium: 'Logo and priority links.',
+                  expanded: 'Full direct navigation.',
+                },
+              },
               sections: [
                 {
                   id: 'hero',
+                  layoutFamily: 'hero',
+                  layoutCases: ['hero-text-5', 'hero-visual-2'],
                   purpose: 'Introduce the offer',
                   copy: {
                     heading: 'Design that earns attention',
