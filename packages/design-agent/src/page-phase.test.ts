@@ -86,7 +86,7 @@ describe('page phase', () => {
     expect(prompt).toContain('Never use an em dash')
     expect(prompt).toContain('Omit eyebrow copy by default')
     expect(prompt).toContain(
-      'Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, and Social Proof',
+      'Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, Social Proof, Stats, and FAQ',
     )
     expect(prompt).toContain('Place the headline at the bottom left or bottom right')
     expect(prompt).toContain('show a wide dashboard, product preview, interface')
@@ -117,6 +117,13 @@ describe('page phase', () => {
     expect(prompt).toContain('A static row of roughly five logos is equally valid')
     expect(prompt).toContain('multi-row grid or logo-wall composition')
     expect(prompt).toContain('in color or in a restrained gray treatment')
+    expect(prompt).toContain('Place a strong, fitting quote at the top left')
+    expect(prompt).toContain('only two very large numbers or a longer list')
+    expect(prompt).toContain('Use a bento arrangement for the quote, numbers')
+    expect(prompt).toContain('followed by a list of questions that open and close')
+    expect(prompt).toContain('a small table of contents on the left')
+    expect(prompt).toContain('a large "FAQ," "Questions," or another fitting heading on the left')
+    expect(prompt).toContain('designed cards that expand, or as a simple accordion list')
   })
 
   it('parses the final response through the page validator', () => {

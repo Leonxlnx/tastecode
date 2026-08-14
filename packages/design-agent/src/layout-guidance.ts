@@ -1,4 +1,4 @@
-export const PAGE_LAYOUT_GUIDANCE = `Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, and Social Proof decisions. Select the case that best fits the content and brand, or lightly combine compatible cases. Keep the described composition recognizable instead of replacing it with an unrelated default layout.
+export const PAGE_LAYOUT_GUIDANCE = `Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, Social Proof, Stats, and FAQ decisions. Select the case that best fits the content and brand, or lightly combine compatible cases. Keep the described composition recognizable instead of replacing it with an unrelated default layout.
 
 The layout case is only part of the result. Font choice and scale, brand colors, spacing, button placement and treatment, corner radii, navigation placement, media crop, and motion create much of the final feeling. Resolve all of them from the approved brand direction. Motion must fit the selected style and composition rather than being added as a generic effect.
 
@@ -115,4 +115,18 @@ Trusted-company and Social Proof element:
 - The logos do not need to move. A static row of roughly five logos is equally valid.
 - When there are more logos, arrange them in a multi-row grid or logo-wall composition.
 - Present logos in color or in a restrained gray treatment according to the brand and surrounding design.
-- Use only real supplied or verified logos. Preserve their proportions and keep the carousel readable, smooth, and safe under reduced motion.`
+- Use only real supplied or verified logos. Preserve their proportions and keep the carousel readable, smooth, and safe under reduced motion.
+
+Stats and numbers section:
+- Use only real, supported numbers. Do not invent metrics to fill the layout.
+1. Place a strong, fitting quote at the top left. Arrange a small set of cards beneath it with large numbers and clear descriptions.
+2. Use a clean background image. Place the heading and a paragraph on the left and a group of clean numbers on the right. The right side may contain only two very large numbers or a longer list of smaller number-and-description items.
+3. Use a bento arrangement for the quote, numbers, descriptions, and any supporting visual. This may overlap with the same open grid and card language used for Features or How It Works.
+
+FAQ section:
+1. Use a standard clean heading with optional supporting text beneath it, followed by a list of questions that open and close.
+2. Place "FAQ" at the top with a "Last updated" date beneath it. When there are many questions, place a small table of contents on the left and the questions on the right, grouped into clear categories.
+3. Place a large "FAQ," "Questions," or another fitting heading on the left and the question list on the right.
+4. Present the questions as designed cards that expand, or as a simple accordion list. Choose between them according to the page design rather than using one universal FAQ treatment.
+
+FAQ questions must actually expand and collapse, remain keyboard accessible, expose their state, and preserve a clear reading order on compact screens.`
