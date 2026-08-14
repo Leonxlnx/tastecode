@@ -8507,12 +8507,11 @@
      an error raised while one of them is open must still be visible. */
   z-index: 110;
   bottom: 18px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 18px;
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: 620px;
+  max-width: min(420px, calc(100vw - 36px));
   background: var(--surface-2);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-card);
@@ -8525,6 +8524,18 @@
   bottom: 62px;
   border-color: color-mix(in srgb, var(--attention) 55%, var(--line-strong));
   color: var(--text-2);
+}
+
+@media (max-width: 700px) {
+  .notice {
+    right: 12px;
+    bottom: 12px;
+    max-width: calc(100vw - 24px);
+  }
+
+  .notice--offline {
+    bottom: 56px;
+  }
 }
 
 .notice__text {
