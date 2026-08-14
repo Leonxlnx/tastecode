@@ -296,7 +296,8 @@ The current version-one schema contains:
 - one `creativeDirection.restraint`;
 - `creativeDirection.avoid`;
 - a `colorPalette` of semantic light or dark role records with exact value and usage;
-- `typefaces` with family, source, roles, and numeric weights;
+- at most two `typefaces` with family, source, roles, and numeric weights; IBM Plex Mono and
+  Archivo are rejected;
 - `interfaceDirection`;
 - `imageDirection` with summary, subjects, treatment, and avoid rules;
 - `motionDirection` with summary, principles, and avoid rules;
@@ -334,7 +335,7 @@ The current version-one blueprint contains:
 - ordered sections with unique IDs;
 - each section's purpose;
 - the user question, decision stage, prior-section dependencies, and real evidence for each section;
-- final eyebrow, heading, body copy, and calls to action;
+- final concise heading, body copy, and calls to action;
 - one beta layout family, the exact selected case IDs, and a content-specific layout direction;
 - component needs;
 - asset needs;
@@ -344,10 +345,11 @@ The current version-one blueprint contains:
 - acceptance criteria.
 
 Generated page copy passes an internal quality gate before the artifact is accepted. Em dashes,
-unsupported objective claims, and `click here` fail validation. Formulaic copy, generic CTA labels,
-collision-prone generated names, decorative eyebrows, and ornamental section numbering are
-contextual review signals rather than an AI-authorship score. Eyebrows are omitted by default and
-numbers such as `01 / 02 / 03` are reserved for real sequence or navigation meaning.
+unsupported objective claims, `click here`, all eyebrows, internal placeholders, overlong headings,
+and multi-block Hero support copy fail validation. Formulaic copy, generic CTA labels, and
+collision-prone generated names remain contextual review signals rather than an AI-authorship
+score. Real process numbers may appear inside How It Works content, but not as a decorative
+page-wide `01 / 02 / 03` label system.
 
 The Page phase writes actual concise copy before implementation. It must use the approved brand
 system and must not choose replacement colors, fonts, or sources.
@@ -375,6 +377,10 @@ Each asset has:
 Ready assets require a real source and destination. Existing assets require a source. Absolute
 destinations and parent-directory escapes are rejected. Duplicate IDs are rejected.
 
+The Asset phase prefers meaningful supplied, generated, or licensed photography, product imagery,
+and interface captures. Abstract SVGs, fake dashboards, sonar graphics, line-grid ornaments, and
+generic geometric filler do not satisfy an open visual need.
+
 ### Build result
 
 Build does not write a second artifact for its summary. The provider returns a validated
@@ -382,6 +388,15 @@ Build does not write a second artifact for its summary. The provider returns a v
 instructed to inspect and reuse the project's real framework, package manager, design system,
 dependencies, entry points, scripts, and existing user changes. It must not scaffold a parallel
 application.
+
+Build and visual Review share a pass-blocking quality floor: headings target one or two lines and
+never exceed three, display sizes are bounded by viewport class, the Hero has one support block,
+typography stays within the approved two families, and internal notes never appear on the page.
+Hairline grids, repeated separator systems, colored card rails, ornamental SVGs, unstyled controls,
+overflow, clipping, and footer overlap require repair. Representative interface or operational
+data may make a one-shot page feel complete, but Build returns it in a `Verify before publishing:`
+summary that the final Harness message surfaces after Preview instead of adding a disclaimer to the
+website.
 
 The provider is currently responsible for running the project's relevant checks through its
 available tools. TasteCode validates the final report shape but does not independently prove that
