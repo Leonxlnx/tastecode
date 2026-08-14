@@ -650,7 +650,7 @@ describe('web client', () => {
     expect(localStorage.getItem('harness.hiddenModels')).toBe(saved)
   })
 
-  it('explains project loading failures and retries the request', async () => {
+  it('explains project loading failures and recovers after reconnect', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     let attempts = 0
@@ -664,10 +664,13 @@ describe('web client', () => {
     render(<App />)
 
     expect(screen.getByText('Loading projects…').closest('[role="status"]')).not.toBeNull()
-    const retry = await screen.findByRole('button', { name: 'Retry' })
+    await screen.findByRole('button', { name: 'Retry' })
     expect(screen.getByRole('heading').textContent).toContain('Projects could not be loaded')
 
-    fireEvent.click(retry)
+    act(() => {
+      setConnectionState('reconnecting')
+      setConnectionState('open')
+    })
 
     expect((await screen.findByRole('heading')).textContent).toContain(
       'What should we build in project?',
@@ -1685,10 +1688,13 @@ describe('new chats', () => {
     render(<App />)
     const composer = await screen.findByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Recover this draft' } })
-    const setup = await screen.findByRole('button', { name: 'Set up a provider' })
+    await screen.findByRole('button', { name: 'Set up a provider' })
     expect(screen.getByRole('status').textContent).toContain('Provider unavailable')
     failing = false
-    fireEvent.click(setup)
+    act(() => {
+      setConnectionState('reconnecting')
+      setConnectionState('open')
+    })
     await waitFor(() => {
       expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
         false,

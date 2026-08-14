@@ -1039,6 +1039,7 @@ export function App() {
         announce = window.setTimeout(() => setOffline(true), 1200)
       } else {
         setOffline(false)
+        if (state === 'open' && missedPushes) setCatalogRequest((current) => current + 1)
         if (
           state === 'open' &&
           usageController.snapshot().some((entry) => entry.status === 'error')
@@ -1116,7 +1117,7 @@ export function App() {
   // unique, so each choice keeps the provider/connection that will pay for it.
   useEffect(() => {
     let cancelled = false
-    setCatalogAvailability('loading')
+    setCatalogAvailability((current) => (current === 'ready' ? current : 'loading'))
     void (async () => {
       const auxiliaryCatalog = Promise.all([
         transport.request('connections.list', {}).catch(() => ({ connections: [] })),
@@ -1347,7 +1348,7 @@ export function App() {
     })().catch(() => {
       if (!cancelled) {
         setModelCatalog((current) => ({ ...current, loaded: true }))
-        setCatalogAvailability('failed')
+        setCatalogAvailability((current) => (current === 'ready' ? current : 'failed'))
       }
     })
     return () => {
@@ -1634,6 +1635,7 @@ export function App() {
         if (retry) resync.current(false)
         return
       }
+      setProjectsStatus('ready')
       if (projects)
         for (const id of ownerPaths.keys())
           if (
