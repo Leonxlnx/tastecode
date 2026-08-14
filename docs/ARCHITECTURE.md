@@ -131,7 +131,7 @@ we switch tiers without touching the UI. That's the point of the layer.
 **Users may register protocol-compatible executables as separate harness sources.** Each
 entry names an existing adapter protocol and stores an executable, fixed argv, optional launch
 directory, and non-secret environment overrides in
-`~/.personalharness/custom-harnesses.json`; arguments never pass through a shell, and secrets
+`~/.tastecode/custom-harnesses.json`; arguments never pass through a shell, and secrets
 never belong in this file. Custom commands resolve against a desktop-safe PATH that includes
 conventional user locations such as `~/.local/bin`. When a mod boots from its own directory,
 `HARNESS_WORKSPACE_PATH` retains the active project for its wrapper and native protocols still
@@ -257,11 +257,14 @@ content-addressed snapshot of touched files only.
 ever, for almost no implementation cost — and "what was that command three weeks ago in the
 other project?" is a real question nobody in this category answers well.
 
-|             | Windows                           | macOS                                            |
-| ----------- | --------------------------------- | ------------------------------------------------ |
-| DB + logs   | `%APPDATA%\PersonalHarness\`      | `~/Library/Application Support/PersonalHarness/` |
-| User config | `%USERPROFILE%\.personalharness\` | `~/.personalharness/`                            |
-| Credentials | Credential Manager                | Keychain                                         |
+|             | Windows                     | macOS                                      |
+| ----------- | --------------------------- | ------------------------------------------ |
+| DB + logs   | `%APPDATA%\TasteCode\`      | `~/Library/Application Support/TasteCode/` |
+| User config | `%USERPROFILE%\.tastecode\` | `~/.tastecode/`                            |
+| Credentials | Credential Manager          | Keychain                                   |
+
+On first use, TasteCode moves legacy Personal Harness files into these locations without
+overwriting an existing TasteCode file.
 
 Config is human-readable and hand-editable on purpose. It is never where secrets go.
 

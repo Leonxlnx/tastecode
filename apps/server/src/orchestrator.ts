@@ -476,7 +476,7 @@ export class Orchestrator {
     },
   ) {
     this.#store = store
-    this.#worktreeRoot = handlers.worktreeRoot ?? path.join(os.tmpdir(), 'personal-harness-trees')
+    this.#worktreeRoot = handlers.worktreeRoot ?? path.join(os.tmpdir(), 'tastecode-trees')
     this.#onEvent = handlers.onEvent
     this.#onSideEvent = handlers.onSideEvent ?? handlers.onEvent
     this.#onQueue = handlers.onQueue ?? (() => {})

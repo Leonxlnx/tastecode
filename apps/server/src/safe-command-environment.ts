@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 export function safeCommandEnvironment(workspace: string): NodeJS.ProcessEnv {
-  const runtime = path.join(os.tmpdir(), 'personal-harness-project-tools')
+  const runtime = path.join(os.tmpdir(), 'tastecode-project-tools')
   mkdirSync(runtime, { recursive: true })
   const nullFile = process.platform === 'win32' ? 'NUL' : '/dev/null'
   return {

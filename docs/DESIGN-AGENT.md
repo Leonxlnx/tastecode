@@ -167,8 +167,9 @@ read before claiming universal support.
 ## Entry and qualification
 
 The renderer adds the sentinel attachment
-`personal-harness://design-brief-v1` when Design is active. The sentinel is protocol metadata, not
-a filesystem path, and is removed before attachments reach the provider.
+`tastecode://design-brief-v1` when Design is active. The sentinel is protocol metadata, not a
+filesystem path, and is removed before attachments reach the provider. Saved turns carrying the
+legacy Personal Harness sentinel remain supported.
 
 The server recognizes the sentinel in `Orchestrator.sendTurn`, creates a persisted `DesignFlow`,
 and replaces the user's provider-visible text with `designBriefingPrompt`. The user still sees the
