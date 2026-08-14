@@ -149,6 +149,7 @@ type DesignFlow = {
   screenshots?: ReviewScreenshot[]
   review?: VisualReview
   buildFileBaseline?: string[] | undefined
+  buildSummary?: string
 }
 
 export function resolveWorkspacePath(workspacePath: string): string {
@@ -255,6 +256,7 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     ...(previewPlan ? { previewUrl: previewPlan.url } : {}),
     ...(screenshots ? { screenshots } : {}),
     ...(review ? { review } : {}),
+    ...(typeof stored.buildSummary === 'string' ? { buildSummary: stored.buildSummary } : {}),
     ...(Array.isArray(stored.buildFileBaseline) &&
     stored.buildFileBaseline.every((file) => typeof file === 'string')
       ? { buildFileBaseline: stored.buildFileBaseline as string[] }
@@ -2786,6 +2788,11 @@ export class Orchestrator {
     if (flow.phase === 'build') {
       const output = parseBuildPhaseOutput(text)
       if (output.status === 'failed') throw new Error(output.error)
+      if (output.summary.startsWith('Verify before publishing:')) {
+        flow.buildSummary = output.summary
+      } else {
+        delete flow.buildSummary
+      }
       validateExactBuildFiles(
         flow.workspacePath,
         readDesignBrief(flow.workspacePath),
@@ -2878,6 +2885,7 @@ export class Orchestrator {
   }
 
   #finishDesignFlow(threadId: string, turnId: string, summary: string): void {
+    const buildSummary = this.#designFlows.get(threadId)?.buildSummary
     this.#clearDesignFlow(threadId, true)
     this.#record(threadId, {
       type: 'item.completed',
@@ -2887,7 +2895,7 @@ export class Orchestrator {
         type: 'message',
         role: 'assistant',
         status: 'completed',
-        text: `Website built. ${summary}`,
+        text: `Website built. ${summary}${buildSummary ? ` ${buildSummary}` : ''}`,
         createdAt: Date.now(),
       },
     })

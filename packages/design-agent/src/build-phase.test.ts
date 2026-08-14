@@ -68,7 +68,8 @@ describe('build phase', () => {
     expect(prompt).toContain('Three lines is a rare maximum and four lines is always a failure')
     expect(prompt).toContain('colored left-edge accent rails')
     expect(prompt).toContain('never leave a browser-default control')
-    expect(prompt).toContain('Record every invented value in the Build summary')
+    expect(prompt).toContain('Record every invented value in a Build summary')
+    expect(prompt).toContain('Set summary to "Verify before publishing: ..."')
   })
 
   it('parses a completed implementation report', () => {
