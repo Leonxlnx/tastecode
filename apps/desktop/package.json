@@ -18,7 +18,8 @@
   },
   "dependencies": {
     "@harness/contracts": "workspace:*",
-    "@harness/server": "workspace:*"
+    "@harness/server": "workspace:*",
+    "electron-updater": "6.8.9"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
@@ -53,6 +54,12 @@
     "directories": {
       "output": "../../release"
     },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://tastecode.dev/releases"
+      }
+    ],
     "artifactName": "TasteCode-${version}-${os}-${arch}.${ext}",
     "win": {
       "target": [
