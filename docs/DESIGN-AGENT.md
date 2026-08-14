@@ -547,8 +547,8 @@ The Electron main process validates the request, denies permission checks and re
 windows, confines navigation and redirects to the preview origin, and verifies the final URL. It
 waits, within a 30-second deadline, for bounded animation settlement, fonts, image load and decode,
 and two final animation frames. It captures each requested size, writes private temporary PNGs,
-destroys the window, clears its session storage, removes failed captures, and sweeps capture
-directories older than one day.
+destroys the window, clears its session storage and HTTP cache, removes failed captures, and sweeps
+capture directories older than one day. Cleanup finishes before the next serialized capture starts.
 
 Current preview risks that still need explicit work:
 
