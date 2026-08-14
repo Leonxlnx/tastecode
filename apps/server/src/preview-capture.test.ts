@@ -28,4 +28,31 @@ describe('preview capture coordinator', () => {
       'unavailable',
     )
   })
+
+  it('serializes captures that share the desktop capture session', async () => {
+    const send = vi.fn()
+    const coordinator = new PreviewCaptureCoordinator(send)
+    coordinator.setCapability(socket, true)
+
+    const first = coordinator.capture('http://127.0.0.1:5183/', viewports)
+    const second = coordinator.capture('http://127.0.0.1:5184/', viewports)
+    expect(send).toHaveBeenCalledTimes(1)
+
+    const firstRequest = send.mock.calls[0]![1]
+    coordinator.complete(socket, {
+      status: 'completed',
+      requestId: firstRequest.requestId,
+      screenshots: [{ path: 'C:\\tmp\\first.png', ...viewports[0]! }],
+    })
+    await expect(first).resolves.toMatchObject([{ path: 'C:\\tmp\\first.png' }])
+    expect(send).toHaveBeenCalledTimes(2)
+
+    const secondRequest = send.mock.calls[1]![1]
+    coordinator.complete(socket, {
+      status: 'completed',
+      requestId: secondRequest.requestId,
+      screenshots: [{ path: 'C:\\tmp\\second.png', ...viewports[0]! }],
+    })
+    await expect(second).resolves.toMatchObject([{ path: 'C:\\tmp\\second.png' }])
+  })
 })
