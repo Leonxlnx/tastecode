@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import {
   app,
@@ -51,6 +52,7 @@ import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './z
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url))
+const require = createRequire(import.meta.url)
 const productIconPath = path.join(here, '../assets/tastecode-icon.png')
 
 function isWebUrl(value: string): boolean {
@@ -114,7 +116,9 @@ if (!ownsSingleInstance) {
  */
 function startOwnedServer(): void {
   if (devServer || serverSupervisor) return
-  const serverEntry = path.join(here, '../../server/dist/main.js')
+  const serverEntry = app.isPackaged
+    ? require.resolve('@harness/server')
+    : path.join(here, '../../server/dist/main.js')
   serverSupervisor = new ServerSupervisor({
     command: process.execPath,
     args: [serverEntry],
@@ -251,7 +255,11 @@ function createWindow(): void {
   if (devServer) {
     void window.loadURL(devServer)
   } else {
-    void window.loadFile(path.join(here, '../../web/dist/index.html'))
+    void window.loadFile(
+      app.isPackaged
+        ? path.join(process.resourcesPath, 'web', 'index.html')
+        : path.join(here, '../../web/dist/index.html'),
+    )
   }
 }
 
