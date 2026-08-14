@@ -407,10 +407,10 @@ export function Thread(props: {
                     projectPath={props.projectPath}
                     hidden={suppressed}
                     activity={activityLead ? activityGroup.items : undefined}
-                    elapsedMs={presentation?.elapsedMs}
+                    elapsedMs={activityGroup?.elapsedMs ?? presentation?.elapsedMs}
                     live={live && !visibleLiveImageResult}
                     responseText={responseLead ? presentation.responseText : undefined}
-                    finalResponse={responseLead && !props.running}
+                    finalResponse={responseLead}
                     settling={settling}
                     showCompletionRail={
                       !live &&
@@ -419,7 +419,10 @@ export function Thread(props: {
                       presentation.finalAnswerIndex === row.index
                     }
                     onEditMessage={props.onEditMessage}
-                    checkpoint={checkpointFor(item, props.checkpoints ?? [])}
+                    checkpoint={checkpointFor(
+                      presentation?.prompt ?? item,
+                      props.checkpoints ?? [],
+                    )}
                     onRevertCheckpoint={props.onRevertCheckpoint}
                   />
                 </div>
@@ -433,7 +436,10 @@ export function Thread(props: {
               // sits at the end of the runway, over the space the spacer
               // below holds.
               <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
-                <WorkingRail startedAt={props.activeTurn.startedAt} label={rawWorkLabel} />
+                <WorkingRail
+                  startedAt={activePresentation?.workStartedAt ?? props.activeTurn.startedAt}
+                  label={rawWorkLabel}
+                />
               </div>
             ) : null}
           </div>
@@ -728,7 +734,12 @@ const Row = memo(function Row({
           updateVersion={liveUpdateVersion}
         />
         {finalResponse && !live && item.status === 'completed' && text ? (
-          <ResponseActions text={text} createdAt={item.createdAt} />
+          <ResponseActions
+            text={text}
+            createdAt={item.createdAt}
+            checkpoint={checkpoint}
+            onRevertCheckpoint={onRevertCheckpoint}
+          />
         ) : null}
       </div>
     )
@@ -756,7 +767,8 @@ const Row = memo(function Row({
  */
 function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
   const [expanded, setExpanded] = useState(false)
-  const detail = imageViewDetail(item) ?? item.text
+  const detail =
+    item.type === 'command' ? activityDetail(item) : (imageViewDetail(item) ?? item.text)
 
   return (
     <div className={`aux aux--${item.type} ${live ? 'aux--live' : ''}`} data-expanded={expanded}>
@@ -812,8 +824,15 @@ function CompletionRail({
   projectPath: string | undefined
   settling: boolean
 }) {
-  const label = `Worked for ${workedFor(elapsedMs)}`
   const visibleActivity = activity.filter(isVisibleWorkedItem)
+  const commandCount = visibleActivity.filter((item) => item.type === 'command').length
+  const label = `Worked for ${workedFor(elapsedMs)}${
+    commandCount === 0
+      ? ''
+      : commandCount === 1
+        ? ' · ran a command'
+        : ` · ran ${commandCount} commands`
+  }`
   const [expanded, setExpanded] = useState(false)
 
   if (visibleActivity.length === 0) {
@@ -881,17 +900,42 @@ function activityDetail(item: Item): string | undefined {
   const image = imageViewDetail(item)
   if (image !== undefined) return image
   const summary = summarise(item)
-  const details = item.type === 'file_change' ? [item.path, item.text] : [item.text]
+  const details =
+    item.type === 'command'
+      ? [item.command, item.text]
+      : item.type === 'file_change'
+        ? [item.path, item.text]
+        : [item.text]
   const unique = details.filter(
     (detail, index) => detail && detail !== summary && details.indexOf(detail) === index,
   )
   return unique.length > 0 ? unique.join('\n') : undefined
 }
 
-function ResponseActions({ text, createdAt }: { text: string; createdAt: number }) {
+function ResponseActions({
+  text,
+  createdAt,
+  checkpoint,
+  onRevertCheckpoint,
+}: {
+  text: string
+  createdAt: number
+  checkpoint: Checkpoint | undefined
+  onRevertCheckpoint: ((checkpoint: Checkpoint) => void) | undefined
+}) {
   return (
     <div className="response-actions" aria-label="Response actions">
       <CopyAction text={text} label="Copy response" />
+      {checkpoint && onRevertCheckpoint ? (
+        <button
+          type="button"
+          onClick={() => onRevertCheckpoint(checkpoint)}
+          aria-label="Revert to before response"
+          title="Revert"
+        >
+          <RotateCcw aria-hidden />
+        </button>
+      ) : null}
       <time dateTime={new Date(createdAt).toISOString()}>
         {new Date(createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
       </time>
@@ -1116,7 +1160,9 @@ function toolText(item: Item): string {
 function summarise(item: Item): string {
   switch (item.type) {
     case 'command':
-      return item.command ?? 'command'
+      if (item.status === 'started') return 'Command interrupted'
+      if (item.exitCode !== undefined && item.exitCode !== 0) return 'Command failed'
+      return 'Ran a command'
     case 'reasoning':
       return 'Thinking'
     case 'file_change':
