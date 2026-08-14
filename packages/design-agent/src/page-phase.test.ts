@@ -43,6 +43,7 @@ const page = {
   },
   navigation: [],
   navigationDesign: {
+    layoutCase: 'navigation-1',
     layout: 'Left logo, direct links, and the primary account action at the right.',
     behavior: ['Gain a solid surface after leaving the hero.'],
     transformation: {
@@ -54,6 +55,8 @@ const page = {
   sections: [
     {
       id: 'hero',
+      layoutFamily: 'hero',
+      layoutCases: ['hero-text-5', 'hero-visual-2'],
       purpose: 'Introduce the offer.',
       userQuestion: 'What can I subscribe to?',
       stage: 'orient',
@@ -83,6 +86,8 @@ describe('page phase', () => {
     expect(prompt).toContain('Do not choose new colors or typefaces')
     expect(prompt).toContain('order sections by information dependencies')
     expect(prompt).toContain('Compact reduces simultaneity, not content or capability')
+    expect(prompt).toContain('Treat the selected layout cases as composition requirements')
+    expect(prompt).toContain('Never collapse a selected case into the default centered heading')
     expect(prompt).toContain('Never use an em dash')
     expect(prompt).toContain('Omit eyebrow copy by default')
     expect(prompt).toContain(
@@ -144,5 +149,37 @@ describe('page phase', () => {
 
   it('parses the final response through the page validator', () => {
     expect(parsePagePhaseOutput(JSON.stringify(page))).toEqual(page)
+  })
+
+  it('rejects page-phase output without a concrete layout selection', () => {
+    const section = { ...page.sections[0] }
+    delete (section as Partial<typeof section>).layoutFamily
+    delete (section as Partial<typeof section>).layoutCases
+
+    expect(() => parsePagePhaseOutput(JSON.stringify({ ...page, sections: [section] }))).toThrow(
+      'must select a layoutFamily and layoutCases',
+    )
+  })
+
+  it('rejects cases from a different layout family', () => {
+    expect(() =>
+      parsePagePhaseOutput(
+        JSON.stringify({
+          ...page,
+          sections: [{ ...page.sections[0], layoutCases: ['feature-grid-3'] }],
+        }),
+      ),
+    ).toThrow('not a hero case')
+  })
+
+  it('rejects the same composition in adjacent sections', () => {
+    expect(() =>
+      parsePagePhaseOutput(
+        JSON.stringify({
+          ...page,
+          sections: [page.sections[0], { ...page.sections[0], id: 'hero-followup' }],
+        }),
+      ),
+    ).toThrow('adjacent sections must not repeat the same layout composition')
   })
 })

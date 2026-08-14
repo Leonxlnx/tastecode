@@ -13,6 +13,7 @@ const validBlueprint = {
   },
   navigation: [{ label: 'Shop', target: '#shop' }],
   navigationDesign: {
+    layoutCase: 'navigation-1',
     layout: 'Left logo with direct links and a right-side action.',
     behavior: ['Become opaque after the hero.'],
     transformation: {
@@ -32,6 +33,8 @@ const validBlueprint = {
   sections: [
     {
       id: 'hero',
+      layoutFamily: 'hero',
+      layoutCases: ['hero-text-5', 'hero-visual-2'],
       purpose: 'State the offer and lead into the primary purchase path.',
       userQuestion: 'What coffee can I buy here?',
       stage: 'orient',
@@ -64,6 +67,8 @@ describe('page blueprint', () => {
     const blueprint = writePageBlueprint(workspace, validBlueprint)
 
     expect(blueprint.sections[0]?.id).toBe('hero')
+    expect(blueprint.sections[0]?.layoutCases).toEqual(['hero-text-5', 'hero-visual-2'])
+    expect(blueprint.navigationDesign?.layoutCase).toBe('navigation-1')
     expect(blueprint.navigationDesign?.transformation.compact).toContain('menu trigger')
     expect(JSON.parse(readFileSync(path.join(workspace, '.taste', 'page.json'), 'utf8'))).toEqual(
       blueprint,
@@ -105,6 +110,8 @@ describe('page blueprint', () => {
     } = validBlueprint
     const legacySection = { ...legacy.sections[0] }
     delete (legacySection as Partial<typeof legacySection>).userQuestion
+    delete (legacySection as Partial<typeof legacySection>).layoutFamily
+    delete (legacySection as Partial<typeof legacySection>).layoutCases
     delete (legacySection as Partial<typeof legacySection>).stage
     delete (legacySection as Partial<typeof legacySection>).dependencies
     delete (legacySection as Partial<typeof legacySection>).evidence
