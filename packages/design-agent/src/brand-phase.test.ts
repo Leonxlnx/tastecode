@@ -74,6 +74,8 @@ describe('brand phase', () => {
     expect(prompt).toContain('Fill every supplied decision into its final destination')
     expect(prompt).toContain('A new or unmeasured device is a candidate, never validated')
     expect(prompt).toContain('Do not map generic emotion labels to fixed hues')
+    expect(prompt).toContain('The only valid locked role keys are canvas, surface, surfaceAlt')
+    expect(prompt).toContain('Leave locked empty when no exact color is supplied')
     expect(prompt).toContain('Treat 60/30/10 only as loose composition guidance')
   })
 
