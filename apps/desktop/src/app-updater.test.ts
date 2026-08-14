@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppUpdater, UpdateInfo } from 'electron-updater'
 import { createAppUpdateController } from './app-updater.js'
 
@@ -17,6 +17,8 @@ function fakeUpdater() {
 }
 
 const info = { version: '0.1.0-beta.2' } as UpdateInfo
+
+afterEach(() => vi.useRealTimers())
 
 describe('app update controller', () => {
   it('downloads an available beta once and installs only after it is ready', async () => {
@@ -56,5 +58,21 @@ describe('app update controller', () => {
 
     await expect(controller.check()).resolves.toMatchObject({ status: 'unsupported' })
     expect(updater.checkForUpdates).not.toHaveBeenCalled()
+  })
+
+  it('checks automatically after startup', async () => {
+    vi.useFakeTimers()
+    const updater = fakeUpdater()
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.0-beta.1',
+      enabled: true,
+    })
+
+    controller.start()
+    await vi.advanceTimersByTimeAsync(14_999)
+    expect(updater.checkForUpdates).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce()
   })
 })
