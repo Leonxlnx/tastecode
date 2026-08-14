@@ -86,7 +86,7 @@ describe('page phase', () => {
     expect(prompt).toContain('Never use an em dash')
     expect(prompt).toContain('Omit eyebrow copy by default')
     expect(prompt).toContain(
-      'Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, Social Proof, Stats, and FAQ',
+      'Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, Social Proof, Stats, FAQ, CTA, and Pricing',
     )
     expect(prompt).toContain('Place the headline at the bottom left or bottom right')
     expect(prompt).toContain('show a wide dashboard, product preview, interface')
@@ -124,6 +124,16 @@ describe('page phase', () => {
     expect(prompt).toContain('a small table of contents on the left')
     expect(prompt).toContain('a large "FAQ," "Questions," or another fitting heading on the left')
     expect(prompt).toContain('designed cards that expand, or as a simple accordion list')
+    expect(prompt).toContain(
+      'Lead with a compelling invitation rather than a generic section heading',
+    )
+    expect(prompt).toContain('email input and CTA button')
+    expect(prompt).toContain('action word itself, such as "Sign up," directly inside the headline')
+    expect(prompt).toContain('images in tiles or a bento arrangement on the right')
+    expect(prompt).toContain('a compact toggle, two larger buttons')
+    expect(prompt).toContain('Place benefits in the left column and plans across the top')
+    expect(prompt).toContain('a larger neighboring card contains separate Pro and Max choices')
+    expect(prompt).toContain('a fitting background image, or a restrained shader effect')
   })
 
   it('parses the final response through the page validator', () => {

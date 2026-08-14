@@ -1,4 +1,4 @@
-export const PAGE_LAYOUT_GUIDANCE = `Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, Social Proof, Stats, and FAQ decisions. Select the case that best fits the content and brand, or lightly combine compatible cases. Keep the described composition recognizable instead of replacing it with an unrelated default layout.
+export const PAGE_LAYOUT_GUIDANCE = `Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, Social Proof, Stats, FAQ, CTA, and Pricing decisions. Select the case that best fits the content and brand, or lightly combine compatible cases. Keep the described composition recognizable instead of replacing it with an unrelated default layout.
 
 The layout case is only part of the result. Font choice and scale, brand colors, spacing, button placement and treatment, corner radii, navigation placement, media crop, and motion create much of the final feeling. Resolve all of them from the approved brand direction. Motion must fit the selected style and composition rather than being added as a generic effect.
 
@@ -129,4 +129,34 @@ FAQ section:
 3. Place a large "FAQ," "Questions," or another fitting heading on the left and the question list on the right.
 4. Present the questions as designed cards that expand, or as a simple accordion list. Choose between them according to the page design rather than using one universal FAQ treatment.
 
-FAQ questions must actually expand and collapse, remain keyboard accessible, expose their state, and preserve a clear reading order on compact screens.`
+FAQ questions must actually expand and collapse, remain keyboard accessible, expose their state, and preserve a clear reading order on compact screens.
+
+CTA section scope:
+- Use this section for a waitlist, account creation, sign-up, newsletter, or another clear next action.
+- Lead with a compelling invitation rather than a generic section heading. Add more explanatory text only when the action needs it.
+
+CTA layout cases:
+1. Use one large image with the compelling CTA text placed over it. Add an email input and CTA button when the action collects email, or use the fitting sign-up buttons for the requested action. Design the complete composition to make the action inviting and obvious.
+2. Place an image or product mockup on the left and the invitation or sign-up action on the right. Mirror it only when the surrounding layout needs the opposite direction.
+3. Use a clean headline with one clean button and place one large image beneath them.
+4. Place the action word itself, such as "Sign up," directly inside the headline as a button or button-like interactive element.
+5. Place the CTA text at the top left, a group of images in tiles or a bento arrangement on the right, and the CTA buttons at the bottom left.
+6. Use one large headline followed by a distinctive, visually prominent button.
+7. Place the headline and CTA first, then arrange images beneath them.
+
+CTA fields and buttons must perform the real requested action, show clear focus and submission states, and avoid collecting information the product does not need.
+
+Pricing section scope:
+- Use only real plans, prices, billing periods, benefits, limits, and disclaimers from the available evidence.
+- The heading may simply say "Pricing" or "Plans," or use one short fitting sentence. Add one supporting sentence only when needed.
+
+Pricing billing controls:
+- When both billing periods exist, let the user switch between monthly and annual pricing. The control may be a compact toggle, two larger buttons, or two clear side-by-side text choices.
+
+Pricing layout cases:
+1. Use plan cards. Each card contains the plan name, such as Free, Pro, Max, or Premium; the real recurring price or billing terms; the included benefits; and a clean action button. When a qualification or limitation needs an asterisk, place the corresponding short disclaimer beneath the cards.
+2. Use a comparison table. Place benefits in the left column and plans across the top, then show clearly which benefits are included or unavailable for each plan.
+3. Use a bento composition. For example, Free may use its own card while a larger neighboring card contains separate Pro and Max choices. Other groupings are valid when they reflect the real plan structure.
+4. Design the cards with a clean surface, a fitting background image, or a restrained shader effect. Later tools may help create the background treatment, but it must not obscure prices, benefits, or actions.
+
+Billing controls, plan actions, checks, unavailable states, and disclaimers must be functional, legible, and unambiguous on every viewport.`
