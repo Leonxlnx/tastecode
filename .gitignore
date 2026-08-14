@@ -10,6 +10,10 @@ build/
 release/
 *.tsbuildinfo
 
+# Generated native mobile workspace
+apps/mobile/.derivedData/
+apps/mobile/HarnessMobile.xcodeproj/
+
 # Rust (if/when we add native sidecars)
 target/
 
