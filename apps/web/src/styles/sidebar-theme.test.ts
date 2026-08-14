@@ -48,6 +48,10 @@ describe('sidebar theme CSS', () => {
     )
   })
 
+  it('reserves a left slot for the working chat spinner', () => {
+    expect(appCss).toMatch(/\.sess:has\(\.sess__spinner\) \{[^}]*padding-left: 28px;/s)
+  })
+
   it('gives project rows a consistent readable rhythm', () => {
     expect(appCss).toMatch(/\.proj \{[^}]*margin-bottom: 0;/s)
     expect(appCss).toMatch(

@@ -3810,6 +3810,10 @@
   color: var(--text);
 }
 
+.sess:has(.sess__spinner) {
+  padding-left: 28px;
+}
+
 .sessrow.is-active .sess {
   color: var(--text);
 }
