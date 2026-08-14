@@ -71,3 +71,36 @@ describe('external URL bridge', () => {
     expect(openExternal).toHaveBeenCalledWith('https://example.com/')
   })
 })
+
+describe('app update bridge', () => {
+  it('stays unsupported in the browser', async () => {
+    const bridge = await import('./bridge.js')
+
+    await expect(bridge.appUpdateState()).resolves.toEqual({
+      status: 'unsupported',
+      currentVersion: 'pre-release',
+    })
+    await expect(bridge.installAppUpdate()).resolves.toBe(false)
+  })
+
+  it('delegates update checks and state events to the desktop shell', async () => {
+    const state = { status: 'ready' as const, currentVersion: '1.0.0', version: '1.0.1' }
+    const checkForUpdates = vi.fn().mockResolvedValue(state)
+    const onUpdateState = vi.fn((listener: (next: typeof state) => void) => {
+      listener(state)
+      return () => undefined
+    })
+    ;(globalThis as { harness?: unknown }).harness = {
+      isDesktop: true,
+      checkForUpdates,
+      onUpdateState,
+    }
+    const bridge = await import('./bridge.js')
+    const listener = vi.fn()
+
+    await expect(bridge.checkForAppUpdates()).resolves.toEqual(state)
+    bridge.onAppUpdateState(listener)
+    expect(checkForUpdates).toHaveBeenCalledOnce()
+    expect(listener).toHaveBeenCalledWith(state)
+  })
+})

@@ -22,6 +22,7 @@ import {
   type Event as ElectronEvent,
   type WebContents,
 } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import {
   PreviewDomAuditSchema,
   PreviewCaptureRequestSchema,
@@ -35,6 +36,11 @@ import {
   pickedAttachment,
 } from './attachment-preview.js'
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
+import {
+  createAppUpdateController,
+  type AppUpdateController,
+  type AppUpdateState,
+} from './app-updater.js'
 import { clipboardText } from './clipboard-text.js'
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
@@ -109,6 +115,7 @@ let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
+let appUpdater: AppUpdateController | undefined
 const macOSHaptics = new MacOSHaptics()
 
 protocol.registerSchemesAsPrivileged([
@@ -319,6 +326,26 @@ ipcMain.handle('harness:setZoom', (event, action: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window) throw new Error('No window for zoom action')
   applyZoom(window, action)
+})
+
+ipcMain.handle('harness:getUpdateState', (event): AppUpdateState => {
+  requireOwnRenderer(event.sender)
+  return (
+    appUpdater?.state() ?? {
+      status: 'unsupported',
+      currentVersion: app.getVersion(),
+    }
+  )
+})
+
+ipcMain.handle('harness:checkForUpdates', (event) => {
+  requireOwnRenderer(event.sender)
+  return appUpdater?.check()
+})
+
+ipcMain.handle('harness:installUpdate', (event) => {
+  requireOwnRenderer(event.sender)
+  return appUpdater?.install() ?? false
 })
 
 ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
@@ -562,6 +589,8 @@ if (ownsSingleInstance) {
     appIsQuitting = true
   })
   app.on('will-quit', () => {
+    appUpdater?.dispose()
+    appUpdater = undefined
     macOSHaptics.stop()
     serverSupervisor?.stop()
     serverSupervisor = undefined
@@ -570,6 +599,16 @@ if (ownsSingleInstance) {
   })
 
   void app.whenReady().then(() => {
+    appUpdater = createAppUpdateController({
+      updater: autoUpdater,
+      currentVersion: app.getVersion(),
+      enabled: app.isPackaged,
+    })
+    appUpdater.subscribe((state) => {
+      const window = mainWindow
+      if (window && !window.isDestroyed()) window.webContents.send('harness:updateState', state)
+    })
+    appUpdater.start()
     if (process.platform === 'darwin') app.dock?.setIcon(productIconPath)
     startOwnedServer()
     configureAttachmentPreviews()
