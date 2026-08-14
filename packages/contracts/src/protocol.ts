@@ -8,6 +8,8 @@ import {
   AccountSchema,
   ApprovalDecisionSchema,
   ApprovalModeSchema,
+  BackgroundModelPreferenceSchema,
+  BackgroundModelSettingsSchema,
   CustomHarnessSchema,
   CustomHarnessVerificationSchema,
   DomainEventSchema,
@@ -886,6 +888,30 @@ export const methods = {
   'models.list': {
     params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
     result: z.object({ models: z.array(ModelSchema) }),
+  },
+  /** Model policy for short product-owned writing tasks. */
+  'backgroundModel.settings': {
+    params: z.object({}),
+    result: BackgroundModelSettingsSchema,
+  },
+  'backgroundModel.updateSettings': {
+    params: BackgroundModelPreferenceSchema,
+    result: BackgroundModelSettingsSchema,
+  },
+  'backgroundModel.generateTitle': {
+    params: z.object({
+      threadId: z.string().min(1),
+      prompt: z.string().trim().min(1).max(40_000),
+      expectedTitle: z.string().min(1).max(200),
+    }),
+    result: z.object({ title: z.string().min(1).max(200), applied: z.boolean() }),
+  },
+  'backgroundModel.generateCommitMessage': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+    }),
+    result: z.object({ message: z.string().min(1).max(2_000) }),
   },
   /**
    * Whether this provider can accept a recorded clip. Availability is account-
