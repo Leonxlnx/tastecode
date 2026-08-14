@@ -67,6 +67,10 @@
   overflow: hidden;
 }
 
+.workspace-panel:not(.is-open) .workspace-panel__controls {
+  visibility: hidden;
+}
+
 .workspace-panel.is-expanded {
   border-left: 0;
 }

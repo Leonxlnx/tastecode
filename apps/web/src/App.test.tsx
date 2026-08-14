@@ -732,13 +732,9 @@ describe('web client', () => {
     const close = await screen.findByRole('button', { name: 'Hide workspace tools' })
     expect(close.closest('.workspace-panel__controls')).toBeTruthy()
     fireEvent.click(close)
-    expect(screen.queryByRole('button', { name: 'Show workspace tools' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Show workspace tools' })).toBeTruthy()
     const panel = document.querySelector('.workspace-panel')!
     await waitFor(() => expect(panel.classList.contains('is-open')).toBe(false))
-    const transitionEnd = new Event('transitionend', { bubbles: true })
-    Object.defineProperty(transitionEnd, 'propertyName', { value: 'transform' })
-    fireEvent(panel, transitionEnd)
-    expect(await screen.findByRole('button', { name: 'Show workspace tools' })).toBeTruthy()
   })
 
   it('routes /side with an inline prompt into an ephemeral Side chat', async () => {

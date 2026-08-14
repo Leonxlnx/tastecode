@@ -10,6 +10,10 @@ describe('workspace panel layout', () => {
       css.match(/\.workspace-layout\.is-panel-open \{(?<body>[\s\S]*?)\n\}/)?.groups?.body ?? ''
     const chrome =
       css.match(/\.workspace-panel__chrome \{(?<body>[\s\S]*?)\n\}/)?.groups?.body ?? ''
+    const closingControls =
+      css.match(
+        /\.workspace-panel:not\(\.is-open\) \.workspace-panel__controls \{(?<body>[\s\S]*?)\n\}/,
+      )?.groups?.body ?? ''
     const launcher =
       css.match(/\.workspace-selector__list \{(?<body>[\s\S]*?)\n\}/)?.groups?.body ?? ''
 
@@ -19,6 +23,7 @@ describe('workspace panel layout', () => {
       'grid-template-columns: minmax(360px, 1fr) min(var(--workspace-panel-w), calc(100% - 360px))',
     )
     expect(chrome).toContain('height: 42px')
+    expect(closingControls).toContain('visibility: hidden')
     expect(launcher).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))')
   })
 })
