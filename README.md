@@ -79,6 +79,8 @@ Read these before your first commit.
 Two people. One Windows developer, one macOS developer. Every decision assumes both
 platforms are first-class and that nobody has to leave their OS to review a change.
 
+Questions and beta feedback: [hello@tasteskill.dev](mailto:hello@tasteskill.dev).
+
 ## License
 
 Undecided while private. Apache-2.0 proposed — see
