@@ -49,5 +49,10 @@ describe('sidebar theme CSS', () => {
     )
     expect(appCss).toMatch(/\.proj__head \{[^}]*min-height: 36px;/s)
     expect(appCss).toMatch(/\.proj__toggle \{[^}]*min-height: 32px;/s)
+    expect(appCss).toMatch(
+      /\.proj\[data-drop-position\]::before \{[^}]*right: 6px;[^}]*left: 26px;[^}]*height: 2px;[^}]*background: var\(--light\);/s,
+    )
+    expect(appCss).toMatch(/\.proj\[data-drop-position='before'\]::before \{[^}]*top: -1px;/s)
+    expect(appCss).toMatch(/\.proj\[data-drop-position='after'\]::before \{[^}]*bottom: -1px;/s)
   })
 })

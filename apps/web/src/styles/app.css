@@ -3645,19 +3645,19 @@
   position: absolute;
   z-index: 2;
   right: 6px;
-  left: 6px;
+  left: 26px;
   height: 2px;
   border-radius: var(--r-pill);
-  background: var(--accent);
+  background: var(--light);
   pointer-events: none;
 }
 
 .proj[data-drop-position='before']::before {
-  top: -2px;
+  top: -1px;
 }
 
 .proj[data-drop-position='after']::before {
-  bottom: -2px;
+  bottom: -1px;
 }
 
 .proj__head {
