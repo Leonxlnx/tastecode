@@ -4119,6 +4119,10 @@
   right: 8px;
 }
 
+.stagehead__action--workspace[aria-pressed='false'] + .stagehead__action {
+  margin-right: 36px;
+}
+
 .zoom-hud {
   position: fixed;
   z-index: 40;
