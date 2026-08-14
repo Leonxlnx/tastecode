@@ -16,6 +16,8 @@ export function designAssetPrompt(
 
 Resolve the page blueprint's asset and component needs into a compact manifest. Inspect the project first and reuse suitable existing files and dependencies. Keep IDs identical to the page blueprint. Mark a need as ready only when its source is real and its project destination is known; otherwise leave it needed with actionable requirements.
 
+Prefer meaningful supplied, generated, or properly licensed photography, product imagery, and interface captures over decorative SVGs. Use an icon or SVG only when it is simple, immediately understandable, and functionally relevant. Do not satisfy an open visual need with an abstract diagram, fake dashboard, sonar graphic, line-grid ornament, or generic geometric filler. When an image-generation capability is available, use it for a specific image need defined by brand.json and page.json; otherwise record a precise external or generated image requirement instead of inventing an unclear vector substitute.
+
 OriginKit is optional. Only when an OriginKit MCP server is available and a component need would materially benefit, search once with the specific need and fetch only a fitting result. A missing server, authentication problem, rate limit, or unsuitable result is a normal fallback: leave the component needed for local implementation and continue. Never invent a component ID or claim a fetch succeeded. Record any fetched component with source kind "origin-kit".
 
 Do not implement the page, install dependencies, or make new brand and copy decisions in this phase. Use available asset skills when exposed by the session without assuming a provider, model, skill name, or private API.

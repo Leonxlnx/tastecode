@@ -66,6 +66,13 @@ Every navigation and section must record the exact case IDs it uses. Numbered ID
 
 The layout case is only part of the result. Font choice and scale, brand colors, spacing, button placement and treatment, corner radii, navigation placement, media crop, and motion create much of the final feeling. Resolve all of them from the approved brand direction. Motion must fit the selected style and composition rather than being added as a generic effect.
 
+Apply these quality constraints to every case:
+- Keep headings deliberately scaled for the composition. Plan one or two visual lines; use three only when the rare editorial composition genuinely benefits, and never plan four.
+- Do not add eyebrows, uppercase monospace micro-labels, decorative section numbers, ornamental hairline grids, colored vertical accent rails, or arbitrary square-panel systems.
+- Use whitespace and content-shaped cards to group information. A divider is exceptional and must clarify a real relationship; it is not the default section or card skeleton.
+- Prefer relevant photography, product imagery, and interface captures. Use SVG only for a simple functional icon, a real product/interface visual, or a diagram whose meaning is immediately clear. Never select an abstract diagram merely to fill empty space.
+- Keep the typography coherent across a section. Do not switch families repeatedly inside one line, sentence, card, or navigation item.
+
 Hero text-layout cases:
 1. Place a short, clear headline in the center. Add one smaller supporting sentence beneath it, followed by one or two CTA buttons.
 2. Place the headline at the bottom left or bottom right. Add a short supporting line or description and the CTA buttons below it. Use the opposite bottom side for a small amount of additional information, either as clean text or in fitting cards.

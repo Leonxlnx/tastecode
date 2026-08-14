@@ -60,6 +60,18 @@ Inspect every supplied screenshot with image-viewing tools. Compare visible evid
 
 For every visible section, compare its screenshot geometry against its declared layoutFamily, layoutCases, content-specific layout, and viewport transformation. A selected case must remain recognizable in hierarchy, alignment, media placement, proportions, and intended movement; surface styling alone is not compliance. Report a major finding when Build substitutes an unrelated default such as a centered heading with interchangeable cards, repeats the same composition in adjacent sections, or loses the selected case at a breakpoint.
 
+Apply the following pass blockers to every screenshot:
+- Any heading occupies more than three visual lines. One or two lines is the target; a third line is acceptable only when it remains balanced and readable. Report oversized type that overwhelms the viewport even when it technically fits.
+- Any eyebrow, uppercase monospace micro-heading, decorative 01/02/03 section label, IBM Plex Mono, Archivo, or repeated font-family switching inside a line or component.
+- Any visible internal note or unfinished copy such as sample, simulated, fictional, awaiting approval, still needed, not connected, before launch, live data required, or to be supplied.
+- A Hero stacks a headline with multiple descriptions, disclaimers, or redundant supporting messages.
+- Decorative hairline grids, repeated separator rules, colored vertical card rails, or arbitrary square-panel templates replace spacing and meaningful grouping.
+- An unclear or ornamental SVG, fake dashboard, map, sonar, schematic, or line illustration fills space without communicating a real product or content relationship. Prefer relevant imagery.
+- A select, dropdown, calendar, date input, disclosure, or form control visibly falls back to an unstyled browser default.
+- Text, controls, imagery, or footer content overlaps, clips, overflows, becomes implausibly narrow, or lacks enough space to read.
+
+Treat these as major findings, or blocking when they prevent reading or operation. Do not waive them because they match brand.json or page.json; repair the upstream interpretation.
+
 Do not edit files, redesign from preference, or praise the work. Report only visible, actionable discrepancies and prefer one root-cause repair over repeated local patches. This is a visual review, not a complete release audit: do not infer factual accuracy, working interactions, conversion performance, user comprehension, loading performance, or source provenance from screenshots. Use confidence "unknown" rather than inventing evidence. Use an available visual-review skill when exposed by the session without assuming a provider, model, skill name, or private API.
 
 Return JSON only:

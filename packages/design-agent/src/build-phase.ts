@@ -34,6 +34,16 @@ Treat brief facts and constraints as requirements, brand.json as the design syst
 
 Each page section records a layoutFamily, one or more selected layoutCases, and a content-specific layout. Treat all three as hard composition requirements. Implement the selected case's recognizable macro geometry, hierarchy, media placement, and movement at expanded size, then follow its recorded medium and compact transformations. Do not replace it with a generic centered heading, uniform card grid, familiar split Hero, or vertically stacked mobile page unless that is the selected case. Do not render the case IDs as visible copy.
 
+Enforce this visual quality floor:
+- Size headings to fit one or two visual lines. Three lines is a rare maximum and four lines is always a failure. Cap expanded Hero display type at 64 CSS px, other expanded section headings at 48 CSS px, compact Hero type at 44 CSS px, and other compact headings at 36 CSS px. Reduce copy width or font size before allowing extra lines.
+- Render no eyebrow, uppercase monospace micro-label, decorative 01/02/03 section label, IBM Plex Mono, or Archivo. Use at most the two approved typeface families and never switch fonts repeatedly inside one line or component.
+- Keep the Hero to one headline, at most one concise supporting block, and its actions. Do not add a second description, implementation note, prototype disclaimer, or status message.
+- Do not show internal notes such as sample data, simulated data, fictional, awaiting approval, still needed, not connected, before launch, or to be supplied. Representative interface records, weather, dates, inventory, and operational values may be created for a finished one-shot experience. Record every invented value in the Build summary for the user to verify after Preview; do not disclose it inside the page.
+- Prefer whitespace, proportion, and content-shaped cards over divider lines. Avoid ornamental hairline grids, repeated horizontal or vertical rules, colored left-edge accent rails, and generic square-panel section backgrounds. Use a divider only when it clarifies a real data or navigation relationship.
+- Use relevant supplied, generated, or properly sourced images more often than diagrams. Do not create an abstract SVG, fake dashboard, map, sonar, schematic, or decorative line graphic just to occupy space. SVG is limited to simple functional icons, real interface visuals, and diagrams with an immediately clear meaning.
+- Style every visible control to the brand, including selects, dropdown menus, date entry, calendars, disclosure panels, and form states. Preserve semantic HTML, keyboard access, focus, labels, and reduced motion, but never leave a browser-default control as the finished visual treatment.
+- Check every reviewed viewport for text collision, clipping, horizontal overflow, unreadable narrow columns, and footer overlap. Content must have enough space to read; novelty never excuses broken geometry.
+
 Use available implementation and motion skills when the session exposes them, without assuming a provider, model, skill name, or private API. Do not start a long-running preview server in this phase; TasteCode owns Preview next.
 ${exactFiles ? `\nThe brief's deliverable boundary is exactly ${list(exactFiles)}. TasteCode validates the workspace before Preview; do not add helper or configuration files.` : ''}
 

@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  designReviewPrompt,
   designRepairPrompt,
   enforceDomAuditFindings,
   parseRepairPhaseOutput,
@@ -36,6 +37,19 @@ const review = {
 }
 
 describe('review and repair phases', () => {
+  it('treats the visual anti-slop floor as pass-blocking', () => {
+    const prompt = designReviewPrompt(
+      {} as Parameters<typeof designReviewPrompt>[0],
+      {} as Parameters<typeof designReviewPrompt>[1],
+      {} as Parameters<typeof designReviewPrompt>[2],
+      [],
+    )
+    expect(prompt).toContain('Any heading occupies more than three visual lines')
+    expect(prompt).toContain('uppercase monospace micro-heading')
+    expect(prompt).toContain('unstyled browser default')
+    expect(prompt).toContain('footer content overlaps')
+  })
+
   it('persists the validated final review artifact', () => {
     workspace = mkdtempSync(path.join(os.tmpdir(), 'taste-review-'))
     const result = {
