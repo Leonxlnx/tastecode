@@ -34,12 +34,18 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('keeps project hierarchy calm and visibly nested', () => {
+  it('keeps project chats wide without a nesting rail', () => {
     expect(appCss).not.toContain('.proj__chevron')
     expect(appCss).toMatch(/\.proj__toggle \{[^}]*padding: 4px 8px;/s)
     expect(appCss).toMatch(/\.proj__sessions-toggle \{[^}]*padding: 0 8px;/s)
-    expect(appCss).toMatch(/\.proj__sessions \{[^}]*margin: 1px 0 6px 20px;[^}]*border-left/s)
-    expect(appCss).toMatch(/\.pinned-sessions \{[^}]*border-left: 0;/s)
+    expect(appCss).toMatch(/\.proj__sessions \{[^}]*margin: 1px 0 6px;[^}]*padding: 0;/s)
+    expect(appCss).not.toMatch(/\.proj__sessions \{[^}]*border-left/s)
+  })
+
+  it('gives project actions room away from the scrollbar', () => {
+    expect(appCss).toMatch(
+      /\.proj__head > \.icon-btn \{[^}]*width: 26px;[^}]*height: 26px;[^}]*margin-right: 4px;/s,
+    )
   })
 
   it('gives project rows a consistent readable rhythm', () => {
