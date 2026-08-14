@@ -101,8 +101,6 @@ Windows?" — because on Windows there currently is no good answer. Conductor is
 Crystal is deprecated, Vibe Kanban's company wound down. The gap is real and it is ours to
 take.
 
-**v3 (mobile):** Start a task from your desk, approve the diff from your phone.
-
 ## Non-goals
 
 - We are not building a model. We are not fine-tuning anything.

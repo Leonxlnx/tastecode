@@ -31,16 +31,6 @@ pnpm dev
 That starts the core server, the renderer and the desktop shell together. Sign in from
 inside the app — it opens the vendor's own page in your browser.
 
-To use the web interface from a phone on the same Tailscale network, run:
-
-```bash
-pnpm dev:mobile
-```
-
-Open the printed URL on the phone. This mode binds the web app and core server only to the
-computer's Tailscale IPv4 address and protects the WebSocket connection with a fresh access
-token. Keep the command running while using the phone; stopping it removes access.
-
 ## What works today
 
 Codex sessions with streaming output · real browser sign-in and plan detection · live
@@ -54,7 +44,7 @@ pin and search.
 | -------------------------------------- | -------------------------------------- |
 | [VISION](./docs/VISION.md)             | What we're building and why            |
 | [FEATURES](./docs/FEATURES.md)         | Every feature, as a list               |
-| [ROADMAP](./docs/ROADMAP.md)           | M0–M8 and the open questions           |
+| [ROADMAP](./docs/ROADMAP.md)           | M0–M7 and the open questions           |
 | [ARCHITECTURE](./docs/ARCHITECTURE.md) | How it's built, and what we rejected   |
 | [PROVIDERS](./docs/PROVIDERS.md)       | Agent and direct API integration plan  |
 | [DESIGN-AGENT](./docs/DESIGN-AGENT.md) | The differentiator _(written at M4)_   |
