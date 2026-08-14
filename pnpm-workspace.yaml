@@ -12,6 +12,9 @@ allowBuilds:
   node-pty: true
 minimumReleaseAgeExclude:
   - electron@43.4.0
+overrides:
+  mermaid: 11.16.1
+  dompurify: 3.4.13
 patchedDependencies:
   # @pierre/diffs keeps the gutter "+" pinned to the last commented line because
   # it never clears the selection after a gutter-utility click. See the patch.
