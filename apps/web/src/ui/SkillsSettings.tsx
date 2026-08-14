@@ -171,6 +171,7 @@ export function SkillsSettings(props: {
     context.projectPath === props.projectPath
   const currentInventory = contextMatches(inventoryContext.current) ? inventory : undefined
   const currentError = currentInventory || contextMatches(errorContext.current) ? error : undefined
+  const projectSkills = currentInventory?.skills.filter((skill) => skill.scope === 'project') ?? []
   const providerStatus = !props.projectPath
     ? 'Select a project to check Agent Skills support.'
     : currentError && !currentInventory
@@ -188,8 +189,8 @@ export function SkillsSettings(props: {
         ? undefined
         : !currentInventory.capabilities.inventory
           ? `${props.providerName} does not expose Agent Skills here yet.`
-          : currentInventory.skills.length === 0
-            ? 'No skills were discovered for this project.'
+          : projectSkills.length === 0
+            ? 'No Agent Skills have been imported into this project.'
             : undefined
 
   return (
@@ -239,9 +240,9 @@ export function SkillsSettings(props: {
           ))}
         </div>
       ) : null}
-      {currentInventory?.capabilities.inventory && currentInventory.skills.length ? (
+      {currentInventory?.capabilities.inventory && projectSkills.length ? (
         <div className="settings__group">
-          {currentInventory.skills.map((skill) => (
+          {projectSkills.map((skill) => (
             <SkillRow
               key={skill.id}
               skill={skill}

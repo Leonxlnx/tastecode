@@ -108,6 +108,29 @@ describe('Agent Skills settings', () => {
     expect(screen.queryByRole('switch')).toBeNull()
   })
 
+  it('starts empty when the provider only reports managed skills', async () => {
+    const transport = client(async () => ({
+      capabilities: { inventory: true, configure: true, install: true },
+      skills: [{ ...skill, id: 'managed', scope: 'system', source: { type: 'provider' } }],
+      errors: [],
+    }))
+    render(
+      <SkillsSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect(
+      await screen.findByText('No Agent Skills have been imported into this project.'),
+    ).toBeTruthy()
+    expect(screen.queryByText('Design Taste')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Install from folder' })).toBeTruthy()
+  })
+
   it('replaces discovery with a retryable error', async () => {
     const transport = client(async () => {
       throw new Error('Skill discovery failed')
@@ -204,7 +227,9 @@ describe('Agent Skills settings', () => {
     act(() => onState?.('reconnecting'))
     act(() => onState?.('open'))
 
-    expect(await screen.findByText('No skills were discovered for this project.')).toBeTruthy()
+    expect(
+      await screen.findByText('No Agent Skills have been imported into this project.'),
+    ).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
   })
 

@@ -397,6 +397,43 @@ describe('Composer prompts', () => {
     expect(onSend).toHaveBeenCalledWith('$airtable-cli', [])
   })
 
+  it('does not offer provider-global resources as project resources', async () => {
+    const transport = createResourceTransport(async (method) => {
+      if (method === 'skills.list') {
+        return {
+          capabilities: { inventory: true, configure: true, install: true },
+          skills: [
+            {
+              id: '/skills/global/SKILL.md',
+              name: 'global-skill',
+              displayName: 'Global skill',
+              source: { type: 'provider' },
+              scope: 'system',
+              enabled: true,
+              dependencyErrors: [],
+            },
+          ],
+          errors: [],
+        }
+      }
+      if (method === 'mcp.list') {
+        return {
+          capabilities: { inventory: true },
+          servers: [{ id: 'global-docs', scope: 'global', enabled: true }],
+        }
+      }
+      throw new Error(`Unexpected request: ${method}`)
+    })
+    renderComposer(vi.fn(), { transport })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: '$', selectionStart: 1 } })
+
+    await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
+    expect(screen.getByText('No more skills or MCP servers are available.')).toBeTruthy()
+    expect(screen.queryByText('Global skill')).toBeNull()
+  })
+
   it('closes the resource picker before Escape interrupts a running turn', async () => {
     const onInterrupt = vi.fn()
     renderComposer(vi.fn(), {
@@ -706,7 +743,7 @@ function populatedResourceTransport(): Transport {
             displayName: 'Airtable CLI',
             description: 'Inspect Airtable bases, schemas, and records',
             source: { type: 'folder', path: '/skills/airtable-cli/SKILL.md' },
-            scope: 'user',
+            scope: 'project',
             enabled: true,
             dependencyErrors: [],
           },
@@ -730,7 +767,7 @@ function populatedResourceTransport(): Transport {
             id: 'officialDocs',
             displayName: 'Official Docs',
             description: 'Search official product documentation',
-            scope: 'global',
+            scope: 'project',
             enabled: true,
             auth: { status: 'not_required' },
             startup: { state: 'ready' },
