@@ -116,17 +116,6 @@ Implementation lanes and release criteria: [PROVIDERS.md](./PROVIDERS.md).
 - [ ] `v1` Opt-in crash reporting
 - [ ] `v2` Desktop notifications when a turn completes
 
-## Mobile — `v2`
-
-- [ ] Session list with live status
-- [ ] Push notifications (turn complete, approval needed)
-- [ ] Read a thread
-- [ ] Approve / deny
-- [ ] Send a message / steer
-- [ ] Review a diff
-- [ ] Voice input
-- [ ] Device pairing + biometric unlock
-
 ## Not doing
 
 Cloud execution of your code · team/multi-user features · reselling tokens · a full IDE ·
