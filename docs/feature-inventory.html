@@ -249,8 +249,6 @@
         <a href="#appearance">Appearance</a>
         <a href="#settings">Settings</a>
         <a href="#shell">Desktop shell and security</a>
-        <a href="#mobile">Native mobile</a>
-        <a href="#web-access">Web access</a>
       </div>
 
       <section id="providers">
@@ -1509,10 +1507,10 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Twelve sections
+                >Nine sections
                 <span class="d"
-                  >General, Profile, and Appearance first, then Providers, Models, MCP, Skills,
-                  Mobile access, Usage, Data &amp; privacy, Debug, About</span
+                  >General, Profile, and Appearance first, then Providers, Models, MCP, Skills, Data
+                  &amp; privacy, About</span
                 ></span
               ></label
             >
@@ -1520,9 +1518,7 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Profile: renderer-local display name and validated PNG, JPEG, or WebP avatar plus
-                lifetime stats, streaks, token heatmap with per-day provider breakdowns, and model
-                insights</span
+                >Profile: renderer-local display name and validated PNG, JPEG, or WebP avatar</span
               ></label
             >
           </li>
@@ -1679,118 +1675,6 @@
             <label
               ><input type="checkbox" /><span
                 >Vendor sign-in and setup live in Settings, never a launch gate</span
-              ></label
-            >
-          </li>
-        </ul>
-      </section>
-
-      <section id="mobile">
-        <header>
-          <h2>Native mobile <span class="pill-parked">parked for the beta</span></h2>
-          <span class="count"></span>
-        </header>
-        <ul class="check">
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Native SwiftUI iPhone client generated with XcodeGen
-                <span class="d">iOS 26, Swift 6 strict concurrency</span></span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >One-time QR or deep-link pairing over Tailscale or a trusted private LAN</span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Paired credentials stored in Keychain with reconnect and revocation support</span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Browse and add remote projects, search sessions, and manage thread lifecycle</span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Start and continue turns with provider, model, effort, approval, mode and
-                attachment controls</span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Stream transcripts, answer approvals, steer queued turns, interrupt and review
-                diffs</span
-              ></label
-            >
-          </li>
-        </ul>
-      </section>
-
-      <section id="web-access">
-        <header>
-          <h2>Web access</h2>
-          <span class="count"></span>
-        </header>
-        <ul class="check">
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >The full harness web app on a phone — same UI as the desktop, served by the server
-                from the built web client at <code>/</code> on the mobile port
-                <span class="d"
-                  >no Vite needed in packaged builds; the dev stack serves the live Vite source
-                  instead of the built client</span
-                ></span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Stable, bookmarkable app URL — long-lived admin token in the OS credential store,
-                unchanged across restarts
-                <span class="d"
-                  >fixed port + Tailscale address + persistent token in the hash</span
-                ></span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >The phone page derives its WebSocket from its own origin
-                (<code>ws://&lt;host&gt;/ws</code>); loopback stays on
-                <code>ws://127.0.0.1:4311</code></span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Web surfaces reachable whenever the server runs; native-app access toggled
-                separately</span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >The desktop app is the management console: Settings → Mobile access shows the app
-                URL with explicit copy states and its adjacent scan QR, generates pairing codes,
-                lists paired devices and revokes them</span
               ></label
             >
           </li>

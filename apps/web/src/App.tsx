@@ -54,7 +54,7 @@ import { StageHeader } from './ui/StageHeader.js'
 import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { ZoomHud } from './ui/ZoomHud.js'
-import { serverBaseUrl, serverUrl } from './server-url.js'
+import { serverBaseUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
 import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-recorder.js'
@@ -297,8 +297,7 @@ function latestSequence(
 }
 
 export function App() {
-  const [connectionUrl, setConnectionUrl] = useState(() => serverUrl(SERVER_BASE_URL))
-  const transport = useMemo(() => new Transport(connectionUrl), [connectionUrl])
+  const transport = useMemo(() => new Transport(SERVER_BASE_URL), [])
   // StrictMode replays effect cleanup against this same memoized instance.
   const usageController = useMemo(
     () => new UsageLimitsController((params) => transport.request('usage.summary', params)),
@@ -648,12 +647,6 @@ export function App() {
   // Syntax grammars load in the background from the first frame, so the first
   // code block an agent produces is already coloured.
   useEffect(warmHighlighter, [])
-
-  useEffect(() => {
-    const reconnectWithCurrentToken = () => setConnectionUrl(serverUrl(SERVER_BASE_URL))
-    window.addEventListener('hashchange', reconnectWithCurrentToken)
-    return () => window.removeEventListener('hashchange', reconnectWithCurrentToken)
-  }, [])
 
   useEffect(() => {
     const checkConnection = () => void transport.ensureHealthy()

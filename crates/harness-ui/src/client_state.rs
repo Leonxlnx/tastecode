@@ -2,10 +2,10 @@ use async_channel::Receiver as EventReceiver;
 use harness_client::{ClientEvent, ClientHandle, ConnectionState, Endpoint};
 use harness_protocol::{
     Account, AcpAgent, AcpAgentsResult, ApprovalDecision, ApprovalMode, AuthEventPush,
-    AuthStartLoginResult, ConnectionsStatus, CredentialConfiguredResult, DiffDecision, DomainEvent,
-    ErrorCode, McpListResult, McpOAuthPush, McpOAuthStartResult, McpServer, McpServerConfig, Model,
+    AuthStartLoginResult, CredentialConfiguredResult, DiffDecision, DomainEvent, ErrorCode,
+    McpListResult, McpOAuthPush, McpOAuthStartResult, McpServer, McpServerConfig, Model,
     ModelConnection, ModelConnectionInput, ModelConnectionResult, ModelConnectionsResult,
-    ModelsListResult, PROTOCOL_VERSION, PairingOffer, PreviewCaptureRequest, PreviewCaptureResult,
+    ModelsListResult, PROTOCOL_VERSION, PreviewCaptureRequest, PreviewCaptureResult,
     ProjectAddedResult, ProjectSummary, ProjectsListResult, ProviderId, ProviderStatus,
     ProvidersListResult, QueueDirection, Response, ReviewDiffResult, SendTurnResult, ServerWelcome,
     SessionDiff, SessionSearchPage, SessionSummary, SidebarMode, SidebarSettings,
@@ -68,12 +68,6 @@ pub(crate) struct ClientState {
     pub(crate) skills_error: Option<String>,
     skills_scope: Option<(ProviderId, String)>,
     skills_generation: u64,
-    pub(crate) mobile_status: Option<ConnectionsStatus>,
-    pub(crate) mobile_pairing: Option<PairingOffer>,
-    pub(crate) mobile_busy: Option<MobileBusy>,
-    pub(crate) mobile_error: Option<String>,
-    mobile_status_pending: bool,
-    mobile_generation: u64,
     settings_terminal_ids: HashSet<String>,
     early_terminal_output: PendingTerminalOutput,
     early_terminal_exits: HashMap<String, Option<i32>>,
@@ -133,13 +127,6 @@ pub(crate) struct AuthLoginSession {
 pub(crate) enum ProviderTerminalKind {
     Install,
     SignIn,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum MobileBusy {
-    Pair,
-    Stop,
-    Revoke(String),
 }
 
 #[derive(Default)]
@@ -387,14 +374,6 @@ enum PendingRequest {
     SkillInstall {
         provider: ProviderId,
         project_path: String,
-    },
-    MobileStatus {
-        generation: u64,
-    },
-    MobileStartPairing,
-    MobileStop,
-    MobileRevoke {
-        device_id: String,
     },
     AddProject {
         path: String,
@@ -820,12 +799,6 @@ impl ClientState {
             skills_error: None,
             skills_scope: None,
             skills_generation: 0,
-            mobile_status: None,
-            mobile_pairing: None,
-            mobile_busy: None,
-            mobile_error: None,
-            mobile_status_pending: false,
-            mobile_generation: 0,
             settings_terminal_ids: HashSet::new(),
             early_terminal_output: PendingTerminalOutput::default(),
             early_terminal_exits: HashMap::new(),
@@ -1162,90 +1135,6 @@ impl ClientState {
             auth_params(&target),
             PendingRequest::AuthStatus { target },
         );
-    }
-
-    pub(crate) fn request_mobile_status(&mut self) -> ClientUpdate {
-        if self.mobile_status_pending || self.mobile_busy.is_some() {
-            return ClientUpdate::default();
-        }
-        self.mobile_status_pending = true;
-        let generation = self.mobile_generation;
-        if !self.send_request(
-            method::CONNECTIONS_STATUS,
-            json!({}),
-            PendingRequest::MobileStatus { generation },
-        ) {
-            self.mobile_status_pending = false;
-            self.mobile_error = Some(self.mobile_request_error(
-                "Mobile access status is unavailable because the server is not connected.",
-            ));
-        }
-        ClientUpdate::shell_changed()
-    }
-
-    pub(crate) fn start_mobile_pairing(&mut self) -> ClientUpdate {
-        if self.mobile_busy.is_some() {
-            return ClientUpdate::default();
-        }
-        self.begin_mobile_mutation(MobileBusy::Pair);
-        if !self.send_request(
-            method::CONNECTIONS_START_PAIRING,
-            json!({}),
-            PendingRequest::MobileStartPairing,
-        ) {
-            self.mobile_busy = None;
-            self.mobile_error = Some(self.mobile_request_error(
-                "The pairing code could not be generated because the server is not connected.",
-            ));
-        }
-        ClientUpdate::shell_changed()
-    }
-
-    pub(crate) fn stop_mobile_access(&mut self) -> ClientUpdate {
-        if self.mobile_busy.is_some() {
-            return ClientUpdate::default();
-        }
-        self.begin_mobile_mutation(MobileBusy::Stop);
-        if !self.send_request(
-            method::CONNECTIONS_STOP,
-            json!({}),
-            PendingRequest::MobileStop,
-        ) {
-            self.mobile_busy = None;
-            self.mobile_error = Some(self.mobile_request_error(
-                "Mobile access could not be stopped because the server is not connected.",
-            ));
-        }
-        ClientUpdate::shell_changed()
-    }
-
-    pub(crate) fn revoke_mobile_device(&mut self, device_id: String) -> ClientUpdate {
-        if self.mobile_busy.is_some() {
-            return ClientUpdate::default();
-        }
-        self.begin_mobile_mutation(MobileBusy::Revoke(device_id.clone()));
-        if !self.send_request(
-            method::CONNECTIONS_REVOKE,
-            json!({ "deviceId": device_id.clone() }),
-            PendingRequest::MobileRevoke { device_id },
-        ) {
-            self.mobile_busy = None;
-            self.mobile_error = Some(self.mobile_request_error(
-                "The device could not be disconnected because the server is not connected.",
-            ));
-        }
-        ClientUpdate::shell_changed()
-    }
-
-    fn begin_mobile_mutation(&mut self, busy: MobileBusy) {
-        self.mobile_generation = self.mobile_generation.wrapping_add(1);
-        self.mobile_status_pending = false;
-        self.mobile_busy = Some(busy);
-        self.mobile_error = None;
-    }
-
-    fn mobile_request_error(&self, fallback: &str) -> String {
-        self.notice.clone().unwrap_or_else(|| fallback.to_owned())
     }
 
     pub(crate) fn request_mcp_inventory(
@@ -2620,24 +2509,6 @@ impl ClientState {
                         self.skills_error = Some(message);
                         ClientUpdate::shell_changed()
                     }
-                    Some(PendingRequest::MobileStatus { generation }) => {
-                        if self.mobile_generation == generation {
-                            self.mobile_status_pending = false;
-                            self.mobile_error = Some(message);
-                            ClientUpdate::shell_changed()
-                        } else {
-                            ClientUpdate::default()
-                        }
-                    }
-                    Some(
-                        PendingRequest::MobileStartPairing
-                        | PendingRequest::MobileStop
-                        | PendingRequest::MobileRevoke { .. },
-                    ) => {
-                        self.mobile_busy = None;
-                        self.mobile_error = Some(message);
-                        ClientUpdate::shell_changed()
-                    }
                     Some(PendingRequest::SearchSessions { revision, .. }) => {
                         ClientUpdate::shell_event(ShellEvent::SessionSearchError {
                             revision,
@@ -2934,16 +2805,6 @@ impl ClientState {
                     provider,
                     project_path,
                 }) => self.handle_skill_install_response(result, provider, project_path),
-                Some(PendingRequest::MobileStatus { generation }) => {
-                    self.handle_mobile_status_response(result, generation)
-                }
-                Some(PendingRequest::MobileStartPairing) => {
-                    self.handle_mobile_pairing_response(result)
-                }
-                Some(PendingRequest::MobileStop) => self.finish_mobile_stop(),
-                Some(PendingRequest::MobileRevoke { device_id }) => {
-                    self.finish_mobile_revoke(device_id)
-                }
                 Some(PendingRequest::AddProject { path }) => {
                     self.handle_add_project_response(result, path)
                 }
@@ -3435,24 +3296,6 @@ impl ClientState {
                 self.skills_busy = None;
                 self.skills_error =
                     Some("The server connection was lost while updating Agent Skills.".into());
-                ClientUpdate::shell_changed()
-            }
-            PendingRequest::MobileStatus { generation } => {
-                if self.mobile_generation != generation {
-                    return ClientUpdate::default();
-                }
-                self.mobile_status_pending = false;
-                self.mobile_error = Some(
-                    "The server connection was lost while loading mobile access status.".into(),
-                );
-                ClientUpdate::shell_changed()
-            }
-            PendingRequest::MobileStartPairing
-            | PendingRequest::MobileStop
-            | PendingRequest::MobileRevoke { .. } => {
-                self.mobile_busy = None;
-                self.mobile_error =
-                    Some("The server connection was lost while updating mobile access.".into());
                 ClientUpdate::shell_changed()
             }
             PendingRequest::SearchSessions { revision, .. } => {
@@ -4504,58 +4347,6 @@ impl ClientState {
         ClientUpdate::shell_changed()
     }
 
-    fn handle_mobile_status_response(&mut self, result: Value, generation: u64) -> ClientUpdate {
-        if self.mobile_generation != generation {
-            return ClientUpdate::default();
-        }
-        self.mobile_status_pending = false;
-        match serde_json::from_value::<ConnectionsStatus>(result) {
-            Ok(status) => {
-                self.mobile_status = Some(status);
-                self.mobile_error = None;
-            }
-            Err(error) => {
-                self.mobile_error = Some(format!("connections.status was invalid: {error}"));
-            }
-        }
-        ClientUpdate::shell_changed()
-    }
-
-    fn handle_mobile_pairing_response(&mut self, result: Value) -> ClientUpdate {
-        self.mobile_busy = None;
-        match serde_json::from_value::<PairingOffer>(result) {
-            Ok(offer) => {
-                self.mobile_status = Some(status_from_pairing_offer(&offer));
-                self.mobile_pairing = Some(offer);
-                self.mobile_error = None;
-            }
-            Err(error) => {
-                self.mobile_error = Some(format!("connections.startPairing was invalid: {error}"));
-            }
-        }
-        ClientUpdate::shell_changed()
-    }
-
-    fn finish_mobile_stop(&mut self) -> ClientUpdate {
-        self.mobile_busy = None;
-        self.mobile_pairing = None;
-        if let Some(status) = &mut self.mobile_status {
-            status.enabled = false;
-            status.addresses.clear();
-        }
-        let _ = self.request_mobile_status();
-        ClientUpdate::shell_changed()
-    }
-
-    fn finish_mobile_revoke(&mut self, device_id: String) -> ClientUpdate {
-        self.mobile_busy = None;
-        if let Some(status) = &mut self.mobile_status {
-            status.devices.retain(|device| device.id != device_id);
-        }
-        let _ = self.request_mobile_status();
-        ClientUpdate::shell_changed()
-    }
-
     fn handle_push(&mut self, channel_name: &str, data: Value) -> ClientUpdate {
         match channel_name {
             channel::SERVER_WELCOME => self.handle_welcome(data),
@@ -4876,10 +4667,6 @@ impl PendingRequest {
             | Self::SkillsList { .. }
             | Self::SkillToggle { .. }
             | Self::SkillInstall { .. }
-            | Self::MobileStatus { .. }
-            | Self::MobileStartPairing
-            | Self::MobileStop
-            | Self::MobileRevoke { .. }
             | Self::TerminalInput { .. }
             | Self::TerminalResize { .. }
             | Self::TerminalClose { .. } => None,
@@ -4893,16 +4680,6 @@ fn failed_update_check(message: String) -> UpdateCheckResult {
         remote: None,
         up_to_date: None,
         error: Some(message),
-    }
-}
-
-fn status_from_pairing_offer(offer: &PairingOffer) -> ConnectionsStatus {
-    ConnectionsStatus {
-        enabled: offer.enabled,
-        server_name: offer.server_name.clone(),
-        port: offer.port,
-        addresses: offer.addresses.clone(),
-        devices: offer.devices.clone(),
     }
 }
 
@@ -5100,75 +4877,6 @@ mod tests {
         assert!(update.shell_changed);
         assert!(state.projects_loaded);
         assert_eq!(state.projects[0].name, "Harness");
-    }
-
-    #[test]
-    fn mobile_pairing_response_updates_status_and_offer_together() {
-        let mut state = ClientState::new(true);
-        state.mobile_busy = Some(MobileBusy::Pair);
-        state
-            .pending
-            .insert("mobile-pair".into(), PendingRequest::MobileStartPairing);
-
-        let update = state.handle_response(Response::Success {
-            id: "mobile-pair".into(),
-            result: json!({
-                "enabled": true,
-                "serverName": "Studio Mac",
-                "port": 4312,
-                "addresses": [{
-                    "kind": "tailscale",
-                    "label": "Tailscale 100.101.22.33",
-                    "url": "ws://100.101.22.33:4312"
-                }],
-                "devices": [],
-                "pairingUri": "harness://pair?payload=abc",
-                "expiresAt": 300000
-            }),
-        });
-
-        assert!(update.shell_changed);
-        assert_eq!(state.mobile_busy, None);
-        assert!(state.mobile_error.is_none());
-        assert!(
-            state
-                .mobile_status
-                .as_ref()
-                .is_some_and(|status| status.enabled)
-        );
-        assert_eq!(
-            state
-                .mobile_pairing
-                .as_ref()
-                .map(|offer| offer.pairing_uri.as_str()),
-            Some("harness://pair?payload=abc")
-        );
-    }
-
-    #[test]
-    fn stale_mobile_status_cannot_replace_a_newer_mutation() {
-        let mut state = ClientState::new(true);
-        state.mobile_generation = 2;
-        state.mobile_status_pending = true;
-        state.pending.insert(
-            "mobile-status".into(),
-            PendingRequest::MobileStatus { generation: 1 },
-        );
-
-        let update = state.handle_response(Response::Success {
-            id: "mobile-status".into(),
-            result: json!({
-                "enabled": false,
-                "serverName": "Stale Mac",
-                "port": 4312,
-                "addresses": [],
-                "devices": []
-            }),
-        });
-
-        assert!(!update.shell_changed);
-        assert!(state.mobile_status.is_none());
-        assert!(state.mobile_status_pending);
     }
 
     #[test]
