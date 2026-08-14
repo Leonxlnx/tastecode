@@ -86,7 +86,7 @@ describe('page phase', () => {
     expect(prompt).toContain('Never use an em dash')
     expect(prompt).toContain('Omit eyebrow copy by default')
     expect(prompt).toContain(
-      'Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, Social Proof, Stats, FAQ, CTA, and Pricing',
+      'Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, Social Proof, Stats, FAQ, CTA, Pricing, Contact, and Footer',
     )
     expect(prompt).toContain('Place the headline at the bottom left or bottom right')
     expect(prompt).toContain('show a wide dashboard, product preview, interface')
@@ -134,6 +134,12 @@ describe('page phase', () => {
     expect(prompt).toContain('Place benefits in the left column and plans across the top')
     expect(prompt).toContain('a larger neighboring card contains separate Pro and Max choices')
     expect(prompt).toContain('a fitting background image, or a restrained shader effect')
+    expect(prompt).toContain('Use a contact form on the right or centered in the section')
+    expect(prompt).toContain('only one or two short words')
+    expect(prompt).toContain('Group destinations into columns with headings and sub-links')
+    expect(prompt).toContain('intentionally cropped by the lower edge')
+    expect(prompt).toContain('each grouped set of links inside its own card')
+    expect(prompt).toContain('one short descriptive text block')
   })
 
   it('parses the final response through the page validator', () => {

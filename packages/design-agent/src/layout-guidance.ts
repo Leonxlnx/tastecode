@@ -1,4 +1,4 @@
-export const PAGE_LAYOUT_GUIDANCE = `Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, Social Proof, Stats, FAQ, CTA, and Pricing decisions. Select the case that best fits the content and brand, or lightly combine compatible cases. Keep the described composition recognizable instead of replacing it with an unrelated default layout.
+export const PAGE_LAYOUT_GUIDANCE = `Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, Social Proof, Stats, FAQ, CTA, Pricing, Contact, and Footer decisions. Select the case that best fits the content and brand, or lightly combine compatible cases. Keep the described composition recognizable instead of replacing it with an unrelated default layout.
 
 The layout case is only part of the result. Font choice and scale, brand colors, spacing, button placement and treatment, corner radii, navigation placement, media crop, and motion create much of the final feeling. Resolve all of them from the approved brand direction. Motion must fit the selected style and composition rather than being added as a generic effect.
 
@@ -159,4 +159,21 @@ Pricing layout cases:
 3. Use a bento composition. For example, Free may use its own card while a larger neighboring card contains separate Pro and Max choices. Other groupings are valid when they reflect the real plan structure.
 4. Design the cards with a clean surface, a fitting background image, or a restrained shader effect. Later tools may help create the background treatment, but it must not obscure prices, benefits, or actions.
 
-Billing controls, plan actions, checks, unavailable states, and disclaimers must be functional, legible, and unambiguous on every viewport.`
+Billing controls, plan actions, checks, unavailable states, and disclaimers must be functional, legible, and unambiguous on every viewport.
+
+Contact section:
+- Use a contact form on the right or centered in the section. Place the supporting contact information on the left or above the form. A fitting background image may support the composition.
+- Include only the fields the contact flow needs, such as email, name, message, or another required detail, followed by a clear submit action and any necessary short supporting information.
+- The style may vary widely. The text on the left may be a normal explanation, only one or two short words, or a small block positioned at the far bottom left.
+- Keep the form simple and make every field, validation state, and submission result work clearly.
+
+Footer layout cases:
+1. Use a fitting background image behind the footer when the design benefits from it.
+2. Use the same structure without a background image for a cleaner footer.
+3. Group destinations into columns with headings and sub-links that lead to the real pages. Place copyright information and social links along the bottom.
+4. Make a large logo the main visual element, or place the logo at the very bottom so it is intentionally cropped by the lower edge.
+5. Place the brand name near the top of the footer and arrange all link groups beneath it.
+6. Place each grouped set of links inside its own card when that card structure fits the design.
+7. Add one short descriptive text block when the footer needs context about the brand or product.
+
+Footer columns, cards, logo treatment, background image, typography, spacing, and alignment remain open to the approved style. Every destination and social link must be real, and compact layouts must retain the full information hierarchy.`
