@@ -211,6 +211,14 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     const rpc = this.#rpc
     if (!rpc || !this.#sessionId) throw new Error('session not started')
 
+    const prompt =
+      this.#instructionsPending && this.#instructions
+        ? `<system-instructions>\n${this.#instructions}\n</system-instructions>\n\n${text}`
+        : text
+    // Read and validate attachments before opening the turn. A preparation
+    // error must reject sendTurn without leaving a started turn orphaned.
+    const promptContent = acpPromptContent(prompt, attachments, this.#images)
+
     // The random suffix keeps turn ids from a resumed process distinct from
     // the persisted turns of the process it replaced — a bare counter reset
     // to zero on every construction and merged two different turns' items.
@@ -225,15 +233,11 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
 
     // Deliberately not awaited inline: updates stream in while this is pending,
     // and the caller needs the turn id now to route them.
-    const prompt =
-      this.#instructionsPending && this.#instructions
-        ? `<system-instructions>\n${this.#instructions}\n</system-instructions>\n\n${text}`
-        : text
     this.#instructionsPending = false
     void rpc
       .request<PromptResult>('session/prompt', {
         sessionId: this.#sessionId,
-        prompt: acpPromptContent(prompt, attachments, this.#images),
+        prompt: promptContent,
       })
       .then((result) => this.#finishTurn(threadId, turnId, result, streamer))
       .catch((error: unknown) => {
