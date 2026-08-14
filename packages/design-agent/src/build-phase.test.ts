@@ -65,6 +65,10 @@ describe('build phase', () => {
     expect(prompt).toContain('TasteCode owns Preview next')
     expect(prompt).toContain('Treat all three as hard composition requirements')
     expect(prompt).toContain('Do not replace it with a generic centered heading')
+    expect(prompt).toContain('Three lines is a rare maximum and four lines is always a failure')
+    expect(prompt).toContain('colored left-edge accent rails')
+    expect(prompt).toContain('never leave a browser-default control')
+    expect(prompt).toContain('Record every invented value in the Build summary')
   })
 
   it('parses a completed implementation report', () => {

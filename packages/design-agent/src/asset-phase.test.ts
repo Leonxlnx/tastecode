@@ -53,6 +53,10 @@ describe('asset phase', () => {
   it('makes OriginKit optional and rate-limit safe', () => {
     const prompt = designAssetPrompt(input.brief, input.brand, input.page)
     expect(prompt).toContain('OriginKit is optional')
+    expect(prompt).toContain(
+      'Prefer meaningful supplied, generated, or properly licensed photography',
+    )
+    expect(prompt).toContain('abstract diagram, fake dashboard, sonar graphic')
     expect(prompt).toContain('rate limit')
     expect(prompt).toContain('Never invent a component ID')
   })
