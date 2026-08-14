@@ -15,6 +15,7 @@ import {
   shell,
   systemPreferences,
   Tray,
+  type Event as ElectronEvent,
   type WebContents,
 } from 'electron'
 import {
@@ -33,6 +34,8 @@ import { pastedFile } from './pasted-file.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PREVIEW_DOM_AUDIT_SCRIPT } from './preview-dom-audit.js'
+import { clearPreviewSession } from './preview-session.js'
+import { PREVIEW_SETTLE_SCRIPT } from './preview-settle.js'
 import { ServerSupervisor } from './server-supervisor.js'
 import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
@@ -68,13 +71,7 @@ const devServer = process.env['HARNESS_DEV_SERVER']
 /** Hidden capture windows are real BrowserWindows; lifecycle checks that count
  *  "the app's windows" must not count them. */
 const captureWindows = new Set<BrowserWindow>()
-const CAPTURE_SETTLE_SCRIPT = `new Promise(resolve => requestAnimationFrame(resolve))
-  .then(() => Promise.race([
-    Promise.allSettled(document.getAnimations().map(animation => animation.finished)),
-    new Promise(resolve => setTimeout(resolve, 1000)),
-  ]))
-  .then(() => document.fonts?.ready)
-  .then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))`
+const MAX_PASTED_IMAGE_BYTES = 25 * 1024 * 1024
 // Windows' native occlusion tracker can wrongly decide the window is fully
 // covered and stick there: the page keeps running with visibilityState
 // 'hidden' while the window shows nothing but its background colour — the
@@ -378,14 +375,16 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
     },
   })
   captureWindows.add(preview)
+  const previewSession = preview.webContents.session
 
-  preview.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
-    callback(false),
-  )
+  previewSession.setPermissionCheckHandler(() => false)
+  previewSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   preview.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  preview.webContents.on('will-navigate', (event, url) => {
+  const restrictNavigation = (event: ElectronEvent, url: string) => {
     if (!allowsPreviewNavigation(request.url, url)) event.preventDefault()
-  })
+  }
+  preview.webContents.on('will-navigate', restrictNavigation)
+  preview.webContents.on('will-redirect', restrictNavigation)
 
   // A pending webfont or a throttled hidden renderer can stall the settle
   // script forever; the whole capture races a hard deadline instead of
@@ -401,6 +400,9 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
   try {
     await mkdir(directory, { recursive: true, mode: 0o700 })
     await Promise.race([preview.loadURL(request.url), deadline])
+    if (!allowsPreviewNavigation(request.url, preview.webContents.getURL())) {
+      throw new Error('preview navigated outside its local origin')
+    }
     const screenshots = []
     // Duplicate viewports would collide on the wx-flagged filename and fail
     // the entire request.
@@ -410,7 +412,7 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
       if (seen.has(key)) continue
       seen.add(key)
       preview.setContentSize(viewport.width, viewport.height)
-      await Promise.race([preview.webContents.executeJavaScript(CAPTURE_SETTLE_SCRIPT), deadline])
+      await Promise.race([preview.webContents.executeJavaScript(PREVIEW_SETTLE_SCRIPT), deadline])
       const domAudit = PreviewDomAuditSchema.parse(
         await Promise.race([
           preview.webContents.executeJavaScriptInIsolatedWorld(1001, [
@@ -439,12 +441,11 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
     clearTimeout(deadlineTimer)
     // The closed-last-window handler may have destroyed us already; touching
     // a destroyed webContents throws, which would eat a successful result.
-    if (!preview.isDestroyed() && !preview.webContents.isDestroyed()) {
-      const previewSession = preview.webContents.session
-      preview.destroy()
-      void previewSession.clearStorageData().catch(() => undefined)
-    }
+    if (!preview.isDestroyed() && !preview.webContents.isDestroyed()) preview.destroy()
     captureWindows.delete(preview)
+    // The fixed partition is shared by every capture, so the IPC must not
+    // resolve until both browser storage and the HTTP cache are clean.
+    await clearPreviewSession(previewSession)
   }
 }
 

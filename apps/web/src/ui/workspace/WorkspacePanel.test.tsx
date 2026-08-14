@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Transport } from '../../transport.js'
 
@@ -25,6 +25,8 @@ vi.mock('./WorkspaceTerminal.js', () => ({
 
 import { WorkspacePanel } from './WorkspacePanel.js'
 
+const idleTransport = { on: () => () => undefined } as unknown as Transport
+
 afterEach(() => {
   cleanup()
   haptics.performAppHaptic.mockClear()
@@ -46,7 +48,7 @@ describe('WorkspacePanel', () => {
         open={false}
         expanded={false}
         width={400}
-        transport={{} as Transport}
+        transport={idleTransport}
         theme="dark"
         sideChatParentStatus="idle"
         sideChatStartOptions={{ approval: 'ask' }}
@@ -70,7 +72,7 @@ describe('WorkspacePanel', () => {
         open
         expanded={false}
         width={400}
-        transport={{} as Transport}
+        transport={idleTransport}
         theme="dark"
         sideChatParentStatus="idle"
         sideChatStartOptions={{ approval: 'ask' }}
@@ -113,7 +115,7 @@ describe('WorkspacePanel', () => {
         open
         expanded={false}
         width={400}
-        transport={{} as Transport}
+        transport={idleTransport}
         projectPath="/workspace/project"
         theme="dark"
         sideChatParentStatus="idle"
@@ -137,7 +139,7 @@ describe('WorkspacePanel', () => {
         open={false}
         expanded={false}
         width={400}
-        transport={{} as Transport}
+        transport={idleTransport}
         theme="dark"
         sideChatParentStatus="idle"
         sideChatStartOptions={{ approval: 'ask' }}
@@ -162,7 +164,7 @@ describe('WorkspacePanel', () => {
         open
         expanded={false}
         width={400}
-        transport={{} as Transport}
+        transport={idleTransport}
         theme="dark"
         sideChatParentStatus="idle"
         sideChatStartOptions={{ approval: 'ask' }}
@@ -190,7 +192,7 @@ describe('WorkspacePanel', () => {
         open
         expanded={false}
         width={400}
-        transport={{} as Transport}
+        transport={idleTransport}
         projectPath="/workspace/project"
         theme="dark"
         sideChatParentStatus="idle"
@@ -218,7 +220,7 @@ describe('WorkspacePanel', () => {
           open
           expanded={false}
           width={400}
-          transport={{} as Transport}
+          transport={idleTransport}
           theme="dark"
           sideChatParentStatus="idle"
           sideChatStartOptions={{ approval: 'ask' }}
@@ -243,4 +245,53 @@ describe('WorkspacePanel', () => {
       expect(screen.getAllByRole('tab', { name: tool })).toHaveLength(1)
     },
   )
+
+  it('opens one reusable Browser tab for design preview captures', async () => {
+    let captureListener: ((value: unknown) => void) | undefined
+    const transport = {
+      on: vi.fn((channel: string, listener: (value: unknown) => void) => {
+        if (channel === 'preview.captureRequested') captureListener = listener
+        return () => undefined
+      }),
+    } as unknown as Transport
+    const onOpen = vi.fn()
+    render(
+      <WorkspacePanel
+        open
+        expanded={false}
+        width={400}
+        transport={transport}
+        theme="dark"
+        sideChatParentStatus="idle"
+        sideChatStartOptions={{ approval: 'ask' }}
+        nativeSurfacesVisible
+        onOpen={onOpen}
+        onClose={vi.fn()}
+        onExpandedChange={vi.fn()}
+        onWidthChange={vi.fn()}
+      />,
+    )
+    await waitFor(() => expect(captureListener).toBeDefined())
+
+    act(() =>
+      captureListener?.({
+        requestId: '00000000-0000-4000-8000-000000000001',
+        url: 'https://example.com/',
+        viewports: [{ width: 1_280, height: 800 }],
+      }),
+    )
+    expect(screen.queryByRole('tab', { name: 'Browser' })).toBeNull()
+
+    const request = (requestId: string) => ({
+      requestId,
+      url: 'http://127.0.0.1:4173/',
+      viewports: [{ width: 1_280, height: 800 }],
+    })
+    act(() => captureListener?.(request('00000000-0000-4000-8000-000000000001')))
+    await waitFor(() => expect(screen.getAllByRole('tab', { name: 'Browser' })).toHaveLength(1))
+
+    act(() => captureListener?.(request('00000000-0000-4000-8000-000000000002')))
+    expect(screen.getAllByRole('tab', { name: 'Browser' })).toHaveLength(1)
+    expect(onOpen).toHaveBeenCalledTimes(2)
+  })
 })

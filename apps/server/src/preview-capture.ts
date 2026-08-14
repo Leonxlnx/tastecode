@@ -15,13 +15,16 @@ type PendingCapture = {
   timer: NodeJS.Timeout
 }
 
+type QueuedCapture = Omit<PendingCapture, 'socket' | 'timer'>
+
 export class PreviewCaptureCoordinator {
   #clients = new Set<WebSocket>()
   #pending = new Map<string, PendingCapture>()
+  #queue: QueuedCapture[] = []
 
   constructor(
     private readonly send: (socket: WebSocket, request: PreviewCaptureRequest) => void,
-    private readonly timeoutMs = 30_000,
+    private readonly timeoutMs = 35_000,
   ) {}
 
   get available(): boolean {
@@ -41,27 +44,16 @@ export class PreviewCaptureCoordinator {
       this.#pending.delete(requestId)
       pending.reject(new Error('Preview capture client disconnected'))
     }
+    this.#dispatchNext()
   }
 
   capture(url: string, viewports: PreviewViewport[]): Promise<PreviewScreenshot[]> {
-    const socket = this.#clients.values().next().value as WebSocket | undefined
-    if (!socket) return Promise.reject(new Error('Preview capture is unavailable'))
+    if (!this.available) return Promise.reject(new Error('Preview capture is unavailable'))
 
     const request = { requestId: randomUUID(), url, viewports }
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.#pending.delete(request.requestId)
-        reject(new Error('Preview capture timed out'))
-      }, this.timeoutMs)
-      timer.unref()
-      this.#pending.set(request.requestId, { socket, request, resolve, reject, timer })
-      try {
-        this.send(socket, request)
-      } catch (error) {
-        clearTimeout(timer)
-        this.#pending.delete(request.requestId)
-        reject(error instanceof Error ? error : new Error(String(error)))
-      }
+      this.#queue.push({ request, resolve, reject })
+      this.#dispatchNext()
     })
   }
 
@@ -73,6 +65,7 @@ export class PreviewCaptureCoordinator {
 
     if (result.status === 'failed') {
       pending.reject(new Error(result.error))
+      this.#dispatchNext()
       return
     }
     if (
@@ -85,8 +78,37 @@ export class PreviewCaptureCoordinator {
       })
     ) {
       pending.reject(new Error('Preview capture returned unexpected viewports'))
+      this.#dispatchNext()
       return
     }
     pending.resolve(result.screenshots)
+    this.#dispatchNext()
+  }
+
+  #dispatchNext(): void {
+    if (this.#pending.size > 0 || this.#queue.length === 0) return
+    const socket = this.#clients.values().next().value as WebSocket | undefined
+    if (!socket) {
+      for (const queued of this.#queue.splice(0)) {
+        queued.reject(new Error('Preview capture client disconnected'))
+      }
+      return
+    }
+    const queued = this.#queue.shift()!
+    const timer = setTimeout(() => {
+      this.#pending.delete(queued.request.requestId)
+      queued.reject(new Error('Preview capture timed out'))
+      this.#dispatchNext()
+    }, this.timeoutMs)
+    timer.unref()
+    this.#pending.set(queued.request.requestId, { socket, timer, ...queued })
+    try {
+      this.send(socket, queued.request)
+    } catch (error) {
+      clearTimeout(timer)
+      this.#pending.delete(queued.request.requestId)
+      queued.reject(error instanceof Error ? error : new Error(String(error)))
+      this.#dispatchNext()
+    }
   }
 }

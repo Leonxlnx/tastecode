@@ -8,7 +8,11 @@ export function browserUrl(value: string): string | undefined {
       : `https://${trimmed}`
   try {
     const url = new URL(candidate)
-    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : undefined
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined
+    if (url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '[::1]')) {
+      url.hostname = '127.0.0.1'
+    }
+    return url.href
   } catch {
     return undefined
   }

@@ -24,8 +24,9 @@ import { toDomainEvents, type ClaudeEvent } from './events.js'
  * `--append-system-prompt-file`.
  *
  * Verified against claude-code 2.1.220; stdin stream-json prompt delivery,
- * `--resume` alongside it, and `--append-system-prompt-file` captured against
- * 2.1.222 on Windows through the real cmd.exe spawn path.
+ * `--resume` alongside it, `--append-system-prompt-file`, and base64 image
+ * content blocks captured against 2.1.222 on Windows through the real cmd.exe
+ * spawn path.
  *
  * As with Codex, this never reads a credential. The binary authenticates
  * itself. See rules/security.md.
