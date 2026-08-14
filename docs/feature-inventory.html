@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-14 450c3b17</span>
+        <span class="meta">2026-08-14 90150d01</span>
       </div>
     </div>
 
@@ -641,7 +641,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Error state as a red dot with hover bubble, never a second row line</span
+                >Provider error state as a red dot with hover bubble, never a second row line;
+                app-level failures use a compact bottom-right notice without an accent rail</span
               ></label
             >
           </li>
@@ -808,10 +809,10 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Selected files, drag/drop, and immediate Ctrl/Command+V image attachments gated by
-                declared source capability; Codex, Claude Code, and Grok receive their native image
-                and file-reference formats, while rejected sends restore the original draft and
-                attachment set</span
+                >Selected files, drag/drop, and immediate Ctrl/Command+V image, PDF, video, and
+                ordinary file attachments gated by declared source capability; Codex, Claude Code,
+                and Grok receive their native image and file-reference formats, while rejected sends
+                restore the original draft and attachment set</span
               ></label
             >
           </li>
@@ -1354,7 +1355,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >MCP servers: add, enable and disable, inspect, per-project scope
+                >MCP servers: empty project view until explicitly added, then enable and disable,
+                inspect, per-project scope
                 <span class="d"
                   >project and transport scoped across reconnects; the heading reports provider
                   capability instead of implying project availability</span
@@ -1380,7 +1382,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Agent Skills: browse, enable per project, progressive loading
+                >Agent Skills: empty project view until explicitly imported, then browse, enable per
+                project, progressive loading
                 <span class="d"
                   >stale refreshes cannot replace confirmed project state; the heading reports
                   provider capability instead of the active project name</span
