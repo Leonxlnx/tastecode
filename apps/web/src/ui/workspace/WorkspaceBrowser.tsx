@@ -72,7 +72,9 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   const canvas = useRef<HTMLDivElement>(null)
   const host = useRef<HTMLDivElement>(null)
   const guest = useRef<BrowserGuest | null>(null)
+  const readyGuest = useRef<BrowserGuest | null>(null)
   const lastNavigationRequest = useRef<string | undefined>(undefined)
+  const [guestReadyRevision, setGuestReadyRevision] = useState(0)
   const [address, setAddress] = useState('')
   const [state, setState] = useState<BrowserState>(EMPTY_STATE)
   const [viewport, setViewport] = useState<BrowserViewportId>('fluid')
@@ -112,6 +114,12 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     view.setAttribute('src', 'about:blank')
 
     const onAttach = () => syncGuestState()
+    const onReady = () => {
+      if (guest.current !== view) return
+      readyGuest.current = view
+      setGuestReadyRevision((revision) => revision + 1)
+      syncGuestState()
+    }
     const onStart = () => {
       setError(undefined)
       setState((current) => ({ ...current, loading: true }))
@@ -151,6 +159,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     }
 
     view.addEventListener('did-attach', onAttach)
+    view.addEventListener('dom-ready', onReady)
     view.addEventListener('did-start-loading', onStart)
     view.addEventListener('did-stop-loading', onStop)
     view.addEventListener('did-navigate', onNavigate)
@@ -167,8 +176,10 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
 
     return () => {
       guest.current = null
+      readyGuest.current = null
       lastNavigationRequest.current = undefined
       view.removeEventListener('did-attach', onAttach)
+      view.removeEventListener('dom-ready', onReady)
       view.removeEventListener('did-start-loading', onStart)
       view.removeEventListener('did-stop-loading', onStop)
       view.removeEventListener('did-navigate', onNavigate)
@@ -225,8 +236,12 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         return false
       }
       const view = guest.current
-      if (!view || typeof view.loadURL !== 'function') {
-        setError('The in-app browser is unavailable in this window.')
+      if (!view || typeof view.loadURL !== 'function' || readyGuest.current !== view) {
+        setError(
+          view && typeof view.loadURL === 'function'
+            ? 'The in-app browser is still starting.'
+            : 'The in-app browser is unavailable in this window.',
+        )
         return false
       }
 
@@ -244,8 +259,9 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
 
   useLayoutEffect(() => {
     if (!navigation || lastNavigationRequest.current === navigation.requestId) return
+    if (!guest.current || readyGuest.current !== guest.current) return
     if (navigate(navigation.url)) lastNavigationRequest.current = navigation.requestId
-  }, [navigate, navigation])
+  }, [guestReadyRevision, navigate, navigation])
 
   const action = (nextAction: 'back' | 'forward' | 'reload' | 'stop') => {
     const view = guest.current

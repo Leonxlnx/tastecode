@@ -98,6 +98,7 @@ describe('WorkspaceBrowser', () => {
     expect(view).toBeDefined()
     expect(view.getAttribute('partition')).toBe('persist:harness-browser')
     expect(view.getAttribute('src')).toBe('about:blank')
+    act(() => view.dispatchEvent(new Event('dom-ready')))
 
     const address = screen.getByLabelText('Browser address')
     fireEvent.change(address, { target: { value: 'example.com/docs' } })
@@ -126,6 +127,8 @@ describe('WorkspaceBrowser', () => {
     const { rerender } = render(<WorkspaceBrowser active navigation={first} />)
     const view = guests[0]!
 
+    expect(view.loadURL).not.toHaveBeenCalled()
+    act(() => view.dispatchEvent(new Event('dom-ready')))
     await waitFor(() => expect(view.loadURL).toHaveBeenCalledWith(first.url))
     expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe(first.url)
 
