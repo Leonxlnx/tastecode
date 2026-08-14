@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-14 nightly · main 4cf1bba1</span>
+        <span class="meta">2026-08-14 nightly · main c9057cb0</span>
       </div>
     </div>
 
@@ -916,9 +916,9 @@
               ><input type="checkbox" /><span
                 >Working status with a live elapsed label during active turns
                 <span class="d"
-                  >one stable rail owns narration and activity transitions; completed or failed
-                  image inspections remain visible as settled results without a duplicate live
-                  row</span
+                  >one stable rail owns narration and activity transitions, restarting its timer
+                  after each assistant message; completed or failed image inspections remain visible
+                  as settled results without a duplicate live row</span
                 ></span
               ></label
             >
@@ -929,7 +929,8 @@
                 >Collapse and expand per item, reasoning collapsed by default
                 <span class="d"
                   >repeated settled reasoning-only histories with no answer compact to one Worked
-                  disclosure; live and single reasoning items stay unchanged</span
+                  disclosure; commands stay summarized until opened, with exact command and output
+                  inside the compact reveal</span
                 ></span
               ></label
             >
@@ -945,7 +946,10 @@
           </li>
           <li>
             <label
-              ><input type="checkbox" /><span>Copy, Edit, and Revert on user messages</span></label
+              ><input type="checkbox" /><span
+                >Persistent Copy and Revert on agent replies; compact hover Copy, Edit, and Revert
+                on user messages without layout movement</span
+              ></label
             >
           </li>
           <li>
@@ -1268,7 +1272,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Braille spinner for running sessions, unread markers, elapsed status labels</span
+                >Braille spinner for running sessions in its own slot before the title, unread
+                markers, elapsed status labels</span
               ></label
             >
           </li>
