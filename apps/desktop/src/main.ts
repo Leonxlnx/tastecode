@@ -29,6 +29,7 @@ import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { allowsMicrophoneRequest } from './media-permissions.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
+import { pastedFile } from './pasted-file.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PREVIEW_DOM_AUDIT_SCRIPT } from './preview-dom-audit.js'
@@ -67,7 +68,6 @@ const devServer = process.env['HARNESS_DEV_SERVER']
 /** Hidden capture windows are real BrowserWindows; lifecycle checks that count
  *  "the app's windows" must not count them. */
 const captureWindows = new Set<BrowserWindow>()
-const MAX_PASTED_IMAGE_BYTES = 25 * 1024 * 1024
 const CAPTURE_SETTLE_SCRIPT = `new Promise(resolve => requestAnimationFrame(resolve))
   .then(() => Promise.race([
     Promise.allSettled(document.getAnimations().map(animation => animation.finished)),
@@ -505,13 +505,13 @@ ipcMain.handle('harness:revealProjectFile', (event, value: unknown, projectRootV
   shell.showItemInFolder(projectFilePath(value, projectRootValue))
 })
 
-ipcMain.handle('harness:savePastedImage', async (event, payload: unknown) => {
+ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
   requireOwnRenderer(event.sender)
-  const image = pastedImage(payload)
-  const directory = path.join(app.getPath('temp'), 'Personal Harness', 'pasted-images')
+  const file = pastedFile(payload)
+  const directory = path.join(app.getPath('temp'), 'Personal Harness', 'pasted-files')
   await mkdir(directory, { recursive: true, mode: 0o700 })
-  const destination = path.join(directory, `pasted-${randomUUID()}${image.extension}`)
-  await writeFile(destination, image.bytes, { flag: 'wx', mode: 0o600 })
+  const destination = path.join(directory, `${randomUUID()}-${file.name}`)
+  await writeFile(destination, file.bytes, { flag: 'wx', mode: 0o600 })
   return destination
 })
 
@@ -597,53 +597,3 @@ app.on('window-all-closed', () => {
   // The core server belongs to the application lifecycle, not to a renderer
   // window. A real app quit still tears down the server process.
 })
-
-function pastedImage(payload: unknown): { bytes: Buffer; extension: string } {
-  if (!payload || typeof payload !== 'object') throw new Error('Invalid pasted image')
-
-  const candidate = payload as { type?: unknown; bytes?: unknown }
-  if (typeof candidate.type !== 'string') throw new Error('Invalid pasted image type')
-
-  const bytes =
-    candidate.bytes instanceof ArrayBuffer
-      ? Buffer.from(candidate.bytes)
-      : ArrayBuffer.isView(candidate.bytes)
-        ? Buffer.from(
-            candidate.bytes.buffer,
-            candidate.bytes.byteOffset,
-            candidate.bytes.byteLength,
-          )
-        : undefined
-
-  if (!bytes || bytes.length === 0 || bytes.length > MAX_PASTED_IMAGE_BYTES) {
-    throw new Error('Pasted image is empty or too large')
-  }
-
-  const extension = imageExtension(candidate.type, bytes)
-
-  if (!extension) throw new Error('Unsupported pasted image')
-  return { bytes, extension }
-}
-
-function imageExtension(type: string, bytes: Buffer): string | undefined {
-  if (type === 'image/png' && hasPrefix(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) {
-    return '.png'
-  }
-  if (type === 'image/jpeg' && hasPrefix(bytes, [0xff, 0xd8, 0xff])) return '.jpg'
-  if (type === 'image/gif' && /^GIF8[79]a$/.test(bytes.subarray(0, 6).toString('ascii'))) {
-    return '.gif'
-  }
-  if (
-    type === 'image/webp' &&
-    bytes.subarray(0, 4).toString('ascii') === 'RIFF' &&
-    bytes.subarray(8, 12).toString('ascii') === 'WEBP'
-  ) {
-    return '.webp'
-  }
-  if (type === 'image/bmp' && bytes.subarray(0, 2).toString('ascii') === 'BM') return '.bmp'
-  return undefined
-}
-
-function hasPrefix(bytes: Buffer, prefix: number[]): boolean {
-  return prefix.every((byte, index) => bytes[index] === byte)
-}

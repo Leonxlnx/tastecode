@@ -18,8 +18,8 @@ const api = {
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('harness:revealPath', path),
   revealProjectFile: (path: string, projectPath: string): Promise<void> =>
     ipcRenderer.invoke('harness:revealProjectFile', path, projectPath),
-  savePastedImage: (image: { type: string; bytes: ArrayBuffer }): Promise<string> =>
-    ipcRenderer.invoke('harness:savePastedImage', image),
+  savePastedFile: (file: { name: string; type: string; bytes: ArrayBuffer }): Promise<string> =>
+    ipcRenderer.invoke('harness:savePastedFile', file),
   writeClipboardText: (text: string): Promise<void> =>
     ipcRenderer.invoke('harness:writeClipboardText', clipboardText(text)),
   setZoom: (action: 'in' | 'out' | 'reset'): Promise<void> =>

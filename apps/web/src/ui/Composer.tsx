@@ -34,7 +34,7 @@ import {
   type LucideIcon,
   X,
 } from 'lucide-react'
-import { pickFiles, savePastedImage } from '../bridge.js'
+import { pickFiles, savePastedFile } from '../bridge.js'
 import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
 import {
@@ -119,6 +119,7 @@ const COMPOSER_DOCK_MOTION_MS = 320
 const COMPOSER_DOCK_EASING = 'cubic-bezier(0.23, 1, 0.32, 1)'
 const ATTACHMENTS_UNSUPPORTED = 'Attachments aren’t supported by this source.'
 const ATTACHMENTS_BLOCK_SEND = 'Remove attachments or switch to a source that supports them.'
+const MAX_PASTED_FILE_BYTES = 25 * 1024 * 1024
 const PASTEABLE_IMAGE_TYPES = new Set([
   'image/png',
   'image/jpeg',
@@ -407,18 +408,24 @@ function ComposerComponent(props: {
     addFiles(paths)
   }
 
-  const addPastedImages = (files: File[]) => {
+  const addPastedFiles = (files: File[]) => {
     setAttachmentError(undefined)
     for (const file of files) {
-      const previewUrl = URL.createObjectURL(file)
-      previewUrls.current.add(previewUrl)
-      const id = previewUrl
+      if (file.size > MAX_PASTED_FILE_BYTES) {
+        setAttachmentError(`“${file.name}” is larger than 25 MB. Use the file picker instead.`)
+        continue
+      }
+      const previewUrl = PASTEABLE_IMAGE_TYPES.has(file.type)
+        ? URL.createObjectURL(file)
+        : undefined
+      if (previewUrl) previewUrls.current.add(previewUrl)
+      const id = previewUrl ?? `pasted:${crypto.randomUUID()}`
       setAttachments((current) => [
         ...current,
-        { id, name: file.name || 'Pasted image', previewUrl },
+        { id, name: file.name || 'Pasted file', ...(previewUrl ? { previewUrl } : {}) },
       ])
 
-      void savePastedImage(file)
+      void savePastedFile(file)
         .then((path) => {
           if (!mounted.current) return
           if (!path) {
@@ -435,7 +442,9 @@ function ComposerComponent(props: {
         .catch(() => {
           if (!mounted.current) return
           removeAttachment(id)
-          setAttachmentError('Couldn’t attach that image.')
+          setAttachmentError(
+            `Couldn’t attach “${file.name || 'that file'}”. Use the file picker instead.`,
+          )
         })
     }
   }
@@ -1011,19 +1020,23 @@ function ComposerComponent(props: {
                   onBlur={() => setResourceTrigger(undefined)}
                   onPaste={(e) => {
                     const files = Array.from(e.clipboardData.files)
-                    const images = files.filter((file) => PASTEABLE_IMAGE_TYPES.has(file.type))
                     const paths = files
                       .filter((file) => !PASTEABLE_IMAGE_TYPES.has(file.type))
                       .map((file) => (file as File & { path?: string }).path)
                       .filter((path): path is string => typeof path === 'string' && path !== '')
-                    if (images.length > 0 || paths.length > 0) {
+                    const materialized = files.filter(
+                      (file) =>
+                        PASTEABLE_IMAGE_TYPES.has(file.type) ||
+                        !(file as File & { path?: string }).path,
+                    )
+                    if (materialized.length > 0 || paths.length > 0) {
                       e.preventDefault()
                       if (!props.attachmentsSupported) {
                         setAttachmentError(ATTACHMENTS_UNSUPPORTED)
                         return
                       }
                       attachFiles(paths)
-                      addPastedImages(images)
+                      addPastedFiles(materialized)
                     }
                   }}
                   placeholder={props.disabled ? 'Add a project folder first' : 'Do anything'}
