@@ -34,6 +34,7 @@ import { pastedFile } from './pasted-file.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PREVIEW_DOM_AUDIT_SCRIPT } from './preview-dom-audit.js'
+import { clearPreviewSession } from './preview-session.js'
 import { PREVIEW_SETTLE_SCRIPT } from './preview-settle.js'
 import { ServerSupervisor } from './server-supervisor.js'
 import { restoreMainWindowPresence } from './window-presence.js'
@@ -374,11 +375,10 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
     },
   })
   captureWindows.add(preview)
+  const previewSession = preview.webContents.session
 
-  preview.webContents.session.setPermissionCheckHandler(() => false)
-  preview.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
-    callback(false),
-  )
+  previewSession.setPermissionCheckHandler(() => false)
+  previewSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   preview.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   const restrictNavigation = (event: ElectronEvent, url: string) => {
     if (!allowsPreviewNavigation(request.url, url)) event.preventDefault()
@@ -441,12 +441,11 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
     clearTimeout(deadlineTimer)
     // The closed-last-window handler may have destroyed us already; touching
     // a destroyed webContents throws, which would eat a successful result.
-    if (!preview.isDestroyed() && !preview.webContents.isDestroyed()) {
-      const previewSession = preview.webContents.session
-      preview.destroy()
-      void previewSession.clearStorageData().catch(() => undefined)
-    }
+    if (!preview.isDestroyed() && !preview.webContents.isDestroyed()) preview.destroy()
     captureWindows.delete(preview)
+    // The fixed partition is shared by every capture, so the IPC must not
+    // resolve until both browser storage and the HTTP cache are clean.
+    await clearPreviewSession(previewSession)
   }
 }
 
