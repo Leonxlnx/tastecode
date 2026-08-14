@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-14 nightly · main c9057cb0</span>
+        <span class="meta">2026-08-14 nightly · main 0d68713c</span>
       </div>
     </div>
 
@@ -1061,11 +1061,12 @@
               ><input type="checkbox" /><span
                 >Add project by folder, multiple projects at once
                 <span class="d"
-                  >project loading and failures remain explicit; Retry and the no-project action use
-                  the existing folder picker; opening an empty project's drawer reveals No chats
-                  without replacing or collapsing the current chat; compact folder rows align
-                  directly below Projects and expanded Show more actions have no extra leading
-                  spacer; <a href="./screenshots/empty-project.png">production evidence</a></span
+                  >project loading and failures remain explicit; Retry remains available and a
+                  reconnect recovers automatically; the no-project action uses the existing folder
+                  picker; opening an empty project's drawer reveals No chats without replacing or
+                  collapsing the current chat; compact folder rows align directly below Projects and
+                  expanded Show more actions have no extra leading spacer;
+                  <a href="./screenshots/empty-project.png">production evidence</a></span
                 ></span
               ></label
             >
@@ -1538,8 +1539,9 @@
                 visibility switch visible
                 <span class="d"
                   >composer pickers retain full-catalog search; first-run defaults wait for complete
-                  installed-provider discovery; stored custom entries remain usable while creation
-                  controls are parked;
+                  installed-provider discovery; failed discovery retries after reconnect without
+                  blocking an already-valid catalog; stored custom entries remain usable while
+                  creation controls are parked;
                   <a href="./screenshots/model-settings-no-search.png">desktop evidence</a></span
                 ></span
               ></label
