@@ -153,8 +153,8 @@ Implemented mechanics:
 - direct API workspace tools with path and credential boundaries;
 - an allowlisted local preview runner;
 - one dedicated sidebar Browser tab that opens on capture and reloads for repair passes;
-- a serialized, capability-negotiated Electron screenshot bridge that settles animations, fonts,
-  and images before capture;
+- a serialized, capability-negotiated Electron screenshot bridge that waits within fixed deadlines
+  for animations, fonts, and images before capture;
 - negotiated ACP image prompt blocks for screenshot-capable ACP agents;
 - visual review and at most two repair attempts;
 - queue release after success and failure;
@@ -479,6 +479,8 @@ The current product surface is provider-neutral for briefing but capability-gate
 | Grok CLI           | Available         | Available                 | Accepts native image attachments.                                              |
 | Cursor CLI         | Available         | Skipped                   | Does not declare image input.                                                  |
 | Native OpenCode    | Available         | Skipped                   | Does not declare image input.                                                  |
+| Antigravity CLI    | Available         | Skipped                   | Does not declare image input.                                                  |
+| Pi RPC             | Available         | Skipped                   | Does not declare image input.                                                  |
 | Direct API runtime | Available         | Skipped                   | Workspace tools exist, but image attachments are not implemented.              |
 | ACP                | Available         | Available when negotiated | Sends ACP image blocks only when the agent advertised image prompt capability. |
 
@@ -537,9 +539,9 @@ session at a time.
 
 The same typed capture request opens or focuses one dedicated sidebar Browser tab. A new request ID
 reloads the requested URL after the Electron guest reports `dom-ready`, so repair passes refresh
-even when the URL is unchanged. Manual Browser input normalizes `localhost` and IPv6 loopback to
-`127.0.0.1` for reliable Windows loading. This visible guest is for user inspection; a separate
-hidden BrowserWindow remains the authority for exact review screenshots.
+even when the URL is unchanged. Manual Browser input normalizes HTTP `localhost` and IPv6 loopback
+addresses to `127.0.0.1` for reliable Windows loading. This visible guest is for user inspection; a
+separate hidden BrowserWindow remains the authority for exact review screenshots.
 
 The Electron main process validates the request, denies permission checks and requests, denies new
 windows, confines navigation and redirects to the preview origin, and verifies the final URL. It
@@ -655,7 +657,8 @@ relies primarily on provider-reported checks and screenshots.
 
 ### Missing M4 product surfaces
 
-- persistent hot-reload and manual iteration controls beyond capture-triggered Browser reloads;
+- persistent hot reload and Design-specific iteration history beyond capture-triggered Browser
+  reloads;
 - a direction gallery with real rendered choices before committing to one direction;
 - a design-token editor;
 - a reference and anti-reference board;
@@ -711,7 +714,7 @@ judgment rules, and UI design.
 
 ### 6. Finish M4 surfaces
 
-- persistent hot-reload and manual preview iteration controls;
+- persistent hot reload and Design-specific preview iteration history;
 - token editor;
 - reference board;
 - asset production and provenance UX;
