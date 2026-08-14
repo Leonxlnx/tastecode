@@ -52,7 +52,7 @@ mod platform {
     ) -> Result<Option<Guard>> {
         fs::create_dir_all(&directory).with_context(|| {
             format!(
-                "failed to create the Harness data directory at {}",
+                "failed to create the TasteCode data directory at {}",
                 directory.display()
             )
         })?;
@@ -96,14 +96,14 @@ mod platform {
             .with_context(|| format!("failed to secure {}", socket_path.display()))?;
         socket
             .set_read_timeout(Some(Duration::from_millis(250)))
-            .context("failed to configure the Harness activation socket")?;
+            .context("failed to configure the TasteCode activation socket")?;
 
         let stop = Arc::new(AtomicBool::new(false));
         let listener_stop = Arc::clone(&stop);
         let listener = thread::Builder::new()
             .name("harness-native-activation".into())
             .spawn(move || listen_for_activation(socket, sender, listener_stop))
-            .context("failed to start the Harness activation listener")?;
+            .context("failed to start the TasteCode activation listener")?;
 
         Ok(Some(Guard {
             _lock: lock,
@@ -155,7 +155,7 @@ mod platform {
                 Err(error) => {
                     return Err(error).with_context(|| {
                         format!(
-                            "failed to activate the running Harness instance through {}",
+                            "failed to activate the running TasteCode instance through {}",
                             socket_path.display()
                         )
                     });
@@ -165,12 +165,12 @@ mod platform {
         if let Some(error) = last_error {
             return Err(error).with_context(|| {
                 format!(
-                    "the running Harness instance did not accept activation through {}",
+                    "the running TasteCode instance did not accept activation through {}",
                     socket_path.display()
                 )
             });
         }
-        bail!("the running Harness instance could not be activated")
+        bail!("the running TasteCode instance could not be activated")
     }
 
     impl Drop for Guard {
@@ -253,7 +253,7 @@ mod platform {
         let event = unsafe { CreateEventW(ptr::null(), 0, 0, event_name.as_ptr()) };
         if event.is_null() {
             return Err(std::io::Error::last_os_error())
-                .context("failed to create the Harness activation event");
+                .context("failed to create the TasteCode activation event");
         }
 
         let mutex = unsafe { CreateMutexW(ptr::null(), 0, mutex_name.as_ptr()) };
@@ -263,7 +263,7 @@ mod platform {
                 CloseHandle(event);
             }
             return Err(std::io::Error::from_raw_os_error(mutex_error as i32))
-                .context("failed to create the Harness singleton mutex");
+                .context("failed to create the TasteCode singleton mutex");
         }
         if mutex_error == ERROR_ALREADY_EXISTS {
             let signaled = unsafe { SetEvent(event) };
@@ -273,7 +273,7 @@ mod platform {
                 CloseHandle(event);
             }
             if let Some(error) = signal_error {
-                return Err(error).context("failed to activate the running Harness instance");
+                return Err(error).context("failed to activate the running TasteCode instance");
             }
             return Ok(None);
         }
@@ -298,7 +298,7 @@ mod platform {
                     CloseHandle(mutex);
                     CloseHandle(event);
                 }
-                return Err(error).context("failed to start the Harness activation listener");
+                return Err(error).context("failed to start the TasteCode activation listener");
             }
         };
 

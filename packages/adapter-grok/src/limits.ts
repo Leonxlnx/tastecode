@@ -5,7 +5,7 @@ import { grokAccount, grokCommand } from './adapter.js'
 /**
  * Weekly credit pool through Grok Build's own ACP extension. The provider
  * process owns its credentials, request headers and token refresh lifecycle;
- * Harness only receives the billing response it deliberately exposes.
+ * TasteCode only receives the billing response it deliberately exposes.
  */
 
 const TIMEOUT_MS = 10_000
@@ -181,7 +181,7 @@ async function readGrokBilling(): Promise<unknown> {
       rpc.request('initialize', {
         protocolVersion: 1,
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-        clientInfo: { name: 'personal-harness', version: '0.0.0' },
+        clientInfo: { name: 'tastecode', version: '0.0.0' },
       }),
     )
     return await bounded(rpc.request('_x.ai/billing', {}))

@@ -238,8 +238,8 @@ export function PullRequestDetailPane(props: {
             disabled={!detail.localProjectPath}
             title={
               detail.localProjectPath
-                ? 'Start a Harness chat in the local checkout'
-                : 'Add this repository as a Harness project to chat about it'
+                ? 'Start a TasteCode chat in the local checkout'
+                : 'Add this repository as a TasteCode project to chat about it'
             }
             onClick={props.onOpenChat}
           >

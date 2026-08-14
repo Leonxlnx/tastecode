@@ -25,7 +25,7 @@ describe('TerminalManager', () => {
       CUSTOM: 'kept',
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
-      TERM_PROGRAM: 'Harness',
+      TERM_PROGRAM: 'TasteCode',
     })
   })
 

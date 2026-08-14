@@ -135,9 +135,9 @@ function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>>
     <Composer
       transport={voiceTransport()}
       provider="codex"
-      projects={[{ path: '/work/harness', name: 'Harness', sessions: [] }]}
+      projects={[{ path: '/work/harness', name: 'TasteCode', sessions: [] }]}
       projectPath="/work/harness"
-      projectName="Harness"
+      projectName="TasteCode"
       branch="main"
       branches={['main']}
       models={[]}

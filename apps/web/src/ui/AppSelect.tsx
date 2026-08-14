@@ -43,7 +43,7 @@ function nextEnabledIndex<Value extends string>(
 }
 
 /**
- * Harness-owned replacement for native selects. The trigger stays in the
+ * TasteCode-owned replacement for native selects. The trigger stays in the
  * layout while the listbox is portalled above scroll containers and dialogs.
  */
 export function AppSelect<Value extends string>(props: {

@@ -331,7 +331,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     const init = await rpc.request<InitializeResult>('initialize', {
       protocolVersion: PROTOCOL_VERSION,
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-      clientInfo: { name: 'personal-harness', version: '0.0.0' },
+      clientInfo: { name: 'tastecode', version: '0.0.0' },
     })
     this.#initialize = init
     if (init.protocolVersion !== undefined && init.protocolVersion !== PROTOCOL_VERSION) {

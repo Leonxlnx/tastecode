@@ -58,7 +58,7 @@ build it. This exists so nothing gets forgotten and so we can argue about scope 
 - [ ] `v1` OpenCode agent
 - [ ] `v1` Kimi Code
 - [ ] `v1` GLM / Z.ai coding plan
-- [ ] `v1` Harness direct API agent runtime
+- [ ] `v1` TasteCode direct API agent runtime
 - [ ] `v1` OpenAI API
 - [ ] `v1` Anthropic API
 - [ ] `v1` OpenRouter

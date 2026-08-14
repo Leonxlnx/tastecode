@@ -157,7 +157,7 @@ describe('ApiAgentSession', () => {
     })
   })
 
-  it('runs approved tools through the injected Harness executor', async () => {
+  it('runs approved tools through the injected TasteCode executor', async () => {
     let request = 0
     const seenMessages: unknown[] = []
     const session = new ApiAgentSession({

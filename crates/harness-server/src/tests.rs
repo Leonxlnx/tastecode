@@ -1182,7 +1182,7 @@ fn design_mode_runs_native_artifact_pipeline_and_drains_queue() {
     wait_for_sent_count(&session, 7);
 
     let sent_texts = session.sent_texts.lock().unwrap().clone();
-    assert!(sent_texts[0].contains("Personal Harness Design Briefing mode"));
+    assert!(sent_texts[0].contains("TasteCode Design Briefing mode"));
     assert!(sent_texts[1].contains("Brand phase"));
     assert!(sent_texts[2].contains("Page Blueprint phase"));
     assert!(sent_texts[3].contains("Asset phase"));

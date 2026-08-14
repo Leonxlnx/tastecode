@@ -29,6 +29,7 @@ import {
   designRepairPrompt,
   designReviewPrompt,
   enforceDomAuditFindings,
+  isDesignBriefAttachment,
   parseAssetPhaseOutput,
   parseBrandPhaseOutput,
   parseBriefingOutput,
@@ -328,7 +329,7 @@ const UNSUPPORTED_MCP_CAPABILITIES: McpCapabilities = {
   startOAuth: false,
   cancelOAuth: false,
 }
-/** Harness-managed project servers only: no vendor inventory, no OAuth. */
+/** TasteCode-managed project servers only: no vendor inventory, no OAuth. */
 const OPENCODE_MCP_MANAGEMENT_CAPABILITIES: McpCapabilities = {
   inventory: false,
   add: true,
@@ -475,7 +476,7 @@ export class Orchestrator {
     },
   ) {
     this.#store = store
-    this.#worktreeRoot = handlers.worktreeRoot ?? path.join(os.tmpdir(), 'personal-harness-trees')
+    this.#worktreeRoot = handlers.worktreeRoot ?? path.join(os.tmpdir(), 'tastecode-trees')
     this.#onEvent = handlers.onEvent
     this.#onSideEvent = handlers.onSideEvent ?? handlers.onEvent
     this.#onQueue = handlers.onQueue ?? (() => {})
@@ -1103,7 +1104,7 @@ export class Orchestrator {
       if (panicGeneration !== this.#panicGeneration) {
         throw new Error('turn cancelled by panic stop')
       }
-      const design = attachments.includes(DESIGN_BRIEF_ATTACHMENT)
+      const design = attachments.some(isDesignBriefAttachment)
       if (design) {
         await this.#stopDesignPreview(threadId)
         // The flow keeps the user's own options; only brief-phase turns force
@@ -1128,7 +1129,7 @@ export class Orchestrator {
           turnId = await this.#sendDesignTurn(
             threadId,
             designBriefingPrompt(text),
-            attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT),
+            attachments.filter((path) => !isDesignBriefAttachment(path)),
             this.#designTurnOptions(flow),
             pendingStart,
           )
@@ -1760,7 +1761,7 @@ export class Orchestrator {
     return {
       id: item.id,
       text: item.text,
-      attachments: item.attachments.filter((path) => path !== DESIGN_BRIEF_ATTACHMENT),
+      attachments: item.attachments.filter((path) => !isDesignBriefAttachment(path)),
       createdAt: item.createdAt,
     }
   }
@@ -2240,7 +2241,7 @@ export class Orchestrator {
 
     const runtime = this.#runtimeFor(stored.provider, this.#onLog)
     if (!runtime.resume) {
-      throw new Error(`${stored.provider} sessions cannot resume after Harness restarts yet`)
+      throw new Error(`${stored.provider} sessions cannot resume after TasteCode restarts yet`)
     }
     const workspacePath = stored.worktreePath ?? resolveWorkspacePath(stored.projectPath)
     const result = await runtime.resume(threadId, workspacePath, {
@@ -3001,7 +3002,7 @@ export class Orchestrator {
     // A raw JSON.parse message reads as gibberish in the transcript; name
     // what actually happened before quoting it.
     const message = /JSON|Unexpected token/i.test(detail)
-      ? `Design mode failed: the agent answered in prose instead of the structured report Harness expects. Running the design again usually recovers. (${detail})`
+      ? `Design mode failed: the agent answered in prose instead of the structured report TasteCode expects. Running the design again usually recovers. (${detail})`
       : `Design mode failed: ${detail}`
     this.#record(threadId, { type: 'thread.error', threadId, message })
     // Prompts typed during the flow queued behind the design guard; every

@@ -66,7 +66,7 @@ M2 proved the multi-engine architecture with Codex, Claude Code and ACP; it did 
 the complete v1 provider list. Provider completion runs alongside M4 and M5 without
 reopening the finished milestone:
 
-- one Harness-owned direct API runtime for OpenAI, Anthropic, OpenRouter, Kimi, GLM / Z.ai
+- one TasteCode-owned direct API runtime for OpenAI, Anthropic, OpenRouter, Kimi, GLM / Z.ai
   and custom OpenAI-compatible endpoints,
 - native OpenCode and Cursor adapters, and
 - Kimi Code and GLM coding-plan support through ACP or captured structured CLI surfaces.

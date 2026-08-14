@@ -1,4 +1,9 @@
-export const DESIGN_BRIEF_ATTACHMENT = 'personal-harness://design-brief-v1'
+export const DESIGN_BRIEF_ATTACHMENT = 'tastecode://design-brief-v1'
+const LEGACY_DESIGN_BRIEF_ATTACHMENT = 'personal-harness://design-brief-v1'
+
+export function isDesignBriefAttachment(path: string): boolean {
+  return path === DESIGN_BRIEF_ATTACHMENT || path === LEGACY_DESIGN_BRIEF_ATTACHMENT
+}
 
 export const FINAL_BRIEFING_QUESTION = {
   id: 'final_note',
@@ -35,20 +40,20 @@ const PROTOCOL = `Return JSON only, without Markdown fences, using exactly one o
 {"status":"not_design","message":"This request is not a website or interface design task.","questions":[],"brief":null}`
 
 export function designBriefingPrompt(request: string): string {
-  return `You are running Personal Harness Design Briefing mode.
+  return `You are running TasteCode Design Briefing mode.
 
 This is a fast text-only classification and extraction step. Answer immediately from the supplied request. Do not inspect the workspace, call tools, browse, invoke skills or MCP servers, or describe your reasoning.
 
-This turn may only advance a design brief. Do not build, scaffold, edit, or generate a website, brand system, asset set, component, or implementation. Personal Harness owns the question UI and persists the final brief.
+This turn may only advance a design brief. Do not build, scaffold, edit, or generate a website, brand system, asset set, component, or implementation. TasteCode owns the question UI and persists the final brief.
 
 First decide whether the request is primarily about designing or redesigning a website, web page, landing page, portfolio, or product interface. The user already selected Design mode, so terse visual intent such as "Make it pop" is an incomplete design request: ask what surface and outcome they mean instead of returning "not_design". Return "not_design" only when the request is clearly unrelated to website or interface design.
 
 For a valid design request:
 1. Infer everything reasonably supported before asking anything.
 2. Complete subject, page type, scope, primary goal, audience, offer or USP, primary action, required content, constraints, existing brand inputs, and desired creative control. Brand inputs and constraints may be empty; do not force font, color, or visual choices that the later Brand skill should make.
-3. If material information is missing, return every currently useful question in the "questions" response. If requirements conflict, ask the smallest question that resolves the contradiction; never silently choose one side or return "complete". There is no total question limit, but ask only questions whose answer materially changes the result — a simple request deserves a handful of questions, not a survey. Personal Harness presents them one at a time.
+3. If material information is missing, return every currently useful question in the "questions" response. If requirements conflict, ask the smallest question that resolves the contradiction; never silently choose one side or return "complete". There is no total question limit, but ask only questions whose answer materially changes the result — a simple request deserves a handful of questions, not a survey. TasteCode presents them one at a time.
 4. Options must fit the question: a yes/no question gets exactly two, most questions two to four real choices, listed with the strongest default first. Add "Decide for me" only when a safe assumption exists. Never add an option that means the user will type the answer themselves — the UI always shows a free-text field, so such an option is a duplicate. Never suffix a label with "(Recommended)" or similar tags. Never ask for information already present or reasonably inferable.
-5. Do not include the final open-ended check yourself. Personal Harness guarantees that after all material questions are resolved.
+5. Do not include the final open-ended check yourself. TasteCode guarantees that after all material questions are resolved.
 6. Return "complete" only when every core field is specific enough for the later Brand and Page Blueprint steps. Record explicit answers, reasoned assumptions, and only non-blocking unresolved details.
 
 ${PROTOCOL}
@@ -64,7 +69,7 @@ export function designBriefingContinuation(
   questions: BriefingQuestion[],
   answers: Record<string, string[]>,
 ): string {
-  return `Continue the Personal Harness Design Briefing using the answers below.
+  return `Continue the TasteCode Design Briefing using the answers below.
 
 Answer immediately from the supplied answers only. Do not inspect the workspace, call tools, browse, invoke skills or MCP servers, or describe your reasoning.
 

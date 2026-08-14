@@ -20,12 +20,12 @@ describe('preview plan', () => {
     expect(prompt).toContain('Preview Setup phase')
     expect(prompt).toContain('127.0.0.1')
     expect(prompt).toContain('Do not install dependencies')
-    expect(prompt).toContain('Harness serves static projects itself')
+    expect(prompt).toContain('TasteCode serves static projects itself')
     expect(prompt).not.toContain('write one small static file server')
     expect(parsePreviewPhaseOutput(JSON.stringify(plan))).toMatchObject({ command: 'pnpm' })
   })
 
-  it('normalizes a Harness-owned static preview plan', () => {
+  it('normalizes a TasteCode-owned static preview plan', () => {
     expect(
       parsePreviewPlan({
         version: 1,

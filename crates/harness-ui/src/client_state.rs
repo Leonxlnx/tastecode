@@ -4867,7 +4867,7 @@ mod tests {
             result: json!({
                 "projects": [{
                     "path": "/workspace",
-                    "name": "Harness",
+                    "name": "TasteCode",
                     "pinned": true,
                     "createdAt": 1,
                     "sessions": []
@@ -4876,7 +4876,7 @@ mod tests {
         });
         assert!(update.shell_changed);
         assert!(state.projects_loaded);
-        assert_eq!(state.projects[0].name, "Harness");
+        assert_eq!(state.projects[0].name, "TasteCode");
     }
 
     #[test]
@@ -4885,7 +4885,7 @@ mod tests {
         state.projects = vec![
             ProjectSummary {
                 path: "/workspace".into(),
-                name: "Harness".into(),
+                name: "TasteCode".into(),
                 pinned: false,
                 created_at: 1.0,
                 sessions: vec![
@@ -4926,7 +4926,7 @@ mod tests {
             result: json!({
                 "results": [{
                     "projectPath": "/workspace",
-                    "projectName": "Harness",
+                    "projectName": "TasteCode",
                     "threadId": "thread-1",
                     "threadTitle": "Queue controls",
                     "turnId": "turn-2",
@@ -4958,7 +4958,7 @@ mod tests {
         state.projects = serde_json::from_value::<ProjectsListResult>(json!({
             "projects": [{
                 "path": "/workspace",
-                "name": "Harness",
+                "name": "TasteCode",
                 "pinned": false,
                 "createdAt": 1,
                 "sessions": [{
@@ -5101,7 +5101,7 @@ mod tests {
         state.projects = serde_json::from_value::<ProjectsListResult>(json!({
             "projects": [{
                 "path": "/workspace",
-                "name": "Harness",
+                "name": "TasteCode",
                 "pinned": false,
                 "createdAt": 1,
                 "sessions": [{
@@ -5531,7 +5531,7 @@ mod tests {
         let mut state = ClientState::new(true);
         state.projects.push(ProjectSummary {
             path: "/workspace".into(),
-            name: "Harness".into(),
+            name: "TasteCode".into(),
             pinned: false,
             created_at: 1.0,
             sessions: vec![provisional_session("pending:native-start")],
@@ -5565,7 +5565,7 @@ mod tests {
         let mut state = ClientState::new(true);
         state.projects.push(ProjectSummary {
             path: "/workspace".into(),
-            name: "Harness".into(),
+            name: "TasteCode".into(),
             pinned: false,
             created_at: 1.0,
             sessions: vec![provisional_session("pending:native-start")],
@@ -5600,7 +5600,7 @@ mod tests {
         let mut state = ClientState::new(true);
         state.projects.push(ProjectSummary {
             path: "/workspace".into(),
-            name: "Harness".into(),
+            name: "TasteCode".into(),
             pinned: false,
             created_at: 1.0,
             sessions: Vec::new(),

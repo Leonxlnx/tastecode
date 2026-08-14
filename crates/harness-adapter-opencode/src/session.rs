@@ -700,7 +700,7 @@ mod tests {
         let (thread, session) = runtime.start(workspace, &options, handlers).unwrap();
         assert_eq!(thread.id, "opencode-session-1");
         assert_eq!(thread.provider, ProviderId::OpenCode);
-        assert_eq!(thread.title.as_deref(), Some("Harness session"));
+        assert_eq!(thread.title.as_deref(), Some("TasteCode session"));
 
         let turn_id = session
             .send_turn(
@@ -735,7 +735,7 @@ mod tests {
             create.headers.get("x-opencode-directory"),
             Some(&encoded_workspace)
         );
-        assert_eq!(create.body, Some(json!({ "title": "Personal Harness" })));
+        assert_eq!(create.body, Some(json!({ "title": "TasteCode" })));
 
         let captured: Vec<Value> =
             serde_json::from_str(include_str!("fixtures/events.json")).unwrap();

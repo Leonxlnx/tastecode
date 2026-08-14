@@ -380,7 +380,7 @@ describe('thread reducer', () => {
       {
         type: 'thread.error',
         threadId: 'th1',
-        message: 'Turn interrupted: Personal Harness restarted. Send a new message to continue.',
+        message: 'Turn interrupted: TasteCode restarted. Send a new message to continue.',
       },
     ])
 
@@ -391,7 +391,7 @@ describe('thread reducer', () => {
       expect.objectContaining({
         type: 'error',
         status: 'completed',
-        text: 'Turn interrupted: Personal Harness restarted. Send a new message to continue.',
+        text: 'Turn interrupted: TasteCode restarted. Send a new message to continue.',
       }),
     ])
   })

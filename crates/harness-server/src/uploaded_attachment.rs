@@ -35,9 +35,7 @@ pub(crate) fn materialize_attachment(
         return Err(UploadedAttachmentError::TooLarge);
     }
 
-    let default_directory = std::env::temp_dir()
-        .join("Personal Harness")
-        .join("attachments");
+    let default_directory = std::env::temp_dir().join("TasteCode").join("attachments");
     let directory = directory.unwrap_or(&default_directory);
     fs::create_dir_all(directory)?;
     set_private_directory_permissions(directory)?;

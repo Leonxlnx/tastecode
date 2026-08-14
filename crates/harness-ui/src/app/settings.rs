@@ -664,7 +664,7 @@ impl HarnessApp {
         }
         if providers.is_empty() {
             providers.push(settings_empty_row(
-                "Provider discovery is waiting for the local Harness server.",
+                "Provider discovery is waiting for the local TasteCode server.",
                 theme,
             ));
         }
@@ -2776,7 +2776,7 @@ impl HarnessApp {
             });
         });
         let source: SettingsAction = Rc::new(|cx| {
-            cx.open_url("https://github.com/Leonxlnx/personalharness");
+            cx.open_url("https://github.com/Leonxlnx/tastecode");
         });
         let update_controls = div()
             .flex()
@@ -2814,7 +2814,7 @@ impl HarnessApp {
                 vec![
                     settings_row(
                         0,
-                        "Personal Harness",
+                        "TasteCode",
                         "",
                         settings_status(product_note, false, theme),
                         theme,

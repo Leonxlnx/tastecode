@@ -1,12 +1,12 @@
 # Credits
 
-Personal Harness is built by [Leonxlnx](https://github.com/Leonxlnx) and
+TasteCode is built by [Leonxlnx](https://github.com/Leonxlnx) and
 [Blueemi](https://github.com/Blueemi).
 
 ## Product and interaction references
 
-These projects informed product research or specific interaction decisions. Personal
-Harness is not a fork of them.
+These projects informed product research or specific interaction decisions. TasteCode is
+not a fork of them.
 
 - [OpenAI Codex](https://github.com/openai/codex) — the `Thread -> Turn -> Item` domain
   model and the app-server integration surface. Types under

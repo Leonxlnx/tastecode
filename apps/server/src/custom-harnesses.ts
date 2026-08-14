@@ -1,15 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { CustomHarnessSchema, type CustomHarness } from '@harness/contracts'
+import { configFile } from './product-paths.js'
 
 type ConfigFile = { version: 1; harnesses: CustomHarness[] }
 const EMPTY_CONFIG: ConfigFile = { version: 1, harnesses: [] }
 
 function defaultLocation(): string {
-  const root = process.env['HARNESS_CONFIG_DIR'] ?? path.join(os.homedir(), '.personalharness')
-  return path.join(root, 'custom-harnesses.json')
+  return configFile('custom-harnesses.json')
 }
 
 function parseConfig(raw: string): ConfigFile {

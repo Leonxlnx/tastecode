@@ -359,7 +359,7 @@ fn event_history_is_ordered_thread_scoped_and_resumable() {
 #[test]
 fn search_indexes_useful_output_filters_and_plain_text_highlights() {
     let mut store = Store::memory().unwrap();
-    store.add_project("/repo", Some("Harness")).unwrap();
+    store.add_project("/repo", Some("TasteCode")).unwrap();
     store
         .add_thread(thread("t1", "/repo", ProviderId::Codex))
         .unwrap();
@@ -432,7 +432,7 @@ fn search_indexes_useful_output_filters_and_plain_text_highlights() {
 #[test]
 fn search_filters_and_cursor_pagination_do_not_repeat_results() {
     let mut store = Store::memory().unwrap();
-    store.add_project("/repo", Some("Harness")).unwrap();
+    store.add_project("/repo", Some("TasteCode")).unwrap();
     store.add_project("/other", Some("Other")).unwrap();
     store
         .add_thread(thread("t1", "/repo", ProviderId::Codex))

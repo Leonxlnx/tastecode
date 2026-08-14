@@ -132,7 +132,7 @@ async function requestChatGptTranscription(
   token: string,
   signal?: AbortSignal,
 ): Promise<VoiceHttpResponse> {
-  const boundary = `Harness-${randomUUID()}`
+  const boundary = `TasteCode-${randomUUID()}`
   const body = Buffer.concat([
     Buffer.from(
       `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="voice.wav"\r\nContent-Type: audio/wav\r\n\r\n`,
@@ -162,7 +162,7 @@ async function requestChatGptTranscription(
           'Content-Type': `multipart/form-data; boundary=${boundary}`,
           'Content-Length': String(body.byteLength),
           'Accept-Encoding': 'identity',
-          'User-Agent': 'Personal Harness',
+          'User-Agent': 'TasteCode',
         },
         signal: requestSignal,
       },

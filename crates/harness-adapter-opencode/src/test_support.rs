@@ -202,7 +202,7 @@ fn handle_connection(mut stream: TcpStream, inner: &Arc<MockInner>) {
                 "id": "session-1",
                 "projectID": "project-1",
                 "directory": "C:\\repo",
-                "title": "Harness session",
+                "title": "TasteCode session",
                 "version": "1.18.11",
                 "time": { "created": 100, "updated": 100 }
             }),

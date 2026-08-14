@@ -26,14 +26,14 @@ export function designBuildPrompt(
   assets: AssetManifest,
 ): string {
   const exactFiles = exactBuildFiles(brief)
-  return `You are running the Build phase of Personal Harness Design Mode.
+  return `You are running the Build phase of TasteCode Design Mode.
 
 Implement the supplied artifacts in the current workspace. First inspect the real project entry points, architecture, scripts, styles, dependencies, and existing user changes. Reuse them. Do not scaffold a second app or replace the project's framework, package manager, design system, or build pipeline.
 
 Treat brief facts and constraints as requirements, brand.json as the design system, page.json as the content and composition plan, and assets.json as the provenance ledger. A needed asset may be implemented locally when appropriate, but never pretend it was sourced. Preserve unrelated work. Use small, coherent edits and accessible native elements. Run the project's relevant typecheck, tests, lint, and build; repair failures caused by this implementation.
 
-Use available implementation and motion skills when the session exposes them, without assuming a provider, model, skill name, or private API. Do not start a long-running preview server in this phase; Personal Harness owns Preview next.
-${exactFiles ? `\nThe brief's deliverable boundary is exactly ${list(exactFiles)}. Personal Harness validates the workspace before Preview; do not add helper or configuration files.` : ''}
+Use available implementation and motion skills when the session exposes them, without assuming a provider, model, skill name, or private API. Do not start a long-running preview server in this phase; TasteCode owns Preview next.
+${exactFiles ? `\nThe brief's deliverable boundary is exactly ${list(exactFiles)}. TasteCode validates the workspace before Preview; do not add helper or configuration files.` : ''}
 
 ${BUILD_PROTOCOL}
 

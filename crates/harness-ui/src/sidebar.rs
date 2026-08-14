@@ -3831,7 +3831,7 @@ mod tests {
     fn inbox_keyboard_order_spans_active_snoozed_and_settled_rows() {
         let project = ProjectSummary {
             path: "/work/harness".into(),
-            name: "Harness".into(),
+            name: "TasteCode".into(),
             pinned: false,
             created_at: 0.0,
             sessions: vec![

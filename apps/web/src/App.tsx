@@ -2298,7 +2298,7 @@ export function App() {
         restoreDraft()
         return
       }
-      // Design briefing questions are Harness-owned and answered by the server,
+      // Design briefing questions are TasteCode-owned and answered by the server,
       // so they work for every provider that can complete a text turn — no
       // structured-input capability gate here (that gates provider-originated
       // input only).

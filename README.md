@@ -1,6 +1,8 @@
-# Personal Harness
+<img src="apps/desktop/assets/tastecode-icon.png" alt="TasteCode" width="96" />
 
-> Working title. A beautiful, adaptive control panel for AI coding agents.
+# TasteCode
+
+> A beautiful, adaptive control panel for AI coding agents.
 > Windows-first, cross-platform, built around a design agent with real taste.
 
 **Status: M0 complete.** Runs, drives a real Codex session, and is nowhere near finished.
@@ -14,7 +16,7 @@ Every good agent client is locked to one vendor. The Claude app runs Claude, the
 runs Codex, Cursor runs Cursor — and none of them will ever run the others. The moment you
 use two, you are back to three windows with three histories and nothing shared.
 
-Personal Harness is the layer above them. One window. Every agent. Every subscription you
+TasteCode is the layer above them. One window. Every agent. Every subscription you
 already pay for, plus your own API keys. Threads that stay instant at 500 messages. Diffs
 you actually want to read. And a design agent that produces work you would ship.
 
@@ -78,6 +80,8 @@ Read these before your first commit.
 
 Two people. One Windows developer, one macOS developer. Every decision assumes both
 platforms are first-class and that nobody has to leave their OS to review a change.
+
+Questions and beta feedback: [hello@tasteskill.dev](mailto:hello@tasteskill.dev).
 
 ## License
 

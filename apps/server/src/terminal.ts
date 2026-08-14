@@ -279,6 +279,6 @@ export function terminalEnvironment(
     ...environment,
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
-    TERM_PROGRAM: 'Harness',
+    TERM_PROGRAM: 'TasteCode',
   }
 }

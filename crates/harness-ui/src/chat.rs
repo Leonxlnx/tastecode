@@ -9244,9 +9244,7 @@ fn materialize_pasted_image(image: &Image) -> anyhow::Result<PathBuf> {
     if image.bytes().is_empty() || image.bytes().len() > MAX_PASTED_IMAGE_BYTES {
         anyhow::bail!("pasted image is empty or too large");
     }
-    let directory = std::env::temp_dir()
-        .join("Personal Harness")
-        .join("pasted-images");
+    let directory = std::env::temp_dir().join("TasteCode").join("pasted-images");
     std::fs::create_dir_all(&directory)?;
     #[cfg(unix)]
     {
@@ -9582,7 +9580,7 @@ mod tests {
             thread_id: None,
             title: "New chat".into(),
             project_path: "/work/harness".into(),
-            project_name: "Harness".into(),
+            project_name: "TasteCode".into(),
             provider: None,
         };
         assert!(is_new_session(Some(&session)));
@@ -9600,8 +9598,8 @@ mod tests {
             Some("What should we build in a project?")
         );
         assert_eq!(
-            new_session_prompt_label(true, false, Some("Harness")).as_deref(),
-            Some("What should we build in Harness?")
+            new_session_prompt_label(true, false, Some("TasteCode")).as_deref(),
+            Some("What should we build in TasteCode?")
         );
     }
 

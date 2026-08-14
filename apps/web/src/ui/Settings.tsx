@@ -1500,8 +1500,8 @@ function ResetConfirmation(props: { onCancel: () => void; onConfirm: () => void 
         <section className="sheet__section">
           <p className="checkout-discard__copy" id={descriptionId}>
             This clears renderer-local preferences, including appearance, model choices, hidden
-            models, layout, and recent UI selections, then reloads Personal Harness. Projects,
-            workspaces, files, chat history, and provider credentials are not deleted.
+            models, layout, and recent UI selections, then reloads TasteCode. Projects, workspaces,
+            files, chat history, and provider credentials are not deleted.
           </p>
           <div className="checkout-discard__actions">
             <button className="ghost" type="button" data-reset-cancel onClick={props.onCancel}>
@@ -1594,7 +1594,7 @@ function AboutSettings(props: { transport: Transport }) {
 
   return (
     <SettingsPanel title="About">
-      <SettingsRow title="Personal Harness">
+      <SettingsRow title="TasteCode">
         <SettingsMeta>
           {`${isDesktop ? 'Desktop' : 'Browser'} · pre-release${result?.localCommit ? ` · ${short(result.localCommit)}` : ''}`}
         </SettingsMeta>
@@ -1620,11 +1620,7 @@ function AboutSettings(props: { transport: Transport }) {
           className="settings__action"
           type="button"
           onClick={() =>
-            window.open(
-              'https://github.com/Leonxlnx/personalharness',
-              '_blank',
-              'noopener,noreferrer',
-            )
+            window.open('https://github.com/Leonxlnx/tastecode', '_blank', 'noopener,noreferrer')
           }
         >
           GitHub

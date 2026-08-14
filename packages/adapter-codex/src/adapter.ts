@@ -75,11 +75,11 @@ import {
  * any other credential. The binary authenticates itself. See rules/security.md.
  */
 
-const CLIENT_NAME = 'personal-harness'
+const CLIENT_NAME = 'tastecode'
 const CONTROL_READ_TIMEOUT_MS = 10_000
 const THREAD_START_TIMEOUT_MS = 30_000
 
-/** Provider state Harness either does not expose or already derives from shared events. */
+/** Provider state TasteCode either does not expose or already derives from shared events. */
 export function isIgnorableCodexNotification(method: string): boolean {
   return method === 'remoteControl/status/changed' || method === 'thread/status/changed'
 }
@@ -541,7 +541,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     try {
       await rpc.request(
         'initialize',
-        { clientInfo: { name: CLIENT_NAME, title: 'Personal Harness', version: '0.0.0' } },
+        { clientInfo: { name: CLIENT_NAME, title: 'TasteCode', version: '0.0.0' } },
         { timeoutMs: CONTROL_READ_TIMEOUT_MS },
       )
     } catch (error) {

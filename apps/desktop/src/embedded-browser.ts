@@ -71,7 +71,7 @@ export function isBrowserGuestUrl(value: unknown, allowBlank = false): value is 
 export function browserUserAgent(value: string): string {
   return value
     .replace(/\sElectron\/[\w.-]+/gi, '')
-    .replace(/\s(?:PersonalHarness|@harness\/desktop)\/[\w.-]+/gi, '')
+    .replace(/\s(?:TasteCode|PersonalHarness|@harness\/desktop)\/[\w.-]+/gi, '')
     .replace(/\s{2,}/g, ' ')
     .trim()
 }

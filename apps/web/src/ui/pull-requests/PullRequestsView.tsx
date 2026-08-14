@@ -233,7 +233,7 @@ export function PullRequestsView(props: {
               title={result?.account.available ? 'Connect GitHub' : 'Install GitHub CLI'}
               detail={
                 result?.account.error ??
-                'Harness uses your local GitHub CLI session and never reads its token.'
+                'TasteCode uses your local GitHub CLI session and never reads its token.'
               }
               action="Open setup guide"
               href="https://cli.github.com/manual/gh_auth_login"

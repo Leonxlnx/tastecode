@@ -17,7 +17,7 @@ pub fn reclaim(address: SocketAddr) -> anyhow::Result<()> {
     let current_pid = std::process::id();
     for pid in pids {
         if pid == current_pid {
-            bail!("the current Harness process already owns {address}");
+            bail!("the current TasteCode process already owns {address}");
         }
         kill(pid)
             .with_context(|| format!("failed to stop process {pid} listening on {address}"))?;
@@ -40,7 +40,7 @@ fn listening_processes(address: SocketAddr) -> anyhow::Result<Vec<u32>> {
     let output = Command::new("lsof")
         .args(["-nP", "-t", "-a", &format!("-i{endpoint}"), "-sTCP:LISTEN"])
         .output()
-        .context("failed to inspect the occupied Harness address with lsof")?;
+        .context("failed to inspect the occupied TasteCode address with lsof")?;
     if !output.status.success() && output.stdout.is_empty() {
         return Ok(Vec::new());
     }
@@ -57,7 +57,7 @@ fn listening_processes(address: SocketAddr) -> anyhow::Result<Vec<u32>> {
     let output = Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", &command])
         .output()
-        .context("failed to inspect the occupied Harness address with PowerShell")?;
+        .context("failed to inspect the occupied TasteCode address with PowerShell")?;
     if !output.status.success() && output.stdout.is_empty() {
         return Ok(Vec::new());
     }

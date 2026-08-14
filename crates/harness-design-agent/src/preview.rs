@@ -31,11 +31,11 @@ const PREVIEW_PROTOCOL: &str = r#"Return the preview plan as JSON only, without 
 
 pub fn design_preview_prompt() -> String {
     format!(
-        r#"You are running the Preview Setup phase of Personal Harness Design Mode.
+        r#"You are running the Preview Setup phase of TasteCode Design Mode.
 
 Inspect the implemented project's real package scripts and configuration. Choose the existing development or preview command that serves the built page on 127.0.0.1 with an explicit port. Do not install dependencies, edit files, start the server, use a shell string, or choose a remote URL. The command is an executable name and args is its argv array. cwd is relative to the current workspace.
 
-Include one representative desktop viewport and one representative mobile viewport. Use readyPattern only when the command has a stable output fragment that indicates readiness. Personal Harness will validate and execute this plan.
+Include one representative desktop viewport and one representative mobile viewport. Use readyPattern only when the command has a stable output fragment that indicates readiness. TasteCode will validate and execute this plan.
 
 {PREVIEW_PROTOCOL}"#
     )

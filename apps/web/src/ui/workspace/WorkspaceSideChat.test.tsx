@@ -40,7 +40,7 @@ describe('WorkspaceSideChat', () => {
         active
         parentThreadId="main-1"
         parentStatus="working"
-        projectName="Harness"
+        projectName="TasteCode"
         transport={transport}
         startOptions={{ model: 'model-1', effort: 'high', approval: 'ask' }}
         promptRequest={{

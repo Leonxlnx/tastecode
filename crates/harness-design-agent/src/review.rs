@@ -71,7 +71,7 @@ pub fn design_review_prompt(
     let page = compact(page);
     let screenshots = compact(screenshots);
     format!(
-        r#"You are running the visual Review phase of Personal Harness Design Mode.
+        r#"You are running the visual Review phase of TasteCode Design Mode.
 
 Inspect every supplied screenshot with image-viewing tools. Compare visible evidence against the brief, brand system, page blueprint, responsive intent, and acceptance criteria. Review hierarchy, composition, spacing, typography, color roles, imagery, content fit, interaction affordance, responsive behavior, overflow, clipping, and obvious accessibility failures.
 
@@ -111,7 +111,7 @@ pub fn design_repair_prompt(review: &VisualReview, attempt: u32, limit: u32) -> 
     }
     let review = compact(review);
     Ok(format!(
-        r#"You are running repair attempt {attempt} of {limit} in Personal Harness Design Mode.
+        r#"You are running repair attempt {attempt} of {limit} in TasteCode Design Mode.
 
 Fix only the validated visual findings below. Inspect the existing implementation, preserve the approved artifacts and unrelated user work, and prefer the smallest shared correction that resolves each root cause across viewports. Run relevant local checks. Do not start a preview server or expand the design direction.
 

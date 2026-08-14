@@ -14,7 +14,7 @@ pub(crate) fn set_factor(factor: f32) {
 
 /// Converts a design pixel into a GPUI logical pixel at the current app zoom.
 ///
-/// GPUI's built-in rem size only scales rem-based component defaults. Harness
+/// GPUI's built-in rem size only scales rem-based component defaults. TasteCode
 /// deliberately uses exact pixel values from the web oracle, so those values
 /// pass through this function to keep layout, text, hitboxes, and effects on
 /// the same zoom factor without adding a transformed compositor layer.

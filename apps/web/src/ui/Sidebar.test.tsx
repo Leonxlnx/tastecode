@@ -230,7 +230,7 @@ describe('Sidebar chat actions', () => {
         projects={[
           {
             path: '/work/harness',
-            name: 'Harness',
+            name: 'TasteCode',
             sessions: [session('thread-1', 'Polish the sidebar')],
           },
         ]}
@@ -286,7 +286,7 @@ describe('Sidebar chat actions', () => {
         projects={[
           {
             path: '/work/harness',
-            name: 'Harness',
+            name: 'TasteCode',
             sessions: [session('thread-1', 'First chat'), session('thread-2', 'Second chat')],
           },
         ]}
@@ -313,10 +313,10 @@ describe('Sidebar chat actions', () => {
       />,
     )
 
-    fireEvent.doubleClick(screen.getByRole('button', { name: 'Harness' }))
-    expect(screen.queryByDisplayValue('Harness')).toBeNull()
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'TasteCode' }))
+    expect(screen.queryByDisplayValue('TasteCode')).toBeNull()
 
-    fireEvent.contextMenu(screen.getByRole('button', { name: 'Harness' }))
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'TasteCode' }))
     const pinItem = screen.getByRole('menuitem', { name: 'Pin to top' })
     const editItem = screen.getByRole('menuitem', { name: 'Edit name' })
     const archiveItem = screen.getByRole('menuitem', { name: 'Archive chats' })
@@ -355,7 +355,7 @@ describe('Sidebar chat actions', () => {
         projects={[
           {
             path: '/work/harness',
-            name: 'Harness',
+            name: 'TasteCode',
             sessions: [pinned, session('thread-2', 'Regular chat')],
           },
         ]}
@@ -396,7 +396,7 @@ describe('Sidebar chat actions', () => {
         projects={[
           {
             path: '/work/harness',
-            name: 'Harness',
+            name: 'TasteCode',
             sessions: Array.from({ length: 7 }, (_, index) =>
               session(`thread-${index + 1}`, `Chat ${index + 1}`),
             ),
@@ -434,8 +434,8 @@ describe('Sidebar chat actions', () => {
     expect(screen.queryByRole('button', { name: 'Chat 6, Codex' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Harness' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Harness' }))
+    fireEvent.click(screen.getByRole('button', { name: 'TasteCode' }))
+    fireEvent.click(screen.getByRole('button', { name: 'TasteCode' }))
     expect(screen.queryByRole('button', { name: 'Chat 6, Codex' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
   })
@@ -486,7 +486,7 @@ describe('Sidebar chat actions', () => {
         projects={[
           {
             path: '/work/harness',
-            name: 'Harness',
+            name: 'TasteCode',
             sessions: [session('thread-1', 'First chat'), session('thread-2', 'Second chat')],
           },
         ]}

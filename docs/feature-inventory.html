@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Personal Harness Feature Inventory</title>
+    <title>TasteCode Feature Inventory</title>
     <style>
       :root {
         --bg: #0e0e0e;
@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-14 nightly · main 0d68713c</span>
+        <span class="meta">2026-08-15 nightly · main 8a087391</span>
       </div>
     </div>
 
@@ -545,7 +545,7 @@
         </ul>
 
         <h3>
-          Direct API connections (Harness-owned agent loop)
+          Direct API connections (TasteCode-owned agent loop)
           <span class="pill-parked">parked for the beta</span>
         </h3>
         <ul class="check">
@@ -838,7 +838,7 @@
                   turn; retired approval warnings are omitted from new and saved transcripts;
                   recoverable preview startup retries once; package-manager selectors cannot escape
                   the selected workspace; exact-file build reports are checked against the bounded
-                  before-and-after tree; Harness-owned static previews reject occupied ports and
+                  before-and-after tree; TasteCode-owned static previews reject occupied ports and
                   clean up child trees; rendered Chromium audits require exactly one h1 and at least
                   44 by 44 CSS-pixel mobile interaction targets, and model review cannot erase those
                   findings; capture opens or reuses one dedicated Browser tab and same-URL repair
@@ -1553,7 +1553,8 @@
                 >Data: project count and confirmed renderer-preference reset
                 <span class="d"
                   >roomier action layout also applies to Debug; projects, workspaces, files,
-                  history, and provider credentials remain untouched;
+                  history, and provider credentials remain untouched; upgrades move legacy history
+                  and config into TasteCode paths without overwriting existing TasteCode data;
                   <a href="./screenshots/reset-preferences-confirm.png"
                     >production evidence</a
                   ></span
@@ -1564,7 +1565,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >About: version, update check with inline status</span
+                >About: version and inline update status from the
+                <code>Leonxlnx/tastecode</code> release feed</span
               ></label
             >
           </li>
@@ -1635,7 +1637,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Windows title bar via the real Window Controls Overlay</span
+                >Windows title bar via the real Window Controls Overlay
+                <span class="d"
+                  >TasteCode icon in the window, taskbar, tray, macOS Dock, package, and
+                  README</span
+                ></span
               ></label
             >
           </li>

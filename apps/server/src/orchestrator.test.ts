@@ -566,7 +566,7 @@ describe('durable turn timing', () => {
       session.emit({ type: 'turn.completed', turnId: 'queued', status: 'completed' })
 
       now.mockReturnValue(11_000)
-      await orchestrator.sendTurn(thread.id, 'Design', [DESIGN_BRIEF_ATTACHMENT])
+      await orchestrator.sendTurn(thread.id, 'Design', ['personal-harness://design-brief-v1'])
       now.mockReturnValue(13_000)
       session.emit({
         type: 'turn.started',
@@ -1262,7 +1262,7 @@ describe('provider-neutral design briefing', () => {
           effort: 'xhigh',
         })
 
-        expect(sessions[0]?.sent[0]).toContain('Personal Harness Design Briefing mode')
+        expect(sessions[0]?.sent[0]).toContain('TasteCode Design Briefing mode')
         sessions[0]?.emit(
           message(
             JSON.stringify({
@@ -2451,7 +2451,7 @@ describe('persisted threads', () => {
     const { orchestrator } = harness(undefined, store)
 
     await expect(orchestrator.submitTurn('claude-thread', 'continue')).rejects.toThrow(
-      'claude-code sessions cannot resume after Harness restarts yet',
+      'claude-code sessions cannot resume after TasteCode restarts yet',
     )
   })
 })

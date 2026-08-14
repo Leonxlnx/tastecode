@@ -165,7 +165,7 @@ fn request_chatgpt_transcription(
     token: &str,
     cancellation: &CancellationToken,
 ) -> Result<VoiceHttpResponse, VoiceError> {
-    let boundary = format!("Harness-{}", Uuid::new_v4());
+    let boundary = format!("TasteCode-{}", Uuid::new_v4());
     let mut body = Vec::with_capacity(audio.len() + 256);
     body.extend_from_slice(
         format!(
@@ -193,7 +193,7 @@ fn request_chatgpt_transcription(
                     format!("multipart/form-data; boundary={boundary}"),
                 )
                 .header(reqwest::header::ACCEPT_ENCODING, "identity")
-                .header(reqwest::header::USER_AGENT, "Personal Harness");
+                .header(reqwest::header::USER_AGENT, "TasteCode");
             if let Some(account_id) = chatgpt_account_id(token) {
                 request = request.header("ChatGPT-Account-ID", account_id);
             }

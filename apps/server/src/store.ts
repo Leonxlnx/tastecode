@@ -130,7 +130,7 @@ type InterruptedThreadState = {
 }
 
 const RESTART_INTERRUPTION_MESSAGE =
-  'Turn interrupted: Personal Harness restarted. Send a new message to continue.'
+  'Turn interrupted: TasteCode restarted. Send a new message to continue.'
 
 const SNIPPET_START = '\u0001'
 const SNIPPET_END = '\u0002'

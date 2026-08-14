@@ -26,7 +26,7 @@ Edit / View / Help menu bar (#306). A real GitHub update check that also works f
 private repo, falling back to `git ls-remote` with the user's own credentials (#307–#309).
 Guided sign-in: the harness runs the provider CLI in a pty, reads the OAuth URL out of
 its output and opens it, leaving the terminal as a fallback (#310). Chat export as
-Markdown and a shortcuts dialog (#312). Harness-managed MCP servers reaching real
+Markdown and a shortcuts dialog (#312). TasteCode-managed MCP servers reaching real
 OpenCode sessions (#313).
 
 **How the chat feels.** Word reveal ran with zero stagger, so every word that arrived in

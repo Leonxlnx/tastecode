@@ -94,6 +94,7 @@ export {
   designBriefingContinuation,
   designBriefingPrompt,
   designPhaseCorrectionPrompt,
+  isDesignBriefAttachment,
   parseBriefingOutput,
   type BriefingOutput,
   type BriefingQuestion,

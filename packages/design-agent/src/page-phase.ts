@@ -9,7 +9,7 @@ const PAGE_PROTOCOL = `Return the final page blueprint as JSON only, without Mar
 {"version":1,"page":{"title":"...","route":"/","description":"..."},"architecture":{"contract":"This page helps ...","mode":"scan_compare|read_understand|persuade_convert|explore_experience|operate_monitor","novelty":"low|medium|high","grid":"...","signatureRule":"...","rhythm":"..."},"navigation":[{"label":"...","target":"..."}],"navigationDesign":{"layout":"...","behavior":[],"transformation":{"compact":"...","medium":"...","expanded":"..."}},"sections":[{"id":"...","purpose":"...","userQuestion":"...","stage":"orient|qualify|evaluate|prove|explain|de_risk|act|continue","dependencies":[],"evidence":[],"copy":{"heading":"...","body":[],"callsToAction":[{"label":"...","target":"..."}]},"layout":"...","componentNeeds":[],"assetNeeds":[],"transformation":{"compact":"...","medium":"...","expanded":"..."}}],"responsive":[],"interactions":[],"acceptanceCriteria":[]}`
 
 export function designPagePrompt(brief: DesignBrief, brand: BrandSystem): string {
-  return `You are running the Page Blueprint phase of Personal Harness Design Mode.
+  return `You are running the Page Blueprint phase of TasteCode Design Mode.
 
 Turn the validated brief and brand system into one implementation-ready page plan. Begin with one page contract: who the page helps, what they must decide or accomplish, the business outcome, and the primary conversion. If that requires unrelated tasks joined by "and", keep only the brief's primary page job. Write the actual concise page copy and order sections by information dependencies rather than a remembered landing-page sequence.
 

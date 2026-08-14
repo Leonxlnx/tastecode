@@ -12,7 +12,7 @@ export function designAssetPrompt(
   brand: BrandSystem,
   page: PageBlueprint,
 ): string {
-  return `You are running the Asset phase of Personal Harness Design Mode.
+  return `You are running the Asset phase of TasteCode Design Mode.
 
 Resolve the page blueprint's asset and component needs into a compact manifest. Inspect the project first and reuse suitable existing files and dependencies. Keep IDs identical to the page blueprint. Mark a need as ready only when its source is real and its project destination is known; otherwise leave it needed with actionable requirements.
 

@@ -384,7 +384,7 @@ export function Thread(props: {
                 (liveActivity && !visibleLiveImageResult) ||
                 isRepeatedDesignRow(item, props.items, row.index) ||
                 // A design turn tells its story through the phase labels and
-                // Harness notes; the provider's raw commands, tool calls, and
+                // TasteCode notes; the provider's raw commands, tool calls, and
                 // thinking would drown that story in noise.
                 (presentation?.design === true &&
                   !compactedActivity &&

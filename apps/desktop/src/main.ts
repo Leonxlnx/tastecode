@@ -51,6 +51,7 @@ import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './z
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url))
+const productIconPath = path.join(here, '../assets/tastecode-icon.png')
 
 function isWebUrl(value: string): boolean {
   try {
@@ -78,8 +79,10 @@ const MAX_PASTED_IMAGE_BYTES = 25 * 1024 * 1024
 // intermittent all-black window. Verified over CDP: DOM complete, renderer
 // healthy, compositor off. The watchdog below covers whatever this misses.
 if (process.platform === 'win32') {
+  app.setAppUserModelId('dev.tastecode.desktop')
   app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 }
+app.setName('TasteCode')
 // Diagnostics for the field: software rendering and a DevTools port, both
 // opt-in via environment so a broken machine can be inspected.
 if (process.env['HARNESS_DISABLE_GPU'] === '1') app.disableHardwareAcceleration()
@@ -95,7 +98,7 @@ let serverSupervisor: ServerSupervisor | undefined
 const macOSHaptics = new MacOSHaptics()
 
 if (!ownsSingleInstance) {
-  console.error('[desktop] another Harness instance owns the single-instance lock')
+  console.error('[desktop] another TasteCode instance owns the single-instance lock')
   app.quit()
 }
 
@@ -121,7 +124,7 @@ function startOwnedServer(): void {
       if (mainWindow && !mainWindow.isDestroyed()) {
         void dialog.showMessageBox(mainWindow, {
           type: 'error',
-          title: 'Harness',
+          title: 'TasteCode',
           message: 'The core server keeps crashing.',
           detail: 'Restart the app. If this keeps happening, reinstall it.',
         })
@@ -139,6 +142,7 @@ function createWindow(): void {
 
   const initialTheme = windowThemeOptions('dark')
   const window = new BrowserWindow({
+    icon: productIconPath,
     width: 1180,
     height: 820,
     minWidth: 720,
@@ -269,22 +273,14 @@ function showMainWindow(): void {
 
 function createBackgroundTray(): void {
   if (process.platform === 'darwin' || tray) return
-  const svg = [
-    '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">',
-    '<rect width="32" height="32" rx="8" fill="#111113"/>',
-    '<path fill="#fff" d="M8 8h4v6h8V8h4v16h-4v-6h-8v6H8z"/>',
-    '</svg>',
-  ].join('')
-  const icon = nativeImage
-    .createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`)
-    .resize({ width: 20, height: 20 })
+  const icon = nativeImage.createFromPath(productIconPath).resize({ width: 20, height: 20 })
   tray = new Tray(icon)
-  tray.setToolTip('Harness')
+  tray.setToolTip('TasteCode')
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: 'Open Harness', click: showMainWindow },
+      { label: 'Open TasteCode', click: showMainWindow },
       { type: 'separator' },
-      { label: 'Quit Harness', click: () => app.quit() },
+      { label: 'Quit TasteCode', click: () => app.quit() },
     ]),
   )
   tray.on('click', showMainWindow)
@@ -352,7 +348,7 @@ function applyZoom(window: BrowserWindow, action: ZoomAction): void {
 async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCaptureResult> {
   const directory = path.join(
     app.getPath('temp'),
-    'Personal Harness',
+    'TasteCode',
     'preview-captures',
     request.requestId,
   )
@@ -452,7 +448,7 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
 /** Screenshot directories older than a day have no consumer left — the design
  *  flow reads them within seconds of the capture. */
 async function sweepStaleCaptures(): Promise<void> {
-  const root = path.join(app.getPath('temp'), 'Personal Harness', 'preview-captures')
+  const root = path.join(app.getPath('temp'), 'TasteCode', 'preview-captures')
   const dayAgo = Date.now() - 24 * 60 * 60 * 1000
   try {
     for (const entry of await readdir(root)) {
@@ -509,7 +505,7 @@ ipcMain.handle('harness:revealProjectFile', (event, value: unknown, projectRootV
 ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
   requireOwnRenderer(event.sender)
   const file = pastedFile(payload)
-  const directory = path.join(app.getPath('temp'), 'Personal Harness', 'pasted-files')
+  const directory = path.join(app.getPath('temp'), 'TasteCode', 'pasted-files')
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const destination = path.join(directory, `${randomUUID()}-${file.name}`)
   await writeFile(destination, file.bytes, { flag: 'wx', mode: 0o600 })
@@ -530,6 +526,7 @@ if (ownsSingleInstance) {
   })
 
   void app.whenReady().then(() => {
+    if (process.platform === 'darwin') app.dock?.setIcon(productIconPath)
     startOwnedServer()
     configureMediaPermissions()
     void sweepStaleCaptures()

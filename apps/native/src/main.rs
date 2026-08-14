@@ -18,7 +18,7 @@ fn main() -> anyhow::Result<()> {
 
     let config = ServerConfig::embedded_from_environment()?;
     let server =
-        start_embedded_server(config).context("failed to start the embedded Harness server")?;
+        start_embedded_server(config).context("failed to start the embedded TasteCode server")?;
     let endpoint = harness_ui::Endpoint::loopback(server.address().port());
     harness_ui::run_with_endpoint_and_shell(endpoint, shell_sender, shell_receiver)?;
     drop(server);

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "personal-harness",
+      "name": "tastecode",
       "devDependencies": {
         "@types/node": "^26.1.1",
         "prettier": "^3.9.6",

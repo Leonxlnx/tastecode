@@ -21,6 +21,7 @@ import { Orchestrator, resolveWorkspacePath } from './orchestrator.js'
 import { detectProviders, installCommandFor, launchCommandFor } from './providers.js'
 import { checkForUpdates } from './update-check.js'
 import { PushBus } from './push-bus.js'
+import { migrateProductFile } from './product-paths.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
 import { PullRequestService } from './pull-requests.js'
 import { DEFAULT_PORT } from './server-config.js'
@@ -44,7 +45,12 @@ export { DEFAULT_PORT } from './server-config.js'
  */
 function storeLocation(): string {
   const override = process.env['HARNESS_DATA_DIR']
-  if (override) return path.join(override, 'harness.db')
+  if (override) {
+    return migrateProductFile(
+      path.join(override, 'tastecode.db'),
+      path.join(override, 'harness.db'),
+    )
+  }
 
   const home = os.homedir()
   const base =
@@ -54,7 +60,10 @@ function storeLocation(): string {
         ? path.join(home, 'Library', 'Application Support')
         : (process.env['XDG_DATA_HOME'] ?? path.join(home, '.local', 'share'))
 
-  return path.join(base, 'PersonalHarness', 'harness.db')
+  return migrateProductFile(
+    path.join(base, 'TasteCode', 'tastecode.db'),
+    path.join(base, 'PersonalHarness', 'harness.db'),
+  )
 }
 
 /**
@@ -86,7 +95,7 @@ export function startServer(
   wss.on('error', (error: NodeJS.ErrnoException) => {
     if (error.code === 'EADDRINUSE') {
       console.error(
-        `[server] port ${port} is already in use — another Personal Harness server is ` +
+        `[server] port ${port} is already in use — another TasteCode server is ` +
           `probably still running. Stop it, or set HARNESS_PORT to a free port.`,
       )
       process.exit(1)

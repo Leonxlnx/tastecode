@@ -84,7 +84,7 @@ describe('design preview runner', () => {
     await expect(fetch(preview.url, { signal: AbortSignal.timeout(500) })).rejects.toThrow()
   })
 
-  it('serves an exact-file static project with a Harness-owned response', async () => {
+  it('serves an exact-file static project with a TasteCode-owned response', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
     workspaces.push(workspace)
     const port = await freePort()

@@ -87,21 +87,21 @@ Linux.
 The TypeScript workspace remains beside this target during migration. It is reference code,
 not a second implementation to maintain after native parity.
 
-|                    |                                              |                                                                                                                        |
-| ------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Language / runtime | Rust stable, pinned by the workspace         | One native runtime for the client, server and adapters                                                                 |
-| Monorepo           | Cargo workspace                              | Crates keep protocol, UI, orchestration and adapters independently testable                                            |
-| UI                 | GPUI 0.2.2, exact pin                        | One GPU-rendered element tree through Metal and DirectX                                                                |
-| Chat list          | Custom end-anchored virtual GPUI element     | Variable-height streaming rows need stable keys, cached measurement and explicit anchor control                        |
-| Markdown           | Incremental parser + native highlighter      | Incomplete streamed blocks stay cheap; completed blocks become immutable                                               |
-| Styling            | Typed Harness tokens                         | The current CSS values are migrated exactly, including every theme and density state                                   |
-| Components         | Harness-owned GPUI primitives                | Focus, menus, sheets and inputs preserve current behavior without importing another visual language                    |
-| Motion             | GPUI frame animations                        | Existing easing and durations are the contract; reduced motion remains first-class                                     |
-| State              | GPUI entities + event-derived read models    | Deltas update the live tail without invalidating the whole application tree                                            |
-| DB                 | SQLite, WAL, FTS5                            | Append-only events and rebuildable read models remain unchanged                                                        |
-| PTY                | Rust ConPTY / Unix PTY abstraction           | Process-tree termination and intentional-exit semantics remain cross-platform requirements                             |
-| Terminal state     | `alacritty_terminal` 0.26.0                  | ANSI parsing mutates a bounded cell grid incrementally, while Harness retains ownership of PTY lifecycle and transport |
-| Tests              | Rust unit, protocol fixture and render tests | Real provider captures and platform screenshots remain the final contract                                              |
+|                    |                                              |                                                                                                                          |
+| ------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Language / runtime | Rust stable, pinned by the workspace         | One native runtime for the client, server and adapters                                                                   |
+| Monorepo           | Cargo workspace                              | Crates keep protocol, UI, orchestration and adapters independently testable                                              |
+| UI                 | GPUI 0.2.2, exact pin                        | One GPU-rendered element tree through Metal and DirectX                                                                  |
+| Chat list          | Custom end-anchored virtual GPUI element     | Variable-height streaming rows need stable keys, cached measurement and explicit anchor control                          |
+| Markdown           | Incremental parser + native highlighter      | Incomplete streamed blocks stay cheap; completed blocks become immutable                                                 |
+| Styling            | Typed TasteCode tokens                       | The current CSS values are migrated exactly, including every theme and density state                                     |
+| Components         | TasteCode-owned GPUI primitives              | Focus, menus, sheets and inputs preserve current behavior without importing another visual language                      |
+| Motion             | GPUI frame animations                        | Existing easing and durations are the contract; reduced motion remains first-class                                       |
+| State              | GPUI entities + event-derived read models    | Deltas update the live tail without invalidating the whole application tree                                              |
+| DB                 | SQLite, WAL, FTS5                            | Append-only events and rebuildable read models remain unchanged                                                          |
+| PTY                | Rust ConPTY / Unix PTY abstraction           | Process-tree termination and intentional-exit semantics remain cross-platform requirements                               |
+| Terminal state     | `alacritty_terminal` 0.26.0                  | ANSI parsing mutates a bounded cell grid incrementally, while TasteCode retains ownership of PTY lifecycle and transport |
+| Tests              | Rust unit, protocol fixture and render tests | Real provider captures and platform screenshots remain the final contract                                                |
 
 **On Effect-TS:** T3 Code uses it throughout and it genuinely fits this problem. We don't
 adopt it for v1 — the learning curve colors every signature and with two developers the
@@ -131,7 +131,7 @@ we switch tiers without touching the UI. That's the point of the layer.
 **Users may register protocol-compatible executables as separate harness sources.** Each
 entry names an existing adapter protocol and stores an executable, fixed argv, optional launch
 directory, and non-secret environment overrides in
-`~/.personalharness/custom-harnesses.json`; arguments never pass through a shell, and secrets
+`~/.tastecode/custom-harnesses.json`; arguments never pass through a shell, and secrets
 never belong in this file. Custom commands resolve against a desktop-safe PATH that includes
 conventional user locations such as `~/.local/bin`. When a mod boots from its own directory,
 `HARNESS_WORKSPACE_PATH` retains the active project for its wrapper and native protocols still
@@ -158,7 +158,7 @@ degradation to an `unknown` item (never a crash, never silent loss), and a visib
 Checkpoints, worktrees, cost accounting and search live **above** the adapters, implemented
 once. Git checkpoints work identically regardless of which engine made the change.
 
-**The product must work with only a direct API provider configured.** Harness owns the
+**The product must work with only a direct API provider configured.** TasteCode owns the
 shared session model, persistence, orchestration, queueing, review, worktrees, terminal and
 UI. Provider integrations supply inference and declare optional capabilities; they do not
 own shared product behavior. New features are designed against the internal contracts
@@ -173,16 +173,16 @@ The side event channel and transcript are independent, the row stays out of proj
 and search, and closing the panel disposes and deletes it. A provider may expose native fork,
 but shared Side chat semantics cannot depend on that optional capability.
 
-**Direct model APIs use one small Harness-owned agent runtime.** OpenAI, Anthropic and
+**Direct model APIs use one small TasteCode-owned agent runtime.** OpenAI, Anthropic and
 OpenAI-compatible endpoints provide inference and tool calls, not a complete coding-agent
 session. The API runtime drives the same server-owned tools, approvals, persistence and
 checkpoints as every other adapter; only request and stream translation varies by API
-transport. This is the fallback that keeps Harness functional with only an API key. It is
+transport. This is the fallback that keeps TasteCode functional with only an API key. It is
 not used when a richer vendor agent surface is available. The concrete transport matrix and
 delivery order live in [PROVIDERS.md](./PROVIDERS.md).
 
 _Rejected:_ ACP-only (gives up Codex's richest-in-class surface) · native-only (caps us at
-4 engines) · a Harness agent loop as the only integration path (throws away richer vendor
+4 engines) · a TasteCode agent loop as the only integration path (throws away richer vendor
 agent features) · a `switch` on provider in the orchestrator.
 
 ### Voice dictation uses the active Codex ChatGPT session
@@ -208,7 +208,7 @@ Speech API (unreliable in packaged Electron and inconsistent across web clients)
 
 ## Project-scoped MCP configuration
 
-**Harness owns project-scoped MCP configuration; vendor-global configuration is an
+**TasteCode owns project-scoped MCP configuration; vendor-global configuration is an
 inherited input, not our storage layer.** Definitions and per-project enablement live in
 the server-owned, human-readable user-config location documented under Storage, keyed by
 the canonical project path and a stable server id. They do not live in the repository or
@@ -216,7 +216,7 @@ the SQLite event log.
 
 Secrets live only in the OS credential store. The config may contain an opaque credential
 reference, never a token or secret environment value. Provider-owned OAuth credentials
-remain with the provider binary; Harness starts the provider's login flow and observes its
+remain with the provider binary; TasteCode starts the provider's login flow and observes its
 reported status without reading the credential.
 
 For each provider, effective MCP configuration resolves in this order:
@@ -228,7 +228,7 @@ For each provider, effective MCP configuration resolves in this order:
 
 Project-scoped operations never rewrite or delete unrelated vendor-global configuration.
 An adapter that cannot perform an operation reports it as unsupported through capabilities
-and returns an actionable error; Harness does not pretend success or fall back to mutating
+and returns an actionable error; TasteCode does not pretend success or fall back to mutating
 global state. Read-only inventory may still be exposed when the provider supports it.
 
 _Rejected:_ repository-local MCP config (opening an untrusted checkout must not authorize
@@ -257,11 +257,14 @@ content-addressed snapshot of touched files only.
 ever, for almost no implementation cost — and "what was that command three weeks ago in the
 other project?" is a real question nobody in this category answers well.
 
-|             | Windows                           | macOS                                            |
-| ----------- | --------------------------------- | ------------------------------------------------ |
-| DB + logs   | `%APPDATA%\PersonalHarness\`      | `~/Library/Application Support/PersonalHarness/` |
-| User config | `%USERPROFILE%\.personalharness\` | `~/.personalharness/`                            |
-| Credentials | Credential Manager                | Keychain                                         |
+|             | Windows                     | macOS                                      |
+| ----------- | --------------------------- | ------------------------------------------ |
+| DB + logs   | `%APPDATA%\TasteCode\`      | `~/Library/Application Support/TasteCode/` |
+| User config | `%USERPROFILE%\.tastecode\` | `~/.tastecode/`                            |
+| Credentials | Credential Manager          | Keychain                                   |
+
+On first use, TasteCode moves legacy Personal Harness files into these locations without
+overwriting an existing TasteCode file.
 
 Config is human-readable and hand-editable on purpose. It is never where secrets go.
 

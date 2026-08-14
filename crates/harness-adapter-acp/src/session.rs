@@ -548,7 +548,7 @@ fn connect(
                 "clientCapabilities": {
                     "fs": { "readTextFile": false, "writeTextFile": false }
                 },
-                "clientInfo": { "name": "personal-harness", "version": "0.0.0" }
+                "clientInfo": { "name": "tastecode", "version": "0.0.0" }
             }),
             HANDSHAKE_TIMEOUT,
         )
@@ -903,7 +903,7 @@ fn validate_workspace(workspace_path: &str) -> AgentResult<()> {
 fn new_session_error(spec: &AcpAgentSpec, error: JsonRpcError) -> AgentError {
     if error.to_string().to_ascii_lowercase().contains("auth") {
         return AgentError::Failed(format!(
-            "{} is not signed in. Run `{}` once in a terminal and sign in there. Personal Harness never handles its credentials.",
+            "{} is not signed in. Run `{}` once in a terminal and sign in there. TasteCode never handles its credentials.",
             spec.name, spec.command
         ));
     }

@@ -1,4 +1,4 @@
-//! Native Harness protocol transport.
+//! Native TasteCode protocol transport.
 //!
 //! The transport owns reconnect and sequence tracking, while callers own
 //! application-level resync. No provider behavior belongs in this crate.
@@ -78,13 +78,13 @@ pub enum ClientEvent {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
-    #[error("the Harness server URL must be ws://127.0.0.1:<port>")]
+    #[error("the TasteCode server URL must be ws://127.0.0.1:<port>")]
     InvalidEndpoint,
-    #[error("the Harness transport is closed")]
+    #[error("the TasteCode transport is closed")]
     Closed,
     #[error("request serialization failed")]
     Serialize(#[source] serde_json::Error),
-    #[error("failed to start the Harness transport")]
+    #[error("failed to start the TasteCode transport")]
     Start(#[source] std::io::Error),
 }
 

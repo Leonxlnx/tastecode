@@ -29,7 +29,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use uuid::Uuid;
 
-const CLIENT_NAME: &str = "personal-harness";
+const CLIENT_NAME: &str = "tastecode";
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub const CODEX_CAPABILITIES: Capabilities = Capabilities {
@@ -180,7 +180,7 @@ impl CodexAdapter {
             json!({
                 "clientInfo": {
                     "name": CLIENT_NAME,
-                    "title": "Personal Harness",
+                    "title": "TasteCode",
                     "version": "0.0.0"
                 }
             }),

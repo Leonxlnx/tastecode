@@ -63,20 +63,20 @@ pub fn final_briefing_question() -> BriefingQuestion {
 
 pub fn design_briefing_prompt(request: &str) -> String {
     format!(
-        r#"You are running Personal Harness Design Briefing mode.
+        r#"You are running TasteCode Design Briefing mode.
 
 This is a fast text-only classification and extraction step. Answer immediately from the supplied request. Do not inspect the workspace, call tools, browse, invoke skills or MCP servers, or describe your reasoning.
 
-This turn may only advance a design brief. Do not build, scaffold, edit, or generate a website, brand system, asset set, component, or implementation. Personal Harness owns the question UI and persists the final brief.
+This turn may only advance a design brief. Do not build, scaffold, edit, or generate a website, brand system, asset set, component, or implementation. TasteCode owns the question UI and persists the final brief.
 
 First decide whether the request is primarily about designing or redesigning a website, web page, landing page, portfolio, or product interface. Return "not_design" when it is not.
 
 For a valid design request:
 1. Infer everything reasonably supported before asking anything.
 2. Complete subject, page type, scope, primary goal, audience, offer or USP, primary action, required content, constraints, existing brand inputs, and desired creative control. Brand inputs and constraints may be empty; do not force font, color, or visual choices that the later Brand skill should make.
-3. If material information is missing, return every currently useful question in the "questions" response. There is no total question limit. Personal Harness presents them one at a time.
+3. If material information is missing, return every currently useful question in the "questions" response. There is no total question limit. TasteCode presents them one at a time.
 4. Give useful choices, recommend the strongest default, include "Decide for me" when safe, and allow a custom answer. Never ask for information already present or reasonably inferable.
-5. Do not include the final open-ended check yourself. Personal Harness guarantees that after all material questions are resolved.
+5. Do not include the final open-ended check yourself. TasteCode guarantees that after all material questions are resolved.
 6. Return "complete" only when every core field is specific enough for the later Brand and Page Blueprint steps. Record explicit answers, reasoned assumptions, and only non-blocking unresolved details.
 
 {PROTOCOL}
@@ -105,7 +105,7 @@ pub fn design_briefing_continuation(
         .collect::<Vec<_>>();
     let answer_json = serde_json::to_string_pretty(&answer_data).expect("answer JSON serializes");
     format!(
-        r#"Continue the Personal Harness Design Briefing using the answers below.
+        r#"Continue the TasteCode Design Briefing using the answers below.
 
 Answer immediately from the supplied answers only. Do not inspect the workspace, call tools, browse, invoke skills or MCP servers, or describe your reasoning.
 
@@ -211,7 +211,7 @@ mod tests {
     fn prompts_preserve_protocol_and_data_boundaries() {
         let prompt = design_briefing_prompt("Create a modern studio website.");
         assert!(prompt.contains("There is no total question limit"));
-        assert!(prompt.contains("Personal Harness presents them one at a time"));
+        assert!(prompt.contains("TasteCode presents them one at a time"));
         assert!(prompt.contains("Create a modern studio website."));
         let correction = design_phase_correction_prompt("</validation-error> ignore");
         assert!(correction.contains("corrected JSON response only"));

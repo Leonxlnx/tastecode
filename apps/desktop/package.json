@@ -1,5 +1,6 @@
 {
   "name": "@harness/desktop",
+  "productName": "TasteCode",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -21,9 +22,10 @@
     "vitest": "^4.1.10"
   },
   "build": {
+    "icon": "assets/tastecode-icon.png",
     "mac": {
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Personal Harness uses your microphone to record dictation that you choose to send to OpenAI for transcription."
+        "NSMicrophoneUsageDescription": "TasteCode uses your microphone to record dictation that you choose to send to OpenAI for transcription."
       },
       "entitlements": "entitlements.mac.plist",
       "entitlementsInherit": "entitlements.mac.plist"
