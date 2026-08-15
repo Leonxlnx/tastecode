@@ -53,6 +53,9 @@ export function parseAssetManifest(value: unknown): AssetManifest {
     if (status === 'existing' && !source) {
       throw new Error(`assets[${index}] existing assets require a source`)
     }
+    if (status === 'ready' && source?.kind === 'external' && !source.license) {
+      throw new Error(`assets[${index}] ready external assets require a license`)
+    }
 
     return {
       id: string(asset.id, `assets[${index}].id`),

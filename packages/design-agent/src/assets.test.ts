@@ -49,4 +49,20 @@ describe('asset manifest', () => {
       }),
     ).toThrow('ready assets require source and destination')
   })
+
+  it('rejects a ready external asset without recorded reuse terms', () => {
+    expect(() =>
+      parseAssetManifest({
+        version: 1,
+        assets: [
+          {
+            ...manifest.assets[0],
+            status: 'ready',
+            source: { kind: 'external', reference: 'https://example.com/photo' },
+            destination: 'public/photo.jpg',
+          },
+        ],
+      }),
+    ).toThrow('ready external assets require a license')
+  })
 })
