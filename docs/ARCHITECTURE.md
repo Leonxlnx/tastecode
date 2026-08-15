@@ -38,34 +38,29 @@ to a TypeScript client).
 
 ---
 
-## Desktop client: Rust and GPUI
+## Desktop shell: Electron
 
-**The primary desktop client is a single Rust + GPUI application on macOS and Windows.** GPUI
-draws the same retained element tree through Metal and DirectX, so both platforms share one
-layout, text and motion implementation without shipping Chromium or accepting two operating
-system webviews. Exact colors, geometry, typography and timings are Rust design tokens rather
-than a second design system invented during the port.
+**The primary desktop client is Electron on macOS and Windows.** One Chromium renderer gives
+both platforms the same layout, text and motion implementation. Tauri and other system-webview
+shells are smaller, but their Chromium/WebKit split would make visual parity a permanent
+cross-platform problem.
 
-The server/client boundary above remains load-bearing. The native client first speaks the
-existing protocol v2 to the Node server; persistence, orchestration, PTY support and adapters
-then move to Rust behind that stable boundary. The Electron/React app remains the visual and
-behavioral oracle during migration and is removed only after native parity. This order keeps
-every screen testable against working product behavior instead of coupling a renderer rewrite
-to an adapter rewrite.
+The local Node server remains a separate long-lived process behind the typed WebSocket
+protocol. Closing or restarting the Electron window does not stop active agents. The renderer
+stays a thin client and never owns orchestration, persistence, provider processes, the PTY, or
+credentials.
 
-GPUI is pre-1.0, so the workspace pins an exact release and wraps framework-facing primitives
-inside `harness-ui`. A GPUI update is an intentional compatibility change, not a floating
-dependency update. macOS and Windows builds and screenshots are separate release gates;
-source-level platform support is not evidence that font rasterization, title bars or input
-behavior match on both systems.
+Electron's weaker security defaults are fixed in the shell: `contextIsolation: true`,
+`nodeIntegration: false`, sandboxing, a strict CSP, a narrow typed `contextBridge`, and
+deny-by-default external navigation. The renderer never spawns a process, touches the
+filesystem, or reads a credential.
 
-_Superseded:_ Electron bought one Chromium renderer across platforms, but its install size,
-idle footprint and per-frame JavaScript/DOM work conflict with the native performance goal.
-_Rejected:_ Tauri/Wails/Neutralino retain divergent OS webviews · separate AppKit and WinUI
-clients create two permanent UI implementations · a web-only primary cannot own the native
-terminal, filesystem and credential-store surface.
+_Rejected:_ Tauri/Wails/Neutralino use divergent operating-system webviews · separate AppKit
+and WinUI clients create two permanent UI implementations · a web-only primary cannot own the
+native terminal, filesystem and credential-store surface. The Rust + GPUI rewrite is preserved
+on `archive/rust-rewrite-2026-08-15`; it is not part of `main`.
 
-### Embedded browser during the Electron reference phase
+### Embedded browser previews
 
 **Page previews use a renderer-owned Electron `<webview>` guest, never an iframe or an
 operating-system webview.** Before attachment, the main process strips preload access, assigns a
@@ -82,26 +77,21 @@ Linux.
 
 ---
 
-## Target stack
+## Stack
 
-The TypeScript workspace remains beside this target during migration. It is reference code,
-not a second implementation to maintain after native parity.
-
-|                    |                                              |                                                                                                                          |
-| ------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Language / runtime | Rust stable, pinned by the workspace         | One native runtime for the client, server and adapters                                                                   |
-| Monorepo           | Cargo workspace                              | Crates keep protocol, UI, orchestration and adapters independently testable                                              |
-| UI                 | GPUI 0.2.2, exact pin                        | One GPU-rendered element tree through Metal and DirectX                                                                  |
-| Chat list          | Custom end-anchored virtual GPUI element     | Variable-height streaming rows need stable keys, cached measurement and explicit anchor control                          |
-| Markdown           | Incremental parser + native highlighter      | Incomplete streamed blocks stay cheap; completed blocks become immutable                                                 |
-| Styling            | Typed TasteCode tokens                       | The current CSS values are migrated exactly, including every theme and density state                                     |
-| Components         | TasteCode-owned GPUI primitives              | Focus, menus, sheets and inputs preserve current behavior without importing another visual language                      |
-| Motion             | GPUI frame animations                        | Existing easing and durations are the contract; reduced motion remains first-class                                       |
-| State              | GPUI entities + event-derived read models    | Deltas update the live tail without invalidating the whole application tree                                              |
-| DB                 | SQLite, WAL, FTS5                            | Append-only events and rebuildable read models remain unchanged                                                          |
-| PTY                | Rust ConPTY / Unix PTY abstraction           | Process-tree termination and intentional-exit semantics remain cross-platform requirements                               |
-| Terminal state     | `alacritty_terminal` 0.26.0                  | ANSI parsing mutates a bounded cell grid incrementally, while TasteCode retains ownership of PTY lifecycle and transport |
-| Tests              | Rust unit, protocol fixture and render tests | Real provider captures and platform screenshots remain the final contract                                                |
+|                    |                                            |                                                                         |
+| ------------------ | ------------------------------------------ | ----------------------------------------------------------------------- |
+| Language / runtime | TypeScript 5.9.3, Node 24 LTS              | One language across the server, adapters, web client, and desktop shell |
+| Monorepo           | pnpm workspaces + Vite                     | pnpm's store keeps worktree-heavy development cheap                     |
+| Desktop            | Electron 43                                | One Chromium renderer across macOS and Windows                          |
+| UI                 | React 19                                   | Shared renderer behavior and app-owned controls                         |
+| Chat list          | TanStack Virtual, end-anchored             | Variable-height streamed rows keep stable keys and cached measurement   |
+| Markdown           | Streamdown + Shiki's JavaScript engine     | Incomplete streamed blocks stay cheap without weakening the CSP         |
+| Styling            | CSS token layer                            | Themes, geometry, density, and motion remain app-owned                  |
+| State              | React external store + event-derived views | Deltas update the live tail without rebuilding completed history        |
+| DB                 | Node SQLite, WAL, FTS5                     | Append-only events and rebuildable read models remain unchanged         |
+| PTY                | `node-pty`                                 | The shared process layer handles Unix PTYs and Windows ConPTY           |
+| Tests              | Vitest + live Electron checks              | Captured provider frames and platform runs remain the final contract    |
 
 **On Effect-TS:** T3 Code uses it throughout and it genuinely fits this problem. We don't
 adopt it for v1 — the learning curve colors every signature and with two developers the
@@ -357,3 +347,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-08-12 | Standardized Electron browser previews on sandboxed `<webview>` guests. |
 | 2026-08-14 | Removed phone and remote-client support from active product scope.      |
 | 2026-08-14 | Routed project-enabled Grok MCP sessions through ACP stdio.             |
+| 2026-08-15 | Archived the Rust + GPUI rewrite and restored Electron on `main`.       |
