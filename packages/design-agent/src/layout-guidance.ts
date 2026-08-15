@@ -4,16 +4,18 @@ const numbered = (prefix: string, count: number): string[] =>
   Array.from({ length: count }, (_, index) => `${prefix}-${index + 1}`)
 
 const NAVIGATION_CASES = new Set(numbered('navigation', 6))
+const FEATURE_CASES = [
+  ...numbered('feature-heading', 6),
+  ...numbered('feature-grid', 6),
+  'feature-timed',
+  ...numbered('feature-spatial', 3),
+]
+
 const SECTION_CASES: Record<PageLayoutFamily, Set<string>> = {
   hero: new Set([...numbered('hero-text', 7), ...numbered('hero-visual', 7)]),
   about: new Set([...numbered('about', 7), ...numbered('about-text', 2)]),
-  feature: new Set([
-    ...numbered('feature-heading', 6),
-    ...numbered('feature-grid', 6),
-    'feature-timed',
-    ...numbered('feature-spatial', 3),
-  ]),
-  how_it_works: new Set(numbered('how-it-works', 5)),
+  feature: new Set(FEATURE_CASES),
+  how_it_works: new Set([...numbered('how-it-works', 5), ...FEATURE_CASES]),
   social_proof: new Set(['social-proof-carousel', 'social-proof-static-row', 'social-proof-wall']),
   stats: new Set(numbered('stats', 3)),
   faq: new Set(numbered('faq', 4)),
