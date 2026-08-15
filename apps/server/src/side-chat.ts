@@ -47,6 +47,39 @@ export function sideChatInstructions(history: ReadonlyArray<{ event: DomainEvent
 export function snapshotEntries(
   history: ReadonlyArray<{ event: DomainEvent }>,
 ): SideChatSnapshotEntry[] {
+  const visible = projectHistoryItems(history)
+    .filter((item) => item.type !== 'reasoning')
+    .map(toSnapshotEntry)
+    .filter((entry): entry is SideChatSnapshotEntry => entry !== undefined)
+
+  const bounded: SideChatSnapshotEntry[] = []
+  let characters = 0
+  for (let index = visible.length - 1; index >= 0; index -= 1) {
+    const entry = visible[index]!
+    const length = JSON.stringify(entry).length
+    if (bounded.length >= MAX_SNAPSHOT_ENTRIES || characters + length > MAX_SNAPSHOT_CHARACTERS) {
+      break
+    }
+    bounded.unshift(entry)
+    characters += length
+  }
+  if (!bounded.some((entry) => entry.kind === 'message' && entry.role === 'user')) {
+    const latestUser = visible.findLast(
+      (entry): entry is Extract<SideChatSnapshotEntry, { kind: 'message' }> =>
+        entry.kind === 'message' && entry.role === 'user',
+    )
+    if (latestUser) {
+      const length = JSON.stringify(latestUser).length
+      while (bounded.length > 0 && characters + length > MAX_SNAPSHOT_CHARACTERS) {
+        characters -= JSON.stringify(bounded.shift()).length
+      }
+      bounded.unshift(latestUser)
+    }
+  }
+  return bounded
+}
+
+export function projectHistoryItems(history: ReadonlyArray<{ event: DomainEvent }>): Item[] {
   const order: string[] = []
   const items = new Map<string, Item>()
 
@@ -97,37 +130,7 @@ export function snapshotEntries(
     }
   }
 
-  const visible = order
-    .map((id) => items.get(id))
-    .filter((item): item is Item => item !== undefined && item.type !== 'reasoning')
-    .map(toSnapshotEntry)
-    .filter((entry): entry is SideChatSnapshotEntry => entry !== undefined)
-
-  const bounded: SideChatSnapshotEntry[] = []
-  let characters = 0
-  for (let index = visible.length - 1; index >= 0; index -= 1) {
-    const entry = visible[index]!
-    const length = JSON.stringify(entry).length
-    if (bounded.length >= MAX_SNAPSHOT_ENTRIES || characters + length > MAX_SNAPSHOT_CHARACTERS) {
-      break
-    }
-    bounded.unshift(entry)
-    characters += length
-  }
-  if (!bounded.some((entry) => entry.kind === 'message' && entry.role === 'user')) {
-    const latestUser = visible.findLast(
-      (entry): entry is Extract<SideChatSnapshotEntry, { kind: 'message' }> =>
-        entry.kind === 'message' && entry.role === 'user',
-    )
-    if (latestUser) {
-      const length = JSON.stringify(latestUser).length
-      while (bounded.length > 0 && characters + length > MAX_SNAPSHOT_CHARACTERS) {
-        characters -= JSON.stringify(bounded.shift()).length
-      }
-      bounded.unshift(latestUser)
-    }
-  }
-  return bounded
+  return order.map((id) => items.get(id)).filter((item): item is Item => item !== undefined)
 }
 
 function toSnapshotEntry(item: Item): SideChatSnapshotEntry | undefined {
