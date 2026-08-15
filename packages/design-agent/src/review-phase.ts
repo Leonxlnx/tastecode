@@ -66,6 +66,8 @@ Apply the following pass blockers to every screenshot:
 - Any visible internal note or unfinished copy such as sample, simulated, fictional, awaiting approval, still needed, not connected, before launch, live data required, or to be supplied.
 - A Hero stacks a headline with multiple descriptions, disclaimers, or redundant supporting messages.
 - Decorative hairline grids, repeated separator rules, colored vertical card rails, or arbitrary square-panel templates replace spacing and meaningful grouping.
+- Cards are absent where discrete features, people, plans, proof, actions, or media need clear grouping; or cards merely box prose, repeat an empty equal-column template, or use unrelated treatments without a shared radius, spacing, media, and state logic.
+- An approved brand accent appears only in tiny labels, icons, or underlines instead of meaningful actions and selected states; or unrelated card colors fragment the brand system.
 - An unclear or ornamental SVG, fake dashboard, map, sonar, schematic, or line illustration fills space without communicating a real product or content relationship. Prefer relevant imagery.
 - A select, dropdown, calendar, date input, disclosure, or form control visibly falls back to an unstyled browser default.
 - Text, controls, imagery, or footer content overlaps, clips, overflows, becomes implausibly narrow, or lacks enough space to read.
