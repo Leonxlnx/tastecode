@@ -46,6 +46,7 @@ Enforce this visual quality floor:
 - Style every visible control to the brand, including selects, dropdown menus, date entry, calendars, disclosure panels, and form states. Preserve semantic HTML, keyboard access, focus, labels, and reduced motion, but never leave a browser-default control as the finished visual treatment.
 - Give every visible interactive target a clickable area of at least 44 by 44 CSS pixels at every reviewed viewport. Verify the rendered hit area, not only the text line height or visible icon size.
 - Check every reviewed viewport for text collision, clipping, horizontal overflow, unreadable narrow columns, and footer overlap. Content must have enough space to read; novelty never excuses broken geometry.
+- Ensure the app can render, not merely bundle. When writing JSX, use the project's configured automatic JSX transform; if none exists, import React in every JSX module that needs it. A successful production build with a blank runtime is a failed Build.
 
 Use available implementation and motion skills when the session exposes them, without assuming a provider, model, skill name, or private API. Do not start a long-running preview server in this phase; TasteCode owns Preview next.
 ${exactFiles ? `\nThe brief's deliverable boundary is exactly ${list(exactFiles)}. TasteCode validates the workspace before Preview; do not add helper or configuration files.` : ''}
