@@ -175,6 +175,23 @@ describe('page phase', () => {
     ).toThrow('not a hero case')
   })
 
+  it('allows feature compositions for how-it-works sections', () => {
+    expect(() =>
+      parsePagePhaseOutput(
+        JSON.stringify({
+          ...page,
+          sections: [
+            {
+              ...page.sections[0],
+              layoutFamily: 'how_it_works',
+              layoutCases: ['feature-heading-5', 'feature-grid-3'],
+            },
+          ],
+        }),
+      ),
+    ).not.toThrow()
+  })
+
   it('rejects the same composition in adjacent sections', () => {
     expect(() =>
       parsePagePhaseOutput(
