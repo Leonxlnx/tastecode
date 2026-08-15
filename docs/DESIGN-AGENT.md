@@ -374,12 +374,17 @@ Each asset has:
 - source reference and optional license;
 - optional workspace-relative destination.
 
-Ready assets require a real source and destination. Existing assets require a source. Absolute
-destinations and parent-directory escapes are rejected. Duplicate IDs are rejected.
+Ready assets require a real source and destination. Ready external assets also require recorded
+reuse terms. Existing assets require a source. Absolute destinations and parent-directory escapes
+are rejected. Duplicate IDs are rejected.
 
-The Asset phase prefers meaningful supplied, generated, or licensed photography, product imagery,
-and interface captures. Abstract SVGs, fake dashboards, sonar graphics, line-grid ornaments, and
-generic geometric filler do not satisfy an open visual need.
+The Asset phase is an acquisition step rather than a wish list. It keeps every Page asset and
+component ID, reuses suitable project or user files first, then invokes available image generation,
+then falls back to available image search with verified source and reuse terms. A generated or
+downloaded file must be saved inside the project before it is marked ready. When the selected provider
+cannot perform generation or licensed search, the need remains explicitly unresolved. Abstract
+SVGs, fake dashboards, sonar graphics, line-grid ornaments, empty cards, and generic geometric
+filler do not satisfy an image-led layout case.
 
 ### Build result
 
@@ -392,11 +397,14 @@ application.
 Build and visual Review share a pass-blocking quality floor: headings target one or two lines and
 never exceed three, display sizes are bounded by viewport class, the Hero has one support block,
 typography stays within the approved two families, and internal notes never appear on the page.
-Hairline grids, repeated separator systems, colored card rails, ornamental SVGs, unstyled controls,
-overflow, clipping, and footer overlap require repair. Representative interface or operational
-data may make a one-shot page feel complete, but Build returns it in a `Verify before publishing:`
-summary that the final Harness message surfaces after Preview instead of adding a disclaimer to the
-website.
+Cards group coherent features, people, plans, proof, actions, or media through one base language
+and at most one emphasized variant; they may not become empty equal-column boxes or unrelated
+experiments. The brand accent must reach meaningful actions and states rather than surviving only
+in tiny labels. Hairline grids, repeated separator systems, colored card rails, ornamental SVGs,
+unstyled controls, overflow, clipping, and footer overlap require repair. Representative interface
+or operational data may make a one-shot page feel complete, but Build returns it in a
+`Verify before publishing:` summary that the final Harness message surfaces after Preview instead
+of adding a disclaimer to the website.
 
 The provider is currently responsible for running the project's relevant checks through its
 available tools. TasteCode validates the final report shape but does not independently prove that
@@ -651,9 +659,10 @@ Build and Review need persisted values.
 
 ### Asset gaps
 
-Asset requirements are currently free-form strings. Add typed section, purpose, aspect ratio,
-composition, dimensions, output path, source, and usage fields where they prevent bad generation,
-wrong cropping, or lost provenance.
+Asset acquisition currently depends on tools exposed by the selected provider. A provider-neutral
+Harness search and generation tool does not exist yet. Requirements remain free-form strings; add
+typed section, purpose, aspect ratio, composition, dimensions, output path, source, and usage fields
+only where they prevent bad generation, wrong cropping, or lost provenance.
 
 ### Token and verification gaps
 
