@@ -20,6 +20,8 @@ describe('preview plan', () => {
     expect(prompt).toContain('Preview Setup phase')
     expect(prompt).toContain('127.0.0.1')
     expect(prompt).toContain('Do not install dependencies')
+    expect(prompt).toContain('package-lock.json means npm')
+    expect(prompt).toContain('Never invoke another package manager')
     expect(prompt).toContain('TasteCode serves static projects itself')
     expect(prompt).not.toContain('write one small static file server')
     expect(parsePreviewPhaseOutput(JSON.stringify(plan))).toMatchObject({ command: 'pnpm' })
