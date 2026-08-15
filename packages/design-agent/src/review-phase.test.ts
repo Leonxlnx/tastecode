@@ -112,26 +112,26 @@ describe('review and repair phases', () => {
     expect(result.verdict).toBe('repair')
     expect(result.findings.map(({ id }) => id)).toEqual([
       'document_h1_count',
-      'mobile_interactive_target_size',
+      'interactive_target_size',
     ])
   })
 
-  it('preserves model findings and ignores target sizes outside mobile viewports', () => {
-    expect(
-      enforceDomAuditFindings(review, [
-        {
-          path: 'desktop.png',
-          width: 1440,
-          height: 1000,
-          domAudit: {
-            h1Count: 1,
-            interactiveTargetViolations: [
-              { selector: '#utility', label: 'Utility', width: 20, height: 20 },
-            ],
-          },
+  it('enforces target sizes outside mobile viewports', () => {
+    const result = enforceDomAuditFindings(review, [
+      {
+        path: 'desktop.png',
+        width: 1440,
+        height: 1000,
+        domAudit: {
+          h1Count: 1,
+          interactiveTargetViolations: [
+            { selector: '#utility', label: 'Utility', width: 20, height: 20 },
+          ],
         },
-      ]),
-    ).toEqual(review)
+      },
+    ])
+    expect(result.verdict).toBe('repair')
+    expect(result.findings.at(-1)).toMatchObject({ id: 'interactive_target_size' })
   })
 
   it('keeps older review findings readable with conservative evidence metadata', () => {
