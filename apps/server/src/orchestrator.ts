@@ -68,6 +68,7 @@ import { rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { changedSince, restoreSnapshot, takeSnapshot } from './checkpoint.js'
+import { compactHistoryReplay } from './history-replay.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import type { Store, StoredCheckpoint } from './store.js'
 import {
@@ -1419,7 +1420,8 @@ export class Orchestrator {
     afterSeq = 0,
   ): Promise<Array<{ seq: number; event: DomainEvent }>> {
     await this.#restoringThreads.get(threadId)
-    return this.#store.history(threadId, afterSeq)
+    const history = this.#store.history(threadId, afterSeq)
+    return afterSeq === 0 ? compactHistoryReplay(history) : history
   }
 
   async diff(threadId: string): Promise<SessionDiff> {

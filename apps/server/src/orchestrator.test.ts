@@ -643,6 +643,54 @@ describe('durable turn timing', () => {
   })
 })
 
+describe('history replay', () => {
+  it('compacts a fresh replay without changing a reconnect tail', async () => {
+    const { orchestrator, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    const reply = {
+      id: 'reply',
+      turnId: 'turn-1',
+      type: 'message' as const,
+      role: 'assistant' as const,
+      status: 'started' as const,
+      text: '',
+      createdAt: 1,
+    }
+    const itemSeq = store.append(thread.id, { type: 'item.started', item: reply })
+    store.append(thread.id, {
+      type: 'item.delta',
+      turnId: 'turn-1',
+      itemId: reply.id,
+      textDelta: 'Hello ',
+    })
+    store.append(thread.id, {
+      type: 'item.delta',
+      turnId: 'turn-1',
+      itemId: reply.id,
+      textDelta: 'world',
+    })
+    store.append(thread.id, {
+      type: 'item.completed',
+      item: { ...reply, status: 'completed' },
+    })
+
+    expect(await orchestrator.history(thread.id, itemSeq)).toEqual(
+      store.history(thread.id, itemSeq),
+    )
+    expect(await orchestrator.history(thread.id)).toEqual([
+      {
+        seq: itemSeq,
+        event: {
+          type: 'item.completed',
+          item: { ...reply, status: 'completed', text: 'Hello world' },
+        },
+      },
+    ])
+
+    await orchestrator.disposeAll()
+  })
+})
+
 describe('durable user submissions', () => {
   it.each([
     ['codex', true],

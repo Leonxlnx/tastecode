@@ -85,15 +85,23 @@ export function projectHistoryItems(history: ReadonlyArray<{ event: DomainEvent 
 
   for (const { event } of history) {
     if (event.type === 'item.started') {
-      if (!items.has(event.item.id)) order.push(event.item.id)
-      items.set(event.item.id, event.item)
+      const existing = items.get(event.item.id)
+      if (!existing) {
+        order.push(event.item.id)
+        items.set(event.item.id, event.item)
+      } else if (existing.status === 'started' || existing.turnId === '') {
+        items.set(event.item.id, {
+          ...event.item,
+          ...(event.item.text || !existing.text ? {} : { text: existing.text }),
+        })
+      }
       continue
     }
     if (event.type === 'item.delta') {
       const current = items.get(event.itemId)
-      if (current) {
+      if (current?.status === 'started') {
         items.set(event.itemId, { ...current, text: (current.text ?? '') + event.textDelta })
-      } else {
+      } else if (!current) {
         order.push(event.itemId)
         items.set(event.itemId, {
           id: event.itemId,
@@ -109,10 +117,10 @@ export function projectHistoryItems(history: ReadonlyArray<{ event: DomainEvent 
     }
     if (event.type === 'item.completed') {
       if (!items.has(event.item.id)) order.push(event.item.id)
-      const streamed = items.get(event.item.id)?.text
+      const existing = items.get(event.item.id)
       items.set(event.item.id, {
         ...event.item,
-        ...(event.item.text || !streamed ? {} : { text: streamed }),
+        ...(event.item.text || !existing ? {} : { text: existing.text }),
       })
       continue
     }
