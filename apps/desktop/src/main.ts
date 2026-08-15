@@ -19,7 +19,7 @@ import {
   type Event as ElectronEvent,
   type WebContents,
 } from 'electron'
-import { autoUpdater } from 'electron-updater'
+import updaterPackage from 'electron-updater'
 import {
   PreviewDomAuditSchema,
   PreviewCaptureRequestSchema,
@@ -48,6 +48,8 @@ import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
 import { windowThemeOptions, windowThemeSource } from './window-theme.js'
 import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './zoom-shortcuts.js'
+
+const { autoUpdater } = updaterPackage
 
 /**
  * Electron shell. Deliberately thin: it opens a window and nothing else.
