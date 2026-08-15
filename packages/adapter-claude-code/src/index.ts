@@ -1,5 +1,11 @@
 export { ClaudeCodeAdapter, CLAUDE_CAPABILITIES, type ClaudeStartOptions } from './adapter.js'
-export { claudeAccount, parseClaudeAccount, signOutClaude, startClaudeLogin } from './auth.js'
+export {
+  claudeAccount,
+  parseClaudeAccount,
+  probeClaudeAccount,
+  signOutClaude,
+  startClaudeLogin,
+} from './auth.js'
 export {
   claudeLimitSource,
   claudeLimits,

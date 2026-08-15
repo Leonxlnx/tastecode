@@ -13,4 +13,17 @@ describe('model selector theme CSS', () => {
       /\.model-selector__group-head \{[^}]*position: sticky;[^}]*background: var\(--model-picker-title-bg\);/s,
     )
   })
+
+  it('bleeds the rail header through the model-list padding', () => {
+    expect(appCss).toMatch(
+      /\.model-selector__group-head \{[^}]*top: -6px;[^}]*margin-inline: -6px;[^}]*padding: 3px 10px 3px 14px;/s,
+    )
+  })
+
+  it('uses the shared control motion for provider selection', () => {
+    expect(appCss).toMatch(
+      /\.model-selector__provider \{[^}]*transition:[^}]*background var\(--dur-fast\) var\(--ease-out\),[^}]*box-shadow var\(--dur-fast\) var\(--ease-out\),[^}]*color var\(--dur-fast\) var\(--ease-out\),[^}]*transform var\(--dur-press\) var\(--ease-out\);/s,
+    )
+    expect(appCss).not.toContain('model-provider-pop')
+  })
 })

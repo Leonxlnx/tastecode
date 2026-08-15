@@ -152,6 +152,7 @@ const TERMINAL_OPEN_KEY = 'harness.terminal.open'
 const TERMINAL_HEIGHT_KEY = 'harness.terminal.height'
 const RAIL_WIDTH_KEY = 'harness.rail.width'
 const WORKSPACE_PANEL_WIDTH_KEY = 'harness.workspacePanel.width'
+const NOTICE_AUTO_DISMISS_MS = 5_000
 const DEFAULT_SIDEBAR_SETTINGS: SidebarSettings = { mode: 'classic', autoSettleDays: 3 }
 const TerminalPane = lazy(() =>
   import('./ui/TerminalPane.js').then((module) => ({ default: module.TerminalPane })),
@@ -506,6 +507,14 @@ export function App() {
   const [rollbackLoadingId, setRollbackLoadingId] = useState<number | undefined>()
   const [rollbackRestoring, setRollbackRestoring] = useState(false)
   const [undoRestore, setUndoRestore] = useState<{ threadId: string; token: string } | undefined>()
+  useEffect(() => {
+    if (!notice) return
+    const timeout = globalThis.setTimeout(() => {
+      setNotice(undefined)
+      setUndoRestore(undefined)
+    }, NOTICE_AUTO_DISMISS_MS)
+    return () => globalThis.clearTimeout(timeout)
+  }, [notice])
   const [isolateSession, setIsolateSession] = useState(false)
   const [designMode, setDesignMode] = useState(false)
   const [checkoutDelete, setCheckoutDelete] = useState<
@@ -2021,11 +2030,30 @@ export function App() {
     setThread(emptyThread)
   }, [transport, refreshProjects])
 
+  const generateSessionTitle = useCallback(
+    async (threadId: string, prompt: string, expectedTitle: string) => {
+      try {
+        const generated = await transport.request('backgroundModel.generateTitle', {
+          threadId,
+          prompt,
+          expectedTitle,
+        })
+        if (!generated.applied) return
+        setProjects((current) => renameSession(current, threadId, generated.title))
+      } catch {
+        // The immediate prompt-derived title remains useful when a background
+        // provider is unavailable or the short generation fails.
+      }
+    },
+    [transport],
+  )
+
   const createSession = useCallback(
     async (
       projectPath: string,
       provisionalId: string,
       title: string,
+      titlePrompt: string,
     ): Promise<string | undefined> => {
       const choice = selectedModelChoice
       if (!choice) return undefined
@@ -2094,6 +2122,7 @@ export function App() {
         }
         void transport
           .request('thread.rename', { threadId, title: canonicalTitle })
+          .then(() => generateSessionTitle(threadId, titlePrompt, canonicalTitle))
           .catch(() => undefined)
           .then(() => refreshProjects())
           .catch(() => undefined)
@@ -2126,6 +2155,7 @@ export function App() {
       autoReviewSupported,
       isolateSession,
       refreshProjects,
+      generateSessionTitle,
       releaseWorkspaceStart,
       refreshWorkspaceAfterCompletion,
     ],
@@ -2179,6 +2209,7 @@ export function App() {
       activeIdRef.current = undefined
       setActiveId(undefined)
       setThread(emptyThread)
+      setComposerFocusRequest((request) => request + 1)
       if (!PUBLIC_BETA_PROVIDER_IDS.has(provider)) setCatalogRequest((current) => current + 1)
     },
     [
@@ -2330,7 +2361,7 @@ export function App() {
         setActiveId(provisionalId)
         setThread(provisional)
         setThreadRevealRequest((request) => request + 1)
-        const promise = createSession(activePath, provisionalId, titleFrom(text))
+        const promise = createSession(activePath, provisionalId, titleFrom(text), text)
         pendingSession.current = { id: provisionalId, promise, title: titleFrom(text) }
         threadId = await promise
         interruptRequested = pendingInterruptThreadIds.current.delete(provisionalId)
@@ -2434,7 +2465,10 @@ export function App() {
       if (untitled) {
         const title = titleFrom(text)
         setProjects((current) => promoteSession(renameSession(current, threadId, title), threadId))
-        void transport.request('thread.rename', { threadId, title }).catch(() => undefined)
+        void transport
+          .request('thread.rename', { threadId, title })
+          .then(() => generateSessionTitle(threadId, text, title))
+          .catch(() => undefined)
       }
       const turnChoice =
         !existingSession ||

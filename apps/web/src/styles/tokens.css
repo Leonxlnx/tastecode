@@ -91,7 +91,7 @@
   --composer-design-beam-stroke-strength: 1;
   --composer-design-beam-inner-strength: 1;
   --composer-design-beam-bloom-strength: 1;
-  --model-picker-bg: var(--menu-bg);
+  --model-picker-bg: var(--surface-2);
   --model-picker-controls-bg: transparent;
   --model-picker-title-bg: var(--model-picker-bg);
   --model-picker-selected-bg: var(--menu-hover);
@@ -338,8 +338,8 @@
   --composer-design-beam-stroke-strength: 2.1;
   --composer-design-beam-inner-strength: 1.15;
   --composer-design-beam-bloom-strength: 1.25;
-  --model-picker-bg: var(--menu-bg);
-  --model-picker-controls-bg: linear-gradient(180deg, #fafafa 0%, #f6f6f7 100%);
+  --model-picker-bg: var(--surface-2);
+  --model-picker-controls-bg: transparent;
   --model-picker-title-bg: var(--model-picker-bg);
   --model-picker-selected-bg: var(--menu-hover);
   --model-picker-selected-shadow: inset 0 0 0 1px var(--chrome-border), var(--chrome-shadow);

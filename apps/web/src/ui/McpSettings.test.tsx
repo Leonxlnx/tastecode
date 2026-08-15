@@ -190,9 +190,73 @@ describe('MCP settings', () => {
       />,
     )
 
-    expect(await screen.findByText(/does not expose MCP servers/)).toBeTruthy()
+    expect(await screen.findByText(/Provider-global inventory is unavailable/)).toBeTruthy()
     expect(screen.getByText('Claude Code · MCP inventory unavailable')).toBeTruthy()
     expect(screen.queryAllByRole('button')).toHaveLength(0)
+  })
+
+  it('switches providers before adding a project server', async () => {
+    const transport = client(async (method, params) => {
+      if (method === 'mcp.list') {
+        const provider = (params as { provider: string }).provider
+        return {
+          capabilities: {
+            inventory: provider === 'codex',
+            add: true,
+            update: true,
+            remove: true,
+            reload: provider === 'codex',
+            startOAuth: provider === 'codex',
+            cancelOAuth: false,
+          },
+          servers: [],
+        }
+      }
+      if (method === 'mcp.add') return {}
+      if (method === 'mcp.reload') return {}
+      throw new Error(`unexpected ${method}`)
+    })
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        providers={[
+          { provider: 'codex', providerName: 'Codex' },
+          { provider: 'grok', providerName: 'Grok' },
+        ]}
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    const picker = await screen.findByRole('combobox', { name: 'MCP provider' })
+    expect(picker.textContent).toContain('Codex')
+    fireEvent.click(picker)
+    fireEvent.click(await screen.findByRole('option', { name: 'Grok' }))
+
+    expect(await screen.findByText('Grok · MCP inventory unavailable')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Add server' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Server ID' }), {
+      target: { value: 'test-tools' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save server' }))
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('mcp.add', {
+        provider: 'grok',
+        projectPath: '/work/project',
+        server: {
+          id: 'test-tools',
+          enabled: true,
+          transport: { type: 'http', url: 'https://example.com/mcp' },
+        },
+      }),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith(
+      'mcp.reload',
+      expect.objectContaining({ provider: 'grok' }),
+    )
   })
 
   it('reports inventory separately when configuration remains available', async () => {

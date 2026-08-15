@@ -1,7 +1,9 @@
 export {
   AcpAdapter,
   parseAcpThreadId,
+  prepareAcpMcpServers,
   type AcpLaunchOptions,
+  type AcpMcpServer,
   type AcpStartOptions,
 } from './adapter.js'
 export {

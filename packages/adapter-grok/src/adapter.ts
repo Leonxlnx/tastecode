@@ -85,6 +85,7 @@ export function grokPromptJson(text: string, attachments: string[]): string {
  *  `--reasoning-effort` help lists every level understood by any model, so it
  *  cannot be the capability set for each row returned by `grok models`. */
 export const GROK_EFFORTS = ['low', 'medium', 'high']
+const GROK_4_6_EFFORTS = [...GROK_EFFORTS, 'xhigh']
 
 type GrokModelDetails = {
   reasoningEfforts: readonly string[]
@@ -92,6 +93,10 @@ type GrokModelDetails = {
 }
 
 const GROK_MODEL_DETAILS: Readonly<Record<string, GrokModelDetails>> = {
+  'grok-4.6': {
+    reasoningEfforts: GROK_4_6_EFFORTS,
+    defaultReasoningEffort: 'high',
+  },
   'grok-4.5': {
     reasoningEfforts: GROK_EFFORTS,
     defaultReasoningEffort: 'high',

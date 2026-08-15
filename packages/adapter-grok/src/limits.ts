@@ -92,13 +92,18 @@ function includedCreditsRow(config: Record<string, unknown>): ProviderLimit[] {
     ]
   }
 
+  // Grok's credits response is protobuf JSON: zero-valued scalar fields are
+  // omitted. A current period without creditUsagePercent therefore means 0%,
+  // matching Grok Build's own credit bar mapper.
   return period
     ? [
         {
           label,
           usedPercent: 0,
           ...(resetsAt === undefined ? {} : { resetsAt }),
-          valueLabel: 'Usage not reported',
+          ...(Object.hasOwn(config, 'creditUsagePercent')
+            ? { valueLabel: 'Usage not reported' }
+            : {}),
         },
       ]
     : []

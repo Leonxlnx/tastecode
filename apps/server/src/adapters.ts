@@ -1,6 +1,6 @@
-import { AcpAdapter } from '@harness/adapter-acp'
+import { AcpAdapter, prepareAcpMcpServers } from '@harness/adapter-acp'
 import { AntigravityAdapter } from '@harness/adapter-antigravity'
-import { GrokAdapter } from '@harness/adapter-grok'
+import { GrokAdapter, grokCommand } from '@harness/adapter-grok'
 import {
   ApiAgentSession,
   createAnthropicMessagesTransport,
@@ -57,6 +57,8 @@ export type StartOptions = {
   agent?: string | undefined
   /** Server-owned direct API connection. Required only by the API runtime. */
   connectionId?: string | undefined
+  /** Provider-owned history should not retain product-internal background work. */
+  ephemeral?: boolean | undefined
   /**
    * Run this session in a private git worktree rather than in the project
    * folder itself, so two agents cannot overwrite each other.
@@ -162,7 +164,7 @@ export interface AgentSession {
    * undefined; the orchestrator then only records the new mode for the
    * design-flow note and future turns.
    */
-  setApproval?(approval: ApprovalMode): void
+  setApproval?(approval: ApprovalMode): void | Promise<void>
   dispose(): void
   on(event: 'event', listener: (event: DomainEvent) => void): void
   on(event: 'log', listener: (line: string) => void): void
@@ -486,6 +488,37 @@ function grokRuntime(
   return {
     async start(workspacePath, options) {
       const harness = harnessFor('grok', options.agent, resolveHarness)
+      const projectMcp = options.mcpServers?.some((server) => server.enabled) ?? false
+      if (projectMcp) {
+        const adapter = new AcpAdapter('grok', {
+          name: harness?.displayName ?? 'Grok',
+          command: grokCommand(),
+          args: [
+            'agent',
+            ...(options.model ? ['--model', options.model] : []),
+            ...(options.effort ? ['--reasoning-effort', options.effort] : []),
+            'stdio',
+          ],
+          provider: 'grok',
+          mcpServers: prepareAcpMcpServers(options.mcpServers ?? [], options.mcpCredentials ?? {}),
+          ...(harness ? { spawn: customHarnessSpawn(harness) } : {}),
+        })
+        adapter.on('log', onLog)
+        try {
+          const starting = adapter.startThread(workspacePath, {
+            model: options.model,
+            approval: options.approval,
+            instructions: options.instructions,
+          })
+          const thread = harness
+            ? await customHarnessOperation(harness, 'start an MCP-enabled ACP session', starting)
+            : await starting
+          return { thread, session: adapter }
+        } catch (error) {
+          adapter.dispose()
+          throw error
+        }
+      }
       const adapter = new GrokAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
       adapter.on('log', onLog)
       const thread = await adapter.startThread(workspacePath, {
@@ -739,6 +772,7 @@ function codexRuntime(
         }
         const thread = await adapter.resumeThread(threadId, workspacePath, {
           ...(options.instructions ? { instructions: options.instructions } : {}),
+          ...(options.approval ? { approval: options.approval } : {}),
         })
         return { thread, session: adapter }
       } catch (error) {
@@ -850,42 +884,66 @@ function claudeRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined,
 ): ProviderRuntime {
+  const adapterFor = (agent: string | undefined, workspacePath?: string) => {
+    const harness = harnessFor('claude-code', agent, resolveHarness)
+    const launch = harness
+      ? resolveCustomHarnessLaunch(harness, workspacePath ?? process.cwd())
+      : undefined
+    const adapter = new ClaudeCodeAdapter(
+      harness
+        ? {
+            spawn: customHarnessSpawn(harness, workspacePath),
+            environment: launch!.environment,
+          }
+        : {},
+    )
+    adapter.on('log', onLog)
+    return adapter
+  }
+
+  const sessionFor = (adapter: ClaudeCodeAdapter): AgentSession => ({
+    capabilities: adapter.capabilities,
+    sendTurn: (threadId, text, attachments, turnOptions) =>
+      adapter.sendTurn(threadId, text, attachments, turnOptions),
+    steer: (threadId, text, attachments) => adapter.steer(threadId, text, attachments),
+    interrupt: () => adapter.interrupt(),
+    respondToApproval: (id, decision) => adapter.respondToApproval(id, decision),
+    respondToUserInput: (id, answers) => adapter.respondToUserInput(id, answers),
+    setApproval: (approval) => adapter.setApproval(approval),
+    onUsageChanged: (listener) => adapter.on('usageChanged', listener),
+    dispose: () => adapter.dispose(),
+    on: (event: 'event' | 'log', listener: never) => adapter.on(event, listener),
+  })
+
   return {
     async start(workspacePath, options) {
-      const harness = harnessFor('claude-code', options.agent, resolveHarness)
-      const adapter = new ClaudeCodeAdapter(
-        harness ? { spawn: customHarnessSpawn(harness), run: customHarnessRun(harness) } : {},
-      )
-      adapter.on('log', onLog)
+      const adapter = adapterFor(options.agent, workspacePath)
       const thread = await adapter.startThread(workspacePath, {
         model: options.model,
         effort: options.effort,
         approval: options.approval,
         instructions: options.instructions,
+        ephemeral: options.ephemeral,
       })
-      return {
-        thread,
-        session: {
-          capabilities: adapter.capabilities,
-          sendTurn: (threadId, text, attachments, turnOptions) =>
-            adapter.sendTurn(threadId, text, attachments, turnOptions),
-          interrupt: () => adapter.interrupt(),
-          // Claude Code decides permissions from the mode it was launched
-          // with; there is no mid-turn callback to answer.
-          respondToApproval: () => {},
-          respondToUserInput: () => {},
-          dispose: () => adapter.dispose(),
-          on: (event: 'event' | 'log', listener: never) => adapter.on(event, listener),
-        },
-      }
+      return { thread, session: sessionFor(adapter) }
     },
-    // The adapter answers with the CLI's documented --model aliases; nothing
-    // needs to start for that, so no dispose dance here.
+    async resume(threadId, workspacePath, options) {
+      const adapter = adapterFor(options.agent, workspacePath)
+      const thread = await adapter.resumeThread(threadId, workspacePath, {
+        model: options.model,
+        effort: options.effort,
+        approval: options.approval,
+        instructions: options.instructions,
+      })
+      return { thread, session: sessionFor(adapter) }
+    },
     async listModels(agent) {
-      const harness = harnessFor('claude-code', agent, resolveHarness)
-      return new ClaudeCodeAdapter(
-        harness ? { spawn: customHarnessSpawn(harness), run: customHarnessRun(harness) } : {},
-      ).listModels()
+      const adapter = adapterFor(agent)
+      try {
+        return await adapter.listModels()
+      } finally {
+        adapter.dispose()
+      }
     },
   }
 }

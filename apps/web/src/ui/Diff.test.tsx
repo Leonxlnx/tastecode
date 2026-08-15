@@ -36,6 +36,7 @@ describe('change summary', () => {
 
     expect(screen.getByText('file-2.ts')).toBeTruthy()
     expect(screen.queryByText('file-3.ts')).toBeNull()
+    expect(screen.queryByText('−0')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: /Show 2 more files/ }))
 

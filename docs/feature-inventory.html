@@ -332,21 +332,27 @@
           </li>
         </ul>
 
-        <h3>Claude Code (structured CLI, stream-json)</h3>
+        <h3>Claude Code (Agent SDK over the installed CLI)</h3>
         <ul class="check">
           <li>
             <label
               ><input type="checkbox" /><span
-                >Sign-in state with email and plan, sign out from Settings</span
+                >CLI sign-in, redacted account email and plan, sign out from Settings
+                <span class="d"
+                  >claude auth login runs in the guided provider terminal; SDK initialization fills
+                  account details without sending a prompt</span
+                ></span
               ></label
             >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Model aliases plus pinned previous generations
+                >Versioned SDK models without the synthetic Default row, merged with the full
+                catalog
                 <span class="d"
-                  >Fable 5, Opus 5, Sonnet 5, Haiku 4.5, Opus 4.8, Opus 4.7, Sonnet 4.6</span
+                  >Fable 5, Opus 5, Sonnet 5, Haiku 4.5, Opus 4.8, Opus 4.7, Opus 4.6, Opus 4.5,
+                  Sonnet 4.6</span
                 ></span
               ></label
             >
@@ -362,10 +368,10 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Interrupt, streamed reasoning, session resume across turns
+                >Steer, interrupt, streamed text and reasoning, durable session resume
                 <span class="d"
-                  >type-aware text and tool identities stay unique, chronological, and deterministic
-                  when Claude reuses a message ID</span
+                  >one long-lived prompt stream carries follow-up turns while SDK controls change
+                  the model and stop active work without replacing the process</span
                 ></span
               ></label
             >
@@ -373,8 +379,10 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Permission modes mapped to the CLI
-                <span class="d">ask, accept edits, bypass</span></span
+                >SDK permissions and structured questions use TasteCode-native cards
+                <span class="d"
+                  >ask, accept edits, automatic review, bypass, and AskUserQuestion</span
+                ></span
               ></label
             >
           </li>
@@ -767,8 +775,8 @@
             <label
               ><input type="checkbox" /><span
                 >Include or exclude individual catalog models in Settings while every catalog choice
-                remains visible; provider-wide tri-state controls and visibility counts are
-                omitted</span
+                remains visible; each provider also has a tri-state master switch for its whole
+                catalog, while visibility counts remain omitted</span
               ></label
             >
           </li>
@@ -811,9 +819,10 @@
               ><input type="checkbox" /><span
                 >Selected files, drag/drop, and immediate Ctrl/Command+V image, PDF, video, and
                 ordinary file attachments gated by declared source capability; Codex, Claude Code,
-                and Grok receive their native image and file-reference formats; selected images
-                reach ACP image blocks only after the agent advertises image prompts, while rejected
-                sends restore the original draft and attachment set</span
+                and Grok receive their native image and file-reference formats; raster images and
+                videos get lightweight composer previews and an app-native full-window viewer;
+                selected images reach ACP image blocks only after the agent advertises image
+                prompts, while rejected sends restore the original draft and attachment set</span
               ></label
             >
           </li>
@@ -1383,8 +1392,9 @@
                 >MCP servers: empty project view until explicitly added, then enable and disable,
                 inspect, per-project scope
                 <span class="d"
-                  >project and transport scoped across reconnects; the heading reports provider
-                  capability instead of implying project availability</span
+                  >a provider selector manages separate Codex and Grok project inventories; Codex
+                  can hot-reload compatible changes, while Grok receives its selected servers over
+                  ACP when a new session starts</span
                 ></span
               ></label
             >
@@ -1547,13 +1557,27 @@
             <label
               ><input type="checkbox" /><span
                 >Models: compact search-free Settings lists keep every catalog model and individual
-                visibility switch visible
+                visibility switch visible, with a tri-state master switch for each provider
                 <span class="d"
                   >composer pickers retain full-catalog search; first-run defaults wait for complete
                   installed-provider discovery; failed discovery retries after reconnect without
                   blocking an already-valid catalog; stored custom entries remain usable while
                   creation controls are parked;
                   <a href="./screenshots/model-settings-no-search.png">desktop evidence</a></span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Background writing: generated session titles and commit-message drafts use Luna at
+                medium effort with a connected Codex subscription
+                <span class="d"
+                  >without that subscription, automatic selection uses the newest cost-oriented
+                  model at its lowest advertised effort across connected subscription, custom
+                  harness, and direct API providers; Models settings exposes an explicit model and
+                  effort override</span
                 ></span
               ></label
             >

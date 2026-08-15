@@ -5,13 +5,25 @@
  * production, so every native call has to degrade rather than crash. Anything
  * that cannot work without the bridge is hidden, not shown broken.
  */
+export type PickedAttachment = {
+  path: string
+  name: string
+  mediaType?: 'image' | 'video'
+  previewUrl?: string
+  thumbnailUrl?: string
+}
+
 type Bridge = {
   pickFolder: () => Promise<string | undefined>
   pickSkillFolder: () => Promise<string | undefined>
-  pickFiles: () => Promise<string[]>
+  pickFiles: () => Promise<Array<PickedAttachment | string>>
   revealPath: (path: string) => Promise<void>
   revealProjectFile?: (path: string, projectPath: string) => Promise<void>
-  savePastedFile: (file: { name: string; type: string; bytes: ArrayBuffer }) => Promise<string>
+  savePastedFile: (file: {
+    name: string
+    type: string
+    bytes: ArrayBuffer
+  }) => Promise<PickedAttachment | string>
   writeClipboardText?: (text: string) => Promise<void>
   setZoom: (action: ZoomAction) => Promise<void>
   setTheme: (preference: AppThemePreference) => Promise<void>
@@ -48,10 +60,19 @@ export async function pickSkillFolder(): Promise<string | undefined> {
   return window.prompt('Full path of an Agent Skill folder')?.trim() || undefined
 }
 
-export async function pickFiles(): Promise<string[]> {
-  if (bridge) return bridge.pickFiles()
+export async function pickFiles(): Promise<PickedAttachment[]> {
+  if (bridge) {
+    const files = await bridge.pickFiles()
+    return files.map((file) =>
+      typeof file === 'string' ? { path: file, name: attachmentName(file) } : file,
+    )
+  }
   const typed = window.prompt('Full path of a file to attach')?.trim()
-  return typed ? [typed] : []
+  return typed ? [{ path: typed, name: attachmentName(typed) }] : []
+}
+
+function attachmentName(filePath: string): string {
+  return filePath.split(/[\\/]/).filter(Boolean).at(-1) ?? filePath
 }
 
 export function revealPath(path: string): Promise<void> {
@@ -62,13 +83,14 @@ export function revealProjectFile(path: string, projectPath: string): Promise<vo
   return bridge?.revealProjectFile?.(path, projectPath) ?? Promise.resolve()
 }
 
-export async function savePastedFile(file: File): Promise<string | undefined> {
+export async function savePastedFile(file: File): Promise<PickedAttachment | undefined> {
   if (!bridge) return undefined
-  return bridge.savePastedFile({
+  const saved = await bridge.savePastedFile({
     name: file.name,
     type: file.type,
     bytes: await file.arrayBuffer(),
   })
+  return typeof saved === 'string' ? { path: saved, name: attachmentName(saved) } : saved
 }
 
 export async function writeClipboardText(text: string): Promise<void> {

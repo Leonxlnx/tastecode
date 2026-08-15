@@ -155,6 +155,7 @@ export type StartOptions = {
   serviceTier?: string | undefined
   effort?: string | undefined
   approval?: ApprovalMode | undefined
+  ephemeral?: boolean | undefined
 }
 
 export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>
@@ -171,23 +172,23 @@ export type CodexLimitSource =
   { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
 
 /**
- * Our three user-facing modes onto Codex's approval policy and sandbox.
+ * Our four user-facing modes onto Codex's approval policy and sandbox.
  *
  * `full` is genuinely dangerous, which is why the UI never makes it the quiet
  * default and never remembers it silently across sessions.
  */
 export const CODEX_APPROVAL: Record<
   ApprovalMode,
-  { approvalPolicy: string; sandbox: string; approvalsReviewer?: 'auto_review' }
+  { approvalPolicy: string; sandbox: string; approvalsReviewer: 'user' | 'auto_review' }
 > = {
-  ask: { approvalPolicy: 'untrusted', sandbox: 'read-only' },
-  auto: { approvalPolicy: 'on-request', sandbox: 'workspace-write' },
+  ask: { approvalPolicy: 'untrusted', sandbox: 'read-only', approvalsReviewer: 'user' },
+  auto: { approvalPolicy: 'on-request', sandbox: 'workspace-write', approvalsReviewer: 'user' },
   'auto-review': {
     approvalPolicy: 'on-request',
     sandbox: 'workspace-write',
     approvalsReviewer: 'auto_review',
   },
-  full: { approvalPolicy: 'never', sandbox: 'danger-full-access' },
+  full: { approvalPolicy: 'never', sandbox: 'danger-full-access', approvalsReviewer: 'user' },
 }
 
 const REVIEW_STATUS: Record<GuardianApprovalReviewStatus, ApprovalReview['status']> = {
@@ -479,6 +480,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #mcpInventoryLoads = new Map<string, Promise<void>>()
   #threadModels = new Map<string, string>()
   #activeTurns = new Map<string, string>()
+  #sessionThread: { id: string; workspacePath: string } | undefined
   #mcpServers: Record<string, JsonValue>
   #mcpEnvironment: NodeJS.ProcessEnv
   #mcpLogins = new Map<string, string>()
@@ -796,37 +798,42 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         ...(options.model ? { model: options.model } : {}),
         ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
         ...(options.instructions ? { developerInstructions: options.instructions } : {}),
+        ...(options.ephemeral !== undefined ? { ephemeral: options.ephemeral } : {}),
         ...(Object.keys(config).length ? { config } : {}),
         ...(approval ?? {}),
       },
       THREAD_START_TIMEOUT_MS,
     )
     this.#threadModels.set(response.thread.id, response.model)
-    return {
+    const thread = {
       id: response.thread.id,
-      provider: 'codex',
+      provider: 'codex' as const,
       workspacePath,
       createdAt: Date.now(),
     }
+    this.#sessionThread = { id: thread.id, workspacePath }
+    return thread
   }
 
   async resumeThread(
     threadId: string,
     workspacePath: string,
-    options: Pick<StartOptions, 'instructions'> = {},
+    options: Pick<StartOptions, 'instructions' | 'approval'> = {},
   ): Promise<Thread> {
+    const approval = options.approval ? CODEX_APPROVAL[options.approval] : undefined
     const response = await this.#call<ThreadResumeResponse>('thread/resume', {
       threadId,
       cwd: workspacePath,
       ...(options.instructions ? { developerInstructions: options.instructions } : {}),
+      ...(approval ?? {}),
       ...(Object.keys(this.#mcpServers).length
         ? { config: { mcp_servers: this.#mcpServers } }
         : {}),
     })
     this.#threadModels.set(response.thread.id, response.model)
-    return {
+    const thread = {
       id: response.thread.id,
-      provider: 'codex',
+      provider: 'codex' as const,
       workspacePath,
       // Codex reports seconds; guard against it ever switching to millis,
       // which the blind ×1000 would launch fifty millennia into the future.
@@ -835,6 +842,14 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
           ? response.thread.createdAt * 1_000
           : response.thread.createdAt,
     }
+    this.#sessionThread = { id: thread.id, workspacePath }
+    return thread
+  }
+
+  async setApproval(approval: ApprovalMode): Promise<void> {
+    const thread = this.#sessionThread
+    if (!thread) throw new Error('no active Codex thread')
+    await this.resumeThread(thread.id, thread.workspacePath, { approval })
   }
 
   async sendTurn(
@@ -935,6 +950,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#mcpInventoryLoads.clear()
     this.#threadModels.clear()
     this.#activeTurns.clear()
+    this.#sessionThread = undefined
     // Held responders close over the dead transport; answering one after
     // disposal would write into nothing. Drop them with the process.
     this.#approvals.clear()

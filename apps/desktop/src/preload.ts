@@ -2,6 +2,14 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
 import { clipboardText } from './clipboard-text.js'
 
+type PickedAttachment = {
+  path: string
+  name: string
+  mediaType?: 'image' | 'video'
+  previewUrl?: string
+  thumbnailUrl?: string
+}
+
 /**
  * The entire native surface exposed to the renderer.
  *
@@ -14,12 +22,15 @@ import { clipboardText } from './clipboard-text.js'
 const api = {
   pickFolder: (): Promise<string | undefined> => ipcRenderer.invoke('harness:pickFolder'),
   pickSkillFolder: (): Promise<string | undefined> => ipcRenderer.invoke('harness:pickSkillFolder'),
-  pickFiles: (): Promise<string[]> => ipcRenderer.invoke('harness:pickFiles'),
+  pickFiles: (): Promise<PickedAttachment[]> => ipcRenderer.invoke('harness:pickFiles'),
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('harness:revealPath', path),
   revealProjectFile: (path: string, projectPath: string): Promise<void> =>
     ipcRenderer.invoke('harness:revealProjectFile', path, projectPath),
-  savePastedFile: (file: { name: string; type: string; bytes: ArrayBuffer }): Promise<string> =>
-    ipcRenderer.invoke('harness:savePastedFile', file),
+  savePastedFile: (file: {
+    name: string
+    type: string
+    bytes: ArrayBuffer
+  }): Promise<PickedAttachment> => ipcRenderer.invoke('harness:savePastedFile', file),
   writeClipboardText: (text: string): Promise<void> =>
     ipcRenderer.invoke('harness:writeClipboardText', clipboardText(text)),
   setZoom: (action: 'in' | 'out' | 'reset'): Promise<void> =>

@@ -65,6 +65,15 @@ class FakeGrokAdapter extends FakeTurnAdapter {
   }
 }
 
+class FakeAcpAdapter extends FakeTurnAdapter {
+  constructor(_agentId: string, options?: Record<string, unknown>) {
+    super('grok', options)
+  }
+
+  setApproval(): void {}
+  respondToApproval(): void {}
+}
+
 class FakeAntigravityAdapter extends FakeTurnAdapter {
   constructor(options?: Record<string, unknown>) {
     super('antigravity', options)
@@ -105,7 +114,15 @@ vi.mock('@harness/adapter-opencode', () => ({
   },
 }))
 
-vi.mock('@harness/adapter-grok', () => ({ GrokAdapter: FakeGrokAdapter }))
+vi.mock('@harness/adapter-grok', () => ({
+  GrokAdapter: FakeGrokAdapter,
+  grokCommand: () => 'grok',
+}))
+vi.mock('@harness/adapter-acp', () => ({
+  AcpAdapter: FakeAcpAdapter,
+  prepareAcpMcpServers: (servers: unknown[]) =>
+    servers.map((server) => ({ name: (server as { id: string }).id })),
+}))
 vi.mock('@harness/adapter-antigravity', () => ({
   AntigravityAdapter: FakeAntigravityAdapter,
 }))
@@ -160,6 +177,31 @@ describe('one-shot provider turn options', () => {
     await runtime.start('/repo', { agent: 'my-grok' })
 
     expect(turnAdapters[0]?.launchOptions?.spawn).toEqual(expect.any(Function))
+  })
+
+  it('starts Grok through ACP when the project has enabled MCP servers', async () => {
+    const runtime = providerRuntime('grok', () => {})
+
+    const { thread } = await runtime.start('/repo', {
+      model: 'grok-4.6',
+      effort: 'xhigh',
+      mcpServers: [
+        {
+          id: 'test-tools',
+          enabled: true,
+          transport: { type: 'stdio', command: 'node', args: ['test-mcp.js'] },
+        },
+      ],
+    })
+
+    expect(thread.provider).toBe('grok')
+    expect(turnAdapters).toHaveLength(1)
+    expect(turnAdapters[0]).toBeInstanceOf(FakeAcpAdapter)
+    expect(turnAdapters[0]?.launchOptions).toMatchObject({
+      provider: 'grok',
+      args: ['agent', '--model', 'grok-4.6', '--reasoning-effort', 'xhigh', 'stdio'],
+      mcpServers: [{ name: 'test-tools' }],
+    })
   })
 
   it('fails instead of silently falling back after a custom source is removed', async () => {

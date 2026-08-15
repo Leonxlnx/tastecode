@@ -1558,6 +1558,44 @@ describe('new chats', () => {
     await waitFor(() => expect(transport.request).toHaveBeenCalledWith('thread.history', { threadId: 'thread-1', afterSeq: 1 }))
   })
 
+  it('replaces the prompt fallback with a generated session title', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method !== 'backgroundModel.generateTitle') return request(method, params)
+      const { threadId } = params as { threadId: string }
+      serverProjects = serverProjects.map((entry) => {
+        const project = entry as { sessions: Array<Record<string, unknown>> }
+        return {
+          ...project,
+          sessions: project.sessions.map((session) =>
+            session.id === threadId ? { ...session, title: 'Fix checkout cleanup' } : session,
+          ),
+        }
+      })
+      return { title: 'Fix checkout cleanup', applied: true }
+    })
+
+    render(<App />)
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Investigate flaky checkout cleanup' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('backgroundModel.generateTitle', {
+        threadId: 'thread-1',
+        prompt: 'Investigate flaky checkout cleanup',
+        expectedTitle: 'Investigate flaky checkout cleanup',
+      })
+      expect(
+        screen.getByRole('button', { name: /^Fix checkout cleanup, Codex(?:,|$)/ }),
+      ).toBeTruthy()
+    })
+  })
+
   it('carries Stop through new-session creation and interrupts the first turn', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
@@ -1607,6 +1645,26 @@ describe('new chats', () => {
     )
     expect((composer as HTMLTextAreaElement).value).toBe('Start after I choose a project')
     expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
+  })
+
+  it('auto-dismisses notifications after five seconds', async () => {
+    serverProjects = []
+    render(<App />)
+
+    const composer = await screen.findByPlaceholderText('Do anything')
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(composer, { target: { value: 'Start after I choose a project' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+      expect(screen.getByRole('alert').textContent).toContain('Choose a project before sending.')
+      act(() => vi.advanceTimersByTime(4_999))
+      expect(screen.getByRole('alert')).toBeTruthy()
+      act(() => vi.advanceTimersByTime(1))
+      expect(screen.queryByRole('alert')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('offers setup without clearing a loaded-thread draft when its provider cannot run', async () => {
@@ -2580,6 +2638,7 @@ describe('new chats', () => {
 
     const composer = document.querySelector('textarea')
     expect(composer).not.toBeNull()
+    expect(document.activeElement).toBe(composer)
     fireEvent.change(composer!, { target: { value: 'Fix the sidebar' } })
     fireEvent.keyDown(composer!, { key: 'Enter' })
 

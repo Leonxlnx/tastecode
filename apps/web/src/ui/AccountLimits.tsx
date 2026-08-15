@@ -15,6 +15,7 @@ export function AccountLimits(props: {
 }) {
   const headingId = useId()
   const heading = useRef<HTMLHeadingElement>(null)
+  const visibleStates = props.states.filter((state) => limitSource(state)?.status !== 'unavailable')
 
   useLayoutEffect(() => heading.current?.focus(), [])
 
@@ -23,18 +24,20 @@ export function AccountLimits(props: {
     props.onRetry(provider)
   }
 
+  if (visibleStates.length === 0) return null
+
   return (
     <section
       className="account-menu__usage"
       aria-labelledby={headingId}
-      aria-busy={props.states.some((state) => state.status === 'loading')}
+      aria-busy={visibleStates.some((state) => state.status === 'loading')}
     >
       <h2 ref={heading} className="account-menu__usage-head" id={headingId} tabIndex={-1}>
         <Gauge size={14} aria-hidden />
         <span>Plan limits</span>
       </h2>
 
-      {props.states.map((state) => (
+      {visibleStates.map((state) => (
         <LimitSource key={state.provider} state={state} onRetry={() => retry(state.provider)} />
       ))}
     </section>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, FileDiff } from 'lucide-react'
+import { ChevronDown, FilePenLine } from 'lucide-react'
 import type { Transport } from '../transport.js'
 import { DiffReview } from './DiffReview.js'
 
@@ -43,16 +43,13 @@ export function Diff({
     <section className={`diff ${reviewing ? 'is-reviewing' : ''}`} aria-label="Edited files">
       <div className="diff__head">
         <span className="diff__icon" aria-hidden>
-          <FileDiff size={16} strokeWidth={2} />
+          <FilePenLine size={15} strokeWidth={1.8} />
         </span>
         <span className="diff__copy">
           <span className="diff__title">
             Edited {parsed.files} file{parsed.files === 1 ? '' : 's'}
           </span>
-          <span className="diff__stat">
-            <span className="stat stat--add">+{parsed.added}</span>
-            <span className="stat stat--del">−{parsed.removed}</span>
-          </span>
+          <ChangeStats added={parsed.added} removed={parsed.removed} className="diff__stat" />
         </span>
         <button
           type="button"
@@ -68,10 +65,7 @@ export function Diff({
         {visibleFiles.map((file, index) => (
           <li className="diff__file" key={`${file.path}:${index}`}>
             <FilePath path={file.path} />
-            <span className="diff__file-stat">
-              <span className="stat stat--add">+{file.added}</span>
-              <span className="stat stat--del">−{file.removed}</span>
-            </span>
+            <ChangeStats added={file.added} removed={file.removed} className="diff__file-stat" />
           </li>
         ))}
         {parsed.fileEntries.length > 3 ? (
@@ -98,6 +92,25 @@ export function Diff({
         </pre>
       ) : null}
     </section>
+  )
+}
+
+function ChangeStats({
+  added,
+  removed,
+  className,
+}: {
+  added: number
+  removed: number
+  className: string
+}) {
+  if (added === 0 && removed === 0) return null
+
+  return (
+    <span className={className}>
+      {added > 0 ? <span className="stat stat--add">+{added}</span> : null}
+      {removed > 0 ? <span className="stat stat--del">−{removed}</span> : null}
+    </span>
   )
 }
 

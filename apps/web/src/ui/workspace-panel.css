@@ -391,6 +391,78 @@
   font-size: var(--t-xs);
 }
 
+.workspace-review__generate-commit {
+  display: inline-flex;
+  flex: none;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  background: var(--chrome-raised);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  box-shadow: var(--chrome-shadow);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+}
+
+.workspace-review__generate-commit:hover:not(:disabled) {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.workspace-review__generate-commit:disabled {
+  color: var(--text-3);
+  cursor: default;
+  opacity: 0.58;
+}
+
+.workspace-review__notices {
+  display: grid;
+}
+
+.workspace-review__commit-draft {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 10px 16px;
+  background: color-mix(in srgb, var(--surface-2) 76%, transparent);
+  border-bottom: 1px solid var(--line);
+}
+
+.workspace-review__commit-draft pre {
+  min-width: 0;
+  margin: 0;
+  overflow: auto;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.workspace-review__commit-draft button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.workspace-review__commit-draft button:hover,
+.workspace-review__commit-draft button:focus-visible {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
 .workspace-review__split {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(230px, 31%, 340px);
@@ -641,6 +713,10 @@
 }
 
 @media (max-width: 560px) {
+  .workspace-review__generate-commit span {
+    display: none;
+  }
+
   .workspace-review__split {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) 210px;

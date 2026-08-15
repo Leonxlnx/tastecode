@@ -590,6 +590,10 @@ describe('threads', () => {
     })
     persistent.snoozeThread('persisted', 100, 20)
     persistent.updateSidebarSettings({ mode: 'classic', autoSettleDays: null })
+    persistent.updateBackgroundModelPreference({
+      mode: 'manual',
+      target: { provider: 'codex', model: 'gpt-5.6-luna', effort: 'medium' },
+    })
     persistent.close()
 
     const reopened = new Store(file)
@@ -601,6 +605,10 @@ describe('threads', () => {
         wakeAt: 100,
       })
       expect(reopened.sidebarSettings()).toEqual({ mode: 'classic', autoSettleDays: null })
+      expect(reopened.backgroundModelPreference()).toEqual({
+        mode: 'manual',
+        target: { provider: 'codex', model: 'gpt-5.6-luna', effort: 'medium' },
+      })
       expect(reopened.dueSnoozedThreads(99)).toEqual([])
       expect(reopened.dueSnoozedThreads(100).map((thread) => thread.id)).toEqual(['persisted'])
     } finally {
@@ -611,6 +619,7 @@ describe('threads', () => {
 
   it('starts new profiles with the classic sidebar and three-day settling', () => {
     expect(store.sidebarSettings()).toEqual({ mode: 'classic', autoSettleDays: 3 })
+    expect(store.backgroundModelPreference()).toEqual({ mode: 'automatic' })
   })
 })
 

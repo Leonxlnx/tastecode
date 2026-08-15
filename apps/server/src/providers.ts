@@ -52,8 +52,9 @@ const PROBES: Probe[] = [
     setup: {
       installUrl: 'https://code.claude.com/docs/en/getting-started',
       installCommand: 'npm install -g @anthropic-ai/claude-code',
-      login: 'app',
+      login: 'provider',
     },
+    loginCommand: 'claude auth login',
   },
   {
     id: 'grok',

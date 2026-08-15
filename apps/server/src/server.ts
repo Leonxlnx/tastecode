@@ -509,6 +509,25 @@ export function startServer(
         return { models: await orchestrator.listModels(p.provider, p.agent) }
       }
 
+      case 'backgroundModel.settings':
+        return orchestrator.backgroundModelSettings()
+
+      case 'backgroundModel.updateSettings':
+        return orchestrator.updateBackgroundModelPreference(
+          params as ParamsOf<'backgroundModel.updateSettings'>,
+        )
+
+      case 'backgroundModel.generateTitle': {
+        const p = params as ParamsOf<'backgroundModel.generateTitle'>
+        return orchestrator.generateBackgroundTitle(p.threadId, p.prompt, p.expectedTitle)
+      }
+
+      case 'backgroundModel.generateCommitMessage': {
+        const p = params as ParamsOf<'backgroundModel.generateCommitMessage'>
+        const diff = await readWorkspaceDiff(workspaceForRequest(store, p))
+        return { message: await orchestrator.generateBackgroundCommitMessage(diff) }
+      }
+
       case 'voice.status': {
         const p = params as { provider: ProviderId }
         return orchestrator.voiceStatus(p.provider)
@@ -903,7 +922,7 @@ export function startServer(
 
       case 'thread.setApproval': {
         const p = params as { threadId: string; approval: 'ask' | 'auto' | 'auto-review' | 'full' }
-        orchestrator.setThreadApproval(p.threadId, p.approval)
+        await orchestrator.setThreadApproval(p.threadId, p.approval)
         return {}
       }
 

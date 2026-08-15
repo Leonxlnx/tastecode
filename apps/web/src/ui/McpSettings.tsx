@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import type {
   McpServer,
   McpServerConfig,
@@ -8,6 +8,7 @@ import type {
 } from '@harness/contracts'
 import { AlertTriangle, Plus, Trash2 } from 'lucide-react'
 import type { Transport } from '../transport.js'
+import { AppSelect } from './AppSelect.js'
 
 type Inventory = ResultOf<'mcp.list'>
 type Editor = { mode: 'add' | 'edit'; id: string; displayName: string; transport: string }
@@ -28,8 +29,59 @@ export function McpSettings(props: {
   transport: Transport
   provider: ProviderId
   providerName: string
+  providers?: Array<{ provider: ProviderId; providerName: string }>
   projectPath: string | undefined
   projectName: string | undefined
+}) {
+  const providers = props.providers?.length
+    ? props.providers
+    : [{ provider: props.provider, providerName: props.providerName }]
+  const initialProvider =
+    providers.find((option) => option.provider === props.provider) ?? providers[0]!
+  const [provider, setProvider] = useState(initialProvider.provider)
+  const availableProviders = providers.map((option) => option.provider).join('\0')
+
+  useEffect(() => {
+    if (availableProviders.split('\0').includes(provider)) return
+    setProvider(initialProvider.provider)
+  }, [availableProviders, initialProvider.provider, provider])
+
+  const selected = providers.find((option) => option.provider === provider) ?? initialProvider
+  return (
+    <ProviderMcpSettings
+      key={selected.provider}
+      {...props}
+      provider={selected.provider}
+      providerName={selected.providerName}
+      providerPicker={
+        providers.length > 1 ? (
+          <div className="mcp-settings__provider">
+            <span>Provider</span>
+            <AppSelect
+              value={selected.provider}
+              options={providers.map((option) => ({
+                value: option.provider,
+                label: option.providerName,
+              }))}
+              onChange={setProvider}
+              ariaLabel="MCP provider"
+              className="mcp-settings__provider-select"
+              align="right"
+            />
+          </div>
+        ) : null
+      }
+    />
+  )
+}
+
+function ProviderMcpSettings(props: {
+  transport: Transport
+  provider: ProviderId
+  providerName: string
+  projectPath: string | undefined
+  projectName: string | undefined
+  providerPicker?: ReactNode
 }) {
   const [inventory, setInventory] = useState<Inventory>()
   const [loading, setLoading] = useState(false)
@@ -309,11 +361,11 @@ export function McpSettings(props: {
       ? 'Loading MCP servers…'
       : !currentInventory
         ? undefined
-        : !currentInventory.capabilities.inventory
-          ? `${props.providerName} does not expose MCP servers here yet.`
-          : projectServers.length === 0
-            ? 'No MCP servers have been added to this project.'
-            : undefined
+        : projectServers.length === 0
+          ? !currentInventory.capabilities.inventory
+            ? `No project MCP servers have been added for ${props.providerName}. Provider-global inventory is unavailable here.`
+            : 'No MCP servers have been added to this project.'
+          : undefined
 
   return (
     <section className="settings__panel mcp-settings" aria-labelledby="settings-mcp">
@@ -326,24 +378,27 @@ export function McpSettings(props: {
             {providerStatus}
           </p>
         </div>
-        {props.projectPath && currentInventory?.capabilities.add ? (
-          <button
-            className="settings__action"
-            type="button"
-            disabled={busy !== undefined}
-            onClick={() =>
-              setEditor({
-                mode: 'add',
-                id: '',
-                displayName: '',
-                transport: '{\n  "type": "http",\n  "url": "https://example.com/mcp"\n}',
-              })
-            }
-          >
-            <Plus size={14} aria-hidden />
-            Add server
-          </button>
-        ) : null}
+        <div className="mcp-settings__actions">
+          {props.providerPicker}
+          {props.projectPath && currentInventory?.capabilities.add ? (
+            <button
+              className="settings__action"
+              type="button"
+              disabled={busy !== undefined}
+              onClick={() =>
+                setEditor({
+                  mode: 'add',
+                  id: '',
+                  displayName: '',
+                  transport: '{\n  "type": "http",\n  "url": "https://example.com/mcp"\n}',
+                })
+              }
+            >
+              <Plus size={14} aria-hidden />
+              Add server
+            </button>
+          ) : null}
+        </div>
       </header>
 
       {currentError ? (
@@ -365,7 +420,7 @@ export function McpSettings(props: {
           onSubmit={(event) => void save(event)}
         />
       ) : null}
-      {currentInventory?.capabilities.inventory && projectServers.length ? (
+      {currentInventory && projectServers.length > 0 ? (
         <div className="settings__group">
           {projectServers.map((server) => (
             <ServerRow

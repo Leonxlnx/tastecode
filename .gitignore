@@ -10,9 +10,6 @@ build/
 release/
 *.tsbuildinfo
 
-# Rust (if/when we add native sidecars)
-target/
-
 # Environment & secrets — NEVER commit
 .env
 .env.*

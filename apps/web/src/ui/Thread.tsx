@@ -1007,9 +1007,7 @@ const WorkingRail = memo(function WorkingRail({
             aria-hidden
           />
         </span>
-        <span className="activity__working-label" key={label}>
-          {label}
-        </span>
+        <WorkingLabel label={label} />
         <span className="activity__working-time">
           <WorkingTimer startedAt={startedAt} />
         </span>
@@ -1017,6 +1015,46 @@ const WorkingRail = memo(function WorkingRail({
     </div>
   )
 })
+
+const WORKING_LABEL_MOTION_MS = 480
+
+function WorkingLabel({ label }: { label: string }) {
+  const lastLabel = useRef(label)
+  const timer = useRef<number | undefined>(undefined)
+  const [previousLabel, setPreviousLabel] = useState<string>()
+
+  useLayoutEffect(() => {
+    if (lastLabel.current === label) return
+
+    setPreviousLabel(lastLabel.current)
+    lastLabel.current = label
+    if (timer.current !== undefined) window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => {
+      timer.current = undefined
+      setPreviousLabel(undefined)
+    }, WORKING_LABEL_MOTION_MS)
+  }, [label])
+
+  useEffect(
+    () => () => {
+      if (timer.current !== undefined) window.clearTimeout(timer.current)
+    },
+    [],
+  )
+
+  return (
+    <span className="activity__working-label-swap" aria-live="polite" aria-atomic="true">
+      {previousLabel ? (
+        <span className="activity__working-label-previous" aria-hidden>
+          {previousLabel}
+        </span>
+      ) : null}
+      <span className={`activity__working-label${previousLabel ? ' is-entering' : ''}`} key={label}>
+        {label}
+      </span>
+    </span>
+  )
+}
 
 export function workLabel(
   items: Item[],

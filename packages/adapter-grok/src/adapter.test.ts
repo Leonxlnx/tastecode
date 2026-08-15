@@ -366,7 +366,8 @@ describe('Grok adapter', () => {
         id: 'grok-4.6',
         displayName: 'Grok 4.6',
         isDefault: true,
-        reasoningEfforts: [],
+        reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+        defaultReasoningEffort: 'high',
         serviceTiers: [],
       },
       {

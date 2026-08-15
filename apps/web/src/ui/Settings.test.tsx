@@ -22,7 +22,7 @@ vi.mock('./InstallTerminal.js', () => ({
 
 function renderSettings(
   options: {
-    initialSection?: 'appearance' | 'data' | 'about'
+    initialSection?: 'appearance' | 'models' | 'data' | 'about'
     onClose?: () => void
     onReset?: () => void
     transport?: Transport
@@ -487,7 +487,128 @@ describe('app haptic setting', () => {
 })
 
 describe('model settings', () => {
-  it('keeps every model visible while toggling picker inclusion individually', () => {
+  it('shows the automatic Luna policy and persists a manual model and effort', async () => {
+    const sources = [
+      {
+        id: 'codex',
+        displayName: 'Codex',
+        provider: 'codex' as const,
+        models: [
+          {
+            id: 'gpt-5.6-luna',
+            displayName: 'GPT-5.6 Luna',
+            isDefault: false,
+            reasoningEfforts: ['low', 'medium', 'high'],
+            serviceTiers: [],
+          },
+        ],
+      },
+    ]
+    const request = vi.fn(async (method: string, params: unknown) => {
+      if (method === 'backgroundModel.settings') {
+        return {
+          preference: { mode: 'automatic' as const },
+          sources,
+          resolved: {
+            provider: 'codex' as const,
+            model: 'gpt-5.6-luna',
+            effort: 'medium',
+            sourceName: 'Codex',
+            automatic: true,
+          },
+        }
+      }
+      if (method === 'backgroundModel.updateSettings') {
+        const preference = params as ResultOf<'backgroundModel.settings'>['preference']
+        const target = preference.mode === 'manual' ? preference.target : undefined
+        return {
+          preference,
+          sources,
+          ...(target
+            ? {
+                resolved: {
+                  ...target,
+                  sourceName: 'Codex',
+                  automatic: false,
+                },
+              }
+            : {}),
+        }
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    renderSettings({
+      initialSection: 'models',
+      transport: { request, on: vi.fn(() => () => {}) } as unknown as Transport,
+    })
+
+    const picker = await screen.findByRole('combobox', { name: 'Background model' })
+    expect(picker.tagName).toBe('BUTTON')
+    expect(screen.getByText(/gpt-5\.6 luna through codex at medium effort/i)).toBeTruthy()
+    fireEvent.click(picker)
+    fireEvent.click(screen.getByRole('option', { name: 'GPT-5.6 Luna' }))
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('backgroundModel.updateSettings', {
+        mode: 'manual',
+        target: {
+          provider: 'codex',
+          model: 'gpt-5.6-luna',
+          effort: 'low',
+        },
+      }),
+    )
+    const effort = await screen.findByRole('combobox', { name: 'Background reasoning effort' })
+    expect(effort.tagName).toBe('BUTTON')
+    fireEvent.click(effort)
+    fireEvent.click(screen.getByRole('option', { name: 'high' }))
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('backgroundModel.updateSettings', {
+        mode: 'manual',
+        target: {
+          provider: 'codex',
+          model: 'gpt-5.6-luna',
+          effort: 'high',
+        },
+      }),
+    )
+  })
+
+  it('keeps a disconnected manual choice visible so Automatic can replace it', async () => {
+    const request = vi.fn(async (method: string, params: unknown) => {
+      if (method === 'backgroundModel.settings') {
+        return {
+          preference: {
+            mode: 'manual' as const,
+            target: { provider: 'grok' as const, model: 'grok-code-fast-1', effort: 'low' },
+          },
+          sources: [],
+        }
+      }
+      if (method === 'backgroundModel.updateSettings') {
+        return { preference: params as { mode: 'automatic' }, sources: [] }
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    renderSettings({
+      initialSection: 'models',
+      transport: { request, on: vi.fn(() => () => {}) } as unknown as Transport,
+    })
+
+    const picker = await screen.findByRole('combobox', { name: 'Background model' })
+    expect(picker.textContent).toContain('grok-code-fast-1 (unavailable)')
+    expect(screen.getByText(/grok-code-fast-1 is unavailable/i)).toBeTruthy()
+    fireEvent.click(picker)
+    fireEvent.click(screen.getByRole('option', { name: 'Automatic (recommended)' }))
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('backgroundModel.updateSettings', {
+        mode: 'automatic',
+      }),
+    )
+  })
+
+  it('toggles a whole provider while exposing partial model visibility honestly', () => {
     const models: ModelChoice[] = [
       {
         key: 'opencode:ling',
@@ -524,7 +645,7 @@ describe('model settings', () => {
       on: vi.fn(() => () => {}),
     } as unknown as Transport
 
-    render(
+    const settings = (hiddenModels: Set<string>) => (
       <Settings
         provider="codex"
         providerName="Codex"
@@ -536,7 +657,7 @@ describe('model settings', () => {
         acpAgents={[]}
         modelConnections={[]}
         models={models}
-        hiddenModels={new Set(['opencode:ling'])}
+        hiddenModels={hiddenModels}
         onModelVisibilityChange={onModelVisibilityChange}
         onConnectionsChanged={() => {}}
         projectCount={0}
@@ -558,8 +679,9 @@ describe('model settings', () => {
         onAccountChange={() => {}}
         onReset={() => {}}
         onClose={() => {}}
-      />,
+      />
     )
+    const view = render(settings(new Set(['opencode:ling'])))
 
     const categories = screen.getByRole('navigation', { name: 'Settings categories' })
     expect(within(categories).getAllByRole('button')[0]?.textContent).toBe('General')
@@ -570,15 +692,53 @@ describe('model settings', () => {
     expect(sourceHeading?.querySelector('svg')?.getAttribute('width')).toBe('15')
     expect(screen.queryByRole('searchbox')).toBeNull()
     expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
+    const providerToggle = screen.getByRole('checkbox', {
+      name: 'Include models from OpenCode in model picker',
+    })
     const ling = screen.getByRole('switch', {
       name: 'Include OpenCode Zen · Ling-3.0-tiny Free in model picker',
     })
     const qwen = screen.getByRole('switch', {
       name: 'Include OpenCode Go · Qwen3.8 Max in model picker',
     })
+    expect(providerToggle.getAttribute('aria-checked')).toBe('mixed')
+    expect(providerToggle.classList.contains('is-mixed')).toBe(true)
     expect(ling.getAttribute('aria-checked')).toBe('false')
     expect(qwen.getAttribute('aria-checked')).toBe('true')
-    fireEvent.click(ling)
+
+    fireEvent.click(providerToggle)
+    expect(onModelVisibilityChange).toHaveBeenCalledOnce()
+    expect(onModelVisibilityChange).toHaveBeenCalledWith('opencode:ling', true)
+
+    onModelVisibilityChange.mockClear()
+    view.rerender(settings(new Set()))
+    const enabledProvider = screen.getByRole('checkbox', {
+      name: 'Include models from OpenCode in model picker',
+    })
+    expect(enabledProvider.getAttribute('aria-checked')).toBe('true')
+    expect(enabledProvider.classList.contains('is-on')).toBe(true)
+    fireEvent.click(enabledProvider)
+    expect(onModelVisibilityChange).toHaveBeenCalledTimes(2)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'opencode:ling', false)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'opencode:qwen', false)
+
+    onModelVisibilityChange.mockClear()
+    view.rerender(settings(new Set(['opencode:ling', 'opencode:qwen'])))
+    const disabledProvider = screen.getByRole('checkbox', {
+      name: 'Include models from OpenCode in model picker',
+    })
+    expect(disabledProvider.getAttribute('aria-checked')).toBe('false')
+    fireEvent.click(disabledProvider)
+    expect(onModelVisibilityChange).toHaveBeenCalledTimes(2)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'opencode:ling', true)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'opencode:qwen', true)
+
+    onModelVisibilityChange.mockClear()
+    fireEvent.click(
+      screen.getByRole('switch', {
+        name: 'Include OpenCode Zen · Ling-3.0-tiny Free in model picker',
+      }),
+    )
     expect(onModelVisibilityChange).toHaveBeenCalledWith('opencode:ling', true)
     expect(screen.getByText('OpenCode Go · Qwen3.8 Max')).toBeTruthy()
   })
@@ -739,7 +899,7 @@ describe('provider settings', () => {
   it('shows one account action per provider and runs that provider flow', async () => {
     const accounts: Record<string, Account> = {
       codex: { signedIn: true, email: 'private@example.com', plan: 'pro' },
-      'claude-code': { signedIn: true, plan: 'pro' },
+      'claude-code': { signedIn: true, email: 'claude@example.com', plan: 'pro' },
       grok: { signedIn: false },
     }
     const transport = {
@@ -854,7 +1014,13 @@ describe('provider settings', () => {
     if (!codexRow) throw new Error('Codex provider row missing')
     const email = within(codexRow).getByText('private@example.com')
     expect(email.className).toBe('settings__email-value')
-    expect(email.closest('.settings__email')?.getAttribute('title')).toBe('private@example.com')
+    const emailButton = email.closest<HTMLButtonElement>('.settings__email')
+    expect(emailButton?.getAttribute('title')).toBe('Click to reveal email')
+    expect(emailButton?.getAttribute('data-revealed')).toBe('false')
+    if (!emailButton) throw new Error('redacted email button missing')
+    fireEvent.click(emailButton)
+    expect(emailButton.getAttribute('data-revealed')).toBe('true')
+    expect(emailButton.getAttribute('title')).toBe('Click to hide email')
     expect(within(codexRow).queryByText(/\*+@example\.com/)).toBeNull()
 
     // Beta scope: agent rows and the API-connection form stay out entirely,
@@ -866,7 +1032,9 @@ describe('provider settings', () => {
 
     const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
     const grokRow = screen.getByText('Grok').closest<HTMLElement>('.settings__row')
-    expect(claudeRow?.querySelector('.provider-row__status')?.textContent).toBe('Signed in · pro')
+    expect(claudeRow?.querySelector('.provider-row__status')?.textContent).toBe(
+      'Authenticated as claude@example.com · pro',
+    )
     if (!claudeRow || !grokRow) throw new Error('provider row missing')
     fireEvent.click(within(claudeRow).getByRole('button', { name: 'Sign out' }))
     await waitFor(() =>

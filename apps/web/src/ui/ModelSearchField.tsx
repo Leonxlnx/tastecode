@@ -4,6 +4,7 @@ import { Search, X } from 'lucide-react'
 export function ModelSearchField(props: {
   value: string
   label: string
+  placeholder?: string
   className?: string
   autoFocus?: boolean
   onChange: (value: string) => void
@@ -18,7 +19,7 @@ export function ModelSearchField(props: {
         ref={input}
         type="search"
         value={props.value}
-        placeholder="Search models"
+        placeholder={props.placeholder ?? 'Search models'}
         aria-label={props.label}
         autoComplete="off"
         autoCapitalize="none"

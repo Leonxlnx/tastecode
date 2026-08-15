@@ -157,6 +157,11 @@ describe('Codex auto-review', () => {
       sandbox: 'workspace-write',
       approvalsReviewer: 'auto_review',
     })
+    expect(CODEX_APPROVAL.full).toEqual({
+      approvalPolicy: 'never',
+      sandbox: 'danger-full-access',
+      approvalsReviewer: 'user',
+    })
     expect(mapAutoApprovalReview(capturedStarted)).toEqual({
       id: 'captured-review',
       turnId: 'captured-turn',

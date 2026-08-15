@@ -15,8 +15,9 @@ ACP and API-connection surfaces, all working). Work that the beta itself needs (
 polish for the three shipped plans) still goes to `main` by PR and reaches `nightly` on the
 next sync; everything else targets `nightly`. Keep `nightly` synchronized by merging `main`
 and resolving conflicts without rewriting published history. Do not un-park a provider on
-`main` without Leon saying so. `harness-rust` stays as an
-experiment. [docs/dashboard.html](./docs/dashboard.html) is the release checklist.
+`main` without Leon saying so. The Rust + GPUI rewrite is preserved only on
+`archive/rust-rewrite-2026-08-15`; do not merge it back into `main` without Leon saying so.
+[docs/dashboard.html](./docs/dashboard.html) is the release checklist.
 
 ## Read first
 

@@ -73,16 +73,14 @@ describe('account limits', () => {
 
     expect(
       screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent),
-    ).toEqual(['Codex', 'Claude Code', 'Grok', 'OpenCode', 'Cursor', 'API connection'])
+    ).toEqual(['Codex', 'Claude Code', 'OpenCode', 'Cursor', 'API connection'])
     expect(within(screen.getByRole('region', { name: 'Codex' })).getByText(/Checking/)).toBeTruthy()
     expect(
       within(screen.getByRole('region', { name: 'Claude Code' })).getByText(
         'No plan limits reported.',
       ),
     ).toBeTruthy()
-    expect(
-      within(screen.getByRole('region', { name: 'Grok' })).getByText(/aren’t available/),
-    ).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Grok' })).toBeNull()
 
     const openCode = screen.getByRole('region', { name: 'OpenCode' })
     expect(within(openCode).getByRole('alert').textContent).not.toContain('Last known values')
@@ -121,13 +119,13 @@ describe('account limits', () => {
     expect(screen.getByText('No plan limits reported.')).toBeTruthy()
 
     view.rerender(limits({ status: 'ready', provider: 'claude-code', summary: summary() }))
-    expect(screen.getByText(/aren’t available/)).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Plan limits' })).toBeNull()
 
     view.rerender(limits({ status: 'error', provider: 'grok', message: 'Offline' }))
     expect(screen.getByRole('region', { name: 'Grok' })).toBeTruthy()
   })
 
-  it('labels each source and keeps unavailable separate from ready values', () => {
+  it('labels available sources and omits providers without a limit source', () => {
     const state: AccountLimitsState = {
       status: 'ready',
       provider: 'codex',
@@ -159,8 +157,7 @@ describe('account limits', () => {
         summary: { ...summary(), limitSource: { provider: 'grok', status: 'unavailable' } },
       }),
     )
-    const grok = screen.getByRole('region', { name: 'Grok' })
-    expect(within(grok).getByText(/aren’t available/)).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Grok' })).toBeNull()
 
     for (const emptySummary of [
       { ...summary(), limitSource: { provider: 'grok', status: 'unavailable' } as const },
@@ -169,7 +166,7 @@ describe('account limits', () => {
       view.rerender(
         limits({ status: 'error', provider: 'grok', message: 'Offline', summary: emptySummary }),
       )
-      expect(screen.getByRole('alert').textContent).not.toContain('Last known values')
+      expect(screen.queryByRole('alert')).toBeNull()
       expect(screen.queryByText('No plan limits reported.')).toBeNull()
       expect(screen.queryByText(/aren’t available/)).toBeNull()
     }
@@ -228,7 +225,14 @@ describe('account limits', () => {
     expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Plan limits' }))
 
     view.rerender(
-      limits({ status: 'loading', provider: 'claude-code', summary: summary() }, onRetry),
+      limits(
+        {
+          status: 'loading',
+          provider: 'claude-code',
+          summary: summary([{ label: 'Session', usedPercent: 42 }]),
+        },
+        onRetry,
+      ),
     )
     expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Plan limits' }))
   })

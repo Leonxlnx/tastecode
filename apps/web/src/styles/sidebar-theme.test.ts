@@ -57,7 +57,7 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(
       /\.proj__drawer\[data-open='false'\] > \.proj__sessions \{[^}]*margin-block: 0;/s,
     )
-    expect(appCss).toMatch(/\.proj__head \{[^}]*min-height: 36px;/s)
+    expect(appCss).toMatch(/\.proj__head \{[^}]*min-height: 36px;[^}]*padding-right: 6px;/s)
     expect(appCss).toMatch(/\.proj__toggle \{[^}]*min-height: 32px;/s)
     expect(appCss).toMatch(
       /\.proj\[data-drop-position\]::before \{[^}]*right: 6px;[^}]*left: 26px;[^}]*height: 2px;[^}]*background: var\(--light\);/s,

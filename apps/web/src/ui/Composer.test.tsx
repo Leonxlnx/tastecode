@@ -7,11 +7,13 @@ import { Composer } from './Composer.js'
 
 const bridge = vi.hoisted(() => ({
   pickFiles: vi.fn(),
+  revealPath: vi.fn(),
   savePastedFile: vi.fn(),
 }))
 
 vi.mock('../bridge.js', () => ({
   pickFiles: bridge.pickFiles,
+  revealPath: bridge.revealPath,
   savePastedFile: bridge.savePastedFile,
 }))
 
@@ -90,7 +92,7 @@ describe('Composer docking motion', () => {
   })
 })
 
-describe('Composer image paste', () => {
+describe('Composer media attachments', () => {
   it('previews a pasted image and sends its materialized path', async () => {
     const onSend = vi.fn()
     renderComposer(onSend)
@@ -169,9 +171,90 @@ describe('Composer image paste', () => {
   })
 
   it.each([
-    ['application/pdf', 'brief.pdf', '/tmp/brief.pdf'],
-    ['video/mp4', 'walkthrough.mp4', '/tmp/walkthrough.mp4'],
-  ])('materializes a pasted %s file and sends its path', async (type, name, path) => {
+    [
+      'image',
+      'reference.png',
+      '/work/reference.png',
+      'tastecode-attachment://preview/image',
+      'tastecode-attachment://preview/image?thumbnail=1',
+    ],
+    [
+      'video',
+      'walkthrough.mp4',
+      '/work/walkthrough.mp4',
+      'tastecode-attachment://preview/video',
+      'tastecode-attachment://preview/video?thumbnail=1',
+    ],
+  ] as const)(
+    'previews a picked %s and opens it in the media viewer',
+    async (mediaType, name, path, previewUrl, thumbnailUrl) => {
+      bridge.pickFiles.mockResolvedValueOnce([{ path, name, mediaType, previewUrl, thumbnailUrl }])
+      renderComposer(vi.fn())
+
+      fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
+      const open = await screen.findByRole('button', { name: `Open ${name}` })
+      expect(open.querySelector('video')).toBeNull()
+      expect(open.querySelector('img')?.getAttribute('src')).toBe(thumbnailUrl)
+      open.focus()
+      fireEvent.click(open)
+
+      expect(screen.getByRole('dialog', { name: `Preview ${name}` })).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Show in folder' }))
+      expect(bridge.revealPath).toHaveBeenCalledWith(path)
+      if (mediaType === 'image') {
+        expect(screen.getByRole('img', { name })).toBeTruthy()
+        expect(screen.getByText('100%')).toBeTruthy()
+      } else {
+        const player = screen.getByLabelText(name) as HTMLVideoElement
+        expect(player.tagName).toBe('VIDEO')
+        expect(player.hasAttribute('controls')).toBe(false)
+        expect(screen.getByRole('button', { name: 'Play video' })).toBeTruthy()
+        expect(screen.getByRole('slider', { name: 'Video progress' })).toBeTruthy()
+        expect(screen.getByRole('button', { name: 'Mute video' })).toBeTruthy()
+        expect(screen.getByRole('button', { name: 'Enter fullscreen' })).toBeTruthy()
+        expect(document.querySelector('.media-viewer__identity')).toBeNull()
+        expect(screen.queryByText('100%')).toBeNull()
+      }
+
+      fireEvent.keyDown(window, { key: 'Escape' })
+      expect(screen.queryByRole('dialog', { name: `Preview ${name}` })).toBeNull()
+      expect(document.activeElement).toBe(open)
+    },
+  )
+
+  it('previews and materializes a pasted video', async () => {
+    bridge.savePastedFile.mockResolvedValueOnce({
+      path: '/tmp/walkthrough.mp4',
+      name: 'walkthrough.mp4',
+      mediaType: 'video',
+      previewUrl: 'tastecode-attachment://preview/pasted-video',
+      thumbnailUrl: 'tastecode-attachment://preview/pasted-video?thumbnail=1',
+    })
+    renderComposer(vi.fn())
+    const composer = screen.getByPlaceholderText('Do anything')
+    const video = new File(['video bytes'], 'walkthrough.mp4', { type: 'video/mp4' })
+
+    fireEvent.paste(composer, { clipboardData: { files: [video] } })
+    const open = screen.getByRole('button', { name: 'Open walkthrough.mp4' })
+    expect(open.querySelector('video')).toBeNull()
+    await waitFor(() =>
+      expect(open.querySelector('img')?.getAttribute('src')).toBe(
+        'tastecode-attachment://preview/pasted-video?thumbnail=1',
+      ),
+    )
+    fireEvent.click(open)
+
+    expect(screen.getByRole('dialog', { name: 'Preview walkthrough.mp4' })).toBeTruthy()
+    const player = screen.getByLabelText('walkthrough.mp4') as HTMLVideoElement
+    expect(player.tagName).toBe('VIDEO')
+    expect(player.hasAttribute('controls')).toBe(false)
+    expect(bridge.savePastedFile).toHaveBeenCalledWith(video)
+  })
+
+  it('materializes a pasted non-media file and sends its path', async () => {
+    const type = 'application/pdf'
+    const name = 'brief.pdf'
+    const path = '/tmp/brief.pdf'
     bridge.savePastedFile.mockResolvedValueOnce(path)
     const onSend = vi.fn()
     renderComposer(onSend)
@@ -656,6 +739,28 @@ describe('Composer branch shelf', () => {
     cleanup()
     renderComposer(vi.fn(), { branch: undefined, branches: [] })
     expect(screen.queryByRole('button', { name: 'Choose branch' })).toBeNull()
+  })
+
+  it('keeps main first and filters branches from the shared search field', () => {
+    renderComposer(vi.fn(), {
+      branch: 'feature/current',
+      branches: ['feature/current', 'main', 'agent/review', 'fix/desktop'],
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose branch' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Choose branch' })
+    const branchNames = Array.from(dialog.querySelectorAll('.menu__item')).map((item) =>
+      item.textContent?.trim(),
+    )
+    expect(branchNames).toEqual(['main', 'feature/current', 'agent/review', 'fix/desktop'])
+
+    const search = screen.getByRole('searchbox', { name: 'Search branches' })
+    fireEvent.change(search, { target: { value: 'agent' } })
+
+    expect(screen.getByRole('menuitem', { name: 'agent/review' })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: 'main' })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: 'feature/current' })).toBeNull()
   })
 })
 

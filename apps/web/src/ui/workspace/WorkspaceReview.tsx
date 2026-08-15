@@ -2,13 +2,16 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CodeView, type CodeViewHandle, type CodeViewReactOptions } from '@pierre/diffs/react'
 import type { DiffFile, SessionDiff } from '@harness/contracts'
 import {
+  Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   Folder,
   GitBranch,
   LoaderCircle,
   RefreshCw,
   Search,
+  Sparkles,
 } from 'lucide-react'
 import type { Transport } from '../../transport.js'
 import { FileTypeIcon } from '../FileTypeIcon.js'
@@ -98,6 +101,10 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
   const [filter, setFilter] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
+  const [commitMessage, setCommitMessage] = useState<string>()
+  const [commitError, setCommitError] = useState<string>()
+  const [generatingCommit, setGeneratingCommit] = useState(false)
+  const [copiedCommit, setCopiedCommit] = useState(false)
   const generation = useRef(0)
   const codeViewRef = useRef<CodeViewHandle<undefined>>(null)
 
@@ -106,6 +113,10 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
     const mine = ++generation.current
     setLoading(true)
     setError(undefined)
+    setCommitMessage(undefined)
+    setCommitError(undefined)
+    setGeneratingCommit(false)
+    setCopiedCommit(false)
     try {
       const result = await props.transport.request('workspace.diff', {
         projectPath: props.projectPath,
@@ -121,8 +132,43 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
     }
   }, [props.projectPath, props.threadId, props.transport])
 
+  const generateCommitMessage = useCallback(async () => {
+    if (!props.projectPath) return
+    const mine = generation.current
+    setGeneratingCommit(true)
+    setCommitError(undefined)
+    setCopiedCommit(false)
+    try {
+      const result = await props.transport.request('backgroundModel.generateCommitMessage', {
+        projectPath: props.projectPath,
+        ...(props.threadId ? { threadId: props.threadId } : {}),
+      })
+      if (generation.current === mine) setCommitMessage(result.message)
+    } catch (cause) {
+      if (generation.current === mine) {
+        setCommitError(cause instanceof Error ? cause.message : String(cause))
+      }
+    } finally {
+      if (generation.current === mine) setGeneratingCommit(false)
+    }
+  }, [props.projectPath, props.threadId, props.transport])
+
+  const copyCommitMessage = useCallback(async () => {
+    if (!commitMessage) return
+    try {
+      await navigator.clipboard.writeText(commitMessage)
+      setCopiedCommit(true)
+    } catch {
+      setCommitError('Could not copy the commit message.')
+    }
+  }, [commitMessage])
+
   useEffect(() => {
     setDiff(undefined)
+    setCommitMessage(undefined)
+    setCommitError(undefined)
+    setGeneratingCommit(false)
+    setCopiedCommit(false)
     if (props.projectPath) void refresh()
     return () => {
       generation.current += 1
@@ -216,6 +262,21 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
         </span>
         <button
           type="button"
+          className="workspace-review__generate-commit"
+          title="Draft commit message"
+          aria-label="Draft commit message"
+          disabled={loading || generatingCommit || !diff || diff.files.length === 0}
+          onClick={() => void generateCommitMessage()}
+        >
+          {generatingCommit ? (
+            <LoaderCircle className="spinner" size={14} aria-hidden />
+          ) : (
+            <Sparkles size={14} aria-hidden />
+          )}
+          <span>Commit message</span>
+        </button>
+        <button
+          type="button"
           className="icon-btn"
           title="Refresh diff"
           disabled={loading}
@@ -225,17 +286,38 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
         </button>
       </header>
 
-      {error ? (
-        <div className="workspace-review__message" role="alert">
-          {error}
-        </div>
-      ) : null}
+      <div className="workspace-review__notices" aria-live="polite">
+        {error ? (
+          <div className="workspace-review__message" role="alert">
+            {error}
+          </div>
+        ) : null}
 
-      {!diff && loading ? (
-        <div className="workspace-review__message" role="status">
-          <LoaderCircle className="spinner" size={15} aria-hidden /> Loading diff…
-        </div>
-      ) : null}
+        {commitError ? (
+          <div className="workspace-review__message" role="alert">
+            {commitError}
+          </div>
+        ) : null}
+
+        {commitMessage ? (
+          <div className="workspace-review__commit-draft" role="status">
+            <pre>{commitMessage}</pre>
+            <button
+              type="button"
+              aria-label="Copy commit message"
+              onClick={() => void copyCommitMessage()}
+            >
+              {copiedCommit ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
+            </button>
+          </div>
+        ) : null}
+
+        {!diff && loading ? (
+          <div className="workspace-review__message" role="status">
+            <LoaderCircle className="spinner" size={15} aria-hidden /> Loading diff…
+          </div>
+        ) : null}
+      </div>
 
       {diff && diff.files.length === 0 ? (
         <WorkspaceEmptyState

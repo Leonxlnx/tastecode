@@ -7,7 +7,10 @@ import type {
   ApprovalMode,
   Capabilities,
   DomainEvent,
+  McpConfigValue,
+  McpServerConfig,
   Model,
+  ProviderId,
   Thread,
 } from '@harness/contracts'
 import { spawnCli, StdioJsonRpc } from '@harness/proc'
@@ -56,6 +59,68 @@ export type AcpLaunchOptions = {
   command: string
   args?: string[]
   spawn?: typeof spawnCli
+  provider?: ProviderId
+  mcpServers?: AcpMcpServer[]
+}
+
+export type AcpMcpServer =
+  | {
+      name: string
+      command: string
+      args: string[]
+      env: Array<{ name: string; value: string }>
+    }
+  | {
+      type: 'http'
+      name: string
+      url: string
+      headers: Array<{ name: string; value: string }>
+    }
+
+/** Translate TasteCode's credential-safe config into the ACP session shape. */
+export function prepareAcpMcpServers(
+  servers: McpServerConfig[],
+  credentials: Record<string, string>,
+): AcpMcpServer[] {
+  const result: AcpMcpServer[] = []
+  for (const server of servers) {
+    if (!server.enabled) continue
+    const transport = server.transport
+    if (transport.type === 'stdio') {
+      if (transport.cwd) {
+        throw new Error(`MCP server "${server.id}" cannot use a custom cwd through ACP`)
+      }
+      result.push({
+        name: server.id,
+        command: transport.command,
+        args: transport.args ?? [],
+        env: Object.entries(transport.environment ?? {}).map(([name, value]) => ({
+          name,
+          value: resolveMcpValue(value, credentials),
+        })),
+      })
+      continue
+    }
+    result.push({
+      type: 'http',
+      name: server.id,
+      url: transport.url,
+      headers: Object.entries(transport.headers ?? {}).map(([name, value]) => ({
+        name,
+        value: resolveMcpValue(value, credentials),
+      })),
+    })
+  }
+  return result
+}
+
+function resolveMcpValue(value: McpConfigValue, credentials: Record<string, string>): string {
+  if (value.source === 'literal') return value.value
+  const credential = credentials[value.credentialRef]
+  if (credential === undefined) {
+    throw new Error(`MCP credential "${value.credentialRef}" is unavailable`)
+  }
+  return credential
 }
 
 type AcpLaunchSpec = Pick<
@@ -95,6 +160,8 @@ export function acpPromptContent(
 export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   #spec: AcpLaunchSpec
   readonly #spawn: typeof spawnCli
+  readonly #provider: ProviderId
+  readonly #mcpServers: AcpMcpServer[]
   #rpc: StdioJsonRpc | undefined
   #initialize: InitializeResult | undefined
   #sessionId: string | undefined
@@ -120,6 +187,8 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   constructor(agentId: string, launch?: AcpLaunchOptions) {
     super()
     this.#spawn = launch?.spawn ?? spawnCli
+    this.#provider = launch?.provider ?? 'acp'
+    this.#mcpServers = launch?.mcpServers ?? []
     if (launch) {
       this.#spec = {
         id: agentId,
@@ -155,7 +224,10 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     const rpc = await this.#connect(workspacePath, options.model)
 
     const session = await rpc
-      .request<NewSessionResult>('session/new', { cwd: workspacePath, mcpServers: [] })
+      .request<NewSessionResult>('session/new', {
+        cwd: workspacePath,
+        mcpServers: this.#mcpServers,
+      })
       .catch((error: unknown) => {
         // Agents report an expired or missing login as a bare protocol error.
         // Passing that through gives the user two words and no way forward, so
@@ -175,7 +247,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
 
     return {
       id: `acp-${this.#spec.id}-${session.sessionId}`,
-      provider: 'acp',
+      provider: this.#provider,
       workspacePath,
       createdAt: Date.now(),
     }
@@ -196,12 +268,16 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       this.dispose()
       throw new Error(`${this.#spec.name} does not support session resume`)
     }
-    await rpc.request('session/load', { sessionId, cwd: workspacePath, mcpServers: [] })
+    await rpc.request('session/load', {
+      sessionId,
+      cwd: workspacePath,
+      mcpServers: this.#mcpServers,
+    })
     this.#sessionId = sessionId
     await this.#selectSessionModel(options.model)
     return {
       id: `acp-${this.#spec.id}-${sessionId}`,
-      provider: 'acp',
+      provider: this.#provider,
       workspacePath,
       createdAt: Date.now(),
     }

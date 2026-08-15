@@ -2,7 +2,9 @@ import { createCipheriv, randomBytes, randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync, type StatementSync } from 'node:sqlite'
+import { BackgroundModelPreferenceSchema } from '@harness/contracts'
 import type {
+  BackgroundModelPreference,
   DiffDecision,
   DomainEvent,
   ProviderId,
@@ -12,6 +14,8 @@ import type {
   Usage,
 } from '@harness/contracts'
 import type { TurnOptions } from './adapters.js'
+
+const BACKGROUND_MODEL_SETTING = 'background-model'
 
 /**
  * Everything that has to survive a restart.
@@ -651,6 +655,31 @@ export class Store {
       .prepare(`UPDATE sidebar_settings SET mode = ?, auto_settle_days = ? WHERE id = 1`)
       .run(next.mode, next.autoSettleDays)
     return next
+  }
+
+  backgroundModelPreference(): BackgroundModelPreference {
+    const row = this.#db
+      .prepare(`SELECT value FROM app_settings WHERE key = ?`)
+      .get(BACKGROUND_MODEL_SETTING) as { value: string } | undefined
+    if (!row) return { mode: 'automatic' }
+    try {
+      return BackgroundModelPreferenceSchema.parse(JSON.parse(row.value))
+    } catch {
+      return { mode: 'automatic' }
+    }
+  }
+
+  updateBackgroundModelPreference(
+    preference: BackgroundModelPreference,
+  ): BackgroundModelPreference {
+    const parsed = BackgroundModelPreferenceSchema.parse(preference)
+    this.#db
+      .prepare(
+        `INSERT INTO app_settings (key, value) VALUES (?, ?)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(BACKGROUND_MODEL_SETTING, JSON.stringify(parsed))
+    return parsed
   }
 
   #updateThread(sql: string, ...params: Array<string | number>): void {

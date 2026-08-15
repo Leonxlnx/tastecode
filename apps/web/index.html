@@ -4,10 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <!-- The renderer talks to one local server; GitHub's avatar CDN is the
-         only remote content origin and is restricted to images. -->
+         only remote content origin. Native attachment previews use a signed,
+         app-local protocol and remain restricted to image/video elements. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; connect-src 'self' __HARNESS_SERVER_ORIGIN__; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://avatars.githubusercontent.com"
+      content="default-src 'self'; connect-src 'self' __HARNESS_SERVER_ORIGIN__; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: tastecode-attachment: https://avatars.githubusercontent.com; media-src 'self' blob: tastecode-attachment:"
     />
     <title>TasteCode</title>
   </head>

@@ -298,6 +298,41 @@ describe('streamed thread renders', () => {
     expect(markdownRender).toHaveBeenLastCalledWith({ text: narration.text, streaming: true })
   })
 
+  it('crossfades working labels without remounting the rail', () => {
+    vi.useFakeTimers()
+    const user = message({
+      id: 'user-1',
+      turnId: 'turn-2',
+      role: 'user',
+      text: 'Run the checks',
+    })
+    const command = message({
+      id: 'command-1',
+      turnId: 'turn-2',
+      type: 'command',
+      role: undefined,
+      status: 'started',
+      command: 'pnpm test',
+    })
+    const rendered = render(view([user]))
+    const rail = rendered.container.querySelector('.activity--working')
+
+    rendered.rerender(view([user, command]))
+
+    expect(rendered.container.querySelector('.activity--working')).toBe(rail)
+    expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
+      'Running a command',
+    )
+    expect(rendered.container.querySelector('.activity__working-label-previous')?.textContent).toBe(
+      'Working',
+    )
+
+    act(() => vi.advanceTimersByTime(480))
+
+    expect(rendered.container.querySelector('.activity__working-label-previous')).toBeNull()
+    vi.useRealTimers()
+  })
+
   it('does not restart the entry animation timer for streamed text updates', () => {
     vi.useFakeTimers()
     const existing: Item[] = [

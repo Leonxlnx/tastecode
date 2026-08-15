@@ -71,7 +71,7 @@ describe('detectProviders', () => {
     // "not installed" with no reason leaves the user nothing to act on.
     expect(claude.problem).toContain('claude')
     expect(claude.setup?.installUrl).toMatch(/^https:/)
-    expect(claude.setup?.login).toBe('app')
+    expect(claude.setup?.login).toBe('provider')
   })
 
   it('links every missing provider to its current product setup guide', async () => {
@@ -130,12 +130,12 @@ describe('sign-in launch command resolution', () => {
     expect(launchCommandFor('acp', 'gemini')).toBe('gemini')
     expect(launchCommandFor('acp', 'kimi')).toBe('kimi')
     expect(launchCommandFor('acp', 'qwen')).toBe('qwen')
+    expect(launchCommandFor('claude-code')).toBe('claude auth login')
     expect(launchCommandFor('grok')).toBe('grok login')
   })
 
   it('refuses providers whose sign-in happens in the app, and unknown targets', () => {
     expect(() => launchCommandFor('codex')).toThrow(/signs in through the app/)
-    expect(() => launchCommandFor('claude-code')).toThrow(/signs in through the app/)
     expect(() => launchCommandFor('acp', 'nonexistent')).toThrow(/unknown launch target/)
     expect(() => launchCommandFor('acp')).toThrow(/unknown launch target/)
   })

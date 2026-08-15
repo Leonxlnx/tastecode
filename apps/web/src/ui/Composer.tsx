@@ -24,6 +24,7 @@ import {
   LockOpen,
   Palette,
   Pencil,
+  Play,
   Plus,
   ScanEye,
   Server,
@@ -32,9 +33,10 @@ import {
   Square,
   Trash2,
   type LucideIcon,
+  Video,
   X,
 } from 'lucide-react'
-import { pickFiles, savePastedFile } from '../bridge.js'
+import { pickFiles, revealPath, savePastedFile, type PickedAttachment } from '../bridge.js'
 import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
 import {
@@ -53,8 +55,9 @@ import {
   type ComposerResourcePickerHandle,
   type ComposerResourceTrigger,
 } from './ComposerResourcePicker.js'
-import { ImageViewer } from './ImageViewer.js'
+import { MediaViewer } from './MediaViewer.js'
 import { Menu, MenuItem } from './Menu.js'
+import { ModelSearchField } from './ModelSearchField.js'
 import { ModelSelector } from './ModelSelector.js'
 import type { Project } from './Sidebar.js'
 
@@ -111,21 +114,88 @@ export const APPROVAL_MODES: {
   },
 ]
 
-const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i
+const IMAGE_RE = /\.(apng|avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i
+const PREVIEWABLE_IMAGE_RE = /\.(apng|avif|bmp|gif|ico|jpe?g|png|webp)$/i
+const VIDEO_RE = /\.(avi|m4v|mkv|mov|mp4|mpe?g|ogg|ogv|webm)$/i
 const COMPOSER_MIN_HEIGHT = 68
 const COMPOSER_MAX_HEIGHT = 242
+
+function BranchMenu(props: {
+  branches: string[]
+  activeBranch: string | undefined
+  onSelect: (branch: string) => void
+}) {
+  const [query, setQuery] = useState('')
+  const results = useRef<HTMLDivElement>(null)
+  const orderedBranches = useMemo(
+    () => [
+      ...props.branches.filter((branch) => branch === 'main'),
+      ...props.branches.filter((branch) => branch !== 'main'),
+    ],
+    [props.branches],
+  )
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const filteredBranches = normalizedQuery
+    ? orderedBranches.filter((branch) => branch.toLocaleLowerCase().includes(normalizedQuery))
+    : orderedBranches
+
+  const focusResult = (edge: 'first' | 'last') => {
+    const items = results.current?.querySelectorAll<HTMLButtonElement>('.menu__item')
+    const target = edge === 'first' ? items?.[0] : items?.[items.length - 1]
+    target?.focus()
+  }
+
+  return (
+    <>
+      <ModelSearchField
+        className="branch-menu__search"
+        value={query}
+        label="Search branches"
+        placeholder="Search branches"
+        autoFocus
+        onChange={setQuery}
+        onNavigate={focusResult}
+      />
+      <div className="branch-menu__results" ref={results}>
+        {filteredBranches.length > 0 ? (
+          filteredBranches.map((branch) => (
+            <MenuItem
+              key={branch}
+              title={branch}
+              active={branch === props.activeBranch}
+              onClick={() => props.onSelect(branch)}
+            />
+          ))
+        ) : (
+          <p className="branch-menu__empty" role="status">
+            No matching branches.
+          </p>
+        )}
+      </div>
+    </>
+  )
+}
 const COMPOSER_DOCK_ANIMATION_ID = 'harness-composer-dock'
 const COMPOSER_DOCK_MOTION_MS = 320
 const COMPOSER_DOCK_EASING = 'cubic-bezier(0.23, 1, 0.32, 1)'
 const ATTACHMENTS_UNSUPPORTED = 'Attachments aren’t supported by this source.'
 const ATTACHMENTS_BLOCK_SEND = 'Remove attachments or switch to a source that supports them.'
 const MAX_PASTED_FILE_BYTES = 25 * 1024 * 1024
-const PASTEABLE_IMAGE_TYPES = new Set([
+const PREVIEWABLE_IMAGE_TYPES = new Set([
   'image/png',
   'image/jpeg',
   'image/gif',
   'image/webp',
   'image/bmp',
+])
+const PREVIEWABLE_VIDEO_TYPES = new Set([
+  'video/mp4',
+  'video/quicktime',
+  'video/webm',
+  'video/ogg',
+  'video/mpeg',
+  'video/x-matroska',
+  'video/x-msvideo',
 ])
 
 type ComposerAttachment = {
@@ -133,6 +203,8 @@ type ComposerAttachment = {
   name: string
   path?: string
   previewUrl?: string
+  thumbnailUrl?: string
+  mediaType?: 'image' | 'video'
 }
 
 type RunningSubmission = 'queue' | 'steer'
@@ -216,7 +288,12 @@ function ComposerComponent(props: {
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState<string>()
-  const [viewingImage, setViewingImage] = useState<{ src: string; name: string }>()
+  const [viewingMedia, setViewingMedia] = useState<{
+    src: string
+    name: string
+    mediaType: 'image' | 'video'
+    localPath?: string
+  }>()
   const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle')
   const [voiceError, setVoiceError] = useState<string>()
   const [dragging, setDragging] = useState(false)
@@ -386,27 +463,36 @@ function ComposerComponent(props: {
     }
   }, [props.draftRequest?.request])
 
-  const addFiles = (paths: string[]) => {
-    if (paths.length === 0) return
+  const addFiles = (files: Array<PickedAttachment | string>) => {
+    if (files.length === 0) return
     setAttachments((current) => {
       const attached = new Set(current.flatMap((attachment) => attachment.path ?? []))
-      return [
-        ...current,
-        ...paths
-          .filter((path) => !attached.has(path))
-          .map((path) => ({ id: path, name: basename(path), path })),
-      ]
+      const additions: ComposerAttachment[] = []
+      for (const file of files) {
+        const picked = typeof file === 'string' ? { path: file, name: basename(file) } : file
+        if (attached.has(picked.path)) continue
+        attached.add(picked.path)
+        additions.push({
+          id: picked.path,
+          name: picked.name,
+          path: picked.path,
+          ...(picked.previewUrl ? { previewUrl: picked.previewUrl } : {}),
+          ...(picked.thumbnailUrl ? { thumbnailUrl: picked.thumbnailUrl } : {}),
+          ...(picked.mediaType ? { mediaType: picked.mediaType } : {}),
+        })
+      }
+      return [...current, ...additions]
     })
   }
 
-  const attachFiles = (paths: string[]) => {
-    if (paths.length === 0) return
+  const attachFiles = (files: Array<PickedAttachment | string>) => {
+    if (files.length === 0) return
     if (!attachmentsSupportedRef.current) {
       setAttachmentError(ATTACHMENTS_UNSUPPORTED)
       return
     }
     setAttachmentError(undefined)
-    addFiles(paths)
+    addFiles(files)
   }
 
   const addPastedFiles = (files: File[]) => {
@@ -416,33 +502,44 @@ function ComposerComponent(props: {
         setAttachmentError(`“${file.name}” is larger than 25 MB. Use the file picker instead.`)
         continue
       }
-      const previewUrl = PASTEABLE_IMAGE_TYPES.has(file.type)
-        ? URL.createObjectURL(file)
-        : undefined
+      const mediaType = previewMediaType(file.type, file.name)
+      const previewUrl = mediaType ? URL.createObjectURL(file) : undefined
       if (previewUrl) previewUrls.current.add(previewUrl)
       const id = previewUrl ?? `pasted:${crypto.randomUUID()}`
       setAttachments((current) => [
         ...current,
-        { id, name: file.name || 'Pasted file', ...(previewUrl ? { previewUrl } : {}) },
+        {
+          id,
+          name: file.name || 'Pasted file',
+          ...(previewUrl ? { previewUrl } : {}),
+          ...(mediaType ? { mediaType } : {}),
+        },
       ])
 
       void savePastedFile(file)
-        .then((path) => {
+        .then((saved) => {
           if (!mounted.current) return
-          if (!path) {
-            removeAttachment(id)
-            setAttachmentError('Pasting images is available in the desktop app.')
+          if (!saved) {
+            removeAttachment(id, previewUrl)
+            setAttachmentError('Pasting files is available in the desktop app.')
             return
           }
+          const picked = typeof saved === 'string' ? { path: saved, name: basename(saved) } : saved
           setAttachments((current) =>
             current.map((attachment) =>
-              attachment.id === id ? { ...attachment, path } : attachment,
+              attachment.id === id
+                ? {
+                    ...attachment,
+                    path: picked.path,
+                    ...(picked.thumbnailUrl ? { thumbnailUrl: picked.thumbnailUrl } : {}),
+                  }
+                : attachment,
             ),
           )
         })
         .catch(() => {
           if (!mounted.current) return
-          removeAttachment(id)
+          removeAttachment(id, previewUrl)
           setAttachmentError(
             `Couldn’t attach “${file.name || 'that file'}”. Use the file picker instead.`,
           )
@@ -455,20 +552,52 @@ function ComposerComponent(props: {
     URL.revokeObjectURL(previewUrl)
   }
 
-  const removeAttachment = (id: string) => {
+  const removeAttachment = (id: string, previewUrl?: string) => {
     // Side effects stay outside the updater — updaters run during render and
-    // replay under StrictMode. Pasted images use their preview URL as their
-    // id, so `id` is the URL; file attachments have no preview to release.
-    if (previewUrls.current.has(id)) {
-      if (viewingImage?.src === id) setViewingImage(undefined)
-      releasePreview(id)
+    // replay under StrictMode. Only renderer-created blob previews are revoked;
+    // signed native-picker URLs remain owned by the desktop protocol.
+    if (previewUrl) {
+      setViewingMedia((current) => (current?.src === previewUrl ? undefined : current))
     }
+    releasePreview(previewUrl)
     setAttachments((current) => current.filter((attachment) => attachment.id !== id))
   }
 
   const clearAttachments = () => {
     for (const attachment of attachments) releasePreview(attachment.previewUrl)
+    setViewingMedia(undefined)
     setAttachments([])
+  }
+
+  const addDroppedFiles = (files: File[]) => {
+    if (!attachmentsSupportedRef.current) {
+      setAttachmentError(ATTACHMENTS_UNSUPPORTED)
+      return
+    }
+
+    const attachedPaths = new Set(attachments.flatMap((attachment) => attachment.path ?? []))
+    const picked: PickedAttachment[] = []
+    const materialized: File[] = []
+    for (const file of files) {
+      const filePath = (file as File & { path?: string }).path
+      if (!filePath) {
+        materialized.push(file)
+        continue
+      }
+      if (attachedPaths.has(filePath)) continue
+      attachedPaths.add(filePath)
+      const mediaType = previewMediaType(file.type, file.name)
+      const previewUrl = mediaType ? URL.createObjectURL(file) : undefined
+      if (previewUrl) previewUrls.current.add(previewUrl)
+      picked.push({
+        path: filePath,
+        name: file.name || basename(filePath),
+        ...(previewUrl ? { previewUrl } : {}),
+        ...(mediaType ? { mediaType } : {}),
+      })
+    }
+    attachFiles(picked)
+    addPastedFiles(materialized)
   }
 
   useEffect(() => {
@@ -678,12 +807,7 @@ function ComposerComponent(props: {
           onDrop={(e) => {
             e.preventDefault()
             setDragging(false)
-            // Electron exposes a real path on dropped files; browsers do not, so
-            // this quietly does nothing during development rather than lying.
-            const paths = Array.from(e.dataTransfer.files)
-              .map((file) => (file as File & { path?: string }).path)
-              .filter((path): path is string => typeof path === 'string' && path !== '')
-            attachFiles(paths)
+            addDroppedFiles(Array.from(e.dataTransfer.files))
           }}
         >
           {props.newSession ? (
@@ -740,6 +864,9 @@ function ComposerComponent(props: {
                   label="Choose branch"
                   drop="down"
                   triggerClassName="shelf-control shelf-control--branch"
+                  panelRole="dialog"
+                  panelLabel="Choose branch"
+                  panelClassName="branch-menu"
                   trigger={() => (
                     <span className="shelf-control__content">
                       <GitBranch size={15} aria-hidden />
@@ -748,19 +875,14 @@ function ComposerComponent(props: {
                   )}
                 >
                   {(close) => (
-                    <>
-                      {props.branches.map((branch) => (
-                        <MenuItem
-                          key={branch}
-                          title={branch}
-                          active={branch === props.branch}
-                          onClick={() => {
-                            props.onBranchChange(branch)
-                            close()
-                          }}
-                        />
-                      ))}
-                    </>
+                    <BranchMenu
+                      branches={props.branches}
+                      activeBranch={props.branch}
+                      onSelect={(branch) => {
+                        props.onBranchChange(branch)
+                        close()
+                      }}
+                    />
                   )}
                 </Menu>
               ) : null}
@@ -872,9 +994,9 @@ function ComposerComponent(props: {
             <div className="composer__prompt">
               <div className="chips">
                 {attachments.map((attachment) =>
-                  attachment.previewUrl ? (
+                  attachment.previewUrl && attachment.mediaType ? (
                     <span
-                      className={`attachment-preview ${attachment.path ? '' : 'is-loading'}`}
+                      className={`attachment-preview attachment-preview--${attachment.mediaType}${attachment.path ? '' : ' is-loading'}`}
                       key={attachment.id}
                       title={attachment.name}
                     >
@@ -882,15 +1004,43 @@ function ComposerComponent(props: {
                         className="attachment-preview__open"
                         type="button"
                         onClick={() =>
-                          setViewingImage({ src: attachment.previewUrl!, name: attachment.name })
+                          setViewingMedia({
+                            src: attachment.previewUrl!,
+                            name: attachment.name,
+                            mediaType: attachment.mediaType!,
+                            ...(attachment.previewUrl?.startsWith('tastecode-attachment:') &&
+                            attachment.path
+                              ? { localPath: attachment.path }
+                              : {}),
+                          })
                         }
                         aria-label={`Open ${attachment.name}`}
                       >
-                        <img src={attachment.previewUrl} alt="" />
+                        <span className="attachment-preview__fallback" aria-hidden>
+                          {attachment.mediaType === 'video' ? (
+                            <Video size={21} strokeWidth={1.6} />
+                          ) : (
+                            <ImageIcon size={21} strokeWidth={1.6} />
+                          )}
+                        </span>
+                        {attachmentThumbnailUrl(attachment) ? (
+                          <img
+                            src={attachmentThumbnailUrl(attachment)}
+                            alt=""
+                            onError={(event) => {
+                              event.currentTarget.hidden = true
+                            }}
+                          />
+                        ) : null}
+                        {attachment.mediaType === 'video' ? (
+                          <span className="attachment-preview__play" aria-hidden>
+                            <Play size={14} fill="currentColor" />
+                          </span>
+                        ) : null}
                       </button>
                       <button
                         className="attachment-preview__remove"
-                        onClick={() => removeAttachment(attachment.id)}
+                        onClick={() => removeAttachment(attachment.id, attachment.previewUrl)}
                         title="Remove"
                         aria-label={`Remove ${attachment.name}`}
                       >
@@ -902,13 +1052,15 @@ function ComposerComponent(props: {
                     <span className="chip chip--file" key={attachment.id} title={attachment.path}>
                       {attachment.path && IMAGE_RE.test(attachment.path) ? (
                         <ImageIcon size={13} aria-hidden />
+                      ) : attachment.path && VIDEO_RE.test(attachment.path) ? (
+                        <Play size={13} aria-hidden />
                       ) : (
                         <FileIcon size={13} aria-hidden />
                       )}
                       <span className="chip__label">{attachment.name}</span>
                       <button
                         className="chip__x"
-                        onClick={() => removeAttachment(attachment.id)}
+                        onClick={() => removeAttachment(attachment.id, attachment.previewUrl)}
                         title="Remove"
                         aria-label={`Remove ${attachment.name}`}
                       >
@@ -1022,12 +1174,12 @@ function ComposerComponent(props: {
                   onPaste={(e) => {
                     const files = Array.from(e.clipboardData.files)
                     const paths = files
-                      .filter((file) => !PASTEABLE_IMAGE_TYPES.has(file.type))
+                      .filter((file) => previewMediaType(file.type, file.name) === undefined)
                       .map((file) => (file as File & { path?: string }).path)
                       .filter((path): path is string => typeof path === 'string' && path !== '')
                     const materialized = files.filter(
                       (file) =>
-                        PASTEABLE_IMAGE_TYPES.has(file.type) ||
+                        previewMediaType(file.type, file.name) !== undefined ||
                         !(file as File & { path?: string }).path,
                     )
                     if (materialized.length > 0 || paths.length > 0) {
@@ -1217,11 +1369,15 @@ function ComposerComponent(props: {
           {voiceError}
         </div>
       ) : null}
-      {viewingImage ? (
-        <ImageViewer
-          src={viewingImage.src}
-          name={viewingImage.name}
-          onClose={() => setViewingImage(undefined)}
+      {viewingMedia ? (
+        <MediaViewer
+          src={viewingMedia.src}
+          name={viewingMedia.name}
+          mediaType={viewingMedia.mediaType}
+          onReveal={
+            viewingMedia.localPath ? () => void revealPath(viewingMedia.localPath!) : undefined
+          }
+          onClose={() => setViewingMedia(undefined)}
         />
       ) : null}
     </>
@@ -1279,6 +1435,19 @@ export function insertTranscriptAtCursor(
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] ?? path
+}
+
+function previewMediaType(mimeType: string, fileName: string): 'image' | 'video' | undefined {
+  if (PREVIEWABLE_IMAGE_TYPES.has(mimeType) || PREVIEWABLE_IMAGE_RE.test(fileName)) return 'image'
+  if (PREVIEWABLE_VIDEO_TYPES.has(mimeType) || VIDEO_RE.test(fileName)) return 'video'
+  return undefined
+}
+
+function attachmentThumbnailUrl(attachment: ComposerAttachment): string | undefined {
+  return (
+    attachment.thumbnailUrl ??
+    (attachment.mediaType === 'image' ? attachment.previewUrl : undefined)
+  )
 }
 
 /**

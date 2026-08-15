@@ -1,5 +1,7 @@
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -12,6 +14,7 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
+  protocol,
   session,
   shell,
   systemPreferences,
@@ -25,6 +28,12 @@ import {
   type PreviewCaptureRequest,
   type PreviewCaptureResult,
 } from '@harness/contracts'
+import {
+  ATTACHMENT_PREVIEW_SCHEME,
+  attachmentByteRange,
+  attachmentPreviewFromUrl,
+  pickedAttachment,
+} from './attachment-preview.js'
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
 import { clipboardText } from './clipboard-text.js'
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
@@ -71,6 +80,9 @@ function sameOrigin(url: string, base: string): boolean {
   }
 }
 const devServer = process.env['HARNESS_DEV_SERVER']
+const attachmentPreviewSecret = randomBytes(32)
+const attachmentThumbnailCache = new Map<string, Promise<Buffer | undefined>>()
+const MAX_ATTACHMENT_THUMBNAILS = 64
 /** Hidden capture windows are real BrowserWindows; lifecycle checks that count
  *  "the app's windows" must not count them. */
 const captureWindows = new Set<BrowserWindow>()
@@ -98,6 +110,13 @@ let tray: Tray | undefined
 let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
 const macOSHaptics = new MacOSHaptics()
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: ATTACHMENT_PREVIEW_SCHEME,
+    privileges: { standard: true, secure: true, stream: true },
+  },
+])
 
 if (!ownsSingleInstance) {
   console.error('[desktop] another TasteCode instance owns the single-instance lock')
@@ -497,7 +516,9 @@ ipcMain.handle('harness:pickFiles', async (event) => {
     properties: ['openFile', 'multiSelections'],
     title: 'Attach files',
   })
-  return result.canceled ? [] : result.filePaths
+  return result.canceled
+    ? []
+    : result.filePaths.map((filePath) => pickedAttachment(filePath, attachmentPreviewSecret))
 })
 
 ipcMain.handle('harness:revealPath', (event, value: unknown) => {
@@ -517,7 +538,7 @@ ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const destination = path.join(directory, `${randomUUID()}-${file.name}`)
   await writeFile(destination, file.bytes, { flag: 'wx', mode: 0o600 })
-  return destination
+  return pickedAttachment(destination, attachmentPreviewSecret)
 })
 
 if (ownsSingleInstance) {
@@ -536,6 +557,7 @@ if (ownsSingleInstance) {
   void app.whenReady().then(() => {
     if (process.platform === 'darwin') app.dock?.setIcon(productIconPath)
     startOwnedServer()
+    configureAttachmentPreviews()
     configureMediaPermissions()
     void sweepStaleCaptures()
     createWindow()
@@ -550,6 +572,123 @@ if (ownsSingleInstance) {
       })
     }
   })
+}
+
+/** Stream only files that came from the native picker. The signed URL keeps a
+ * compromised renderer from turning the preview surface into a filesystem API. */
+function configureAttachmentPreviews(): void {
+  protocol.handle(ATTACHMENT_PREVIEW_SCHEME, async (request) => {
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      return new Response(null, { status: 405, headers: { Allow: 'GET, HEAD' } })
+    }
+
+    const preview = attachmentPreviewFromUrl(request.url, attachmentPreviewSecret)
+    if (!preview) return new Response(null, { status: 404 })
+
+    try {
+      const info = await stat(preview.path)
+      if (!info.isFile()) return new Response(null, { status: 404 })
+
+      if (preview.variant === 'thumbnail') {
+        const thumbnail = await attachmentThumbnail(
+          preview.path,
+          `${info.size}:${info.mtimeMs}`,
+          preview.mediaType,
+        )
+        if (!thumbnail) return new Response(null, { status: 404 })
+        const headers = {
+          'Cache-Control': 'no-store',
+          'Content-Length': String(thumbnail.byteLength),
+          'Content-Type': 'image/png',
+          'X-Content-Type-Options': 'nosniff',
+        }
+        return new Response(request.method === 'HEAD' ? null : Uint8Array.from(thumbnail), {
+          status: 200,
+          headers,
+        })
+      }
+
+      const range = attachmentByteRange(request.headers.get('range'), info.size)
+      if (range === 'invalid') {
+        return new Response(null, {
+          status: 416,
+          headers: { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes */${info.size}` },
+        })
+      }
+
+      const start = range?.start ?? 0
+      const end = range?.end ?? Math.max(0, info.size - 1)
+      const headers: Record<string, string> = {
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-store',
+        'Content-Length': String(info.size === 0 ? 0 : end - start + 1),
+        'Content-Type': preview.mimeType,
+        'X-Content-Type-Options': 'nosniff',
+      }
+      if (range) headers['Content-Range'] = `bytes ${start}-${end}/${info.size}`
+      const status = range ? 206 : 200
+      if (request.method === 'HEAD' || info.size === 0) {
+        return new Response(null, { status, headers })
+      }
+
+      const stream = createReadStream(preview.path, { start, end })
+      request.signal.addEventListener('abort', () => stream.destroy(), { once: true })
+      return new Response(Readable.toWeb(stream), { status, headers })
+    } catch {
+      return new Response(null, { status: 404 })
+    }
+  })
+}
+
+function attachmentThumbnail(
+  filePath: string,
+  fingerprint: string,
+  mediaType: 'image' | 'video',
+): Promise<Buffer | undefined> {
+  const cacheKey = `${filePath}\0${fingerprint}`
+  const cached = attachmentThumbnailCache.get(cacheKey)
+  if (cached) return cached
+
+  const pending = createAttachmentThumbnail(filePath, mediaType)
+  attachmentThumbnailCache.set(cacheKey, pending)
+  if (attachmentThumbnailCache.size > MAX_ATTACHMENT_THUMBNAILS) {
+    const oldest = attachmentThumbnailCache.keys().next().value
+    if (oldest) attachmentThumbnailCache.delete(oldest)
+  }
+  void pending.then((thumbnail) => {
+    if (!thumbnail && attachmentThumbnailCache.get(cacheKey) === pending) {
+      attachmentThumbnailCache.delete(cacheKey)
+    }
+  })
+  return pending
+}
+
+async function createAttachmentThumbnail(
+  filePath: string,
+  mediaType: 'image' | 'video',
+): Promise<Buffer | undefined> {
+  try {
+    const thumbnail = await nativeImage.createThumbnailFromPath(filePath, {
+      width: 256,
+      height: 256,
+    })
+    if (!thumbnail.isEmpty()) {
+      const bytes = thumbnail.toPNG()
+      if (bytes.byteLength > 0) return bytes
+    }
+  } catch {
+    // Linux has no native thumbnail provider. Raster images still have a safe
+    // decoder fallback; videos use the renderer's lightweight media tile.
+  }
+
+  if (mediaType !== 'image') return undefined
+  const image = nativeImage.createFromPath(filePath)
+  if (image.isEmpty()) return undefined
+  const size = image.getSize()
+  const scale = Math.min(1, 256 / Math.max(size.width, size.height))
+  const thumbnail = image.resize({ width: Math.max(1, Math.round(size.width * scale)) })
+  const bytes = thumbnail.toPNG()
+  return bytes.byteLength > 0 ? bytes : undefined
 }
 
 /** Allow this app's own renderer to request audio, never video or another origin. */

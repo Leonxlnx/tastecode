@@ -340,15 +340,34 @@ describe('live access level', () => {
     const { orchestrator, sessions } = harness()
     const thread = await orchestrator.startThread('codex', process.cwd(), { approval: 'ask' })
 
-    orchestrator.setThreadApproval(thread.id, 'full')
+    await orchestrator.setThreadApproval(thread.id, 'full')
 
     expect(sessions[0]?.approvalModes).toEqual(['full'])
+  })
+
+  it('resumes a persisted thread with the selected mode', async () => {
+    const store = new Store(':memory:')
+    store.addProject('/repo')
+    store.addThread({
+      id: 'persisted-thread',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Persisted',
+    })
+    const { orchestrator, resumedIds, resumedOptions } = harness(undefined, store)
+
+    await orchestrator.setThreadApproval('persisted-thread', 'full')
+
+    expect(resumedIds).toEqual(['persisted-thread'])
+    expect(resumedOptions[0]).toMatchObject({ approval: 'full' })
   })
 
   it('throws for a thread it does not know', async () => {
     const { orchestrator } = harness()
 
-    expect(() => orchestrator.setThreadApproval('missing-thread', 'auto')).toThrow(/no such thread/)
+    await expect(orchestrator.setThreadApproval('missing-thread', 'auto')).rejects.toThrow(
+      /no such thread/,
+    )
   })
 })
 
@@ -2577,6 +2596,33 @@ describe('MCP inventory', () => {
     await expect(orchestrator.listMcpServers('codex', '/repo')).resolves.toMatchObject({
       capabilities: { add: true, reload: true, startOAuth: true, cancelOAuth: false },
       servers: [{ id: 'docs', scope: 'project', enabled: true }],
+    })
+  })
+
+  it('manages Grok project servers and passes them into new sessions', async () => {
+    const { orchestrator, startedOptions } = harness()
+    orchestrator.addMcpServer('grok', '/repo', {
+      id: 'test-tools',
+      enabled: true,
+      displayName: 'Test tools',
+      transport: { type: 'stdio', command: 'node', args: ['test-mcp.js'] },
+    })
+
+    await expect(orchestrator.listMcpServers('grok', '/repo')).resolves.toMatchObject({
+      capabilities: { inventory: false, add: true, update: true, remove: true, reload: false },
+      servers: [
+        {
+          id: 'test-tools',
+          displayName: 'Test tools',
+          scope: 'project',
+          enabled: true,
+        },
+      ],
+    })
+
+    await orchestrator.startThread('grok', '/repo')
+    expect(startedOptions[0]).toMatchObject({
+      mcpServers: [{ id: 'test-tools', enabled: true }],
     })
   })
 })

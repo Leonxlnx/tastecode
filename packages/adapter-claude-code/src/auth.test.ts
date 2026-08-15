@@ -1,6 +1,7 @@
 import { runCli } from '@harness/proc'
 import { describe, expect, it, vi } from 'vitest'
 import { claudeAccount, parseClaudeAccount } from './auth.js'
+import type { ClaudeQueryFactory, ClaudeQueryRuntime } from './sdk-runtime.js'
 
 vi.mock('@harness/proc', () => ({ runCli: vi.fn(), killTree: vi.fn(), spawnCli: vi.fn() }))
 
@@ -27,5 +28,29 @@ describe('Claude Code authentication', () => {
         }),
       ),
     ).toEqual({ signedIn: true, email: 'dev@example.test', plan: 'pro' })
+  })
+
+  it('fills missing subscription details from SDK initialization without sending a prompt', async () => {
+    vi.mocked(runCli).mockResolvedValue({
+      code: 0,
+      stdout: '{"loggedIn":true,"email":"dev@example.test"}',
+    })
+    let closed = false
+    const createQuery: ClaudeQueryFactory = () =>
+      ({
+        initializationResult: async () => ({
+          account: { email: 'dev@example.test', subscriptionType: 'max' },
+        }),
+        close: () => {
+          closed = true
+        },
+      }) as unknown as ClaudeQueryRuntime
+
+    await expect(claudeAccount({ createQuery })).resolves.toEqual({
+      signedIn: true,
+      email: 'dev@example.test',
+      plan: 'max',
+    })
+    expect(closed).toBe(true)
   })
 })
