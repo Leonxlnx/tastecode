@@ -80,6 +80,8 @@ describe('brand phase', () => {
     expect(prompt).toContain('Use at most two typeface families')
     expect(prompt).toContain('Never choose IBM Plex Mono, Archivo')
     expect(prompt).toContain('colored left-edge accent rails')
+    expect(prompt).toContain('one base card language and at most one emphasized variant')
+    expect(prompt).toContain('primary action, focus and selected states')
     expect(prompt).toContain('prefer relevant supplied, generated, or properly sourced photographs')
   })
 

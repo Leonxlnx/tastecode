@@ -46,6 +46,8 @@ describe('review and repair phases', () => {
     )
     expect(prompt).toContain('Any heading occupies more than three visual lines')
     expect(prompt).toContain('uppercase monospace micro-heading')
+    expect(prompt).toContain('cards merely box prose')
+    expect(prompt).toContain('approved brand accent appears only in tiny labels')
     expect(prompt).toContain('unstyled browser default')
     expect(prompt).toContain('footer content overlaps')
   })

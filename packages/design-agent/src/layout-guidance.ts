@@ -70,6 +70,8 @@ Apply these quality constraints to every case:
 - Keep headings deliberately scaled for the composition. Plan one or two visual lines; use three only when the rare editorial composition genuinely benefits, and never plan four.
 - Do not add eyebrows, uppercase monospace micro-labels, decorative section numbers, ornamental hairline grids, colored vertical accent rails, or arbitrary square-panel systems.
 - Use whitespace and content-shaped cards to group information. A divider is exceptional and must clarify a real relationship; it is not the default section or card skeleton.
+- Use cards generously when they contain a coherent feature, person, plan, proof point, action, or media story. Give the page one base card language and at most one emphasized variant. Keep their radius, spacing logic, media treatment, and interaction feedback related while varying size and internal composition to fit the content. Never box ordinary prose, repeat an empty three-column template, or style every card as an unrelated experiment.
+- Carry the brand accent into meaningful actions, focus and selected states, and a recurring card, media, or section treatment. Do not reduce the brand color to tiny labels or icons, and do not spread unrelated accent colors across every card.
 - Prefer relevant photography, product imagery, and interface captures. Use SVG only for a simple functional icon, a real product/interface visual, or a diagram whose meaning is immediately clear. Never select an abstract diagram merely to fill empty space.
 - Keep the typography coherent across a section. Do not switch families repeatedly inside one line, sentence, card, or navigation item.
 

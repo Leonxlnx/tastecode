@@ -67,6 +67,8 @@ describe('build phase', () => {
     expect(prompt).toContain('Do not replace it with a generic centered heading')
     expect(prompt).toContain('Three lines is a rare maximum and four lines is always a failure')
     expect(prompt).toContain('colored left-edge accent rails')
+    expect(prompt).toContain('Use cards generously for coherent features')
+    expect(prompt).toContain('finished page must not become generic gray')
     expect(prompt).toContain('never leave a browser-default control')
     expect(prompt).toContain('Record every invented value in a Build summary')
     expect(prompt).toContain('Set summary to "Verify before publishing: ..."')
