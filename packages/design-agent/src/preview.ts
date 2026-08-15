@@ -29,6 +29,8 @@ export function designPreviewPrompt(): string {
 
 Inspect the implemented project's real package scripts and configuration. Choose the existing development or preview command that serves the built page on 127.0.0.1 with an explicit port. Do not install dependencies, start the server yourself, use a shell string, or choose a remote URL. The command is an executable name and args is its argv array. cwd is relative to the current workspace.
 
+Match the project's package manager instead of copying the example: package-lock.json means npm, pnpm-lock.yaml means pnpm, yarn.lock means yarn, and bun.lock or bun.lockb means bun. When the project has no package-manager lockfile, prefer a static plan for plain HTML or the package manager already named by the project's scripts or packageManager field. Never invoke another package manager against an existing install because it may rewrite node_modules or stall Preview while reinstalling dependencies.
+
 For an existing app, use kind command. TasteCode executes only these commands: bun, node, npm, pnpm, yarn. Anything else — npx, python, deno, a path to a binary — is rejected. A package-manager command must run a script that exists in the workspace's package.json; a node command must point at a script file inside the workspace.
 
 For a static-file project with no existing preview script, use kind static and name its HTML entry file. TasteCode serves static projects itself. Do not create a server script or package manifest.

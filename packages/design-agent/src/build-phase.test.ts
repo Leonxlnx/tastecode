@@ -70,6 +70,7 @@ describe('build phase', () => {
     expect(prompt).toContain('Use cards generously for coherent features')
     expect(prompt).toContain('finished page must not become generic gray')
     expect(prompt).toContain('never leave a browser-default control')
+    expect(prompt).toContain('at least 44 by 44 CSS pixels')
     expect(prompt).toContain('Record every invented value in a Build summary')
     expect(prompt).toContain('Set summary to "Verify before publishing: ..."')
   })
