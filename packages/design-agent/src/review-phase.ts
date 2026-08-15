@@ -131,7 +131,11 @@ export function parseReviewPhaseOutput(text: string): VisualReview {
   }
 }
 
-const AUDIT_FINDING_IDS = new Set(['document_h1_count', 'mobile_interactive_target_size'])
+const AUDIT_FINDING_IDS = new Set([
+  'document_h1_count',
+  'interactive_target_size',
+  'mobile_interactive_target_size',
+])
 
 export function enforceDomAuditFindings(
   review: VisualReview,
@@ -140,9 +144,8 @@ export function enforceDomAuditFindings(
   const h1Failures = screenshots.filter(
     (screenshot) => screenshot.domAudit && screenshot.domAudit.h1Count !== 1,
   )
-  const mobileFailures = screenshots.filter(
-    (screenshot) =>
-      screenshot.width <= 480 && screenshot.domAudit?.interactiveTargetViolations.length,
+  const targetFailures = screenshots.filter(
+    (screenshot) => screenshot.domAudit?.interactiveTargetViolations.length,
   )
   const findings = review.findings.filter(({ id }) => !AUDIT_FINDING_IDS.has(id))
 
@@ -161,12 +164,12 @@ export function enforceDomAuditFindings(
       repair: 'Render exactly one h1 element in the document at every reviewed viewport.',
     })
   }
-  if (mobileFailures.length) {
-    const count = mobileFailures.reduce(
+  if (targetFailures.length) {
+    const count = targetFailures.reduce(
       (total, screenshot) => total + screenshot.domAudit!.interactiveTargetViolations.length,
       0,
     )
-    const examples = mobileFailures
+    const examples = targetFailures
       .flatMap(({ width, domAudit }) =>
         domAudit!.interactiveTargetViolations.map(
           ({ selector, label, width: targetWidth, height }) =>
@@ -176,20 +179,21 @@ export function enforceDomAuditFindings(
       .slice(0, 5)
       .join('; ')
     findings.push({
-      id: 'mobile_interactive_target_size',
+      id: 'interactive_target_size',
       severity: 'blocking',
-      area: 'Mobile interaction targets',
+      area: 'Interaction targets',
       evidenceType: 'automated',
       confidence: 'high',
       evidence: `${count} visible interactive target${count === 1 ? '' : 's'} below 44x44 CSS px. ${examples}`,
-      repair: 'Make every visible mobile interactive target at least 44x44 CSS px.',
+      repair:
+        'Make every visible interactive target at every reviewed viewport at least 44x44 CSS px.',
     })
   }
-  if (!h1Failures.length && !mobileFailures.length) return review
+  if (!h1Failures.length && !targetFailures.length) return review
   return {
     ...review,
     verdict: 'repair',
-    summary: `${review.summary} TasteCode DOM audit found ${h1Failures.length + mobileFailures.length} blocking accessibility group${h1Failures.length + mobileFailures.length === 1 ? '' : 's'}.`,
+    summary: `${review.summary} TasteCode DOM audit found ${h1Failures.length + targetFailures.length} blocking accessibility group${h1Failures.length + targetFailures.length === 1 ? '' : 's'}.`,
     findings,
   }
 }
