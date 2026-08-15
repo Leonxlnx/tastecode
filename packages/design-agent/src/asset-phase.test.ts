@@ -53,9 +53,7 @@ describe('asset phase', () => {
   it('makes OriginKit optional and rate-limit safe', () => {
     const prompt = designAssetPrompt(input.brief, input.brand, input.page)
     expect(prompt).toContain('OriginKit is optional')
-    expect(prompt).toContain(
-      'This is an acquisition phase, not a wish list',
-    )
+    expect(prompt).toContain('This is an acquisition phase, not a wish list')
     expect(prompt).toContain('image generation for a precise original need')
     expect(prompt).toContain('download the actual image to the local destination')
     expect(prompt).toContain('Every image-led selected layout case must receive')
