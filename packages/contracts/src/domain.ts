@@ -284,6 +284,66 @@ export const ModelSchema = z.object({
 export type Model = z.infer<typeof ModelSchema>
 
 /**
+ * The small model TasteCode uses for short product-owned writing such as thread
+ * titles and commit-message drafts. Source identity stays explicit because
+ * model ids are not globally unique and API connections have their own bill.
+ */
+export const BackgroundModelTargetSchema = z
+  .object({
+    provider: ProviderIdSchema,
+    connectionId: z.string().min(1).optional(),
+    agent: z.string().min(1).optional(),
+    model: z.string().min(1),
+    effort: z.string().min(1).optional(),
+  })
+  .superRefine((target, context) => {
+    if ((target.provider === 'api') !== Boolean(target.connectionId)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['connectionId'],
+        message: 'connectionId is required only for api background models',
+      })
+    }
+    if (target.provider === 'api' && target.agent) {
+      context.addIssue({
+        code: 'custom',
+        path: ['agent'],
+        message: 'api background models cannot select an agent',
+      })
+    }
+  })
+export type BackgroundModelTarget = z.infer<typeof BackgroundModelTargetSchema>
+
+export const BackgroundModelPreferenceSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('automatic') }),
+  z.object({ mode: z.literal('manual'), target: BackgroundModelTargetSchema }),
+])
+export type BackgroundModelPreference = z.infer<typeof BackgroundModelPreferenceSchema>
+
+export const BackgroundModelSourceSchema = z.object({
+  id: z.string().min(1),
+  displayName: z.string().min(1),
+  provider: ProviderIdSchema,
+  connectionId: z.string().min(1).optional(),
+  agent: z.string().min(1).optional(),
+  models: z.array(ModelSchema),
+})
+export type BackgroundModelSource = z.infer<typeof BackgroundModelSourceSchema>
+
+export const BackgroundModelSelectionSchema = BackgroundModelTargetSchema.extend({
+  sourceName: z.string().min(1),
+  automatic: z.boolean(),
+})
+export type BackgroundModelSelection = z.infer<typeof BackgroundModelSelectionSchema>
+
+export const BackgroundModelSettingsSchema = z.object({
+  preference: BackgroundModelPreferenceSchema,
+  sources: z.array(BackgroundModelSourceSchema),
+  resolved: BackgroundModelSelectionSchema.optional(),
+})
+export type BackgroundModelSettings = z.infer<typeof BackgroundModelSettingsSchema>
+
+/**
  * How much the agent may do without asking. Mapped per adapter onto whatever
  * the engine calls it — this is the user-facing concept, and it is the single
  * most consequential setting in the app, so it is never hidden in a menu.

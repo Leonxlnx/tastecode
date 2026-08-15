@@ -1196,4 +1196,63 @@ describe('protocol envelopes', () => {
     })
     expect(() => methods['sideChat.start'].params.parse({ parentThreadId: '' })).toThrow()
   })
+
+  it('keeps background model settings source-aware and non-secret', () => {
+    const target = {
+      mode: 'manual' as const,
+      target: {
+        provider: 'api' as const,
+        connectionId: 'openrouter',
+        model: 'anthropic/claude-haiku-4.5',
+        effort: 'low',
+      },
+    }
+    expect(methods['backgroundModel.updateSettings'].params.parse(target)).toEqual(target)
+    expect(() =>
+      methods['backgroundModel.updateSettings'].params.parse({
+        mode: 'manual',
+        target: { provider: 'api', model: 'missing-connection' },
+      }),
+    ).toThrow()
+    expect(
+      methods['backgroundModel.settings'].result.parse({
+        preference: { mode: 'automatic' },
+        sources: [
+          {
+            id: 'codex',
+            displayName: 'Codex',
+            provider: 'codex',
+            models: [
+              {
+                id: 'gpt-5.6-luna',
+                displayName: 'GPT-5.6 Luna',
+                isDefault: false,
+                reasoningEfforts: ['low', 'medium'],
+                serviceTiers: [],
+              },
+            ],
+          },
+        ],
+        resolved: {
+          provider: 'codex',
+          model: 'gpt-5.6-luna',
+          effort: 'medium',
+          sourceName: 'Codex',
+          automatic: true,
+        },
+      }).resolved,
+    ).toMatchObject({ model: 'gpt-5.6-luna', effort: 'medium' })
+    expect(() =>
+      methods['backgroundModel.settings'].result.parse({
+        preference: { mode: 'automatic' },
+        sources: [],
+        resolved: {
+          provider: 'api',
+          model: 'missing-connection',
+          sourceName: 'API',
+          automatic: true,
+        },
+      }),
+    ).toThrow()
+  })
 })
