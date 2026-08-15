@@ -54,8 +54,11 @@ describe('asset phase', () => {
     const prompt = designAssetPrompt(input.brief, input.brand, input.page)
     expect(prompt).toContain('OriginKit is optional')
     expect(prompt).toContain(
-      'Prefer meaningful supplied, generated, or properly licensed photography',
+      'This is an acquisition phase, not a wish list',
     )
+    expect(prompt).toContain('image generation for a precise original need')
+    expect(prompt).toContain('download the actual image to the local destination')
+    expect(prompt).toContain('Every image-led selected layout case must receive')
     expect(prompt).toContain('abstract diagram, fake dashboard, sonar graphic')
     expect(prompt).toContain('rate limit')
     expect(prompt).toContain('Never invent a component ID')
