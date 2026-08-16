@@ -39,6 +39,11 @@ export {
 } from './page.js'
 export { designPagePrompt, parsePagePhaseOutput } from './page-phase.js'
 export {
+  REFERENCE_DIRECTIONS,
+  selectReferenceDirectionDeck,
+  type ReferenceDirection,
+} from './reference-directions.js'
+export {
   assertPageCopy,
   lintPageCopy,
   type CopyLintFinding,
