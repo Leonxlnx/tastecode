@@ -3,12 +3,17 @@ import type { BrandSystem } from './brand.js'
 import { assertPageCopy } from './copywriting.js'
 import { assertPageLayoutSelections, PAGE_LAYOUT_GUIDANCE } from './layout-guidance.js'
 import { parsePageBlueprint, type PageBlueprint } from './page.js'
+import { selectReferenceDirectionDeck } from './reference-directions.js'
 
 const PAGE_PROTOCOL = `Return the final page blueprint as JSON only, without Markdown fences:
 
 {"version":1,"page":{"title":"...","route":"/","description":"..."},"architecture":{"contract":"This page helps ...","mode":"scan_compare|read_understand|persuade_convert|explore_experience|operate_monitor","novelty":"low|medium|high","grid":"...","signatureRule":"...","rhythm":"..."},"navigation":[{"label":"...","target":"..."}],"navigationDesign":{"layoutCase":"navigation-1","layout":"...","behavior":[],"transformation":{"compact":"...","medium":"...","expanded":"..."}},"sections":[{"id":"...","layoutFamily":"hero|about|feature|how_it_works|social_proof|stats|faq|cta|pricing|contact|footer","layoutCases":["hero-text-1","hero-visual-1"],"purpose":"...","userQuestion":"...","stage":"orient|qualify|evaluate|prove|explain|de_risk|act|continue","dependencies":[],"evidence":[],"copy":{"heading":"...","body":[],"callsToAction":[{"label":"...","target":"..."}]},"layout":"...","motion":{"purpose":"none|feedback|state_change|spatial_continuity|explanation|status","trigger":"none|load|scroll_enter|scroll_progress|hover|press|drag|state_change","behavior":"...","durationMs":220,"easing":"cubic-bezier(0.23, 1, 0.32, 1)","reducedMotion":"..."},"componentNeeds":[],"assetNeeds":[],"transformation":{"compact":"...","medium":"...","expanded":"..."}}],"responsive":[],"interactions":[],"acceptanceCriteria":[]}`
 
 export function designPagePrompt(brief: DesignBrief, brand: BrandSystem): string {
+  const referenceDirectionDeck = selectReferenceDirectionDeck(brief, brand).map(
+    ({ id, family, cue }) => ({ id, family, cue }),
+  )
+
   return `You are running the Page Blueprint phase of TasteCode Design Mode.
 
 Turn the validated brief and brand system into one implementation-ready page plan. Begin with one page contract: who the page helps, what they must decide or accomplish, the business outcome, and the primary conversion. If that requires unrelated tasks joined by "and", keep only the brief's primary page job. Write the actual concise page copy and order sections by information dependencies rather than a remembered landing-page sequence.
@@ -22,6 +27,8 @@ Give every section one explicit motion decision. Motion must serve feedback, sta
 Use cards for coherent features, people, plans, proof, actions, and media stories, not as empty wrappers around paragraphs. Plan one related base card language and at most one emphasized variant across the page. Let card size, media crop, and internal composition respond to the content instead of defaulting to equal three-column boxes. When a selected layout is image-led, record stable assetNeeds for every meaningful image or capture rather than replacing it with a decorative vector. Carry the approved brand accent into primary actions, focus and selected states, and one recurring card, media, or section treatment.
 
 Treat the selected layout cases as composition requirements, not inspiration. Map every section to the closest available layoutFamily, including custom-named sections such as Showcase, and record every applied case ID in layoutCases. Preserve the case's recognizable macro geometry, hierarchy, media placement, and movement while adapting its details to the real content and brand. Never collapse a selected case into the default centered heading followed by interchangeable cards. Do not place adjacent sections in the same composition. navigationDesign must select one navigation case in layoutCase.
+
+Use the reference-direction deck as optional macro-composition evidence. Each cue was distilled from a generated and visually inspected reference. Apply only cues that improve the real content and selected layout case; do not add a section merely to use a cue. Reinterpret the geometry through this project's brand and copy. Never copy a reference's names, wording, imagery, palette, or identity. A cue never overrides the brief, brand system, layout-case rules, heading limits, accessibility, responsive behavior, or factual constraints.
 
 Default section introductions to one clear stacked heading and supporting block. Use a split heading on one side and description on the other only when the selected case and content benefit from it, and do not repeat that split-intro pattern elsewhere on the same page. Keep section order and internal alignment easy to scan. Avoid oversized media surrounded by empty space; size imagery to the information density so a section can be understood as one composition. A centered Hero headline must keep its support and actions centered beneath it rather than drifting to an unrelated edge. Do not repeat the same action twice in one section or viewport unless the second instance has a different, necessary job.
 
@@ -45,7 +52,11 @@ ${JSON.stringify(brief, null, 2)}
 
 <brand-system>
 ${JSON.stringify(brand, null, 2)}
-</brand-system>`
+</brand-system>
+
+<reference-direction-deck>
+${JSON.stringify(referenceDirectionDeck, null, 2)}
+</reference-direction-deck>`
 }
 
 export function parsePagePhaseOutput(text: string): PageBlueprint {

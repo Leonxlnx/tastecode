@@ -91,6 +91,10 @@ describe('page phase', () => {
     const prompt = designPagePrompt(brief, brand)
     expect(prompt).toContain('<design-brief>')
     expect(prompt).toContain('<brand-system>')
+    expect(prompt).toContain('<reference-direction-deck>')
+    expect(prompt).toContain('generated and visually inspected reference')
+    expect(prompt).toContain('A cue never overrides the brief, brand system')
+    expect(prompt).not.toContain('"imagePath"')
     expect(prompt).toContain('Do not choose new colors or typefaces')
     expect(prompt).toContain('order sections by information dependencies')
     expect(prompt).toContain('Compact reduces simultaneity, not content or capability')
@@ -159,6 +163,10 @@ describe('page phase', () => {
     expect(prompt).toContain('intentionally cropped by the lower edge')
     expect(prompt).toContain('each grouped set of links inside its own card')
     expect(prompt).toContain('one short descriptive text block')
+    const deck = /<reference-direction-deck>\s*([\s\S]*?)\s*<\/reference-direction-deck>/u.exec(
+      prompt,
+    )?.[1]
+    expect(JSON.parse(deck ?? '[]')).toHaveLength(11)
   })
 
   it('parses the final response through the page validator', () => {
