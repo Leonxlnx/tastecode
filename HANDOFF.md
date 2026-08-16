@@ -44,12 +44,12 @@ The landed behavior is intentionally small:
 
 The largest measured real thread contained 6,495 events. Loopback `thread.history` results:
 
-| Metric | Before | After | Change |
-| --- | ---: | ---: | ---: |
-| Response events | 6,495 | 603 | -90.7% |
-| Response size | 18.81 MB | 1.85 MB | -90.2% |
+| Metric             |    Before |     After | Change |
+| ------------------ | --------: | --------: | -----: |
+| Response events    |     6,495 |       603 | -90.7% |
+| Response size      |  18.81 MB |   1.85 MB | -90.2% |
 | Median RPC latency | 466.17 ms | 109.18 ms | -76.6% |
-| p95 RPC latency | 537.58 ms | 128.04 ms | -76.2% |
+| p95 RPC latency    | 537.58 ms | 128.04 ms | -76.2% |
 
 Final-head validation replayed all 70 current durable user threads through both paths:
 
