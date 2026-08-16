@@ -364,6 +364,13 @@ Build. Build treats the family, cases, layout direction, and responsive transfor
 composition requirements; Review compares visible geometry against the same decisions. Older
 version-one artifacts without these additive fields remain readable.
 
+The package also carries 132 generated and visually inspected direction references across all 11
+layout families. A deterministic brief-and-brand seed selects one compact geometry cue per family
+for the Page prompt. The cues are optional, never override the brief, brand, accessibility, copy,
+responsive, or case rules, and never copy the reference identity. Only generated WebP variants are
+stored; the source screenshots are excluded. Provider turns receive the distilled cues rather than
+132 binary attachments, keeping the phase provider-neutral and the prompt bounded.
+
 ### Current `assets.json`
 
 Each asset has:
@@ -656,8 +663,9 @@ them.
 
 The blueprint records visitor questions, decision stages, information dependencies, final copy,
 selected beta layout cases, responsive behavior, interactions, acceptance criteria, and one
-purposeful motion decision per section. The current catalog covers the human-reviewed website
-section cases but still needs evidence from varied real builds and reference cases.
+purposeful motion decision per section. The current catalog combines the human-reviewed website
+section cases with 132 generated direction variants. It still needs scored evidence from varied
+real builds to show which cues improve results and which should be retired.
 
 ### Asset gaps
 
@@ -689,8 +697,8 @@ relies primarily on provider-reported checks and screenshots.
 
 1. Finish compact Brand, Page, Asset, Build, and Review rules inside `packages/design-agent`.
 2. Build and test deterministic type, spacing, gradient, asset, and objective QA tools.
-3. Test the beta layout catalog on varied real briefs, then finish component, imagery, and motion
-   judgment with real reference cases.
+3. Test the beta layout and direction catalogs on varied real briefs, retire weak cues, then finish
+   component, imagery, and motion judgment.
 4. Add provider-independent fixtures proving every phase output parses into the same artifacts.
 5. Define artifact migration before changing persisted schema versions.
 
