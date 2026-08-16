@@ -69,6 +69,38 @@ jobs:
         if: matrix.platform == 'macos'
         run: pnpm --filter @harness/desktop exec electron-builder --mac dmg zip --arm64 --publish never
 
+      - name: Smoke-test unsigned Windows installer
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem release -File -Filter 'TasteCode-*-win-x64.exe' | Select-Object -First 1
+          if ($null -eq $installer) { throw 'Windows installer was not created' }
+
+          $signature = Get-AuthenticodeSignature $installer.FullName
+          if ($signature.Status -ne 'NotSigned') {
+            throw "Expected an unsigned beta installer, got $($signature.Status)"
+          }
+
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList '/S' -PassThru -Wait
+          if ($install.ExitCode -ne 0) { throw "Silent install failed with $($install.ExitCode)" }
+
+          $installed = Join-Path $env:LOCALAPPDATA 'Programs\TasteCode\TasteCode.exe'
+          if (-not (Test-Path $installed)) { throw "Installed app was not found at $installed" }
+
+          $uninstaller = Join-Path $env:LOCALAPPDATA 'Programs\TasteCode\Uninstall TasteCode.exe'
+          if (-not (Test-Path $uninstaller)) { throw "Uninstaller was not found at $uninstaller" }
+          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru -Wait
+          if ($uninstall.ExitCode -ne 0) { throw "Silent uninstall failed with $($uninstall.ExitCode)" }
+
+      - name: Verify macOS containers
+        if: matrix.platform == 'macos'
+        run: |
+          dmg="$(find release -maxdepth 1 -name 'TasteCode-*-mac-arm64.dmg' -print -quit)"
+          zip="$(find release -maxdepth 1 -name 'TasteCode-*-mac-arm64.zip' -print -quit)"
+          test -n "$dmg" && test -n "$zip"
+          hdiutil verify "$dmg"
+          unzip -t "$zip"
+
       - name: Generate SHA-256 checksums
         run: node tools/scripts/release-checksums.js release SHA256SUMS-${{ matrix.label }}.txt
 
