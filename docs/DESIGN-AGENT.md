@@ -314,6 +314,11 @@ The persisted `colorPalette` remains version-one compatible, so later phases nee
 framework. `60/30/10` is only loose composition guidance for dominant surfaces, supporting
 structure, and sparse accent use, never a palette formula or pixel quota.
 
+The deterministic gradient helper derives dependency-free CSS recipes for card, section, and page
+purposes from the validated palette. It preserves an opaque content surface for readable copy and
+controls. Build may use at most one matching purpose per view; gradients remain optional and may
+not replace imagery, hierarchy, or content.
+
 Signature-device status is deliberately conservative. Existing or newly proposed devices are not
 called validated unless the input includes real category-buyer attribution evidence. Visual
 novelty, internal preference, and competitor distance can justify a candidate, but do not prove
@@ -696,7 +701,8 @@ relies primarily on provider-reported checks and screenshots.
 ### Missing internal judgment and tool work
 
 1. Finish compact Brand, Page, Asset, Build, and Review rules inside `packages/design-agent`.
-2. Build and test deterministic type, spacing, gradient, asset, and objective QA tools.
+2. Build and test deterministic type, spacing, asset, and objective QA tools; keep the existing
+   palette and gradient helpers narrow and evidence-backed.
 3. Test the beta layout and direction catalogs on varied real briefs, retire weak cues, then finish
    component, imagery, and motion judgment.
 4. Add provider-independent fixtures proving every phase output parses into the same artifacts.
@@ -752,7 +758,8 @@ judgment rules, and UI design.
 
 ### 5. Raise visual quality with evidence
 
-- build the palette, type, spacing, gradient, and taste-check tools;
+- build the type, spacing, asset, and taste-check tools around the existing palette and gradient
+  helpers;
 - test them on several deliberately different briefs;
 - add reference and anti-reference evidence;
 - add the direction gallery before full implementation when multiple directions are plausible;
