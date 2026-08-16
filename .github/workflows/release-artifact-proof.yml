@@ -1,0 +1,89 @@
+name: Release artifact proof
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/release-artifact-proof
+
+# The branch-only push trigger proves packaging before this workflow reaches main.
+# Once merged, releases remain manually dispatched.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-artifact-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            label: windows-x64
+          - os: macos-14
+            platform: macos
+            label: macos-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Format
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: Test
+        run: pnpm -r test
+
+      - name: Build
+        run: pnpm -r build
+
+      - name: Build preload
+        run: pnpm --filter @harness/desktop exec node scripts/build-preload.js
+
+      - name: Package Windows x64
+        if: matrix.platform == 'windows'
+        run: pnpm --filter @harness/desktop exec electron-builder --win nsis --x64 --publish never
+
+      - name: Package macOS Apple Silicon
+        if: matrix.platform == 'macos'
+        run: pnpm --filter @harness/desktop exec electron-builder --mac dmg zip --arm64 --publish never
+
+      - name: Generate SHA-256 checksums
+        run: node tools/scripts/release-checksums.js release
+
+      - name: Upload release proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: tastecode-0.1.0-beta.1-${{ matrix.label }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+            release/*.yml
+            release/*.yaml
+            release/SHA256SUMS.txt
