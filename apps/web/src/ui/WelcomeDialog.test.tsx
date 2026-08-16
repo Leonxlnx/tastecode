@@ -37,8 +37,8 @@ describe('first-run welcome', () => {
     expect(plans.textContent).toContain('GrokSetup needed')
     expect(plans.querySelectorAll('.welcome__provider')).toHaveLength(3)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Set up agents' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Add project' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Set up providers' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose a project' }))
     expect(onOpenProviders).toHaveBeenCalledOnce()
     expect(onAddProject).toHaveBeenCalledOnce()
   })

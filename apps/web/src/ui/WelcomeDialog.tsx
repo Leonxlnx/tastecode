@@ -34,7 +34,7 @@ export function WelcomeDialog(props: {
             Start your first project
           </h1>
           <p className="welcome__copy">
-            Choose a folder, then work with the coding plan you already use.
+            Choose a folder. TasteCode finds the coding agents already on this machine.
           </p>
         </header>
         <div className="welcome__providers" aria-label="Supported beta plans">
@@ -44,7 +44,7 @@ export function WelcomeDialog(props: {
               <div className="welcome__provider" key={provider.id}>
                 <ProviderIcon mark={providerMark(provider.id)} />
                 <span>{provider.name}</span>
-                <small>
+                <small className={status?.installed ? 'is-ready' : undefined}>
                   {status ? (status.installed ? 'Installed' : 'Setup needed') : 'Checking…'}
                 </small>
               </div>
@@ -52,8 +52,7 @@ export function WelcomeDialog(props: {
           })}
         </div>
         <p className="welcome__privacy">
-          Provider sign-in stays with each provider. TasteCode keeps projects and chats on this
-          machine.
+          Projects and chats stay on this machine. Sign-in stays with each provider.
         </p>
         <footer className="welcome__actions">
           <button className="ghost" type="button" onClick={props.onDismiss}>
@@ -61,11 +60,11 @@ export function WelcomeDialog(props: {
           </button>
           <button className="ghost" type="button" onClick={props.onOpenProviders}>
             <Settings2 size={14} aria-hidden />
-            Set up agents
+            Set up providers
           </button>
           <button className="btn" type="button" onClick={props.onAddProject}>
             <FolderOpen size={14} aria-hidden />
-            Add project
+            Choose a project
           </button>
         </footer>
       </div>

@@ -703,11 +703,11 @@
 }
 
 .welcome {
-  max-width: 560px;
+  max-width: 500px;
 }
 
 .welcome__head {
-  padding: 24px 24px 18px;
+  padding: 24px 24px 16px;
 }
 
 .welcome__eyebrow,
@@ -736,31 +736,37 @@
 
 .welcome__providers {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  padding: 0 24px;
+  margin: 0 24px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
 }
 
 .welcome__provider {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 3px 8px;
+  gap: 10px;
   min-width: 0;
-  padding: 12px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  min-height: 43px;
+  padding: 0 12px;
   color: var(--text);
   font-size: var(--t-sm);
   font-weight: 550;
 }
 
+.welcome__provider + .welcome__provider {
+  border-top: 1px solid var(--line);
+}
+
 .welcome__provider small {
-  grid-column: 2;
   color: var(--text-3);
   font-size: var(--t-xs);
   font-weight: 450;
+}
+
+.welcome__provider small.is-ready {
+  color: var(--success);
 }
 
 .welcome__privacy {
@@ -782,10 +788,6 @@
 }
 
 @media (max-width: 560px) {
-  .welcome__providers {
-    grid-template-columns: 1fr;
-  }
-
   .welcome__actions {
     align-items: stretch;
     flex-direction: column-reverse;
