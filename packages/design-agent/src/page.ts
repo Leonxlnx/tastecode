@@ -22,6 +22,37 @@ export const PAGE_LAYOUT_FAMILIES = [
 
 export type PageLayoutFamily = (typeof PAGE_LAYOUT_FAMILIES)[number]
 
+export const PAGE_MOTION_PURPOSES = [
+  'none',
+  'feedback',
+  'state_change',
+  'spatial_continuity',
+  'explanation',
+  'status',
+] as const
+export type PageMotionPurpose = (typeof PAGE_MOTION_PURPOSES)[number]
+
+export const PAGE_MOTION_TRIGGERS = [
+  'none',
+  'load',
+  'scroll_enter',
+  'scroll_progress',
+  'hover',
+  'press',
+  'drag',
+  'state_change',
+] as const
+export type PageMotionTrigger = (typeof PAGE_MOTION_TRIGGERS)[number]
+
+export interface PageSectionMotion {
+  purpose: PageMotionPurpose
+  trigger: PageMotionTrigger
+  behavior: string
+  durationMs: number
+  easing: string
+  reducedMotion: string
+}
+
 export interface PageNavigationDesign {
   layoutCase?: string
   layout: string
@@ -65,12 +96,12 @@ export interface PageBlueprint {
     dependencies: string[]
     evidence: string[]
     copy: {
-      eyebrow?: string
       heading: string
       body: string[]
       callsToAction: PageLink[]
     }
     layout: string
+    motion?: PageSectionMotion
     componentNeeds: string[]
     assetNeeds: string[]
     transformation: {
@@ -96,6 +127,9 @@ export function parsePageBlueprint(value: unknown): PageBlueprint {
   const sections = array(blueprint.sections, 'sections').map((value, index) => {
     const section = record(value, `sections[${index}]`)
     const copy = record(section.copy, `sections[${index}].copy`)
+    if (copy.eyebrow !== undefined) {
+      throw new Error(`sections[${index}].copy.eyebrow is forbidden`)
+    }
     return {
       id: string(section.id, `sections[${index}].id`),
       ...(section.layoutFamily === undefined
@@ -141,12 +175,12 @@ export function parsePageBlueprint(value: unknown): PageBlueprint {
           ? []
           : strings(section.evidence, `sections[${index}].evidence`),
       copy: {
-        ...optionalString(copy.eyebrow, `sections[${index}].copy.eyebrow`),
         heading: string(copy.heading, `sections[${index}].copy.heading`),
         body: strings(copy.body, `sections[${index}].copy.body`),
         callsToAction: links(copy.callsToAction, `sections[${index}].copy.callsToAction`),
       },
       layout: string(section.layout, `sections[${index}].layout`),
+      ...(section.motion === undefined ? {} : { motion: parseMotion(section.motion, index) }),
       componentNeeds: strings(section.componentNeeds, `sections[${index}].componentNeeds`),
       assetNeeds: strings(section.assetNeeds, `sections[${index}].assetNeeds`),
       transformation:
@@ -254,6 +288,35 @@ function transformation(
   }
 }
 
+function parseMotion(value: unknown, index: number): PageSectionMotion {
+  const motion = record(value, `sections[${index}].motion`)
+  const purpose = member(
+    motion.purpose,
+    PAGE_MOTION_PURPOSES,
+    `sections[${index}].motion.purpose`,
+  )
+  const trigger = member(
+    motion.trigger,
+    PAGE_MOTION_TRIGGERS,
+    `sections[${index}].motion.trigger`,
+  )
+  const durationMs = integer(motion.durationMs, `sections[${index}].motion.durationMs`, 0, 1200)
+  if (purpose === 'none' && (trigger !== 'none' || durationMs !== 0)) {
+    throw new Error(`sections[${index}].motion none must use trigger none and durationMs 0`)
+  }
+  if (purpose !== 'none' && (trigger === 'none' || durationMs < 80)) {
+    throw new Error(`sections[${index}].motion requires a trigger and 80-1200ms duration`)
+  }
+  return {
+    purpose,
+    trigger,
+    behavior: string(motion.behavior, `sections[${index}].motion.behavior`),
+    durationMs,
+    easing: string(motion.easing, `sections[${index}].motion.easing`),
+    reducedMotion: string(motion.reducedMotion, `sections[${index}].motion.reducedMotion`),
+  }
+}
+
 export function readPageBlueprint(workspacePath: string): PageBlueprint {
   return parsePageBlueprint(JSON.parse(readFileSync(pagePath(workspacePath), 'utf8')))
 }
@@ -315,8 +378,11 @@ function route(value: unknown): string {
   return result
 }
 
-function optionalString(value: unknown, field: string): { eyebrow?: string } {
-  return value === undefined ? {} : { eyebrow: string(value, field) }
+function integer(value: unknown, field: string, minimum: number, maximum: number): number {
+  if (!Number.isInteger(value) || (value as number) < minimum || (value as number) > maximum) {
+    throw new Error(`${field} must be an integer from ${minimum} to ${maximum}`)
+  }
+  return value as number
 }
 
 function member<T extends string>(value: unknown, values: readonly T[], field: string): T {

@@ -64,6 +64,8 @@ describe('build phase', () => {
     expect(prompt).toContain('Do not scaffold a second app')
     expect(prompt).toContain('TasteCode owns Preview next')
     expect(prompt).toContain('Treat all three as hard composition requirements')
+    expect(prompt).toContain("Implement each section's recorded motion decision")
+    expect(prompt).toContain('never use transition: all')
     expect(prompt).toContain('Do not replace it with a generic centered heading')
     expect(prompt).toContain('Three lines is a rare maximum and four lines is always a failure')
     expect(prompt).toContain('colored left-edge accent rails')
@@ -73,6 +75,8 @@ describe('build phase', () => {
     expect(prompt).toContain('at least 44 by 44 CSS pixels')
     expect(prompt).toContain('A successful production build with a blank runtime is a failed Build')
     expect(prompt).toContain('Record every invented value in a Build summary')
+    expect(prompt).toContain("Preserve every image's natural aspect ratio")
+    expect(prompt).toContain('split heading-and-description pattern at most once per page')
     expect(prompt).toContain('Set summary to "Verify before publishing: ..."')
   })
 

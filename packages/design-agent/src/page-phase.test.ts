@@ -64,6 +64,14 @@ const page = {
       evidence: [],
       copy: { heading: 'Fresh by design.', body: [], callsToAction: [] },
       layout: 'Editorial split.',
+      motion: {
+        purpose: 'explanation',
+        trigger: 'scroll_enter',
+        behavior: 'Product proof resolves into the reading rail.',
+        durationMs: 220,
+        easing: 'cubic-bezier(0.23, 1, 0.32, 1)',
+        reducedMotion: 'Show the final composition immediately.',
+      },
       componentNeeds: [],
       assetNeeds: [],
       transformation: {
@@ -91,6 +99,9 @@ describe('page phase', () => {
     expect(prompt).toContain('one related base card language and at most one emphasized variant')
     expect(prompt).toContain('record stable assetNeeds for every meaningful image')
     expect(prompt).toContain('Carry the approved brand accent into primary actions')
+    expect(prompt).toContain('Give every section one explicit motion decision')
+    expect(prompt).toContain('Default section introductions to one clear stacked heading')
+    expect(prompt).toContain('do not repeat that split-intro pattern elsewhere')
     expect(prompt).toContain('Never use an em dash')
     expect(prompt).toContain('Do not write eyebrow copy')
     expect(prompt).toContain(

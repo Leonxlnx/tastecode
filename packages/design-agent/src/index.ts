@@ -26,11 +26,16 @@ export {
 } from './palette.js'
 export {
   parsePageBlueprint,
+  PAGE_MOTION_PURPOSES,
+  PAGE_MOTION_TRIGGERS,
   readPageBlueprint,
   writePageBlueprint,
   type PageBlueprint,
   type PageLink,
+  type PageMotionPurpose,
   type PageNavigationDesign,
+  type PageMotionTrigger,
+  type PageSectionMotion,
 } from './page.js'
 export { designPagePrompt, parsePagePhaseOutput } from './page-phase.js'
 export {

@@ -41,12 +41,19 @@ const validBlueprint = {
       dependencies: [],
       evidence: ['Seasonal beans roasted weekly'],
       copy: {
-        eyebrow: 'Roasted weekly',
         heading: 'Coffee worth waking up for.',
         body: ['Seasonal beans, roasted in small batches and shipped fresh.'],
         callsToAction: [{ label: 'Shop the roast', target: '#shop' }],
       },
       layout: 'Split copy and product image with the product leading on wide screens.',
+      motion: {
+        purpose: 'spatial_continuity',
+        trigger: 'scroll_enter',
+        behavior: 'The product image settles into the copy rail as the section enters.',
+        durationMs: 240,
+        easing: 'cubic-bezier(0.23, 1, 0.32, 1)',
+        reducedMotion: 'Show the final composition immediately.',
+      },
       componentNeeds: ['Primary button'],
       assetNeeds: ['hero-product'],
       transformation: {
@@ -100,6 +107,34 @@ describe('page blueprint', () => {
         sections: [{ ...validBlueprint.sections[0], dependencies: ['missing-proof'] }],
       }),
     ).toThrow('depends on unknown section missing-proof')
+  })
+
+  it('rejects eyebrow copy at the artifact boundary', () => {
+    expect(() =>
+      parsePageBlueprint({
+        ...validBlueprint,
+        sections: [
+          {
+            ...validBlueprint.sections[0],
+            copy: { ...validBlueprint.sections[0]!.copy, eyebrow: 'Roasted weekly' },
+          },
+        ],
+      }),
+    ).toThrow('copy.eyebrow is forbidden')
+  })
+
+  it('validates motion purpose, trigger, and timing together', () => {
+    expect(() =>
+      parsePageBlueprint({
+        ...validBlueprint,
+        sections: [
+          {
+            ...validBlueprint.sections[0],
+            motion: { ...validBlueprint.sections[0]!.motion, trigger: 'none' },
+          },
+        ],
+      }),
+    ).toThrow('motion requires a trigger and 80-1200ms duration')
   })
 
   it('keeps legacy page artifacts readable', () => {

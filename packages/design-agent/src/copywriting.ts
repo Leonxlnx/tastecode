@@ -129,15 +129,6 @@ function collectCopy(page: PageBlueprint): CopySurface[] {
       evidence: pageEvidence,
     })),
     ...page.sections.flatMap((section, sectionIndex) => [
-      ...(section.copy.eyebrow
-        ? [
-            {
-              path: `sections[${sectionIndex}].copy.eyebrow`,
-              text: section.copy.eyebrow,
-              evidence: section.evidence,
-            },
-          ]
-        : []),
       {
         path: `sections[${sectionIndex}].copy.heading`,
         text: section.copy.heading,
@@ -286,16 +277,19 @@ function lintCallsToAction(page: PageBlueprint): CopyLintFinding[] {
 }
 
 function lintEyebrows(page: PageBlueprint): CopyLintFinding[] {
-  const eyebrows = page.sections.flatMap((section, index) =>
-    section.copy.eyebrow ? [{ index, text: section.copy.eyebrow }] : [],
-  )
-  return eyebrows.map(({ index, text }) => ({
-    rule: 'copy/decorative-eyebrow',
-    severity: 'error',
-    path: `sections[${index}].copy.eyebrow`,
-    excerpt: text,
-    message: 'Remove the eyebrow and express necessary context in the heading or body.',
-  }))
+  return page.sections.flatMap((section, index) => {
+    const eyebrow = (section.copy as { eyebrow?: unknown }).eyebrow
+    if (typeof eyebrow !== 'string' || !eyebrow.trim()) return []
+    return [
+      {
+        rule: 'copy/decorative-eyebrow',
+        severity: 'error' as const,
+        path: `sections[${index}].copy.eyebrow`,
+        excerpt: eyebrow,
+        message: 'Remove the eyebrow and express necessary context in the heading or body.',
+      },
+    ]
+  })
 }
 
 function lintProductName(page: PageBlueprint): CopyLintFinding[] {

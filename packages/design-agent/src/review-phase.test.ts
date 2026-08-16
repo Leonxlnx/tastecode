@@ -50,6 +50,9 @@ describe('review and repair phases', () => {
     expect(prompt).toContain('approved brand accent appears only in tiny labels')
     expect(prompt).toContain('unstyled browser default')
     expect(prompt).toContain('footer content overlaps')
+    expect(prompt).toContain('visibly stretched, cropped, cut off, or oversized')
+    expect(prompt).toContain('repeatedly uses split heading-and-description introductions')
+    expect(prompt).toContain("each section's recorded motion decision")
   })
 
   it('persists the validated final review artifact', () => {

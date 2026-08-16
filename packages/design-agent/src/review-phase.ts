@@ -60,6 +60,8 @@ Inspect every supplied screenshot with image-viewing tools. Compare visible evid
 
 For every visible section, compare its screenshot geometry against its declared layoutFamily, layoutCases, content-specific layout, and viewport transformation. A selected case must remain recognizable in hierarchy, alignment, media placement, proportions, and intended movement; surface styling alone is not compliance. Report a major finding when Build substitutes an unrelated default such as a centered heading with interchangeable cards, repeats the same composition in adjacent sections, or loses the selected case at a breakpoint.
 
+Review each section's recorded motion decision against the rendered result when the evidence makes that possible. Motion must have one clear purpose, preserve spatial continuity, avoid repeated generic reveal choreography, and provide a reduced-motion path. Do not claim that a still screenshot proves timing or interaction behavior; use unknown confidence when the browser evidence cannot show it.
+
 Apply the following pass blockers to every screenshot:
 - Any heading occupies more than three visual lines. One or two lines is the target; a third line is acceptable only when it remains balanced and readable. Report oversized type that overwhelms the viewport even when it technically fits.
 - Any eyebrow, uppercase monospace micro-heading, decorative 01/02/03 section label, IBM Plex Mono, Archivo, or repeated font-family switching inside a line or component.
@@ -71,6 +73,9 @@ Apply the following pass blockers to every screenshot:
 - An unclear or ornamental SVG, fake dashboard, map, sonar, schematic, or line illustration fills space without communicating a real product or content relationship. Prefer relevant imagery.
 - A select, dropdown, calendar, date input, disclosure, or form control visibly falls back to an unstyled browser default.
 - Text, controls, imagery, or footer content overlaps, clips, overflows, becomes implausibly narrow, or lacks enough space to read.
+- An image is visibly stretched, cropped, cut off, or oversized relative to its content; a simple codeable interface was rasterized; or a section contains cavernous empty space without hierarchy or purpose.
+- The page repeatedly uses split heading-and-description introductions, drifts centered Hero support or actions to an unrelated edge, duplicates the same CTA in one section or viewport, or changes between unrelated light and dark themes.
+- A page toggles serif and sans repeatedly, uses improvised icons, or leaves a section as a flat color field with only a heading and sentence when meaningful content is available.
 
 Treat these as major findings, or blocking when they prevent reading or operation. Do not waive them because they match brand.json or page.json; repair the upstream interpretation.
 
