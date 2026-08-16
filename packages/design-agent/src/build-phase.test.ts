@@ -77,6 +77,8 @@ describe('build phase', () => {
     expect(prompt).toContain('Record every invented value in a Build summary')
     expect(prompt).toContain("Preserve every image's natural aspect ratio")
     expect(prompt).toContain('split heading-and-description pattern at most once per page')
+    expect(prompt).toContain('<brand-gradient-recipes>')
+    expect(prompt).toContain("recipe's opaque contentSurface")
     expect(prompt).toContain('Set summary to "Verify before publishing: ..."')
   })
 

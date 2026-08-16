@@ -7,6 +7,14 @@ export {
 export { parseBrandSystem, readBrandSystem, writeBrandSystem, type BrandSystem } from './brand.js'
 export { designBrandPrompt, parseBrandPhaseOutput } from './brand-phase.js'
 export {
+  generateGradientSet,
+  gradientSetForBrand,
+  GRADIENT_PURPOSES,
+  type GradientPurpose,
+  type GradientRecipe,
+  type GradientSet,
+} from './gradients.js'
+export {
   auditPalette,
   generatePalette,
   paletteColorRecords,
