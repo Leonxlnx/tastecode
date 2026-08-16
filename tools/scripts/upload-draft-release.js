@@ -7,6 +7,8 @@ const token = process.env.GITHUB_TOKEN
 const repository = process.env.GITHUB_REPOSITORY
 const targetCommit = process.env.GITHUB_SHA
 const tag = process.env.RELEASE_TAG ?? 'v0.1.0-beta.1'
+const releaseExtensions = new Set(['.exe', '.dmg', '.zip', '.blockmap'])
+const internalAssetNames = new Set(['builder-debug.yml', 'builder-effective-config.yaml'])
 
 if (!token || !repository || !targetCommit) {
   throw new Error('GITHUB_TOKEN, GITHUB_REPOSITORY, and GITHUB_SHA are required')
@@ -56,7 +58,17 @@ async function findRelease() {
 
 async function getOrCreateRelease() {
   const existing = await findRelease()
-  if (existing) return existing
+  if (existing) {
+    const response = await apiRequest(
+      `https://api.github.com/repos/${owner}/${repo}/releases/${existing.id}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_commitish: targetCommit }),
+      },
+    )
+    return response.json()
+  }
 
   try {
     const response = await apiRequest(`https://api.github.com/repos/${owner}/${repo}/releases`, {
@@ -92,20 +104,40 @@ const assetResponse = await apiRequest(
 )
 const currentAssets = await assetResponse.json()
 const currentByName = new Map(currentAssets.map((asset) => [asset.name, asset]))
-const allowedExtensions = new Set(['.exe', '.dmg', '.zip', '.blockmap', '.yml', '.yaml', '.txt'])
+
+async function deleteAsset(asset) {
+  try {
+    await apiRequest(`https://api.github.com/repos/${owner}/${repo}/releases/assets/${asset.id}`, {
+      method: 'DELETE',
+    })
+  } catch (error) {
+    if (error.status !== 404) throw error
+  }
+}
+
+function isReleaseAsset(name) {
+  if (name === 'beta.yml' || name === 'beta-mac.yml') return true
+  if (/^SHA256SUMS-[A-Za-z0-9._-]+\.txt$/.test(name)) return true
+  return name.startsWith('TasteCode-') && releaseExtensions.has(path.extname(name))
+}
+
+for (const name of internalAssetNames) {
+  const internalAsset = currentByName.get(name)
+  if (internalAsset) {
+    await deleteAsset(internalAsset)
+    console.log(`Removed internal asset ${name}`)
+  }
+}
 
 for (const entry of (await readdir(releaseDirectory)).sort()) {
   const filePath = path.join(releaseDirectory, entry)
   const fileStat = await stat(filePath)
 
-  if (!fileStat.isFile() || !allowedExtensions.has(path.extname(entry))) continue
+  if (!fileStat.isFile() || !isReleaseAsset(entry)) continue
 
   const existingAsset = currentByName.get(entry)
   if (existingAsset) {
-    await apiRequest(
-      `https://api.github.com/repos/${owner}/${repo}/releases/assets/${existingAsset.id}`,
-      { method: 'DELETE' },
-    )
+    await deleteAsset(existingAsset)
   }
 
   await apiRequest(
