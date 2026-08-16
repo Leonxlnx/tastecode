@@ -9,7 +9,7 @@ on:
 # The branch-only push trigger proves packaging before this workflow reaches main.
 # Once merged, releases remain manually dispatched.
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: release-artifact-proof-${{ github.ref }}
@@ -70,20 +70,10 @@ jobs:
         run: pnpm --filter @harness/desktop exec electron-builder --mac dmg zip --arm64 --publish never
 
       - name: Generate SHA-256 checksums
-        run: node tools/scripts/release-checksums.js release
+        run: node tools/scripts/release-checksums.js release SHA256SUMS-${{ matrix.label }}.txt
 
-      - name: Upload release proof
-        uses: actions/upload-artifact@v4
-        with:
-          name: tastecode-0.1.0-beta.1-${{ matrix.label }}
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-          path: |
-            release/*.exe
-            release/*.dmg
-            release/*.zip
-            release/*.blockmap
-            release/*.yml
-            release/*.yaml
-            release/SHA256SUMS.txt
+      - name: Upload to private draft release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: v0.1.0-beta.1
+        run: node tools/scripts/upload-draft-release.js release
