@@ -337,6 +337,8 @@ The current version-one blueprint contains:
 - the user question, decision stage, prior-section dependencies, and real evidence for each section;
 - final concise heading, body copy, and calls to action;
 - one beta layout family, the exact selected case IDs, and a content-specific layout direction;
+- one bounded motion decision per section with purpose, trigger, behavior, duration, easing, and a
+  reduced-motion equivalent;
 - component needs;
 - asset needs;
 - explicit compact, medium, and expanded transformations per section;
@@ -578,8 +580,10 @@ separate hidden BrowserWindow remains the authority for exact review screenshots
 
 The Electron main process validates the request, denies permission checks and requests, denies new
 windows, confines navigation and redirects to the preview origin, and verifies the final URL. It
-waits, within a 30-second deadline, for bounded animation settlement, fonts, image load and decode,
-and two final animation frames. It captures each requested size, writes private temporary PNGs,
+scrolls through the document to activate lazy content, then waits, within a 30-second deadline, for
+bounded animation settlement, fonts, image load and decode, and two final animation frames. It
+audits interaction targets across the whole document and captures a whole-page image for each
+requested viewport, bounded to 12,000 CSS pixels in height. It writes private temporary PNGs,
 destroys the window, clears its session storage and HTTP cache, removes failed captures, and sweeps
 capture directories older than one day. Cleanup finishes before the next serialized capture starts.
 
@@ -591,7 +595,6 @@ Current preview risks that still need explicit work:
   approval surface;
 - when several desktop clients are connected, the coordinator uses the first capable socket and the
   capture request has no thread owner, so a concurrent run can open in the wrong visible workspace;
-- captures cover the requested viewport from the top of the page, not a durable full-page iteration;
 - screenshot files are temporary evidence, not a durable iteration history.
 
 ## OriginKit
@@ -652,10 +655,9 @@ them.
 ### Page gaps
 
 The blueprint records visitor questions, decision stages, information dependencies, final copy,
-selected beta layout cases, responsive behavior, interactions, and acceptance criteria. The current
-catalog covers the human-reviewed website section cases but still needs evidence from varied real
-builds. Per-section motion roles remain implicit. Add them only after the Motion rules prove that
-Build and Review need persisted values.
+selected beta layout cases, responsive behavior, interactions, acceptance criteria, and one
+purposeful motion decision per section. The current catalog covers the human-reviewed website
+section cases but still needs evidence from varied real builds and reference cases.
 
 ### Asset gaps
 
