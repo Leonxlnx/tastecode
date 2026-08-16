@@ -290,16 +290,8 @@ function transformation(
 
 function parseMotion(value: unknown, index: number): PageSectionMotion {
   const motion = record(value, `sections[${index}].motion`)
-  const purpose = member(
-    motion.purpose,
-    PAGE_MOTION_PURPOSES,
-    `sections[${index}].motion.purpose`,
-  )
-  const trigger = member(
-    motion.trigger,
-    PAGE_MOTION_TRIGGERS,
-    `sections[${index}].motion.trigger`,
-  )
+  const purpose = member(motion.purpose, PAGE_MOTION_PURPOSES, `sections[${index}].motion.purpose`)
+  const trigger = member(motion.trigger, PAGE_MOTION_TRIGGERS, `sections[${index}].motion.trigger`)
   const durationMs = integer(motion.durationMs, `sections[${index}].motion.durationMs`, 0, 1200)
   if (purpose === 'none' && (trigger !== 'none' || durationMs !== 0)) {
     throw new Error(`sections[${index}].motion none must use trigger none and durationMs 0`)
