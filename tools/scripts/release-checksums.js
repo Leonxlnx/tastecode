@@ -4,6 +4,7 @@ import { readdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const releaseDirectory = path.resolve(process.argv[2] ?? 'release')
+const outputName = process.argv[3] ?? 'SHA256SUMS.txt'
 const includedExtensions = new Set(['.exe', '.dmg', '.zip', '.blockmap', '.yml', '.yaml'])
 
 const entries = await readdir(releaseDirectory)
@@ -37,6 +38,7 @@ for (const { entry, filePath } of files) {
   rows.push(`${hash.digest('hex')}  ${entry}`)
 }
 
-const outputPath = path.join(releaseDirectory, 'SHA256SUMS.txt')
+const outputPath = path.join(releaseDirectory, outputName)
 await writeFile(outputPath, `${rows.join('\n')}\n`, 'utf8')
 console.log(`Wrote ${rows.length} checksums to ${outputPath}`)
+console.log(rows.join('\n'))
