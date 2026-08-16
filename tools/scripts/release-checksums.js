@@ -5,7 +5,12 @@ import path from 'node:path'
 
 const releaseDirectory = path.resolve(process.argv[2] ?? 'release')
 const outputName = process.argv[3] ?? 'SHA256SUMS.txt'
-const includedExtensions = new Set(['.exe', '.dmg', '.zip', '.blockmap', '.yml', '.yaml'])
+const releaseExtensions = new Set(['.exe', '.dmg', '.zip', '.blockmap'])
+
+function isReleaseArtifact(name) {
+  if (name === 'beta.yml' || name === 'beta-mac.yml') return true
+  return name.startsWith('TasteCode-') && releaseExtensions.has(path.extname(name))
+}
 
 const entries = await readdir(releaseDirectory)
 const files = []
@@ -14,7 +19,7 @@ for (const entry of entries.sort()) {
   const filePath = path.join(releaseDirectory, entry)
   const fileStat = await stat(filePath)
 
-  if (fileStat.isFile() && includedExtensions.has(path.extname(entry))) {
+  if (fileStat.isFile() && isReleaseArtifact(entry)) {
     files.push({ entry, filePath })
   }
 }
