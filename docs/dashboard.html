@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-16 main 3715e64f</span>
+        <span class="meta">2026-08-16 main 379f7639</span>
       </div>
     </div>
 
@@ -319,9 +319,9 @@
             <small>design</small>
           </div>
           <div class="kpi">
-            <b>8</b>
+            <b>6</b>
             <span>items open before release</span>
-            <small>two of them are human decisions</small>
+            <small>design acceptance, distribution, and launch proof</small>
           </div>
         </div>
       </section>
@@ -334,7 +334,7 @@
         </p>
         <div class="lanes">
           <div class="lane l-done">
-            <header>Ready <span class="count">30</span></header>
+            <header>Ready <span class="count">32</span></header>
             <ul>
               <li>
                 <i class="tick">✓</i>
@@ -710,6 +710,29 @@
                   >
                 </span>
               </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Packaged release client
+                  <span class="d"
+                    >NSIS packaging produces the installer, blockmap, and beta metadata; the About
+                    surface checks, downloads, and installs updates from the TasteCode feed. Public
+                    feed publication, signing, and version-to-version proof remain release
+                    tasks</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >First-run and private diagnostics
+                  <span class="d"
+                    >the empty desktop guides users to one project and the three beta providers;
+                    bounded local logs can be revealed or copied only by the user after secrets,
+                    emails, project paths, and cross-platform home paths are scrubbed</span
+                  >
+                </span>
+              </li>
             </ul>
           </div>
 
@@ -758,49 +781,54 @@
           </div>
 
           <div class="lane l-todo">
-            <header>To do before beta <span class="count">8</span></header>
+            <header>To do before beta <span class="count">6</span></header>
             <ul>
               <li>
                 <i class="tick"></i>
                 <span
-                  >Product name and domain
-                  <span class="d">human decision, blocks everything visual</span>
+                  >Design Mode acceptance
+                  <span class="d"
+                    >ship-quality TasteCode landing page and provider/platform matrix</span
+                  >
                 </span>
               </li>
               <li>
                 <i class="tick"></i>
                 <span
-                  >Windows code signing <span class="d">human decision, weeks of lead time</span>
+                  >Signing and notarization
+                  <span class="d">Windows SmartScreen trust and packaged macOS proof</span>
                 </span>
               </li>
               <li>
                 <i class="tick"></i>
-                <span>Installer <span class="d">NSIS, no SmartScreen warning</span></span>
-              </li>
-              <li>
-                <i class="tick"></i>
-                <span>Auto-update with rollback</span>
-              </li>
-              <li>
-                <i class="tick"></i>
-                <span>Crash reporting, opt in</span>
-              </li>
-              <li>
-                <i class="tick"></i>
                 <span
-                  >Clean-VM install test
-                  <span class="d">fresh Windows to first agent answer in under five minutes</span>
+                  >Publish and prove updates
+                  <span class="d"
+                    >real feed, old-to-new install, relaunch, and rollback decision</span
+                  >
                 </span>
               </li>
               <li>
                 <i class="tick"></i>
-                <span>Landing page and docs</span>
+                <span
+                  >Crash intake decision
+                  <span class="d">manual private export or explicit opt-in remote reporting</span>
+                </span>
               </li>
               <li>
                 <i class="tick"></i>
                 <span
-                  >Onboarding hardening
-                  <span class="d">first-run flow covers exactly the three beta plans</span>
+                  >Clean packaged smoke matrix
+                  <span class="d">fresh Windows and macOS to first real provider answer</span>
+                </span>
+              </li>
+              <li>
+                <i class="tick"></i>
+                <span
+                  >Launch site and legal posture
+                  <span class="d"
+                    >downloads, support, privacy/terms, and source license decision</span
+                  >
                 </span>
               </li>
             </ul>
