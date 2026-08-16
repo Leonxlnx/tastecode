@@ -66,7 +66,7 @@ export const PREVIEW_DOM_AUDIT_SCRIPT = `(() => {
     const rect = element.getBoundingClientRect()
     if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) continue
     if (rect.width <= 0 || rect.height <= 0) continue
-    if (rect.right <= 0 || rect.left >= innerWidth || rect.bottom <= 0 || rect.top >= innerHeight) continue
+    if (rect.right <= 0 || rect.left >= innerWidth || rect.bottom <= 0) continue
     if (rect.width >= 44 && rect.height >= 44) continue
     violations.push({
       selector: selectorFor(element),

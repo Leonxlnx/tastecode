@@ -45,7 +45,7 @@ import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PREVIEW_DOM_AUDIT_SCRIPT } from './preview-dom-audit.js'
 import { clearPreviewSession } from './preview-session.js'
-import { PREVIEW_SETTLE_SCRIPT } from './preview-settle.js'
+import { PREVIEW_PAGE_HEIGHT_SCRIPT, PREVIEW_SETTLE_SCRIPT } from './preview-settle.js'
 import { ServerSupervisor } from './server-supervisor.js'
 import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
@@ -445,10 +445,25 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
         ]),
       )
       const destination = path.join(directory, `${key}.png`)
-      await writeFile(destination, (await preview.webContents.capturePage()).toPNG(), {
-        flag: 'wx',
-        mode: 0o600,
-      })
+      const pageHeight = await Promise.race([
+        preview.webContents.executeJavaScript(PREVIEW_PAGE_HEIGHT_SCRIPT),
+        deadline,
+      ])
+      await writeFile(
+        destination,
+        (
+          await preview.webContents.capturePage({
+            x: 0,
+            y: 0,
+            width: viewport.width,
+            height: Number(pageHeight),
+          })
+        ).toPNG(),
+        {
+          flag: 'wx',
+          mode: 0o600,
+        },
+      )
       screenshots.push({ path: destination, ...viewport, domAudit })
     }
     return { status: 'completed', requestId: request.requestId, screenshots }
