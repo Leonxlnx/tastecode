@@ -56,8 +56,10 @@
     },
     "publish": [
       {
-        "provider": "generic",
-        "url": "https://tastecode.dev/releases"
+        "provider": "github",
+        "owner": "Leonxlnx",
+        "repo": "tastecode",
+        "releaseType": "prerelease"
       }
     ],
     "artifactName": "TasteCode-${version}-${os}-${arch}.${ext}",
