@@ -84,7 +84,8 @@ export class LocalDiagnostics {
 
 export function scrub(value: string): string {
   return value
-    .replace(/\b[A-Z]:\\Users\\[^\\\s]+/gi, '[home]')
+    .replace(/\b[A-Z]:\\Users\\[^\\\r\n]+/gi, '[home]')
+    .replace(/\/(?:Users|home)\/[^/\r\n]+/g, '[home]')
     .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '[email]')
     .replace(/\b(bearer|token|api[_-]?key)(\s*[:=]?\s*)\S+/gi, '$1$2[redacted]')
     .slice(0, 4_000)

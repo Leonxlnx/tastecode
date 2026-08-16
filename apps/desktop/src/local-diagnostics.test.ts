@@ -2,12 +2,18 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { LocalDiagnostics } from './local-diagnostics.js'
+import { LocalDiagnostics, scrub } from './local-diagnostics.js'
 
 const directories: string[] = []
 afterEach(async () => Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true }))))
 
 describe('local diagnostics', () => {
+  it('scrubs Windows, macOS, and Linux home directories', () => {
+    expect(scrub('C:\\Users\\Leon Lin\\work /Users/Leon Lin/work /home/leon/work')).toBe(
+      '[home]\\work [home]/work [home]/work',
+    )
+  })
+
   it('stays off by default and scrubs sensitive error details when enabled', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'tastecode-diagnostics-'))
     directories.push(directory)
