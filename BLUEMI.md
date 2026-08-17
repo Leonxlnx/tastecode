@@ -1,8 +1,35 @@
 # Blueemi launch handoff
 
-Updated: 2026-08-17  
-Planned launch: 2026-08-17 15:00 CEST / 21:00 China Standard Time  
-Latest product main included in this branch: `094b68781e8b2a426d1640624f5759f9a76f5909`
+Updated: 2026-08-17 19:30 CEST / 2026-08-18 01:30 China Standard Time  
+Launch status: paused pending a new explicit go/no-go  
+Latest product main audited: `fae4da906c26bb9a0d45c003c01a2801fcd4e753`
+
+## Overnight audit update
+
+Read the new **Overnight audit addendum** at the top of `HANDOFF.md` before using the older launch
+instructions below. It supersedes any conflicting status in this file.
+
+Important changes since the previous handoff:
+
+- Draft PRs #959, #960, and #961 contain isolated focus/accessibility, child-output-drain, and
+  unavailable-image-preview fixes. They are unmerged and still need local focused/full gates.
+- The launch branches were 43 commits behind audited `main` at the review boundary. Do not package
+  them until current `main` has been merged into the working branch without rebasing.
+- Public launch blockers are tracked in #950, #951, #952, #953, #954, and #956. #955 also blocks
+  if direct API/Connections is exposed.
+- Claude subscription credential handling and Codex voice currently use unsupported/private auth
+  paths. Hide those paths for beta unless they are replaced with supported provider APIs or have
+  explicit written provider approval.
+- Grok threads cannot resume after an app restart. Fix #953 or remove Grok from the public roster.
+- The release upload design still has a duplicate-draft race and stale-artifact risk. Do not use it
+  for final publication until #954 is fixed and both old private drafts are deleted.
+- Current-main full gates were not completed in the cloud because the registry was unavailable and
+  the cache was incomplete. Earlier green totals below apply only to the older branch state.
+
+Blueemi's macOS responsibility remains the same: build the exact approved SHA used by Windows,
+sign/notarize/staple it, verify the final containers and signatures, complete the real UI smoke,
+and create checksums after signing. Keep every artifact in one private draft until Leon approves
+publication.
 
 ## Hard stop
 
