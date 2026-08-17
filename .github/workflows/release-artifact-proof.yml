@@ -2,12 +2,8 @@ name: Release artifact proof
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - agent/release-artifact-proof
 
-# The branch-only push trigger proves packaging before this workflow reaches main.
-# Once merged, releases remain manually dispatched.
+# Hosted Actions are manual so release proof never consumes minutes on a normal push.
 permissions:
   contents: write
 

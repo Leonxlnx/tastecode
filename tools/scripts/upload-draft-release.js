@@ -45,15 +45,28 @@ async function apiRequest(url, options = {}) {
 }
 
 async function findRelease() {
-  try {
+  const matches = []
+
+  for (let page = 1; ; page += 1) {
     const response = await apiRequest(
-      `https://api.github.com/repos/${owner}/${repo}/releases/tags/${encodeURIComponent(tag)}`,
+      `https://api.github.com/repos/${owner}/${repo}/releases?per_page=100&page=${page}`,
     )
-    return response.json()
-  } catch (error) {
-    if (error.status === 404) return null
-    throw error
+    const releases = await response.json()
+    matches.push(...releases.filter((release) => release.tag_name === tag))
+
+    if (releases.length < 100) break
   }
+
+  if (matches.length > 1) {
+    const details = matches
+      .map((release) => `#${release.id} (${release.draft ? 'draft' : 'published'})`)
+      .join(', ')
+    throw new Error(
+      `Multiple releases use tag ${tag}: ${details}. Delete duplicate drafts before uploading.`,
+    )
+  }
+
+  return matches[0] ?? null
 }
 
 async function getOrCreateRelease() {

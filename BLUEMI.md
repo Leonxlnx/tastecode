@@ -1,140 +1,162 @@
-# Blueemi release handoff
+# Blueemi launch handoff
 
-Updated: 2026-08-16  
+Updated: 2026-08-17  
 Planned launch: 2026-08-17 15:00 CEST / 21:00 China Standard Time  
-Product main at handoff: `d3bcf3e7da25c9d9392964b0826a00849833390b`
+Latest product main included in this branch: `094b68781e8b2a426d1640624f5759f9a76f5909`
 
 ## Hard stop
 
-Leon is travelling and explicitly said not to launch yet.
+Do not make either repository public, publish a GitHub Release, merge a launch pull
+request, or announce the beta until Leon gives an explicit launch approval.
 
-Do not:
+## Active pull requests
 
-- publish the draft release
-- make either repository public
-- merge either launch pull request
-- merge the open-source pull request
-- announce the beta
-
-Prepare, test, and report only. Wait for Leon's explicit go-ahead for every public action.
-
-## Active repositories and pull requests
-
-### Product
-
-- Repository: `Leonxlnx/tastecode`
-- Main is protected and has not been changed by this launch preparation.
-- Open-source preparation: draft PR #936
-  - https://github.com/Leonxlnx/tastecode/pull/936
-- Release proof: draft PR #937
-  - https://github.com/Leonxlnx/tastecode/pull/937
+- Product OSS preparation: draft PR #936
+  - branch: `docs/oss-launch-readiness`
+- Product release preparation: draft PR #937
   - branch: `agent/release-artifact-proof`
-  - head: `60e9f35743916d9bfe7bc2f73f48a5f0589d01c1`
-
-### Landing page
-
-- Repository: `Leonxlnx/tastecode-landingpage`
-- Public beta site: draft PR #1
-  - https://github.com/Leonxlnx/tastecode-landingpage/pull/1
+- Landing page: draft PR #1 in `Leonxlnx/tastecode-landingpage`
   - branch: `feat/public-beta-launch`
-  - head: `adf5a5fc9ab174eda41c472683ce2976abc63a2d`
-- Nothing has been merged to landing-page main.
 
-## Work completed in PR #937
+Both product branches have been merged forward with the latest product `main`. No rebase
+or force-push was used. The landing-page PR is still separate from landing-page `main`.
 
-- Added a branch-scoped Windows and macOS release proof workflow.
-- The workflow runs install, format, typecheck, all tests, build, preload, native packaging,
-  platform smoke tests, SHA-256 generation, and draft-release upload.
-- Windows packaging creates an unsigned x64 NSIS installer.
-- The Windows smoke test verifies the expected unsigned state, performs a silent install,
-  confirms the installed executable, and performs a silent uninstall.
-- macOS packaging creates unsigned Apple Silicon DMG and ZIP files.
-- The macOS smoke test verifies both containers with `hdiutil verify` and `unzip -t`.
-- The app update provider now uses the public GitHub Releases provider for
-  `Leonxlnx/tastecode`. The updater already enables prerelease versions.
-- Added a cross-platform Node checksum helper.
-- Added a draft-release upload helper that refuses non-draft releases, accepts only public
-  distribution files, removes known internal builder files, and updates the release target
-  to the exact build commit.
-- Fixed the Windows-only `EBUSY` test cleanup race by allowing the preview process tree more
-  time to release its temporary directory.
+## Work completed in release PR #937
 
-Official electron-builder publishing configuration reference:
-https://www.electron.build/docs/publish
+- Configured the desktop updater for GitHub prereleases in `Leonxlnx/tastecode`.
+- Added Windows x64 NSIS and macOS Apple Silicon DMG/ZIP release proof.
+- Added Windows silent install/uninstall and macOS container verification.
+- Added SHA-256 generation and strict draft-release asset filtering.
+- Increased the Windows preview cleanup tolerance for the observed `EBUSY` race.
+- Changed hosted release proof to manual dispatch only. Normal pushes no longer consume
+  GitHub Actions minutes.
+- Fixed draft lookup to include unpublished draft releases. The uploader now refuses to
+  continue when duplicate releases use the same tag instead of creating another duplicate.
+- Fixed formatting in this handoff and the new macOS icon metadata.
 
-## Hosted validation already completed
+## Local cloud validation completed
 
-macOS job from run `31940973817` completed successfully through:
+Validation used Node 24 with the repository-pinned pnpm 11.8.0 and a frozen lockfile.
 
-- dependency install
-- format
-- typecheck
-- all 372 server tests and the remaining workspace tests
-- production build
-- preload build
-- native Apple Silicon DMG and ZIP packaging
-- SHA-256 generation
-- upload to the private draft release
+- `pnpm install --frozen-lockfile`: passed
+- `pnpm lint`: passed
+- `pnpm typecheck`: passed across all workspace projects
+- `pnpm test`: passed across all workspace projects
+  - web suite: 818 tests
+  - server suite: 375 tests
+  - desktop suite: 68 tests
+  - every package and adapter suite also passed
+- `pnpm build`: passed, including the production renderer build
+- desktop preload build: passed
+- Electron Linux unpacked packaging smoke: passed
+  - `resources/app.asar` present
+  - `resources/app-update.yml` present
+  - bundled web resources present
+- release uploader fixture: passed create/upload, strict filtering, and duplicate-draft
+  refusal scenarios
+- checksum helper fixture: passed and excluded internal builder files
+- landing-page `npm run build`: passed
+  - TypeScript passed
+  - all nine static pages/routes generated
+- landing-page download URLs match the intended Windows EXE and macOS DMG asset names.
 
-The first Windows job reached the test step successfully. It passed install, format, and
-typecheck. Test results were 371 passed and one failed. The only failure was cleanup after
-`stops the complete preview process tree`; Windows briefly retained a temporary-directory
-handle. The retry-tolerance fix is in PR #937, but GitHub has not allowed the final run to
-execute yet.
+The cloud host is Linux. It cannot truthfully prove the real Windows NSIS GUI flow,
+SmartScreen wording, Authenticode status, or macOS signing/notarization. The Linux
+packaging smoke used the repository's smaller 512x512 icon as a local-only fallback
+because the connector could not download the larger app icon. No icon fallback was pushed.
 
-## Current GitHub Actions blocker
+## Private draft-release blocker
 
-Final run:
-https://github.com/Leonxlnx/tastecode/actions/runs/31941608385
+There are currently two incomplete private draft releases using the intended tag
+`v0.1.0-beta.1`:
 
-Both jobs were rejected before the first step. GitHub's exact annotation says that recent
-account payments failed or the Actions spending limit must be increased.
+- release ID `371292479`
+- release ID `371294326`
 
-Required next action:
+Neither draft is publishable. They were created before draft-aware lookup was fixed and
+contain partial/older macOS proof assets. Delete both drafts in GitHub before the final
+local upload so the fixed uploader creates one clean canonical draft. Do not reuse or
+publish either current draft.
 
-1. Open GitHub Settings, then Billing & plans.
-2. Fix the failed payment or increase the Actions spending limit.
-3. Rerun all failed jobs for run `31941608385`.
-4. Do not accept a partial result. Both matrix jobs must be green on commit
-   `60e9f35743916d9bfe7bc2f73f48a5f0589d01c1` or a later reviewed commit.
+The fixed uploader intentionally stops with a clear error while duplicate tag matches
+exist.
 
-Do not work around this by publishing the older artifacts. The final workflow contains the
-updater-provider fix, strict asset filtering, internal-file cleanup, and installer smoke tests.
+## Leon: required Windows work
 
-## Private draft release
+Use a clean Windows checkout of the exact final product commit. Do not build from an
+unmerged polish branch or from one of the old draft targets.
 
-Draft URL:
-https://github.com/Leonxlnx/tastecode/releases/tag/untagged-caf9234c197cdc600015
+Run:
 
-Current state:
+```text
+corepack pnpm@11.8.0 install --frozen-lockfile
+corepack pnpm@11.8.0 lint
+corepack pnpm@11.8.0 typecheck
+corepack pnpm@11.8.0 test
+corepack pnpm@11.8.0 build
+corepack pnpm@11.8.0 --filter @harness/desktop exec node scripts/build-preload.js
+corepack pnpm@11.8.0 --filter @harness/desktop exec electron-builder --win nsis --x64 --publish never
+node tools/scripts/release-checksums.js release SHA256SUMS-windows-x64.txt
+```
 
-- draft: yes
-- prerelease: yes
-- tag intent: `v0.1.0-beta.1`
-- target is still the older proof commit `a0e5777cecaccc125745ec26acc19909f84919c0`
-- Windows assets are not present
-- `builder-debug.yml` is still present
-- do not publish this state
+Then complete this short physical Windows pass:
 
-Current macOS proof assets and GitHub-computed SHA-256 digests:
+1. Confirm the EXE and `beta.yml` exist and the checksum file matches.
+2. Confirm `Get-AuthenticodeSignature` reports `NotSigned` if Windows remains unsigned.
+3. Run the normal interactive installer, including one non-default install directory.
+4. Launch from the Start menu and complete first-run setup.
+5. Sign in to one shipped provider and receive one real response.
+6. Open a project and smoke-test terminal, attachment, approval, diff/checkpoint, and
+   Design Mode.
+7. Quit and relaunch; verify user data is preserved.
+8. Uninstall and verify the documented user-data retention behavior.
+9. Record the exact SmartScreen wording for the release notes.
 
-| Asset | Bytes | SHA-256 |
-| --- | ---: | --- |
-| `TasteCode-0.1.0-beta.1-mac-arm64.dmg` | 219,558,691 | `24c1ddf6aabc4cf99f45647d5e27909c91af424b940fb7905f29adb107a26909` |
-| `TasteCode-0.1.0-beta.1-mac-arm64.dmg.blockmap` | 229,444 | `ba9ba3c42b8ad61cd631bae93509577df6d34991566a15b3ec1809e3aec75e6c` |
-| `TasteCode-0.1.0-beta.1-mac-arm64.zip` | 220,915,183 | `6c967d195e66684f0ab943066acdcc82eb5ad79ef9107396092d7ad4a9d98efa` |
-| `TasteCode-0.1.0-beta.1-mac-arm64.zip.blockmap` | 230,728 | `063bae15518ec698dd6f2e44d10d38f4a84507bf064402891d4d2d3291eeb019` |
-| `beta-mac.yml` | 543 | `980a3aff05bd0412448c1a4171c273eca98b9708c93e359652af64aaf2cae4e1` |
+After both duplicate drafts are deleted, upload only from the approved final commit:
 
-The next successful final run must:
+```text
+set GITHUB_REPOSITORY=Leonxlnx/tastecode
+set GITHUB_SHA=<exact-final-commit>
+set RELEASE_TAG=v0.1.0-beta.1
+set GITHUB_TOKEN=<temporary-token-with-release-write-access>
+node tools/scripts/upload-draft-release.js release
+```
 
-- move the draft target to the final workflow commit
-- remove `builder-debug.yml`
-- replace the macOS proof with artifacts built from the final commit
-- add the Windows installer, blockmap, `beta.yml`, and Windows checksum file
-- leave only intended distribution assets and both checksum files
+Never commit or paste the token into a PR, issue, handoff, or log.
 
-Expected public asset names:
+## Blueemi: required macOS work
+
+Blueemi owns the Apple Developer signing/notarization path.
+
+1. Use the same exact approved final product commit as Windows.
+2. Run the four local gates and build Apple Silicon DMG and ZIP artifacts.
+3. Sign the app and installer, notarize, and staple the final deliverables.
+4. Verify with `codesign`, `spctl`, `stapler`, `hdiutil verify`, and `unzip -t`.
+5. Test DMG drag-to-Applications, first Finder launch, one real provider response, project
+   open, terminal, attachment, approval, checkpoint, Design Mode, relaunch, and removal.
+6. Generate `SHA256SUMS-macos-arm64.txt` after signing because signing changes hashes.
+7. Upload the signed macOS assets to the same single private draft as Windows.
+
+If signing cannot be completed in time, Leon must explicitly approve an unsigned macOS
+beta and its user-facing warning before publication.
+
+## OSS/legal work before public
+
+PR #936 is not ready to merge blindly. Before making the product repository public:
+
+- confirm Apache-2.0 and the `TasteCode contributors` copyright wording
+- add the standard full Apache-2.0 license text through GitHub's official license template;
+  the current short SPDX notice alone is not the normal distributable license file
+- add/confirm the required NOTICE file
+- generate and review the production dependency license inventory
+- ensure the packaged desktop app carries the root license and every required third-party
+  license/notice
+- confirm `hello@tasteskill.dev` is monitored for security reports
+- confirm provider terms and trademark wording
+
+## Final private draft contents
+
+The single clean draft must target the exact final product commit and contain only:
 
 - `TasteCode-0.1.0-beta.1-win-x64.exe`
 - `TasteCode-0.1.0-beta.1-win-x64.exe.blockmap`
@@ -147,114 +169,21 @@ Expected public asset names:
 - `beta-mac.yml`
 - `SHA256SUMS-macos-arm64.txt`
 
-## Blueemi macOS work
+No `builder-debug.yml`, effective config, logs, credentials, or unrelated files.
 
-The current cloud proof is unsigned. Blueemi has the Apple Developer account and owns the
-final signing and notarization decision.
+## Launch order after Leon's explicit approval
 
-After the final unsigned matrix run is green:
+1. Review and merge OSS PR #936 and release PR #937.
+2. Record the resulting exact product `main` commit.
+3. Delete both broken duplicate draft releases.
+4. Build and test Windows and macOS from that exact commit.
+5. Create one private draft, upload both platforms, and verify every checksum and updater
+   metadata URL while it remains private.
+6. Make the product repository public.
+7. Publish the prerelease.
+8. Merge landing-page PR #1 and verify desktop/mobile, download URLs, support, privacy,
+   terms, release notes, robots, and sitemap.
+9. Perform one public clean download per platform.
+10. Announce only after the public downloads work.
 
-1. Build from the exact approved release commit, not from another local branch.
-2. Sign the app and installer using repository secrets or a controlled local keychain. Never
-   commit certificates, passwords, profiles, or tokens.
-3. Notarize and staple the final deliverables.
-4. Verify the final app and disk image on a clean Apple Silicon Mac.
-5. Replace the unsigned macOS assets in the private draft only after all checks pass.
-6. Recalculate and replace the macOS checksum file after signing because signing changes the
-   binary hashes.
-
-Suggested local verification:
-
-```text
-codesign --verify --deep --strict --verbose=2 "TasteCode.app"
-spctl --assess --type execute --verbose=4 "TasteCode.app"
-xcrun stapler validate "TasteCode.app"
-hdiutil verify "TasteCode-0.1.0-beta.1-mac-arm64.dmg"
-```
-
-Also test:
-
-- DMG open and drag-to-Applications flow
-- first launch through Finder
-- provider sign-in and one real response
-- project open, terminal, attachment, approval, checkpoint, and Design Mode
-- quit and relaunch with user data preserved
-- uninstall or removal instructions
-
-If signing cannot be completed before launch, leave macOS unsigned only after Leon explicitly
-accepts that release posture and the user-facing warning is verified.
-
-## Windows work after Actions is unblocked
-
-The cloud workflow will perform silent install and uninstall. Leon should still perform a
-clean-machine GUI pass on Windows because a hosted runner cannot prove the real first-run UX.
-
-Required manual checks:
-
-- download the installer from the private draft release
-- compare its SHA-256 with `SHA256SUMS-windows-x64.txt`
-- confirm `Get-AuthenticodeSignature` reports `NotSigned` for the planned unsigned beta
-- run the normal interactive installer with a non-default directory once
-- launch from Start Menu and desktop shortcut if present
-- complete first-run setup
-- sign in to one shipped provider and receive a real response
-- open a project and exercise terminal, attachment, approval, diff, checkpoint, and Design Mode
-- quit and relaunch with user data preserved
-- run uninstall and confirm user data follows the documented retention behavior
-- record any SmartScreen wording for the release notes
-
-## Landing page status
-
-PR #1 now links directly to the final GitHub Release asset names instead of nonexistent files
-under the Vercel site. This matches the app's GitHub updater provider.
-
-Latest local validation:
-
-- `npm run build` passed
-- TypeScript passed
-- all nine static routes generated
-
-The Vercel preview is access-protected from external visual inspection. Leon or Blueemi must
-perform the final signed-in desktop and mobile visual pass.
-
-Do not merge the landing page before the product repository is public and the prerelease is
-published. The direct download links intentionally return no public file while the release is
-still a private draft.
-
-## Open-source PR #936
-
-Do not merge PR #936 until both contributors explicitly approve:
-
-- Apache-2.0
-- `TasteCode contributors` copyright wording
-- the monitored security contact `hello@tasteskill.dev`
-- the production dependency license inventory
-- bundled root license and required third-party notices
-- provider terms and trademark posture
-
-The long Apache license text was not copied into the repository by ChatGPT Work. PR #936 uses a
-short SPDX notice and links to the canonical terms. Confirm that this is the intended repository
-license presentation before making the repository public.
-
-## Issues and scope
-
-The only open issue at this handoff is #25, assigned to Blueemi and labeled `target:later`:
-https://github.com/Leonxlnx/tastecode/issues/25
-
-It has no milestone and is not a beta launch blocker. Do not add it to this release.
-
-## Safe completion order after Leon returns
-
-1. Fix GitHub Actions billing and rerun the final release workflow.
-2. Require both Windows and macOS jobs to pass every step.
-3. Inspect the private draft asset list, target commit, sizes, and SHA-256 values.
-4. Complete Windows clean-machine GUI QA.
-5. Complete macOS signing, notarization, and clean-machine QA if time permits.
-6. Review and approve PR #936 legal and open-source decisions.
-7. Review PR #937 and keep the release draft.
-8. Review the protected Vercel preview on desktop and mobile.
-9. Prove one real beta-to-newer-beta update before claiming updater support is end-to-end proven.
-10. Only with Leon's explicit approval: merge the reviewed PRs, make the product repository public,
-    publish the prerelease, merge the landing page, and run final public URL/download checks.
-
-Until step 10 is explicitly approved, nothing should become public.
+Issue #25 remains assigned to Blueemi with `target:later`; it is not a beta-launch blocker.
