@@ -611,7 +611,7 @@ describe('model settings', () => {
     )
   })
 
-  it('toggles a whole provider while exposing partial model visibility honestly', () => {
+  it('shows a partially visible provider as off and turns every model on', () => {
     const models: ModelChoice[] = [
       {
         key: 'opencode:ling',
@@ -692,7 +692,7 @@ describe('model settings', () => {
     expect(sourceHeading?.querySelector('svg')?.getAttribute('width')).toBe('15')
     expect(screen.queryByRole('searchbox')).toBeNull()
     expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
-    const providerToggle = screen.getByRole('checkbox', {
+    const providerToggle = screen.getByRole('switch', {
       name: 'Include models from OpenCode in model picker',
     })
     const ling = screen.getByRole('switch', {
@@ -701,8 +701,8 @@ describe('model settings', () => {
     const qwen = screen.getByRole('switch', {
       name: 'Include OpenCode Go · Qwen3.8 Max in model picker',
     })
-    expect(providerToggle.getAttribute('aria-checked')).toBe('mixed')
-    expect(providerToggle.classList.contains('is-mixed')).toBe(true)
+    expect(providerToggle.getAttribute('aria-checked')).toBe('false')
+    expect(providerToggle.classList.contains('is-on')).toBe(false)
     expect(ling.getAttribute('aria-checked')).toBe('false')
     expect(qwen.getAttribute('aria-checked')).toBe('true')
 
@@ -712,7 +712,7 @@ describe('model settings', () => {
 
     onModelVisibilityChange.mockClear()
     view.rerender(settings(new Set()))
-    const enabledProvider = screen.getByRole('checkbox', {
+    const enabledProvider = screen.getByRole('switch', {
       name: 'Include models from OpenCode in model picker',
     })
     expect(enabledProvider.getAttribute('aria-checked')).toBe('true')
@@ -724,7 +724,7 @@ describe('model settings', () => {
 
     onModelVisibilityChange.mockClear()
     view.rerender(settings(new Set(['opencode:ling', 'opencode:qwen'])))
-    const disabledProvider = screen.getByRole('checkbox', {
+    const disabledProvider = screen.getByRole('switch', {
       name: 'Include models from OpenCode in model picker',
     })
     expect(disabledProvider.getAttribute('aria-checked')).toBe('false')

@@ -1077,7 +1077,6 @@ function ModelVisibilityGroup(props: {
 }) {
   const visibleCount = props.choices.filter((choice) => !props.hiddenModels.has(choice.key)).length
   const allVisible = visibleCount === props.choices.length
-  const mixedVisibility = visibleCount > 0 && !allVisible
 
   return (
     <section className="model-visibility" aria-label={props.source}>
@@ -1088,11 +1087,11 @@ function ModelVisibilityGroup(props: {
           </h3>
         ) : null}
         <button
-          className={`switch model-visibility__source-switch${allVisible ? ' is-on' : ''}${mixedVisibility ? ' is-mixed' : ''}`}
+          className={`switch model-visibility__source-switch${allVisible ? ' is-on' : ''}`}
           type="button"
-          role="checkbox"
+          role="switch"
           aria-label={`Include models from ${props.source} in model picker`}
-          aria-checked={mixedVisibility ? 'mixed' : allVisible}
+          aria-checked={allVisible}
           onClick={() => {
             const visible = !allVisible
             for (const choice of props.choices) {

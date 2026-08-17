@@ -2422,10 +2422,6 @@
   transform: translateX(14px);
 }
 
-.settings .switch.is-mixed .switch__thumb {
-  transform: translateX(7px);
-}
-
 /* ---------- Agent Skills settings ---------- */
 
 .skills-settings__header,
@@ -3117,16 +3113,6 @@
   background: var(--chrome-recessed);
   border-color: var(--chrome-border);
   box-shadow: var(--chrome-inset-shadow);
-}
-
-.switch.is-mixed {
-  background: color-mix(in srgb, var(--light) 38%, var(--surface-3));
-  border-color: color-mix(in srgb, var(--light) 58%, var(--line-strong));
-}
-
-.switch.is-mixed .switch__thumb {
-  background: var(--light);
-  transform: translateX(6px);
 }
 
 .switch__thumb {
