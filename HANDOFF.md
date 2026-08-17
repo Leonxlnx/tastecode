@@ -1,8 +1,191 @@
 # TasteCode launch handoff
 
-Updated: 2026-08-17  
-Target launch: 2026-08-17 15:00 CEST / 21:00 China Standard Time  
+Updated: 2026-08-17 19:30 CEST / 2026-08-18 01:30 China Standard Time  
+Launch status: paused; the previous target passed and a new time needs an explicit go/no-go  
 GitHub is the authority for current commits, branches, pull requests, and release state.
+
+## Overnight audit addendum — read this first
+
+This section supersedes older status statements below when they conflict. It records the deep
+review performed after the earlier release handoff. The audit was pinned to product `main`
+`fae4da906c26bb9a0d45c003c01a2801fcd4e753`.
+
+### Current verdict
+
+**No-go for public visibility or beta publication yet.** Nothing was merged, published, made
+public, or launched during this pass. No hosted GitHub Actions were run.
+
+The product is materially stronger than the previous handoff suggested, but the review found
+public-release blockers in provider authentication, durable session resume, licensing, and the
+release uploader. These are product and compliance gates, not visual-polish preferences.
+
+### Branch and pull-request state at the audit boundary
+
+- Product `main`: `fae4da906c26bb9a0d45c003c01a2801fcd4e753`.
+- Draft PR #936, `docs/oss-launch-readiness`: code head
+  `526ab64910575d7c7ca48c7faae607cd5a116d50` before this addendum.
+- Draft PR #937, `agent/release-artifact-proof`: code head
+  `d286fdfe7ad2ee1af693071e83d9030c3fab8e6d` before this addendum.
+- Both launch branches were 43 commits behind `main` at the audit boundary. Their merge base was
+  `094b68781e8b2a426d1640624f5759f9a76f5909`.
+- Do not build a launch artifact from either stale branch. Merge current `main` into the working
+  branch without rebasing, then repeat every gate against the resulting exact commit.
+
+Three focused, unmerged draft pull requests were opened from the audited `main`:
+
+- #959 — `fix(ui): restore keyboard focus and dialog containment`
+  - branch: `agent/overnight-a11y-hardening`
+  - head: `c0ca415f210614bb52b2d411aba4b522d98fb540`
+  - restores visible focus, fixes placeholder contrast, names composer/thread-search controls, and
+    gives the command palette focus trapping and restoration
+- #960 — `fix(runtime): drain child output before settling`
+  - branch: `agent/overnight-stdio-drain`
+  - head: `0990c497df4c6401272566cac9af5cafd78a4e48`
+  - waits for child `close`, not `exit`, in output-capturing runtime paths and adds regression
+    fixtures for bytes delivered after process exit
+- #961 — `fix(ui): finish unavailable historical image previews`
+  - branch: `agent/overnight-image-preview-state`
+  - head: `182e0723047c4a99fe36a4468f77f219792c2348`
+  - prevents missing or rejected historical image previews from showing an endless loading state
+
+All three intentionally remain drafts and have unchecked local validation boxes. Review and run
+them locally before merging. Keep each PR isolated; do not fold unrelated polish into them.
+
+### Launch-blocking issues created by the audit
+
+- #950 — remove unsupported Claude subscription OAuth and credential rotation.
+  - The shipped limits/auth path reads and writes Claude Code subscription credentials, uses an
+    undocumented usage endpoint, and refreshes with Claude Code's client identity.
+  - Before a public third-party product ships, remove/disable this path and use supported API-key
+    or cloud authentication, omit Claude from this beta, or obtain written Anthropic approval.
+- #951 — move Codex voice off the private ChatGPT transcription endpoint.
+  - The current path exports a ChatGPT session token and calls an undocumented ChatGPT backend.
+  - Hide voice for the beta or migrate it to the public transcription API with an explicit API
+    key stored through the normal credential system.
+- #952 — complete the Apache license and packaged dependency notices.
+  - The root `LICENSE` is a short SPDX/link notice rather than the complete standard text.
+  - `THIRD_PARTY_NOTICES.md` and `licenses/` do not yet cover the complete packaged production
+    dependency tree. Generate and review the final transitive inventory on both artifacts.
+- #953 — persist and restore Grok's provider-native session ID across restarts.
+  - The database stores a synthetic TasteCode ID while the real CLI ID remains in memory, and the
+    runtime has no resume implementation. A Grok chat cannot continue after restart.
+- #954 — make draft-release creation single-writer and enforce an exact manifest.
+  - GitHub permits duplicate draft releases, so concurrent matrix upload jobs can each create one.
+  - The existing duplicate private drafts `371292479` and `371294326` prove the race.
+  - The uploader also needs published-release immutability before any PATCH and strict rejection
+    of stale/wrong-version artifacts.
+- #955 — persist direct-API state and connection identity for restart resume.
+  - Treat this as a blocker if Connections/direct API is visible in the public build; otherwise
+    keep the feature hidden and schedule the issue after beta.
+- #956 — prove packaged `node-pty` and keyring bindings on both physical platforms.
+  - Do not blindly flip `npmRebuild`. Require the exact packaged modules in Electron Node mode,
+    spawn/resize/exit a PTY, and save/read/delete a test credential on Windows and macOS.
+
+Additional beta-hardening issues:
+
+- #962 — close every started adapter item before a terminal turn event.
+- #964 — surface pull-request refresh failures while preserving stale data.
+
+Measured later work, not a reason for an unsafe overnight rewrite:
+
+- #957 — paginate/materialize cold thread history instead of parsing the full raw event log.
+- #958 — move Shiki tokenization off the renderer and cache by content hash.
+- #963 — add a renderer error boundary with diagnostics and reload recovery.
+
+Keep these reviewed findings in the next planning pass even though they were not split into more
+issues tonight:
+
+- direct API ignores a per-turn model change and presents provider output-length truncation as a
+  normal completion;
+- direct API resends unbounded history/tool output and needs a context-budget policy;
+- Grok's exported tested-version value is not wired into provider detection;
+- collapsed activity rows still mount heavy hidden detail DOM;
+- custom-harness verification is weaker than a real protocol handshake, and relative discovery
+  working directories can differ from actual turn launch directories.
+
+### What the deep review found to be sound
+
+- Electron renderer and preview boundaries are materially hardened: context isolation and
+  sandboxing are enabled, Node is disabled in renderer content, navigation/window/permission
+  boundaries are restricted, and loopback attachment URLs are scoped.
+- The thread rAF delta batching, structural flushes, live markdown tail, row virtualization, stable
+  completed rows, history wire compaction, OpenCode single-flight handling, and cancellation paths
+  are coherent. Do not rewrite this core without benchmarks.
+
+### Validation truth for this pass
+
+The audited text source was reconstructed from GitHub and checked against the pinned blob hashes.
+The following focused evidence was obtained:
+
+- A standalone child-process fixture proved that `exit` observed only `early-`, while `close`
+  observed `early-late`; this supports PR #960's change and regression tests.
+- The new placeholder tokens calculate to 4.529:1 in dark mode and 4.833:1 in light mode.
+
+The current cloud environment could not complete a frozen install: its package cache lacked
+`@oxlint/plugins`, and registry access was unavailable. Therefore **current-main lint, typecheck,
+test, build, and package gates were not completed in this pass**. Do not confuse this with the
+earlier green validation listed below, which was performed against the older launch-branch state.
+
+### Required next sequence
+
+1. Review draft PRs #959, #960, and #961 locally. Run their focused tests, then the full frozen
+   install, lint, typecheck, test, and build gates. Merge only after review.
+2. Merge the resulting current `main` into PR #936 and PR #937 without rebasing. Merge PR #936
+   before PR #937 when they are approved, and rerun every gate after the merge commits.
+3. Resolve #950 and #951 before public distribution. The safe time-boxed default is to hide the
+   unsupported Claude subscription and Codex voice paths until supported authentication exists.
+4. Resolve #953 before advertising Grok as a durable provider. Hide Grok if restart resume cannot
+   be completed and proved in time.
+5. Resolve or hide direct API per #955 if Connections is exposed.
+6. Resolve #952, scan the full Git history and all refs for secrets, and inspect the unpacked
+   Windows and macOS artifacts for every required license/notice file.
+7. Fix #954. Delete both duplicate drafts. Use one trusted upload writer for one exact approved
+   merged-main SHA and reconcile the exact final asset manifest.
+8. Run the packaged Windows proof, including NSIS interactive/silent install, custom directory,
+   PTY, keyring, provider response, terminal, attachment, approvals, checkpoint, Design Mode,
+   relaunch persistence, and uninstall.
+9. Blueemi must build the same SHA on macOS, sign/notarize/staple, verify the DMG/ZIP and signatures,
+   and perform the equivalent Finder/UI product smoke. Generate checksums only after signing.
+10. Keep the repositories private and the release a draft until Leon gives a new explicit go.
+
+### Codex Desktop resume prompt
+
+Paste the following into a fresh local Codex Desktop chat from a clean TasteCode checkout:
+
+```text
+Read AGENTS.md, rules/working-together.md, rules/git.md, rules/code.md,
+rules/security.md, docs/ARCHITECTURE.md, HANDOFF.md, and BLUEMI.md completely.
+
+GitHub is authoritative. Do not rebase, force-push, push main, publish a release, make a
+repository public, or run hosted Actions. The audited main boundary is
+fae4da906c26bb9a0d45c003c01a2801fcd4e753. Fetch current GitHub state first in case main moved.
+
+1. Review draft PRs #959, #960, and #961 independently. Inspect every diff. On a clean checkout
+   run the focused tests, then pnpm install --frozen-lockfile, pnpm lint, pnpm typecheck,
+   pnpm test, and pnpm build. Exercise #959 with keyboard-only navigation in both themes and
+   verify #961's loading, missing, rejected, and successful preview states.
+2. If those PRs pass review, merge them normally. Then merge current main into
+   docs/oss-launch-readiness and agent/release-artifact-proof without rebasing. Resolve conflicts
+   by preserving both current main and the release-only legal/package changes. Repeat all gates.
+3. Treat #950, #951, #952, #953, #954, and #956 as public-launch blockers. Treat #955 as a blocker
+   if direct API/Connections is exposed. Prefer hiding unsupported provider/voice features for
+   beta over shipping private authentication endpoints. Do not silently claim durable Grok
+   sessions while restart resume is broken.
+4. Implement/review #962 and #964 if time permits, with focused lifecycle/refresh tests. Do not
+   rush the measured later work in #957, #958, or #963.
+5. Run a full-history/all-refs secret scan. Generate the complete packaged production license
+   inventory and inspect the unpacked Windows/macOS resources.
+6. Fix #954 before using the uploader. Delete private draft release IDs 371292479 and 371294326.
+   Use one single writer and one exact approved merged-main SHA.
+7. On Windows, build/package locally and prove node-pty and keyring inside the packaged Electron
+   runtime, then complete the NSIS and real-product smoke in HANDOFF.md. Blueemi must build the
+   exact same SHA on macOS, sign/notarize/staple it, verify containers/signatures, and complete the
+   macOS smoke. Generate hashes after signing.
+8. Update HANDOFF.md with exact SHAs, commands, test totals, artifact names/hashes, failures, and
+   remaining owner decisions. Stop with everything private and the release still a draft. Ask Leon
+   for the final go/no-go only after every blocker is either fixed and proved or explicitly removed
+   from the public build.
+```
 
 ## Stop conditions
 
