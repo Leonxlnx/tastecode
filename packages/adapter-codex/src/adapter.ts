@@ -38,11 +38,6 @@ import {
   prepareMcpConfig,
 } from './mcp.js'
 import { mapSkillList } from './skills.js'
-import {
-  CodexVoiceTranscriber,
-  type VoiceCapability,
-  type VoiceTranscriptionInput,
-} from './voice.js'
 import { propertiesWhen } from './properties-when.js'
 import {
   AccountLoginCompletedNotificationSchema,
@@ -430,9 +425,6 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   readonly #spawn: Spawn
   readonly #connect: CodexRpcConnector
   #rpc: CodexRpc | undefined
-  #voice = new CodexVoiceTranscriber((method, params, result) =>
-    this.#callParsed(method, params, result),
-  )
   #started = false
   #mcpStartup = new Map<string, McpStartupStatus>()
   #mcpInventory = new Map<string, McpServer[]>()
@@ -598,14 +590,6 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
   async signOut(): Promise<void> {
     await this.#call('account/logout', {})
-  }
-
-  voiceCapability(): Promise<VoiceCapability> {
-    return this.#voice.capability()
-  }
-
-  transcribeVoice(input: VoiceTranscriptionInput, signal?: AbortSignal): Promise<string> {
-    return this.#voice.transcribe(input, signal)
   }
 
   /**
