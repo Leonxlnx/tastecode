@@ -1283,6 +1283,7 @@ function ComposerComponent(props: {
                   rows={2}
                   spellCheck={false}
                   disabled={props.disabled}
+                  aria-label="Message"
                   aria-keyshortcuts={shortcutAria(SHORTCUTS.focusComposer)}
                   aria-controls={resourceTrigger ? COMPOSER_RESOURCE_LIST_ID : undefined}
                   aria-expanded={resourceTrigger !== undefined}

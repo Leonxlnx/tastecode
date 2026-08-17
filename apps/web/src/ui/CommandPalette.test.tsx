@@ -99,4 +99,21 @@ describe('CommandPalette', () => {
       'New thread in Project A',
     ])
   })
+
+  it('traps focus and restores it after closing', () => {
+    const trigger = document.createElement('button')
+    document.body.append(trigger)
+    trigger.focus()
+    const { commands } = makeCommands()
+    const view = render(<CommandPalette commands={commands} scope="all" onClose={vi.fn()} />)
+    const input = screen.getByRole('textbox', { name: 'Search commands' })
+
+    expect(document.activeElement).toBe(input)
+    fireEvent.keyDown(input, { key: 'Tab' })
+    expect(document.activeElement).toBe(input)
+
+    view.unmount()
+    expect(document.activeElement).toBe(trigger)
+    trigger.remove()
+  })
 })
