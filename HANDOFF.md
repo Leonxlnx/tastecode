@@ -85,6 +85,8 @@ Additional beta-hardening issues:
 
 - #962 — close every started adapter item before a terminal turn event.
 - #964 — surface pull-request refresh failures while preserving stale data.
+- #965 — redact standalone secret-shaped values from local diagnostics.
+- #966 — isolate release write permission and pin GitHub Actions.
 
 Measured later work, not a reason for an unsafe overnight rewrite:
 
@@ -101,7 +103,13 @@ issues tonight:
 - Grok's exported tested-version value is not wired into provider detection;
 - collapsed activity rows still mount heavy hidden detail DOM;
 - custom-harness verification is weaker than a real protocol handshake, and relative discovery
-  working directories can differ from actual turn launch directories.
+  working directories can differ from actual turn launch directories;
+- the Windows proof assumes `Programs\\TasteCode\\TasteCode.exe`, while the configured product name
+  can produce a spaced executable/install path; set an explicit executable name or discover the
+  installed binary robustly before trusting that smoke;
+- before beta 2, restrict auto-update to official signed builds and retest the on-quit update path;
+- later macOS hardening should minimize inherited library-validation/microphone entitlements, and
+  the parked Kimi probe should stop inferring auth from credential-file existence.
 
 ### What the deep review found to be sound
 
@@ -137,10 +145,10 @@ earlier green validation listed below, which was performed against the older lau
 4. Resolve #953 before advertising Grok as a durable provider. Hide Grok if restart resume cannot
    be completed and proved in time.
 5. Resolve or hide direct API per #955 if Connections is exposed.
-6. Resolve #952, scan the full Git history and all refs for secrets, and inspect the unpacked
-   Windows and macOS artifacts for every required license/notice file.
-7. Fix #954. Delete both duplicate drafts. Use one trusted upload writer for one exact approved
-   merged-main SHA and reconcile the exact final asset manifest.
+6. Resolve #952 and #965, scan the full Git history and all refs for secrets, and inspect the
+   unpacked Windows and macOS artifacts for every required license/notice file.
+7. Fix #954 and #966. Delete both duplicate drafts. Use one trusted upload writer for one exact
+   approved merged-main SHA and reconcile the exact final asset manifest.
 8. Run the packaged Windows proof, including NSIS interactive/silent install, custom directory,
    PTY, keyring, provider response, terminal, attachment, approvals, checkpoint, Design Mode,
    relaunch persistence, and uninstall.
@@ -167,10 +175,10 @@ fae4da906c26bb9a0d45c003c01a2801fcd4e753. Fetch current GitHub state first in ca
 2. If those PRs pass review, merge them normally. Then merge current main into
    docs/oss-launch-readiness and agent/release-artifact-proof without rebasing. Resolve conflicts
    by preserving both current main and the release-only legal/package changes. Repeat all gates.
-3. Treat #950, #951, #952, #953, #954, and #956 as public-launch blockers. Treat #955 as a blocker
-   if direct API/Connections is exposed. Prefer hiding unsupported provider/voice features for
-   beta over shipping private authentication endpoints. Do not silently claim durable Grok
-   sessions while restart resume is broken.
+3. Treat #950, #951, #952, #953, #954, #956, #965, and #966 as public-launch blockers. Treat #955
+   as a blocker if direct API/Connections is exposed. Prefer hiding unsupported provider/voice
+   features for beta over shipping private authentication endpoints. Do not silently claim durable
+   Grok sessions while restart resume is broken.
 4. Implement/review #962 and #964 if time permits, with focused lifecycle/refresh tests. Do not
    rush the measured later work in #957, #958, or #963.
 5. Run a full-history/all-refs secret scan. Generate the complete packaged production license
