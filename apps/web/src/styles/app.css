@@ -4813,18 +4813,20 @@
 }
 
 .said__attachments .viewed-image-preview__open,
-.said__attachments .viewed-image-preview--message.is-loading {
+.said__attachments .viewed-image-preview--message:is(.is-loading, .is-unavailable) {
   height: 118px;
 }
 
 .said__attachments > :only-child .viewed-image-preview__open,
-.said__attachments > .viewed-image-preview--message.is-loading:only-child {
+.said__attachments > .viewed-image-preview--message:is(.is-loading, .is-unavailable):only-child {
   height: 178px;
 }
 
 .viewed-image-preview__placeholder {
   display: grid;
   place-items: center;
+  align-content: center;
+  gap: 8px;
   width: 100%;
   height: 100%;
   background: var(--chrome-recessed);
@@ -4834,9 +4836,22 @@
   color: var(--text-3);
 }
 
-.viewed-image-preview--message.is-loading {
+.viewed-image-preview--message:is(.is-loading, .is-unavailable) {
   display: block;
+}
+
+.viewed-image-preview--message.is-loading {
   opacity: 0.68;
+}
+
+.viewed-image-preview__unavailable-copy {
+  display: block;
+  max-width: calc(100% - 24px);
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Completed work folds into the same quiet narrative Codex uses: commentary
