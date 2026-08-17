@@ -64,6 +64,8 @@ The cloud host is Linux. It cannot truthfully prove the real Windows NSIS GUI fl
 SmartScreen wording, Authenticode status, or macOS signing/notarization. The Linux
 packaging smoke used the repository's smaller 512x512 icon as a local-only fallback
 because the connector could not download the larger app icon. No icon fallback was pushed.
+Starting the unpacked Electron binary was blocked before app code by the cloud sandbox,
+which denies Chromium's required local process-singleton socket.
 
 ## Private draft-release blocker
 
