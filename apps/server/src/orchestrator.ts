@@ -111,6 +111,7 @@ import {
   readSessionDiff,
   reviewDiffFile,
   reviewDiffHunk,
+  reverseUnifiedDiff,
   StaleDiffSnapshotError,
 } from './diff-review.js'
 import { McpConfigStore } from './mcp-config.js'
@@ -132,7 +133,13 @@ import {
   type AvailableBackgroundModelSource,
 } from './background-model.js'
 
-type UserSubmission = { id: string; text: string; createdAt: number; queueId?: string }
+type UserSubmission = {
+  id: string
+  text: string
+  attachments: string[]
+  createdAt: number
+  queueId?: string
+}
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions; clientSubmissionId?: string }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
@@ -1402,7 +1409,7 @@ export class Orchestrator {
     if (clientSubmissionId) this.#assertFreshSubmissionId(threadId, clientSubmissionId)
     const submittedAt = Date.now()
     const submission = clientSubmissionId
-      ? { id: clientSubmissionId, text, createdAt: submittedAt }
+      ? { id: clientSubmissionId, text, attachments, createdAt: submittedAt }
       : undefined
     const queue = this.#queueEntries(threadId)
     if (
@@ -1510,6 +1517,7 @@ export class Orchestrator {
         this.#recordUserSubmission(threadId, activeTurnId, {
           id: item.clientSubmissionId,
           text: item.text,
+          attachments: item.attachments,
           createdAt: item.createdAt,
           queueId: item.id,
         })
@@ -1617,6 +1625,9 @@ export class Orchestrator {
 
   #recordUserSubmission(threadId: string, turnId: string, submission: UserSubmission): void {
     this.#serverOwnedUserTurns.add(userTurnKey(threadId, turnId))
+    const visibleAttachments = submission.attachments.filter(
+      (attachment) => !isDesignBriefAttachment(attachment),
+    )
     const event: DomainEvent = {
       type: 'item.completed',
       item: {
@@ -1626,6 +1637,7 @@ export class Orchestrator {
         role: 'user',
         status: 'completed',
         text: submission.text,
+        ...(visibleAttachments.length > 0 ? { attachments: visibleAttachments } : {}),
         createdAt: submission.createdAt,
       },
     }
@@ -1649,6 +1661,33 @@ export class Orchestrator {
 
   async diff(threadId: string): Promise<SessionDiff> {
     return readSessionDiff(this.#diffRepoPath(threadId), threadId, this.#store)
+  }
+
+  /** Reverse only the exact provider patch shown in the latest edit block. */
+  async undoTurnChanges(threadId: string, turnId: string, expectedDiff: string): Promise<void> {
+    if (this.isTurnRunning(threadId)) {
+      throw new Error('cannot undo changes while the agent turn is running')
+    }
+    if (this.#restoringThreads.has(threadId)) {
+      throw new Error('cannot undo changes while restoring a checkpoint')
+    }
+    if (this.#reviewingDiffs.has(threadId)) throw new StaleDiffSnapshotError()
+
+    this.#reviewingDiffs.add(threadId)
+    try {
+      const diff = this.#store.turnDiff(threadId, turnId)
+      if (!diff || diff !== expectedDiff) {
+        throw new Error('This edit block changed. Reload the session and try again.')
+      }
+      try {
+        await reverseUnifiedDiff(this.#repoPath(threadId), diff)
+      } catch {
+        throw new Error('These files changed after this edit block. Undo did not change them.')
+      }
+      this.#record(threadId, { type: 'diff.updated', turnId, diff: '' })
+    } finally {
+      this.#reviewingDiffs.delete(threadId)
+    }
   }
 
   async reviewHunk(
@@ -1941,6 +1980,7 @@ export class Orchestrator {
           ? {
               id: next.clientSubmissionId,
               text: next.text,
+              attachments: next.attachments,
               createdAt: next.createdAt,
               queueId: next.id,
             }

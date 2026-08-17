@@ -26,6 +26,9 @@ export function mapThreadItem(
     case 'userMessage':
       return { ...base, type: 'message', role: 'user', text: userInputToText(raw.content) }
 
+    case 'hookPrompt':
+      return { ...base, type: 'tool_call', text: 'hook prompt' }
+
     case 'agentMessage':
       return {
         ...base,
@@ -76,7 +79,12 @@ export function mapThreadItem(
       }
 
     case 'dynamicToolCall':
-      return { ...base, type: 'tool_call', text: raw.tool }
+      return {
+        ...base,
+        type: 'tool_call',
+        text: raw.tool,
+        ...(raw.durationMs === null ? {} : { durationMs: raw.durationMs }),
+      }
 
     case 'collabAgentToolCall': {
       const failed = failedAgentCount(raw)
@@ -122,8 +130,29 @@ export function mapThreadItem(
       }
     }
 
-    default:
-      return { ...base, type: 'unknown', text: `[${raw.type}]` }
+    case 'sleep':
+      return { ...base, type: 'tool_call', text: 'sleep', durationMs: raw.durationMs }
+
+    case 'imageGeneration':
+      return { ...base, type: 'tool_call', text: 'image generation' }
+
+    case 'enteredReviewMode':
+      return { ...base, type: 'tool_call', text: 'enter review mode' }
+
+    case 'exitedReviewMode':
+      return { ...base, type: 'tool_call', text: 'exit review mode' }
+
+    case 'contextCompaction':
+      return { ...base, type: 'tool_call', text: 'context compaction' }
+
+    default: {
+      const wireType = (raw as unknown as { type?: unknown }).type
+      return {
+        ...base,
+        type: 'unknown',
+        text: `[${typeof wireType === 'string' ? wireType : 'unknown'}]`,
+      }
+    }
   }
 }
 

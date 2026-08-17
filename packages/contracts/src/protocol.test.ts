@@ -81,6 +81,23 @@ describe('domain events', () => {
     expect(() => ItemSchema.parse({ ...legacy, phase: 'analysis' })).toThrow()
   })
 
+  it('preserves attachments on user messages without changing legacy messages', () => {
+    const message = {
+      id: 'i1',
+      turnId: 't1',
+      type: 'message',
+      status: 'completed',
+      role: 'user',
+      text: 'Review this',
+      createdAt: 1,
+    }
+
+    expect(ItemSchema.parse(message)).toEqual(message)
+    expect(
+      ItemSchema.parse({ ...message, attachments: ['/work/reference.png'] }).attachments,
+    ).toEqual(['/work/reference.png'])
+  })
+
   it('carries one item ID through a complete lifecycle', () => {
     const item = {
       id: 'assistant-1',

@@ -1110,6 +1110,18 @@ export const methods = {
     params: z.object({ threadId: z.string() }),
     result: SessionDiffSchema,
   },
+  /** Reverse only the exact file patch represented by one completed turn's edit block. */
+  'thread.undoTurnChanges': {
+    params: z.object({
+      threadId: z.string(),
+      turnId: z.string(),
+      expectedDiff: z
+        .string()
+        .min(1)
+        .max(64 * 1024 * 1024),
+    }),
+    result: z.object({}),
+  },
   'thread.reviewHunk': {
     params: z.object({
       threadId: z.string(),

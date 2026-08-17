@@ -52,6 +52,12 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(/\.sess:has\(\.sess__spinner\) \{[^}]*padding-left: 28px;/s)
   })
 
+  it('uses the light foreground color for unread chat dots', () => {
+    expect(appCss).toMatch(
+      /\.sess__unread-dot \{[^}]*width: 6px;[^}]*height: 6px;[^}]*background: var\(--light\);/s,
+    )
+  })
+
   it('gives project rows a consistent readable rhythm', () => {
     expect(appCss).toMatch(/\.proj \{[^}]*margin-bottom: 0;/s)
     expect(appCss).toMatch(

@@ -1,6 +1,6 @@
 {
   "name": "@harness/desktop",
-  "productName": "TasteCode",
+  "productName": "Taste Code",
   "description": "A local desktop workspace for coding agents.",
   "author": "TasteCode",
   "copyright": "Copyright © 2026 TasteCode",
@@ -11,7 +11,7 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b",
-    "start": "tsc -b && node scripts/build-preload.js && electron .",
+    "start": "tsc -b && node scripts/build-preload.js && node scripts/start.js",
     "test": "vitest run --passWithNoTests",
     "dist": "pnpm -w build && node scripts/build-preload.js && electron-builder",
     "dist:dir": "pnpm -w build && node scripts/build-preload.js && electron-builder --dir"
@@ -31,7 +31,7 @@
   },
   "build": {
     "appId": "dev.tastecode.desktop",
-    "icon": "assets/tastecode-icon.png",
+    "icon": "assets/tastecode-app-icon.png",
     "asar": true,
     "npmRebuild": false,
     "asarUnpack": [
@@ -81,6 +81,7 @@
       "deleteAppDataOnUninstall": false
     },
     "mac": {
+      "icon": "assets/tastecode-icon.icon",
       "target": [
         "dmg",
         "zip"

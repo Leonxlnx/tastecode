@@ -31,6 +31,48 @@ describe('preview capture bridge', () => {
   })
 })
 
+describe('attachment preview bridge', () => {
+  it('reuses the signed preview returned by the file picker', async () => {
+    const picked = {
+      path: '/work/reference.png',
+      name: 'reference.png',
+      mediaType: 'image' as const,
+      previewUrl: 'tastecode-attachment://preview/reference',
+    }
+    const pickFiles = vi.fn().mockResolvedValue([picked])
+    const previewViewedImage = vi.fn()
+    ;(globalThis as { harness?: unknown }).harness = {
+      isDesktop: true,
+      pickFiles,
+      previewViewedImage,
+    }
+    const bridge = await import('./bridge.js')
+
+    await expect(bridge.pickFiles()).resolves.toEqual([picked])
+    await expect(bridge.previewViewedImage(picked.path)).resolves.toEqual(picked)
+    expect(previewViewedImage).not.toHaveBeenCalled()
+  })
+
+  it('resolves a persisted pasted-file path through its safe basename', async () => {
+    const preview = {
+      path: '/private/tmp/TasteCode/pasted-files/uuid-reference.png',
+      name: 'uuid-reference.png',
+      mediaType: 'image' as const,
+      previewUrl: 'tastecode-attachment://preview/pasted',
+    }
+    const previewViewedImage = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(preview)
+    ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, previewViewedImage }
+    const bridge = await import('./bridge.js')
+
+    await expect(bridge.previewViewedImage(preview.path)).resolves.toEqual(preview)
+    expect(previewViewedImage).toHaveBeenNthCalledWith(1, preview.path)
+    expect(previewViewedImage).toHaveBeenNthCalledWith(2, preview.name)
+  })
+})
+
 describe('clipboard bridge', () => {
   it('delegates text writes to the native bridge', async () => {
     const writeClipboardText = vi.fn().mockResolvedValue(undefined)

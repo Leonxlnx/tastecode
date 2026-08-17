@@ -390,6 +390,62 @@ describe('Sidebar chat actions', () => {
     expect(onToggleSessionPin).toHaveBeenCalledWith('thread-1')
   })
 
+  it('keeps active and unread chats above the saved chat order', () => {
+    const unread = {
+      ...session('thread-unread', 'Just done'),
+      status: 'ready' as const,
+      unread: true,
+    }
+    const working = {
+      ...session('thread-working', 'Still running'),
+      status: 'working' as const,
+    }
+    render(
+      <Sidebar
+        projects={[
+          {
+            path: '/work/harness',
+            name: 'TasteCode',
+            sessions: [
+              session('thread-old', 'Older chat'),
+              unread,
+              working,
+              session('thread-new', 'Newer chat'),
+            ],
+          },
+        ]}
+        activeProjectPath="/work/harness"
+        activeSessionId="thread-old"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    expect(
+      [...document.querySelectorAll('.proj__sessions:not(.pinned-sessions) .sess__title')].map(
+        (title) => title.textContent,
+      ),
+    ).toEqual(['Still running', 'Just done', 'Older chat', 'Newer chat'])
+    const justDone = screen.getByRole('button', { name: 'Just done, Codex, ready, unread' })
+    expect(justDone.firstElementChild?.classList.contains('sess__unread-dot')).toBe(true)
+  })
+
   it('shows five project chats until the list is expanded', () => {
     render(
       <Sidebar

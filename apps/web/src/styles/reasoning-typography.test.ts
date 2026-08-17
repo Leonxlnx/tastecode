@@ -12,6 +12,6 @@ function rule(selector: string): string | undefined {
 describe('reasoning typography', () => {
   it('renders thinking as prose while keeping other operational output monospace', () => {
     expect(rule('.aux__out')).toContain('font-family: var(--font-mono)')
-    expect(rule('.aux--reasoning .aux__out')).toContain('font-family: var(--font-ui)')
+    expect(rule('.reasoning-summary')).toContain('font-family: var(--font-ui)')
   })
 })

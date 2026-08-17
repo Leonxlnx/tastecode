@@ -59,6 +59,8 @@ export const ItemSchema = z.object({
   phase: AssistantPhaseSchema.optional(),
   /** Accumulated text. Deltas append here. */
   text: z.string().optional(),
+  /** Absolute paths attached to a user message. The renderer only previews images. */
+  attachments: z.array(z.string()).optional(),
   /** Present on `command`: the command line and its exit code once finished. */
   command: z.string().optional(),
   exitCode: z.number().optional(),

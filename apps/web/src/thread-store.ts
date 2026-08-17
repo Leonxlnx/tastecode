@@ -30,6 +30,8 @@ export type ThreadState = {
   usage?: Usage
   /** Everything the current turn changed, as one unified diff. */
   diff?: string | undefined
+  /** The turn that owns `diff`, so actions target the exact displayed block. */
+  diffTurnId?: string | undefined
   /** Permission requests still waiting on an answer. */
   approvals: ApprovalRequest[]
   /** Structured questions still blocking the current agent turn. */
@@ -154,6 +156,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
         },
         plan: [],
         diff: undefined,
+        diffTurnId: undefined,
       }
     }
 
@@ -190,7 +193,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       return { ...state, usage: withoutIncompatibleContextWindow(event.usage) }
 
     case 'diff.updated':
-      return { ...state, diff: event.diff }
+      return { ...state, diff: event.diff, diffTurnId: event.turnId }
 
     case 'approval.requested':
       // Codex is blocked waiting on this. Queued rather than replacing, since
@@ -531,6 +534,7 @@ export function appendUserMessage(
   text: string,
   id = createOptimisticMessageId(),
   createdAt = Date.now(),
+  attachments: string[] = [],
 ): ThreadState {
   state = settleLiveItems(state)
   return {
@@ -544,6 +548,7 @@ export function appendUserMessage(
         role: 'user',
         status: 'completed',
         text,
+        ...(attachments.length > 0 ? { attachments } : {}),
         createdAt,
       },
     ],
@@ -556,9 +561,10 @@ export function beginOptimisticTurn(
   text: string,
   itemId = createOptimisticMessageId(),
   createdAt = Date.now(),
+  attachments: string[] = [],
 ): ThreadState {
   return {
-    ...appendUserMessage(state, text, itemId, createdAt),
+    ...appendUserMessage(state, text, itemId, createdAt, attachments),
     running: true,
     activeTurn: { id: localId('local-turn:'), startedAt: createdAt },
     plan: [],

@@ -1230,6 +1230,22 @@ export class Store {
       })
   }
 
+  /** The final provider-owned patch shown for one turn. */
+  turnDiff(threadId: string, turnId: string): string | undefined {
+    const row = this.#db
+      .prepare(
+        `SELECT payload FROM events
+         WHERE thread_id = ?
+           AND json_extract(payload, '$.type') = 'diff.updated'
+           AND json_extract(payload, '$.turnId') = ?
+         ORDER BY seq DESC LIMIT 1`,
+      )
+      .get(threadId, turnId) as { payload: string } | undefined
+    if (!row) return undefined
+    const event = JSON.parse(row.payload) as DomainEvent
+    return event.type === 'diff.updated' ? event.diff : undefined
+  }
+
   searchSessions(options: SessionSearchOptions): SessionSearchPage {
     const requestedLimit = options.limit ?? 25
     const limit = Number.isSafeInteger(requestedLimit)

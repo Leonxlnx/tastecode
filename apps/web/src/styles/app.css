@@ -16,6 +16,27 @@
   user-select: text;
 }
 
+:where(svg.lucide, svg[width][height], svg[aria-hidden='true']) {
+  transform-origin: center;
+  transition: rotate var(--dur-fast) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  :where(
+      button,
+      a,
+      summary,
+      [role='button'],
+      [role='menuitem'],
+      [role='tab'],
+      [role='switch']
+    ):hover
+    :where(svg.lucide, svg[width][height], svg[aria-hidden='true']),
+  :where(svg.lucide, svg[width][height], svg[aria-hidden='true']):hover {
+    rotate: 3deg;
+  }
+}
+
 .shell {
   display: grid;
   grid-template-rows: var(--titlebar-h) 1fr;
@@ -4034,6 +4055,14 @@
   white-space: nowrap;
 }
 
+.sess__unread-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-circle);
+  background: var(--light);
+  flex: none;
+}
+
 .sess__source {
   max-width: 84px;
   flex: none;
@@ -4596,6 +4625,12 @@
   padding-bottom: 12px;
 }
 
+/* Keep one turn's narration and work status visually connected. The normal
+   turn gap is too large between two rows that describe the same live step. */
+.thread__row.is-compact-to-next {
+  padding-bottom: 4px;
+}
+
 .thread__row.is-suppressed {
   height: 0;
   overflow: hidden;
@@ -4774,13 +4809,63 @@
   word-break: break-word;
 }
 
+.said__attachments {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 148px));
+  gap: 5px;
+  max-width: 301px;
+  margin: -2px -6px 7px;
+}
+
+.said__attachments:has(> :only-child) {
+  grid-template-columns: minmax(0, 301px);
+}
+
+.said__attachments .viewed-image-preview--message {
+  width: 100%;
+  margin: 0;
+}
+
+.said__attachments .viewed-image-preview__open,
+.said__attachments .viewed-image-preview--message.is-loading {
+  height: 118px;
+}
+
+.said__attachments > :only-child .viewed-image-preview__open,
+.said__attachments > .viewed-image-preview--message.is-loading:only-child {
+  height: 178px;
+}
+
+.viewed-image-preview__placeholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  background: var(--chrome-recessed);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-card);
+  box-shadow: var(--chrome-inset-shadow);
+  color: var(--text-3);
+}
+
+.viewed-image-preview--message.is-loading {
+  display: block;
+  opacity: 0.68;
+}
+
 /* Completed work folds into the same quiet narrative Codex uses: commentary
    and edit milestones remain readable, while raw operational noise stays out. */
+.thread__row > :is(.activity, .aux) {
+  position: relative;
+  margin-block: 4px;
+}
+
 .activity__summary {
   display: flex;
   align-items: center;
   gap: 6px;
   min-height: 30px;
+  margin-left: -3.5px;
   padding: 0 2px 4px;
   background: none;
   border: 0;
@@ -4800,16 +4885,56 @@
   color: var(--text-2);
 }
 
-.activity__summary svg {
+.activity__glyph {
+  display: grid;
+  flex: none;
+  width: 18px;
+  place-items: center;
+}
+
+.activity__glyph svg,
+.activity__chevron {
   width: 15px;
   height: 15px;
+}
+
+.activity__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity--live .activity__label {
+  flex: 1 1 0;
+  background: linear-gradient(100deg, var(--text-2) 20%, var(--text) 48%, var(--text-2) 76%);
+  background-clip: text;
+  background-size: 220% 100%;
+  color: transparent;
+  animation: activity-label-shine 2.4s linear infinite;
+}
+
+@keyframes activity-label-shine {
+  to {
+    background-position: -220% 0;
+  }
+}
+
+.activity__chevron {
+  flex: none;
   transition:
     transform var(--dur-fast) var(--ease-out),
     rotate var(--dur-fast) var(--ease-out);
 }
 
-.activity[data-expanded='true'] > .activity__summary svg {
+.activity[data-expanded='true'] > .activity__summary .activity__chevron {
   transform: rotate(90deg);
+}
+
+.activity--live .activity__summary {
+  width: 100%;
+  min-width: 0;
+  color: var(--text-2);
 }
 
 /* Commit the expanded height in one layout pass. Animating the grid track made
@@ -4820,6 +4945,18 @@
 
 .activity__reveal[data-open='true'] {
   display: block;
+}
+
+.activity__reveal[data-open='closing'] {
+  position: absolute;
+  z-index: 1;
+  top: 100%;
+  right: 0;
+  left: 0;
+  display: block;
+  background: var(--bg);
+  pointer-events: none;
+  animation: disclosure-reveal-out var(--dur-slow) var(--ease-out) both;
 }
 
 .activity__reveal[data-open='true'] > .activity__reveal-clip {
@@ -4838,6 +4975,23 @@
   }
 }
 
+@keyframes disclosure-reveal-out {
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* Closing details leave flow once, then the virtualizer moves the measured
+   rows with compositor-only transforms while the old details fade above them. */
+.thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing']) .thread__row {
+  transition: transform var(--dur-slow) var(--ease-out);
+}
+
+.thread__row:has(> :is(.activity, .aux) [data-open='closing']) {
+  z-index: 1;
+}
+
 .activity--empty .activity__summary {
   cursor: default;
 }
@@ -4849,6 +5003,7 @@
 }
 
 .activity--working .activity__summary {
+  min-width: 0;
   cursor: default;
   font-variant-numeric: tabular-nums;
 }
@@ -4863,26 +5018,42 @@
 
 .activity__working-label-swap {
   display: grid;
+  flex: 1 1 0;
   align-items: center;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.activity__working-status,
+.activity__working-status-previous {
+  grid-area: 1 / 1;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .activity__working-label,
 .activity__working-label-previous {
-  grid-area: 1 / 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.activity__working-label.is-entering {
+.activity__working-status.is-entering {
   animation: activity-label-in 480ms cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
-.activity__working-label-previous {
+.activity__working-status-previous {
   animation: activity-label-out 480ms cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
 /* Dimmer than the label beside it — --text-4 was never defined, so this
    declaration was dropped and the elapsed time read at full label weight. */
 .activity__working-time {
+  flex: none;
   color: color-mix(in srgb, var(--text-3) 72%, transparent);
 }
 
@@ -4927,26 +5098,36 @@
   .thread__row.is-entering > :is(.reply, .aux, .activity),
   .thread__row.is-entering > .said,
   .activity--working,
-  .activity__working-label,
-  .activity__working-label-previous,
+  .activity__working-status,
+  .activity__working-status-previous,
   .activity.is-settling {
     animation: none;
   }
 
-  .activity__working-label-previous {
+  .activity__working-status-previous {
     display: none;
+  }
+
+  .activity--live .activity__label {
+    animation: none;
+    background: none;
+    color: var(--text-2);
   }
 
   .activity__reveal[data-open='true'] > .activity__reveal-clip,
   .aux__reveal[data-open='true'] > .aux__reveal-clip {
     animation: none;
   }
+
+  .thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing']) .thread__row {
+    transition: none;
+  }
 }
 
 .activity__body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   margin: 4px 0;
 }
 
@@ -4961,7 +5142,7 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  min-height: 20px;
+  min-height: 24px;
   color: var(--text-3);
   font-family: var(--font-ui);
   font-size: var(--t-md);
@@ -4972,6 +5153,13 @@
   flex: none;
 }
 
+.activity__item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .activity__detail {
   max-height: 180px;
   overflow: auto;
@@ -4980,6 +5168,48 @@
   font-family: var(--font-mono);
   font-size: var(--t-sm);
   white-space: pre-wrap;
+}
+
+.viewed-image-preview {
+  width: min(320px, calc(100% - 21px));
+  margin: 7px 0 2px 21px;
+}
+
+.viewed-image-preview__open {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 180px;
+  padding: 0;
+  overflow: hidden;
+  background: var(--chrome-recessed);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-card);
+  box-shadow: var(--chrome-inset-shadow);
+  cursor: zoom-in;
+}
+
+.viewed-image-preview__open:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
+.viewed-image-preview__open img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.viewed-image-preview__name {
+  display: block;
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .reply > .activity {
@@ -5122,7 +5352,7 @@
   width: 1em;
   height: 1em;
   margin-right: 3px;
-  vertical-align: -0.13em;
+  vertical-align: middle;
 }
 
 .md .md-file-ref__icon > svg {
@@ -5327,15 +5557,19 @@
 .aux__row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  margin-left: -3.5px;
+  padding: 0 2px 4px;
   background: none;
   border: 0;
   cursor: pointer;
   color: var(--text-3);
   font: inherit;
-  font-size: var(--t-sm);
-  padding: 1px 0;
+  font-size: var(--t-md);
+  letter-spacing: -0.012em;
   text-align: left;
   transition: color var(--dur-fast) var(--ease-out);
 }
@@ -5345,15 +5579,22 @@
 }
 
 .aux__glyph {
-  flex: none;
-  width: 14px;
   display: grid;
+  flex: none;
+  width: 18px;
   place-items: center;
 }
 
+.aux__glyph svg {
+  width: 15px;
+  height: 15px;
+}
+
 .aux__label {
-  font-family: var(--font-mono);
-  font-size: var(--t-sm);
+  flex: 1 1 0;
+  min-width: 0;
+  font-family: var(--font-ui);
+  font-size: var(--t-md);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5372,8 +5613,16 @@
   border-radius: var(--r-card);
 }
 
-.aux--reasoning .aux__out {
+.reasoning-summary {
+  max-width: 72ch;
+  color: var(--text-3);
   font-family: var(--font-ui);
+  font-size: var(--t-md);
+  line-height: 1.45;
+}
+
+.reasoning-summary > .md > :last-child {
+  margin-bottom: 0;
 }
 
 /* Match the completion rail: one virtual-row resize, then compositor-only motion. */
@@ -5383,6 +5632,18 @@
 
 .aux__reveal[data-open='true'] {
   display: block;
+}
+
+.aux__reveal[data-open='closing'] {
+  position: absolute;
+  z-index: 1;
+  top: 100%;
+  right: 0;
+  left: 0;
+  display: block;
+  background: var(--bg);
+  pointer-events: none;
+  animation: disclosure-reveal-out var(--dur-slow) var(--ease-out) both;
 }
 
 .aux__reveal[data-open='true'] > .aux__reveal-clip {
@@ -5395,26 +5656,16 @@
 }
 
 .aux--live .aux__row {
-  gap: 10px;
-  min-height: 30px;
-  padding: 2px 0;
   color: var(--text-2);
-  font-size: var(--t-lg);
 }
 
 .aux--live .aux__glyph {
-  width: 22px;
   color: var(--text-3);
 }
 
-.aux--live .aux__label {
-  font-family: var(--font-ui);
-  font-size: var(--t-lg);
-}
-
 .aux--live .aux__glyph svg {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   stroke-width: 1.7;
 }
 
@@ -5467,6 +5718,7 @@
   position: static;
   padding-top: 2px;
   margin: 0;
+  margin-left: -6.5px;
   opacity: 1;
   pointer-events: auto;
 }
@@ -5710,6 +5962,14 @@
 
 /* ---------- diff ---------- */
 
+.thread__runway + .diff {
+  margin-top: -8px;
+}
+
+.thread__col > .diff {
+  margin-bottom: 16px;
+}
+
 .diff {
   background: color-mix(in srgb, var(--surface) 55%, var(--bg));
   border: 1px solid var(--line);
@@ -5757,6 +6017,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+.diff__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+
 .diff__review {
   flex: none;
   min-height: 28px;
@@ -5778,9 +6044,26 @@
   color: var(--text);
 }
 
+.diff__review:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.diff__review:disabled:hover {
+  background: transparent;
+  color: var(--text-2);
+}
+
 .diff__review:focus-visible {
   outline: 1px solid var(--text-3);
   outline-offset: 1px;
+}
+
+.diff__undo-error {
+  margin: 0;
+  padding: 0 10px 7px 41px;
+  color: var(--error);
+  font-size: var(--t-xs);
 }
 
 .diff__file-list {
@@ -6525,6 +6808,70 @@
   white-space: nowrap;
 }
 
+.queue-row__media {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  padding: 0;
+  overflow: hidden;
+  place-items: center;
+  background: var(--chrome-recessed);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  box-shadow: var(--chrome-inset-shadow);
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.queue-row__media:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.queue-row__media:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
+.queue-row__media-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--surface-3) 42%, transparent), transparent 62%),
+    var(--chrome-recessed);
+}
+
+.queue-row__media img {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.queue-row__media-play {
+  position: absolute;
+  z-index: 2;
+  bottom: 2px;
+  left: 2px;
+  display: grid;
+  width: 15px;
+  height: 15px;
+  padding-left: 1px;
+  place-items: center;
+  background: rgb(14 14 15 / 78%);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: var(--r-sm);
+  color: rgb(250 250 250 / 92%);
+}
+
 .queue-row__steer,
 .queue-row__action {
   display: inline-flex;
@@ -6825,6 +7172,10 @@
 .attachment-preview__open:focus-visible {
   outline: 2px solid var(--text-2);
   outline-offset: 2px;
+}
+
+.attachment-preview__open:disabled {
+  cursor: default;
 }
 
 .attachment-preview.is-loading img {

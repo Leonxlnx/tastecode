@@ -467,9 +467,7 @@ html.is-macos-font-smoothing {
 }
 
 :focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 1px;
-  border-radius: var(--r-sm);
+  outline: none !important;
 }
 
 /* Keep text selection at the browser default so Electron follows the user's

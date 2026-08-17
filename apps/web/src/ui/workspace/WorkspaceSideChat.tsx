@@ -250,7 +250,13 @@ export function WorkspaceSideChat(props: {
       const clientSubmissionId = `side:${globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${submissionSequence++}`}`
       try {
         const threadId = await ensureSideThread()
-        const optimistic = beginOptimisticTurn(threadRef.current, text, clientSubmissionId)
+        const optimistic = beginOptimisticTurn(
+          threadRef.current,
+          text,
+          clientSubmissionId,
+          Date.now(),
+          attachments,
+        )
         replaceThread(optimistic)
         await props.transport.request('thread.sendTurn', {
           threadId,

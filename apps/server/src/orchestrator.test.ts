@@ -789,19 +789,25 @@ describe('durable user submissions', () => {
       const thread = await orchestrator.startThread('codex', '/repo')
       const session = sessions[0]!
       session.turnIds.push('turn-current', 'turn-queued', 'turn-steered')
-      await orchestrator.submitTurn(thread.id, 'Repeat this.', [], {}, 'submission-current')
+      await orchestrator.submitTurn(
+        thread.id,
+        'Repeat this.',
+        ['/current.png'],
+        {},
+        'submission-current',
+      )
       session.emit(turnStarted(thread.id, 'turn-current'))
       const queued = await orchestrator.submitTurn(
         thread.id,
         'Repeat this.',
-        [],
+        ['/queued.png'],
         {},
         'submission-queued',
       )
       const steered = await orchestrator.submitTurn(
         thread.id,
         'Repeat this.',
-        [],
+        ['/steered.png'],
         {},
         'submission-steered',
       )
@@ -831,10 +837,10 @@ describe('durable user submissions', () => {
           (event): event is Extract<DomainEvent, { type: 'item.completed' }> =>
             event.type === 'item.completed' && event.item.role === 'user',
         )
-      expect(users.map(({ item }) => [item.id, item.turnId])).toEqual([
-        ['submission-current', 'turn-current'],
-        ['submission-queued', 'turn-queued'],
-        ['submission-steered', 'turn-steered'],
+      expect(users.map(({ item }) => [item.id, item.turnId, item.attachments])).toEqual([
+        ['submission-current', 'turn-current', ['/current.png']],
+        ['submission-queued', 'turn-queued', ['/queued.png']],
+        ['submission-steered', 'turn-steered', ['/steered.png']],
       ])
     } finally {
       releaseSteer()
@@ -3372,6 +3378,36 @@ describe('rolling a session back', () => {
     const checkpoints = orchestrator.checkpoints(thread.id)
     expect(checkpoints).toHaveLength(1)
     expect(checkpoints[0]?.label).toBe('change the file')
+  })
+
+  it('undoes only the patch from an edit block and keeps the conversation', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    sessions[0]!.turnIds.push('turn-1')
+    await orchestrator.sendTurn(thread.id, 'change one file')
+    sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
+
+    writeFileSync(path.join(repo, 'file.txt'), 'agent change\n')
+    const relative = execFileSync('git', ['diff', '--binary', '--no-color', '--', 'file.txt'], {
+      cwd: repo,
+      encoding: 'utf8',
+      windowsHide: true,
+    })
+    const root = repo.replaceAll('\\', '/')
+    const absolute = relative
+      .replaceAll('a/file.txt', `a/${root}/file.txt`)
+      .replaceAll('b/file.txt', `b/${root}/file.txt`)
+    sessions[0]!.emit({ type: 'diff.updated', turnId: 'turn-1', diff: absolute })
+    sessions[0]!.emit(message('Done with the requested edit.', 'turn-1'))
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+    writeFileSync(path.join(repo, 'unrelated.txt'), 'user work\n')
+
+    await orchestrator.undoTurnChanges(thread.id, 'turn-1', absolute)
+
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('original\n')
+    expect(readFileSync(path.join(repo, 'unrelated.txt'), 'utf8')).toBe('user work\n')
+    expect(text(store.history(thread.id))).toEqual(['Done with the requested edit.'])
+    expect(store.turnDiff(thread.id, 'turn-1')).toBe('')
   })
 
   it('puts the files back and drops the conversation that described them', async () => {

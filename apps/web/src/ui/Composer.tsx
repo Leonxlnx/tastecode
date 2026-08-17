@@ -36,7 +36,13 @@ import {
   Video,
   X,
 } from 'lucide-react'
-import { pickFiles, revealPath, savePastedFile, type PickedAttachment } from '../bridge.js'
+import {
+  pickFiles,
+  previewViewedImage,
+  revealPath,
+  savePastedFile,
+  type PickedAttachment,
+} from '../bridge.js'
 import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
 import {
@@ -210,6 +216,83 @@ type ComposerAttachment = {
 type RunningSubmission = 'queue' | 'steer'
 
 export type SendAvailability = 'loading' | 'ready' | 'setup-required' | 'unavailable'
+
+function QueuedMediaPreview({ attachments }: { attachments: string[] }) {
+  const reference = attachments.find((attachment) => previewMediaType('', attachment))
+  return reference ? <QueuedMediaPreviewCard key={reference} reference={reference} /> : null
+}
+
+function QueuedMediaPreviewCard({ reference }: { reference: string }) {
+  const inferredMediaType = previewMediaType('', reference)
+  const [preview, setPreview] = useState<PickedAttachment>()
+  const [thumbnailFailed, setThumbnailFailed] = useState(false)
+  const [mediaFailed, setMediaFailed] = useState(false)
+  const [viewerOpen, setViewerOpen] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    void previewViewedImage(reference).then((result) => {
+      if (!cancelled) setPreview(result)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [reference])
+
+  if (!inferredMediaType) return null
+  const mediaType = preview?.mediaType ?? inferredMediaType
+  const name = preview?.name ?? basename(reference)
+  const inlineSource =
+    !mediaFailed && preview?.thumbnailUrl && !thumbnailFailed
+      ? preview.thumbnailUrl
+      : !mediaFailed && mediaType === 'image'
+        ? preview?.previewUrl
+        : undefined
+  const canOpen = Boolean(preview?.previewUrl && preview.mediaType)
+
+  return (
+    <>
+      <button
+        type="button"
+        className="queue-row__media"
+        disabled={!canOpen}
+        onClick={() => setViewerOpen(true)}
+        aria-label={
+          canOpen ? `Open queued preview of ${name}` : `Loading queued preview of ${name}`
+        }
+      >
+        <span className="queue-row__media-fallback" aria-hidden>
+          {mediaType === 'video' ? <Video size={16} /> : <ImageIcon size={16} />}
+        </span>
+        {inlineSource ? (
+          <img
+            src={inlineSource}
+            alt=""
+            draggable={false}
+            onError={() => {
+              if (preview?.thumbnailUrl && !thumbnailFailed) setThumbnailFailed(true)
+              else setMediaFailed(true)
+            }}
+          />
+        ) : null}
+        {mediaType === 'video' ? (
+          <span className="queue-row__media-play" aria-hidden>
+            <Play size={9} fill="currentColor" />
+          </span>
+        ) : null}
+      </button>
+      {viewerOpen && preview?.previewUrl && preview.mediaType ? (
+        <MediaViewer
+          src={preview.previewUrl}
+          name={preview.name}
+          mediaType={preview.mediaType}
+          onReveal={() => void revealPath(reference)}
+          onClose={() => setViewerOpen(false)}
+        />
+      ) : null}
+    </>
+  )
+}
 
 export function composerResourceTriggerAt(
   text: string,
@@ -463,6 +546,26 @@ function ComposerComponent(props: {
     }
   }, [props.draftRequest?.request])
 
+  const hydrateAttachmentPreview = (reference: string) => {
+    void previewViewedImage(reference).then((preview) => {
+      if (!mounted.current || !preview?.mediaType || !preview.previewUrl) return
+      const { mediaType, name, previewUrl, thumbnailUrl } = preview
+      setAttachments((current) =>
+        current.map((attachment) =>
+          attachment.path === reference
+            ? {
+                ...attachment,
+                name,
+                mediaType,
+                previewUrl,
+                ...(thumbnailUrl ? { thumbnailUrl } : {}),
+              }
+            : attachment,
+        ),
+      )
+    })
+  }
+
   const addFiles = (files: Array<PickedAttachment | string>) => {
     if (files.length === 0) return
     setAttachments((current) => {
@@ -472,10 +575,12 @@ function ComposerComponent(props: {
         const picked = typeof file === 'string' ? { path: file, name: basename(file) } : file
         if (attached.has(picked.path)) continue
         attached.add(picked.path)
+        const inferredMediaType = previewMediaType('', picked.name)
         additions.push({
           id: picked.path,
           name: picked.name,
           path: picked.path,
+          ...(inferredMediaType ? { mediaType: inferredMediaType } : {}),
           ...(picked.previewUrl ? { previewUrl: picked.previewUrl } : {}),
           ...(picked.thumbnailUrl ? { thumbnailUrl: picked.thumbnailUrl } : {}),
           ...(picked.mediaType ? { mediaType: picked.mediaType } : {}),
@@ -483,6 +588,9 @@ function ComposerComponent(props: {
       }
       return [...current, ...additions]
     })
+    for (const file of files) {
+      if (typeof file === 'string' && previewMediaType('', file)) hydrateAttachmentPreview(file)
+    }
   }
 
   const attachFiles = (files: Array<PickedAttachment | string>) => {
@@ -935,6 +1043,7 @@ function ComposerComponent(props: {
                   >
                     <GripVertical size={14} aria-hidden />
                   </button>
+                  <QueuedMediaPreview attachments={queuedTurn.attachments} />
                   <span className="queue-row__text" title={queuedTurn.text}>
                     {queuedTurn.text}
                   </span>
@@ -994,7 +1103,7 @@ function ComposerComponent(props: {
             <div className="composer__prompt">
               <div className="chips">
                 {attachments.map((attachment) =>
-                  attachment.previewUrl && attachment.mediaType ? (
+                  attachment.mediaType ? (
                     <span
                       className={`attachment-preview attachment-preview--${attachment.mediaType}${attachment.path ? '' : ' is-loading'}`}
                       key={attachment.id}
@@ -1003,18 +1112,24 @@ function ComposerComponent(props: {
                       <button
                         className="attachment-preview__open"
                         type="button"
-                        onClick={() =>
+                        disabled={!attachment.previewUrl}
+                        onClick={() => {
+                          if (!attachment.previewUrl || !attachment.mediaType) return
                           setViewingMedia({
-                            src: attachment.previewUrl!,
+                            src: attachment.previewUrl,
                             name: attachment.name,
-                            mediaType: attachment.mediaType!,
-                            ...(attachment.previewUrl?.startsWith('tastecode-attachment:') &&
+                            mediaType: attachment.mediaType,
+                            ...(attachment.previewUrl.startsWith('tastecode-attachment:') &&
                             attachment.path
                               ? { localPath: attachment.path }
                               : {}),
                           })
+                        }}
+                        aria-label={
+                          attachment.previewUrl
+                            ? `Open ${attachment.name}`
+                            : `Loading preview of ${attachment.name}`
                         }
-                        aria-label={`Open ${attachment.name}`}
                       >
                         <span className="attachment-preview__fallback" aria-hidden>
                           {attachment.mediaType === 'video' ? (

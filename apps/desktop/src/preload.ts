@@ -24,6 +24,8 @@ const api = {
   pickFolder: (): Promise<string | undefined> => ipcRenderer.invoke('harness:pickFolder'),
   pickSkillFolder: (): Promise<string | undefined> => ipcRenderer.invoke('harness:pickSkillFolder'),
   pickFiles: (): Promise<PickedAttachment[]> => ipcRenderer.invoke('harness:pickFiles'),
+  previewViewedImage: (reference: string): Promise<PickedAttachment | undefined> =>
+    ipcRenderer.invoke('harness:previewViewedImage', reference),
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('harness:revealPath', path),
   revealProjectFile: (path: string, projectPath: string): Promise<void> =>
     ipcRenderer.invoke('harness:revealProjectFile', path, projectPath),

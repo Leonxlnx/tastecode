@@ -71,9 +71,9 @@ export type PromptProgressRun = {
   canonicalPrompt: Element
   canonicalRail: Element
   startedPrompt: Element
-  startedRail: Element
+  startedReply: Element
   deltaPrompt: Element
-  deltaRail: Element
+  deltaReply: Element
   finalState: ThreadState
 }
 
@@ -128,7 +128,7 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
   })
   rendered.rerender(view(state))
   const startedPrompt = promptNode(rendered)
-  const startedRail = oneWorkingRail(rendered)
+  const startedReply = streamingReply(rendered)
 
   const textDeltas = LIVE_DELTAS.get(scenario.liveCharacters)
   if (!textDeltas) throw new Error(`Missing ${scenario.liveCharacters}-character live fixture`)
@@ -151,9 +151,9 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
     canonicalPrompt,
     canonicalRail,
     startedPrompt,
-    startedRail,
+    startedReply,
     deltaPrompt,
-    deltaRail: oneWorkingRail(rendered),
+    deltaReply: streamingReply(rendered),
     finalState: state,
   }
 }
@@ -169,6 +169,10 @@ function oneWorkingRail(rendered: RenderResult): Element {
   const rails = rendered.container.querySelectorAll('.activity--working')
   if (rails.length !== 1) throw new Error(`Expected one Working rail, received ${rails.length}`)
   return rails[0]!
+}
+
+function streamingReply(rendered: RenderResult): Element {
+  return required(rendered.container.querySelector('.reply.is-streaming'), 'streaming reply')
 }
 
 function required<T>(value: T | null | undefined, label: string): T {

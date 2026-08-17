@@ -21,26 +21,52 @@ export function Diff({
   diff,
   threadId,
   transport,
+  onUndo,
 }: {
   diff: string | undefined
   threadId?: string | undefined
   transport?: Transport | undefined
+  onUndo?: (() => Promise<void>) | undefined
 }) {
   const parsed = useMemo(() => (diff ? parseDiff(diff) : null), [diff])
   const [reviewing, setReviewing] = useState(false)
   const [showAllFiles, setShowAllFiles] = useState(false)
+  const [undoing, setUndoing] = useState(false)
+  const [undoError, setUndoError] = useState<string>()
+  const [undone, setUndone] = useState(false)
 
   useEffect(() => {
     setReviewing(false)
     setShowAllFiles(false)
+    setUndoing(false)
+    setUndoError(undefined)
+    setUndone(false)
   }, [diff])
 
-  if (!parsed || parsed.lines.length === 0) return null
+  if (!parsed || parsed.lines.length === 0 || undone) return null
   const visibleFiles = showAllFiles ? parsed.fileEntries : parsed.fileEntries.slice(0, 3)
   const hiddenFiles = parsed.fileEntries.length - visibleFiles.length
 
+  const undo = async () => {
+    if (!onUndo || undoing) return
+    setUndoing(true)
+    setUndoError(undefined)
+    try {
+      await onUndo()
+      setUndone(true)
+    } catch (cause) {
+      setUndoError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setUndoing(false)
+    }
+  }
+
   return (
-    <section className={`diff ${reviewing ? 'is-reviewing' : ''}`} aria-label="Edited files">
+    <section
+      className={`diff ${reviewing ? 'is-reviewing' : ''}`}
+      aria-label="Edited files"
+      aria-busy={undoing}
+    >
       <div className="diff__head">
         <span className="diff__icon" aria-hidden>
           <FilePenLine size={15} strokeWidth={1.8} />
@@ -51,15 +77,34 @@ export function Diff({
           </span>
           <ChangeStats added={parsed.added} removed={parsed.removed} className="diff__stat" />
         </span>
-        <button
-          type="button"
-          className="diff__review"
-          aria-expanded={reviewing}
-          onClick={() => setReviewing((current) => !current)}
-        >
-          {reviewing ? 'Close' : 'Review'}
-        </button>
+        <div className="diff__actions">
+          {onUndo ? (
+            <button
+              type="button"
+              className="diff__review"
+              disabled={undoing}
+              onClick={() => void undo()}
+            >
+              {undoing ? 'Undoing…' : 'Undo'}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="diff__review"
+            aria-expanded={reviewing}
+            disabled={undoing}
+            onClick={() => setReviewing((current) => !current)}
+          >
+            {reviewing ? 'Close' : 'Review'}
+          </button>
+        </div>
       </div>
+
+      {undoError ? (
+        <p className="diff__undo-error" role="alert">
+          {undoError}
+        </p>
+      ) : null}
 
       <ul className="diff__file-list">
         {visibleFiles.map((file, index) => (

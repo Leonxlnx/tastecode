@@ -41,6 +41,7 @@ describe('thread reply spacing', () => {
     expect(actions).toContain('position: static')
     expect(actions).toContain('padding-top: 2px')
     expect(actions).toContain('margin: 0')
+    expect(actions).toContain('margin-left: -6.5px')
     expect(actions).toContain('opacity: 1')
     expect(actions).toContain('pointer-events: auto')
     expect(css).not.toContain('.thread__row:has(> .reply:hover)')
@@ -61,13 +62,53 @@ describe('thread reply spacing', () => {
     expect(css).not.toContain('.thread__row:has(> .said:hover)')
   })
 
-  it('keeps expanded work details close to their summary', () => {
+  it('aligns every operational row with assistant prose', () => {
+    const activity = css.match(/\.thread__row > :is\(\.activity, \.aux\) \{(?<body>[\s\S]*?)\n\}/)
+      ?.groups?.['body']
     const summary = css.match(/\.activity__summary \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
+    const aux = css.match(/\.aux__row \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
+    const auxGlyph = css.match(/\.aux__glyph \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
+    const auxLabel = css.match(/\.aux__label \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
+
+    expect(activity).toContain('margin-block: 4px')
+    expect(summary).toContain('min-height: 30px')
+    expect(summary).toContain('margin-left: -3.5px')
+    expect(summary).toContain('padding: 0 2px 4px')
+    expect(aux).toContain('gap: 6px')
+    expect(aux).toContain('width: 100%')
+    expect(aux).toContain('min-width: 0')
+    expect(aux).toContain('min-height: 30px')
+    expect(aux).toContain('margin-left: -3.5px')
+    expect(aux).toContain('padding: 0 2px 4px')
+    expect(aux).toContain('font-size: var(--t-md)')
+    expect(auxGlyph).toContain('width: 18px')
+    expect(auxLabel).toContain('flex: 1 1 0')
+    expect(auxLabel).toContain('font-family: var(--font-ui)')
+    expect(auxLabel).toContain('font-size: var(--t-md)')
+  })
+
+  it('shines only the active tool label', () => {
+    const label = css.match(/\.activity__label \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
+    const liveLabel = css.match(/\.activity--live \.activity__label \{(?<body>[\s\S]*?)\n\}/)
+      ?.groups?.['body']
+
+    expect(label).not.toContain('animation')
+    expect(liveLabel).toContain('background-clip: text')
+    expect(liveLabel).toContain('animation: activity-label-shine 2.4s linear infinite')
+    expect(css).toContain('@keyframes activity-label-shine')
+    expect(css).toContain(
+      '  .activity--live .activity__label {\n    animation: none;\n    background: none;\n    color: var(--text-2);\n  }',
+    )
+  })
+
+  it('keeps expanded work details close to their summary', () => {
     const body = css.match(/\.activity__body \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
 
-    expect(summary).toContain('min-height: 30px')
-    expect(summary).toContain('padding: 0 2px 4px')
-    expect(body).toContain('gap: 10px')
+    expect(body).toContain('gap: 6px')
     expect(body).toContain('margin: 4px 0')
+  })
+
+  it('uses a small gap inside one live work sequence', () => {
+    expect(css).toContain('.thread__row.is-compact-to-next {\n  padding-bottom: 4px;\n}')
   })
 })

@@ -7,18 +7,21 @@ import { Composer } from './Composer.js'
 
 const bridge = vi.hoisted(() => ({
   pickFiles: vi.fn(),
+  previewViewedImage: vi.fn(),
   revealPath: vi.fn(),
   savePastedFile: vi.fn(),
 }))
 
 vi.mock('../bridge.js', () => ({
   pickFiles: bridge.pickFiles,
+  previewViewedImage: bridge.previewViewedImage,
   revealPath: bridge.revealPath,
   savePastedFile: bridge.savePastedFile,
 }))
 
 beforeEach(() => {
   bridge.pickFiles.mockResolvedValue([])
+  bridge.previewViewedImage.mockResolvedValue(undefined)
   bridge.savePastedFile.mockResolvedValue('/tmp/pasted-image.png')
   Object.defineProperty(URL, 'createObjectURL', {
     configurable: true,
@@ -319,6 +322,75 @@ describe('Composer send handoff', () => {
 })
 
 describe('Composer queue', () => {
+  it('shows the first queued media and restores every preview when editing', async () => {
+    const previews = new Map([
+      [
+        '/work/reference.png',
+        {
+          path: '/work/reference.png',
+          name: 'reference.png',
+          mediaType: 'image',
+          previewUrl: 'tastecode-attachment://preview/reference',
+          thumbnailUrl: 'tastecode-attachment://preview/reference?thumbnail=1',
+        },
+      ],
+      [
+        '/work/walkthrough.mp4',
+        {
+          path: '/work/walkthrough.mp4',
+          name: 'walkthrough.mp4',
+          mediaType: 'video',
+          previewUrl: 'tastecode-attachment://preview/walkthrough',
+          thumbnailUrl: 'tastecode-attachment://preview/walkthrough?thumbnail=1',
+        },
+      ],
+    ])
+    bridge.previewViewedImage.mockImplementation(async (reference: string) =>
+      previews.get(reference),
+    )
+    const onDeleteQueuedTurn = vi.fn()
+    renderComposer(vi.fn(), {
+      running: true,
+      queuedTurns: [
+        {
+          id: 'queued-media',
+          text: 'Use these references',
+          attachments: ['/work/notes.txt', '/work/reference.png', '/work/walkthrough.mp4'],
+          createdAt: 1,
+        },
+      ],
+      onDeleteQueuedTurn,
+    })
+
+    const queuedPreview = await screen.findByRole('button', {
+      name: 'Open queued preview of reference.png',
+    })
+    expect(queuedPreview.querySelector('img')?.getAttribute('src')).toBe(
+      'tastecode-attachment://preview/reference?thumbnail=1',
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Open queued preview of walkthrough.mp4' }),
+    ).toBeNull()
+
+    fireEvent.click(queuedPreview)
+    expect(screen.getByRole('dialog', { name: 'Preview reference.png' })).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Use these references' }))
+
+    const imagePreview = await screen.findByRole('button', { name: 'Open reference.png' })
+    const videoPreview = await screen.findByRole('button', { name: 'Open walkthrough.mp4' })
+    expect(imagePreview.querySelector('img')?.getAttribute('src')).toBe(
+      'tastecode-attachment://preview/reference?thumbnail=1',
+    )
+    expect(videoPreview.querySelector('img')?.getAttribute('src')).toBe(
+      'tastecode-attachment://preview/walkthrough?thumbnail=1',
+    )
+    expect(screen.queryByText('reference.png')).toBeNull()
+    expect(screen.queryByText('walkthrough.mp4')).toBeNull()
+    expect(screen.getByText('notes.txt')).toBeTruthy()
+    expect(onDeleteQueuedTurn).toHaveBeenCalledWith('queued-media')
+  })
+
   it('changes Stop to Queue when a running session has a draft and Enter queues it', () => {
     const onSend = vi.fn()
     const onInterrupt = vi.fn()

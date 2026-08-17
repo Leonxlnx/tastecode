@@ -27,6 +27,7 @@ import {
   Plus,
   Search,
   Settings,
+  SquarePen,
   UserRound,
   X,
 } from 'lucide-react'
@@ -337,15 +338,14 @@ function SidebarComponent(props: {
   // Memoised because the sidebar re-renders with every streamed frame: these
   // three passes over every project and session ran 60 times a second while
   // an answer arrived, for a list that had not changed.
-  const pinnedSessions = useMemo(
-    () =>
-      props.projects.flatMap((project) =>
-        project.sessions
-          .filter((session) => session.pinned)
-          .map((session) => ({ projectPath: project.path, session })),
-      ),
-    [props.projects],
-  )
+  const pinnedSessions = useMemo(() => {
+    const sessions = props.projects.flatMap((project) =>
+      project.sessions
+        .filter((session) => session.pinned)
+        .map((session) => ({ projectPath: project.path, session })),
+    )
+    return prioritizeSessions(sessions, ({ session }) => session)
+  }, [props.projects])
   const orderedProjects = useMemo(
     () =>
       [
@@ -353,7 +353,10 @@ function SidebarComponent(props: {
         ...props.projects.filter((project) => !project.pinned),
       ].map((project) => ({
         ...project,
-        sessions: project.sessions.filter((session) => !session.pinned),
+        sessions: prioritizeSessions(
+          project.sessions.filter((session) => !session.pinned),
+          (session) => session,
+        ),
       })),
     [props.projects],
   )
@@ -441,7 +444,7 @@ function SidebarComponent(props: {
                     }
                   }}
                 >
-                  <Plus size={15} aria-hidden />
+                  <SquarePen size={15} aria-hidden />
                   <span>New chat</span>
                 </button>
                 <button
@@ -1056,7 +1059,7 @@ function ProjectRow(props: {
               onClick={() => props.onNewSession(props.project.path)}
               title="New chat here"
             >
-              <Plus size={15} aria-hidden />
+              <SquarePen size={15} aria-hidden />
             </button>
           </>
         )}
@@ -1203,6 +1206,7 @@ function SessionRow(props: {
         aria-label={sessionLabel(props.session)}
         title={sessionLabel(props.session)}
       >
+        {props.session.unread ? <span className="sess__unread-dot" aria-hidden /> : null}
         <span className="sess__title">{props.session.title}</span>
         <SourceIdentity
           className="sess__source"
@@ -1353,24 +1357,42 @@ function SessionStatus(props: { status: Session['status'] }) {
 
 function sessionLabel(session: Session): string {
   const source = sessionSourcePresentation(session.provider, session.agent).label
+  const unread = session.unread ? ', unread' : ''
   const branch = session.worktreeBranch ? `, isolated on ${session.worktreeBranch}` : ''
   switch (session.status) {
     case 'starting':
     case 'working':
-      return `${session.title}, ${source}, working${branch}`
+      return `${session.title}, ${source}, working${unread}${branch}`
     case 'queued':
-      return `${session.title}, ${source}, queued${branch}`
+      return `${session.title}, ${source}, queued${unread}${branch}`
     case 'approval':
-      return `${session.title}, ${source}, waiting for approval${branch}`
+      return `${session.title}, ${source}, waiting for approval${unread}${branch}`
     case 'input':
-      return `${session.title}, ${source}, needs attention${branch}`
+      return `${session.title}, ${source}, needs attention${unread}${branch}`
     case 'failed':
-      return `${session.title}, ${source}, failed${branch}`
+      return `${session.title}, ${source}, failed${unread}${branch}`
     case 'ready':
-      return `${session.title}, ${source}, ready${branch}`
+      return `${session.title}, ${source}, ready${unread}${branch}`
     default:
-      return `${session.title}, ${source}${branch}`
+      return `${session.title}, ${source}${unread}${branch}`
   }
+}
+
+function prioritizeSessions<T>(sessions: T[], getSession: (value: T) => Session): T[] {
+  const active: T[] = []
+  const unread: T[] = []
+  const rest: T[] = []
+  for (const value of sessions) {
+    const session = getSession(value)
+    if (['starting', 'working', 'queued', 'approval', 'input'].includes(session.status)) {
+      active.push(value)
+    } else if (session.unread) {
+      unread.push(value)
+    } else {
+      rest.push(value)
+    }
+  }
+  return [...active, ...unread, ...rest]
 }
 
 /** Rename in place. Enter commits, Escape reverts, blur commits. */

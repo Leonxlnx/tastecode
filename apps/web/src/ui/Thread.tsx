@@ -29,15 +29,27 @@ import {
   SquareTerminal,
   Wrench,
 } from 'lucide-react'
-import { writeClipboardText } from '../bridge.js'
+import {
+  previewViewedImage,
+  revealPath,
+  writeClipboardText,
+  type PickedAttachment,
+} from '../bridge.js'
 import { isEditableTarget } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
 import { Approval, AutomaticApprovalReview } from './Approval.js'
 import { Diff } from './Diff.js'
 import { Markdown } from './Markdown.js'
+import { MediaViewer } from './MediaViewer.js'
 import { Plan } from './Plan.js'
 import { ThreadSearch } from './ThreadSearch.js'
-import { createThreadProjector, neighbourTurn, type TurnTiming } from './turns.js'
+import {
+  createThreadProjector,
+  isBlankReasoning,
+  isStackedActivity,
+  neighbourTurn,
+  type TurnTiming,
+} from './turns.js'
 import {
   activeTurnAnchor,
   isAtBottom,
@@ -60,9 +72,9 @@ const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()
  * rather than estimated because a single item can be three words or a 400-line
  * diff, and a wrong estimate shows up as scroll drift.
  *
- * Messages read as prose; commands, reasoning and file edits collapse to one
- * line you can open. The default view should read as a summary of what
- * happened, not a transcript of every byte.
+ * Messages and reasoning summaries read as prose. Commands, tool calls and
+ * file edits in one work batch share one line you can open. The default view
+ * should read as a summary of what happened, not a transcript of every byte.
  */
 export function Thread(props: {
   items: Item[]
@@ -77,6 +89,7 @@ export function Thread(props: {
   turnTiming?: TurnTiming | undefined
   plan: PlanStep[]
   diff: string | undefined
+  diffTurnId?: string | undefined
   threadId?: string | undefined
   transport?: Transport | undefined
   searchJump?: { turnId: string; request: number } | undefined
@@ -88,6 +101,8 @@ export function Thread(props: {
   keyboardActive?: boolean | undefined
   onEditMessage?: ((text: string) => void) | undefined
   onRevertCheckpoint?: ((checkpoint: Checkpoint) => void) | undefined
+  onUndoChanges?:
+    ((threadId: string, turnId: string, expectedDiff: string) => Promise<void>) | undefined
   onDecide: (id: string, decision: ApprovalDecision) => void
   onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
 }) {
@@ -218,12 +233,15 @@ export function Thread(props: {
       return
     }
     writtenScrollTop.current = undefined
-    // Any manual scroll hands control back to the user — from anchor mode
-    // too, not only from follow-end.
-    if (isAtBottom(el)) {
-      if (modeRef.current !== 'follow-end') setMode('follow-end')
-    } else if (modeRef.current !== 'free') {
-      setMode('free')
+    // Any manual move away from the exact end hands control back at once.
+    // isAtBottom intentionally has 80px of slack for starting a new turn,
+    // but that slack must not trap small upward gestures during streaming.
+    const nextMode = el.scrollHeight - el.scrollTop - el.clientHeight <= 1 ? 'follow-end' : 'free'
+    if (modeRef.current !== nextMode) {
+      // Update the ref before the next streamed chunk can run the layout
+      // effect and pull the viewport back to the end.
+      modeRef.current = nextMode
+      setMode(nextMode)
     }
   }, [])
 
@@ -302,19 +320,19 @@ export function Thread(props: {
 
   const rows = virtualizer.getVirtualItems()
 
-  // The working rail mounts in exactly one place — inside the runway, after
-  // the rows — for the whole turn. Rendering it inside the row at
-  // firstResponseIndex remounted it at the first token (a different tree
-  // position is an unmount) and again whenever that row left the overscan
-  // window, restarting the orb and its entrance animation mid-turn. Instead
-  // the rail is translated to sit above the first response row, whose
-  // .is-rail-anchor padding reserves the space it overlays.
+  // The generic rail only covers the gap before the first response, plus
+  // design turns whose phase owns the status line. Normal reasoning, tool
+  // activity and answer text carry their own visible state in chronological
+  // rows, so the rail must disappear instead of duplicating them.
   //
   // measurementsCache, not getOffsetForIndex: the latter clamps to the
   // maximum scroll offset, which is below the anchor row's true start
   // whenever the thread is shorter than the viewport.
-  const railIndex =
-    props.running && props.activeTurn ? activePresentation?.firstResponseIndex : undefined
+  const showWorkingRail =
+    props.running &&
+    props.activeTurn !== undefined &&
+    (activePresentation?.design === true || activePresentation?.firstResponseIndex === undefined)
+  const railIndex = showWorkingRail ? activePresentation?.firstResponseIndex : undefined
   const railOffset =
     railIndex === undefined
       ? virtualizer.getTotalSize()
@@ -358,30 +376,28 @@ export function Thread(props: {
               const presentation = presentations.get(item.turnId)
               const live = props.running && props.activeTurn?.id === item.turnId
               const activityGroup =
-                !live && presentation?.complete === true
+                presentation && presentation.design !== true
                   ? presentation.activityGroups.find(
                       ({ firstIndex, lastIndex }) =>
                         row.index >= firstIndex && row.index <= lastIndex,
                     )
                   : undefined
-              const compactedActivity = activityGroup !== undefined
+              const compactedActivity = activityGroup !== undefined && isStackedActivity(item)
               const activityLead = compactedActivity && activityGroup.firstIndex === row.index
+              const itemAfterActivity = activityGroup
+                ? itemAt(activityGroup.lastIndex + 1)
+                : undefined
+              const liveActivityGroup =
+                live &&
+                activityGroup !== undefined &&
+                (itemAfterActivity === undefined || itemAfterActivity.turnId !== item.turnId)
               const responseLead =
                 !live &&
                 presentation?.complete === true &&
                 presentation.finalAnswerIndex === row.index
-              // Image inspection is an authored result, not another running
-              // status. Keep its completed/failed outcome visible while the
-              // turn continues, but render it as settled so it never gains
-              // the duplicate `.aux--live` treatment.
-              const visibleLiveImageResult =
-                live &&
-                (item.status === 'completed' || item.status === 'failed') &&
-                isImageView(item)
-              const liveActivity = live && isActivity(item)
               const suppressed =
+                isBlankReasoning(item) ||
                 (compactedActivity && !activityLead) ||
-                (liveActivity && !visibleLiveImageResult) ||
                 isRepeatedDesignRow(item, props.items, row.index) ||
                 // A design turn tells its story through the phase labels and
                 // TasteCode notes; the provider's raw commands, tool calls, and
@@ -390,12 +406,27 @@ export function Thread(props: {
                   !compactedActivity &&
                   ((isActivity(item) && !designPhaseLabel(toolText(item))) ||
                     item.type === 'error'))
+              const nextVisibleItem = itemAt(
+                activityLead && activityGroup ? activityGroup.lastIndex + 1 : row.index + 1,
+              )
+              const compactToNext =
+                !suppressed &&
+                nextVisibleItem?.turnId === item.turnId &&
+                !(item.type === 'message' && item.role === 'user') &&
+                !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
               const settling = settledTurnId === item.turnId
-              const railAnchor = live && presentation?.firstResponseIndex === row.index
+              const railAnchor =
+                showWorkingRail && live && presentation?.firstResponseIndex === row.index
+              const activityItems = activityGroup
+                ? Array.from(
+                    { length: activityGroup.lastIndex - activityGroup.firstIndex + 1 },
+                    (_, offset) => itemAt(activityGroup.firstIndex + offset),
+                  ).filter((entry): entry is Item => entry !== undefined)
+                : undefined
               return (
                 <div
                   key={row.key}
-                  className={`thread__row${suppressed ? ' is-suppressed' : ''}${enteringItemIds.has(item.id) ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
+                  className={`thread__row${suppressed ? ' is-suppressed' : ''}${compactToNext ? ' is-compact-to-next' : ''}${enteringItemIds.has(item.id) ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
                   data-index={row.index}
                   ref={virtualizer.measureElement}
                   style={{ transform: `translateY(${row.start}px)` }}
@@ -406,18 +437,12 @@ export function Thread(props: {
                     liveUpdateVersion={liveItemUpdate?.version}
                     projectPath={props.projectPath}
                     hidden={suppressed}
-                    activity={activityLead ? activityGroup.items : undefined}
-                    elapsedMs={activityGroup?.elapsedMs ?? presentation?.elapsedMs}
-                    live={live && !visibleLiveImageResult}
+                    activity={activityLead ? activityItems : undefined}
+                    activityLive={liveActivityGroup}
+                    live={live}
                     responseText={responseLead ? presentation.responseText : undefined}
                     finalResponse={responseLead}
                     settling={settling}
-                    showCompletionRail={
-                      !live &&
-                      presentation?.complete === true &&
-                      presentation.activityGroups.length === 0 &&
-                      presentation.finalAnswerIndex === row.index
-                    }
                     onEditMessage={props.onEditMessage}
                     checkpoint={checkpointFor(
                       presentation?.prompt ?? item,
@@ -428,7 +453,7 @@ export function Thread(props: {
                 </div>
               )
             })}
-            {props.running && props.activeTurn ? (
+            {showWorkingRail && props.activeTurn ? (
               // Deliberately not keyed by turn id: the optimistic turn's id is
               // replaced by the server's a few seconds in, and a key would
               // remount the rail at exactly the moment this render position
@@ -444,7 +469,7 @@ export function Thread(props: {
             ) : null}
           </div>
 
-          {props.running && props.activeTurn && railIndex === undefined ? (
+          {showWorkingRail && props.activeTurn && railIndex === undefined ? (
             <div className="thread__rail-spacer" aria-hidden />
           ) : null}
 
@@ -472,7 +497,16 @@ export function Thread(props: {
 
           {props.running ? <Plan steps={props.plan} compact /> : null}
           {!props.running ? (
-            <Diff diff={props.diff} threadId={props.threadId} transport={props.transport} />
+            <Diff
+              diff={props.diff}
+              threadId={props.threadId}
+              transport={props.transport}
+              onUndo={
+                props.threadId && props.diffTurnId && props.diff && props.onUndoChanges
+                  ? () => props.onUndoChanges!(props.threadId!, props.diffTurnId!, props.diff!)
+                  : undefined
+              }
+            />
           ) : null}
         </div>
       </div>
@@ -633,12 +667,11 @@ const Row = memo(function Row({
   projectPath,
   hidden,
   activity,
-  elapsedMs,
+  activityLive,
   live,
   responseText,
   finalResponse,
   settling,
-  showCompletionRail,
   onEditMessage,
   checkpoint,
   onRevertCheckpoint,
@@ -649,12 +682,11 @@ const Row = memo(function Row({
   projectPath: string | undefined
   hidden: boolean
   activity: Item[] | undefined
-  elapsedMs: number | undefined
+  activityLive: boolean
   live: boolean
   responseText: string | undefined
   finalResponse: boolean
   settling: boolean
-  showCompletionRail: boolean
   onEditMessage: ((text: string) => void) | undefined
   checkpoint: Checkpoint | undefined
   onRevertCheckpoint: ((checkpoint: Checkpoint) => void) | undefined
@@ -669,22 +701,28 @@ const Row = memo(function Row({
   }
 
   if (activity) {
-    return (
-      <CompletionRail
-        activity={activity}
-        elapsedMs={elapsedMs ?? 0}
-        projectPath={projectPath}
-        settling={settling}
-      />
-    )
+    return <ActivityStack activity={activity} live={activityLive} settling={settling} />
   }
 
   // The user's own words get a surface so the eye can find where each exchange
   // begins; the agent's answer is plain prose, which is what you actually read.
   if (item.type === 'message' && item.role === 'user') {
+    const imageAttachments = item.attachments?.filter(isImageAttachment) ?? []
     return (
       <div className="said">
-        <p className="said__text">{item.text}</p>
+        {imageAttachments.length > 0 ? (
+          <div className="said__attachments" aria-label="Attached images">
+            {imageAttachments.map((attachment) => (
+              <ViewedImagePreview
+                key={attachment}
+                reference={attachment}
+                active
+                variant="message"
+              />
+            ))}
+          </div>
+        ) : null}
+        {item.text ? <p className="said__text">{item.text}</p> : null}
         {item.text ? (
           <div className="response-actions said__actions" aria-label="Prompt actions">
             <CopyAction text={item.text} label="Copy prompt" />
@@ -718,14 +756,6 @@ const Row = memo(function Row({
     const text = responseText ?? item.text ?? ''
     return (
       <div className={`reply${live ? ' is-streaming' : ''}`}>
-        {showCompletionRail ? (
-          <CompletionRail
-            activity={[]}
-            elapsedMs={elapsedMs ?? 0}
-            projectPath={projectPath}
-            settling={settling}
-          />
-        ) : null}
         <Markdown
           text={text}
           projectPath={projectPath}
@@ -745,6 +775,22 @@ const Row = memo(function Row({
     )
   }
 
+  if (item.type === 'reasoning') {
+    const text = item.text?.trim()
+    if (!text) return null
+    return (
+      <div className={`reasoning-summary${live ? ' is-live' : ''}`}>
+        <Markdown
+          text={text}
+          projectPath={projectPath}
+          streaming={live && item.status === 'started'}
+          liveUpdate={liveTextUpdate}
+          updateVersion={liveUpdateVersion}
+        />
+      </div>
+    )
+  }
+
   // A thread-level failure is a statement, not an operational row: the alert
   // and the reason, without the disclosure affordance tool calls get.
   if (item.type === 'error') {
@@ -760,23 +806,28 @@ const Row = memo(function Row({
 })
 
 /**
- * One collapsed operational row — a command, reasoning, file edit or tool
- * call. A controlled disclosure rather than <details>: keeping the output
- * mounted lets the height transition play both ways, so closing is as smooth
- * as opening, exactly like the completion rail below.
+ * A standalone operational row for activity that does not belong to a normal
+ * tool stack, such as a design phase marker or an unknown provider item.
  */
 function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
-  const [expanded, setExpanded] = useState(false)
+  const disclosure = useDisclosure()
   const detail =
-    item.type === 'command' ? activityDetail(item) : (imageViewDetail(item) ?? item.text)
+    item.type === 'command'
+      ? activityDetail(item)
+      : isContextCompaction(item)
+        ? undefined
+        : (imageViewDetail(item) ?? item.text)
 
   return (
-    <div className={`aux aux--${item.type} ${live ? 'aux--live' : ''}`} data-expanded={expanded}>
+    <div
+      className={`aux aux--${item.type} ${live ? 'aux--live' : ''}`}
+      data-expanded={disclosure.expanded}
+    >
       <button
         type="button"
         className="aux__row"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((current) => !current)}
+        aria-expanded={disclosure.expanded}
+        onClick={disclosure.toggle}
       >
         <span className="aux__glyph" aria-hidden>
           {glyph(item)}
@@ -795,9 +846,25 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
       </button>
       {/* Design markers have no output worth expanding — their text is the slug. */}
       {detail && !(item.type === 'tool_call' && designPhaseLabel(toolText(item))) ? (
-        <div className="aux__reveal" data-open={expanded} aria-hidden={!expanded} inert={!expanded}>
+        <div
+          className="aux__reveal"
+          data-open={disclosure.dataOpen}
+          aria-hidden={!disclosure.expanded}
+          inert={!disclosure.expanded}
+          onAnimationEnd={(event) => {
+            if (event.target === event.currentTarget) disclosure.finishClosing()
+          }}
+        >
           <div className="aux__reveal-clip">
-            <pre className="aux__out">{detail}</pre>
+            {isImageView(item) && item.status === 'completed' ? (
+              <ViewedImagePreview
+                reference={detail}
+                active={disclosure.expanded}
+                fallbackClassName="aux__out"
+              />
+            ) : (
+              <pre className="aux__out">{detail}</pre>
+            )}
           </div>
         </div>
       ) : null}
@@ -813,74 +880,99 @@ function checkpointFor(item: Item, checkpoints: Checkpoint[]): Checkpoint | unde
   )
 }
 
-function CompletionRail({
+type DisclosurePhase = 'closed' | 'open' | 'closing'
+
+function useDisclosure() {
+  const [phase, setPhase] = useState<DisclosurePhase>('closed')
+  const expanded = phase === 'open'
+
+  const toggle = useCallback(() => {
+    const reduceMotion =
+      globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    setPhase((current) => (current === 'open' ? (reduceMotion ? 'closed' : 'closing') : 'open'))
+  }, [])
+
+  const finishClosing = useCallback(() => {
+    setPhase((current) => (current === 'closing' ? 'closed' : current))
+  }, [])
+
+  return {
+    expanded,
+    dataOpen: phase === 'open' ? 'true' : phase === 'closing' ? 'closing' : 'false',
+    toggle,
+    finishClosing,
+  } as const
+}
+
+function ActivityStack({
   activity,
-  elapsedMs,
-  projectPath,
+  live,
   settling,
 }: {
   activity: Item[]
-  elapsedMs: number
-  projectPath: string | undefined
+  live: boolean
   settling: boolean
 }) {
-  const visibleActivity = activity.filter(isVisibleWorkedItem)
-  const commandCount = visibleActivity.filter((item) => item.type === 'command').length
-  const label = `Worked for ${workedFor(elapsedMs)}${
-    commandCount === 0
-      ? ''
-      : commandCount === 1
-        ? ' · ran a command'
-        : ` · ran ${commandCount} commands`
-  }`
-  const [expanded, setExpanded] = useState(false)
+  const visibleActivity = activity.filter(isStackedActivity)
+  const current = visibleActivity.at(-1)
+  const label = live && current ? liveActivityLabel(current) : activityStackLabel(visibleActivity)
+  const summaryItem = live ? current : visibleActivity[0]
+  const disclosure = useDisclosure()
 
-  if (visibleActivity.length === 0) {
-    return (
-      <div className={`activity activity--empty${settling ? ' is-settling' : ''}`}>
-        <div className="activity__summary">{label}</div>
-      </div>
-    )
-  }
+  if (!summaryItem) return null
 
   return (
-    <div className={`activity${settling ? ' is-settling' : ''}`} data-expanded={expanded}>
+    <div
+      className={`activity${live ? ' activity--live' : ''}${settling ? ' is-settling' : ''}`}
+      data-expanded={disclosure.expanded}
+    >
       <button
         type="button"
         className="activity__summary"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((current) => !current)}
+        aria-expanded={disclosure.expanded}
+        onClick={disclosure.toggle}
       >
-        <span>{label}</span>
-        <ChevronRight size={15} strokeWidth={1.8} aria-hidden />
+        <span className="activity__glyph" aria-hidden>
+          {glyph(summaryItem)}
+        </span>
+        <span className="activity__label" aria-live="polite" aria-atomic="true">
+          {label}
+        </span>
+        <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
       </button>
       <div
         className="activity__reveal"
-        data-open={expanded}
-        aria-hidden={!expanded}
-        inert={!expanded}
+        data-open={disclosure.dataOpen}
+        aria-hidden={!disclosure.expanded}
+        inert={!disclosure.expanded}
+        onAnimationEnd={(event) => {
+          if (event.target === event.currentTarget) disclosure.finishClosing()
+        }}
       >
         <div className="activity__reveal-clip">
           <div className="activity__body">
             {visibleActivity.map((item) => {
-              if (item.type === 'message') {
-                return (
-                  <div className="activity__message" key={item.id}>
-                    <Markdown text={item.text ?? ''} projectPath={projectPath} />
-                  </div>
-                )
-              }
               const detail = activityDetail(item)
               return (
                 <div className="activity__item" key={item.id}>
                   <div className="activity__file-change">
                     {glyph(item)}
-                    <span>{summarise(item)}</span>
+                    <span className="activity__item-label">{activityItemLabel(item)}</span>
                     {item.exitCode !== undefined && item.exitCode !== 0 ? (
                       <span className="aux__code">exit {item.exitCode}</span>
                     ) : null}
                   </div>
-                  {detail ? <pre className="activity__detail">{detail}</pre> : null}
+                  {detail ? (
+                    isImageView(item) && item.status === 'completed' ? (
+                      <ViewedImagePreview
+                        reference={detail}
+                        active={disclosure.expanded}
+                        fallbackClassName="activity__detail"
+                      />
+                    ) : (
+                      <pre className="activity__detail">{detail}</pre>
+                    )
+                  ) : null}
                 </div>
               )
             })}
@@ -891,25 +983,226 @@ function CompletionRail({
   )
 }
 
-function isVisibleWorkedItem(item: Item): boolean {
-  return isActivity(item)
-}
-
 function activityDetail(item: Item): string | undefined {
   if (item.type === 'tool_call' && designPhaseLabel(toolText(item))) return undefined
+  if (isContextCompaction(item)) return undefined
   const image = imageViewDetail(item)
   if (image !== undefined) return image
-  const summary = summarise(item)
   const details =
-    item.type === 'command'
-      ? [item.command, item.text]
-      : item.type === 'file_change'
-        ? [item.path, item.text]
-        : [item.text]
+    item.type === 'command' ? [item.text] : item.type === 'file_change' ? [item.text] : [item.text]
   const unique = details.filter(
-    (detail, index) => detail && detail !== summary && details.indexOf(detail) === index,
+    (detail, index) =>
+      detail &&
+      detail !== activityItemLabel(item) &&
+      detail !== item.command &&
+      detail !== item.path &&
+      details.indexOf(detail) === index,
   )
   return unique.length > 0 ? unique.join('\n') : undefined
+}
+
+function ViewedImagePreview({
+  reference,
+  active,
+  fallbackClassName,
+  variant = 'detail',
+}: {
+  reference: string
+  active: boolean
+  fallbackClassName?: string
+  variant?: 'detail' | 'message'
+}) {
+  const [preview, setPreview] = useState<PickedAttachment>()
+  const [viewerOpen, setViewerOpen] = useState(false)
+  const [thumbnailFailed, setThumbnailFailed] = useState(false)
+  const [imageFailed, setImageFailed] = useState(false)
+
+  useEffect(() => {
+    if (!active) return
+    let cancelled = false
+    void previewViewedImage(reference).then((result) => {
+      if (!cancelled) {
+        setPreview(result)
+        setThumbnailFailed(false)
+        setImageFailed(false)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [active, reference])
+
+  const inlineSource =
+    preview?.thumbnailUrl && !thumbnailFailed ? preview.thumbnailUrl : preview?.previewUrl
+  if (!preview || !inlineSource || !preview.previewUrl || imageFailed) {
+    if (variant === 'detail' && fallbackClassName) {
+      return <pre className={fallbackClassName}>{reference}</pre>
+    }
+    return (
+      <span
+        className="viewed-image-preview viewed-image-preview--message is-loading"
+        aria-label={`Loading preview of ${attachmentName(reference)}`}
+      >
+        <span className="viewed-image-preview__placeholder" aria-hidden>
+          <Images />
+        </span>
+      </span>
+    )
+  }
+
+  return (
+    <div
+      className={`viewed-image-preview${variant === 'message' ? ' viewed-image-preview--message' : ''}`}
+    >
+      <button
+        type="button"
+        className="viewed-image-preview__open"
+        aria-label={`Open preview of ${preview.name}`}
+        onClick={() => setViewerOpen(true)}
+      >
+        <img
+          src={inlineSource}
+          alt={`Preview of ${preview.name}`}
+          draggable={false}
+          onError={() =>
+            preview.thumbnailUrl && !thumbnailFailed
+              ? setThumbnailFailed(true)
+              : setImageFailed(true)
+          }
+        />
+      </button>
+      {variant === 'detail' ? (
+        <span className="viewed-image-preview__name" title={reference}>
+          {reference}
+        </span>
+      ) : null}
+      {viewerOpen ? (
+        <MediaViewer
+          src={preview.previewUrl}
+          name={preview.name}
+          mediaType="image"
+          onReveal={variant === 'message' ? () => void revealPath(reference) : undefined}
+          onClose={() => setViewerOpen(false)}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+const IMAGE_ATTACHMENT_RE = /\.(?:apng|avif|bmp|gif|ico|jpe?g|png|webp)$/i
+
+function isImageAttachment(reference: string): boolean {
+  return IMAGE_ATTACHMENT_RE.test(reference)
+}
+
+function attachmentName(reference: string): string {
+  return reference.split(/[\\/]/).filter(Boolean).at(-1) ?? reference
+}
+
+function activityStackLabel(items: Item[]): string {
+  const onlyItem = items.length === 1 ? items[0] : undefined
+  if (
+    onlyItem &&
+    (onlyItem.status !== 'completed' ||
+      (onlyItem.exitCode !== undefined && onlyItem.exitCode !== 0))
+  ) {
+    return activityItemLabel(onlyItem)
+  }
+
+  const categories = items.reduce<string[]>((labels, item) => {
+    const label = activityCategoryLabel(item)
+    if (!labels.includes(label)) labels.push(label)
+    return labels
+  }, [])
+
+  return categories
+    .map((label, index) => (index === 0 ? label : `${label[0]?.toLowerCase()}${label.slice(1)}`))
+    .join(', ')
+}
+
+function activityCategoryLabel(item: Item): string {
+  switch (item.type) {
+    case 'command':
+      return 'Ran commands'
+    case 'file_change':
+      return 'Edited files'
+    case 'plan':
+      return 'Updated plan'
+    case 'tool_call': {
+      const text = toolText(item)
+      if (isContextCompaction(item)) return 'Compacted context window'
+      if (isImageView(item) || text.includes('image')) return 'Viewed images'
+      if (text.includes('search')) return 'Searched'
+      if (text.match(/read|open|file/)) return 'Read files'
+      return 'Used tools'
+    }
+    default:
+      return 'Used tools'
+  }
+}
+
+function liveActivityLabel(item: Item): string {
+  const ongoing = item.status === 'started'
+
+  switch (item.type) {
+    case 'command': {
+      const command = inlineActivityText(item.command)
+      if (item.status === 'failed' || (item.exitCode !== undefined && item.exitCode !== 0)) {
+        return command ? `Command failed: ${command}` : 'Command failed'
+      }
+      if (!command) return ongoing ? 'Running a command' : 'Ran a command'
+      return `${ongoing ? 'Running' : 'Ran'} ${command}`
+    }
+    case 'file_change': {
+      const path = inlineActivityText(item.path)
+      if (!path) return ongoing ? 'Editing files' : 'Edited files'
+      return `${ongoing ? 'Editing' : 'Edited'} ${path}`
+    }
+    case 'tool_call': {
+      const text = toolText(item)
+      if (isImageView(item)) {
+        if (item.status === 'failed') return 'Could not view image'
+        return ongoing ? 'Viewing image' : 'Viewed image'
+      }
+      if (text.includes('image')) return ongoing ? 'Viewing images' : 'Viewed images'
+      if (text.includes('search')) return ongoing ? 'Searching' : 'Searched'
+      if (text.match(/read|open|file/)) return ongoing ? 'Reading files' : 'Read files'
+      const tool = inlineActivityText(item.text)
+      if (!tool) return ongoing ? 'Using a tool' : 'Used a tool'
+      return `${ongoing ? 'Using' : 'Used'} ${tool}`
+    }
+    case 'plan':
+      return ongoing ? 'Updating the plan' : 'Updated the plan'
+    default:
+      return summariseLive(item)
+  }
+}
+
+function activityItemLabel(item: Item): string {
+  if (item.type === 'command') {
+    const command = inlineActivityText(item.command)
+    if (item.status === 'started')
+      return command ? `Command interrupted: ${command}` : 'Command interrupted'
+    if (item.status === 'failed' || (item.exitCode !== undefined && item.exitCode !== 0)) {
+      return command ? `Command failed: ${command}` : 'Command failed'
+    }
+    return command ? `Ran ${command}` : 'Ran a command'
+  }
+
+  if (item.type === 'file_change') {
+    const path = inlineActivityText(item.path)
+    if (item.status === 'started') return path ? `Edit interrupted: ${path}` : 'Edit interrupted'
+    if (item.status === 'failed') return path ? `Could not edit ${path}` : 'Could not edit files'
+    return path ? `Edited ${path}` : 'Edited files'
+  }
+
+  if (item.type === 'plan') return 'Updated plan'
+
+  return summarise(item)
+}
+
+function inlineActivityText(text: string | undefined): string {
+  return text?.replace(/\s+/g, ' ').trim() ?? ''
 }
 
 function ResponseActions({
@@ -1007,10 +1300,7 @@ const WorkingRail = memo(function WorkingRail({
             aria-hidden
           />
         </span>
-        <WorkingLabel label={label} />
-        <span className="activity__working-time">
-          <WorkingTimer startedAt={startedAt} />
-        </span>
+        <WorkingLabel label={label} startedAt={startedAt} />
       </div>
     </div>
   )
@@ -1018,7 +1308,7 @@ const WorkingRail = memo(function WorkingRail({
 
 const WORKING_LABEL_MOTION_MS = 480
 
-function WorkingLabel({ label }: { label: string }) {
+function WorkingLabel({ label, startedAt }: { label: string; startedAt: number }) {
   const lastLabel = useRef(label)
   const timer = useRef<number | undefined>(undefined)
   const [previousLabel, setPreviousLabel] = useState<string>()
@@ -1045,12 +1335,21 @@ function WorkingLabel({ label }: { label: string }) {
   return (
     <span className="activity__working-label-swap" aria-live="polite" aria-atomic="true">
       {previousLabel ? (
-        <span className="activity__working-label-previous" aria-hidden>
-          {previousLabel}
+        <span className="activity__working-status-previous" aria-hidden>
+          <span className="activity__working-label-previous">{previousLabel}</span>
+          <span className="activity__working-time">
+            <WorkingTimer startedAt={startedAt} />
+          </span>
         </span>
       ) : null}
-      <span className={`activity__working-label${previousLabel ? ' is-entering' : ''}`} key={label}>
-        {label}
+      <span
+        className={`activity__working-status${previousLabel ? ' is-entering' : ''}`}
+        key={label}
+      >
+        <span className="activity__working-label">{label}</span>
+        <span className="activity__working-time">
+          <WorkingTimer startedAt={startedAt} />
+        </span>
       </span>
     </span>
   )
@@ -1075,6 +1374,7 @@ export function workLabel(
     if (!item) continue
     if (item.turnId !== turnId) break
     if (item.status !== 'started' || !isActivity(item)) continue
+    if (isBlankReasoning(item)) continue
     // A design phase owns its whole turn: its label must not flicker to
     // "Running a command" for every tool the provider uses inside it.
     if (item.type === 'tool_call') {
@@ -1129,6 +1429,8 @@ export function workedFor(ms: number): string {
 }
 
 function glyph(item: Item) {
+  if (isContextCompaction(item)) return <ArrowDownToLine size={13} />
+
   switch (item.type) {
     case 'command':
       return <SquareTerminal size={13} />
@@ -1139,8 +1441,8 @@ function glyph(item: Item) {
     case 'tool_call':
       if (toolText(item).includes('image')) return <Images size={14} />
       if (designPhaseLabel(toolText(item))) return <Palette size={13} />
-      if (toolText(item).match(/read|open|file/)) return <BookOpen size={14} />
       if (toolText(item).includes('search')) return <Search size={14} />
+      if (toolText(item).match(/read|open|file/)) return <BookOpen size={14} />
       return <Wrench size={13} />
     case 'plan':
       return <ListChecks size={13} />
@@ -1151,29 +1453,37 @@ function glyph(item: Item) {
 
 function summariseLive(item: Item): string {
   const ongoing = item.status === 'started'
+  const supportedActivity = supportedActivitySummary(item, ongoing)
+  if (supportedActivity) return supportedActivity
 
   switch (item.type) {
     case 'command':
-      return ongoing ? 'Running a command' : 'Ran a command'
+      return liveActivityLabel(item)
     case 'reasoning':
-      return 'Thinking'
+      return item.text?.trim() || 'Thinking'
     case 'file_change':
       return ongoing ? 'Editing files' : 'Edited files'
     case 'tool_call': {
       const text = toolText(item)
       const designPhase = designPhaseLabel(text)
       if (designPhase) return designPhase
+      if (isContextCompaction(item)) {
+        if (item.status === 'failed') return 'Could not compact context window'
+        return ongoing ? 'Compacting context window…' : 'Compacted context window'
+      }
       if (isImageView(item)) {
         if (item.status === 'failed') return 'Could not view image'
         return ongoing ? 'Viewing image' : 'Viewed image'
       }
       if (text.includes('image')) return ongoing ? 'Viewing an image' : 'Viewed an image'
-      if (text.match(/read|open|file/)) return ongoing ? 'Reading files' : 'Read files'
       if (text.includes('search')) return ongoing ? 'Searching' : 'Searched'
+      if (text.match(/read|open|file/)) return ongoing ? 'Reading files' : 'Read files'
       return ongoing ? 'Using a tool' : 'Used a tool'
     }
     case 'plan':
       return ongoing ? 'Updating the plan' : 'Updated the plan'
+    case 'unknown':
+      return unknownActivityLabel(item)
     default:
       return summarise(item)
   }
@@ -1196,6 +1506,9 @@ function toolText(item: Item): string {
 }
 
 function summarise(item: Item): string {
+  const supportedActivity = supportedActivitySummary(item, false)
+  if (supportedActivity) return supportedActivity
+
   switch (item.type) {
     case 'command':
       if (item.status === 'started') return 'Command interrupted'
@@ -1210,24 +1523,118 @@ function summarise(item: Item): string {
       // same human label the working rail used while the phase ran.
       return (
         designPhaseLabel(toolText(item)) ??
-        (isImageView(item)
+        (isContextCompaction(item)
           ? item.status === 'failed'
-            ? 'Could not view image'
+            ? 'Could not compact context window'
             : item.status === 'started'
-              ? 'Image inspection interrupted'
-              : 'Viewed image'
-          : item.text) ??
+              ? 'Context compaction interrupted'
+              : 'Compacted context window'
+          : isImageView(item)
+            ? item.status === 'failed'
+              ? 'Could not view image'
+              : item.status === 'started'
+                ? 'Image inspection interrupted'
+                : 'Viewed image'
+            : item.text) ??
         'Tool call'
       )
     case 'plan':
       return 'Plan'
+    case 'unknown':
+      return unknownActivityLabel(item)
     default:
-      return item.type
+      return 'Activity'
   }
+}
+
+function supportedActivitySummary(item: Item, ongoing: boolean): string | undefined {
+  if (item.type !== 'tool_call' && item.type !== 'unknown') return undefined
+  const name = (item.text ?? '')
+    .split('\n', 1)[0]
+    ?.replaceAll(/[^a-z0-9]/gi, '')
+    .toLowerCase()
+  const failed = item.status === 'failed'
+  const interrupted = item.status === 'started' && !ongoing
+
+  switch (name) {
+    case 'contextcompaction':
+      return failed
+        ? 'Could not compact context window'
+        : interrupted
+          ? 'Context compaction interrupted'
+          : ongoing
+            ? 'Compacting context window…'
+            : 'Compacted context window'
+    case 'imagegeneration':
+      return failed
+        ? 'Could not generate an image'
+        : interrupted
+          ? 'Image generation interrupted'
+          : ongoing
+            ? 'Generating an image'
+            : 'Generated an image'
+    case 'imageview':
+      return failed
+        ? 'Could not view image'
+        : interrupted
+          ? 'Image inspection interrupted'
+          : ongoing
+            ? 'Viewing image'
+            : 'Viewed image'
+    case 'hookprompt':
+      return failed
+        ? 'Hook failed'
+        : interrupted
+          ? 'Hook interrupted'
+          : ongoing
+            ? 'Running a hook'
+            : 'Ran a hook'
+    case 'sleep':
+      return failed || interrupted ? 'Wait interrupted' : ongoing ? 'Waiting' : 'Waited'
+    case 'enterreviewmode':
+    case 'enteredreviewmode':
+      return failed
+        ? 'Could not enter review mode'
+        : interrupted
+          ? 'Review mode entry interrupted'
+          : ongoing
+            ? 'Entering review mode'
+            : 'Entered review mode'
+    case 'exitreviewmode':
+    case 'exitedreviewmode':
+      return failed
+        ? 'Could not exit review mode'
+        : interrupted
+          ? 'Review mode exit interrupted'
+          : ongoing
+            ? 'Exiting review mode'
+            : 'Exited review mode'
+    default:
+      return undefined
+  }
+}
+
+function unknownActivityLabel(item: Item): string {
+  const raw = item.text?.match(/^\[([^\]]+)]$/)?.[1]
+  if (!raw || raw.toLowerCase() === 'unknown') return 'Agent activity'
+  const words = raw
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replaceAll(/[_-]+/g, ' ')
+    .trim()
+    .toLowerCase()
+  return words ? `${words[0]?.toUpperCase()}${words.slice(1)}` : 'Agent activity'
 }
 
 function isImageView(item: Item): boolean {
   return item.type === 'tool_call' && item.text?.split('\n', 1)[0]?.trim() === 'image view'
+}
+
+function isContextCompaction(item: Item): boolean {
+  const text = item.text?.trim()
+  return (
+    (item.type === 'tool_call' && text === 'context compaction') ||
+    (item.type === 'unknown' && text === '[contextCompaction]')
+  )
 }
 
 function imageViewDetail(item: Item): string | undefined {

@@ -820,9 +820,10 @@
                 >Selected files, drag/drop, and immediate Ctrl/Command+V image, PDF, video, and
                 ordinary file attachments gated by declared source capability; Codex, Claude Code,
                 and Grok receive their native image and file-reference formats; raster images and
-                videos get lightweight composer previews and an app-native full-window viewer;
-                selected images reach ACP image blocks only after the agent advertises image
-                prompts, while rejected sends restore the original draft and attachment set</span
+                videos get lightweight composer previews, sent image previews above their message,
+                and an app-native full-window viewer; selected images reach ACP image blocks only
+                after the agent advertises image prompts, while rejected sends restore the original
+                draft and attachment set</span
               ></label
             >
           </li>
@@ -917,8 +918,8 @@
                 >Every item type first class
                 <span class="d"
                   >message, reasoning, plan, command, file change, tool call, subagent activity,
-                  error; completed narration and tool output remain chronological and accessible on
-                  replay</span
+                  error; completed narration stays visible while tool output remains ordered and
+                  accessible on replay</span
                 ></span
               ></label
             >
@@ -943,9 +944,9 @@
               ><input type="checkbox" /><span
                 >Working status with a live elapsed label during active turns
                 <span class="d"
-                  >one stable rail owns narration and activity transitions, restarting its timer
-                  after each assistant message; completed or failed image inspections remain visible
-                  as settled results without a duplicate live row</span
+                  >a placeholder rail covers the gap before output; reasoning then streams as prose,
+                  while one fixed tool row changes to the current command and settles without a
+                  duplicate live status</span
                 ></span
               ></label
             >
@@ -953,11 +954,12 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Collapse and expand per item, reasoning collapsed by default
+                >Stacked tool activity with visible reasoning summaries
                 <span class="d"
-                  >repeated settled reasoning-only histories with no answer compact to one Worked
-                  disclosure; commands stay summarized until opened, with exact command and output
-                  inside the compact reveal</span
+                  >each completed model reply compacts all activity into one Worked disclosure;
+                  repeated settled reasoning-only histories with no answer do the same; commands
+                  stay summarized until opened, with exact command and output inside the compact
+                  reveal</span
                 ></span
               ></label
             >
@@ -1043,6 +1045,17 @@
           <li>
             <label
               ><input type="checkbox" /><span>Per-hunk and per-file accept or reject</span></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >One-click Undo on a completed edited-files block
+                <span class="d"
+                  >reverses only that block's exact patch, keeps the conversation and unrelated
+                  work, and fails closed when a file changed afterwards</span
+                ></span
+              ></label
             >
           </li>
           <li>

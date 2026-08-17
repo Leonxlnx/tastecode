@@ -91,6 +91,7 @@ function view(
       { item: Item; version: number; textUpdate: { kind: 'append'; text: string } }
     >
     itemVersion?: number
+    searching?: boolean
   } = {},
 ) {
   return (
@@ -98,6 +99,7 @@ function view(
       items={items}
       liveItems={identity.liveItems}
       itemVersion={identity.itemVersion}
+      {...(identity.searching === undefined ? {} : { searching: identity.searching })}
       running={running}
       activeTurn={running ? { id: 'turn-2', startedAt: 0 } : undefined}
       threadId={identity.threadId}
@@ -216,7 +218,7 @@ describe('streamed thread renders', () => {
     })
   })
 
-  it('does not reconcile the working animation for streamed text updates', () => {
+  it('does not add a duplicate working animation beside a streamed answer', () => {
     const items: Item[] = [
       message({ id: 'user-1', turnId: 'turn-2', role: 'user', text: 'Question' }),
       message({ id: 'answer-1', turnId: 'turn-2', status: 'started', text: 'Hel' }),
@@ -226,22 +228,103 @@ describe('streamed thread renders', () => {
 
     rendered.rerender(view([...items.slice(0, -1), { ...items.at(-1)!, text: 'Hello' }]))
 
-    expect(initialRenders).toBe(1)
+    expect(initialRenders).toBe(0)
     expect(orbRender).toHaveBeenCalledTimes(initialRenders)
   })
 
-  it('uses the stable rail as the only live status and clears completed activity', () => {
+  it('keeps one live activity stack while commands change, then settles it at a boundary', () => {
     const user = message({
       id: 'user-1',
       turnId: 'turn-2',
       role: 'user',
       text: 'Run the checks',
     })
-    const opening = message({
-      id: 'opening-1',
+    const firstCommand = message({
+      id: 'command-1',
       turnId: 'turn-2',
+      type: 'command',
+      role: undefined,
       status: 'started',
-      text: 'I will run the checks.',
+      command: 'pnpm test',
+    })
+    const rendered = render(view([user, firstCommand]))
+    const stack = rendered.container.querySelector('.activity')
+
+    expect(rendered.getByRole('button', { name: 'Running pnpm test' })).toBeTruthy()
+    expect(rendered.container.querySelector('[data-index="1"]')?.className).not.toContain(
+      'is-suppressed',
+    )
+
+    const blankReasoning = message({
+      id: 'reasoning-empty',
+      turnId: 'turn-2',
+      type: 'reasoning',
+      role: undefined,
+      status: 'completed',
+      text: '',
+    })
+    rendered.rerender(view([user, { ...firstCommand, status: 'completed' }, blankReasoning]))
+
+    expect(rendered.container.querySelector('.activity')).toBe(stack)
+    expect(rendered.getByRole('button', { name: 'Ran pnpm test' })).toBeTruthy()
+    expect(rendered.queryByText('Thinking')).toBeNull()
+
+    const secondCommand = message({
+      id: 'command-2',
+      turnId: 'turn-2',
+      type: 'command',
+      role: undefined,
+      status: 'started',
+      command: 'git status --short',
+    })
+    rendered.rerender(
+      view([user, { ...firstCommand, status: 'completed' }, blankReasoning, secondCommand]),
+    )
+
+    expect(rendered.container.querySelector('.activity')).toBe(stack)
+    expect(rendered.getByRole('button', { name: 'Running git status --short' })).toBeTruthy()
+    expect(rendered.container.querySelectorAll('.activity')).toHaveLength(1)
+    expect(rendered.container.querySelector('[data-index="3"]')?.className).toContain(
+      'is-suppressed',
+    )
+
+    const reasoning = message({
+      id: 'reasoning-1',
+      turnId: 'turn-2',
+      type: 'reasoning',
+      role: undefined,
+      status: 'started',
+      text: 'Reviewing command results',
+    })
+    rendered.rerender(
+      view([
+        user,
+        { ...firstCommand, status: 'completed' },
+        blankReasoning,
+        { ...secondCommand, status: 'completed' },
+        reasoning,
+      ]),
+    )
+
+    expect(rendered.container.querySelector('.activity')).toBe(stack)
+    expect(rendered.getByRole('button', { name: 'Ran commands' })).toBeTruthy()
+    expect(rendered.getByText('Reviewing command results')).toBeTruthy()
+    expect(rendered.container.querySelector('.activity--working')).toBeNull()
+  })
+
+  it('keeps live narration close to the activity row that follows it', () => {
+    const user = message({
+      id: 'user-1',
+      turnId: 'turn-2',
+      role: 'user',
+      text: 'Run the checks',
+    })
+    const narration = message({
+      id: 'commentary-1',
+      turnId: 'turn-2',
+      role: 'assistant',
+      phase: 'commentary',
+      text: 'I found the cause.',
     })
     const command = message({
       id: 'command-1',
@@ -251,51 +334,15 @@ describe('streamed thread renders', () => {
       status: 'started',
       command: 'pnpm test',
     })
-    const rendered = render(view([user, opening]))
-    const rail = rendered.container.querySelector('.activity--working')
 
-    expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
-      'Working',
-    )
-    rendered.rerender(view([user, opening, command]))
+    const rendered = render(view([user, narration, command]))
 
-    expect(rendered.container.querySelector('.activity--working')).toBe(rail)
-    expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
-      'Running a command',
+    expect(rendered.container.querySelector('[data-index="1"]')?.className).toContain(
+      'is-compact-to-next',
     )
-    expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
-    expect(rendered.container.querySelector('[data-index="2"]')?.className).toContain(
-      'is-suppressed',
+    expect(rendered.container.querySelector('[data-index="0"]')?.className).not.toContain(
+      'is-compact-to-next',
     )
-    expect(rendered.container.querySelector('[data-index="2"]')?.className).not.toContain(
-      'is-live-activity',
-    )
-
-    rendered.rerender(view([user, opening, { ...command, text: 'Tests passed.' }]))
-    expect(rendered.container.querySelector('.activity--working')).toBe(rail)
-    expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
-
-    const narration = message({
-      id: 'answer-1',
-      turnId: 'turn-2',
-      status: 'started',
-      text: 'The checks passed.',
-    })
-    rendered.rerender(
-      view([user, opening, { ...command, status: 'completed', text: 'Tests passed.' }, narration]),
-    )
-
-    expect(rendered.container.querySelector('.activity--working')).toBe(rail)
-    expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
-      'Working',
-    )
-    expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
-    expect(rendered.container.querySelector('[data-index="2"]')?.className).toContain(
-      'is-suppressed',
-    )
-    expect(rendered.queryByRole('button', { name: 'Ran a command' })).toBeNull()
-    expect(rendered.queryByRole('button', { name: 'pnpm test' })).toBeNull()
-    expect(markdownRender).toHaveBeenLastCalledWith({ text: narration.text, streaming: true })
   })
 
   it('crossfades working labels without remounting the rail', () => {
@@ -306,26 +353,26 @@ describe('streamed thread renders', () => {
       role: 'user',
       text: 'Run the checks',
     })
-    const command = message({
-      id: 'command-1',
-      turnId: 'turn-2',
-      type: 'command',
-      role: undefined,
-      status: 'started',
-      command: 'pnpm test',
-    })
     const rendered = render(view([user]))
     const rail = rendered.container.querySelector('.activity--working')
 
-    rendered.rerender(view([user, command]))
+    rendered.rerender(view([user], true, { searching: true }))
 
     expect(rendered.container.querySelector('.activity--working')).toBe(rail)
     expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
-      'Running a command',
+      'Searching',
     )
     expect(rendered.container.querySelector('.activity__working-label-previous')?.textContent).toBe(
       'Working',
     )
+    const previousTime = rendered.container.querySelector(
+      '.activity__working-status-previous .activity__working-time',
+    )?.textContent
+    const currentTime = rendered.container.querySelector(
+      '.activity__working-status .activity__working-time',
+    )?.textContent
+    expect(previousTime).toBeTruthy()
+    expect(currentTime).toBe(previousTime)
 
     act(() => vi.advanceTimersByTime(480))
 

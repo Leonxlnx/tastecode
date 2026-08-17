@@ -64,16 +64,10 @@ describe('prompt progress lifecycle', () => {
     expect(run.startedPrompt).toBe(run.optimisticPrompt)
     expect(run.deltaPrompt).toBe(run.optimisticPrompt)
     expect(run.canonicalRail).toBe(run.optimisticRail)
-    expect(run.startedRail).toBe(run.optimisticRail)
-    expect(run.deltaRail).toBe(run.optimisticRail)
-    expect(run.rendered.container.querySelectorAll('.activity--working')).toHaveLength(1)
-    expect(run.rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
-      'Working',
-    )
+    expect(run.deltaReply).toBe(run.startedReply)
+    expect(run.rendered.container.querySelectorAll('.activity--working')).toHaveLength(0)
     expect(threadItems(run.finalState).at(-1)?.text).toHaveLength(scenario.liveCharacters)
-    expect(run.rendered.container.querySelector('.reply.is-streaming')?.textContent).toHaveLength(
-      scenario.liveCharacters,
-    )
+    expect(run.deltaReply.textContent).toHaveLength(scenario.liveCharacters)
 
     run.rendered.unmount()
   })

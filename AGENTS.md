@@ -35,6 +35,8 @@ and resolving conflicts without rewriting published history. Do not un-park a pr
 - **Never commit a secret**, including in fixtures and examples.
 - **Never write a `.sh` script.** Node/TypeScript only — we are a Windows + macOS team.
 - **Never assume POSIX paths.** Use `node:path`.
+- **Stay on the current branch unless the user explicitly asks otherwise.** Do not create a
+  branch or worktree, or switch branches, as a routine setup step.
 - **Never open a PR unless the user explicitly asks for one.**
 - **Never push to `main`.** Branch, PR, merge. An agent may **merge its own PR without
   waiting** when the work is confidently finished: all four gates green locally, the flow

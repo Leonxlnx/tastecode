@@ -71,11 +71,7 @@ describe('thread at scale', () => {
     ).toBe('Searching…')
   })
 
-  it('keeps one working rail mounted across the first response item', () => {
-    // The rail used to render in two tree positions — after the runway before
-    // any response item existed, then inside the virtualized row at
-    // firstResponseIndex. The move is an unmount, so the orb and its entrance
-    // animation restarted exactly at the first token.
+  it('hands the placeholder rail to the first visible response without duplication', () => {
     cleanup() // earlier renders would satisfy the queries below with stale DOM
     const props = {
       running: true,
@@ -111,8 +107,8 @@ describe('thread at scale', () => {
       createdAt: 2,
     }
     rendered.rerender(<Thread {...props} items={[asked, reply]} />)
-    expect(rendered.container.querySelectorAll('.activity--working')).toHaveLength(1)
-    expect(rendered.container.querySelector('.activity__working-orb canvas')).toBe(orb)
+    expect(rendered.container.querySelectorAll('.activity--working')).toHaveLength(0)
+    expect(rendered.container.querySelector('.activity__working-orb canvas')).toBeNull()
     cleanup()
   })
 
@@ -127,6 +123,22 @@ describe('thread at scale', () => {
       },
     ]
     expect(workLabel(items, 'turn-1', false)).toBe('Updating the plan')
+    expect(
+      workLabel(
+        [
+          {
+            id: 'reasoning-empty',
+            turnId: 'turn-1',
+            type: 'reasoning',
+            text: '',
+            status: 'started',
+            createdAt: 2,
+          },
+        ],
+        'turn-1',
+        false,
+      ),
+    ).toBe('Working')
     expect(
       workLabel(
         [
@@ -160,6 +172,28 @@ describe('thread at scale', () => {
         false,
       ),
     ).toBe('Creating brand direction')
+  })
+
+  it('names current and saved Codex activities instead of showing unknown', () => {
+    const item = (type: Item['type'], text: string): Item => ({
+      id: `${type}-${text}`,
+      turnId: 'turn-1',
+      type,
+      text,
+      status: 'started',
+      createdAt: 1,
+    })
+
+    expect(workLabel([item('tool_call', 'context compaction')], 'turn-1', false)).toBe(
+      'Compacting context window…',
+    )
+    expect(workLabel([item('unknown', '[contextCompaction]')], 'turn-1', false)).toBe(
+      'Compacting context window…',
+    )
+    expect(workLabel([item('unknown', '[futureCapability]')], 'turn-1', false)).toBe(
+      'Future capability',
+    )
+    expect(workLabel([item('unknown', '[unknown]')], 'turn-1', false)).toBe('Agent activity')
   })
 
   it('costs about the same at a thousand items as at a hundred', () => {

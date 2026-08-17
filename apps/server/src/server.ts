@@ -717,6 +717,12 @@ export function startServer(
         return orchestrator.diff(p.threadId)
       }
 
+      case 'thread.undoTurnChanges': {
+        const p = params as { threadId: string; turnId: string; expectedDiff: string }
+        await orchestrator.undoTurnChanges(p.threadId, p.turnId, p.expectedDiff)
+        return {}
+      }
+
       case 'thread.reviewHunk': {
         const p = params as {
           threadId: string

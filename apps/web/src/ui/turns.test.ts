@@ -47,7 +47,7 @@ describe('turn boundaries', () => {
     expect(neighbourTurn(turns, 3, 'prev')).toBe(1)
   })
 
-  it('collects completed turn activity behind one elapsed-time disclosure', () => {
+  it('keeps reasoning visible and groups the following tool activity', () => {
     const items: Item[] = [
       { ...item('user', 't1'), role: 'user', createdAt: 1_000 },
       {
@@ -66,7 +66,7 @@ describe('turn boundaries', () => {
     ]
 
     expect(presentTurns(items).get('t1')).toMatchObject({
-      activityGroups: [{ items: [items[1], items[2]], firstIndex: 1 }],
+      activityGroups: [{ items: [items[2]], firstIndex: 2 }],
       responseText: 'Done.',
       firstResponseIndex: 1,
       finalAnswerIndex: 3,
@@ -123,7 +123,7 @@ describe('turn boundaries', () => {
     ).toBe(false)
   })
 
-  it('keeps chronological activity groups between assistant narration rows', () => {
+  it('collects activity around assistant narration into one disclosure', () => {
     const items: Item[] = [
       { ...item('user', 't1'), role: 'user', text: 'Fix it.' },
       { ...item('update-1', 't1'), role: 'assistant', text: 'I found the cause.' },
@@ -134,17 +134,35 @@ describe('turn boundaries', () => {
     ]
 
     expect(presentTurns(items).get('t1')).toMatchObject({
-      activityGroups: [
-        { items: [items[2]], firstIndex: 2 },
-        { items: [items[4]], firstIndex: 4 },
-      ],
+      activityGroups: [{ items: [items[2], items[4]], firstIndex: 2 }],
       responseText: 'Fixed.',
       finalAnswerIndex: 5,
       complete: true,
     })
   })
 
-  it('restarts work timing after each assistant message', () => {
+  it('keeps one activity group across empty reasoning placeholders', () => {
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', text: 'Fix it.' },
+      { ...item('command-1', 't1'), type: 'command', command: 'git status --short' },
+      { ...item('blank-1', 't1'), type: 'reasoning' },
+      { ...item('files', 't1'), type: 'file_change', text: '2 files changed' },
+      { ...item('blank-2', 't1'), type: 'reasoning', text: '   ' },
+      { ...item('command-2', 't1'), type: 'command', command: 'pnpm test' },
+      { ...item('summary', 't1'), type: 'reasoning', text: 'Reviewing test results' },
+      { ...item('answer', 't1'), role: 'assistant', text: 'Fixed.' },
+    ]
+
+    expect(presentTurns(items).get('t1')?.activityGroups).toMatchObject([
+      {
+        items: [items[1], items[3], items[5]],
+        firstIndex: 1,
+        lastIndex: 5,
+      },
+    ])
+  })
+
+  it('keeps the live timer reset while the completed disclosure uses total turn time', () => {
     const items: Item[] = [
       { ...item('user', 't1'), role: 'user', text: 'Fix it.', createdAt: 1_000 },
       { ...item('thinking', 't1'), type: 'reasoning', createdAt: 2_000 },
@@ -169,7 +187,7 @@ describe('turn boundaries', () => {
       t1: { startedAt: 1_000, completedAt: 14_000 },
     }).get('t1')
 
-    expect(presentation?.activityGroups.map(({ elapsedMs }) => elapsedMs)).toEqual([4_000, 8_000])
+    expect(presentation?.activityGroups.map(({ elapsedMs }) => elapsedMs)).toEqual([13_000])
     expect(presentation?.workStartedAt).toBe(13_000)
   })
 

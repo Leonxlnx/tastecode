@@ -21,17 +21,17 @@ export type TurnMark = {
 }
 
 export type TurnActivityGroup = {
-  /** Consecutive operational items between two transcript messages. */
+  /** Tool activity shown in one disclosure for a completed turn. */
   items: Item[]
   /** Flat-list index where Thread anchors this disclosure. */
   firstIndex: number
   lastIndex: number
-  /** Time spent after the previous message and before the next one. */
+  /** Total elapsed time for the completed turn. */
   elapsedMs: number
 }
 
 export type TurnPresentation = {
-  /** Chronological Worked disclosures, split wherever narration resumes. */
+  /** One disclosure when complete; chronological batches while work is live. */
   activityGroups: TurnActivityGroup[]
   responseText: string
   firstResponseIndex: number | undefined
@@ -112,10 +112,13 @@ export function findTurns(items: Item[]): TurnMark[] {
 /**
  * The compact, completed-turn view used by first-party agent apps.
  *
- * The provider may emit commentary messages before its final answer. Those
- * messages stay in the transcript, so operational items are compacted only in
- * contiguous groups between them. An explicit final-answer phase wins; older
- * unphased histories safely fall back to their last completed assistant message.
+ * The provider may emit reasoning summaries and commentary before its final
+ * answer. Those stay readable in the transcript, while completed tool activity
+ * compacts into one disclosure for the turn. Live tool activity stays in
+ * chronological batches so the current batch can update in place. Empty
+ * reasoning placeholders are invisible and do not split a live batch. An
+ * explicit final-answer phase wins; older unphased histories safely fall back
+ * to their last completed assistant message.
  */
 export function presentTurns(
   items: Item[],
@@ -163,13 +166,17 @@ export function presentTurns(
     draft.latest = Math.max(draft.latest, item.createdAt)
     draft.design ||= item.type === 'tool_call' && item.text?.startsWith('design:') === true
 
-    if (item.type !== 'message' || item.role !== 'user') {
+    if ((item.type !== 'message' || item.role !== 'user') && !isBlankReasoning(item)) {
       draft.firstResponseIndex ??= index
     }
 
     if (isActivity(item)) {
       draft.activityCount += 1
       draft.onlyReasoning &&= item.type === 'reasoning'
+      draft.hasRunningActivity ||= item.status === 'started'
+    }
+
+    if (isStackedActivity(item)) {
       const lastGroup = draft.activityGroups.at(-1)
       if (lastGroup?.lastIndex === index - 1) {
         lastGroup.entries.push({ item, index })
@@ -182,7 +189,12 @@ export function presentTurns(
           startsTurn: draft.latestAssistantOutputAt === undefined,
         })
       }
-      draft.hasRunningActivity ||= item.status === 'started'
+    } else if (isBlankReasoning(item)) {
+      // Empty provider reasoning has no readable transcript content. Keep an
+      // open tool batch anchored in one place while the next command arrives,
+      // and include the placeholder in its compacted flat-list range.
+      const openGroup = draft.activityGroups.at(-1)
+      if (openGroup && openGroup.completedAt === undefined) openGroup.lastIndex = index
     } else {
       const openGroup = draft.activityGroups.at(-1)
       if (openGroup && openGroup.completedAt === undefined) openGroup.completedAt = item.createdAt
@@ -204,34 +216,50 @@ export function presentTurns(
         draft.answers.findLast(({ item }) => item.phase === 'final_answer') ??
         draft.answers.findLast(({ item }) => item.phase === undefined)
       const timing = turnTiming[turnId]
+      const elapsedMs =
+        timing?.startedAt !== undefined && timing.completedAt !== undefined
+          ? Math.max(0, timing.completedAt - timing.startedAt)
+          : Math.max(0, draft.latest - draft.earliest)
+      const complete =
+        !draft.hasRunningActivity &&
+        (finalAnswer !== undefined || (draft.activityCount > 1 && draft.onlyReasoning))
+      const liveActivityGroups = draft.activityGroups.map(
+        ({ entries, lastIndex, startedAt, startsTurn, completedAt }) => ({
+          items: entries.map(({ item }) => item),
+          firstIndex: entries[0]!.index,
+          lastIndex,
+          elapsedMs: Math.max(
+            0,
+            (completedAt ?? timing?.completedAt ?? draft.latest) -
+              (startsTurn ? (timing?.startedAt ?? startedAt) : startedAt),
+          ),
+        }),
+      )
+      const firstActivityGroup = liveActivityGroups[0]
+      const lastActivityGroup = liveActivityGroups.at(-1)
+      const activityGroups =
+        complete && firstActivityGroup && lastActivityGroup
+          ? [
+              {
+                items: liveActivityGroups.flatMap(({ items }) => items),
+                firstIndex: firstActivityGroup.firstIndex,
+                lastIndex: lastActivityGroup.lastIndex,
+                elapsedMs,
+              },
+            ]
+          : liveActivityGroups
 
       return [
         turnId,
         {
-          activityGroups: draft.activityGroups.map(
-            ({ entries, lastIndex, startedAt, startsTurn, completedAt }) => ({
-              items: entries.map(({ item }) => item),
-              firstIndex: entries[0]!.index,
-              lastIndex,
-              elapsedMs: Math.max(
-                0,
-                (completedAt ?? timing?.completedAt ?? draft.latest) -
-                  (startsTurn ? (timing?.startedAt ?? startedAt) : startedAt),
-              ),
-            }),
-          ),
+          activityGroups,
           responseText: finalAnswer?.item.text ?? '',
           firstResponseIndex: draft.firstResponseIndex,
           finalAnswerIndex: finalAnswer?.index,
-          elapsedMs:
-            timing?.startedAt !== undefined && timing.completedAt !== undefined
-              ? Math.max(0, timing.completedAt - timing.startedAt)
-              : Math.max(0, draft.latest - draft.earliest),
+          elapsedMs,
           workStartedAt: draft.latestAssistantOutputAt ?? timing?.startedAt ?? draft.earliest,
           prompt: draft.prompt,
-          complete:
-            !draft.hasRunningActivity &&
-            (finalAnswer !== undefined || (draft.activityCount > 1 && draft.onlyReasoning)),
+          complete,
           design: draft.design,
         },
       ]
@@ -271,6 +299,19 @@ function isStartedAssistantTailTextUpdate(previous: Item[], next: Item[]): boole
 
 function isActivity(item: Item): boolean {
   return item.type !== 'message' && item.type !== 'error'
+}
+
+export function isStackedActivity(item: Item): boolean {
+  return (
+    item.type === 'command' ||
+    item.type === 'file_change' ||
+    item.type === 'tool_call' ||
+    item.type === 'plan'
+  )
+}
+
+export function isBlankReasoning(item: Item): boolean {
+  return item.type === 'reasoning' && !item.text?.trim()
 }
 
 /**
