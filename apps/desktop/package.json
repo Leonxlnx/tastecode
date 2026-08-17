@@ -49,6 +49,22 @@
       {
         "from": "../web/dist",
         "to": "web"
+      },
+      {
+        "from": "../../LICENSE",
+        "to": "LICENSE"
+      },
+      {
+        "from": "../../NOTICE",
+        "to": "NOTICE"
+      },
+      {
+        "from": "../../THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      },
+      {
+        "from": "../../licenses",
+        "to": "licenses"
       }
     ],
     "directories": {
