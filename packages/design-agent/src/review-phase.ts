@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import type { PageBlueprint } from './page.js'
+import { type BoundaryRecord, member, record, string, strings } from './parse.js'
 
 const SEVERITIES = ['blocking', 'major', 'minor'] as const
 export type ReviewSeverity = (typeof SEVERITIES)[number]
@@ -240,37 +241,9 @@ export function parseRepairPhaseOutput(text: string): RepairPhaseOutput {
   }
 }
 
-function json(text: string): Record<string, unknown> {
+function json(text: string): BoundaryRecord {
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
   return record(JSON.parse(fenced?.[1] ?? text), 'phase output')
-}
-
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${field} must be an object`)
-  }
-  return value as Record<string, unknown>
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`${field} must be a non-empty string`)
-  }
-  return value
-}
-
-function strings(value: unknown, field: string): string[] {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string' && item.trim())) {
-    throw new Error(`${field} must be a string array`)
-  }
-  return value
-}
-
-function member<T extends string>(value: unknown, values: readonly T[], field: string): T {
-  if (typeof value !== 'string' || !values.includes(value as T)) {
-    throw new Error(`${field} must be one of ${values.join(', ')}`)
-  }
-  return value as T
 }
 
 function reviewPath(workspacePath: string): string {

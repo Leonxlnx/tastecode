@@ -55,7 +55,7 @@ const ICONS = {
 
 type IconKind = keyof typeof ICONS
 
-const KIND_BY_EXTENSION: Record<string, IconKind> = {
+const KIND_BY_EXTENSION = {
   tsx: 'react',
   jsx: 'react',
   ts: 'typescript',
@@ -126,9 +126,9 @@ const KIND_BY_EXTENSION: Record<string, IconKind> = {
   ex: 'code',
   exs: 'code',
   lua: 'code',
-}
+} satisfies Record<string, IconKind>
 
-const KIND_BY_FILENAME: Record<string, IconKind> = {
+const KIND_BY_FILENAME = {
   dockerfile: 'docker',
   makefile: 'shell',
   procfile: 'shell',
@@ -136,7 +136,7 @@ const KIND_BY_FILENAME: Record<string, IconKind> = {
   '.gitattributes': 'config',
   license: 'text',
   readme: 'markdown',
-}
+} satisfies Record<string, IconKind>
 
 export function isFileReference(path: string): boolean {
   return iconKind(path) !== undefined
@@ -158,9 +158,9 @@ function iconKind(path: string): IconKind | undefined {
   const filename = withoutPosition.split(/[\\/]/).at(-1)?.toLowerCase()
   if (!filename) return undefined
 
-  const namedKind = KIND_BY_FILENAME[filename]
+  const namedKind = Object.entries(KIND_BY_FILENAME).find(([name]) => name === filename)?.[1]
   if (namedKind) return namedKind
 
   const extension = filename.includes('.') ? filename.slice(filename.lastIndexOf('.') + 1) : ''
-  return KIND_BY_EXTENSION[extension]
+  return Object.entries(KIND_BY_EXTENSION).find(([name]) => name === extension)?.[1]
 }

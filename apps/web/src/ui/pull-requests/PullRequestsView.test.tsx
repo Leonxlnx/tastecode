@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { PullRequestListResult } from '@harness/contracts'
-import type { Transport } from '../../transport.js'
+import { TestTransport } from '../../test-transport.js'
 import { PullRequestsView } from './PullRequestsView.js'
 
 afterEach(cleanup)
@@ -89,13 +89,16 @@ const result: PullRequestListResult = {
   ],
 }
 
+function pullRequestTransport(): TestTransport {
+  return new TestTransport(async (method) => {
+    if (method === 'pullRequests.list') return result
+    throw new Error(`Unexpected request: ${method}`)
+  })
+}
+
 describe('PullRequestsView', () => {
   it('shows authored and reviewing work, then filters without another request', async () => {
-    const never = new Promise<never>(() => undefined)
-    const request = vi.fn((method: string) =>
-      method === 'pullRequests.list' ? Promise.resolve(result) : never,
-    )
-    const transport = { request } as unknown as Transport
+    const transport = pullRequestTransport()
 
     render(<PullRequestsView transport={transport} onOpenChat={vi.fn()} />)
 
@@ -118,15 +121,13 @@ describe('PullRequestsView', () => {
       target: { value: 'no-match' },
     })
     expect(screen.getByText('No matching pull requests')).toBeTruthy()
-    expect(request.mock.calls.filter(([method]) => method === 'pullRequests.list')).toHaveLength(1)
+    expect(transport.requests.filter(({ method }) => method === 'pullRequests.list')).toHaveLength(
+      1,
+    )
   })
 
   it('filters open, draft, merged, and closed history locally', async () => {
-    const never = new Promise<never>(() => undefined)
-    const request = vi.fn((method: string) =>
-      method === 'pullRequests.list' ? Promise.resolve(result) : never,
-    )
-    const transport = { request } as unknown as Transport
+    const transport = pullRequestTransport()
 
     render(<PullRequestsView transport={transport} onOpenChat={vi.fn()} />)
     expect(await screen.findByText('Closed draft change')).toBeTruthy()
@@ -148,15 +149,13 @@ describe('PullRequestsView', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: /Merged/ }))
     expect(screen.getByText('Merged change')).toBeTruthy()
     expect(screen.queryByText('Closed draft change')).toBeNull()
-    expect(request.mock.calls.filter(([method]) => method === 'pullRequests.list')).toHaveLength(1)
+    expect(transport.requests.filter(({ method }) => method === 'pullRequests.list')).toHaveLength(
+      1,
+    )
   })
 
   it('combines review and repository filters and clears them together', async () => {
-    const never = new Promise<never>(() => undefined)
-    const request = vi.fn((method: string) =>
-      method === 'pullRequests.list' ? Promise.resolve(result) : never,
-    )
-    const transport = { request } as unknown as Transport
+    const transport = pullRequestTransport()
 
     render(<PullRequestsView transport={transport} onOpenChat={vi.fn()} />)
     expect(await screen.findByText('Needs my review')).toBeTruthy()
@@ -180,6 +179,8 @@ describe('PullRequestsView', () => {
     ).toBeTruthy()
     expect(screen.getByText('Authored change')).toBeTruthy()
     expect(screen.getByText('Closed draft change')).toBeTruthy()
-    expect(request.mock.calls.filter(([method]) => method === 'pullRequests.list')).toHaveLength(1)
+    expect(transport.requests.filter(({ method }) => method === 'pullRequests.list')).toHaveLength(
+      1,
+    )
   })
 })

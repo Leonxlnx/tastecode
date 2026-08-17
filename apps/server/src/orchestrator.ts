@@ -13,7 +13,6 @@ import {
 } from '@harness/adapter-claude-code'
 import { cursorAccount, signOutCursor, startCursorLogin } from '@harness/adapter-cursor'
 import {
-  DESIGN_BRIEF_ATTACHMENT,
   ExactBuildFilesError,
   FINAL_BRIEFING_QUESTION,
   designAssetPrompt,
@@ -54,6 +53,8 @@ import {
   type ReviewScreenshot,
   type VisualReview,
 } from '@harness/design-agent'
+import { JsonValueSchema, PreviewDomAuditSchema } from '@harness/contracts'
+import { z } from 'zod'
 import {
   providerRuntime,
   apiRuntime,
@@ -132,6 +133,7 @@ import {
   titlePrompt,
   type AvailableBackgroundModelSource,
 } from './background-model.js'
+import { propertiesWhen } from './properties-when.js'
 
 type UserSubmission = {
   id: string
@@ -144,6 +146,12 @@ type QueuedTurnEntry = QueuedTurn & { options: TurnOptions; clientSubmissionId?:
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
 type AdapterLimitSource = { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
+type InboxProjection = {
+  seq: number
+  approvals: Set<string>
+  inputs: Set<string>
+  last: 'idle' | 'failed'
+}
 const userTurnKey = (threadId: string, turnId: string) => JSON.stringify([threadId, turnId])
 const composeInstructions = (instructions?: string): string =>
   instructions?.trim()
@@ -151,6 +159,57 @@ const composeInstructions = (instructions?: string): string =>
     : REPLY_STYLE_INSTRUCTIONS
 type DesignFlowPhase =
   'brief' | 'brand' | 'page' | 'assets' | 'build' | 'preview' | 'review' | 'repair' | 'complete'
+const DesignFlowPhaseSchema = z.enum([
+  'brief',
+  'brand',
+  'page',
+  'assets',
+  'build',
+  'preview',
+  'review',
+  'repair',
+  'complete',
+])
+const DesignBriefInputSchema = z.record(z.string(), JsonValueSchema)
+const StoredDesignFlowSchema = z.object({
+  originalRequest: z.string(),
+  options: z
+    .object({
+      model: z.string().optional(),
+      serviceTier: z.string().optional(),
+      effort: z.string().optional(),
+    })
+    .optional()
+    .default({}),
+  phase: DesignFlowPhaseSchema,
+  askedQuestions: z.boolean(),
+  finalAsked: z.boolean(),
+  explicitAnswers: z.array(z.object({ question: z.string(), answer: z.string() })),
+  correcting: z.boolean().optional().default(false),
+  repairAttempt: z.number().int().nonnegative().optional().default(0),
+  pendingBrief: DesignBriefInputSchema.optional(),
+  pendingPrompt: z.string().optional(),
+  completion: z.string().optional(),
+  previewPlan: JsonValueSchema.optional(),
+  screenshots: z
+    .array(
+      z.object({
+        path: z.string(),
+        width: z.number().int(),
+        height: z.number().int(),
+        domAudit: PreviewDomAuditSchema.optional(),
+      }),
+    )
+    .optional(),
+  review: JsonValueSchema.optional(),
+  buildFileBaseline: z.array(z.string()).optional(),
+  buildSummary: z.string().optional(),
+})
+const BoundaryValueSchema = z.unknown()
+const FileSystemErrorSchema = z.object({ code: z.string() })
+
+type BoundaryValue = z.input<typeof BoundaryValueSchema>
+type DesignBriefInput = z.infer<typeof DesignBriefInputSchema>
 type DesignFlow = {
   workspacePath: string
   originalRequest: string
@@ -161,7 +220,7 @@ type DesignFlow = {
   explicitAnswers: Array<{ question: string; answer: string }>
   correcting: boolean
   repairAttempt: number
-  pendingBrief?: unknown
+  pendingBrief?: DesignBriefInput
   pendingPrompt?: string
   completion?: string
   previewPlan?: PreviewPlan
@@ -182,45 +241,17 @@ export function resolveWorkspacePath(workspacePath: string): string {
 
 const projectTerminalKey = (projectPath: string): string => `project:${projectPath}`
 
-function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlow | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
-  const stored = value as Record<string, unknown>
-  const phases: DesignFlowPhase[] = [
-    'brief',
-    'brand',
-    'page',
-    'assets',
-    'build',
-    'preview',
-    'review',
-    'repair',
-    'complete',
-  ]
-  if (
-    typeof stored.originalRequest !== 'string' ||
-    !phases.includes(stored.phase as DesignFlowPhase) ||
-    typeof stored.askedQuestions !== 'boolean' ||
-    typeof stored.finalAsked !== 'boolean' ||
-    !Array.isArray(stored.explicitAnswers)
-  ) {
-    return undefined
-  }
-  const explicitAnswers = stored.explicitAnswers.filter(
-    (answer): answer is { question: string; answer: string } =>
-      typeof answer === 'object' &&
-      answer !== null &&
-      typeof (answer as Record<string, unknown>).question === 'string' &&
-      typeof (answer as Record<string, unknown>).answer === 'string',
-  )
-  if (explicitAnswers.length !== stored.explicitAnswers.length) return undefined
-
-  const rawOptions =
-    typeof stored.options === 'object' && stored.options !== null && !Array.isArray(stored.options)
-      ? (stored.options as Record<string, unknown>)
-      : {}
-  const options: TurnOptions = {}
-  for (const field of ['model', 'serviceTier', 'effort'] as const) {
-    if (typeof rawOptions[field] === 'string') options[field] = rawOptions[field]
+function parseStoredDesignFlow(
+  value: BoundaryValue,
+  workspacePath: string,
+): DesignFlow | undefined {
+  const parsed = StoredDesignFlowSchema.safeParse(value)
+  if (!parsed.success) return undefined
+  const stored = parsed.data
+  const options: TurnOptions = {
+    ...propertiesWhen(stored.options.model, (model) => ({ model })),
+    ...propertiesWhen(stored.options.serviceTier, (serviceTier) => ({ serviceTier })),
+    ...propertiesWhen(stored.options.effort, (effort) => ({ effort })),
   }
 
   let previewPlan: PreviewPlan | undefined
@@ -233,24 +264,8 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
   } catch {
     return undefined
   }
-  const rawScreenshots = stored.screenshots
-  const screenshotCount = Array.isArray(rawScreenshots) ? rawScreenshots.length : undefined
-  const screenshots = Array.isArray(rawScreenshots)
-    ? rawScreenshots.filter(
-        (value): value is ReviewScreenshot =>
-          typeof value === 'object' &&
-          value !== null &&
-          typeof (value as Record<string, unknown>).path === 'string' &&
-          Number.isInteger((value as Record<string, unknown>).width) &&
-          Number.isInteger((value as Record<string, unknown>).height),
-      )
-    : undefined
-  if (screenshots && screenshots.length !== screenshotCount) return undefined
-  const repairAttempt =
-    Number.isInteger(stored.repairAttempt) && (stored.repairAttempt as number) >= 0
-      ? (stored.repairAttempt as number)
-      : 0
-  const phase = stored.phase as DesignFlowPhase
+  const screenshots: ReviewScreenshot[] | undefined = stored.screenshots
+  const phase = stored.phase
   if (
     ((phase === 'review' || phase === 'repair') && !previewPlan) ||
     (phase === 'review' && !screenshots) ||
@@ -266,33 +281,28 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     phase,
     askedQuestions: stored.askedQuestions,
     finalAsked: stored.finalAsked,
-    explicitAnswers,
-    correcting: stored.correcting === true,
-    repairAttempt,
-    ...(stored.pendingBrief === undefined ? {} : { pendingBrief: stored.pendingBrief }),
-    ...(typeof stored.pendingPrompt === 'string' ? { pendingPrompt: stored.pendingPrompt } : {}),
-    ...(typeof stored.completion === 'string' ? { completion: stored.completion } : {}),
-    ...(previewPlan ? { previewPlan } : {}),
-    ...(previewPlan ? { previewUrl: previewPlan.url } : {}),
-    ...(screenshots ? { screenshots } : {}),
-    ...(review ? { review } : {}),
-    ...(typeof stored.buildSummary === 'string' ? { buildSummary: stored.buildSummary } : {}),
-    ...(Array.isArray(stored.buildFileBaseline) &&
-    stored.buildFileBaseline.every((file) => typeof file === 'string')
-      ? { buildFileBaseline: stored.buildFileBaseline as string[] }
-      : {}),
+    explicitAnswers: stored.explicitAnswers,
+    correcting: stored.correcting,
+    repairAttempt: stored.repairAttempt,
+    ...propertiesWhen(stored.pendingBrief, (pendingBrief) => ({ pendingBrief })),
+    ...propertiesWhen(stored.pendingPrompt, (pendingPrompt) => ({ pendingPrompt })),
+    ...propertiesWhen(stored.completion, (completion) => ({ completion })),
+    ...propertiesWhen(previewPlan, (previewPlan) => ({ previewPlan })),
+    ...propertiesWhen(previewPlan, (includedValue) => ({ previewUrl: includedValue.url })),
+    ...propertiesWhen(screenshots, (screenshots) => ({ screenshots })),
+    ...propertiesWhen(review, (review) => ({ review })),
+    ...propertiesWhen(stored.buildSummary, (buildSummary) => ({ buildSummary })),
+    ...propertiesWhen(stored.buildFileBaseline, (buildFileBaseline) => ({ buildFileBaseline })),
   }
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: BoundaryValue): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function isRecoverablePreviewError(error: unknown): boolean {
-  const code =
-    typeof error === 'object' && error !== null && 'code' in error
-      ? (error as { code?: unknown }).code
-      : undefined
+function isRecoverablePreviewError(error: BoundaryValue): boolean {
+  const parsed = FileSystemErrorSchema.safeParse(error)
+  const code = parsed.success ? parsed.data.code : undefined
   const message = errorMessage(error)
   return (
     code === 'ENOENT' ||
@@ -443,10 +453,7 @@ export class Orchestrator {
     | undefined
   #watchedSkillProjects = new Set<string>()
   #watchedMcpProjects = new Set<string>()
-  #inboxProjections = new Map<
-    string,
-    { seq: number; approvals: Set<string>; inputs: Set<string>; last: 'idle' | 'failed' }
-  >()
+  #inboxProjections = new Map<string, InboxProjection>()
   #mcpConfig: McpConfigStore
   #modelConnections: ModelConnectionStore
   #customHarnesses: CustomHarnessStore
@@ -456,6 +463,10 @@ export class Orchestrator {
   #backgroundSourcesRevision = 0
   #readCredential: (reference: string) => string
   #terminals: TerminalManager
+  #createCodexAdapter: () => CodexAdapter
+  #claudeLimitSource: () => Promise<AdapterLimitSource>
+  #grokLimitSource: () => Promise<AdapterLimitSource>
+  #startPreview: typeof startDesignPreview
 
   /**
    * How a provider is turned into a running session. Injectable so the
@@ -497,6 +508,10 @@ export class Orchestrator {
       onTerminalOutput?: (terminalId: string, data: string) => void
       onTerminalExit?: (terminalId: string, exitCode: number | null) => void
       runtimeFor?: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
+      createCodexAdapter?: () => CodexAdapter
+      claudeLimitSource?: () => Promise<AdapterLimitSource>
+      grokLimitSource?: () => Promise<AdapterLimitSource>
+      startDesignPreview?: typeof startDesignPreview
       /** Where isolated checkouts live. Outside any repository, on purpose. */
       worktreeRoot?: string
     },
@@ -518,6 +533,10 @@ export class Orchestrator {
     this.#modelConnections = handlers.modelConnections ?? new ModelConnectionStore()
     this.#customHarnesses = handlers.customHarnesses ?? new CustomHarnessStore()
     this.#readCredential = handlers.readCredential ?? readCredential
+    this.#createCodexAdapter = handlers.createCodexAdapter ?? (() => new CodexAdapter())
+    this.#claudeLimitSource = handlers.claudeLimitSource ?? claudeLimitSource
+    this.#grokLimitSource = handlers.grokLimitSource ?? grokLimitSource
+    this.#startPreview = handlers.startDesignPreview ?? startDesignPreview
     this.#terminals = new TerminalManager({
       onOutput: handlers.onTerminalOutput ?? (() => {}),
       onExit: handlers.onTerminalExit ?? (() => {}),
@@ -543,7 +562,7 @@ export class Orchestrator {
   async #controlAdapter(): Promise<CodexAdapter> {
     if (this.#control) return this.#control
     if (this.#controlStarting) return this.#controlStarting
-    const adapter = new CodexAdapter()
+    const adapter = this.#createCodexAdapter()
     adapter.on('log', (line) => this.#onLog(line))
     adapter.on('login', (result) => {
       if (result.success) this.#invalidateBackgroundSources()
@@ -568,7 +587,7 @@ export class Orchestrator {
         this.#control = adapter
         return adapter
       })
-      .catch((error: unknown) => {
+      .catch((error: BoundaryValue) => {
         adapter.dispose()
         throw error
       })
@@ -644,11 +663,11 @@ export class Orchestrator {
       id: source.id,
       displayName: source.displayName,
       provider: source.provider,
-      ...(source.connectionId ? { connectionId: source.connectionId } : {}),
-      ...(source.agent ? { agent: source.agent } : {}),
+      ...propertiesWhen(source.connectionId, (includedValue) => ({ connectionId: includedValue })),
+      ...propertiesWhen(source.agent, (includedValue) => ({ agent: includedValue })),
       models: source.models,
     }))
-    return { preference, sources, ...(resolved ? { resolved } : {}) }
+    return { preference, sources, ...propertiesWhen(resolved, (resolved) => ({ resolved })) }
   }
 
   async updateBackgroundModelPreference(
@@ -738,13 +757,9 @@ export class Orchestrator {
             displayName,
             provider,
             models,
-            ...(provider === 'codex'
-              ? {
-                  codexSubscription: Boolean(
-                    account.plan && account.plan.toLowerCase() !== 'api key',
-                  ),
-                }
-              : {}),
+            ...propertiesWhen(provider === 'codex', () => ({
+              codexSubscription: Boolean(account.plan && account.plan.toLowerCase() !== 'api key'),
+            })),
           } satisfies AvailableBackgroundModelSource
         } catch {
           return undefined
@@ -837,22 +852,24 @@ export class Orchestrator {
       this.#watchedMcpProjects.add(projectPath)
       return {
         capabilities: PROJECT_MCP_MANAGEMENT_CAPABILITIES,
-        servers: this.#mcpConfig.list(provider, projectPath).map((config) => ({
-          id: config.id,
-          scope: 'project' as const,
-          enabled: config.enabled,
-          auth: { status: 'not_required' as const },
-          startup: { state: 'stopped' as const },
-          tools: [],
-          resources: [],
-          resourceTemplates: [],
-          ...(config.enabled
-            ? {
-                transport: config.transport,
-                ...(config.displayName ? { displayName: config.displayName } : {}),
-              }
-            : {}),
-        })),
+        servers: this.#mcpConfig.list(provider, projectPath).map((config): McpServer => {
+          const common = {
+            id: config.id,
+            scope: 'project' as const,
+            enabled: config.enabled,
+            auth: { status: 'not_required' as const },
+            startup: { state: 'stopped' as const },
+            tools: [],
+            resources: [],
+            resourceTemplates: [],
+          }
+          if (!config.enabled) return common
+          return {
+            ...common,
+            transport: config.transport,
+            ...propertiesWhen(config.displayName, (displayName) => ({ displayName })),
+          }
+        }),
       }
     }
     if (provider !== 'codex') {
@@ -889,7 +906,9 @@ export class Orchestrator {
           ? { startup: { state: 'stopped' as const } }
           : {
               transport: config.transport,
-              ...(config.displayName ? { displayName: config.displayName } : {}),
+              ...propertiesWhen(config.displayName, (includedValue) => ({
+                displayName: includedValue,
+              })),
             }),
       })
     }
@@ -1048,21 +1067,24 @@ export class Orchestrator {
   }
 
   async usageLimitSource(provider: ProviderId): Promise<ProviderLimitSource> {
-    const readers: Partial<Record<ProviderId, () => Promise<AdapterLimitSource>>> = {
-      codex: async () => {
-        const adapter = new CodexAdapter()
-        adapter.on('log', (line) => this.#onLog(line))
-        try {
-          await adapter.start()
-          return await adapter.rateLimitSource()
-        } finally {
-          adapter.dispose()
-        }
-      },
-      'claude-code': claudeLimitSource,
-      grok: grokLimitSource,
-    }
-    const source = await (readers[provider]?.() ?? Promise.resolve({ status: 'unavailable' }))
+    const readers = new Map<ProviderId, () => Promise<AdapterLimitSource>>([
+      [
+        'codex',
+        async () => {
+          const adapter = this.#createCodexAdapter()
+          adapter.on('log', (line) => this.#onLog(line))
+          try {
+            await adapter.start()
+            return await adapter.rateLimitSource()
+          } finally {
+            adapter.dispose()
+          }
+        },
+      ],
+      ['claude-code', this.#claudeLimitSource],
+      ['grok', this.#grokLimitSource],
+    ])
+    const source = await (readers.get(provider)?.() ?? Promise.resolve({ status: 'unavailable' }))
     return source.status === 'ready'
       ? { provider, status: 'ready', limits: source.limits }
       : { provider, status: 'unavailable' }
@@ -1192,10 +1214,13 @@ export class Orchestrator {
       // still belongs to the folder the user chose.
       projectPath: workspacePath,
       provider,
-      ...(options.agent ? { agent: options.agent } : {}),
+      ...propertiesWhen(options.agent, (includedValue) => ({ agent: includedValue })),
       title: 'New session',
       createdAt: thread.createdAt,
-      ...(worktree ? { worktreePath: worktree.path, worktreeBranch: worktree.branch } : {}),
+      ...propertiesWhen(worktree, (includedValue) => ({
+        worktreePath: includedValue.path,
+        worktreeBranch: includedValue.branch,
+      })),
     })
     this.#attachThread(thread, session, workspacePath, worktree)
     if (options.approval) this.#threadApprovals.set(thread.id, options.approval)
@@ -1253,8 +1278,8 @@ export class Orchestrator {
     const runtimeOptions: StartOptions = {
       ...options,
       approval,
-      ...(storedParent.agent ? { agent: storedParent.agent } : {}),
-      ...(parent.connectionId ? { connectionId: parent.connectionId } : {}),
+      ...propertiesWhen(storedParent.agent, (includedValue) => ({ agent: includedValue })),
+      ...propertiesWhen(parent.connectionId, (includedValue) => ({ connectionId: includedValue })),
       instructions: composeInstructions(sideChatInstructions(this.#store.history(parentThreadId))),
       ...this.#mcpRuntimeOptions(provider, storedParent.projectPath),
     }
@@ -1271,7 +1296,7 @@ export class Orchestrator {
         id: thread.id,
         projectPath: storedParent.projectPath,
         provider,
-        ...(storedParent.agent ? { agent: storedParent.agent } : {}),
+        ...propertiesWhen(storedParent.agent, (includedValue) => ({ agent: includedValue })),
         title: 'Side chat',
         createdAt: thread.createdAt,
         ephemeral: true,
@@ -1426,7 +1451,7 @@ export class Orchestrator {
         attachments,
         createdAt: submittedAt,
         options,
-        ...(clientSubmissionId ? { clientSubmissionId } : {}),
+        ...propertiesWhen(clientSubmissionId, (clientSubmissionId) => ({ clientSubmissionId })),
       }
       this.#store.enqueueQueuedTurn({ ...queuedTurn, threadId })
       queue.push(queuedTurn)
@@ -1637,7 +1662,9 @@ export class Orchestrator {
         role: 'user',
         status: 'completed',
         text: submission.text,
-        ...(visibleAttachments.length > 0 ? { attachments: visibleAttachments } : {}),
+        ...propertiesWhen(visibleAttachments.length > 0, () => ({
+          attachments: visibleAttachments,
+        })),
         createdAt: submission.createdAt,
       },
     }
@@ -1753,11 +1780,11 @@ export class Orchestrator {
     // so each call replays only events after the last consumed seq — the
     // full-history replay per sidebar refresh was the first thing to hurt on
     // long transcripts. History rewrites (restore/undo) drop the projection.
-    const projection = this.#inboxProjections.get(threadId) ?? {
+    const projection: InboxProjection = this.#inboxProjections.get(threadId) ?? {
       seq: 0,
       approvals: new Set<string>(),
       inputs: new Set<string>(),
-      last: 'idle' as 'idle' | 'failed',
+      last: 'idle',
     }
     for (const { seq, event } of this.#store.history(threadId, projection.seq)) {
       projection.seq = seq
@@ -2038,7 +2065,10 @@ export class Orchestrator {
     if (cached) return cached
     const restored = this.#store.queuedTurns(threadId).map((turn) => {
       const { threadId: _threadId, intent: _intent, clientSubmissionId, ...entry } = turn
-      return { ...entry, ...(clientSubmissionId ? { clientSubmissionId } : {}) }
+      return {
+        ...entry,
+        ...propertiesWhen(clientSubmissionId, (clientSubmissionId) => ({ clientSubmissionId })),
+      }
     })
     this.#queuedTurns.set(threadId, restored)
     return restored
@@ -2218,7 +2248,7 @@ export class Orchestrator {
           delete flow.pendingPrompt
           this.#saveDesignFlow(threadId)
           void this.#sendDesignTurn(threadId, prompt, [], this.#designTurnOptions(flow)).catch(
-            (sendError: unknown) => this.#failDesignFlow(threadId, sendError),
+            (sendError: BoundaryValue) => this.#failDesignFlow(threadId, sendError),
           )
         }
         return
@@ -2229,7 +2259,7 @@ export class Orchestrator {
         designBriefingContinuation(designInput.questions, answers),
         [],
         this.#designTurnOptions(flow),
-      ).catch((error: unknown) => this.#failDesignFlow(threadId, error))
+      ).catch((error: BoundaryValue) => this.#failDesignFlow(threadId, error))
       return
     }
 
@@ -2527,10 +2557,10 @@ export class Orchestrator {
     }
     const workspacePath = stored.worktreePath ?? resolveWorkspacePath(stored.projectPath)
     const result = await runtime.resume(threadId, workspacePath, {
-      ...(stored.agent ? { agent: stored.agent } : {}),
-      ...(this.#threadApprovals.has(threadId)
-        ? { approval: this.#threadApprovals.get(threadId)! }
-        : {}),
+      ...propertiesWhen(stored.agent, (includedValue) => ({ agent: includedValue })),
+      ...propertiesWhen(this.#threadApprovals.has(threadId), () => ({
+        approval: this.#threadApprovals.get(threadId)!,
+      })),
       instructions: REPLY_STYLE_INSTRUCTIONS,
       ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
     })
@@ -2594,7 +2624,7 @@ export class Orchestrator {
       prompt,
       this.#designAttachmentsFor(flow),
       this.#designTurnOptions(flow),
-    ).catch((error: unknown) => this.#failDesignFlow(threadId, error))
+    ).catch((error: BoundaryValue) => this.#failDesignFlow(threadId, error))
   }
 
   /**
@@ -2676,7 +2706,7 @@ export class Orchestrator {
               this.#onLog('provider returned a different turn id after Design already started')
             }
           },
-          (error: unknown) => {
+          (error: BoundaryValue) => {
             this.#onLog(`provider rejected after Design already started: ${errorMessage(error)}`)
           },
         )
@@ -2734,7 +2764,10 @@ export class Orchestrator {
   }
 
   #beginTurnStart(threadId: string, submission?: UserSubmission): PendingTurnStart {
-    const pending = { acceptedAt: Date.now(), ...(submission ? { submission } : {}) }
+    const pending = {
+      acceptedAt: Date.now(),
+      ...propertiesWhen(submission, (submission) => ({ submission })),
+    }
     this.#pendingTurnStarts.set(threadId, pending)
     return pending
   }
@@ -2892,7 +2925,7 @@ export class Orchestrator {
           prompt,
           this.#designAttachmentsFor(flow),
           this.#designTurnOptions(flow),
-        ).catch((error: unknown) => this.#failDesignFlow(threadId, error))
+        ).catch((error: BoundaryValue) => this.#failDesignFlow(threadId, error))
         return
       }
     }
@@ -2915,7 +2948,7 @@ export class Orchestrator {
     if (output.status === 'questions') {
       const round = flow.askedQuestions ? 'follow-up' : 'first'
       flow.askedQuestions = true
-      flow.pendingBrief = undefined
+      delete flow.pendingBrief
       this.#saveDesignFlow(threadId)
       this.#requestDesignInput(threadId, turnId, output.questions, false, round)
       return
@@ -2936,14 +2969,15 @@ export class Orchestrator {
       })
       return
     }
+    const brief = DesignBriefInputSchema.parse(output.brief)
     if (!flow.finalAsked) {
-      flow.pendingBrief = output.brief
+      flow.pendingBrief = brief
       flow.finalAsked = true
       this.#saveDesignFlow(threadId)
       this.#requestDesignInput(threadId, turnId, [FINAL_BRIEFING_QUESTION], true)
       return
     }
-    this.#completeDesignBrief(threadId, turnId, output.brief)
+    this.#completeDesignBrief(threadId, turnId, brief)
   }
 
   #recordDesignNote(threadId: string, turnId: string, text: string): void {
@@ -3004,15 +3038,13 @@ export class Orchestrator {
     })
   }
 
-  #completeDesignBrief(threadId: string, turnId: string, brief: unknown): void {
+  #completeDesignBrief(threadId: string, turnId: string, brief: DesignBriefInput): void {
     const flow = this.#designFlows.get(threadId)
     if (!flow) return
-    const saved = writeDesignBrief(
-      flow.workspacePath,
-      typeof brief === 'object' && brief !== null && !Array.isArray(brief)
-        ? { ...brief, explicitAnswers: flow.explicitAnswers }
-        : brief,
-    )
+    const saved = writeDesignBrief(flow.workspacePath, {
+      ...brief,
+      explicitAnswers: flow.explicitAnswers,
+    })
     this.#recordDesignNote(threadId, turnId, 'Brief locked in. Starting the design.')
     flow.phase = 'brand'
     const prompt = designBrandPrompt(saved)
@@ -3023,7 +3055,7 @@ export class Orchestrator {
     }
     this.#saveDesignFlow(threadId)
     void this.#sendDesignTurn(threadId, prompt, [], this.#designTurnOptions(flow)).catch(
-      (error: unknown) => this.#failDesignFlow(threadId, error),
+      (error: BoundaryValue) => this.#failDesignFlow(threadId, error),
     )
   }
 
@@ -3090,7 +3122,7 @@ export class Orchestrator {
     if (flow.phase === 'preview') {
       const plan = parsePreviewPhaseOutput(text)
       const task = this.#startDesignPreview(threadId, turnId, flow, plan).catch(
-        (error: unknown) => {
+        (error: BoundaryValue) => {
           if (this.#designFlows.get(threadId) !== flow) return
           if (
             isRecoverablePreviewError(error) &&
@@ -3105,7 +3137,7 @@ export class Orchestrator {
               prompt,
               this.#designAttachmentsFor(flow),
               this.#designTurnOptions(flow),
-            ).catch((sendError: unknown) => {
+            ).catch((sendError: BoundaryValue) => {
               if (this.#designFlows.get(threadId) === flow) {
                 this.#failDesignFlow(threadId, sendError)
               }
@@ -3159,7 +3191,7 @@ export class Orchestrator {
       const output = parseRepairPhaseOutput(text)
       flow.correcting = false
       if (output.status === 'failed') throw new Error(output.summary)
-      void this.#captureDesignReview(threadId, turnId, flow).catch((error: unknown) => {
+      void this.#captureDesignReview(threadId, turnId, flow).catch((error: BoundaryValue) => {
         if (this.#designFlows.get(threadId) === flow) this.#failDesignFlow(threadId, error)
       })
       return
@@ -3196,11 +3228,11 @@ export class Orchestrator {
       const cwd = existingWorkspacePath(workspace, plan.cwd, true)
       assertPublicWorkspaceFile(existingWorkspacePath(cwd, plan.entry, false))
     }
-    const preview = await startDesignPreview(flow.workspacePath, plan)
+    const preview = await this.#startPreview(flow.workspacePath, plan)
     if (this.#designFlows.get(threadId) !== flow) {
       await preview
         .stop()
-        .catch((error: unknown) =>
+        .catch((error: BoundaryValue) =>
           this.#onLog(`[design] stale preview stop failed: ${errorMessage(error)}`),
         )
       return
@@ -3227,11 +3259,11 @@ export class Orchestrator {
       return
     }
     if (!this.#designPreviews.has(threadId)) {
-      const preview = await startDesignPreview(flow.workspacePath, flow.previewPlan)
+      const preview = await this.#startPreview(flow.workspacePath, flow.previewPlan)
       if (this.#designFlows.get(threadId) !== flow) {
         await preview
           .stop()
-          .catch((error: unknown) =>
+          .catch((error: BoundaryValue) =>
             this.#onLog(`[design] stale preview stop failed: ${errorMessage(error)}`),
           )
         return
@@ -3284,7 +3316,7 @@ export class Orchestrator {
     this.#finishDesignFlow(threadId, turnId, flow.completion)
   }
 
-  #failDesignFlow(threadId: string, error: unknown): void {
+  #failDesignFlow(threadId: string, error: BoundaryValue): void {
     for (const [turnId, owner] of this.#designTurns) {
       if (owner === threadId) this.#completeDesignActivity(threadId, turnId, 'failed')
     }
@@ -3302,7 +3334,11 @@ export class Orchestrator {
     void this.#drainQueue(threadId)
   }
 
-  #queueDesignCorrection(threadId: string, flow: DesignFlow, error: unknown): string | undefined {
+  #queueDesignCorrection(
+    threadId: string,
+    flow: DesignFlow,
+    error: BoundaryValue,
+  ): string | undefined {
     if (flow.correcting) return undefined
     flow.correcting = true
     const detail = error instanceof Error ? error.message : String(error)
@@ -3332,7 +3368,7 @@ export class Orchestrator {
     this.#designPreviews.delete(threadId)
     const stop = preview
       .stop()
-      .catch((error: unknown) =>
+      .catch((error: BoundaryValue) =>
         this.#onLog(`[design] preview stop failed: ${errorMessage(error)}`),
       )
       .finally(() => {
@@ -3403,7 +3439,11 @@ export class Orchestrator {
     // A racing double-attach must not silently drop the previous session's
     // process — dispose it before overwriting.
     this.#threads.get(thread.id)?.session.dispose()
-    this.#threads.set(thread.id, { thread, session, ...(worktree ? { worktree } : {}) })
+    this.#threads.set(thread.id, {
+      thread,
+      session,
+      ...propertiesWhen(worktree, (worktree) => ({ worktree })),
+    })
     session.onMcpOAuth?.((result) => this.#onMcpOAuth(thread.provider, projectPath, result))
     session.onUsageChanged?.(() => {
       if (this.#threads.get(thread.id)?.session === session) {

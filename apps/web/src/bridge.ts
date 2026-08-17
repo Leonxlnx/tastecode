@@ -1,3 +1,7 @@
+import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
+import { z } from 'zod'
+import type { BoundaryValue } from './boundary.js'
+
 /**
  * The native bridge, when one exists.
  *
@@ -5,15 +9,17 @@
  * production, so every native call has to degrade rather than crash. Anything
  * that cannot work without the bridge is hidden, not shown broken.
  */
-export type PickedAttachment = {
-  path: string
-  name: string
-  mediaType?: 'image' | 'video'
-  previewUrl?: string
-  thumbnailUrl?: string
-}
+export const PickedAttachmentSchema = z.object({
+  path: z.string(),
+  name: z.string(),
+  mediaType: z.enum(['image', 'video']).optional(),
+  previewUrl: z.string().optional(),
+  thumbnailUrl: z.string().optional(),
+})
 
-type Bridge = {
+export type PickedAttachment = z.infer<typeof PickedAttachmentSchema>
+
+export type Bridge = {
   pickFolder: () => Promise<string | undefined>
   pickSkillFolder: () => Promise<string | undefined>
   pickFiles: () => Promise<Array<PickedAttachment | string>>
@@ -44,6 +50,12 @@ type Bridge = {
   isDesktop: true
 }
 
+declare global {
+  interface Window {
+    harness?: Bridge
+  }
+}
+
 export type ZoomAction = 'in' | 'out' | 'reset'
 export type AppTheme = 'light' | 'dark'
 export type AppThemePreference = AppTheme | 'system'
@@ -56,7 +68,7 @@ export type AppUpdateState = {
   error?: string
 }
 
-const bridge = (globalThis as { harness?: Bridge }).harness
+const bridge = window.harness
 const attachmentPreviews = new Map<string, PickedAttachment>()
 
 export const isDesktop = bridge?.isDesktop === true
@@ -80,9 +92,12 @@ export async function pickSkillFolder(): Promise<string | undefined> {
 export async function pickFiles(): Promise<PickedAttachment[]> {
   if (bridge) {
     const files = await bridge.pickFiles()
-    const picked = files.map((file) =>
-      typeof file === 'string' ? { path: file, name: attachmentName(file) } : file,
-    )
+    const picked = files.map((file) => {
+      const path = z.string().safeParse(file)
+      return path.success
+        ? { path: path.data, name: attachmentName(path.data) }
+        : PickedAttachmentSchema.parse(file)
+    })
     for (const attachment of picked) attachmentPreviews.set(attachment.path, attachment)
     return picked
   }
@@ -126,8 +141,10 @@ export async function savePastedFile(file: File): Promise<PickedAttachment | und
     type: file.type,
     bytes: await file.arrayBuffer(),
   })
-  const attachment =
-    typeof saved === 'string' ? { path: saved, name: attachmentName(saved) } : saved
+  const path = z.string().safeParse(saved)
+  const attachment = path.success
+    ? { path: path.data, name: attachmentName(path.data) }
+    : PickedAttachmentSchema.parse(saved)
   attachmentPreviews.set(attachment.path, attachment)
   return attachment
 }
@@ -192,8 +209,9 @@ export function openLocalDiagnostics(): Promise<boolean> {
   return bridge?.openDiagnostics?.() ?? Promise.resolve(false)
 }
 
-export function reportRendererError(cause: unknown): void {
-  const message = cause instanceof Error ? cause.stack || cause.message : String(cause)
+export function reportRendererError(cause: BoundaryValue): void {
+  const error = z.instanceof(Error).safeParse(cause)
+  const message = error.success ? error.data.stack || error.data.message : String(cause)
   bridge?.reportRendererError?.(message.slice(0, 4_000))
 }
 
@@ -217,4 +235,3 @@ export function installAppUpdate(): Promise<boolean> {
 export function onAppUpdateState(listener: (state: AppUpdateState) => void): () => void {
   return bridge?.onUpdateState?.(listener) ?? (() => undefined)
 }
-import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const request = {
@@ -7,9 +8,19 @@ const request = {
 }
 
 afterEach(() => {
-  delete (globalThis as { harness?: unknown }).harness
+  Reflect.deleteProperty(globalThis, 'harness')
   vi.resetModules()
 })
+
+type TestHarness = { isDesktop: true }
+
+function installHarness<Harness extends TestHarness>(value: Harness): void {
+  Object.defineProperty(globalThis, 'harness', {
+    configurable: true,
+    writable: true,
+    value,
+  })
+}
 
 describe('preview capture bridge', () => {
   it('degrades when no native bridge exists', async () => {
@@ -22,7 +33,7 @@ describe('preview capture bridge', () => {
   it('delegates to the native bridge', async () => {
     const result = { status: 'completed' as const, requestId: request.requestId, screenshots: [] }
     const capturePreview = vi.fn().mockResolvedValue(result)
-    ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, capturePreview }
+    installHarness({ isDesktop: true, capturePreview })
     const bridge = await import('./bridge.js')
 
     expect(bridge.canCapturePreview).toBe(true)
@@ -41,11 +52,11 @@ describe('attachment preview bridge', () => {
     }
     const pickFiles = vi.fn().mockResolvedValue([picked])
     const previewViewedImage = vi.fn()
-    ;(globalThis as { harness?: unknown }).harness = {
+    installHarness({
       isDesktop: true,
       pickFiles,
       previewViewedImage,
-    }
+    })
     const bridge = await import('./bridge.js')
 
     await expect(bridge.pickFiles()).resolves.toEqual([picked])
@@ -64,7 +75,7 @@ describe('attachment preview bridge', () => {
       .fn()
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce(preview)
-    ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, previewViewedImage }
+    installHarness({ isDesktop: true, previewViewedImage })
     const bridge = await import('./bridge.js')
 
     await expect(bridge.previewViewedImage(preview.path)).resolves.toEqual(preview)
@@ -76,7 +87,7 @@ describe('attachment preview bridge', () => {
 describe('clipboard bridge', () => {
   it('delegates text writes to the native bridge', async () => {
     const writeClipboardText = vi.fn().mockResolvedValue(undefined)
-    ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, writeClipboardText }
+    installHarness({ isDesktop: true, writeClipboardText })
     const bridge = await import('./bridge.js')
 
     await expect(bridge.writeClipboardText('copied text')).resolves.toBe(undefined)
@@ -88,11 +99,11 @@ describe('haptic bridge', () => {
   it('sends only the named native feedback pattern', async () => {
     const prepareHaptics = vi.fn()
     const performHaptic = vi.fn()
-    ;(globalThis as { harness?: unknown }).harness = {
+    installHarness({
       isDesktop: true,
       prepareHaptics,
       performHaptic,
-    }
+    })
     const bridge = await import('./bridge.js')
 
     bridge.prepareNativeHaptics()
@@ -106,7 +117,7 @@ describe('haptic bridge', () => {
 describe('external URL bridge', () => {
   it('delegates system-browser links to the desktop shell', async () => {
     const openExternal = vi.fn().mockResolvedValue(undefined)
-    ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, openExternal }
+    installHarness({ isDesktop: true, openExternal })
     const bridge = await import('./bridge.js')
 
     await expect(bridge.openExternalUrl('https://example.com/')).resolves.toBeUndefined()
@@ -126,11 +137,11 @@ describe('local diagnostics bridge', () => {
   it('delegates the preference and redacted error source to the desktop', async () => {
     const setDiagnosticsEnabled = vi.fn().mockResolvedValue(true)
     const reportRendererError = vi.fn()
-    ;(globalThis as { harness?: unknown }).harness = {
+    installHarness({
       isDesktop: true,
       setDiagnosticsEnabled,
       reportRendererError,
-    }
+    })
     const bridge = await import('./bridge.js')
 
     await expect(bridge.setLocalDiagnosticsEnabled(true)).resolves.toBe(true)
@@ -158,11 +169,11 @@ describe('app update bridge', () => {
       listener(state)
       return () => undefined
     })
-    ;(globalThis as { harness?: unknown }).harness = {
+    installHarness({
       isDesktop: true,
       checkForUpdates,
       onUpdateState,
-    }
+    })
     const bridge = await import('./bridge.js')
     const listener = vi.fn()
 

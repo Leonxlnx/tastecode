@@ -42,7 +42,7 @@ import {
 } from '../haptics.js'
 import { sessionSourcePresentation } from '../provider-presentation.js'
 import { profileInitials, type ProfileIdentityPreferences } from '../profile-preferences.js'
-import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
+import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
 import { AccountLimits, type AccountLimitsState } from './AccountLimits.js'
 import { useDialogFocus } from './dialog-focus.js'
@@ -77,6 +77,16 @@ export type Project = {
   name?: string
   sessions: Session[]
   pinned?: boolean
+}
+
+export type SidebarHaptics = {
+  perform: typeof performAppHaptic
+  prepare: typeof prepareAppHaptics
+}
+
+const defaultSidebarHaptics: SidebarHaptics = {
+  perform: performAppHaptic,
+  prepare: prepareAppHaptics,
 }
 
 type DropPosition = 'before' | 'after'
@@ -118,6 +128,7 @@ function SidebarComponent(props: {
   account: Account | undefined
   profileIdentity?: ProfileIdentityPreferences | undefined
   providerName: string
+  keybindings?: Keybindings | undefined
   usageStates?: AccountLimitsState[] | undefined
   onRetryUsage?: ((provider: ProviderId) => void) | undefined
   mode?: 'classic' | 'inbox'
@@ -147,7 +158,10 @@ function SidebarComponent(props: {
   pullRequestsActive?: boolean | undefined
   onOpenPullRequests?: (() => void) | undefined
   onOpenSettings: (section?: 'profile') => void
+  haptics?: SidebarHaptics | undefined
 }) {
+  const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
+  const hapticServices = props.haptics ?? defaultSidebarHaptics
   const profileDisplayName = props.profileIdentity?.displayName.trim()
   const [edgeRevealed, setEdgeRevealed] = useState(false)
   const slotRef = useRef<HTMLDivElement>(null)
@@ -431,7 +445,7 @@ function SidebarComponent(props: {
               <div className="rail__row">
                 <button
                   className="navitem rail__new-chat"
-                  aria-keyshortcuts={shortcutAria(SHORTCUTS.newChat)}
+                  aria-keyshortcuts={shortcutAria(keybindings.newChat)}
                   onClick={() => {
                     const project =
                       props.projects.find(
@@ -453,7 +467,7 @@ function SidebarComponent(props: {
                   onClick={() => props.onOpenSearch()}
                   aria-label="Search chats"
                   title="Search chats"
-                  aria-keyshortcuts={shortcutAria(SHORTCUTS.searchSessions)}
+                  aria-keyshortcuts={shortcutAria(keybindings.searchSessions)}
                 >
                   <Search size={15} aria-hidden />
                 </button>
@@ -464,7 +478,7 @@ function SidebarComponent(props: {
                   props.onAddProject()
                   closeOnNarrowViewport()
                 }}
-                aria-keyshortcuts={shortcutAria(SHORTCUTS.newProject)}
+                aria-keyshortcuts={shortcutAria(keybindings.newProject)}
               >
                 <FolderPen size={15} aria-hidden />
                 <span>New project</span>
@@ -474,6 +488,7 @@ function SidebarComponent(props: {
                   type="button"
                   className={`navitem rail__pull-requests${props.pullRequestsActive ? ' is-active' : ''}`}
                   aria-current={props.pullRequestsActive ? 'page' : undefined}
+                  aria-keyshortcuts={shortcutAria(keybindings.openPullRequests)}
                   onClick={openPullRequests}
                 >
                   <GitPullRequest size={15} aria-hidden />
@@ -546,7 +561,7 @@ function SidebarComponent(props: {
                     }
                     onProjectDragStart={(event) => {
                       if (event.target !== event.currentTarget || !props.onReorderProject) return
-                      prepareAppHaptics()
+                      hapticServices.prepare()
                       event.dataTransfer.effectAllowed = 'move'
                       event.dataTransfer.setData('text/plain', project.path)
                       setDraggedProjectPath(project.path)
@@ -568,7 +583,7 @@ function SidebarComponent(props: {
                       )
                         return
                       setProjectDropTarget({ path: project.path, position })
-                      performAppHaptic('alignment')
+                      hapticServices.perform('alignment')
                     }}
                     onProjectDrop={(event) => {
                       event.preventDefault()
@@ -584,6 +599,7 @@ function SidebarComponent(props: {
                     onProjectDragEnd={endProjectDrag}
                     onNewSession={(path) => newSession(path)}
                     onSelectSession={selectSession}
+                    haptics={hapticServices}
                   />
                 ))
               )}
@@ -633,7 +649,7 @@ function SidebarComponent(props: {
                 <button
                   type="button"
                   className="menu__item"
-                  aria-keyshortcuts={shortcutAria(SHORTCUTS.settings)}
+                  aria-keyshortcuts={shortcutAria(keybindings.settings)}
                   onClick={() => {
                     props.onOpenSettings()
                     closeOnNarrowViewport()
@@ -897,6 +913,7 @@ function ProjectRow(props: {
     targetId: string,
     position: DropPosition,
   ) => void
+  haptics: SidebarHaptics
 }) {
   const count = props.project.sessions.length
   const [open, setOpen] = useState(props.active)
@@ -943,7 +960,7 @@ function ProjectRow(props: {
     const next = { id: targetId, position }
     dropTargetRef.current = next
     setDropTarget(next)
-    performAppHaptic('alignment')
+    props.haptics.perform('alignment')
   }
 
   return (
@@ -1108,7 +1125,7 @@ function ProjectRow(props: {
               dragging={session.id === draggedSessionId}
               dropPosition={dropTarget?.id === session.id ? dropTarget.position : undefined}
               onDragStart={(event) => {
-                prepareAppHaptics()
+                props.haptics.prepare()
                 event.dataTransfer.effectAllowed = 'move'
                 event.dataTransfer.setData('text/plain', session.id)
                 setDraggedSessionId(session.id)
@@ -1251,6 +1268,13 @@ function SessionRow(props: {
             <>
               <MenuItem
                 title={props.session.pinned ? 'Unpin chat' : 'Pin chat'}
+                icon={
+                  props.session.pinned ? (
+                    <PinOff size={14} aria-hidden />
+                  ) : (
+                    <Pin size={14} aria-hidden />
+                  )
+                }
                 onClick={() => {
                   props.onTogglePin()
                   close()
@@ -1258,6 +1282,7 @@ function SessionRow(props: {
               />
               <MenuItem
                 title="Rename chat"
+                icon={<Pencil size={14} aria-hidden />}
                 onClick={() => {
                   setRenaming(true)
                   close()
@@ -1265,6 +1290,7 @@ function SessionRow(props: {
               />
               <MenuItem
                 title="Archive chat"
+                icon={<Archive size={14} aria-hidden />}
                 onClick={() => {
                   props.onDelete()
                   close()
@@ -1273,6 +1299,7 @@ function SessionRow(props: {
               {isDesktop ? (
                 <MenuItem
                   title="Open in Explorer"
+                  icon={<FolderOpen size={14} aria-hidden />}
                   onClick={() => {
                     props.onOpenInExplorer()
                     close()

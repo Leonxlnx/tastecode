@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import type { ResultOf } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { requiredElement, requiredValue } from '../test-dom.js'
 import { AccountLimits, type AccountLimitsState } from './AccountLimits.js'
 
 afterEach(() => {
@@ -148,7 +149,7 @@ describe('account limits', () => {
     expect(within(codex).getByText('$12.40')).toBeTruthy()
     const bar = within(codex).getByRole('progressbar', { name: 'Codex Weekly left' })
     expect(bar.getAttribute('aria-valuenow')).toBe('15')
-    expect((bar.firstElementChild as HTMLElement).style.width).toBe('15%')
+    expect(requiredElement(bar, ':scope > *', HTMLElement).style.width).toBe('15%')
 
     view.rerender(
       limits({
@@ -192,12 +193,16 @@ describe('account limits', () => {
       }),
     )
 
-    const epoch = screen.getByText('Epoch').closest('.account-menu__limit')
-    const farFuture = screen.getByText('Far future').closest('.account-menu__limit')
-    expect(epoch).not.toBeNull()
-    expect(farFuture).not.toBeNull()
-    expect(within(epoch as HTMLElement).getByText(/^Resets .*19(?:69|70)$/)).toBeTruthy()
-    expect(within(farFuture as HTMLElement).getByText('Reset time unavailable.')).toBeTruthy()
+    const epoch = requiredValue(
+      screen.getByText('Epoch').closest<HTMLElement>('.account-menu__limit'),
+      'Epoch limit row',
+    )
+    const farFuture = requiredValue(
+      screen.getByText('Far future').closest<HTMLElement>('.account-menu__limit'),
+      'Far future limit row',
+    )
+    expect(within(epoch).getByText(/^Resets .*19(?:69|70)$/)).toBeTruthy()
+    expect(within(farFuture).getByText('Reset time unavailable.')).toBeTruthy()
   })
 
   it('preserves usable values through a failed refresh and retries', () => {

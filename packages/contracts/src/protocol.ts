@@ -282,8 +282,10 @@ export const McpServerSchema = z.object({
   enabled: z.boolean(),
   /** Vendor-global inventory may not expose its underlying transport. */
   transport: McpTransportSchema.optional(),
-  auth: McpAuthSchema,
-  startup: McpStartupStatusSchema,
+  /** Older live provider adapters may not report authentication state yet. */
+  auth: McpAuthSchema.optional(),
+  /** Older live provider adapters may not report startup state yet. */
+  startup: McpStartupStatusSchema.optional(),
   tools: z.array(McpToolSchema),
   resources: z.array(McpResourceSchema),
   resourceTemplates: z.array(McpResourceTemplateSchema),
@@ -614,7 +616,7 @@ export const methods = {
     params: z.object({
       provider: ProviderIdSchema,
       agent: z.string().min(1).optional(),
-      ...TerminalSizeSchema.shape,
+      ...TerminalSizeSchema['shape'],
     }),
     result: z.object({ terminalId: TerminalIdSchema }),
   },
@@ -632,7 +634,7 @@ export const methods = {
     params: z.object({
       provider: ProviderIdSchema,
       agent: z.string().min(1).optional(),
-      ...TerminalSizeSchema.shape,
+      ...TerminalSizeSchema['shape'],
     }),
     result: z.object({ terminalId: TerminalIdSchema }),
   },
@@ -1034,8 +1036,8 @@ export const methods = {
   /** Open the platform-selected shell in a session checkout or registered project. */
   'terminal.open': {
     params: z.union([
-      z.object({ threadId: z.string().min(1), ...TerminalSizeSchema.shape }).strict(),
-      z.object({ projectPath: z.string().min(1), ...TerminalSizeSchema.shape }).strict(),
+      z.object({ threadId: z.string().min(1), ...TerminalSizeSchema['shape'] }).strict(),
+      z.object({ projectPath: z.string().min(1), ...TerminalSizeSchema['shape'] }).strict(),
     ]),
     result: z.object({ terminalId: TerminalIdSchema }),
   },
@@ -1044,7 +1046,7 @@ export const methods = {
     result: z.object({}),
   },
   'terminal.resize': {
-    params: z.object({ terminalId: TerminalIdSchema, ...TerminalSizeSchema.shape }),
+    params: z.object({ terminalId: TerminalIdSchema, ...TerminalSizeSchema['shape'] }),
     result: z.object({}),
   },
   'terminal.close': {

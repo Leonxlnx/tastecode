@@ -33,11 +33,11 @@ const PROVIDERS = {
   api: { label: 'API connection', mark: 'custom' },
 } as const satisfies Record<ProviderId, ProviderPresentation>
 
-const ACP_AGENTS: Record<string, ProviderPresentation> = {
+const ACP_AGENTS = {
   gemini: { label: 'Gemini CLI', mark: 'gemini' },
   kimi: { label: 'Kimi CLI', mark: 'kimi' },
   qwen: { label: 'Qwen Code', mark: 'qwen' },
-}
+} satisfies Record<string, ProviderPresentation>
 
 export function providerPresentation(provider: ProviderId): ProviderPresentation {
   return PROVIDERS[provider]
@@ -79,7 +79,7 @@ export function agentPresentation(
   agentId: string,
   sourceName?: string | undefined,
 ): ProviderPresentation {
-  const known = ACP_AGENTS[agentId]
+  const known = Object.entries(ACP_AGENTS).find(([id]) => id === agentId)?.[1]
   return sourcePresentation({
     provider: 'acp',
     sourceName: sourceName?.trim() || known?.label || agentId,

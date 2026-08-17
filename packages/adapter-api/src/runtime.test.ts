@@ -229,9 +229,6 @@ describe('ApiAgentSession', () => {
     const completed = events
       .filter(
         (event): event is Extract<DomainEvent, { type: 'item.completed' }> =>
-          typeof event === 'object' &&
-          event !== null &&
-          'type' in event &&
           event.type === 'item.completed',
       )
       .map((event) => event.item)

@@ -1,24 +1,20 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { Transport } from '../transport.js'
+import { methods, type ResultOf } from '@harness/contracts'
+import { requiredInstance } from '../test-dom.js'
+import { TestTransport, type TestRequestResolver } from '../test-transport.js'
 import { SkillsSettings } from './SkillsSettings.js'
 
-const pickSkillFolder = vi.hoisted(() => vi.fn())
-vi.mock('../bridge.js', () => ({ pickSkillFolder }))
+const pickSkillFolder = vi.fn<() => Promise<string | undefined>>()
 
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
 })
 
-function client(request: (method: string, params: unknown) => Promise<unknown>): Transport {
-  return {
-    state: 'open',
-    request: vi.fn(request),
-    on: vi.fn(() => () => {}),
-    onState: vi.fn(() => () => {}),
-  } as unknown as Transport
+function client(request: TestRequestResolver): TestTransport {
+  return new TestTransport(request)
 }
 
 const skill = {
@@ -58,6 +54,7 @@ describe('Agent Skills settings', () => {
         providerName="Codex"
         projectPath="/work/project"
         projectName="Project"
+        pickSkillFolder={pickSkillFolder}
       />,
     )
 
@@ -69,20 +66,26 @@ describe('Agent Skills settings', () => {
     expect(screen.getByText(/screenshots/)).toBeTruthy()
     fireEvent.click(screen.getByRole('switch', { name: 'Disable Design Taste' }))
     await waitFor(() => {
-      expect(transport.request).toHaveBeenCalledWith('skills.setEnabled', {
-        provider: 'codex',
-        projectPath: '/work/project',
-        skillId: skill.id,
-        enabled: false,
+      expect(transport.requests).toContainEqual({
+        method: 'skills.setEnabled',
+        params: {
+          provider: 'codex',
+          projectPath: '/work/project',
+          skillId: skill.id,
+          enabled: false,
+        },
       })
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'Install from folder' }))
     expect(await screen.findByText('New Skill')).toBeTruthy()
-    expect(transport.request).toHaveBeenCalledWith('skills.installFromFolder', {
-      provider: 'codex',
-      projectPath: '/work/project',
-      folderPath: '/downloads/new-skill',
+    expect(transport.requests).toContainEqual({
+      method: 'skills.installFromFolder',
+      params: {
+        provider: 'codex',
+        projectPath: '/work/project',
+        folderPath: '/downloads/new-skill',
+      },
     })
   })
 
@@ -149,7 +152,7 @@ describe('Agent Skills settings', () => {
     expect(screen.getByText('Codex · Agent Skills status unavailable')).toBeTruthy()
     expect(screen.queryByText('Discovering skills…')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(transport.requests).toHaveLength(2))
   })
 
   it('reports a rejected folder picker without starting an install', async () => {
@@ -176,6 +179,7 @@ describe('Agent Skills settings', () => {
         providerName="Codex"
         projectPath="/work/project"
         projectName="Project"
+        pickSkillFolder={pickSkillFolder}
       />,
     )
 
@@ -188,31 +192,23 @@ describe('Agent Skills settings', () => {
     rejectPicker(new Error('Folder picker unavailable'))
 
     expect((await screen.findByRole('alert')).textContent).toContain('Folder picker unavailable')
-    expect(
-      vi
-        .mocked(transport.request)
-        .mock.calls.some(([method]) => method === 'skills.installFromFolder'),
-    ).toBe(false)
+    expect(transport.requests.some(({ method }) => method === 'skills.installFromFolder')).toBe(
+      false,
+    )
   })
 
   it('recovers inventory after the connection reopens', async () => {
-    let onState: ((state: 'open' | 'reconnecting') => void) | undefined
-    const transport = {
-      state: 'open',
-      request: vi
-        .fn()
-        .mockRejectedValueOnce(new Error('Connection to the server was lost.'))
-        .mockResolvedValueOnce({
-          capabilities: { inventory: true, configure: false, install: false },
-          skills: [],
-          errors: [],
-        }),
-      on: vi.fn(() => () => {}),
-      onState: vi.fn((listener: typeof onState) => {
-        onState = listener
-        return () => undefined
-      }),
-    } as unknown as Transport
+    let reads = 0
+    const transport = new TestTransport(async (method) => {
+      if (method !== 'skills.list') throw new Error(`unexpected ${method}`)
+      reads += 1
+      if (reads === 1) throw new Error('Connection to the server was lost.')
+      return {
+        capabilities: { inventory: true, configure: false, install: false },
+        skills: [],
+        errors: [],
+      }
+    })
     render(
       <SkillsSettings
         transport={transport}
@@ -224,8 +220,8 @@ describe('Agent Skills settings', () => {
     )
 
     expect(await screen.findByRole('alert')).toBeTruthy()
-    act(() => onState?.('reconnecting'))
-    act(() => onState?.('open'))
+    act(() => transport.emitState('reconnecting'))
+    act(() => transport.emitState('open'))
 
     expect(
       await screen.findByText('No Agent Skills have been imported into this project.'),
@@ -239,8 +235,8 @@ describe('Agent Skills settings', () => {
       finishToggle = resolve
     })
     const transport = client(async (method, params) => {
-      const projectPath = (params as { projectPath: string }).projectPath
       if (method === 'skills.list') {
+        const { projectPath } = methods[method].params.parse(params)
         return {
           capabilities: { inventory: true, configure: true, install: false },
           skills: [
@@ -279,7 +275,7 @@ describe('Agent Skills settings', () => {
     )
     expect(screen.getByText('Checking Codex Agent Skills support…')).toBeTruthy()
     const beta = await screen.findByRole('switch', { name: 'Disable Beta Skill' })
-    expect((beta as HTMLButtonElement).disabled).toBe(false)
+    expect(requiredInstance(beta, HTMLButtonElement).disabled).toBe(false)
 
     await act(async () => finishToggle?.({ enabled: false }))
 
@@ -287,9 +283,8 @@ describe('Agent Skills settings', () => {
   })
 
   it('keeps a confirmed toggle ahead of an older inventory refresh', async () => {
-    const listeners = new Map<string, (value: never) => void>()
-    let resolveRefresh: ((value: unknown) => void) | undefined
-    const staleRefresh = new Promise((resolve) => {
+    let resolveRefresh: ((value: ResultOf<'skills.list'>) => void) | undefined
+    const staleRefresh = new Promise<ResultOf<'skills.list'>>((resolve) => {
       resolveRefresh = resolve
     })
     let lists = 0
@@ -298,19 +293,11 @@ describe('Agent Skills settings', () => {
       skills: [{ ...skill, dependencyErrors: [], enabled: true }],
       errors: [],
     }
-    const transport = {
-      state: 'open',
-      request: vi.fn(async (method: string) => {
-        if (method === 'skills.list') return lists++ === 0 ? inventory : staleRefresh
-        if (method === 'skills.setEnabled') return { enabled: false }
-        throw new Error(`unexpected ${method}`)
-      }),
-      on: vi.fn((channel: string, listener: (value: never) => void) => {
-        listeners.set(channel, listener)
-        return () => listeners.delete(channel)
-      }),
-      onState: vi.fn(() => () => {}),
-    } as unknown as Transport
+    const transport = new TestTransport(async (method) => {
+      if (method === 'skills.list') return lists++ === 0 ? inventory : staleRefresh
+      if (method === 'skills.setEnabled') return { enabled: false }
+      throw new Error(`unexpected ${method}`)
+    })
     render(
       <SkillsSettings
         transport={transport}
@@ -323,10 +310,10 @@ describe('Agent Skills settings', () => {
 
     fireEvent.click(await screen.findByRole('switch', { name: 'Disable Design Taste' }))
     act(() =>
-      listeners.get('skills.changed')?.({
+      transport.emit('skills.changed', {
         provider: 'codex',
         projectPath: '/work/project',
-      } as never),
+      }),
     )
     expect(await screen.findByRole('switch', { name: 'Enable Design Taste' })).toBeTruthy()
 

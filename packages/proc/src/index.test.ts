@@ -11,6 +11,7 @@ describe('StdioJsonRpc', () => {
   it('forgets a timed-out request and still accepts the next reply', async () => {
     vi.useFakeTimers()
     try {
+      // SAFETY: StdioJsonRpc uses only these three streams and EventEmitter process events in this test.
       const child = new EventEmitter() as ChildProcessWithoutNullStreams
       child.stdin = new PassThrough()
       child.stdout = new PassThrough()

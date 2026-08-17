@@ -13,6 +13,7 @@ export function SkillsSettings(props: {
   providerName: string
   projectPath: string | undefined
   projectName: string | undefined
+  pickSkillFolder?: typeof pickSkillFolder | undefined
 }) {
   const [inventory, setInventory] = useState<Inventory>()
   const [loading, setLoading] = useState(false)
@@ -140,7 +141,7 @@ export function SkillsSettings(props: {
     setError(undefined)
     setBusy('install')
     try {
-      const folderPath = await pickSkillFolder()
+      const folderPath = await (props.pickSkillFolder ?? pickSkillFolder)()
       if (!folderPath || !isCurrentContext()) return
       const { skill } = await props.transport.request('skills.installFromFolder', {
         provider: props.provider,

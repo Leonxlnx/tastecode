@@ -1,3 +1,5 @@
+import { type BoundaryRecord, type BoundaryValue, list, record, string } from './parse.js'
+
 export const DESIGN_BRIEF_ATTACHMENT = 'tastecode://design-brief-v1'
 const LEGACY_DESIGN_BRIEF_ATTACHMENT = 'personal-harness://design-brief-v1'
 
@@ -28,7 +30,7 @@ export interface BriefingQuestion {
 
 export type BriefingOutput =
   | { status: 'questions'; message: string; questions: BriefingQuestion[]; brief: null }
-  | { status: 'complete'; message: string; questions: []; brief: unknown }
+  | { status: 'complete'; message: string; questions: []; brief: BoundaryRecord }
   | { status: 'not_design'; message: string; questions: []; brief: null }
 
 const PROTOCOL = `Return JSON only, without Markdown fences, using exactly one of these shapes:
@@ -113,14 +115,17 @@ export function parseBriefingOutput(text: string): BriefingOutput {
     }
   }
   if (value.status === 'complete') {
-    if (typeof value.brief !== 'object' || value.brief === null || Array.isArray(value.brief)) {
+    let brief: BoundaryRecord
+    try {
+      brief = record(value.brief, 'completed briefing output brief')
+    } catch {
       throw new Error('completed briefing output must contain a brief')
     }
     return {
       status: 'complete',
       message: string(value.message, 'message'),
       questions: [],
-      brief: value.brief,
+      brief,
     }
   }
   if (
@@ -138,41 +143,23 @@ export function parseBriefingOutput(text: string): BriefingOutput {
   }
 }
 
-function question(value: unknown): BriefingQuestion {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error('briefing question must be an object')
-  }
-  const record = value as Record<string, unknown>
-  if (!Array.isArray(record.options) || record.options.length === 0) {
+function question(value: BoundaryValue): BriefingQuestion {
+  const questionRecord = record(value, 'briefing question')
+  const options = list(questionRecord.options, 'briefing question options')
+  if (options.length === 0) {
     throw new Error('briefing question must contain options')
   }
   return {
-    id: string(record.id, 'question id'),
-    header: string(record.header, 'question header'),
-    question: string(record.question, 'question'),
-    allowOther: record.allowOther !== false,
-    options: record.options.map((option) => {
-      if (typeof option !== 'object' || option === null || Array.isArray(option)) {
-        throw new Error('briefing option must be an object')
-      }
-      const item = option as Record<string, unknown>
+    id: string(questionRecord.id, 'question id'),
+    header: string(questionRecord.header, 'question header'),
+    question: string(questionRecord.question, 'question'),
+    allowOther: questionRecord.allowOther !== false,
+    options: options.map((option) => {
+      const item = record(option, 'briefing option')
       return {
         label: string(item.label, 'option label'),
         description: string(item.description, 'option description'),
       }
     }),
   }
-}
-
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${field} must be an object`)
-  }
-  return value as Record<string, unknown>
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() === '')
-    throw new Error(`${field} must be a non-empty string`)
-  return value
 }

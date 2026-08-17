@@ -10,8 +10,10 @@ function createCanvasContext() {
     fillRect: vi.fn(),
     imageSmoothingEnabled: true,
     fillStyle: '',
-  } as unknown as CanvasRenderingContext2D
+  }
 }
+
+const canvasGetContext = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'getContext')
 
 beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(240)
@@ -22,6 +24,11 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  if (canvasGetContext) {
+    Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', canvasGetContext)
+  } else {
+    Reflect.deleteProperty(HTMLCanvasElement.prototype, 'getContext')
+  }
 })
 
 describe('DitherWaveform', () => {
@@ -29,10 +36,12 @@ describe('DitherWaveform', () => {
     const textureContext = createCanvasContext()
     const bloomContext = createCanvasContext()
 
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (
-      this: HTMLCanvasElement,
-    ) {
-      return this.classList.contains('dither-waveform__texture') ? textureContext : bloomContext
+    Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
+      configurable: true,
+      writable: true,
+      value: vi.fn(function (this: HTMLCanvasElement) {
+        return this.classList.contains('dither-waveform__texture') ? textureContext : bloomContext
+      }),
     })
 
     const { rerender } = render(<DitherWaveform levels={Array(48).fill(0)} />)

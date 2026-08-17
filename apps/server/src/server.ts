@@ -3,18 +3,14 @@ import path from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
+import { z } from 'zod'
 import { detectAgents } from '@harness/adapter-acp'
 import {
   ErrorCode,
   methods,
   PROTOCOL_VERSION,
   RequestSchema,
-  type DiffDecision,
   type MethodName,
-  type McpServerConfig,
-  type ParamsOf,
-  type ProviderId,
-  type SidebarSettings,
 } from '@harness/contracts'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath } from './orchestrator.js'
@@ -30,6 +26,11 @@ import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
 import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { listWorkspaceDirectory, readWorkspaceTextFile } from './workspace-files.js'
+import { propertiesWhen } from './properties-when.js'
+
+const BoundaryValueSchema = z.unknown()
+const FileSystemErrorSchema = z.object({ code: z.string() })
+type BoundaryValue = z.input<typeof BoundaryValueSchema>
 
 export const SERVER_VERSION = '0.0.0'
 export { DEFAULT_PORT } from './server-config.js'
@@ -176,7 +177,7 @@ export function startServer(
   }
 
   async function handleMessage(socket: WebSocket, raw: string): Promise<void> {
-    let parsed: unknown
+    let parsed: BoundaryValue
     try {
       parsed = JSON.parse(raw)
     } catch {
@@ -194,11 +195,11 @@ export function startServer(
     // 'toString' and friends pass a truthy check and then blow up on
     // spec.params — outside the try below, so no reply is ever sent and the
     // client's call hangs until the socket closes.
-    const spec = Object.hasOwn(methods, method) ? methods[method as MethodName] : undefined
-    if (!spec) {
+    if (!isMethodName(method)) {
       respondError(socket, id, ErrorCode.BAD_REQUEST, `unknown method: ${method}`)
       return
     }
+    const spec = methods[method]
 
     const decoded = spec.params.safeParse(params)
     if (!decoded.success) {
@@ -214,7 +215,7 @@ export function startServer(
     }
 
     try {
-      const result = await route(socket, method as MethodName, decoded.data)
+      const result = await route(socket, method, decoded.data)
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ id, result }))
     } catch (error) {
       respondError(
@@ -226,17 +227,21 @@ export function startServer(
     }
   }
 
-  async function route(socket: WebSocket, method: MethodName, params: unknown): Promise<unknown> {
+  async function route(
+    socket: WebSocket,
+    method: MethodName,
+    params: BoundaryValue,
+  ): Promise<BoundaryValue> {
     switch (method) {
       case 'client.capabilities':
         previewCapture.setCapability(
           socket,
-          (params as ParamsOf<'client.capabilities'>).previewCapture,
+          methods['client.capabilities'].params.parse(params).previewCapture,
         )
         return {}
 
       case 'preview.captureResult':
-        previewCapture.complete(socket, params as ParamsOf<'preview.captureResult'>)
+        previewCapture.complete(socket, methods['preview.captureResult'].params.parse(params))
         return {}
 
       case 'system.info':
@@ -253,18 +258,10 @@ export function startServer(
         return checkForUpdates()
 
       case 'search.sessions':
-        return store.searchSessions(
-          params as {
-            query: string
-            projectPath?: string
-            provider?: ProviderId
-            cursor?: string
-            limit?: number
-          },
-        )
+        return store.searchSessions(methods['search.sessions'].params.parse(params))
 
       case 'pullRequests.list': {
-        const p = params as ParamsOf<'pullRequests.list'>
+        const p = methods['pullRequests.list'].params.parse(params)
         return pullRequests.list(
           store.projects().map((project) => project.path),
           p.refresh ?? false,
@@ -272,7 +269,7 @@ export function startServer(
       }
 
       case 'pullRequests.detail': {
-        const p = params as ParamsOf<'pullRequests.detail'>
+        const p = methods['pullRequests.detail'].params.parse(params)
         return pullRequests.detail(
           p.repository,
           p.number,
@@ -282,17 +279,17 @@ export function startServer(
       }
 
       case 'pullRequests.files': {
-        const p = params as ParamsOf<'pullRequests.files'>
+        const p = methods['pullRequests.files'].params.parse(params)
         return pullRequests.files(p.repository, p.number, p.page ?? 1, p.refresh ?? false)
       }
 
       case 'pullRequests.metadataOptions': {
-        const p = params as ParamsOf<'pullRequests.metadataOptions'>
+        const p = methods['pullRequests.metadataOptions'].params.parse(params)
         return pullRequests.metadataOptions(p.repository, p.refresh ?? false)
       }
 
       case 'pullRequests.action': {
-        const p = params as ParamsOf<'pullRequests.action'>
+        const p = methods['pullRequests.action'].params.parse(params)
         return pullRequests.action(p.repository, p.number, p.action)
       }
 
@@ -304,31 +301,33 @@ export function startServer(
 
       case 'harnesses.upsert':
         return {
-          harness: orchestrator.upsertCustomHarness(params as ParamsOf<'harnesses.upsert'>),
+          harness: orchestrator.upsertCustomHarness(
+            methods['harnesses.upsert'].params.parse(params),
+          ),
         }
 
       case 'harnesses.verify': {
-        const p = params as ParamsOf<'harnesses.verify'>
+        const p = methods['harnesses.verify'].params.parse(params)
         return {
           verification: await orchestrator.verifyCustomHarness(p.harness, p.workspacePath),
         }
       }
 
       case 'harnesses.remove': {
-        const p = params as ParamsOf<'harnesses.remove'>
+        const p = methods['harnesses.remove'].params.parse(params)
         orchestrator.removeCustomHarness(p.harnessId)
         return {}
       }
 
       case 'providers.install': {
-        const p = params as ParamsOf<'providers.install'>
+        const p = methods['providers.install'].params.parse(params)
         const command = installCommandFor(p.provider, p.agent)
         const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
         return { terminalId: orchestrator.installProvider(target, command, p.columns, p.rows) }
       }
 
       case 'providers.launch': {
-        const p = params as ParamsOf<'providers.launch'>
+        const p = methods['providers.launch'].params.parse(params)
         const command = launchCommandFor(p.provider, p.agent)
         const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
         return {
@@ -341,85 +340,74 @@ export function startServer(
 
       case 'connections.upsert':
         return {
-          connection: orchestrator.upsertModelConnection(params as ParamsOf<'connections.upsert'>),
+          connection: orchestrator.upsertModelConnection(
+            methods['connections.upsert'].params.parse(params),
+          ),
         }
 
       case 'connections.setCredential': {
-        const p = params as { connectionId: string; apiKey: string }
+        const p = methods['connections.setCredential'].params.parse(params)
         orchestrator.setModelConnectionCredential(p.connectionId, p.apiKey)
         return { credentialConfigured: true }
       }
 
       case 'connections.remove': {
-        const p = params as { connectionId: string }
+        const p = methods['connections.remove'].params.parse(params)
         orchestrator.removeModelConnection(p.connectionId)
         return {}
       }
 
       case 'connections.models': {
-        const p = params as { connectionId: string }
+        const p = methods['connections.models'].params.parse(params)
         return { models: await orchestrator.listConnectionModels(p.connectionId) }
       }
 
       case 'mcp.list': {
-        const p = params as { provider: ProviderId; projectPath: string }
+        const p = methods['mcp.list'].params.parse(params)
         return orchestrator.listMcpServers(p.provider, p.projectPath)
       }
 
       case 'mcp.add': {
-        const p = params as {
-          provider: ProviderId
-          projectPath: string
-          server: McpServerConfig
-        }
+        const p = methods['mcp.add'].params.parse(params)
         orchestrator.addMcpServer(p.provider, p.projectPath, p.server)
         return {}
       }
 
       case 'mcp.update': {
-        const p = params as {
-          provider: ProviderId
-          projectPath: string
-          server: McpServerConfig
-        }
+        const p = methods['mcp.update'].params.parse(params)
         orchestrator.updateMcpServer(p.provider, p.projectPath, p.server)
         return {}
       }
 
       case 'mcp.remove': {
-        const p = params as { provider: ProviderId; projectPath: string; serverId: string }
+        const p = methods['mcp.remove'].params.parse(params)
         orchestrator.removeMcpServer(p.provider, p.projectPath, p.serverId)
         return {}
       }
 
       case 'mcp.reload': {
-        const p = params as { provider: ProviderId; projectPath: string }
+        const p = methods['mcp.reload'].params.parse(params)
         await orchestrator.reloadMcpServers(p.provider, p.projectPath)
         return {}
       }
 
       case 'mcp.startOAuth': {
-        const p = params as { provider: ProviderId; projectPath: string; serverId: string }
+        const p = methods['mcp.startOAuth'].params.parse(params)
         return orchestrator.startMcpOAuth(p.provider, p.projectPath, p.serverId)
       }
 
       case 'mcp.cancelOAuth': {
-        const p = params as { provider: ProviderId }
+        const p = methods['mcp.cancelOAuth'].params.parse(params)
         return orchestrator.cancelMcpOAuth(p.provider)
       }
 
       case 'skills.list': {
-        const p = params as { provider: ProviderId; projectPath: string }
+        const p = methods['skills.list'].params.parse(params)
         return orchestrator.listSkills(p.provider, p.projectPath)
       }
 
       case 'skills.setEnabled': {
-        const p = params as {
-          provider: ProviderId
-          projectPath: string
-          skillId: string
-          enabled: boolean
-        }
+        const p = methods['skills.setEnabled'].params.parse(params)
         return {
           enabled: await orchestrator.setSkillEnabled(
             p.provider,
@@ -431,55 +419,51 @@ export function startServer(
       }
 
       case 'skills.installFromFolder': {
-        const p = params as {
-          provider: ProviderId
-          projectPath: string
-          folderPath: string
-        }
+        const p = methods['skills.installFromFolder'].params.parse(params)
         return {
           skill: await orchestrator.installSkillFromFolder(p.provider, p.projectPath, p.folderPath),
         }
       }
 
       case 'auth.status': {
-        const p = params as { provider: ProviderId; agent?: string }
+        const p = methods['auth.status'].params.parse(params)
         return orchestrator.account(p.provider, p.agent)
       }
 
       case 'auth.startLogin': {
-        const p = params as { provider: ProviderId; agent?: string }
+        const p = methods['auth.startLogin'].params.parse(params)
         return orchestrator.startLogin(p.provider)
       }
 
       case 'auth.cancelLogin': {
-        const p = params as { provider: ProviderId; agent?: string; loginId: string }
+        const p = methods['auth.cancelLogin'].params.parse(params)
         await orchestrator.cancelLogin(p.provider, p.loginId)
         return {}
       }
 
       case 'auth.useApiKey': {
-        const p = params as { provider: ProviderId; agent?: string; apiKey: string }
+        const p = methods['auth.useApiKey'].params.parse(params)
         return orchestrator.useApiKey(p.provider, p.apiKey)
       }
 
       case 'auth.signOut': {
-        const p = params as { provider: ProviderId; agent?: string }
+        const p = methods['auth.signOut'].params.parse(params)
         await orchestrator.signOut(p.provider, p.agent)
         return {}
       }
 
       case 'workspace.info': {
-        const p = params as { path: string }
+        const p = methods['workspace.info'].params.parse(params)
         return readWorkspace(resolveWorkspacePath(p.path))
       }
 
       case 'workspace.branches': {
-        const p = params as { path: string }
+        const p = methods['workspace.branches'].params.parse(params)
         return { branches: await listWorkspaceBranches(resolveWorkspacePath(p.path)) }
       }
 
       case 'workspace.switchBranch': {
-        const p = params as { path: string; branch: string }
+        const p = methods['workspace.switchBranch'].params.parse(params)
         const localSessionRunning = store
           .threads(p.path)
           .some((thread) => !thread.worktreePath && orchestrator.isRunning(thread.id))
@@ -490,22 +474,22 @@ export function startServer(
       }
 
       case 'workspace.diff': {
-        const p = params as ParamsOf<'workspace.diff'>
+        const p = methods['workspace.diff'].params.parse(params)
         return readWorkspaceDiff(workspaceForRequest(store, p))
       }
 
       case 'workspace.listDirectory': {
-        const p = params as ParamsOf<'workspace.listDirectory'>
+        const p = methods['workspace.listDirectory'].params.parse(params)
         return listWorkspaceDirectory(workspaceForRequest(store, p), p.directory)
       }
 
       case 'workspace.readFile': {
-        const p = params as ParamsOf<'workspace.readFile'>
+        const p = methods['workspace.readFile'].params.parse(params)
         return readWorkspaceTextFile(workspaceForRequest(store, p), p.path)
       }
 
       case 'models.list': {
-        const p = params as { provider: ProviderId; agent?: string }
+        const p = methods['models.list'].params.parse(params)
         return { models: await orchestrator.listModels(p.provider, p.agent) }
       }
 
@@ -514,30 +498,30 @@ export function startServer(
 
       case 'backgroundModel.updateSettings':
         return orchestrator.updateBackgroundModelPreference(
-          params as ParamsOf<'backgroundModel.updateSettings'>,
+          methods['backgroundModel.updateSettings'].params.parse(params),
         )
 
       case 'backgroundModel.generateTitle': {
-        const p = params as ParamsOf<'backgroundModel.generateTitle'>
+        const p = methods['backgroundModel.generateTitle'].params.parse(params)
         return orchestrator.generateBackgroundTitle(p.threadId, p.prompt, p.expectedTitle)
       }
 
       case 'backgroundModel.generateCommitMessage': {
-        const p = params as ParamsOf<'backgroundModel.generateCommitMessage'>
+        const p = methods['backgroundModel.generateCommitMessage'].params.parse(params)
         const diff = await readWorkspaceDiff(workspaceForRequest(store, p))
         return { message: await orchestrator.generateBackgroundCommitMessage(diff) }
       }
 
       case 'voice.status': {
-        const p = params as { provider: ProviderId }
+        const p = methods['voice.status'].params.parse(params)
         return orchestrator.voiceStatus(p.provider)
       }
 
       case 'voice.transcribe':
-        return orchestrator.transcribeVoice(params as ParamsOf<'voice.transcribe'>)
+        return orchestrator.transcribeVoice(methods['voice.transcribe'].params.parse(params))
 
       case 'voice.cancel': {
-        const p = params as { requestId: string }
+        const p = methods['voice.cancel'].params.parse(params)
         orchestrator.cancelVoice(p.requestId)
         return {}
       }
@@ -551,8 +535,8 @@ export function startServer(
             installed,
             verified,
             setup,
-            ...(install === undefined ? {} : { install }),
-            ...(problem === undefined ? {} : { problem }),
+            ...propertiesWhen(!(install === undefined), () => ({ install })),
+            ...propertiesWhen(!(problem === undefined), () => ({ problem })),
           })),
         }
       }
@@ -567,39 +551,41 @@ export function startServer(
               title: thread.title,
               pinned: thread.pinned,
               provider: thread.provider,
-              ...(thread.agent === undefined ? {} : { agent: thread.agent }),
+              ...propertiesWhen(!(thread.agent === undefined), () => ({ agent: thread.agent })),
               createdAt: thread.createdAt,
               running: orchestrator.isTurnRunning(thread.id),
               status: orchestrator.inboxStatus(thread.id),
               unread: thread.unread,
               lifecycle: thread.lifecycle,
-              ...(thread.worktreeBranch === undefined
-                ? {}
-                : { worktreeBranch: thread.worktreeBranch }),
-              ...(thread.closedAt === undefined ? {} : { closedAt: thread.closedAt }),
+              ...propertiesWhen(!(thread.worktreeBranch === undefined), () => ({
+                worktreeBranch: thread.worktreeBranch,
+              })),
+              ...propertiesWhen(!(thread.closedAt === undefined), () => ({
+                closedAt: thread.closedAt,
+              })),
             })),
           })),
         }
 
       case 'projects.add': {
-        const p = params as { path: string; name?: string }
+        const p = methods['projects.add'].params.parse(params)
         return store.addProject(p.path, p.name)
       }
 
       case 'projects.pin': {
-        const p = params as { path: string; pinned: boolean }
+        const p = methods['projects.pin'].params.parse(params)
         store.setPinned(p.path, p.pinned)
         return {}
       }
 
       case 'projects.rename': {
-        const p = params as { path: string; name: string }
+        const p = methods['projects.rename'].params.parse(params)
         store.renameProject(p.path, p.name)
         return {}
       }
 
       case 'projects.remove': {
-        const p = params as { path: string }
+        const p = methods['projects.remove'].params.parse(params)
         // An isolated session's checkout can only be discarded through its
         // own thread id, and removing the project hides every one of them
         // from the sidebar — so the worktree and its branch would survive
@@ -621,7 +607,7 @@ export function startServer(
       }
 
       case 'terminal.open': {
-        const p = params as ParamsOf<'terminal.open'>
+        const p = methods['terminal.open'].params.parse(params)
         return {
           terminalId:
             'threadId' in p
@@ -631,69 +617,69 @@ export function startServer(
       }
 
       case 'terminal.input': {
-        const p = params as { terminalId: string; data: string }
+        const p = methods['terminal.input'].params.parse(params)
         orchestrator.writeTerminal(p.terminalId, p.data)
         return {}
       }
 
       case 'terminal.resize': {
-        const p = params as { terminalId: string; columns: number; rows: number }
+        const p = methods['terminal.resize'].params.parse(params)
         orchestrator.resizeTerminal(p.terminalId, p.columns, p.rows)
         return {}
       }
 
       case 'terminal.close': {
-        const p = params as { terminalId: string }
+        const p = methods['terminal.close'].params.parse(params)
         orchestrator.closeTerminal(p.terminalId)
         return {}
       }
 
       case 'attachments.saveImage': {
-        const p = params as ParamsOf<'attachments.saveImage'>
+        const p = methods['attachments.saveImage'].params.parse(params)
         return {
           path: await materializeAttachment({ name: imageFileName(p.mimeType), data: p.data }),
         }
       }
 
       case 'thread.rename': {
-        const p = params as { threadId: string; title: string }
+        const p = methods['thread.rename'].params.parse(params)
         store.renameThread(p.threadId, p.title)
         return {}
       }
 
       case 'thread.pin': {
-        const p = params as { threadId: string; pinned: boolean }
+        const p = methods['thread.pin'].params.parse(params)
         store.setThreadPinned(p.threadId, p.pinned)
         return {}
       }
 
       case 'thread.settle': {
-        const p = params as { threadId: string }
+        const p = methods['thread.settle'].params.parse(params)
         return { lifecycle: orchestrator.settleThread(p.threadId) }
       }
 
       case 'thread.unsettle': {
-        const p = params as { threadId: string }
+        const p = methods['thread.unsettle'].params.parse(params)
         return { lifecycle: orchestrator.unsettleThread(p.threadId) }
       }
 
       case 'thread.snooze': {
-        const p = params as { threadId: string; wakeAt: number }
+        const p = methods['thread.snooze'].params.parse(params)
         return { lifecycle: orchestrator.snoozeThread(p.threadId, p.wakeAt) }
       }
 
       case 'thread.unsnooze': {
-        const p = params as { threadId: string }
+        const p = methods['thread.unsnooze'].params.parse(params)
         return { lifecycle: orchestrator.unsnoozeThread(p.threadId) }
       }
 
       case 'thread.setKeepActive': {
-        const p = params as { threadId: string; keepActive: boolean }
+        const p = methods['thread.setKeepActive'].params.parse(params)
         return { lifecycle: orchestrator.setThreadKeepActive(p.threadId, p.keepActive) }
       }
 
       case 'thread.delete': {
-        const p = params as { threadId: string }
+        const p = methods['thread.delete'].params.parse(params)
         if (store.thread(p.threadId)?.worktreePath) {
           throw new Error('discard the isolated session checkout before deleting it')
         }
@@ -703,7 +689,7 @@ export function startServer(
       }
 
       case 'thread.history': {
-        const p = params as { threadId: string; afterSeq?: number }
+        const p = methods['thread.history'].params.parse(params)
         const result = {
           events: await orchestrator.history(p.threadId, p.afterSeq ?? 0),
           running: orchestrator.isTurnRunning(p.threadId),
@@ -713,43 +699,32 @@ export function startServer(
       }
 
       case 'thread.diff': {
-        const p = params as { threadId: string }
+        const p = methods['thread.diff'].params.parse(params)
         return orchestrator.diff(p.threadId)
       }
 
       case 'thread.undoTurnChanges': {
-        const p = params as { threadId: string; turnId: string; expectedDiff: string }
+        const p = methods['thread.undoTurnChanges'].params.parse(params)
         await orchestrator.undoTurnChanges(p.threadId, p.turnId, p.expectedDiff)
         return {}
       }
 
       case 'thread.reviewHunk': {
-        const p = params as {
-          threadId: string
-          version: string
-          path: string
-          hunkId: string
-          decision: DiffDecision
-        }
+        const p = methods['thread.reviewHunk'].params.parse(params)
         return {
           diff: await orchestrator.reviewHunk(p.threadId, p.version, p.path, p.hunkId, p.decision),
         }
       }
 
       case 'thread.reviewFile': {
-        const p = params as {
-          threadId: string
-          version: string
-          path: string
-          decision: DiffDecision
-        }
+        const p = methods['thread.reviewFile'].params.parse(params)
         return {
           diff: await orchestrator.reviewFile(p.threadId, p.version, p.path, p.decision),
         }
       }
 
       case 'usage.summary': {
-        const p = params as { threadId: string } | { provider: ProviderId }
+        const p = methods['usage.summary'].params.parse(params)
         const thread = 'threadId' in p ? store.thread(p.threadId) : undefined
         if ('threadId' in p && !thread) throw new Error('thread not found')
         const provider = thread?.provider ?? ('provider' in p ? p.provider : undefined)
@@ -773,7 +748,7 @@ export function startServer(
       }
 
       case 'sideChat.start': {
-        const p = params as ParamsOf<'sideChat.start'>
+        const p = methods['sideChat.start'].params.parse(params)
         const thread = await orchestrator.startSideThread(p.parentThreadId, {
           model: p.model,
           serviceTier: p.serviceTier,
@@ -784,23 +759,13 @@ export function startServer(
       }
 
       case 'sideChat.close': {
-        const p = params as ParamsOf<'sideChat.close'>
+        const p = methods['sideChat.close'].params.parse(params)
         orchestrator.closeSideThread(p.threadId)
         return {}
       }
 
       case 'thread.start': {
-        const p = params as {
-          provider: ProviderId
-          agent?: string
-          connectionId?: string
-          workspacePath: string
-          model?: string
-          serviceTier?: string
-          effort?: string
-          approval?: 'ask' | 'auto' | 'auto-review' | 'full'
-          isolate?: boolean
-        }
+        const p = methods['thread.start'].params.parse(params)
         const thread = await orchestrator.startThread(p.provider, p.workspacePath, {
           model: p.model,
           serviceTier: p.serviceTier,
@@ -814,7 +779,7 @@ export function startServer(
       }
 
       case 'thread.checkpoints': {
-        const p = params as { threadId: string }
+        const p = methods['thread.checkpoints'].params.parse(params)
         return {
           checkpoints: orchestrator.checkpoints(p.threadId).map((entry) => ({
             id: entry.id,
@@ -826,23 +791,23 @@ export function startServer(
       }
 
       case 'thread.changedSince': {
-        const p = params as { threadId: string; checkpointId: number }
+        const p = methods['thread.changedSince'].params.parse(params)
         return { files: await orchestrator.changedSinceCheckpoint(p.threadId, p.checkpointId) }
       }
 
       case 'thread.restore': {
-        const p = params as { threadId: string; checkpointId: number }
+        const p = methods['thread.restore'].params.parse(params)
         return orchestrator.restoreCheckpoint(p.threadId, p.checkpointId)
       }
 
       case 'thread.undoRestore': {
-        const p = params as { threadId: string; undo: string }
+        const p = methods['thread.undoRestore'].params.parse(params)
         await orchestrator.undoRestore(p.threadId, p.undo)
         return {}
       }
 
       case 'thread.unsavedWork': {
-        const p = params as { threadId: string }
+        const p = methods['thread.unsavedWork'].params.parse(params)
         const stored = store.thread(p.threadId)
         return {
           isolated: stored?.worktreePath !== undefined,
@@ -851,13 +816,13 @@ export function startServer(
       }
 
       case 'thread.discardWorktree': {
-        const p = params as { threadId: string; force?: boolean }
+        const p = methods['thread.discardWorktree'].params.parse(params)
         await orchestrator.discardWorktree(p.threadId, p.force ?? false)
         return {}
       }
 
       case 'thread.sendTurn': {
-        const p = params as ParamsOf<'thread.sendTurn'>
+        const p = methods['thread.sendTurn'].params.parse(params)
         return {
           ...(await orchestrator.submitTurn(
             p.threadId,
@@ -874,66 +839,54 @@ export function startServer(
       }
 
       case 'thread.queue': {
-        const p = params as { threadId: string }
+        const p = methods['thread.queue'].params.parse(params)
         return orchestrator.queue(p.threadId)
       }
 
       case 'thread.deleteQueuedTurn': {
-        const p = params as { threadId: string; queuedTurnId: string }
+        const p = methods['thread.deleteQueuedTurn'].params.parse(params)
         orchestrator.deleteQueuedTurn(p.threadId, p.queuedTurnId)
         return {}
       }
 
       case 'thread.moveQueuedTurn': {
-        const p = params as {
-          threadId: string
-          queuedTurnId: string
-          direction: 'up' | 'down'
-        }
+        const p = methods['thread.moveQueuedTurn'].params.parse(params)
         orchestrator.moveQueuedTurn(p.threadId, p.queuedTurnId, p.direction)
         return {}
       }
 
       case 'thread.steerQueuedTurn': {
-        const p = params as { threadId: string; queuedTurnId: string }
+        const p = methods['thread.steerQueuedTurn'].params.parse(params)
         await orchestrator.steerQueuedTurn(p.threadId, p.queuedTurnId)
         return {}
       }
 
       case 'thread.respondToApproval': {
-        const p = params as {
-          threadId: string
-          approvalId: string
-          decision: 'approve' | 'approve-session' | 'deny' | 'abort'
-        }
+        const p = methods['thread.respondToApproval'].params.parse(params)
         orchestrator.respondToApproval(p.threadId, p.approvalId, p.decision)
         return {}
       }
 
       case 'thread.respondToUserInput': {
-        const p = params as {
-          threadId: string
-          requestId: string
-          answers: Record<string, string[]>
-        }
+        const p = methods['thread.respondToUserInput'].params.parse(params)
         orchestrator.respondToUserInput(p.threadId, p.requestId, p.answers)
         return {}
       }
 
       case 'thread.interrupt': {
-        const p = params as { threadId: string }
+        const p = methods['thread.interrupt'].params.parse(params)
         await orchestrator.interrupt(p.threadId)
         return {}
       }
 
       case 'thread.setApproval': {
-        const p = params as { threadId: string; approval: 'ask' | 'auto' | 'auto-review' | 'full' }
+        const p = methods['thread.setApproval'].params.parse(params)
         await orchestrator.setThreadApproval(p.threadId, p.approval)
         return {}
       }
 
       case 'thread.close': {
-        const p = params as { threadId: string }
+        const p = methods['thread.close'].params.parse(params)
         await orchestrator.close(p.threadId)
         return {}
       }
@@ -942,7 +895,16 @@ export function startServer(
         return store.sidebarSettings()
 
       case 'sidebar.updateSettings': {
-        const settings = store.updateSidebarSettings(params as Partial<SidebarSettings>)
+        const update = methods['sidebar.updateSettings'].params.parse(params)
+        const settings = store.updateSidebarSettings({
+          ...propertiesWhen(update.mode, (mode) => ({ mode })),
+          ...propertiesWhen(
+            update.autoSettleDays === undefined
+              ? undefined
+              : { autoSettleDays: update.autoSettleDays },
+            (includedAutoSettleDays) => includedAutoSettleDays,
+          ),
+        })
         push.broadcast('sidebar.settings', settings)
         orchestrator.refreshLifecycle()
         return settings
@@ -958,7 +920,12 @@ export function startServer(
     detail?: string,
   ): void {
     if (socket.readyState !== socket.OPEN) return
-    socket.send(JSON.stringify({ id, error: { code, message, ...(detail ? { detail } : {}) } }))
+    socket.send(
+      JSON.stringify({
+        id,
+        error: { code, message, ...propertiesWhen(detail, (detail) => ({ detail })) },
+      }),
+    )
   }
 
   console.log(`[server] listening on ws://${host}:${port}`)
@@ -1038,12 +1005,17 @@ function workspaceForRequest(
   return resolveWorkspacePath(thread.worktreePath ?? project.path)
 }
 
-function messageOf(error: unknown): string {
+function isMethodName(method: string): method is MethodName {
+  return Object.hasOwn(methods, method)
+}
+
+function messageOf(error: BoundaryValue): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-export function clientErrorMessage(error: unknown): string {
-  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+export function clientErrorMessage(error: BoundaryValue): string {
+  const parsed = FileSystemErrorSchema.safeParse(error)
+  if (parsed.success && parsed.data.code === 'ENOENT') {
     return 'This project folder or workspace item is unavailable. Choose another project or add the folder again.'
   }
   return messageOf(error)

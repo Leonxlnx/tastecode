@@ -8,6 +8,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk'
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { killTree, spawnCli } from '@harness/proc'
+import { propertiesWhen } from './properties-when.js'
 
 export type ClaudeQueryRuntime = Pick<
   Query,
@@ -40,7 +41,7 @@ export function claudeSdkSpawner(
 ) {
   return (options: SpawnOptions): SpawnedProcess => {
     const child = spawn(options.command, options.args, {
-      ...(options.cwd ? { cwd: options.cwd } : {}),
+      ...propertiesWhen(options.cwd, (includedValue) => ({ cwd: includedValue })),
       env: options.env,
       replaceEnv: true,
     })

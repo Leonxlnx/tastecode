@@ -4,12 +4,14 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { killTree, readNdjson } from '@harness/proc'
+import { z } from 'zod'
 import {
   collapseAntigravityModels,
   getAntigravityIndex,
   rememberAntigravityIndex,
   resolveAntigravityModel,
 } from './models.js'
+import { propertiesWhen } from './properties-when.js'
 
 /**
  * Tier 3 adapter: drives Google's Antigravity CLI (`agy`) in headless
@@ -107,25 +109,34 @@ export function antigravityCommand(): string {
   return existsSync(installed) ? installed : 'agy.exe'
 }
 
-type AgyFrame = {
-  event?: string
-  conversation_id?: string
-  step_update?: {
-    state?: string
-    step_type?: string
-    text_delta?: string
-    usage?: AgyUsage
-  }
-  result?: { conversation_id?: string; status?: string; response?: string; usage?: AgyUsage }
-}
+const AgyUsageSchema = z.object({
+  input_tokens: z.number().optional(),
+  output_tokens: z.number().optional(),
+  thinking_tokens: z.number().optional(),
+  cache_read_tokens: z.number().optional(),
+  total_tokens: z.number().optional(),
+})
 
-type AgyUsage = {
-  input_tokens?: number
-  output_tokens?: number
-  thinking_tokens?: number
-  cache_read_tokens?: number
-  total_tokens?: number
-}
+const AgyFrameSchema = z.object({
+  event: z.string().optional(),
+  conversation_id: z.string().optional(),
+  step_update: z
+    .object({
+      state: z.string().optional(),
+      step_type: z.string().optional(),
+      text_delta: z.string().optional(),
+      usage: AgyUsageSchema.optional(),
+    })
+    .optional(),
+  result: z
+    .object({
+      conversation_id: z.string().optional(),
+      status: z.string().optional(),
+      response: z.string().optional(),
+      usage: AgyUsageSchema.optional(),
+    })
+    .optional(),
+})
 
 export type AntigravityAdapterEvents = {
   event: [DomainEvent]
@@ -226,7 +237,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     readNdjson(
       child.stdout,
       (value) => {
-        const frame = value as AgyFrame
+        const frame = AgyFrameSchema.parse(value)
         if (frame.event === 'init' && frame.conversation_id) {
           this.#conversationId = frame.conversation_id
           return
@@ -276,7 +287,9 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
             this.emit('event', {
               type: 'usage.updated',
               usage: {
-                ...(this.#options.model ? { model: this.#options.model } : {}),
+                ...propertiesWhen(this.#options.model, (includedValue) => ({
+                  model: includedValue,
+                })),
                 inputTokens: usage.input_tokens ?? 0,
                 cachedInputTokens: usage.cache_read_tokens ?? 0,
                 outputTokens: (usage.output_tokens ?? 0) + reasoningTokens,
@@ -354,7 +367,8 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
         if (settled) return
         settled = true
         clearTimeout(timer)
-        result instanceof Error ? reject(result) : resolve(result)
+        if (result instanceof Error) reject(result)
+        else resolve(result)
       }
       const timer = setTimeout(() => {
         killTree(child)

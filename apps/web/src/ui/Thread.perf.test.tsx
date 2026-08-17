@@ -6,6 +6,21 @@ import { Thread, workLabel } from './Thread.js'
 import { makeFixtureThread } from './fixture.js'
 import { activeTurnIsSearching, emptyThread, reduce } from '../thread-store.js'
 
+function countItemReads(items: Item[], onRead: () => void): Item[] {
+  const counted = [...items]
+  counted.forEach((item, index) => {
+    Object.defineProperty(counted, index, {
+      configurable: true,
+      enumerable: true,
+      get() {
+        onRead()
+        return item
+      },
+    })
+  })
+  return counted
+}
+
 /**
  * Performance budgets, enforced rather than aspired to.
  *
@@ -268,11 +283,8 @@ describe('thread at scale', () => {
       createdAt: Date.now(),
     }
     let itemReads = 0
-    const items = new Proxy([...history, activeSearch, turnlessSteer, activeTail], {
-      get(target, property, receiver) {
-        if (typeof property === 'string' && /^\d+$/.test(property)) itemReads += 1
-        return Reflect.get(target, property, receiver)
-      },
+    const items = countItemReads([...history, activeSearch, turnlessSteer, activeTail], () => {
+      itemReads += 1
     })
 
     expect(activeTurnIsSearching(items, activeSearch.turnId)).toBe(true)
@@ -293,11 +305,8 @@ describe('thread at scale', () => {
       createdAt: Date.now(),
     }
     let itemReads = 0
-    const items = new Proxy([...history, turnlessSteer], {
-      get(target, property, receiver) {
-        if (typeof property === 'string' && /^\d+$/.test(property)) itemReads += 1
-        return Reflect.get(target, property, receiver)
-      },
+    const items = countItemReads([...history, turnlessSteer], () => {
+      itemReads += 1
     })
 
     expect(activeTurnIsSearching(items, 'active-turn')).toBe(false)

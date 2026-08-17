@@ -1,17 +1,23 @@
-import { EventEmitter } from 'node:events'
+import { ChildProcess } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { PassThrough } from 'node:stream'
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { DomainEvent } from '@harness/contracts'
 import { describe, expect, it } from 'vitest'
 import { CursorAdapter, CURSOR_CAPABILITIES } from './adapter.js'
 import { resetCursorIndexForTests } from './models.js'
 
-class FakeChild extends EventEmitter {
-  readonly stdin = new PassThrough()
-  readonly stdout = new PassThrough()
-  readonly stderr = new PassThrough()
-  killed = false
+class FakeChild extends ChildProcess {
+  override stdin = new PassThrough()
+  override stdout = new PassThrough()
+  override stderr = new PassThrough()
+  override stdio: [PassThrough, PassThrough, PassThrough, null, null] = [
+    this.stdin,
+    this.stdout,
+    this.stderr,
+    null,
+    null,
+  ]
+  override killed = false
 
   kill(): boolean {
     this.killed = true
@@ -27,7 +33,7 @@ describe('Cursor adapter', () => {
     const adapter = new CursorAdapter({
       spawn: (_command, value) => {
         args = value
-        return child as unknown as ChildProcessWithoutNullStreams
+        return child
       },
     })
     const events: DomainEvent[] = []
@@ -73,7 +79,7 @@ describe('Cursor adapter', () => {
     const adapter = new CursorAdapter({
       spawn: (_command, value) => {
         args = value
-        return child as unknown as ChildProcessWithoutNullStreams
+        return child
       },
     })
     const events: DomainEvent[] = []
@@ -138,7 +144,7 @@ describe('Cursor adapter', () => {
     // reported this successful turn as a crash.
     const child = new FakeChild()
     const adapter = new CursorAdapter({
-      spawn: () => child as unknown as ChildProcessWithoutNullStreams,
+      spawn: () => child,
     })
     const events: DomainEvent[] = []
     adapter.on('event', (event) => events.push(event))
@@ -166,7 +172,7 @@ describe('Cursor adapter', () => {
       spawn: () => {
         const child = new FakeChild()
         children.push(child)
-        return child as unknown as ChildProcessWithoutNullStreams
+        return child
       },
     })
     const events: DomainEvent[] = []
@@ -216,7 +222,7 @@ describe('Cursor adapter', () => {
       },
       spawn: (_command, value) => {
         args = value
-        return child as unknown as ChildProcessWithoutNullStreams
+        return child
       },
     })
     const thread = await adapter.startThread('C:\\repo', {
@@ -248,7 +254,7 @@ describe('Cursor adapter', () => {
       },
       spawn: (_command, value) => {
         args = value
-        return child as unknown as ChildProcessWithoutNullStreams
+        return child
       },
     })
     const thread = await adapter.startThread('C:\\repo', { model: 'gpt-5.3-codex' })

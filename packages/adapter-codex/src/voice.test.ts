@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   chatGptAccountIdFromToken,
   CodexVoiceTranscriber,
@@ -7,6 +8,12 @@ import {
   VoiceTranscriptionError,
   type VoiceTranscriptionInput,
 } from './voice.js'
+
+const AuthRequestSchema = z.object({
+  includeToken: z.boolean(),
+  refreshToken: z.boolean(),
+})
+type AuthRequest = z.infer<typeof AuthRequestSchema>
 
 describe('chatGptAccountIdFromToken', () => {
   it('reads the account routing claim without accepting malformed tokens', () => {
@@ -54,13 +61,17 @@ describe('validateVoiceClip', () => {
 
 describe('CodexVoiceTranscriber', () => {
   it('uses the Codex ChatGPT session to transcribe the validated WAV', async () => {
-    const calls: Array<{ method: string; params: unknown }> = []
-    const call = async <T>(method: string, params: unknown): Promise<T> => {
-      calls.push({ method, params })
-      return {
+    const calls: Array<{ method: string; params: AuthRequest }> = []
+    const call: ConstructorParameters<typeof CodexVoiceTranscriber>[0] = async (
+      method,
+      params,
+      result,
+    ) => {
+      calls.push({ method, params: AuthRequestSchema.parse(params) })
+      return result.parse({
         authMethod: 'chatgpt',
         authToken: 'voice-session',
-      } as T
+      })
     }
     const requests: Array<{ audio: Buffer; token: string }> = []
     const transcriber = new CodexVoiceTranscriber(call, async (audio, token) => {
@@ -84,13 +95,13 @@ describe('CodexVoiceTranscriber', () => {
     const refreshes: boolean[] = []
     const tokens: string[] = []
     const transcriber = new CodexVoiceTranscriber(
-      async <T>(_method: string, params: unknown) => {
-        const refresh = (params as { refreshToken: boolean }).refreshToken
+      async (_method, params, result) => {
+        const refresh = AuthRequestSchema.parse(params).refreshToken
         refreshes.push(refresh)
-        return {
+        return result.parse({
           authMethod: 'chatgpt',
           authToken: refresh ? 'fresh-session' : 'stale-session',
-        } as T
+        })
       },
       async (_audio, token) => {
         tokens.push(token)
@@ -108,9 +119,7 @@ describe('CodexVoiceTranscriber', () => {
   it('gates non-ChatGPT auth without uploading audio', async () => {
     let uploaded = false
     const transcriber = new CodexVoiceTranscriber(
-      async <T>() => {
-        return { authMethod: 'apikey', authToken: null } as T
-      },
+      async (_method, _params, result) => result.parse({ authMethod: 'apikey', authToken: null }),
       async () => {
         uploaded = true
         return { status: 200, body: '{}' }
@@ -126,7 +135,8 @@ describe('CodexVoiceTranscriber', () => {
   it('aborts an in-flight transcription request', async () => {
     const controller = new AbortController()
     const transcriber = new CodexVoiceTranscriber(
-      async <T>() => ({ authMethod: 'chatgpt', authToken: 'voice-session' }) as T,
+      async (_method, _params, result) =>
+        result.parse({ authMethod: 'chatgpt', authToken: 'voice-session' }),
       async (_audio, _token, signal) => {
         queueMicrotask(() => controller.abort())
         return new Promise<never>((_resolve, reject) => {

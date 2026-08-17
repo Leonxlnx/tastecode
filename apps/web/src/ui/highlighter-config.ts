@@ -21,10 +21,12 @@ export const COMMON_LANGUAGES = [
   'sql',
   'rust',
   'go',
-] as ReturnType<CodeHighlighterPlugin['getSupportedLanguages']>
+] satisfies ReturnType<CodeHighlighterPlugin['getSupportedLanguages']>
+
+type HighlightResult = NonNullable<ReturnType<CodeHighlighterPlugin['highlight']>>
 
 /** One token per line, no colours — the shape Streamdown expects. */
-export function plainHighlight(code: string) {
+export function plainHighlight(code: string): HighlightResult {
   return {
     tokens: code.split('\n').map((line) => [{ content: line }]),
   }

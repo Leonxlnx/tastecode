@@ -5,7 +5,9 @@ import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import { killTree, readNdjson } from '@harness/proc'
+import { JsonRpcValueSchema, killTree, readNdjson } from '@harness/proc'
+import { z } from 'zod'
+import { propertiesWhen } from './properties-when.js'
 
 /**
  * Tier 3 adapter: drives xAI's Grok Build CLI (`grok`) in headless
@@ -52,19 +54,19 @@ export const GROK_CAPABILITIES: Capabilities = {
   images: true,
 }
 
-const IMAGE_MIME_TYPES: Record<string, string> = {
-  '.gif': 'image/gif',
-  '.jpeg': 'image/jpeg',
-  '.jpg': 'image/jpeg',
-  '.png': 'image/png',
-  '.webp': 'image/webp',
-}
+const IMAGE_MIME_TYPES = new Map<string, string>([
+  ['.gif', 'image/gif'],
+  ['.jpeg', 'image/jpeg'],
+  ['.jpg', 'image/jpeg'],
+  ['.png', 'image/png'],
+  ['.webp', 'image/webp'],
+])
 
 export function grokPromptJson(text: string, attachments: string[]): string {
   return JSON.stringify([
     { type: 'text', text },
     ...attachments.map((file) => {
-      const mimeType = IMAGE_MIME_TYPES[path.extname(file).toLowerCase()]
+      const mimeType = IMAGE_MIME_TYPES.get(path.extname(file).toLowerCase())
       return mimeType
         ? {
             type: 'image',
@@ -92,16 +94,22 @@ type GrokModelDetails = {
   defaultReasoningEffort: string
 }
 
-const GROK_MODEL_DETAILS: Readonly<Record<string, GrokModelDetails>> = {
-  'grok-4.6': {
-    reasoningEfforts: GROK_4_6_EFFORTS,
-    defaultReasoningEffort: 'high',
-  },
-  'grok-4.5': {
-    reasoningEfforts: GROK_EFFORTS,
-    defaultReasoningEffort: 'high',
-  },
-}
+const GROK_MODEL_DETAILS = new Map<string, GrokModelDetails>([
+  [
+    'grok-4.6',
+    {
+      reasoningEfforts: GROK_4_6_EFFORTS,
+      defaultReasoningEffort: 'high',
+    },
+  ],
+  [
+    'grok-4.5',
+    {
+      reasoningEfforts: GROK_EFFORTS,
+      defaultReasoningEffort: 'high',
+    },
+  ],
+])
 
 export type GrokStartOptions = {
   instructions?: string | undefined
@@ -157,26 +165,40 @@ export function grokCommand(): string {
   return existsSync(installed) ? installed : 'grok'
 }
 
-type GrokFrame = {
-  type?: string
-  data?: string
-  toolCallId?: string
-  toolName?: string
-  title?: string
-  status?: string | null
-  rawInput?: { file_path?: string; command?: string }
-  content?: unknown
-  rawOutput?: unknown
-  stopReason?: string
-  sessionId?: string
-  total_cost_usd?: number
-  usage?: {
-    input_tokens?: number
-    output_tokens?: number
-    reasoning_tokens?: number
-    cache_read_input_tokens?: number
-    total_tokens?: number
-  }
+const GrokFrameSchema = z.object({
+  type: z.string().optional(),
+  data: z.string().optional(),
+  toolCallId: z.string().optional(),
+  toolName: z.string().optional(),
+  title: z.string().optional(),
+  status: z.string().nullable().optional(),
+  rawInput: z
+    .object({ file_path: z.string().optional(), command: z.string().optional() })
+    .optional(),
+  content: JsonRpcValueSchema.optional(),
+  rawOutput: JsonRpcValueSchema.optional(),
+  stopReason: z.string().optional(),
+  sessionId: z.string().optional(),
+  total_cost_usd: z.number().optional(),
+  usage: z
+    .object({
+      input_tokens: z.number().optional(),
+      output_tokens: z.number().optional(),
+      reasoning_tokens: z.number().optional(),
+      cache_read_input_tokens: z.number().optional(),
+      total_tokens: z.number().optional(),
+    })
+    .optional(),
+})
+
+type GrokFrame = z.infer<typeof GrokFrameSchema>
+
+type OpenTool = {
+  itemId: string
+  itemType: 'command' | 'file_change' | 'tool_call'
+  label: string
+  command?: string
+  path?: string
 }
 
 export type GrokAdapterEvents = {
@@ -285,26 +307,22 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     const reasoning = new StreamedItem(`${turnId}-reasoning`)
     let toolCounter = 0
     /** toolCallId -> the open item it maps to. */
-    const tools = new Map<
-      string,
-      {
-        itemId: string
-        itemType: 'command' | 'file_change' | 'tool_call'
-        label: string
-        command?: string
-        path?: string
-      }
-    >()
+    const tools = new Map<string, OpenTool>()
 
     readNdjson(
       child.stdout,
       (value) => {
-        const frame = value as GrokFrame
-        if (frame.type === 'thought' && typeof frame.data === 'string') {
+        const parsed = GrokFrameSchema.safeParse(value)
+        if (!parsed.success) {
+          this.emit('log', `unrecognized Grok frame: ${JSON.stringify(value).slice(0, 200)}`)
+          return
+        }
+        const frame = parsed.data
+        if (frame.type === 'thought' && frame.data !== undefined) {
           if (reasoning.push(frame.data, turnId, 'reasoning', this)) return
           return
         }
-        if (frame.type === 'text' && typeof frame.data === 'string') {
+        if (frame.type === 'text' && frame.data !== undefined) {
           message.push(frame.data, turnId, 'message', this)
           return
         }
@@ -323,9 +341,13 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
             itemId,
             itemType,
             label: frame.title ?? name,
-            ...(frame.rawInput?.command ? { command: frame.rawInput.command } : {}),
-            ...(frame.rawInput?.file_path ? { path: frame.rawInput.file_path } : {}),
-          } as const
+            ...propertiesWhen(frame.rawInput?.command, (includedValue) => ({
+              command: includedValue,
+            })),
+            ...propertiesWhen(frame.rawInput?.file_path, (includedValue) => ({
+              path: includedValue,
+            })),
+          } satisfies OpenTool
           tools.set(frame.toolCallId, entry)
           this.emit('event', {
             type: 'item.started',
@@ -334,11 +356,13 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
               turnId,
               type: itemType,
               status: 'started',
-              ...(itemType === 'command'
-                ? { command: frame.rawInput?.command ?? entry.label }
-                : {}),
-              ...(itemType === 'file_change' && entry.path ? { path: entry.path } : {}),
-              ...(itemType === 'tool_call' ? { text: entry.label } : {}),
+              ...propertiesWhen(itemType === 'command', () => ({
+                command: frame.rawInput?.command ?? entry.label,
+              })),
+              ...propertiesWhen(itemType === 'file_change' && entry.path, () => ({
+                path: entry.path,
+              })),
+              ...propertiesWhen(itemType === 'tool_call', () => ({ text: entry.label })),
               createdAt: Date.now(),
             },
           })
@@ -355,14 +379,19 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
               turnId,
               type: entry.itemType,
               status: frame.status === 'failed' ? 'failed' : 'completed',
-              ...(entry.itemType === 'command'
-                ? { command: entry.command ?? entry.label, ...(output ? { text: output } : {}) }
-                : {}),
-              ...(entry.itemType === 'file_change' && entry.path ? { path: entry.path } : {}),
-              ...(entry.itemType === 'file_change' && output ? { text: output } : {}),
-              ...(entry.itemType === 'tool_call'
-                ? { text: output ? `${entry.label}\n${output}` : entry.label }
-                : {}),
+              ...propertiesWhen(entry.itemType === 'command', () => ({
+                command: entry.command ?? entry.label,
+                ...propertiesWhen(output, (includedValue) => ({ text: includedValue })),
+              })),
+              ...propertiesWhen(entry.itemType === 'file_change' && entry.path, () => ({
+                path: entry.path,
+              })),
+              ...propertiesWhen(entry.itemType === 'file_change' && output, () => ({
+                text: output,
+              })),
+              ...propertiesWhen(entry.itemType === 'tool_call', () => ({
+                text: output ? `${entry.label}\n${output}` : entry.label,
+              })),
               createdAt: Date.now(),
             },
           })
@@ -381,16 +410,18 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
             this.emit('event', {
               type: 'usage.updated',
               usage: {
-                ...(this.#options.model ? { model: this.#options.model } : {}),
+                ...propertiesWhen(this.#options.model, (includedValue) => ({
+                  model: includedValue,
+                })),
                 inputTokens: usage.input_tokens ?? 0,
                 cachedInputTokens: usage.cache_read_input_tokens ?? 0,
                 outputTokens: (usage.output_tokens ?? 0) + reasoningTokens,
                 reasoningTokens,
                 totalTokens: usage.total_tokens ?? 0,
                 inputIncludesCached: false,
-                ...(typeof frame.total_cost_usd === 'number'
-                  ? { costUsd: frame.total_cost_usd }
-                  : {}),
+                ...propertiesWhen(frame.total_cost_usd !== undefined, () => ({
+                  costUsd: frame.total_cost_usd,
+                })),
               },
             })
           }
@@ -502,7 +533,8 @@ function captureGrok(spawnFn: SpawnFn, args: string[], timeoutMs = 15000): Promi
       if (settled) return
       settled = true
       clearTimeout(timer)
-      result instanceof Error ? reject(result) : resolve(result)
+      if (result instanceof Error) reject(result)
+      else resolve(result)
     }
     const timer = setTimeout(() => {
       killTree(child)
@@ -524,7 +556,8 @@ function grokToolOutput(frame: GrokFrame): string | undefined {
     .map((value) => {
       if (value === null || value === undefined || value === '') return undefined
       if (Array.isArray(value) && value.length === 0) return undefined
-      return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+      const text = z.string().safeParse(value)
+      return text.success ? text.data : JSON.stringify(value, null, 2)
     })
     .filter((value): value is string => value !== undefined)
   const unique = [...new Set(parts)]
@@ -532,7 +565,9 @@ function grokToolOutput(frame: GrokFrame): string | undefined {
 }
 
 /** Auth as the CLI reports it on `grok models` — nothing else is read. */
-export async function grokAccount(): Promise<{ signedIn: boolean }> {
+export type GrokAccount = { signedIn: boolean }
+
+export async function grokAccount(): Promise<GrokAccount> {
   return parseGrokAccount(await captureGrok(spawn, ['models']))
 }
 
@@ -568,7 +603,7 @@ class StreamedItem {
           id: this.#id,
           turnId,
           type,
-          ...(type === 'message' ? { role: 'assistant' as const } : {}),
+          ...propertiesWhen(type === 'message', () => ({ role: 'assistant' as const })),
           status: 'started',
           text: '',
           createdAt: Date.now(),
@@ -593,7 +628,7 @@ class StreamedItem {
         id: this.#id,
         turnId,
         type,
-        ...(type === 'message' ? { role: 'assistant' as const } : {}),
+        ...propertiesWhen(type === 'message', () => ({ role: 'assistant' as const })),
         status: 'completed',
         text: this.#text.trimEnd(),
         createdAt: Date.now(),
@@ -635,13 +670,15 @@ export function parseGrokModels(output: string): Model[] {
     }
     foundModel = true
     const id = match[1]!
-    const details = GROK_MODEL_DETAILS[id]
+    const details = GROK_MODEL_DETAILS.get(id)
     models.push({
       id,
       displayName: grokDisplayName(id),
       isDefault: Boolean(match[2]),
       reasoningEfforts: details ? [...details.reasoningEfforts] : [],
-      ...(details ? { defaultReasoningEffort: details.defaultReasoningEffort } : {}),
+      ...propertiesWhen(details, (includedValue) => ({
+        defaultReasoningEffort: includedValue.defaultReasoningEffort,
+      })),
       serviceTiers: [],
     })
   }
@@ -662,7 +699,7 @@ export function grokDisplayName(id: string): string {
 }
 
 /** The CLI announces its own auth state on `grok models`. */
-export function parseGrokAccount(output: string): { signedIn: boolean } {
+export function parseGrokAccount(output: string): GrokAccount {
   return { signedIn: !/You are not authenticated/i.test(output) }
 }
 

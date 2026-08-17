@@ -8,9 +8,12 @@ import type {
   McpTool,
 } from '@harness/contracts'
 import type { JsonValue } from './generated/serde_json/JsonValue.js'
-import type { McpAuthStatus } from './generated/v2/McpAuthStatus.js'
-import type { McpServerStatus } from './generated/v2/McpServerStatus.js'
-import type { McpServerStatusUpdatedNotification } from './generated/v2/McpServerStatusUpdatedNotification.js'
+import { propertiesWhen } from './properties-when.js'
+import {
+  JsonObjectSchema,
+  type McpServerStatusUpdatedNotification,
+  type ParsedMcpServerStatus,
+} from './schemas.js'
 
 export const CODEX_MCP_CAPABILITIES: McpCapabilities = {
   inventory: true,
@@ -22,10 +25,15 @@ export const CODEX_MCP_CAPABILITIES: McpCapabilities = {
   cancelOAuth: false,
 }
 
+export type PreparedMcpConfig = {
+  servers: Record<string, JsonValue>
+  environment: NodeJS.ProcessEnv
+}
+
 export function prepareMcpConfig(
   servers: McpServerConfig[],
   credentials: Record<string, string>,
-): { servers: Record<string, JsonValue>; environment: NodeJS.ProcessEnv } {
+): PreparedMcpConfig {
   const result: Record<string, JsonValue> = {}
   const environment: NodeJS.ProcessEnv = {}
   const secret = (reference: string): string => {
@@ -48,9 +56,9 @@ export function prepareMcpConfig(
       result[server.id] = {
         command: server.transport.command,
         enabled: true,
-        ...(server.transport.args ? { args: server.transport.args } : {}),
-        ...(server.transport.cwd ? { cwd: server.transport.cwd } : {}),
-        ...(Object.keys(env).length ? { env } : {}),
+        ...propertiesWhen(server.transport.args, (includedValue) => ({ args: includedValue })),
+        ...propertiesWhen(server.transport.cwd, (includedValue) => ({ cwd: includedValue })),
+        ...propertiesWhen(Object.keys(env).length, () => ({ env })),
       }
       continue
     }
@@ -73,15 +81,17 @@ export function prepareMcpConfig(
     result[server.id] = {
       url: server.transport.url,
       enabled: true,
-      ...(Object.keys(httpHeaders).length ? { http_headers: httpHeaders } : {}),
-      ...(Object.keys(envHttpHeaders).length ? { env_http_headers: envHttpHeaders } : {}),
+      ...propertiesWhen(Object.keys(httpHeaders).length, () => ({ http_headers: httpHeaders })),
+      ...propertiesWhen(Object.keys(envHttpHeaders).length, () => ({
+        env_http_headers: envHttpHeaders,
+      })),
     }
   }
 
   return { servers: result, environment }
 }
 
-function auth(status: McpAuthStatus): McpAuth {
+function auth(status: ParsedMcpServerStatus['authStatus']): McpAuth {
   switch (status) {
     case 'notLoggedIn':
       return { status: 'sign_in_required', method: 'oauth' }
@@ -95,9 +105,8 @@ function auth(status: McpAuthStatus): McpAuth {
 }
 
 function objectSchema(value: JsonValue | undefined): McpTool['inputSchema'] | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as McpTool['inputSchema'])
-    : undefined
+  const parsed = JsonObjectSchema.safeParse(value)
+  return parsed.success ? parsed.data : undefined
 }
 
 export function mapMcpStartupStatus(status: McpServerStatusUpdatedNotification): McpStartupStatus {
@@ -143,16 +152,21 @@ export function mcpStartupInventory(
   )
 }
 
-export function mapMcpServerStatus(status: McpServerStatus, startup?: McpStartupStatus): McpServer {
+export function mapMcpServerStatus(
+  status: ParsedMcpServerStatus,
+  startup?: McpStartupStatus,
+): McpServer {
   const displayName =
     status.serverInfo?.title ??
     (status.serverInfo?.name !== status.name ? status.serverInfo?.name : undefined)
 
   return {
     id: status.name,
-    ...(displayName ? { displayName } : {}),
-    ...(status.serverInfo?.description ? { description: status.serverInfo.description } : {}),
-    ...(status.serverInfo?.version ? { version: status.serverInfo.version } : {}),
+    ...propertiesWhen(displayName, (displayName) => ({ displayName })),
+    ...propertiesWhen(status.serverInfo?.description, (includedValue) => ({
+      description: includedValue,
+    })),
+    ...propertiesWhen(status.serverInfo?.version, (includedValue) => ({ version: includedValue })),
     scope: 'global',
     enabled: true,
     auth: auth(status.authStatus),
@@ -164,29 +178,38 @@ export function mapMcpServerStatus(status: McpServerStatus, startup?: McpStartup
       return [
         {
           name: tool.name,
-          ...(tool.title ? { title: tool.title } : {}),
-          ...(tool.description !== undefined ? { description: tool.description } : {}),
+          ...propertiesWhen(tool.title, (includedValue) => ({ title: includedValue })),
+          ...propertiesWhen(tool.description !== undefined, () => ({
+            description: tool.description,
+          })),
           inputSchema,
-          ...(outputSchema ? { outputSchema } : {}),
+          ...propertiesWhen(outputSchema, (outputSchema) => ({ outputSchema })),
         },
       ]
     }),
-    resources: status.resources.map((resource) => ({
-      uri: resource.uri,
-      name: resource.name,
-      ...(resource.title ? { title: resource.title } : {}),
-      ...(resource.description !== undefined ? { description: resource.description } : {}),
-      ...(resource.mimeType ? { mimeType: resource.mimeType } : {}),
-      ...(Number.isSafeInteger(resource.size) && resource.size! >= 0
-        ? { size: resource.size }
-        : {}),
-    })),
+    resources: status.resources.map((resource) => {
+      const size = resource.size
+      return {
+        uri: resource.uri,
+        name: resource.name,
+        ...propertiesWhen(resource.title, (includedValue) => ({ title: includedValue })),
+        ...propertiesWhen(resource.description !== undefined, () => ({
+          description: resource.description,
+        })),
+        ...propertiesWhen(resource.mimeType, (includedValue) => ({ mimeType: includedValue })),
+        ...propertiesWhen(size !== undefined && Number.isSafeInteger(size) && size >= 0, () => ({
+          size,
+        })),
+      }
+    }),
     resourceTemplates: status.resourceTemplates.map((template) => ({
       uriTemplate: template.uriTemplate,
       name: template.name,
-      ...(template.title ? { title: template.title } : {}),
-      ...(template.description !== undefined ? { description: template.description } : {}),
-      ...(template.mimeType ? { mimeType: template.mimeType } : {}),
+      ...propertiesWhen(template.title, (includedValue) => ({ title: includedValue })),
+      ...propertiesWhen(template.description !== undefined, () => ({
+        description: template.description,
+      })),
+      ...propertiesWhen(template.mimeType, (includedValue) => ({ mimeType: includedValue })),
     })),
   }
 }

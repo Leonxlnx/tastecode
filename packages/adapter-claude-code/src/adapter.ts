@@ -20,8 +20,9 @@ import type {
   Thread,
   UserInputQuestion,
 } from '@harness/contracts'
-import { spawnCli } from '@harness/proc'
-import { toDomainEvents, toUsage, type ClaudeEvent } from './events.js'
+import { JsonRpcValueSchema, spawnCli } from '@harness/proc'
+import { z } from 'zod'
+import { ClaudeEventSchema, toDomainEvents, toUsage, type ClaudeEvent } from './events.js'
 import {
   claudeSdkSpawner,
   createClaudeQuery,
@@ -30,6 +31,7 @@ import {
   type ClaudeQueryRuntime,
   type ClaudeSpawn,
 } from './sdk-runtime.js'
+import { propertiesWhen } from './properties-when.js'
 
 /**
  * Claude Code is hosted through Anthropic's Agent SDK. The SDK keeps one
@@ -41,6 +43,57 @@ import {
 const SUPPORTED = '2.1'
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit'])
+const ToolLocationSchema = z.object({ cwd: z.string().optional() })
+const ToolInputSchema = z.record(z.string(), JsonRpcValueSchema)
+const ClaudeEffortSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
+const StreamEventSchema = z.object({
+  type: z.string(),
+  index: z.number().optional(),
+  message: z.object({ id: z.string().optional() }).optional(),
+  content_block: z
+    .object({
+      type: z.string().optional(),
+      id: z.string().optional(),
+      name: z.string().optional(),
+      input: ToolInputSchema.optional().catch({}),
+      text: z.string().optional(),
+      thinking: z.string().optional(),
+    })
+    .optional(),
+  delta: z
+    .object({
+      type: z.string().optional(),
+      text: z.string().optional(),
+      thinking: z.string().optional(),
+    })
+    .optional(),
+})
+const TodoInputSchema = z.object({
+  todos: z.array(
+    z.object({
+      content: z.coerce.string(),
+      status: z.coerce.string().optional(),
+    }),
+  ),
+})
+const UserInputSchema = z.object({
+  questions: z.array(
+    z.object({
+      question: z.coerce.string(),
+      header: z.coerce.string().optional(),
+      options: z
+        .array(
+          z.object({
+            label: z.coerce.string(),
+            description: z.coerce.string().optional(),
+          }),
+        )
+        .optional(),
+    }),
+  ),
+})
+
+type ToolInput = z.infer<typeof ToolInputSchema>
 
 export const CLAUDE_CAPABILITIES: Capabilities = {
   steer: true,
@@ -114,16 +167,16 @@ function claudeModel(
     isDefault,
     reasoningEfforts,
     serviceTiers: [],
-    ...(reasoningEfforts.length > 0 ? { defaultReasoningEffort } : {}),
+    ...propertiesWhen(reasoningEfforts.length > 0, () => ({ defaultReasoningEffort })),
   }
 }
 
-const PERMISSION_MODE: Record<ApprovalMode, PermissionMode> = {
+const PERMISSION_MODE = {
   ask: 'default',
   auto: 'acceptEdits',
   'auto-review': 'auto',
   full: 'bypassPermissions',
-}
+} satisfies Record<ApprovalMode, PermissionMode>
 
 export type ClaudeAdapterEvents = {
   event: [DomainEvent]
@@ -156,13 +209,15 @@ function applyClaudeTurnOptions(
   return merged
 }
 
-const IMAGE_MIME_TYPES: Record<string, string> = {
-  '.gif': 'image/gif',
-  '.jpeg': 'image/jpeg',
-  '.jpg': 'image/jpeg',
-  '.png': 'image/png',
-  '.webp': 'image/webp',
-}
+type ImageMediaType = 'image/gif' | 'image/jpeg' | 'image/png' | 'image/webp'
+
+const IMAGE_MIME_TYPES = new Map<string, ImageMediaType>([
+  ['.gif', 'image/gif'],
+  ['.jpeg', 'image/jpeg'],
+  ['.jpg', 'image/jpeg'],
+  ['.png', 'image/png'],
+  ['.webp', 'image/webp'],
+])
 
 /** Build one SDK user message; prompts and file contents never travel on argv. */
 export function claudeUserMessage(
@@ -170,7 +225,9 @@ export function claudeUserMessage(
   attachments: string[] = [],
   sessionId?: string,
 ): SDKUserMessage {
-  const files = attachments.filter((file) => !IMAGE_MIME_TYPES[path.extname(file).toLowerCase()])
+  const files = attachments.filter(
+    (file) => !IMAGE_MIME_TYPES.has(path.extname(file).toLowerCase()),
+  )
   const prompt = files.length
     ? `${text}\n\nAttached file paths:\n${files.map((file) => `- ${JSON.stringify(file)}`).join('\n')}`
     : text
@@ -182,15 +239,14 @@ export function claudeUserMessage(
       content: [
         { type: 'text', text: prompt },
         ...attachments.flatMap((file) => {
-          const mediaType = IMAGE_MIME_TYPES[path.extname(file).toLowerCase()]
+          const mediaType = IMAGE_MIME_TYPES.get(path.extname(file).toLowerCase())
           return mediaType
             ? [
                 {
                   type: 'image' as const,
                   source: {
                     type: 'base64' as const,
-                    media_type: mediaType as
-                      'image/gif' | 'image/jpeg' | 'image/png' | 'image/webp',
+                    media_type: mediaType,
                     data: readFileSync(file).toString('base64'),
                   },
                 },
@@ -201,7 +257,7 @@ export function claudeUserMessage(
     },
     parent_tool_use_id: null,
     uuid: crypto.randomUUID(),
-    ...(sessionId ? { session_id: sessionId } : {}),
+    ...propertiesWhen(sessionId, (includedValue) => ({ session_id: includedValue })),
   }
 }
 
@@ -241,14 +297,14 @@ class PromptQueue implements AsyncIterable<SDKUserMessage> {
 
 type PendingApproval = {
   finish(result: PermissionResult): void
-  input: Record<string, unknown>
+  input: ToolInput
   suggestions: NonNullable<Parameters<CanUseTool>[2]['suggestions']>
   toolUseId: string
 }
 
 type PendingUserInput = {
   finish(result: PermissionResult): void
-  input: Record<string, unknown>
+  input: ToolInput
   toolUseId: string
 }
 
@@ -392,9 +448,9 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       pending.finish({
         behavior: 'allow',
         updatedInput: pending.input,
-        ...(decision === 'approve-session' && pending.suggestions.length > 0
-          ? { updatedPermissions: pending.suggestions }
-          : {}),
+        ...propertiesWhen(decision === 'approve-session' && pending.suggestions.length > 0, () => ({
+          updatedPermissions: pending.suggestions,
+        })),
         ...common,
       })
       return
@@ -403,7 +459,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       behavior: 'deny',
       message:
         decision === 'abort' ? 'User cancelled tool execution.' : 'User declined tool execution.',
-      ...(decision === 'abort' ? { interrupt: true } : {}),
+      ...propertiesWhen(decision === 'abort', () => ({ interrupt: true })),
       ...common,
     })
     if (decision === 'abort') void this.interrupt()
@@ -489,18 +545,22 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 
   #startQuery(resume?: string): void {
     const promptQueue = new PromptQueue()
+    const effort =
+      this.#options.effort === undefined
+        ? undefined
+        : ClaudeEffortSchema.parse(this.#options.effort)
     const query = this.#createQuery({
       prompt: promptQueue,
       options: this.#queryOptions({
         cwd: this.#workspacePath,
-        ...(this.#options.model ? { model: this.#options.model } : {}),
-        ...(this.#options.effort
-          ? { effort: this.#options.effort as NonNullable<ClaudeQueryOptions['effort']> }
-          : {}),
+        ...propertiesWhen(this.#options.model, (includedValue) => ({ model: includedValue })),
+        ...propertiesWhen(effort, (includedValue) => ({ effort: includedValue })),
         systemPrompt: {
           type: 'preset',
           preset: 'claude_code',
-          ...(this.#options.instructions ? { append: this.#options.instructions } : {}),
+          ...propertiesWhen(this.#options.instructions, (includedValue) => ({
+            append: includedValue,
+          })),
         },
         settingSources: ['user', 'project', 'local'],
         persistSession: !this.#options.ephemeral,
@@ -577,7 +637,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       }
       this.#reportedModel = message.message.model
       if (message.error) this.emit('log', `Claude assistant error: ${message.error}`)
-      const event = message as unknown as ClaudeEvent
+      const event = ClaudeEventSchema.parse(message)
       const streamed = event.message?.id && this.#streamedMessageIds.has(event.message.id)
       const filtered: ClaudeEvent =
         streamed && event.message?.content
@@ -598,9 +658,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 
     if (message.type === 'user') {
       if (this.#activeTurnId)
-        this.#emitDomainEvents(
-          toDomainEvents(message as unknown as ClaudeEvent, this.#activeTurnId),
-        )
+        this.#emitDomainEvents(toDomainEvents(ClaudeEventSchema.parse(message), this.#activeTurnId))
       return
     }
 
@@ -611,7 +669,10 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       if (usage) {
         this.emit('event', {
           type: 'usage.updated',
-          usage: { ...usage, ...(this.#reportedModel ? { model: this.#reportedModel } : {}) },
+          usage: {
+            ...usage,
+            ...propertiesWhen(this.#reportedModel, (includedValue) => ({ model: includedValue })),
+          },
         })
       }
       if (message.is_error && 'errors' in message && message.errors.length > 0) {
@@ -667,25 +728,27 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   #onStreamEvent(message: Extract<SDKMessage, { type: 'stream_event' }>): void {
     const turnId = this.#activeTurnId
     if (!turnId || message.parent_tool_use_id) return
-    const event = message.event as unknown as Record<string, unknown>
-    const type = String(event['type'] ?? '')
+    const parsed = StreamEventSchema.safeParse(message.event)
+    if (!parsed.success) {
+      this.emit('log', `ignored unrecognized Claude stream event: ${parsed.error.message}`)
+      return
+    }
+    const event = parsed.data
+    const type = event.type
     if (type === 'message_start') {
-      const raw = event['message'] as Record<string, unknown> | undefined
-      this.#streamMessageId = String(raw?.['id'] ?? message.uuid)
+      this.#streamMessageId = event.message?.id ?? message.uuid
       return
     }
 
-    const index = typeof event['index'] === 'number' ? event['index'] : -1
+    const index = event.index ?? -1
     if (type === 'content_block_start') {
-      const raw = event['content_block'] as Record<string, unknown> | undefined
-      const blockType = raw?.['type']
+      const raw = event.content_block
+      if (!raw) return
+      const blockType = raw?.type
       if (blockType === 'tool_use') {
-        const name = String(raw?.['name'] ?? 'tool')
-        const input =
-          raw?.['input'] && typeof raw['input'] === 'object'
-            ? (raw['input'] as Record<string, unknown>)
-            : {}
-        const id = `${String(raw?.['id'] ?? `${message.uuid}-${index}`)}-call`
+        const name = raw.name ?? 'tool'
+        const input = raw.input ?? {}
+        const id = `${raw.id ?? `${message.uuid}-${index}`}-call`
         this.emit('event', {
           type: 'item.started',
           item: {
@@ -700,7 +763,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       }
       if (blockType !== 'text' && blockType !== 'thinking') return
       const messageId = this.#streamMessageId ?? message.uuid
-      const text = String(blockType === 'text' ? (raw?.['text'] ?? '') : (raw?.['thinking'] ?? ''))
+      const text = blockType === 'text' ? (raw.text ?? '') : (raw.thinking ?? '')
       const block: StreamBlock = {
         id: `${messageId}-${blockType}-${index}`,
         turnId,
@@ -717,7 +780,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           turnId,
           type: block.type,
           status: 'started',
-          ...(block.type === 'message' ? { role: 'assistant' as const } : {}),
+          ...propertiesWhen(block.type === 'message', () => ({ role: 'assistant' as const })),
           text: '',
           createdAt: block.createdAt,
         },
@@ -728,12 +791,12 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
 
     if (type === 'content_block_delta') {
-      const delta = event['delta'] as Record<string, unknown> | undefined
+      const delta = event.delta
       const text =
-        delta?.['type'] === 'text_delta'
-          ? String(delta['text'] ?? '')
-          : delta?.['type'] === 'thinking_delta'
-            ? String(delta['thinking'] ?? '')
+        delta?.type === 'text_delta'
+          ? (delta.text ?? '')
+          : delta?.type === 'thinking_delta'
+            ? (delta.thinking ?? '')
             : ''
       const block = this.#streamBlocks.get(index)
       if (!block || !text) return
@@ -753,7 +816,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           turnId: block.turnId,
           type: block.type,
           status: 'completed',
-          ...(block.type === 'message' ? { role: 'assistant' as const } : {}),
+          ...propertiesWhen(block.type === 'message', () => ({ role: 'assistant' as const })),
           text: block.text,
           createdAt: block.createdAt,
         },
@@ -765,14 +828,13 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     const content = event.message?.content ?? []
     for (const block of content) {
       if (block.type !== 'tool_use') continue
-      const tool = block as { name?: string; input?: Record<string, unknown> }
-      if (tool.name !== 'TodoWrite' || !Array.isArray(tool.input?.['todos'])) continue
-      const steps = tool.input['todos'].flatMap((value) => {
-        if (!value || typeof value !== 'object') return []
-        const todo = value as Record<string, unknown>
-        const text = String(todo['content'] ?? '').trim()
+      if (block.name !== 'TodoWrite') continue
+      const parsed = TodoInputSchema.safeParse(block.input)
+      if (!parsed.success) continue
+      const steps = parsed.data.todos.flatMap((todo) => {
+        const text = todo.content.trim()
         if (!text) return []
-        const rawStatus = String(todo['status'] ?? 'pending')
+        const rawStatus = todo.status ?? 'pending'
         return [
           {
             text,
@@ -802,9 +864,10 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   }
 
   #canUseTool: CanUseTool = async (toolName, input, options) => {
-    if (toolName === 'AskUserQuestion') return this.#requestUserInput(input, options)
+    const parsedInput = ToolInputSchema.parse(input)
+    if (toolName === 'AskUserQuestion') return this.#requestUserInput(parsedInput, options)
     if ((this.#options.approval ?? 'ask') === 'full') {
-      return { behavior: 'allow', updatedInput: input, toolUseID: options.toolUseID }
+      return { behavior: 'allow', updatedInput: parsedInput, toolUseID: options.toolUseID }
     }
     if (!this.#activeTurnId) {
       return {
@@ -815,7 +878,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
 
     const id = crypto.randomUUID()
-    const request = approvalRequest(id, toolName, input, options)
+    const request = approvalRequest(id, toolName, parsedInput, options)
     return new Promise<PermissionResult>((resolve) => {
       let finished = false
       const finish = (result: PermissionResult) => {
@@ -835,7 +898,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         })
       this.#pendingApprovals.set(id, {
         finish,
-        input,
+        input: parsedInput,
         suggestions: options.suggestions ?? [],
         toolUseId: options.toolUseID,
       })
@@ -845,7 +908,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   }
 
   #requestUserInput(
-    input: Record<string, unknown>,
+    input: ToolInput,
     options: Parameters<CanUseTool>[2],
   ): Promise<PermissionResult> {
     if (!this.#activeTurnId) {
@@ -958,9 +1021,11 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 function approvalRequest(
   id: string,
   toolName: string,
-  input: Record<string, unknown>,
+  input: ToolInput,
   options: Parameters<CanUseTool>[2],
 ): ApprovalRequest {
+  const location = ToolLocationSchema.safeParse(input)
+  const cwd = location.success ? location.data.cwd : undefined
   const kind = SHELL_TOOLS.has(toolName)
     ? ('command' as const)
     : EDIT_TOOLS.has(toolName)
@@ -970,19 +1035,21 @@ function approvalRequest(
   return {
     id,
     kind,
-    ...(options.title || options.description || options.decisionReason
-      ? { reason: options.title ?? options.description ?? options.decisionReason }
-      : {}),
-    ...(kind === 'command' ? { command: String(input['command'] ?? toolName) } : {}),
-    ...(typeof input['cwd'] === 'string' ? { cwd: input['cwd'] } : {}),
-    ...(pathValue ? { path: String(pathValue) } : {}),
+    ...propertiesWhen(options.title || options.description || options.decisionReason, () => ({
+      reason: options.title ?? options.description ?? options.decisionReason,
+    })),
+    ...propertiesWhen(kind === 'command', () => ({
+      command: String(input['command'] ?? toolName),
+    })),
+    ...propertiesWhen(cwd, (cwd) => ({ cwd })),
+    ...propertiesWhen(pathValue, (includedValue) => ({ path: String(includedValue) })),
     createdAt: Date.now(),
   }
 }
 
 function toolItemFields(
   toolName: string,
-  input: Record<string, unknown>,
+  input: ToolInput,
 ):
   | { type: 'command'; command: string }
   | { type: 'file_change'; path: string }
@@ -996,32 +1063,27 @@ function toolItemFields(
   return { type: 'tool_call', text: toolName }
 }
 
-function parseUserInputQuestions(input: Record<string, unknown>): UserInputQuestion[] {
-  if (!Array.isArray(input['questions'])) return []
-  return input['questions'].flatMap((value, index) => {
-    if (!value || typeof value !== 'object') return []
-    const raw = value as Record<string, unknown>
-    const question = String(raw['question'] ?? '').trim()
+function parseUserInputQuestions(input: ToolInput): UserInputQuestion[] {
+  const parsed = UserInputSchema.safeParse(input)
+  if (!parsed.success) return []
+  return parsed.data.questions.flatMap((raw, index) => {
+    const question = raw.question.trim()
     if (!question) return []
-    const options = Array.isArray(raw['options'])
-      ? raw['options'].flatMap((entry) => {
-          if (!entry || typeof entry !== 'object') return []
-          const option = entry as Record<string, unknown>
-          const label = String(option['label'] ?? '').trim()
-          if (!label) return []
-          return [
-            {
-              label,
-              description: String(option['description'] ?? '').trim() || `Choose ${label}`,
-            },
-          ]
-        })
-      : []
+    const options = (raw.options ?? []).flatMap((option) => {
+      const label = option.label.trim()
+      if (!label) return []
+      return [
+        {
+          label,
+          description: option.description?.trim() || `Choose ${label}`,
+        },
+      ]
+    })
     return [
       {
         // Claude Code uses the full question text as the answer-map key.
         id: question,
-        header: String(raw['header'] ?? '').trim() || `Question ${index + 1}`,
+        header: raw.header?.trim() || `Question ${index + 1}`,
         question,
         allowOther: true,
         secret: false,
@@ -1107,7 +1169,7 @@ function mapSdkModel(model: ModelInfo, id = model.value): DiscoveredClaudeModel 
       description: model.description,
       isDefault: false,
       reasoningEfforts,
-      ...(reasoningEfforts.length > 0 ? { defaultReasoningEffort: 'high' } : {}),
+      ...propertiesWhen(reasoningEfforts.length > 0, () => ({ defaultReasoningEffort: 'high' })),
       serviceTiers: [],
     },
   }

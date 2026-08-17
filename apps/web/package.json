@@ -30,7 +30,8 @@
     "react-dom": "^19.2.8",
     "shiki": "^4.3.1",
     "streamdown": "^2.5.0",
-    "thinking-orbs": "^0.1.1"
+    "thinking-orbs": "^0.1.1",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",

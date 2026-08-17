@@ -125,7 +125,7 @@ export function DitherWaveform({ levels, cell = 4 }: { levels: readonly number[]
     controllerRef.current = controller
 
     paint()
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(paint)
+    const observer = globalThis.ResizeObserver ? new globalThis.ResizeObserver(paint) : null
     observer?.observe(wrapper)
     window.addEventListener('resize', paint)
 

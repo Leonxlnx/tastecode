@@ -18,6 +18,7 @@ import {
   FolderPlus,
   GitBranch,
   GitPullRequest,
+  Pencil,
   Pin,
   PinOff,
   Search,
@@ -738,6 +739,13 @@ function ThreadMenu(props: {
               {lifecycle && canHide(props.entry.session) ? (
                 <MenuItem
                   title={lifecycle.keepActive ? 'Allow auto-settle' : 'Keep active'}
+                  icon={
+                    lifecycle.keepActive ? (
+                      <Clock3 size={13} aria-hidden />
+                    ) : (
+                      <Pin size={13} aria-hidden />
+                    )
+                  }
                   onClick={() =>
                     finish(close, () =>
                       props.actions.onKeepActive(props.entry.session.id, !lifecycle.keepActive),
@@ -746,7 +754,11 @@ function ThreadMenu(props: {
                 />
               ) : null}
               <div className="menu__rule" />
-              <MenuItem title="Rename" onClick={() => finish(close, props.onRename)} />
+              <MenuItem
+                title="Rename"
+                icon={<Pencil size={13} aria-hidden />}
+                onClick={() => finish(close, props.onRename)}
+              />
               <MenuItem
                 title={props.entry.session.pinned ? 'Unpin thread' : 'Pin thread'}
                 icon={
@@ -810,6 +822,7 @@ function SnoozeMenu(props: { label: string; onSnooze: (wakeAt: number) => void }
             <MenuItem
               key={preset.label}
               title={preset.label}
+              icon={<Clock3 size={13} aria-hidden />}
               onClick={() => {
                 props.onSnooze(preset.at)
                 close()
@@ -851,10 +864,12 @@ function Status(props: { session: Session; now: number }) {
   return <span className={`inbox-status is-${status.tone}`}>{status.label}</span>
 }
 
-function statusPresentation(
-  session: Session,
-  now: number,
-): { label: string; tone: 'quiet' | 'working' | 'attention' | 'failed' | 'done' | 'woke' } {
+type StatusPresentation = {
+  label: string
+  tone: 'quiet' | 'working' | 'attention' | 'failed' | 'done' | 'woke'
+}
+
+function statusPresentation(session: Session, now: number): StatusPresentation {
   const woke = session.lifecycle.state === 'active' && session.lifecycle.wokeAt !== undefined
   if (session.status === 'approval') return { label: 'Approval', tone: 'attention' }
   if (session.status === 'input') return { label: 'Needs input', tone: 'attention' }

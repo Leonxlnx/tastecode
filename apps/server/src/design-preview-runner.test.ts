@@ -1,4 +1,3 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { createServer } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -6,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parsePreviewPlan } from '@harness/design-agent'
+import { z } from 'zod'
 import {
   assertRunsWorkspaceCode,
   startDesignPreview,
@@ -16,6 +16,7 @@ import {
 
 const workspaces: string[] = []
 const previews: RunningPreview[] = []
+const ServerAddressSchema = z.object({ port: z.number() })
 
 afterEach(async () => {
   await Promise.all(previews.splice(0).map((preview) => preview.stop()))
@@ -31,8 +32,7 @@ describe('design preview runner', () => {
     const marker = path.join(workspace, 'spawned.txt')
     const occupied = createServer((_request, response) => response.end('unrelated preview'))
     await listen(occupied)
-    const address = occupied.address()
-    if (!address || typeof address === 'string') throw new Error('missing test port')
+    const address = ServerAddressSchema.parse(occupied.address())
     writeFileSync(
       path.join(workspace, 'preview.mjs'),
       `import { createServer } from 'node:http'\nimport { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'started')\ncreateServer((_request, response) => response.end('expected preview')).listen(${address.port}, '127.0.0.1')\n`,
@@ -57,7 +57,8 @@ describe('design preview runner', () => {
       await close(occupied)
     }
     expect(failure).toBeInstanceOf(Error)
-    expect((failure as Error).message).toContain(`preview port ${address.port} is already in use`)
+    if (!(failure instanceof Error)) throw new Error('expected preview failure')
+    expect(failure.message).toContain(`preview port ${address.port} is already in use`)
     expect(existsSync(marker)).toBe(false)
   })
 
@@ -164,7 +165,7 @@ describe('design preview runner', () => {
   it('turns a child spawn error into a readiness failure', async () => {
     const child = Object.assign(new EventEmitter(), {
       exitCode: null,
-    }) as ChildProcessWithoutNullStreams
+    })
     const childFailure = watchPreviewChild(child)
     const waiting = waitForPreview(child, 'http://127.0.0.1:1', 5_000, () => '', childFailure)
 
@@ -370,8 +371,9 @@ function freePort(): Promise<number> {
     const server = createServer()
     server.on('error', reject)
     server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') return reject(new Error('missing test port'))
+      const parsed = ServerAddressSchema.safeParse(server.address())
+      if (!parsed.success) return reject(new Error('missing test port'))
+      const address = parsed.data
       server.close((error) => (error ? reject(error) : resolve(address.port)))
     })
   })

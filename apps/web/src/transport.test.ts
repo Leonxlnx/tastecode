@@ -1,6 +1,9 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { IndeterminateRequestError, Transport } from './transport.js'
+
+const RequestFrameSchema = z.object({ id: z.string() })
 
 /**
  * The client half of the wire protocol had zero coverage — and its edges are
@@ -52,6 +55,16 @@ afterEach(() => {
 const userFrames = (socket: FakeSocket): string[] =>
   socket.sent.filter((frame) => !frame.includes('client.capabilities'))
 
+const completedThreadEvent = (turnId: string) => ({
+  threadId: 'thread-1',
+  event: {
+    type: 'turn.completed' as const,
+    turnId,
+    status: 'completed' as const,
+    error: null,
+  },
+})
+
 describe('Transport', () => {
   it('rejects in-flight requests when the socket drops instead of hanging', async () => {
     const transport = new Transport('ws://test')
@@ -101,11 +114,11 @@ describe('Transport', () => {
     second.open()
     expect(userFrames(second)).toHaveLength(1)
 
-    const frame = JSON.parse(userFrames(second)[0]!) as { id: string }
+    const frame = RequestFrameSchema.parse(JSON.parse(userFrames(second)[0]!))
     second.onmessage?.({
       data: JSON.stringify({
         id: frame.id,
-        result: { serverVersion: 'test', protocolVersion: 1, platform: 'test' },
+        result: { serverVersion: 'test', protocolVersion: 1, platform: 'darwin' },
       }),
     })
     await expect(queued).resolves.toMatchObject({ serverVersion: 'test' })
@@ -165,11 +178,11 @@ describe('Transport', () => {
     socket.open()
 
     const checking = transport.ensureHealthy(500)
-    const frame = JSON.parse(userFrames(socket)[0]!) as { id: string }
+    const frame = RequestFrameSchema.parse(JSON.parse(userFrames(socket)[0]!))
     socket.onmessage?.({
       data: JSON.stringify({
         id: frame.id,
-        result: { serverVersion: 'test', protocolVersion: 1, platform: 'test' },
+        result: { serverVersion: 'test', protocolVersion: 1, platform: 'darwin' },
       }),
     })
     await checking
@@ -218,7 +231,7 @@ describe('Transport', () => {
     socket.open()
 
     const pending = transport.request('system.info', {})
-    const frame = JSON.parse(userFrames(socket)[0]!) as { id: string }
+    const frame = RequestFrameSchema.parse(JSON.parse(userFrames(socket)[0]!))
     socket.onmessage?.({ data: JSON.stringify({ id: frame.id, error: {} }) })
 
     await expect(pending).rejects.toThrow('The server reported an error.')
@@ -235,7 +248,7 @@ describe('Transport', () => {
     const frame = JSON.stringify({
       channel: 'thread.event',
       sequence: 1,
-      data: { threadId: 'thread-1', seq: 1, event: { type: 'turn.started', turnId: 'turn-1' } },
+      data: { ...completedThreadEvent('turn-1'), seq: 1 },
     })
     socket.onmessage?.({ data: frame })
     socket.onmessage?.({ data: frame })
@@ -270,7 +283,11 @@ describe('Transport', () => {
     const first = FakeSocket.instances[0]!
     first.open()
     first.onmessage?.({
-      data: JSON.stringify({ channel: 'thread.event', sequence: 1, data: { source: 'first' } }),
+      data: JSON.stringify({
+        channel: 'thread.event',
+        sequence: 1,
+        data: completedThreadEvent('first'),
+      }),
     })
 
     const checking = transport.ensureHealthy(1)
@@ -281,14 +298,22 @@ describe('Transport', () => {
     second.open()
 
     first.onmessage?.({
-      data: JSON.stringify({ channel: 'thread.event', sequence: 2, data: { source: 'stale' } }),
+      data: JSON.stringify({
+        channel: 'thread.event',
+        sequence: 2,
+        data: completedThreadEvent('stale'),
+      }),
     })
     second.onmessage?.({
-      data: JSON.stringify({ channel: 'thread.event', sequence: 1, data: { source: 'second' } }),
+      data: JSON.stringify({
+        channel: 'thread.event',
+        sequence: 1,
+        data: completedThreadEvent('second'),
+      }),
     })
 
     expect(listener).toHaveBeenCalledTimes(2)
-    expect(listener).not.toHaveBeenCalledWith({ source: 'stale' })
+    expect(listener).not.toHaveBeenCalledWith(completedThreadEvent('stale'))
   })
 
   it('starts push sequence tracking fresh on each connection', () => {

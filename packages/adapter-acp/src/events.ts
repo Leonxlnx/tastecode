@@ -1,5 +1,6 @@
 import type { DomainEvent, Item, PlanStep } from '@harness/contracts'
 import type { SessionUpdate, ToolCallContent, ToolKind } from './protocol.js'
+import { propertiesWhen } from './properties-when.js'
 
 /**
  * Translate one `session/update` into domain events.
@@ -11,13 +12,13 @@ import type { SessionUpdate, ToolCallContent, ToolKind } from './protocol.js'
  */
 
 /** ACP tool kinds mapped onto how we render them. */
-const KIND_TO_ITEM: Partial<Record<ToolKind, Item['type']>> = {
-  execute: 'command',
-  edit: 'file_change',
-  delete: 'file_change',
-  move: 'file_change',
-  think: 'reasoning',
-}
+const KIND_TO_ITEM = new Map<ToolKind, Item['type']>([
+  ['execute', 'command'],
+  ['edit', 'file_change'],
+  ['delete', 'file_change'],
+  ['move', 'file_change'],
+  ['think', 'reasoning'],
+])
 
 export class Streamer {
   #turnId: string
@@ -51,7 +52,10 @@ export class Streamer {
     const known = this.#tools.get(toolCallId)
     const kind = fields.kind ?? known?.kind
     const title = fields.title ?? known?.title
-    this.#tools.set(toolCallId, { ...(kind ? { kind } : {}), ...(title ? { title } : {}) })
+    this.#tools.set(toolCallId, {
+      ...propertiesWhen(kind, (kind) => ({ kind })),
+      ...propertiesWhen(title, (title) => ({ title })),
+    })
   }
 
   /** Called when a turn ends, so the next one does not append to a stale item. */
@@ -108,7 +112,7 @@ export class Streamer {
       turnId: this.#turnId,
       type: kind,
       status: 'started',
-      ...(kind === 'message' ? { role: 'assistant' as const } : {}),
+      ...propertiesWhen(kind === 'message', () => ({ role: 'assistant' as const })),
       text,
       createdAt: Date.now(),
     }
@@ -144,12 +148,12 @@ export class Streamer {
     const chunk = outputOf(update.content)
     const output = chunk ? (known?.output ? `${known.output}${chunk}` : chunk) : known?.output
     this.#tools.set(id, {
-      ...(kind ? { kind } : {}),
-      ...(title ? { title } : {}),
-      ...(output ? { output } : {}),
+      ...propertiesWhen(kind, (kind) => ({ kind })),
+      ...propertiesWhen(title, (title) => ({ title })),
+      ...propertiesWhen(output, (output) => ({ output })),
     })
 
-    const type = (kind && KIND_TO_ITEM[kind]) ?? 'tool_call'
+    const type = (kind && KIND_TO_ITEM.get(kind)) ?? 'tool_call'
     const finished = update.status === 'completed' || update.status === 'failed'
 
     // A tool call interrupts the prose around it. Complete that message before

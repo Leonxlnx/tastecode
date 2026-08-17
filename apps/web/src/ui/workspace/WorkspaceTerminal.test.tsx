@@ -1,23 +1,20 @@
 // @vitest-environment happy-dom
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Transport } from '../../transport.js'
+import { TestTransport } from '../../test-transport.js'
+import { WorkspaceTerminal, type WorkspaceTerminalPane } from './WorkspaceTerminal.js'
 
-vi.mock('../TerminalPane.js', () => ({
-  TerminalPane: (props: { threadId?: string; projectPath?: string; onClose?: () => void }) => (
-    <button
-      type="button"
-      data-testid="terminal-pane"
-      data-thread-id={props.threadId}
-      data-project-path={props.projectPath}
-      onClick={props.onClose}
-    >
-      Terminal pane
-    </button>
-  ),
-}))
-
-import { WorkspaceTerminal } from './WorkspaceTerminal.js'
+const TestTerminalPane = ((props) => (
+  <button
+    type="button"
+    data-testid="terminal-pane"
+    data-thread-id={props.threadId}
+    data-project-path={props.projectPath}
+    onClick={props.onClose}
+  >
+    Terminal pane
+  </button>
+)) satisfies WorkspaceTerminalPane
 
 afterEach(cleanup)
 
@@ -26,10 +23,11 @@ describe('WorkspaceTerminal', () => {
     render(
       <WorkspaceTerminal
         active
-        transport={{} as Transport}
+        transport={new TestTransport()}
         projectPath="/workspace/current-project"
         theme="dark"
         onClose={vi.fn()}
+        terminalPaneComponent={TestTerminalPane}
       />,
     )
 
@@ -43,11 +41,12 @@ describe('WorkspaceTerminal', () => {
     render(
       <WorkspaceTerminal
         active
-        transport={{} as Transport}
+        transport={new TestTransport()}
         threadId="thread-1"
         projectPath="/workspace/current-project"
         theme="dark"
         onClose={vi.fn()}
+        terminalPaneComponent={TestTerminalPane}
       />,
     )
 
@@ -61,10 +60,11 @@ describe('WorkspaceTerminal', () => {
     render(
       <WorkspaceTerminal
         active
-        transport={{} as Transport}
+        transport={new TestTransport()}
         projectPath="/workspace/current-project"
         theme="dark"
         onClose={onClose}
+        terminalPaneComponent={TestTerminalPane}
       />,
     )
 

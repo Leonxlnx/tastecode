@@ -84,21 +84,21 @@ const HARNESS_DIFF_CSS = `
   }
 `
 
-export function PullRequestDiffRenderer(props: {
+export type PullRequestDiffRendererProps = {
   file: PullRequestFile
   cacheKey: string
   annotations: PullRequestDiffAnnotation[]
   renderAnnotation: (annotation: PullRequestDiffAnnotation) => ReactNode
   onCommentLine: (target: { lineNumber: number; side: PullRequestDiffSide }) => void
-}) {
+}
+
+export function PullRequestDiffRenderer(props: PullRequestDiffRendererProps) {
   const fileDiff = useMemo(
     () => parseFileDiff(props.file, props.cacheKey),
     [props.cacheKey, props.file],
   )
   const themeType =
-    typeof document !== 'undefined' && document.documentElement.dataset['theme'] === 'light'
-      ? 'light'
-      : 'dark'
+    globalThis.document?.documentElement.dataset['theme'] === 'light' ? 'light' : 'dark'
   const options = useMemo<FileDiffOptions<PullRequestReviewAnnotation>>(
     () => ({
       diffStyle: 'unified',

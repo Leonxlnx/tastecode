@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type {
+  JsonValue,
   PullRequestAccount,
   PullRequestAction,
   PullRequestActionResult,
@@ -17,6 +18,8 @@ import type {
   PullRequestReviewer,
 } from '@harness/contracts'
 import { isInstalled, killTree, spawnCli } from '@harness/proc'
+import { z } from 'zod'
+import { propertiesWhen } from './properties-when.js'
 
 const runFile = promisify(execFile)
 const LIST_TTL_MS = 30_000
@@ -53,163 +56,222 @@ type MetadataSource<T> = {
 }
 
 type ReviewThreadsResult = {
-  threads: RawReviewThread[]
+  threads: ParsedRawReviewThread[]
   truncated: boolean
 }
 
 type ApiMutation = {
   method: 'POST' | 'PATCH' | 'DELETE'
   endpoint: string
-  input?: Record<string, unknown>
+  input?: Record<string, JsonValue>
 }
 
 type UpdateMetadataAction = Extract<PullRequestAction, { type: 'update_metadata' }>
 
 type PullRequestSearch = 'authored' | 'review-requested' | 'reviewed'
 
-type RawActor = {
-  login?: string | null
-  name?: string | null
-  slug?: string | null
-  is_bot?: boolean
-  type?: string
-}
+const RawActorSchema = z.object({
+  login: z.string().nullable().optional(),
+  name: z.string().nullable().optional(),
+  slug: z.string().nullable().optional(),
+  is_bot: z.boolean().optional(),
+  type: z.string().optional(),
+})
+const RawMetadataLabelSchema = z.object({
+  name: z.string().optional(),
+  color: z.string().optional(),
+  description: z.string().nullable().optional(),
+})
+const RawMetadataMilestoneSchema = z.object({
+  number: z.number().optional(),
+  title: z.string().optional(),
+})
+const RawMetadataBranchSchema = z.object({ name: z.string().optional() })
+const RawCheckSchema = z.object({
+  __typename: z.enum(['CheckRun', 'StatusContext']).optional(),
+  name: z.string().optional(),
+  context: z.string().optional(),
+  workflowName: z.string().optional(),
+  status: z.string().optional(),
+  conclusion: z.string().nullable().optional(),
+  state: z.string().optional(),
+  detailsUrl: z.string().optional(),
+  targetUrl: z.string().optional(),
+  startedAt: z.string().nullable().optional(),
+  completedAt: z.string().nullable().optional(),
+})
+const RawCommentSchema = z.object({
+  id: z.string().optional(),
+  databaseId: z.number().nullable().optional(),
+  author: RawActorSchema.nullable().optional(),
+  body: z.string().optional(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().nullable().optional(),
+  url: z.string().optional(),
+})
+const RawReviewSchema = z.object({
+  id: z.string().optional(),
+  author: RawActorSchema.nullable().optional(),
+  body: z.string().optional(),
+  state: z.string().optional(),
+  submittedAt: z.string().optional(),
+})
+const RawSearchNodeSchema = z.object({
+  id: z.string(),
+  number: z.number(),
+  title: z.string(),
+  url: z.string(),
+  state: z.string(),
+  isDraft: z.boolean(),
+  updatedAt: z.string(),
+  additions: z.number(),
+  deletions: z.number(),
+  comments: z.object({ totalCount: z.number().optional() }).optional(),
+  author: RawActorSchema.nullable().optional(),
+  repository: z.object({ nameWithOwner: z.string().optional() }).optional(),
+  headRefName: z.string().optional(),
+  baseRefName: z.string().optional(),
+  reviewDecision: z.string().nullable().optional(),
+  mergeStateStatus: z.string().nullable().optional(),
+})
+const RawSearchCliItemSchema = z.object({
+  id: z.string().optional(),
+  number: z.number().optional(),
+  title: z.string().optional(),
+  url: z.string().optional(),
+  state: z.string().optional(),
+  isDraft: z.boolean().optional(),
+  updatedAt: z.string().optional(),
+  commentsCount: z.number().optional(),
+  author: RawActorSchema.nullable().optional(),
+  repository: z.object({ nameWithOwner: z.string().optional() }).optional(),
+})
+const RawSearchPageSchema = z.object({
+  data: z
+    .object({
+      search: z
+        .object({
+          nodes: z.array(RawSearchNodeSchema.nullable()).optional(),
+          pageInfo: z
+            .object({
+              hasNextPage: z.boolean().optional(),
+              endCursor: z.string().nullable().optional(),
+            })
+            .optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+})
+const RawPullRequestSchema = RawSearchNodeSchema.omit({ comments: true }).extend({
+  body: z.string().optional(),
+  createdAt: z.string().optional(),
+  closedAt: z.string().nullable().optional(),
+  mergedAt: z.string().nullable().optional(),
+  headRefOid: z.string().optional(),
+  baseRefOid: z.string().optional(),
+  changedFiles: z.number().optional(),
+  mergeable: z.string().optional(),
+  maintainerCanModify: z.boolean().optional(),
+  autoMergeRequest: z
+    .object({
+      mergeMethod: z.string().optional(),
+      enabledAt: z.string().nullable().optional(),
+      enabledBy: RawActorSchema.nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  reviewRequests: z.array(RawActorSchema).optional(),
+  assignees: z.array(RawActorSchema).optional(),
+  labels: z
+    .array(z.object({ name: z.string().optional(), color: z.string().optional() }))
+    .optional(),
+  milestone: z.object({ title: z.string().optional() }).nullable().optional(),
+  statusCheckRollup: z.array(RawCheckSchema).optional(),
+  comments: z.array(RawCommentSchema).optional(),
+  reviews: z.array(RawReviewSchema).optional(),
+})
+const RawReviewThreadSchema = z.object({
+  id: z.string().optional(),
+  isResolved: z.boolean().optional(),
+  isOutdated: z.boolean().optional(),
+  path: z.string().optional(),
+  line: z.number().nullable().optional(),
+  startLine: z.number().nullable().optional(),
+  originalLine: z.number().nullable().optional(),
+  originalStartLine: z.number().nullable().optional(),
+  diffSide: z.string().nullable().optional(),
+  startDiffSide: z.string().nullable().optional(),
+  comments: z.object({ nodes: z.array(RawCommentSchema).optional() }).optional(),
+})
+const RawRepositorySchema = z.object({
+  allow_merge_commit: z.boolean().optional(),
+  allow_rebase_merge: z.boolean().optional(),
+  allow_squash_merge: z.boolean().optional(),
+  delete_branch_on_merge: z.boolean().optional(),
+  permissions: z
+    .object({
+      admin: z.boolean().optional(),
+      push: z.boolean().optional(),
+      maintain: z.boolean().optional(),
+    })
+    .optional(),
+})
+const ReviewThreadPageSchema = z.object({
+  data: z
+    .object({
+      repository: z
+        .object({
+          pullRequest: z
+            .object({
+              reviewThreads: z
+                .object({
+                  nodes: z.array(RawReviewThreadSchema.nullable()).optional(),
+                  pageInfo: z
+                    .object({
+                      hasNextPage: z.boolean().optional(),
+                      endCursor: z.string().nullable().optional(),
+                    })
+                    .optional(),
+                })
+                .optional(),
+            })
+            .nullable()
+            .optional(),
+        })
+        .nullable()
+        .optional(),
+    })
+    .optional(),
+})
+const RawFileSchema = z.object({
+  sha: z.string().optional(),
+  filename: z.string().optional(),
+  previous_filename: z.string().optional(),
+  status: z.string().optional(),
+  additions: z.number().optional(),
+  deletions: z.number().optional(),
+  changes: z.number().optional(),
+  patch: z.string().optional(),
+  blob_url: z.string().optional(),
+})
+const AccountSchema = z.object({ login: z.string().optional() })
+const CheckRunSchema = z.object({
+  bucket: z.string().optional(),
+  link: z.string().optional(),
+})
 
-type RawMetadataLabel = { name?: string; color?: string; description?: string | null }
-type RawMetadataMilestone = { number?: number; title?: string }
-type RawMetadataBranch = { name?: string }
-
-type RawSearchNode = {
-  id: string
-  number: number
-  title: string
-  url: string
-  state: string
-  isDraft: boolean
-  updatedAt: string
-  additions: number
-  deletions: number
-  comments?: { totalCount?: number }
-  author?: RawActor | null
-  repository?: { nameWithOwner?: string }
-  headRefName?: string
-  baseRefName?: string
-  reviewDecision?: string | null
-  mergeStateStatus?: string | null
-}
-
-type RawSearchCliItem = {
-  id?: string
-  number?: number
-  title?: string
-  url?: string
-  state?: string
-  isDraft?: boolean
-  updatedAt?: string
-  commentsCount?: number
-  author?: RawActor | null
-  repository?: { nameWithOwner?: string }
-}
-
-type RawSearchPage = {
-  data?: {
-    search?: {
-      nodes?: Array<RawSearchNode | null>
-      pageInfo?: { hasNextPage?: boolean; endCursor?: string | null }
-    }
-  }
-}
-
-type RawPullRequest = Omit<RawSearchNode, 'comments'> & {
-  body?: string
-  createdAt?: string
-  closedAt?: string | null
-  mergedAt?: string | null
-  headRefOid?: string
-  baseRefOid?: string
-  changedFiles?: number
-  mergeable?: string
-  maintainerCanModify?: boolean
-  autoMergeRequest?: {
-    mergeMethod?: string
-    enabledAt?: string | null
-    enabledBy?: RawActor | null
-  } | null
-  reviewRequests?: RawActor[]
-  assignees?: RawActor[]
-  labels?: Array<{ name?: string; color?: string }>
-  milestone?: { title?: string } | null
-  statusCheckRollup?: RawCheck[]
-  comments?: RawComment[]
-  reviews?: RawReview[]
-}
-
-type RawCheck = {
-  __typename?: 'CheckRun' | 'StatusContext'
-  name?: string
-  context?: string
-  workflowName?: string
-  status?: string
-  conclusion?: string | null
-  state?: string
-  detailsUrl?: string
-  targetUrl?: string
-  startedAt?: string | null
-  completedAt?: string | null
-}
-
-type RawComment = {
-  id?: string
-  databaseId?: number | null
-  author?: RawActor | null
-  body?: string
-  createdAt?: string
-  updatedAt?: string | null
-  url?: string
-}
-
-type RawReview = {
-  id?: string
-  author?: RawActor | null
-  body?: string
-  state?: string
-  submittedAt?: string
-}
-
-type RawReviewThread = {
-  id?: string
-  isResolved?: boolean
-  isOutdated?: boolean
-  path?: string
-  line?: number | null
-  startLine?: number | null
-  originalLine?: number | null
-  originalStartLine?: number | null
-  diffSide?: string | null
-  startDiffSide?: string | null
-  comments?: { nodes?: RawComment[] }
-}
-
-type RawRepository = {
-  allow_merge_commit?: boolean
-  allow_rebase_merge?: boolean
-  allow_squash_merge?: boolean
-  delete_branch_on_merge?: boolean
-  permissions?: { admin?: boolean; push?: boolean; maintain?: boolean }
-}
-
-type ReviewThreadPage = {
-  data?: {
-    repository?: {
-      pullRequest?: {
-        reviewThreads?: {
-          nodes?: Array<RawReviewThread | null>
-          pageInfo?: { hasNextPage?: boolean; endCursor?: string | null }
-        }
-      } | null
-    } | null
-  }
-}
+type ParsedRawActor = z.infer<typeof RawActorSchema>
+type ParsedRawMetadataLabel = z.infer<typeof RawMetadataLabelSchema>
+type ParsedRawMetadataMilestone = z.infer<typeof RawMetadataMilestoneSchema>
+type ParsedRawSearchNode = z.infer<typeof RawSearchNodeSchema>
+type ParsedRawSearchCliItem = z.infer<typeof RawSearchCliItemSchema>
+type ParsedRawPullRequest = z.infer<typeof RawPullRequestSchema>
+type ParsedRawCheck = z.infer<typeof RawCheckSchema>
+type ParsedRawComment = z.infer<typeof RawCommentSchema>
+type ParsedRawReview = z.infer<typeof RawReviewSchema>
+type ParsedRawReviewThread = z.infer<typeof RawReviewThreadSchema>
+type ParsedRawRepository = z.infer<typeof RawRepositorySchema>
 
 const SEARCH_QUERY =
   'query($q:String!,$cursor:String){search(query:$q,type:ISSUE,first:100,after:$cursor){nodes{... on PullRequest{id number title url state isDraft updatedAt additions deletions comments{totalCount} author{login} repository{nameWithOwner} headRefName baseRefName reviewDecision mergeStateStatus}}pageInfo{hasNextPage endCursor}}}'
@@ -279,14 +341,14 @@ export class PullRequestService {
   #detailCache = new Map<string, Cache<PullRequestDetail>>()
   #filesCache = new Map<string, Cache<PullRequestFilesResult>>()
   #metadataOptionsCache = new Map<string, Cache<PullRequestMetadataOptions>>()
-  #repositoryCache = new Map<string, Cache<RawRepository>>()
+  #repositoryCache = new Map<string, Cache<ParsedRawRepository>>()
   #reviewThreadsCache = new Map<string, Cache<ReviewThreadsResult>>()
   #projectCache: (Cache<Map<string, string>> & { projectKey: string }) | undefined
   #listInFlight: { projectKey: string; promise: Promise<PullRequestListResult> } | undefined
   #detailInFlight = new Map<string, Promise<PullRequestDetail>>()
   #filesInFlight = new Map<string, Promise<PullRequestFilesResult>>()
   #metadataOptionsInFlight = new Map<string, Promise<PullRequestMetadataOptions>>()
-  #repositoryInFlight = new Map<string, Promise<RawRepository>>()
+  #repositoryInFlight = new Map<string, Promise<ParsedRawRepository>>()
   #reviewThreadsInFlight = new Map<string, Promise<ReviewThreadsResult>>()
 
   constructor(
@@ -469,8 +531,14 @@ export class PullRequestService {
 
       case 'edit': {
         const input = {
-          ...(action.title === undefined ? {} : { title: action.title }),
-          ...(action.body === undefined ? {} : { body: action.body }),
+          ...propertiesWhen(
+            action.title === undefined ? undefined : { title: action.title },
+            (includedTitle) => includedTitle,
+          ),
+          ...propertiesWhen(
+            action.body === undefined ? undefined : { body: action.body },
+            (includedBody) => includedBody,
+          ),
         }
         if (Object.keys(input).length === 0) {
           throw new Error('Choose a title or description to update')
@@ -562,21 +630,22 @@ export class PullRequestService {
     const [reviewerSource, assigneeSource, labelSource, milestoneSource, branchSource] =
       await Promise.all([
         optionalMetadataSource(
-          this.#loadMetadataPages<RawActor>(endpoint('collaborators?per_page=100')),
+          this.#loadMetadataPages(endpoint('collaborators?per_page=100'), RawActorSchema),
         ),
         optionalMetadataSource(
-          this.#loadMetadataPages<RawActor>(endpoint('assignees?per_page=100')),
+          this.#loadMetadataPages(endpoint('assignees?per_page=100'), RawActorSchema),
         ),
         optionalMetadataSource(
-          this.#loadMetadataPages<RawMetadataLabel>(endpoint('labels?per_page=100')),
+          this.#loadMetadataPages(endpoint('labels?per_page=100'), RawMetadataLabelSchema),
         ),
         optionalMetadataSource(
-          this.#loadMetadataPages<RawMetadataMilestone>(
+          this.#loadMetadataPages(
             endpoint('milestones?state=open&per_page=100'),
+            RawMetadataMilestoneSchema,
           ),
         ),
         optionalMetadataSource(
-          this.#loadMetadataPages<RawMetadataBranch>(endpoint('branches?per_page=100')),
+          this.#loadMetadataPages(endpoint('branches?per_page=100'), RawMetadataBranchSchema),
         ),
       ])
     const unavailable: PullRequestMetadataOptions['unavailable'] = []
@@ -606,13 +675,19 @@ export class PullRequestService {
     return value
   }
 
-  async #loadMetadataPages<T>(endpoint: string): Promise<{ items: T[]; truncated: boolean }> {
+  async #loadMetadataPages<T>(
+    endpoint: string,
+    itemSchema: z.ZodType<T>,
+  ): Promise<{ items: T[]; truncated: boolean }> {
     const output = await this.#run(['api', endpoint, '--paginate', '--slurp'], {
       maxBytes: 16 * 1024 * 1024,
     })
-    const pages = parseJson<unknown>(output, `metadata options from ${endpoint}`)
-    if (!Array.isArray(pages)) throw new Error('GitHub returned invalid metadata options')
-    const items = pages.flatMap((page) => (Array.isArray(page) ? (page as T[]) : []))
+    const pages = parseJson(
+      output,
+      `metadata options from ${endpoint}`,
+      z.array(z.array(itemSchema)),
+    )
+    const items = pages.flat()
     return {
       items: items.slice(0, METADATA_OPTIONS_LIMIT),
       truncated: items.length > METADATA_OPTIONS_LIMIT,
@@ -667,7 +742,7 @@ export class PullRequestService {
         ...(existing ?? item),
         ...item,
         relationship,
-        ...(localProjectPath ? { localProjectPath } : {}),
+        ...propertiesWhen(localProjectPath, (localProjectPath) => ({ localProjectPath })),
       })
     }
     const items = [...combined.values()].sort(
@@ -698,7 +773,7 @@ export class PullRequestService {
         this.#cachedReviewThreads(repository, number, refresh),
         this.#projects(projectPaths, refresh),
       ])
-    const raw = parseJson<RawPullRequest>(pullRequestOutput, 'pull-request detail')
+    const raw = parseJson(pullRequestOutput, 'pull-request detail', RawPullRequestSchema)
     const repo = repositoryOutput
     const viewerLogin = account.login ?? ''
     const relationship: PullRequestListItem['relationship'] =
@@ -725,22 +800,30 @@ export class PullRequestService {
         deletions: raw.deletions,
         comments: { totalCount: comments.length },
         repository: { nameWithOwner: repository },
-        ...(raw.author === undefined ? {} : { author: raw.author }),
-        ...(raw.headRefName === undefined ? {} : { headRefName: raw.headRefName }),
-        ...(raw.baseRefName === undefined ? {} : { baseRefName: raw.baseRefName }),
-        ...(raw.reviewDecision === undefined ? {} : { reviewDecision: raw.reviewDecision }),
-        ...(raw.mergeStateStatus === undefined ? {} : { mergeStateStatus: raw.mergeStateStatus }),
+        ...propertiesWhen(!(raw.author === undefined), () => ({ author: raw.author })),
+        ...propertiesWhen(!(raw.headRefName === undefined), () => ({
+          headRefName: raw.headRefName,
+        })),
+        ...propertiesWhen(!(raw.baseRefName === undefined), () => ({
+          baseRefName: raw.baseRefName,
+        })),
+        ...propertiesWhen(!(raw.reviewDecision === undefined), () => ({
+          reviewDecision: raw.reviewDecision,
+        })),
+        ...propertiesWhen(!(raw.mergeStateStatus === undefined), () => ({
+          mergeStateStatus: raw.mergeStateStatus,
+        })),
       },
       relationship,
     )
 
     const detail: PullRequestDetail = {
       ...listItem,
-      ...(localProjectPath ? { localProjectPath } : {}),
+      ...propertiesWhen(localProjectPath, (localProjectPath) => ({ localProjectPath })),
       body: raw.body ?? '',
       createdAt: requiredString(raw.createdAt, 'createdAt'),
-      ...(raw.closedAt ? { closedAt: raw.closedAt } : {}),
-      ...(raw.mergedAt ? { mergedAt: raw.mergedAt } : {}),
+      ...propertiesWhen(raw.closedAt, (includedValue) => ({ closedAt: includedValue })),
+      ...propertiesWhen(raw.mergedAt, (includedValue) => ({ mergedAt: includedValue })),
       headRefOid: requiredString(raw.headRefOid, 'headRefOid'),
       baseRefOid: requiredString(raw.baseRefOid, 'baseRefOid'),
       changedFiles: raw.changedFiles ?? 0,
@@ -755,7 +838,7 @@ export class PullRequestService {
           ? [{ name: label.name, color: label.color! }]
           : [],
       ),
-      ...(raw.milestone?.title ? { milestone: raw.milestone.title } : {}),
+      ...propertiesWhen(raw.milestone?.title, (includedValue) => ({ milestone: includedValue })),
       checks: (raw.statusCheckRollup ?? []).map(normalizeCheck),
       comments,
       reviews,
@@ -791,8 +874,7 @@ export class PullRequestService {
       'api',
       `repos/${repository}/pulls/${number}/files?per_page=${FILES_PAGE_SIZE}&page=${page}`,
     ])
-    const raw = parseJson<unknown[]>(output, 'pull-request files')
-    if (!Array.isArray(raw)) throw new Error('GitHub returned an invalid file list')
+    const raw = parseJson(output, 'pull-request files', z.array(RawFileSchema))
     const files = raw.map(normalizeFile)
     const value = { files, page, hasMore: files.length === FILES_PAGE_SIZE }
     this.#filesCache.set(`${targetKey(repository, number)}:${page}`, {
@@ -828,8 +910,7 @@ export class PullRequestService {
       '--json',
       PULL_REQUEST_SEARCH_FIELDS,
     ])
-    const raw = parseJson<RawSearchCliItem[]>(output, 'pull-request search')
-    if (!Array.isArray(raw)) throw new Error('GitHub returned an invalid pull-request search')
+    const raw = parseJson(output, 'pull-request search', z.array(RawSearchCliItemSchema))
     return {
       items: raw.map((item) => normalizeSearchItem(item, relationship)),
       truncated: raw.length >= SEARCH_LIMIT,
@@ -856,7 +937,7 @@ export class PullRequestService {
     while (hasNextPage && items.length < SEARCH_LIMIT) {
       const args = ['api', 'graphql', '-f', `query=${SEARCH_QUERY}`, '-f', `q=${query}`]
       if (cursor) args.push('-f', `cursor=${cursor}`)
-      const page = parseJson<RawSearchPage>(await this.#run(args), 'pull-request search')
+      const page = parseJson(await this.#run(args), 'pull-request search', RawSearchPageSchema)
       const search = page.data?.search
       for (const node of search?.nodes ?? []) {
         if (node) items.push(normalizeListItem(node, relationship))
@@ -872,9 +953,10 @@ export class PullRequestService {
   async #reviewThreads(
     repository: string,
     number: number,
-  ): Promise<{ threads: RawReviewThread[]; truncated: boolean }> {
-    const [owner, name] = repository.split('/') as [string, string]
-    const threads: RawReviewThread[] = []
+  ): Promise<{ threads: ParsedRawReviewThread[]; truncated: boolean }> {
+    const [owner, name] = repository.split('/')
+    if (!owner || !name) throw new Error('GitHub repository must have an owner and name')
+    const threads: ParsedRawReviewThread[] = []
     let cursor: string | undefined
     let hasNextPage = true
 
@@ -892,7 +974,7 @@ export class PullRequestService {
         `number=${number}`,
       ]
       if (cursor) args.push('-f', `cursor=${cursor}`)
-      const page = parseJson<ReviewThreadPage>(await this.#run(args), 'review threads')
+      const page = parseJson(await this.#run(args), 'review threads', ReviewThreadPageSchema)
       const connection = page.data?.repository?.pullRequest?.reviewThreads
       for (const thread of connection?.nodes ?? []) {
         if (thread) threads.push(thread)
@@ -919,10 +1001,7 @@ export class PullRequestService {
       }
     } else {
       try {
-        const raw = parseJson<{ login?: string }>(
-          await this.#run(['api', 'user']),
-          'GitHub account',
-        )
+        const raw = parseJson(await this.#run(['api', 'user']), 'GitHub account', AccountSchema)
         value = raw.login
           ? { available: true, authenticated: true, login: raw.login }
           : {
@@ -957,7 +1036,7 @@ export class PullRequestService {
     return value
   }
 
-  async #repository(repository: string, refresh: boolean): Promise<RawRepository> {
+  async #repository(repository: string, refresh: boolean): Promise<ParsedRawRepository> {
     const key = repository.toLowerCase()
     const cached = this.#repositoryCache.get(key)
     if (!refresh && cached && cached.expiresAt > this.#now()) return cached.value
@@ -965,7 +1044,7 @@ export class PullRequestService {
     if (existing) return existing
 
     const pending = this.#run(['api', `repos/${repository}`])
-      .then((output) => parseJson<RawRepository>(output, 'repository detail'))
+      .then((output) => parseJson(output, 'repository detail', RawRepositorySchema))
       .catch(() => ({}))
       .then((value) => {
         this.#repositoryCache.set(key, {
@@ -1018,10 +1097,7 @@ export class PullRequestService {
       '--json',
       'bucket,link,name,state,workflow',
     ])
-    const checks = parseJson<Array<{ bucket?: string; link?: string }>>(
-      output,
-      'pull-request checks',
-    )
+    const checks = parseJson(output, 'pull-request checks', z.array(CheckRunSchema))
     const runIds = new Set<string>()
     for (const check of checks) {
       if (failedOnly && check.bucket !== 'fail' && check.bucket !== 'cancel') continue
@@ -1078,11 +1154,20 @@ function applyActionToListItem(
     case 'comment':
       return { ...item, commentsCount: item.commentsCount + 1 }
     case 'edit':
-      return { ...item, ...(action.title === undefined ? {} : { title: action.title }) }
+      return {
+        ...item,
+        ...propertiesWhen(
+          action.title === undefined ? undefined : { title: action.title },
+          (includedTitle) => includedTitle,
+        ),
+      }
     case 'update_metadata':
       return {
         ...item,
-        ...(action.baseRefName === undefined ? {} : { baseRefName: action.baseRefName }),
+        ...propertiesWhen(
+          action.baseRefName === undefined ? undefined : { baseRefName: action.baseRefName },
+          (includedBase) => includedBase,
+        ),
       }
     case 'set_draft':
       return { ...item, state: 'OPEN', isDraft: action.draft }
@@ -1111,7 +1196,7 @@ async function runApiMutation(
   run: GhRunner,
   method: ApiMutation['method'],
   endpoint: string,
-  input?: Record<string, unknown>,
+  input?: Record<string, JsonValue>,
 ): Promise<void> {
   if (input === undefined) {
     await run(['api', '--silent', '--method', method, endpoint])
@@ -1216,7 +1301,7 @@ async function optionalMetadataSource<T>(
   }
 }
 
-function uniqueActors(values: RawActor[]): PullRequestMetadataOptions['reviewers'] {
+function uniqueActors(values: ParsedRawActor[]): PullRequestMetadataOptions['reviewers'] {
   const actors = new Map<string, PullRequestMetadataOptions['reviewers'][number]>()
   for (const value of values) {
     const login = value.login?.trim()
@@ -1232,7 +1317,9 @@ function uniqueActors(values: RawActor[]): PullRequestMetadataOptions['reviewers
   return [...actors.values()].sort((left, right) => compareText(left.login, right.login))
 }
 
-function uniqueMetadataLabels(values: RawMetadataLabel[]): PullRequestMetadataOptions['labels'] {
+function uniqueMetadataLabels(
+  values: ParsedRawMetadataLabel[],
+): PullRequestMetadataOptions['labels'] {
   const labels = new Map<string, PullRequestMetadataOptions['labels'][number]>()
   for (const value of values) {
     const name = value.name?.trim()
@@ -1240,10 +1327,13 @@ function uniqueMetadataLabels(values: RawMetadataLabel[]): PullRequestMetadataOp
     if (!name || !color || !/^[0-9a-fA-F]{6}$/.test(color)) continue
     const key = name.toLowerCase()
     if (!labels.has(key)) {
+      const description = value.description?.trim()
       labels.set(key, {
         name,
         color,
-        ...(value.description?.trim() ? { description: value.description.trim() } : {}),
+        ...propertiesWhen(description, (includedDescription) => ({
+          description: includedDescription,
+        })),
       })
     }
   }
@@ -1251,7 +1341,7 @@ function uniqueMetadataLabels(values: RawMetadataLabel[]): PullRequestMetadataOp
 }
 
 function uniqueMetadataMilestones(
-  values: RawMetadataMilestone[],
+  values: ParsedRawMetadataMilestone[],
 ): PullRequestMetadataOptions['milestones'] {
   const milestones = new Map<number, PullRequestMetadataOptions['milestones'][number]>()
   for (const value of values) {
@@ -1368,7 +1458,7 @@ export function githubRepositoryFromRemote(remote: string): string | undefined {
 }
 
 function normalizeSearchItem(
-  raw: RawSearchCliItem,
+  raw: ParsedRawSearchCliItem,
   relationship: PullRequestListItem['relationship'],
 ): PullRequestListItem {
   return normalizeListItem(
@@ -1383,7 +1473,7 @@ function normalizeSearchItem(
       additions: 0,
       deletions: 0,
       comments: { totalCount: nonnegative(raw.commentsCount) },
-      ...(raw.author === undefined ? {} : { author: raw.author }),
+      ...propertiesWhen(!(raw.author === undefined), () => ({ author: raw.author })),
       repository: {
         nameWithOwner: requiredString(raw.repository?.nameWithOwner, 'repository'),
       },
@@ -1393,7 +1483,7 @@ function normalizeSearchItem(
 }
 
 function normalizeListItem(
-  raw: RawSearchNode,
+  raw: ParsedRawSearchNode,
   relationship: PullRequestListItem['relationship'],
 ): PullRequestListItem {
   const repository = requiredString(raw.repository?.nameWithOwner, 'repository')
@@ -1413,30 +1503,32 @@ function normalizeListItem(
     commentsCount: nonnegative(raw.comments?.totalCount),
     headRefName: raw.headRefName ?? '',
     baseRefName: raw.baseRefName ?? '',
-    ...(reviewDecision ? { reviewDecision } : {}),
-    ...(raw.mergeStateStatus ? { mergeStateStatus: raw.mergeStateStatus } : {}),
+    ...propertiesWhen(reviewDecision, (reviewDecision) => ({ reviewDecision })),
+    ...propertiesWhen(raw.mergeStateStatus, (includedValue) => ({
+      mergeStateStatus: includedValue,
+    })),
     relationship,
   }
 }
 
-function normalizeComment(raw: RawComment, viewerLogin: string): PullRequestComment {
+function normalizeComment(raw: ParsedRawComment, viewerLogin: string): PullRequestComment {
   const url = raw.url ?? 'https://github.com/'
   const author = actor(raw.author)
   const parsedDatabaseId = Number(/(?:issuecomment|discussion_r)-(\d+)/.exec(url)?.[1] ?? 0)
   const databaseId = raw.databaseId ?? (parsedDatabaseId || undefined)
   return {
     id: raw.id ?? `${author.login}:${raw.createdAt ?? ''}`,
-    ...(databaseId ? { databaseId } : {}),
+    ...propertiesWhen(databaseId, (databaseId) => ({ databaseId })),
     author,
     body: raw.body ?? '',
     createdAt: requiredString(raw.createdAt, 'comment.createdAt'),
-    ...(raw.updatedAt ? { updatedAt: raw.updatedAt } : {}),
+    ...propertiesWhen(raw.updatedAt, (includedValue) => ({ updatedAt: includedValue })),
     url,
     viewerDidAuthor: author.login.toLowerCase() === viewerLogin.toLowerCase(),
   }
 }
 
-function normalizeReview(raw: RawReview, viewerLogin: string): PullRequestReview {
+function normalizeReview(raw: ParsedRawReview, viewerLogin: string): PullRequestReview {
   const author = actor(raw.author)
   return {
     id: raw.id ?? `${author.login}:${raw.submittedAt ?? ''}`,
@@ -1448,42 +1540,49 @@ function normalizeReview(raw: RawReview, viewerLogin: string): PullRequestReview
   }
 }
 
-function normalizeReviewThread(raw: RawReviewThread, viewerLogin: string): PullRequestReviewThread {
+function normalizeReviewThread(
+  raw: ParsedRawReviewThread,
+  viewerLogin: string,
+): PullRequestReviewThread {
+  const diffSide: PullRequestReviewThread['diffSide'] =
+    raw.diffSide === 'LEFT' || raw.diffSide === 'RIGHT' ? raw.diffSide : undefined
+  const startDiffSide: PullRequestReviewThread['startDiffSide'] =
+    raw.startDiffSide === 'LEFT' || raw.startDiffSide === 'RIGHT' ? raw.startDiffSide : undefined
   return {
     id: requiredString(raw.id, 'reviewThread.id'),
     path: requiredString(raw.path, 'reviewThread.path'),
-    ...(raw.line ? { line: raw.line } : {}),
-    ...(raw.startLine ? { startLine: raw.startLine } : {}),
-    ...(raw.originalLine ? { originalLine: raw.originalLine } : {}),
-    ...(raw.originalStartLine ? { originalStartLine: raw.originalStartLine } : {}),
-    ...(raw.diffSide === 'LEFT' || raw.diffSide === 'RIGHT' ? { diffSide: raw.diffSide } : {}),
-    ...(raw.startDiffSide === 'LEFT' || raw.startDiffSide === 'RIGHT'
-      ? { startDiffSide: raw.startDiffSide }
-      : {}),
+    ...propertiesWhen(raw.line, (includedValue) => ({ line: includedValue })),
+    ...propertiesWhen(raw.startLine, (includedValue) => ({ startLine: includedValue })),
+    ...propertiesWhen(raw.originalLine, (includedValue) => ({ originalLine: includedValue })),
+    ...propertiesWhen(raw.originalStartLine, (includedValue) => ({
+      originalStartLine: includedValue,
+    })),
+    ...propertiesWhen(diffSide, (includedDiffSide) => ({ diffSide: includedDiffSide })),
+    ...propertiesWhen(startDiffSide, (includedStartDiffSide) => ({
+      startDiffSide: includedStartDiffSide,
+    })),
     resolved: raw.isResolved === true,
     outdated: raw.isOutdated === true,
     comments: (raw.comments?.nodes ?? []).map((comment) => normalizeComment(comment, viewerLogin)),
   }
 }
 
-function normalizeCheck(raw: RawCheck): PullRequestDetail['checks'][number] {
+function normalizeCheck(raw: ParsedRawCheck): PullRequestDetail['checks'][number] {
   const checkRun = raw.__typename === 'CheckRun'
   const name = checkRun ? raw.name : raw.context
   const detailsUrl = checkRun ? raw.detailsUrl : raw.targetUrl
   return {
     name: name || 'Check',
-    ...(raw.workflowName ? { workflowName: raw.workflowName } : {}),
+    ...propertiesWhen(raw.workflowName, (includedValue) => ({ workflowName: includedValue })),
     state: checkState(raw),
-    ...(detailsUrl && isUrl(detailsUrl) ? { detailsUrl } : {}),
-    ...(raw.startedAt ? { startedAt: raw.startedAt } : {}),
-    ...(raw.completedAt ? { completedAt: raw.completedAt } : {}),
+    ...propertiesWhen(detailsUrl && isUrl(detailsUrl), () => ({ detailsUrl })),
+    ...propertiesWhen(raw.startedAt, (includedValue) => ({ startedAt: includedValue })),
+    ...propertiesWhen(raw.completedAt, (includedValue) => ({ completedAt: includedValue })),
   }
 }
 
-function normalizeFile(value: unknown): PullRequestFile {
-  if (!value || typeof value !== 'object') throw new Error('GitHub returned an invalid file')
-  const raw = value as Record<string, unknown>
-  const status = raw['status']
+function normalizeFile(raw: z.infer<typeof RawFileSchema>): PullRequestFile {
+  const status = raw.status
   const validStatus =
     status === 'added' ||
     status === 'removed' ||
@@ -1495,19 +1594,26 @@ function normalizeFile(value: unknown): PullRequestFile {
       ? status
       : 'modified'
   return {
-    sha: requiredString(raw['sha'], 'file.sha'),
-    path: requiredString(raw['filename'], 'file.filename'),
-    ...(typeof raw['previous_filename'] === 'string'
-      ? { previousPath: raw['previous_filename'] }
-      : {}),
+    sha: requiredString(raw.sha, 'file.sha'),
+    path: requiredString(raw.filename, 'file.filename'),
+    ...propertiesWhen(
+      raw.previous_filename === undefined ? undefined : { previousPath: raw.previous_filename },
+      (includedPreviousPath) => includedPreviousPath,
+    ),
     status: validStatus,
-    additions: nonnegative(raw['additions']),
-    deletions: nonnegative(raw['deletions']),
-    changes: nonnegative(raw['changes']),
-    ...(typeof raw['patch'] === 'string' ? { patch: raw['patch'] } : {}),
-    ...(typeof raw['blob_url'] === 'string' && isUrl(raw['blob_url'])
-      ? { blobUrl: raw['blob_url'] }
-      : {}),
+    additions: nonnegative(raw.additions),
+    deletions: nonnegative(raw.deletions),
+    changes: nonnegative(raw.changes),
+    ...propertiesWhen(
+      raw.patch === undefined ? undefined : { patch: raw.patch },
+      (includedPatch) => includedPatch,
+    ),
+    ...propertiesWhen(
+      raw.blob_url && isUrl(raw.blob_url) ? raw.blob_url : undefined,
+      (blobUrl) => ({
+        blobUrl,
+      }),
+    ),
   }
 }
 
@@ -1540,7 +1646,7 @@ function mergeReviewers(
 }
 
 function normalizeAutoMerge(
-  raw: RawPullRequest['autoMergeRequest'],
+  raw: ParsedRawPullRequest['autoMergeRequest'],
 ): Pick<PullRequestDetail, 'autoMerge'> | null {
   if (!raw?.mergeMethod) return null
   const mergeMethod = raw.mergeMethod.toUpperCase()
@@ -1548,13 +1654,13 @@ function normalizeAutoMerge(
   return {
     autoMerge: {
       mergeMethod,
-      ...(raw.enabledAt ? { enabledAt: raw.enabledAt } : {}),
-      ...(raw.enabledBy ? { enabledBy: actor(raw.enabledBy) } : {}),
+      ...propertiesWhen(raw.enabledAt, (includedValue) => ({ enabledAt: includedValue })),
+      ...propertiesWhen(raw.enabledBy, (includedValue) => ({ enabledBy: actor(includedValue) })),
     },
   }
 }
 
-function actor(raw: RawActor | null | undefined): PullRequestDetail['author'] {
+function actor(raw: ParsedRawActor | null | undefined): PullRequestDetail['author'] {
   const login = raw?.login || raw?.slug || raw?.name || 'ghost'
   return { login, isBot: raw?.is_bot === true || /(?:\[bot\]|-bot$|bot$)/i.test(login) }
 }
@@ -1601,7 +1707,7 @@ function normalizeReviewState(
   return 'COMMENTED'
 }
 
-function checkState(raw: RawCheck): PullRequestDetail['checks'][number]['state'] {
+function checkState(raw: ParsedRawCheck): PullRequestDetail['checks'][number]['state'] {
   const value = (raw.conclusion || raw.state || raw.status || '').toUpperCase()
   if (value === 'SUCCESS') return 'success'
   if (
@@ -1618,30 +1724,32 @@ function checkState(raw: RawCheck): PullRequestDetail['checks'][number]['state']
   return 'pending'
 }
 
-function parseJson<T>(output: string, label: string): T {
+function parseJson<T>(output: string, label: string, schema: z.ZodType<T>): T {
   try {
-    return JSON.parse(output) as T
+    return schema.parse(JSON.parse(output))
   } catch {
     throw new Error(`GitHub returned invalid ${label} data`)
   }
 }
 
-function requiredString(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.length === 0) {
+function requiredString(value: string | null | undefined, field: string): string {
+  if (!value) {
     throw new Error(`GitHub response is missing ${field}`)
   }
   return value
 }
 
-function requiredNumber(value: unknown, field: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
+function requiredNumber(value: number | undefined, field: string): number {
+  if (value === undefined || !Number.isFinite(value)) {
     throw new Error(`GitHub response is missing ${field}`)
   }
   return value
 }
 
-function nonnegative(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0
+function nonnegative(value: number | null | undefined): number {
+  return value !== null && value !== undefined && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : 0
 }
 
 function isUrl(value: string): boolean {

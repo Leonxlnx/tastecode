@@ -1,38 +1,35 @@
 // @vitest-environment happy-dom
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ZoomHud } from './ZoomHud.js'
+import { ZoomHud, type ZoomHudServices } from './ZoomHud.js'
 
-const zoom = vi.hoisted(() => ({
-  listener: undefined as ((factor: number) => void) | undefined,
-  set: vi.fn(async () => undefined),
-}))
-
-vi.mock('../bridge.js', () => ({
+let zoomListener: ((factor: number) => void) | undefined
+const setAppZoom = vi.fn<ZoomHudServices['setAppZoom']>(async () => undefined)
+const services = {
   onAppZoomChange: (listener: (factor: number) => void) => {
-    zoom.listener = listener
+    zoomListener = listener
     return () => {
-      zoom.listener = undefined
+      zoomListener = undefined
     }
   },
-  setAppZoom: zoom.set,
-}))
+  setAppZoom,
+} satisfies ZoomHudServices
 
 afterEach(() => {
-  zoom.listener = undefined
+  zoomListener = undefined
   vi.clearAllMocks()
 })
 
 describe('ZoomHud', () => {
   it('shows the current percentage and exposes zoom controls', () => {
-    render(<ZoomHud />)
+    render(<ZoomHud services={services} />)
 
-    act(() => zoom.listener?.(1.1))
+    act(() => zoomListener?.(1.1))
 
     expect(screen.getByLabelText('App zoom 110%').textContent).toContain('110%')
     fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }))
     fireEvent.click(screen.getByRole('button', { name: 'Reset' }))
-    expect(zoom.set).toHaveBeenNthCalledWith(1, 'out')
-    expect(zoom.set).toHaveBeenNthCalledWith(2, 'reset')
+    expect(setAppZoom).toHaveBeenNthCalledWith(1, 'out')
+    expect(setAppZoom).toHaveBeenNthCalledWith(2, 'reset')
   })
 })

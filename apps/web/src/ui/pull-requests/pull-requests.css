@@ -226,6 +226,9 @@
 }
 
 .pr-filter-menu-head button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   padding: 4px 6px;
   background: transparent;
   border: 0;

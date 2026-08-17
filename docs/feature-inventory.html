@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-16 3715e64f</span>
+        <span class="meta">2026-08-17 ab3e88c8</span>
       </div>
     </div>
 
@@ -1368,7 +1368,7 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Command palette with a reachable keyboard-shortcut reference</span
+                >Command palette with reachable keybind settings</span
               ></label
             >
           </li>
@@ -1389,10 +1389,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Keyboard shortcuts with hints rendered in the UI
+                >Custom keybinds with hints rendered in the UI
                 <span class="d"
-                  >new chat, new project, settings, search; Settings and modal dialogs retain
-                  keyboard ownership while visible</span
+                  >22 app, chat, project, and workspace actions; searchable native editor, conflict
+                  checks, automatic persistence, reset, and safe keyboard ownership for Settings and
+                  modal dialogs</span
                 ></span
               ></label
             >
@@ -1577,7 +1578,8 @@
             <label
               ><input type="checkbox" /><span
                 >Models: compact search-free Settings lists keep every catalog model and individual
-                visibility switch visible, with a tri-state master switch for each provider
+                visibility switch visible, with a two-state master switch for each provider; partial
+                groups appear off, and enabling a provider makes every model visible
                 <span class="d"
                   >composer pickers retain full-catalog search; first-run defaults wait for complete
                   installed-provider discovery; failed discovery retries after reconnect without

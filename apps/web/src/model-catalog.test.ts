@@ -11,6 +11,7 @@ import {
   providerDisplayName,
   resolveReasoningEffort,
 } from './model-catalog.js'
+import { propertiesWhen } from './properties-when.js'
 
 const model: Model = {
   id: 'shared-model',
@@ -24,7 +25,9 @@ function reasoningModel(reasoningEfforts: string[], defaultReasoningEffort?: str
   return {
     ...model,
     reasoningEfforts,
-    ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
+    ...propertiesWhen(defaultReasoningEffort, (defaultReasoningEffort) => ({
+      defaultReasoningEffort,
+    })),
   }
 }
 

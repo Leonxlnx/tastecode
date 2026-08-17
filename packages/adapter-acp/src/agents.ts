@@ -3,6 +3,21 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Account, Model, ProviderSetup } from '@harness/contracts'
 import { isInstalled, killTree, spawnCli } from '@harness/proc'
+import { z } from 'zod'
+import { propertiesWhen } from './properties-when.js'
+
+const KimiModelsSchema = z.object({
+  models: z
+    .record(
+      z.string(),
+      z.object({
+        displayName: z.string().optional(),
+        supportEfforts: z.array(z.string()).optional(),
+        defaultEffort: z.string().optional(),
+      }),
+    )
+    .default({}),
+})
 
 /**
  * Agents we know how to launch in ACP mode.
@@ -201,21 +216,16 @@ function model(id: string, displayName: string, description: string, isDefault =
 }
 
 export function parseKimiModels(output: string): Model[] {
-  const parsed = JSON.parse(output) as { models?: Record<string, unknown> }
-  const entries = Object.entries(parsed.models ?? {})
-  return entries.map(([id, value], index) => {
-    const details = value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
-    const efforts = Array.isArray(details.supportEfforts)
-      ? details.supportEfforts.filter((effort): effort is string => typeof effort === 'string')
-      : []
+  const parsed = KimiModelsSchema.parse(JSON.parse(output))
+  return Object.entries(parsed.models).map(([id, details], index) => {
     return {
       id,
-      displayName: typeof details.displayName === 'string' ? details.displayName : id,
+      displayName: details.displayName ?? id,
       isDefault: index === 0,
-      reasoningEfforts: efforts,
-      ...(typeof details.defaultEffort === 'string'
-        ? { defaultReasoningEffort: details.defaultEffort }
-        : {}),
+      reasoningEfforts: details.supportEfforts ?? [],
+      ...propertiesWhen(details.defaultEffort, (defaultReasoningEffort) => ({
+        defaultReasoningEffort,
+      })),
       serviceTiers: [],
     }
   })

@@ -1,3 +1,5 @@
+import { propertiesWhen } from './properties-when.js'
+import { z } from 'zod'
 export type ProfileIdentityPreferences = {
   displayName: string
   avatarDataUrl?: string | undefined
@@ -17,7 +19,7 @@ export function readProfileIdentityPreferences(): ProfileIdentityPreferences {
     const avatarDataUrl = localStorage.getItem(AVATAR_KEY) ?? undefined
     return {
       displayName,
-      ...(avatarDataUrl && DATA_URL.test(avatarDataUrl) ? { avatarDataUrl } : {}),
+      ...propertiesWhen(avatarDataUrl && DATA_URL.test(avatarDataUrl), () => ({ avatarDataUrl })),
     }
   } catch {
     return { displayName: '' }
@@ -42,11 +44,11 @@ export async function readProfileImage(file: File): Promise<string> {
 
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
-    reader.addEventListener('load', () =>
-      typeof reader.result === 'string'
-        ? resolve(reader.result)
-        : reject(new Error('Read failed.')),
-    )
+    reader.addEventListener('load', () => {
+      const result = z.string().safeParse(reader.result)
+      if (result.success) resolve(result.data)
+      else reject(new Error('Read failed.'))
+    })
     reader.addEventListener('error', () => reject(new Error('The image could not be read.')))
     reader.readAsDataURL(file)
   })

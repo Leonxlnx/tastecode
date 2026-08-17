@@ -1,12 +1,14 @@
 import { spawn } from 'node:child_process'
 import type { Writable } from 'node:stream'
+import { z } from 'zod'
+import type { BoundaryValue } from './boundary.js'
 
 export type MacHapticPattern = 'alignment' | 'generic'
 
 type HapticHelperProcess = {
   stdin: Writable
-  once: (event: 'error' | 'exit', listener: () => void) => unknown
-  kill: () => unknown
+  once: (event: 'error' | 'exit', listener: () => void) => HapticHelperProcess
+  kill: () => boolean
 }
 
 type MacOSHapticsOptions = {
@@ -60,7 +62,7 @@ function spawnHapticHelper(): HapticHelperProcess {
     stdio: ['pipe', 'ignore', 'ignore'],
   })
   if (!child.stdin) throw new Error('macOS haptic helper has no input pipe')
-  return child as HapticHelperProcess
+  return child
 }
 
 /** Low-latency, macOS-only AppKit haptics with a hard flood limit. */
@@ -212,6 +214,8 @@ export class MacOSHaptics {
   }
 }
 
-export function isMacHapticPattern(value: unknown): value is MacHapticPattern {
-  return value === 'alignment' || value === 'generic'
+const MacHapticPatternSchema = z.enum(['alignment', 'generic'])
+
+export function isMacHapticPattern(value: BoundaryValue): value is MacHapticPattern {
+  return MacHapticPatternSchema.safeParse(value).success
 }

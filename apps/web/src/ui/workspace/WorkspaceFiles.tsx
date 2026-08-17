@@ -14,6 +14,7 @@ import {
 import type { Transport } from '../../transport.js'
 import { FileTypeIcon } from '../FileTypeIcon.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
+import { propertiesWhen } from '../../properties-when.js'
 
 type Entry = ResultOf<'workspace.listDirectory'>['entries'][number]
 type FileContents = ResultOf<'workspace.readFile'>
@@ -38,7 +39,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
   const context = useCallback(
     () => ({
       projectPath: props.projectPath!,
-      ...(props.threadId ? { threadId: props.threadId } : {}),
+      ...propertiesWhen(props.threadId, (includedValue) => ({ threadId: includedValue })),
     }),
     [props.projectPath, props.threadId],
   )
@@ -51,7 +52,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
       try {
         const result = await props.transport.request('workspace.listDirectory', {
           ...context(),
-          ...(directory ? { directory } : {}),
+          ...propertiesWhen(directory, (directory) => ({ directory })),
         })
         if (directoryGeneration.current === mine) {
           setDirectories((current) => new Map(current).set(directory, result.entries))

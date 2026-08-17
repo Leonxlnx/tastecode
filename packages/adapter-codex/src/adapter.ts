@@ -17,33 +17,19 @@ import type {
   Usage,
   UserInputRequest,
 } from '@harness/contracts'
-import type { LoginAccountResponse } from './generated/v2/LoginAccountResponse'
-import type { GetAccountRateLimitsResponse } from './generated/v2/GetAccountRateLimitsResponse'
-import type { RateLimitSnapshot } from './generated/v2/RateLimitSnapshot'
-import type { ModelListResponse } from './generated/v2/ModelListResponse'
 import { mapThreadItem } from './map-item.js'
-import { spawnCli, StdioJsonRpc } from '@harness/proc'
-import type { AgentMessageDeltaNotification } from './generated/v2/AgentMessageDeltaNotification'
-import type { ItemCompletedNotification } from './generated/v2/ItemCompletedNotification'
-import type { ItemStartedNotification } from './generated/v2/ItemStartedNotification'
-import type { ThreadStartedNotification } from './generated/v2/ThreadStartedNotification'
-import type { ThreadTokenUsageUpdatedNotification } from './generated/v2/ThreadTokenUsageUpdatedNotification'
-import type { WarningNotification } from './generated/v2/WarningNotification'
-import type { ErrorNotification } from './generated/v2/ErrorNotification'
-import type { TurnPlanUpdatedNotification } from './generated/v2/TurnPlanUpdatedNotification'
-import type { ThreadStartResponse } from './generated/v2/ThreadStartResponse'
-import type { ThreadResumeResponse } from './generated/v2/ThreadResumeResponse'
-import type { TurnCompletedNotification } from './generated/v2/TurnCompletedNotification'
-import type { TurnStartedNotification } from './generated/v2/TurnStartedNotification'
-import type { TurnStartResponse } from './generated/v2/TurnStartResponse'
-import type { ListMcpServerStatusResponse } from './generated/v2/ListMcpServerStatusResponse'
-import type { McpServerStatusUpdatedNotification } from './generated/v2/McpServerStatusUpdatedNotification'
-import type { McpServerOauthLoginResponse } from './generated/v2/McpServerOauthLoginResponse'
-import type { McpServerOauthLoginCompletedNotification } from './generated/v2/McpServerOauthLoginCompletedNotification'
-import type { GuardianApprovalReviewAction } from './generated/v2/GuardianApprovalReviewAction'
-import type { GuardianApprovalReviewStatus } from './generated/v2/GuardianApprovalReviewStatus'
-import type { ItemGuardianApprovalReviewCompletedNotification } from './generated/v2/ItemGuardianApprovalReviewCompletedNotification'
-import type { ItemGuardianApprovalReviewStartedNotification } from './generated/v2/ItemGuardianApprovalReviewStartedNotification'
+import {
+  spawnCli,
+  StdioJsonRpc,
+  type JsonRpcInput,
+  type JsonRpcRequestOptions,
+  type JsonRpcResultParser,
+  type JsonRpcValue,
+  type ParsedJsonRpcRequestOptions,
+  type ServerRequestHandler,
+  JsonRpcValueSchema,
+} from '@harness/proc'
+import { ZodError } from 'zod'
 import type { JsonValue } from './generated/serde_json/JsonValue.js'
 import {
   mapMcpServerStatus,
@@ -51,18 +37,55 @@ import {
   mcpStartupInventory,
   prepareMcpConfig,
 } from './mcp.js'
-import type { SkillsListResponse } from './generated/v2/SkillsListResponse.js'
-import type { SkillsConfigWriteResponse } from './generated/v2/SkillsConfigWriteResponse.js'
-import type { ToolRequestUserInputParams } from './generated/v2/ToolRequestUserInputParams.js'
-import type { PermissionsRequestApprovalParams } from './generated/v2/PermissionsRequestApprovalParams.js'
-import type { PermissionsRequestApprovalResponse } from './generated/v2/PermissionsRequestApprovalResponse.js'
-import type { RequestPermissionProfile } from './generated/v2/RequestPermissionProfile.js'
 import { mapSkillList } from './skills.js'
 import {
   CodexVoiceTranscriber,
   type VoiceCapability,
   type VoiceTranscriptionInput,
 } from './voice.js'
+import { propertiesWhen } from './properties-when.js'
+import {
+  AccountLoginCompletedNotificationSchema,
+  AccountResponseSchema,
+  ApprovalParamsSchema,
+  CodexRateLimitResponseSchema,
+  CommandOutputDeltaNotificationSchema,
+  ErrorNotificationSchema,
+  GuardianReviewCompletedSchema,
+  GuardianReviewStartedSchema,
+  ItemCompletedNotificationSchema,
+  ItemDeltaNotificationSchema,
+  ItemStartedNotificationSchema,
+  ListMcpServerStatusResponseSchema,
+  LoginAccountResponseSchema,
+  McpServerOauthLoginCompletedNotificationSchema,
+  McpServerOauthLoginResponseSchema,
+  McpServerStatusUpdatedNotificationSchema,
+  ModelListResponseSchema,
+  PermissionsRequestApprovalParamsSchema,
+  SkillsConfigWriteResponseSchema,
+  SkillsListResponseSchema,
+  ThreadResumeResponseSchema,
+  ThreadStartResponseSchema,
+  ThreadStartedNotificationSchema,
+  ThreadTokenUsageUpdatedNotificationSchema,
+  ToolRequestUserInputParamsSchema,
+  TurnCompletedNotificationSchema,
+  TurnDiffUpdatedNotificationSchema,
+  TurnPlanUpdatedNotificationSchema,
+  TurnStartedNotificationSchema,
+  TurnStartResponseSchema,
+  WarningNotificationSchema,
+  type CodexRateLimitResponse,
+  type CodexRateLimitSnapshot,
+  type ErrorNotification,
+  type GuardianReviewAction,
+  type GuardianReviewNotification,
+  type RequestPermissionProfile,
+  type ThreadTokenUsageUpdatedNotification,
+  type ToolRequestUserInputParams,
+  type WarningNotification,
+} from './schemas.js'
 
 /**
  * Tier 1 adapter: drives `codex app-server` over JSON-RPC.
@@ -106,7 +129,7 @@ export function mapCodexUsage(
   // Usage cannot carry both numerators, so exposing the window beside total
   // would render an impossible context percentage after a few turns.
   return {
-    ...(model ? { model } : {}),
+    ...propertiesWhen(model, (model) => ({ model })),
     inputTokens: total.inputTokens,
     cachedInputTokens: total.cachedInputTokens,
     outputTokens: total.outputTokens,
@@ -161,6 +184,34 @@ export type StartOptions = {
 export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>
 type Spawn = typeof spawnCli
 
+export interface CodexRpc {
+  onStderr(handler: (text: string) => void): void
+  onNotification(handler: (method: string, params: JsonRpcValue | undefined) => void): void
+  onServerRequest(handler: ServerRequestHandler): void
+  request(
+    method: string,
+    params?: JsonRpcInput,
+    options?: JsonRpcRequestOptions,
+  ): Promise<JsonRpcValue | undefined>
+  request<Result>(
+    method: string,
+    params: JsonRpcInput,
+    options: ParsedJsonRpcRequestOptions<Result>,
+  ): Promise<Result>
+  notify(method: string, params?: JsonRpcInput): void
+  dispose(): void
+}
+
+export type CodexRpcConnector = (launch: {
+  command: string
+  args: string[]
+  environment: NodeJS.ProcessEnv
+  spawn: Spawn
+}) => CodexRpc
+
+const connectCodex: CodexRpcConnector = ({ command, args, environment, spawn }) =>
+  new StdioJsonRpc(spawn(command, args, { env: environment }))
+
 export type ProviderLimit = {
   label: string
   usedPercent: number
@@ -177,10 +228,7 @@ export type CodexLimitSource =
  * `full` is genuinely dangerous, which is why the UI never makes it the quiet
  * default and never remembers it silently across sessions.
  */
-export const CODEX_APPROVAL: Record<
-  ApprovalMode,
-  { approvalPolicy: string; sandbox: string; approvalsReviewer: 'user' | 'auto_review' }
-> = {
+export const CODEX_APPROVAL = {
   ask: { approvalPolicy: 'untrusted', sandbox: 'read-only', approvalsReviewer: 'user' },
   auto: { approvalPolicy: 'on-request', sandbox: 'workspace-write', approvalsReviewer: 'user' },
   'auto-review': {
@@ -189,15 +237,18 @@ export const CODEX_APPROVAL: Record<
     approvalsReviewer: 'auto_review',
   },
   full: { approvalPolicy: 'never', sandbox: 'danger-full-access', approvalsReviewer: 'user' },
-}
+} satisfies Record<
+  ApprovalMode,
+  { approvalPolicy: string; sandbox: string; approvalsReviewer: 'user' | 'auto_review' }
+>
 
-const REVIEW_STATUS: Record<GuardianApprovalReviewStatus, ApprovalReview['status']> = {
+const REVIEW_STATUS = {
   inProgress: 'in_progress',
   approved: 'approved',
   denied: 'denied',
   timedOut: 'timed_out',
   aborted: 'aborted',
-}
+} satisfies Record<GuardianReviewNotification['review']['status'], ApprovalReview['status']>
 
 export function mapUserInputRequest(params: ToolRequestUserInputParams): UserInputRequest {
   return {
@@ -216,7 +267,7 @@ export function mapUserInputRequest(params: ToolRequestUserInputParams): UserInp
   }
 }
 
-function describeApprovalReviewAction(action: GuardianApprovalReviewAction): string {
+function describeApprovalReviewAction(action: GuardianReviewAction): string {
   switch (action.type) {
     case 'command':
       return `Run ${action.command}`
@@ -237,143 +288,47 @@ function describeApprovalReviewAction(action: GuardianApprovalReviewAction): str
   }
 }
 
-export function mapAutoApprovalReview(
-  params:
-    ItemGuardianApprovalReviewStartedNotification | ItemGuardianApprovalReviewCompletedNotification,
-): ApprovalReview {
+export function mapAutoApprovalReview(params: GuardianReviewNotification): ApprovalReview {
+  const completedAt = 'completedAtMs' in params ? params.completedAtMs : undefined
   return {
     id: params.reviewId,
     turnId: params.turnId,
     status: REVIEW_STATUS[params.review.status],
     description: describeApprovalReviewAction(params.action),
-    ...(params.review.rationale ? { rationale: params.review.rationale } : {}),
-    ...(params.review.riskLevel ? { riskLevel: params.review.riskLevel } : {}),
+    ...propertiesWhen(params.review.rationale, (includedValue) => ({ rationale: includedValue })),
+    ...propertiesWhen(params.review.riskLevel, (includedValue) => ({ riskLevel: includedValue })),
     startedAt: params.startedAtMs,
-    ...('completedAtMs' in params ? { completedAt: params.completedAtMs } : {}),
+    ...propertiesWhen(completedAt, (includedCompletedAt) => ({
+      completedAt: includedCompletedAt,
+    })),
   }
-}
-
-/**
- * Codex's account union has variants we do not model (Bedrock, and whatever
- * comes next), so the fallback is a bare `type` we can still branch on.
- */
-type CodexAccount =
-  | { type: 'apiKey' }
-  | { type: 'chatgpt'; email: string | null; planType: string }
-  | { type: 'other' }
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-function limitAccount(response: unknown): CodexAccount | null {
-  const envelope = record(response)
-  if (!envelope || !Object.hasOwn(envelope, 'account')) {
-    throw new Error('Codex account response was invalid.')
-  }
-  if (envelope.account === null) return null
-  const account = record(envelope.account)
-  if (!account || typeof account.type !== 'string' || account.type.length === 0) {
-    throw new Error('Codex account response was invalid.')
-  }
-  if (account.type === 'apiKey') return { type: 'apiKey' }
-  if (account.type !== 'chatgpt') return { type: 'other' }
-  if (
-    typeof account.planType !== 'string' ||
-    (account.email !== null && typeof account.email !== 'string')
-  ) {
-    throw new Error('Codex account response was invalid.')
-  }
-  return { type: 'chatgpt', email: account.email, planType: account.planType }
-}
-
-function nullable(value: unknown, type: 'string' | 'number'): boolean {
-  return value === null || typeof value === type
-}
-
-function rateWindow(value: unknown): boolean {
-  const window = record(value)
-  return Boolean(
-    window &&
-    typeof window.usedPercent === 'number' &&
-    nullable(window.windowDurationMins, 'number') &&
-    nullable(window.resetsAt, 'number'),
-  )
-}
-
-function creditsSnapshot(value: unknown): boolean {
-  const credits = record(value)
-  return Boolean(
-    credits &&
-    typeof credits.hasCredits === 'boolean' &&
-    typeof credits.unlimited === 'boolean' &&
-    nullable(credits.balance, 'string'),
-  )
-}
-
-function rateLimitSnapshot(value: unknown): value is RateLimitSnapshot {
-  const snapshot = record(value)
-  return Boolean(
-    snapshot &&
-    nullable(snapshot.limitId, 'string') &&
-    nullable(snapshot.limitName, 'string') &&
-    (snapshot.primary === null || rateWindow(snapshot.primary)) &&
-    (snapshot.secondary === null || rateWindow(snapshot.secondary)) &&
-    (snapshot.credits === null || creditsSnapshot(snapshot.credits)) &&
-    (snapshot.individualLimit === null || record(snapshot.individualLimit)) &&
-    nullable(snapshot.planType, 'string') &&
-    nullable(snapshot.rateLimitReachedType, 'string'),
-  )
-}
-
-function rateLimitResponse(value: unknown): GetAccountRateLimitsResponse {
-  const response = record(value)
-  const buckets = response && response.rateLimitsByLimitId
-  const bucketRecord = record(buckets)
-  const resets = response && response.rateLimitResetCredits
-  const validBuckets =
-    buckets === null ||
-    Boolean(bucketRecord && Object.values(bucketRecord).every((entry) => rateLimitSnapshot(entry)))
-  const reset = record(resets)
-  const validResets =
-    resets === null ||
-    Boolean(
-      reset &&
-      (typeof reset.availableCount === 'number' || typeof reset.availableCount === 'string') &&
-      (reset.credits === undefined || reset.credits === null || Array.isArray(reset.credits)),
-    )
-  if (!response || !rateLimitSnapshot(response.rateLimits) || !validBuckets || !validResets) {
-    throw new Error('Codex rate-limit response was invalid.')
-  }
-  return response as GetAccountRateLimitsResponse
 }
 
 /** The vendor's plan ids are not display strings. */
 function planLabel(plan: string): string {
-  const named: Record<string, string> = {
-    free: 'Free',
-    go: 'Go',
-    plus: 'Plus',
-    pro: 'Pro',
-    prolite: 'Pro Lite',
-    team: 'Team',
-    business: 'Business',
-    enterprise: 'Enterprise',
-    edu: 'Edu',
-  }
-  return named[plan] ?? 'Signed in'
+  return PLAN_LABELS.find(([id]) => id === plan)?.[1] ?? 'Signed in'
 }
 
+const PLAN_LABELS = [
+  ['free', 'Free'],
+  ['go', 'Go'],
+  ['plus', 'Plus'],
+  ['pro', 'Pro'],
+  ['prolite', 'Pro Lite'],
+  ['team', 'Team'],
+  ['business', 'Business'],
+  ['enterprise', 'Enterprise'],
+  ['edu', 'Edu'],
+] as const
+
 /** Which server requests are approval prompts, and what they are about. */
-const APPROVAL_KIND: Record<string, ApprovalRequest['kind'] | undefined> = {
-  'item/commandExecution/requestApproval': 'command',
-  'item/fileChange/requestApproval': 'file_change',
-  'item/permissions/requestApproval': 'permissions',
-  execCommandApproval: 'command',
-  applyPatchApproval: 'file_change',
-}
+const APPROVAL_KIND = new Map<string, ApprovalRequest['kind']>([
+  ['item/commandExecution/requestApproval', 'command'],
+  ['item/fileChange/requestApproval', 'file_change'],
+  ['item/permissions/requestApproval', 'permissions'],
+  ['execCommandApproval', 'command'],
+  ['applyPatchApproval', 'file_change'],
+])
 
 /**
  * Our four answers onto Codex's per-kind decision vocabulary.
@@ -381,7 +336,7 @@ const APPROVAL_KIND: Record<string, ApprovalRequest['kind'] | undefined> = {
  * `abort` maps to cancel, which stops the turn rather than just this step —
  * "no, and stop" is a different intent from "not this one".
  */
-const DECISION: Record<ApprovalRequest['kind'], Record<ApprovalDecision, string>> = {
+const DECISION = {
   command: {
     approve: 'accept',
     'approve-session': 'acceptForSession',
@@ -400,54 +355,57 @@ const DECISION: Record<ApprovalRequest['kind'], Record<ApprovalDecision, string>
     deny: 'decline',
     abort: 'cancel',
   },
-}
+} satisfies Record<ApprovalRequest['kind'], Record<ApprovalDecision, string>>
 
 export function mapApprovalResponse(
   kind: ApprovalRequest['kind'],
   decision: ApprovalDecision,
   requested?: RequestPermissionProfile,
-): { decision: string } | PermissionsRequestApprovalResponse {
-  if (kind !== 'permissions') return { decision: DECISION[kind][decision] }
-  return {
+) {
+  if (kind !== 'permissions') {
+    return JsonRpcValueSchema.parse({ decision: DECISION[kind][decision] })
+  }
+  return JsonRpcValueSchema.parse({
     permissions:
       decision === 'approve' || decision === 'approve-session'
         ? {
-            ...(requested?.network ? { network: requested.network } : {}),
-            ...(requested?.fileSystem ? { fileSystem: requested.fileSystem } : {}),
+            ...propertiesWhen(requested?.network, (includedValue) => ({ network: includedValue })),
+            ...propertiesWhen(requested?.fileSystem, (includedValue) => ({
+              fileSystem: includedValue,
+            })),
           }
         : {},
     scope: decision === 'approve-session' ? 'session' : 'turn',
-  }
-}
-
-type ApprovalParams = {
-  itemId?: string
-  approvalId?: string | null
-  reason?: string | null
-  command?: string | null
-  cwd?: string | null
-  grantRoot?: string | null
+  })
 }
 
 export function mapApprovalRequest(
   kind: ApprovalRequest['kind'],
-  params: ApprovalParams | PermissionsRequestApprovalParams,
+  value: JsonRpcValue | undefined,
 ): ApprovalRequest {
-  const permission =
-    kind === 'permissions' ? (params as PermissionsRequestApprovalParams) : undefined
+  if (kind === 'permissions') {
+    const params = PermissionsRequestApprovalParamsSchema.parse(value)
+    return {
+      id: params.itemId,
+      kind,
+      ...propertiesWhen(params.reason, (reason) => ({ reason })),
+      command: `Requested access:\n${JSON.stringify(params.permissions, null, 2)}`,
+      cwd: params.cwd,
+      createdAt: Date.now(),
+    }
+  }
+
+  const params = ApprovalParamsSchema.parse(value)
   return {
     id:
       ('approvalId' in params ? params.approvalId : undefined) ??
       params.itemId ??
       crypto.randomUUID(),
     kind,
-    ...(params.reason ? { reason: params.reason } : {}),
-    ...('command' in params && params.command ? { command: params.command } : {}),
-    ...(permission
-      ? { command: `Requested access:\n${JSON.stringify(permission.permissions, null, 2)}` }
-      : {}),
-    ...(params.cwd ? { cwd: String(params.cwd) } : {}),
-    ...('grantRoot' in params && params.grantRoot ? { path: String(params.grantRoot) } : {}),
+    ...propertiesWhen(params.reason, (includedValue) => ({ reason: includedValue })),
+    ...propertiesWhen(params.command, (command) => ({ command })),
+    ...propertiesWhen(params.cwd, (includedValue) => ({ cwd: String(includedValue) })),
+    ...propertiesWhen(params.grantRoot, (path) => ({ path })),
     createdAt: Date.now(),
   }
 }
@@ -470,9 +428,10 @@ export type CodexAdapterEvents = {
 
 export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   readonly #spawn: Spawn
-  #rpc: StdioJsonRpc | undefined
-  #voice = new CodexVoiceTranscriber(<T>(method: string, params: unknown) =>
-    this.#call<T>(method, params),
+  readonly #connect: CodexRpcConnector
+  #rpc: CodexRpc | undefined
+  #voice = new CodexVoiceTranscriber((method, params, result) =>
+    this.#callParsed(method, params, result),
   )
   #started = false
   #mcpStartup = new Map<string, McpStartupStatus>()
@@ -492,23 +451,25 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     string,
     {
       kind: ApprovalRequest['kind']
-      respond: (result: unknown) => void
+      respond: (result: JsonRpcValue) => void
       permissions?: RequestPermissionProfile
       threadId?: string
       turnId?: string
     }
   >()
-  #userInputs = new Map<string, (result: unknown) => void>()
+  #userInputs = new Map<string, (result: JsonRpcValue) => void>()
 
   constructor(
     options: {
       mcpServers?: McpServerConfig[]
       mcpCredentials?: Record<string, string>
       spawn?: Spawn
+      connect?: CodexRpcConnector
     } = {},
   ) {
     super()
     this.#spawn = options.spawn ?? spawnCli
+    this.#connect = options.connect ?? connectCodex
     const prepared = prepareMcpConfig(options.mcpServers ?? [], options.mcpCredentials ?? {})
     this.#mcpServers = prepared.servers
     this.#mcpEnvironment = prepared.environment
@@ -525,14 +486,12 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     // Structured questions are gated in Codex's default collaboration mode.
     // Enable the native tool at process startup so every advertised user-input
     // capability is real rather than a request the model can never make.
-    const child = this.#spawn(
-      'codex',
-      ['app-server', '--enable', 'default_mode_request_user_input'],
-      {
-        env: this.#mcpEnvironment,
-      },
-    )
-    const rpc = new StdioJsonRpc(child)
+    const rpc = this.#connect({
+      command: 'codex',
+      args: ['app-server', '--enable', 'default_mode_request_user_input'],
+      environment: this.#mcpEnvironment,
+      spawn: this.#spawn,
+    })
     this.#rpc = rpc
 
     rpc.onStderr((text) => this.emit('log', text.trimEnd()))
@@ -562,37 +521,43 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
    * answers questions about them; that is the whole compliance posture.
    */
   async account(): Promise<Account> {
-    try {
-      // The response wraps the account rather than being one.
-      const { account } = await this.#call<{ account: CodexAccount | null }>('account/read', {})
-      if (!account) return { signedIn: false }
-      switch (account.type) {
-        case 'apiKey':
-          return { signedIn: true, plan: 'API key' }
-        case 'chatgpt':
-          return {
-            signedIn: true,
-            ...(account.email ? { email: account.email } : {}),
-            plan: planLabel(account.planType),
-          }
-        default:
-          return { signedIn: true }
-      }
-    } catch (cause) {
-      // A failed read is not evidence that the user signed out.
-      throw cause
+    const { account } = await this.#callParsed('account/read', {}, AccountResponseSchema)
+    if (!account) return { signedIn: false }
+    switch (account.type) {
+      case 'apiKey':
+        return { signedIn: true, plan: 'API key' }
+      case 'chatgpt':
+        return {
+          signedIn: true,
+          ...propertiesWhen(account.email, (email) => ({ email })),
+          plan: planLabel(account.planType),
+        }
+      default:
+        return { signedIn: true }
     }
   }
 
   /** Subscription availability and headroom, decided inside the adapter. */
   async rateLimitSource(): Promise<CodexLimitSource> {
-    const account = limitAccount(
-      await this.#call<unknown>('account/read', {}, CONTROL_READ_TIMEOUT_MS),
-    )
+    const { account } = await this.#callParsed(
+      'account/read',
+      {},
+      AccountResponseSchema,
+      CONTROL_READ_TIMEOUT_MS,
+    ).catch((cause) => {
+      if (cause instanceof ZodError) throw new Error('Codex account response was invalid.')
+      throw cause
+    })
     if (account?.type !== 'chatgpt') return { status: 'unavailable' }
-    const response = rateLimitResponse(
-      await this.#call<unknown>('account/rateLimits/read', {}, CONTROL_READ_TIMEOUT_MS),
-    )
+    const response = await this.#callParsed(
+      'account/rateLimits/read',
+      {},
+      CodexRateLimitResponseSchema,
+      CONTROL_READ_TIMEOUT_MS,
+    ).catch((cause) => {
+      if (cause instanceof ZodError) throw new Error('Codex rate-limit response was invalid.')
+      throw cause
+    })
     return { status: 'ready', limits: mapCodexRateLimits(response) }
   }
 
@@ -612,9 +577,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
    * never in a position to see the credential.
    */
   async startLogin(): Promise<{ loginId: string; authUrl: string }> {
-    const response = await this.#call<LoginAccountResponse>('account/login/start', {
-      type: 'chatgpt',
-    })
+    const response = await this.#callParsed(
+      'account/login/start',
+      { type: 'chatgpt' },
+      LoginAccountResponseSchema,
+    )
     if (response.type !== 'chatgpt') throw new Error('unexpected login response')
     return { loginId: response.loginId, authUrl: response.authUrl }
   }
@@ -646,28 +613,28 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
    * — vendors add models constantly and a stale dropdown is worse than none.
    */
   async listModels(): Promise<Model[]> {
-    const response = await this.#call<ModelListResponse>('model/list', {})
+    const response = await this.#callParsed('model/list', {}, ModelListResponseSchema)
     return response.data
       .filter((model) => !model.hidden)
       .map((model) => ({
         id: model.id,
         displayName: model.displayName,
-        ...(model.description ? { description: model.description } : {}),
+        ...propertiesWhen(model.description, (includedValue) => ({ description: includedValue })),
         isDefault: model.isDefault,
         reasoningEfforts: model.supportedReasoningEfforts.map((option) =>
           String(option.reasoningEffort),
         ),
-        ...(model.defaultReasoningEffort
-          ? { defaultReasoningEffort: String(model.defaultReasoningEffort) }
-          : {}),
+        ...propertiesWhen(model.defaultReasoningEffort, (includedValue) => ({
+          defaultReasoningEffort: String(includedValue),
+        })),
         serviceTiers: model.serviceTiers.map((tier) => ({
           id: String(tier.id),
           name: String(tier.name),
           description: String(tier.description),
         })),
-        ...(model.defaultServiceTier
-          ? { defaultServiceTier: String(model.defaultServiceTier) }
-          : {}),
+        ...propertiesWhen(model.defaultServiceTier, (includedValue) => ({
+          defaultServiceTier: String(includedValue),
+        })),
       }))
   }
 
@@ -681,10 +648,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
           this.#mcpInventory.set(key, servers)
           this.emit('mcpChanged', threadId ? { threadId } : {})
         })
-        .catch((error: unknown) => {
+        .catch((cause) => {
           this.emit(
             'log',
-            `MCP inventory refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+            `MCP inventory refresh failed: ${cause instanceof Error ? cause.message : String(cause)}`,
           )
         })
         .finally(() => this.#mcpInventoryLoads.delete(key))
@@ -697,11 +664,15 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const servers: McpServer[] = []
     let cursor: string | undefined
     do {
-      const response = await this.#call<ListMcpServerStatusResponse>('mcpServerStatus/list', {
-        detail: 'full',
-        ...(threadId ? { threadId } : {}),
-        ...(cursor ? { cursor } : {}),
-      })
+      const response = await this.#callParsed(
+        'mcpServerStatus/list',
+        {
+          detail: 'full',
+          ...propertiesWhen(threadId, (includedThreadId) => ({ threadId: includedThreadId })),
+          ...propertiesWhen(cursor, (includedCursor) => ({ cursor: includedCursor })),
+        },
+        ListMcpServerStatusResponseSchema,
+      )
       servers.push(
         ...response.data.map((status) =>
           mapMcpServerStatus(status, this.#mcpStartup.get(mcpStartupKey(threadId, status.name))),
@@ -716,19 +687,20 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     skills: Skill[]
     errors: SkillDiscoveryError[]
   }> {
-    const response = await this.#call<SkillsListResponse>('skills/list', {
-      cwds: [projectPath],
-      forceReload: true,
-    })
+    const response = await this.#callParsed(
+      'skills/list',
+      { cwds: [projectPath], forceReload: true },
+      SkillsListResponseSchema,
+    )
     return mapSkillList(response, projectPath)
   }
 
   async setSkillEnabled(skillId: string, enabled: boolean): Promise<boolean> {
-    const response = await this.#call<SkillsConfigWriteResponse>('skills/config/write', {
-      path: skillId,
-      name: null,
-      enabled,
-    })
+    const response = await this.#callParsed(
+      'skills/config/write',
+      { path: skillId, name: null, enabled },
+      SkillsConfigWriteResponseSchema,
+    )
     return response.effectiveEnabled
   }
 
@@ -765,10 +737,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     serverId: string,
     threadId: string,
   ): Promise<{ loginId: string; authUrl: string }> {
-    const response = await this.#call<McpServerOauthLoginResponse>('mcpServer/oauth/login', {
-      name: serverId,
-      threadId,
-    })
+    const response = await this.#callParsed(
+      'mcpServer/oauth/login',
+      { name: serverId, threadId },
+      McpServerOauthLoginResponseSchema,
+    )
     const loginId = crypto.randomUUID()
     this.#mcpLogins.set(mcpLoginKey(threadId, serverId), loginId)
     return { loginId, authUrl: response.authorizationUrl }
@@ -788,20 +761,29 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   async startThread(workspacePath: string, options: StartOptions = {}): Promise<Thread> {
     const approval = options.approval ? CODEX_APPROVAL[options.approval] : undefined
     const config = {
-      ...(options.effort ? { model_reasoning_effort: options.effort } : {}),
-      ...(Object.keys(this.#mcpServers).length ? { mcp_servers: this.#mcpServers } : {}),
+      ...propertiesWhen(options.effort, (includedValue) => ({
+        model_reasoning_effort: includedValue,
+      })),
+      ...propertiesWhen(Object.keys(this.#mcpServers).length, () => ({
+        mcp_servers: this.#mcpServers,
+      })),
     }
-    const response = await this.#call<ThreadStartResponse>(
+    const response = await this.#callParsed(
       'thread/start',
       {
         cwd: workspacePath,
-        ...(options.model ? { model: options.model } : {}),
-        ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
-        ...(options.instructions ? { developerInstructions: options.instructions } : {}),
-        ...(options.ephemeral !== undefined ? { ephemeral: options.ephemeral } : {}),
-        ...(Object.keys(config).length ? { config } : {}),
+        ...propertiesWhen(options.model, (includedValue) => ({ model: includedValue })),
+        ...propertiesWhen(options.serviceTier, (includedValue) => ({ serviceTier: includedValue })),
+        ...propertiesWhen(options.instructions, (includedValue) => ({
+          developerInstructions: includedValue,
+        })),
+        ...propertiesWhen(options.ephemeral !== undefined, () => ({
+          ephemeral: options.ephemeral,
+        })),
+        ...propertiesWhen(Object.keys(config).length, () => ({ config })),
         ...(approval ?? {}),
       },
+      ThreadStartResponseSchema,
       THREAD_START_TIMEOUT_MS,
     )
     this.#threadModels.set(response.thread.id, response.model)
@@ -821,15 +803,21 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     options: Pick<StartOptions, 'instructions' | 'approval'> = {},
   ): Promise<Thread> {
     const approval = options.approval ? CODEX_APPROVAL[options.approval] : undefined
-    const response = await this.#call<ThreadResumeResponse>('thread/resume', {
-      threadId,
-      cwd: workspacePath,
-      ...(options.instructions ? { developerInstructions: options.instructions } : {}),
-      ...(approval ?? {}),
-      ...(Object.keys(this.#mcpServers).length
-        ? { config: { mcp_servers: this.#mcpServers } }
-        : {}),
-    })
+    const response = await this.#callParsed(
+      'thread/resume',
+      {
+        threadId,
+        cwd: workspacePath,
+        ...propertiesWhen(options.instructions, (includedValue) => ({
+          developerInstructions: includedValue,
+        })),
+        ...(approval ?? {}),
+        ...propertiesWhen(Object.keys(this.#mcpServers).length, () => ({
+          config: { mcp_servers: this.#mcpServers },
+        })),
+      },
+      ThreadResumeResponseSchema,
+    )
     this.#threadModels.set(response.thread.id, response.model)
     const thread = {
       id: response.thread.id,
@@ -858,23 +846,29 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     attachments: string[] = [],
     options: TurnOptions = {},
   ): Promise<string> {
-    const response = await this.#call<TurnStartResponse>('turn/start', {
-      threadId,
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
-      ...(options.effort ? { effort: options.effort } : {}),
-      input: [
-        { type: 'text', text, text_elements: [] },
-        // Images go in as images so the model can actually see them; anything
-        // else becomes a mention, which is Codex's way of saying "this path is
-        // relevant" without pushing the whole file into context.
-        ...attachments.map((path) =>
-          isImage(path)
-            ? { type: 'localImage', path }
-            : { type: 'mention', name: basename(path), path },
-        ),
-      ],
-    })
+    const response = await this.#callParsed(
+      'turn/start',
+      {
+        threadId,
+        ...propertiesWhen(options.model, (includedValue) => ({ model: includedValue })),
+        ...propertiesWhen(options.serviceTier, (includedValue) => ({
+          serviceTier: includedValue,
+        })),
+        ...propertiesWhen(options.effort, (includedValue) => ({ effort: includedValue })),
+        input: [
+          { type: 'text', text, text_elements: [] },
+          // Images go in as images so the model can actually see them; anything
+          // else becomes a mention, which is Codex's way of saying "this path is
+          // relevant" without pushing the whole file into context.
+          ...attachments.map((path) =>
+            isImage(path)
+              ? { type: 'localImage', path }
+              : { type: 'mention', name: basename(path), path },
+          ),
+        ],
+      },
+      TurnStartResponseSchema,
+    )
     if (options.model) this.#threadModels.set(threadId, options.model)
     return response.turn.id
   }
@@ -959,9 +953,22 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.removeAllListeners()
   }
 
-  #call<T>(method: string, params: unknown, timeoutMs?: number): Promise<T> {
+  #call(method: string, params: JsonRpcInput): Promise<JsonRpcValue | undefined> {
     if (!this.#rpc) throw new Error('adapter not started')
-    return this.#rpc.request<T>(method, params, timeoutMs === undefined ? {} : { timeoutMs })
+    return this.#rpc.request(method, params)
+  }
+
+  #callParsed<Result>(
+    method: string,
+    params: JsonRpcInput,
+    result: JsonRpcResultParser<Result>,
+    timeoutMs?: number,
+  ): Promise<Result> {
+    if (!this.#rpc) throw new Error('adapter not started')
+    return this.#rpc.request(method, params, {
+      result,
+      ...propertiesWhen(timeoutMs, (includedTimeoutMs) => ({ timeoutMs: includedTimeoutMs })),
+    })
   }
 
   /**
@@ -969,25 +976,28 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
    * Anything we do not recognise is declined — silently approving a request we
    * could not even parse is the worst possible default.
    */
-  #onServerRequest(method: string, params: unknown, respond: (result: unknown) => void): void {
+  #onServerRequest(
+    method: string,
+    params: JsonRpcValue | undefined,
+    respond: (result: JsonRpcValue) => void,
+  ): void {
     if (method === 'item/tool/requestUserInput') {
-      const request = mapUserInputRequest(params as ToolRequestUserInputParams)
+      const request = mapUserInputRequest(ToolRequestUserInputParamsSchema.parse(params))
       this.#userInputs.set(request.id, respond)
       this.emit('event', { type: 'user_input.requested', request })
       return
     }
 
-    const kind = APPROVAL_KIND[method]
+    const kind = APPROVAL_KIND.get(method)
     if (!kind) {
       this.emit('log', `declined unhandled server request: ${method}`)
       respond({ decision: 'decline' })
       return
     }
 
-    const p = params as ApprovalParams
     const permission =
-      kind === 'permissions' ? (params as PermissionsRequestApprovalParams) : undefined
-    const request = mapApprovalRequest(kind, permission ?? p)
+      kind === 'permissions' ? PermissionsRequestApprovalParamsSchema.parse(params) : undefined
+    const request = mapApprovalRequest(kind, params)
     const id = request.id
     // An id collision (a retried command reusing its itemId) would silently
     // drop the earlier responder and leave Codex blocked on it forever.
@@ -999,14 +1009,17 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#approvals.set(id, {
       kind,
       respond,
-      ...(permission ? { permissions: permission.permissions, threadId: permission.threadId } : {}),
-      ...(permission ? { turnId: permission.turnId } : {}),
+      ...propertiesWhen(permission, (includedValue) => ({
+        permissions: includedValue.permissions,
+        threadId: includedValue.threadId,
+      })),
+      ...propertiesWhen(permission, (includedValue) => ({ turnId: includedValue.turnId })),
     })
 
     this.emit('event', { type: 'approval.requested', request })
   }
 
-  #onNotification(method: string, params: unknown): void {
+  #onNotification(method: string, params: JsonRpcValue | undefined): void {
     if (isIgnorableCodexNotification(method)) return
 
     const emit = (event: DomainEvent) => this.emit('event', event)
@@ -1017,7 +1030,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         return
 
       case 'thread/started': {
-        const p = params as ThreadStartedNotification
+        const p = ThreadStartedNotificationSchema.parse(params)
         emit({
           type: 'thread.started',
           thread: {
@@ -1031,7 +1044,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       }
 
       case 'turn/started': {
-        const p = params as TurnStartedNotification
+        const p = TurnStartedNotificationSchema.parse(params)
         this.#activeTurns.set(p.threadId, p.turn.id)
         emit({
           type: 'turn.started',
@@ -1046,7 +1059,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       }
 
       case 'turn/completed': {
-        const p = params as TurnCompletedNotification
+        const p = TurnCompletedNotificationSchema.parse(params)
         if (this.#activeTurns.get(p.threadId) === p.turn.id) this.#activeTurns.delete(p.threadId)
         // A turn that ends with unanswered approvals must not leave the
         // thread pinned to 'approval' forever — the request is durably in
@@ -1072,7 +1085,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       }
 
       case 'item/started': {
-        const p = params as ItemStartedNotification
+        const p = ItemStartedNotificationSchema.parse(params)
         const item = mapThreadItem(p.item, {
           turnId: p.turnId,
           status: 'started',
@@ -1086,7 +1099,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       }
 
       case 'item/completed': {
-        const p = params as ItemCompletedNotification
+        const p = ItemCompletedNotificationSchema.parse(params)
         const item = mapThreadItem(p.item, {
           turnId: p.turnId,
           status: 'completed',
@@ -1102,7 +1115,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       case 'item/autoApprovalReview/started': {
         emit({
           type: 'approval.review.started',
-          review: mapAutoApprovalReview(params as ItemGuardianApprovalReviewStartedNotification),
+          review: mapAutoApprovalReview(GuardianReviewStartedSchema.parse(params)),
         })
         return
       }
@@ -1110,13 +1123,13 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       case 'item/autoApprovalReview/completed': {
         emit({
           type: 'approval.review.completed',
-          review: mapAutoApprovalReview(params as ItemGuardianApprovalReviewCompletedNotification),
+          review: mapAutoApprovalReview(GuardianReviewCompletedSchema.parse(params)),
         })
         return
       }
 
       case 'item/agentMessage/delta': {
-        const p = params as AgentMessageDeltaNotification
+        const p = ItemDeltaNotificationSchema.parse(params)
         emit({ type: 'item.delta', turnId: p.turnId, itemId: p.itemId, textDelta: p.delta })
         return
       }
@@ -1125,7 +1138,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       // row sits empty until the item completes, which reads as a hang.
       case 'item/reasoning/summaryTextDelta':
       case 'item/reasoning/textDelta': {
-        const p = params as { turnId: string; itemId: string; delta: string }
+        const p = ItemDeltaNotificationSchema.parse(params)
         emit({ type: 'item.delta', turnId: p.turnId, itemId: p.itemId, textDelta: p.delta })
         return
       }
@@ -1133,14 +1146,14 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       // Command output, live. A build that prints for a minute should show it
       // printing, not a spinner and then a wall of text.
       case 'item/commandExecution/outputDelta': {
-        const p = params as { turnId: string; itemId: string; delta?: string; deltaBase64?: string }
+        const p = CommandOutputDeltaNotificationSchema.parse(params)
         const text = p.delta ?? (p.deltaBase64 ? decodeBase64(p.deltaBase64) : '')
         if (text) emit({ type: 'item.delta', turnId: p.turnId, itemId: p.itemId, textDelta: text })
         return
       }
 
       case 'turn/plan/updated': {
-        const p = params as TurnPlanUpdatedNotification
+        const p = TurnPlanUpdatedNotificationSchema.parse(params)
         emit({
           type: 'plan.updated',
           turnId: p.turnId,
@@ -1158,13 +1171,13 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       }
 
       case 'turn/diff/updated': {
-        const p = params as { turnId: string; diff: string }
+        const p = TurnDiffUpdatedNotificationSchema.parse(params)
         emit({ type: 'diff.updated', turnId: p.turnId, diff: p.diff })
         return
       }
 
       case 'thread/tokenUsage/updated': {
-        const p = params as ThreadTokenUsageUpdatedNotification
+        const p = ThreadTokenUsageUpdatedNotificationSchema.parse(params)
         emit({
           type: 'usage.updated',
           usage: mapCodexUsage(p, this.#threadModels.get(p.threadId)),
@@ -1173,7 +1186,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       }
 
       case 'account/login/completed': {
-        const p = params as { loginId: string | null; success: boolean; error: string | null }
+        const p = AccountLoginCompletedNotificationSchema.parse(params)
         this.emit('login', p)
         return
       }
@@ -1183,11 +1196,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         return
 
       case 'warning':
-        this.emit('log', formatCodexWarning(params as WarningNotification))
+        this.emit('log', formatCodexWarning(WarningNotificationSchema.parse(params)))
         return
 
       case 'error': {
-        const p = params as ErrorNotification
+        const p = ErrorNotificationSchema.parse(params)
         const event = mapCodexError(p)
         if (event) emit(event)
         else this.emit('log', `Codex retrying after error: ${p.error.message}`)
@@ -1195,7 +1208,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       }
 
       case 'mcpServer/startupStatus/updated': {
-        const p = params as McpServerStatusUpdatedNotification
+        const p = McpServerStatusUpdatedNotificationSchema.parse(params)
         this.#mcpStartup.set(mcpStartupKey(p.threadId ?? undefined, p.name), mapMcpStartupStatus(p))
         const inventory = this.#mcpInventory.get(p.threadId ?? '')
         if (inventory) {
@@ -1211,7 +1224,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       }
 
       case 'mcpServer/oauthLogin/completed': {
-        const p = params as McpServerOauthLoginCompletedNotification
+        const p = McpServerOauthLoginCompletedNotificationSchema.parse(params)
         // A completion without a threadId still ends someone's login — match
         // by server name across threads rather than leaving the browser flow
         // finished and the UI waiting forever.
@@ -1251,10 +1264,10 @@ function mcpLoginKey(threadId: string, server: string): string {
 const CREDIT_USD_RATE = 0.04
 
 /** Pure mapping kept separate from the app-server transport for fixture tests. */
-export function mapCodexRateLimits(response: GetAccountRateLimitsResponse): ProviderLimit[] {
+export function mapCodexRateLimits(response: CodexRateLimitResponse): ProviderLimit[] {
   const buckets = response.rateLimitsByLimitId
     ? Object.entries(response.rateLimitsByLimitId).filter(
-        (pair): pair is [string, RateLimitSnapshot] => Boolean(pair[1]),
+        (pair): pair is [string, CodexRateLimitSnapshot] => Boolean(pair[1]),
       )
     : []
   if (response.rateLimits && !buckets.some(([limitId]) => limitId === 'codex')) {
@@ -1280,7 +1293,7 @@ export function mapCodexRateLimits(response: GetAccountRateLimitsResponse): Prov
               prefix +
                 rateLimitLabel(window.windowDurationMins, index === 0 ? 'Primary' : 'Secondary'),
             usedPercent,
-            ...(resetsAt === undefined ? {} : { resetsAt }),
+            ...propertiesWhen(!(resetsAt === undefined), () => ({ resetsAt })),
           },
         ]
       }),
@@ -1317,14 +1330,12 @@ export function mapCodexRateLimits(response: GetAccountRateLimitsResponse): Prov
   return rows
 }
 
-function finitePercent(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value)
-    ? Math.max(0, Math.min(100, value))
-    : undefined
+function finitePercent(value: number): number | undefined {
+  return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : undefined
 }
 
-function resetTimestamp(value: unknown): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined
+function resetTimestamp(value: number | null): number | undefined {
+  if (value === null || !Number.isFinite(value) || value <= 0) return undefined
   return value < 1_000_000_000_000 ? value * 1000 : value
 }
 
@@ -1343,7 +1354,7 @@ function titleCaseLimitId(limitId: string): string {
 function friendlyLimitLabel(
   limitId: string,
   limitName: string | null,
-  windowDurationMins: unknown,
+  windowDurationMins: number | null,
 ): string | undefined {
   if (windowDurationMins !== 7 * 24 * 60) return undefined
   if (limitId === 'codex') return 'Weekly'
@@ -1351,8 +1362,8 @@ function friendlyLimitLabel(
   return undefined
 }
 
-function rateLimitLabel(minutes: unknown, fallback: string): string {
-  if (typeof minutes !== 'number' || !Number.isFinite(minutes) || minutes <= 0) {
+function rateLimitLabel(minutes: number | null, fallback: string): string {
+  if (minutes === null || !Number.isFinite(minutes) || minutes <= 0) {
     return `${fallback} limit`
   }
   if (minutes % 1440 === 0) return `${minutes / 1440} day${minutes === 1440 ? '' : 's'}`

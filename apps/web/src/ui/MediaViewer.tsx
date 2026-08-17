@@ -34,8 +34,10 @@ export function MediaViewer(props: {
   const [waiting, setWaiting] = useState(props.mediaType === 'video')
   const [videoError, setVideoError] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
+  const [imageSize, setImageSize] = useState<{ width: number; height: number }>()
   const dialog = useRef<HTMLDivElement>(null)
   const viewport = useRef<HTMLDivElement>(null)
+  const image = useRef<HTMLImageElement>(null)
   const video = useRef<HTMLVideoElement>(null)
   const videoShell = useRef<HTMLDivElement>(null)
   const previousZoom = useRef(zoom)
@@ -70,14 +72,33 @@ export function MediaViewer(props: {
     const element = videoShell.current
     if (!element) return
     if (document.fullscreenElement) {
-      if (typeof document.exitFullscreen === 'function') void document.exitFullscreen()
-    } else if (typeof element.requestFullscreen === 'function') {
-      void element.requestFullscreen()
+      void document.exitFullscreen?.()
+    } else {
+      void element.requestFullscreen?.()
     }
   }, [])
 
+  const fitImageToViewport = useCallback(() => {
+    const imageElement = image.current
+    const viewportElement = viewport.current
+    if (!imageElement || !viewportElement) return
+
+    const { naturalWidth, naturalHeight } = imageElement
+    const { width: viewportWidth, height: viewportHeight } = viewportElement.getBoundingClientRect()
+    if (naturalWidth <= 0 || naturalHeight <= 0 || viewportWidth <= 0 || viewportHeight <= 0) {
+      return
+    }
+
+    const fit = Math.min(1, viewportWidth / naturalWidth, viewportHeight / naturalHeight)
+    const nextSize = { width: naturalWidth * fit, height: naturalHeight * fit }
+    setImageSize((current) =>
+      current?.width === nextSize.width && current.height === nextSize.height ? current : nextSize,
+    )
+  }, [])
+
   useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     close.current?.focus()
@@ -156,6 +177,16 @@ export function MediaViewer(props: {
   }, [])
 
   useEffect(() => {
+    if (props.mediaType !== 'image') return
+    const element = viewport.current
+    if (!element) return
+
+    const observer = new ResizeObserver(fitImageToViewport)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [fitImageToViewport, props.mediaType])
+
+  useEffect(() => {
     const element = viewport.current
     const oldZoom = previousZoom.current
     previousZoom.current = zoom
@@ -228,12 +259,23 @@ export function MediaViewer(props: {
         {props.mediaType === 'image' ? (
           <div
             className="media-viewer__frame"
-            style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%` }}
+            data-sized={imageSize ? 'true' : undefined}
+            style={
+              imageSize
+                ? { width: imageSize.width * zoom, height: imageSize.height * zoom }
+                : { width: `${zoom * 100}%`, height: `${zoom * 100}%` }
+            }
             onMouseDown={(event) => {
               if (zoom <= 1 && event.target === event.currentTarget) onClose.current()
             }}
           >
-            <img src={props.src} alt={props.name} draggable={false} />
+            <img
+              ref={image}
+              src={props.src}
+              alt={props.name}
+              draggable={false}
+              onLoad={fitImageToViewport}
+            />
           </div>
         ) : (
           <div className="media-viewer__video-frame">
@@ -326,7 +368,7 @@ export function MediaViewer(props: {
                     setCurrentTime(nextTime)
                   }}
                   aria-label="Video progress"
-                  style={{ '--media-progress': `${progress}%` } as CSSProperties}
+                  style={mediaProgressStyle(progress)}
                 />
                 <output className="media-viewer__time" aria-label="Video time">
                   {formatTime(currentTime)} <span>/</span> {formatTime(duration)}
@@ -381,6 +423,10 @@ export function MediaViewer(props: {
     </div>,
     document.body,
   )
+}
+
+function mediaProgressStyle(progress: number): CSSProperties & { '--media-progress': string } {
+  return { '--media-progress': `${progress}%` }
 }
 
 function formatTime(value: number): string {

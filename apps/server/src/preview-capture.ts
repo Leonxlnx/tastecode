@@ -7,23 +7,23 @@ import type {
 } from '@harness/contracts'
 import type { WebSocket } from 'ws'
 
-type PendingCapture = {
-  socket: WebSocket
+type PendingCapture<Client extends object> = {
+  socket: Client
   request: PreviewCaptureRequest
   resolve: (screenshots: PreviewScreenshot[]) => void
   reject: (error: Error) => void
   timer: NodeJS.Timeout
 }
 
-type QueuedCapture = Omit<PendingCapture, 'socket' | 'timer'>
+type QueuedCapture<Client extends object> = Omit<PendingCapture<Client>, 'socket' | 'timer'>
 
-export class PreviewCaptureCoordinator {
-  #clients = new Set<WebSocket>()
-  #pending = new Map<string, PendingCapture>()
-  #queue: QueuedCapture[] = []
+export class PreviewCaptureCoordinator<Client extends object = WebSocket> {
+  #clients = new Set<Client>()
+  #pending = new Map<string, PendingCapture<Client>>()
+  #queue: Array<QueuedCapture<Client>> = []
 
   constructor(
-    private readonly send: (socket: WebSocket, request: PreviewCaptureRequest) => void,
+    private readonly send: (socket: Client, request: PreviewCaptureRequest) => void,
     private readonly timeoutMs = 35_000,
   ) {}
 
@@ -31,12 +31,12 @@ export class PreviewCaptureCoordinator {
     return this.#clients.size > 0
   }
 
-  setCapability(socket: WebSocket, available: boolean): void {
+  setCapability(socket: Client, available: boolean): void {
     if (available) this.#clients.add(socket)
     else this.remove(socket)
   }
 
-  remove(socket: WebSocket): void {
+  remove(socket: Client): void {
     this.#clients.delete(socket)
     for (const [requestId, pending] of this.#pending) {
       if (pending.socket !== socket) continue
@@ -57,7 +57,7 @@ export class PreviewCaptureCoordinator {
     })
   }
 
-  complete(socket: WebSocket, result: PreviewCaptureResult): void {
+  complete(socket: Client, result: PreviewCaptureResult): void {
     const pending = this.#pending.get(result.requestId)
     if (!pending || pending.socket !== socket) throw new Error('Unknown preview capture request')
     clearTimeout(pending.timer)
@@ -87,7 +87,11 @@ export class PreviewCaptureCoordinator {
 
   #dispatchNext(): void {
     if (this.#pending.size > 0 || this.#queue.length === 0) return
-    const socket = this.#clients.values().next().value as WebSocket | undefined
+    let socket: Client | undefined
+    for (const client of this.#clients) {
+      socket = client
+      break
+    }
     if (!socket) {
       for (const queued of this.#queue.splice(0)) {
         queued.reject(new Error('Preview capture client disconnected'))

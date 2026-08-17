@@ -1,4 +1,13 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ComponentType,
+} from 'react'
 import { CodeView, type CodeViewHandle, type CodeViewReactOptions } from '@pierre/diffs/react'
 import type { DiffFile, SessionDiff } from '@harness/contracts'
 import {
@@ -21,6 +30,7 @@ import {
   workspaceDiffItemId,
   type WorkspaceDiffFallback,
 } from './workspace-diffs.js'
+import { propertiesWhen } from '../../properties-when.js'
 
 const WORKSPACE_DIFF_CSS = `
   :host {
@@ -90,12 +100,15 @@ const WORKSPACE_DIFF_CSS = `
   }
 `
 
+export type WorkspaceCodeView = ComponentType<ComponentProps<typeof CodeView<undefined>>>
+
 export const WorkspaceReview = memo(function WorkspaceReview(props: {
   transport: Transport
   projectPath?: string | undefined
   threadId?: string | undefined
   branch?: string | undefined
   theme: 'light' | 'dark'
+  codeViewComponent?: WorkspaceCodeView | undefined
 }) {
   const [diff, setDiff] = useState<SessionDiff>()
   const [filter, setFilter] = useState('')
@@ -107,6 +120,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
   const [copiedCommit, setCopiedCommit] = useState(false)
   const generation = useRef(0)
   const codeViewRef = useRef<CodeViewHandle<undefined>>(null)
+  const CodeViewComponent = props.codeViewComponent ?? CodeView
 
   const refresh = useCallback(async () => {
     if (!props.projectPath) return
@@ -120,7 +134,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
     try {
       const result = await props.transport.request('workspace.diff', {
         projectPath: props.projectPath,
-        ...(props.threadId ? { threadId: props.threadId } : {}),
+        ...propertiesWhen(props.threadId, (includedValue) => ({ threadId: includedValue })),
       })
       if (generation.current === mine) setDiff(result)
     } catch (cause) {
@@ -141,7 +155,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
     try {
       const result = await props.transport.request('backgroundModel.generateCommitMessage', {
         projectPath: props.projectPath,
-        ...(props.threadId ? { threadId: props.threadId } : {}),
+        ...propertiesWhen(props.threadId, (includedValue) => ({ threadId: includedValue })),
       })
       if (generation.current === mine) setCommitMessage(result.message)
     } catch (cause) {
@@ -334,7 +348,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
               <div className="workspace-review__message">No changed files match “{filter}”.</div>
             </div>
           ) : renderedDiff.items.length > 0 ? (
-            <CodeView
+            <CodeViewComponent
               ref={codeViewRef}
               className="workspace-review__diff workspace-review__code-view"
               items={renderedDiff.items}
@@ -501,7 +515,9 @@ function diffStats(diff: SessionDiff | undefined): { added: number; removed: num
   )
 }
 
-function fileStats(file: DiffFile): { added: number; removed: number } {
+type FileStats = { added: number; removed: number }
+
+function fileStats(file: DiffFile): FileStats {
   let added = 0
   let removed = 0
   for (const hunk of file.hunks) {

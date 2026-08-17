@@ -1,6 +1,5 @@
-import { EventEmitter } from 'node:events'
+import { ChildProcess } from 'node:child_process'
 import { PassThrough } from 'node:stream'
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { DomainEvent } from '@harness/contracts'
 import { describe, expect, it } from 'vitest'
 import {
@@ -21,17 +20,26 @@ const CAPTURED_FRAMES = [
   '{"event":"result","result":{"conversation_id":"9f1827a7-3506-4a85-add9-63182b9917a4","status":"SUCCESS","response":"MONDLICHT\\n","num_turns":1,"usage":{"input_tokens":26368,"output_tokens":6,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":26374}}}',
 ]
 
-class FakeChild extends EventEmitter {
-  stdout = new PassThrough()
-  stderr = new PassThrough()
-  stdin = new PassThrough()
+class FakeChild extends ChildProcess {
+  override stdout = new PassThrough()
+  override stderr = new PassThrough()
+  override stdin = new PassThrough()
+  override stdio: [PassThrough, PassThrough, PassThrough, null, null] = [
+    this.stdin,
+    this.stdout,
+    this.stderr,
+    null,
+    null,
+  ]
 }
 
-function fakeSpawn(record: { command?: string; args?: string[] }, child: FakeChild) {
+type SpawnRecord = { command?: string; args?: string[] }
+
+function fakeSpawn(record: SpawnRecord, child: FakeChild) {
   return (command: string, args: string[]) => {
     record.command = command
     record.args = args
-    return child as unknown as ChildProcessWithoutNullStreams
+    return child
   }
 }
 
@@ -50,7 +58,7 @@ describe('Antigravity turn invocation', () => {
   })
 
   it('streams a captured turn into message deltas, usage, and completion', async () => {
-    const record: { command?: string; args?: string[] } = {}
+    const record: SpawnRecord = {}
     const child = new FakeChild()
     const adapter = new AntigravityAdapter({ spawn: fakeSpawn(record, child) })
     const events: DomainEvent[] = []
@@ -107,7 +115,7 @@ describe('Antigravity turn invocation', () => {
   })
 
   it('prepends session instructions to the first prompt only', async () => {
-    const record: { command?: string; args?: string[] } = {}
+    const record: SpawnRecord = {}
     const child = new FakeChild()
     const adapter = new AntigravityAdapter({ spawn: fakeSpawn(record, child) })
     const thread = await adapter.startThread('C:\\repo', {
@@ -124,7 +132,7 @@ describe('Antigravity turn invocation', () => {
     const [model] = parseAntigravityModels(
       'gemini-3.6-flash-high\ngemini-3.6-flash-medium\ngemini-3.6-flash-low\n',
     )
-    const record: { command?: string; args?: string[] } = {}
+    const record: SpawnRecord = {}
     const child = new FakeChild()
     const adapter = new AntigravityAdapter({ spawn: fakeSpawn(record, child) })
     const thread = await adapter.startThread('C:\\repo', {
@@ -146,10 +154,10 @@ describe('Antigravity turn invocation', () => {
     resetAntigravityIndexForTests()
     const discovery = new FakeChild()
     const turn = new FakeChild()
-    const record: { command?: string; args?: string[] } = {}
+    const record: SpawnRecord = {}
     const adapter = new AntigravityAdapter({
       spawn: (command, args) => {
-        if (args[0] === 'models') return discovery as unknown as ChildProcessWithoutNullStreams
+        if (args[0] === 'models') return discovery
         return fakeSpawn(record, turn)(command, args)
       },
     })
@@ -179,7 +187,7 @@ describe('Antigravity model list', () => {
     let stdinEnded = false
     child.stdin.on('finish', () => (stdinEnded = true))
     const adapter = new AntigravityAdapter({
-      spawn: () => child as unknown as ChildProcessWithoutNullStreams,
+      spawn: () => child,
     })
     const listing = adapter.listModels()
     await new Promise((resolve) => setImmediate(resolve))

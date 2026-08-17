@@ -1,40 +1,35 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render } from '@testing-library/react'
-import type { ReactNode } from 'react'
-
-const streamdownRender = vi.hoisted(() => vi.fn())
-const shikiHighlight = vi.hoisted(() => vi.fn())
-const plainHighlight = vi.hoisted(() => vi.fn())
-
-vi.mock('./highlighter.js', () => ({
-  onHighlighterChange: () => () => undefined,
-  shikiPlugin: { highlight: shikiHighlight },
-  plainCodePlugin: { highlight: plainHighlight },
-}))
-
-vi.mock('streamdown', () => ({
-  Streamdown: (props: {
-    children: ReactNode
-    controls: unknown
-    plugins: { code: { highlight: (options: { code: string }) => unknown } }
-    animated: unknown
-  }) => {
-    streamdownRender(props)
-    props.plugins.code.highlight({ code: String(props.children) })
-    return <div>{props.children}</div>
-  },
-}))
-
-import { Markdown } from './Markdown.js'
+import { cleanup, render as renderView } from '@testing-library/react'
+import type { ReactElement, ReactNode } from 'react'
+import {
+  defaultMarkdownServices,
+  Markdown,
+  MarkdownServicesProvider,
+  type MarkdownServices,
+} from './Markdown.js'
+import { plainCodePlugin } from './highlighter.js'
 import { LiveMarkdownParser } from './live-markdown.js'
+
+const completedRender = vi.fn()
+const markdownServices: MarkdownServices = {
+  ...defaultMarkdownServices,
+  codePlugin: plainCodePlugin,
+  onCompletedRender: completedRender,
+}
+
+function Services({ children }: { children: ReactNode }) {
+  return <MarkdownServicesProvider services={markdownServices}>{children}</MarkdownServicesProvider>
+}
+
+function render(view: ReactElement) {
+  return renderView(view, { wrapper: Services })
+}
 
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
-  streamdownRender.mockReset()
-  shikiHighlight.mockReset()
-  plainHighlight.mockReset()
+  completedRender.mockReset()
 })
 
 describe('streamed Markdown renders', () => {
@@ -63,9 +58,7 @@ describe('streamed Markdown renders', () => {
       expect(append).toHaveBeenCalledOnce()
       expect(append).toHaveBeenCalledWith(' next')
       expect(replace).not.toHaveBeenCalled()
-      expect(streamdownRender).not.toHaveBeenCalled()
-      expect(plainHighlight).not.toHaveBeenCalled()
-      expect(shikiHighlight).not.toHaveBeenCalled()
+      expect(completedRender).not.toHaveBeenCalled()
     },
   )
 
@@ -89,9 +82,7 @@ describe('streamed Markdown renders', () => {
     expect(append).toHaveBeenCalledOnce()
     expect(append).toHaveBeenCalledWith('y')
     expect(replace).not.toHaveBeenCalled()
-    expect(streamdownRender).not.toHaveBeenCalled()
-    expect(plainHighlight).not.toHaveBeenCalled()
-    expect(shikiHighlight).not.toHaveBeenCalled()
+    expect(completedRender).not.toHaveBeenCalled()
     expect(rendered.container.querySelector('pre')?.textContent).toBe('x'.repeat(64 * 1024) + 'y')
   })
 
@@ -110,7 +101,7 @@ describe('streamed Markdown renders', () => {
 
     expect(rendered.container.textContent).toBe('Corrected answer')
     expect(rendered.container.querySelector('strong')).toBeTruthy()
-    expect(streamdownRender).not.toHaveBeenCalled()
+    expect(completedRender).not.toHaveBeenCalled()
 
     replace.mockClear()
     rendered.rerender(
@@ -144,15 +135,14 @@ describe('streamed Markdown renders', () => {
     expect(rendered.container.textContent).toBe('Authoritative replacement')
   })
 
-  it('parses and highlights the completed reply exactly once', () => {
+  it('parses and renders the completed reply exactly once', () => {
     const text = '```ts\nconst value = 1\n```'
     const rendered = render(<Markdown text={text} streaming />)
 
-    expect(streamdownRender).not.toHaveBeenCalled()
-    expect(plainHighlight).not.toHaveBeenCalled()
+    expect(completedRender).not.toHaveBeenCalled()
 
     rendered.rerender(<Markdown text={text} />)
-    expect(streamdownRender).toHaveBeenCalledTimes(1)
-    expect(shikiHighlight).toHaveBeenCalledTimes(1)
+    expect(completedRender).toHaveBeenCalledTimes(1)
+    expect(rendered.container.querySelector('pre code')?.textContent).toContain('const value = 1')
   })
 })

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import type { HighlightOptions } from 'streamdown'
+import { requiredValue } from '../test-dom.js'
 import { DARK_THEME, LIGHT_THEME } from './highlighter-config.js'
 import { onHighlighterChange, shikiPlugin, warmHighlighter } from './highlighter.js'
 
@@ -9,7 +11,7 @@ describe('syntax highlighter loading', () => {
       code,
       language: 'typescript',
       themes: [LIGHT_THEME, DARK_THEME],
-    } as const
+    } satisfies HighlightOptions
     const ready = new Promise<void>((resolve) => {
       const off = onHighlighterChange(() => {
         off()
@@ -17,9 +19,7 @@ describe('syntax highlighter loading', () => {
       })
     })
 
-    const initial = shikiPlugin.highlight(options as never) as {
-      tokens: Array<Array<{ content: string; htmlStyle?: Record<string, string> }>>
-    }
+    const initial = requiredValue(shikiPlugin.highlight(options), 'initial highlight')
     expect(
       initial.tokens
         .flat()
@@ -31,9 +31,7 @@ describe('syntax highlighter loading', () => {
     warmHighlighter()
     await ready
 
-    const highlighted = shikiPlugin.highlight(options as never) as {
-      tokens: Array<Array<{ content: string; htmlStyle?: Record<string, string> }>>
-    }
+    const highlighted = requiredValue(shikiPlugin.highlight(options), 'warmed highlight')
     expect(
       highlighted.tokens
         .flat()

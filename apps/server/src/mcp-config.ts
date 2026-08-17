@@ -10,11 +10,13 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 import {
+  JsonValueSchema,
   McpServerConfigSchema,
   ProviderIdSchema,
   type McpServerConfig,
   type ProviderId,
 } from '@harness/contracts'
+import { z } from 'zod'
 import { configFile } from './product-paths.js'
 
 type ConfigFile = {
@@ -22,11 +24,14 @@ type ConfigFile = {
   projects: Record<string, Partial<Record<ProviderId, Record<string, McpServerConfig>>>>
 }
 
-const EMPTY_CONFIG: ConfigFile = { version: 1, projects: {} }
+type ParsedConfig = { config: ConfigFile; skipped: boolean }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
+const EMPTY_CONFIG: ConfigFile = { version: 1, projects: {} }
+const JsonObjectSchema = z.record(z.string(), JsonValueSchema)
+const StoredConfigSchema = z.object({
+  version: z.literal(1),
+  projects: JsonObjectSchema,
+})
 
 function defaultLocation(): string {
   return configFile('mcp.json')
@@ -38,11 +43,12 @@ function canonicalProjectPath(projectPath: string): string {
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved
 }
 
-function parseConfig(raw: string): { config: ConfigFile; skipped: boolean } {
-  const value: unknown = JSON.parse(raw)
-  if (!isObject(value) || value['version'] !== 1 || !isObject(value['projects'])) {
+function parseConfig(raw: string): ParsedConfig {
+  const parsed = StoredConfigSchema.safeParse(JSON.parse(raw))
+  if (!parsed.success) {
     throw new Error('invalid MCP config: expected a version 1 project map')
   }
+  const value = parsed.data
   let skipped = false
 
   // One malformed entry must not take the whole file down: throwing here
@@ -50,16 +56,18 @@ function parseConfig(raw: string): { config: ConfigFile; skipped: boolean } {
   // the file from inside the app. Invalid entries are skipped and logged;
   // the next write persists the sanitised shape.
   const projects: ConfigFile['projects'] = {}
-  for (const [projectPath, providersValue] of Object.entries(value['projects'])) {
-    if (!isObject(providersValue)) {
+  for (const [projectPath, providersValue] of Object.entries(value.projects)) {
+    const parsedProviders = JsonObjectSchema.safeParse(providersValue)
+    if (!parsedProviders.success) {
       skipped = true
       console.warn(`[mcp-config] skipping invalid project entry "${projectPath}"`)
       continue
     }
     const providers: ConfigFile['projects'][string] = {}
-    for (const [providerName, serversValue] of Object.entries(providersValue)) {
+    for (const [providerName, serversValue] of Object.entries(parsedProviders.data)) {
       const provider = ProviderIdSchema.safeParse(providerName)
-      if (!provider.success || !isObject(serversValue)) {
+      const parsedServers = JsonObjectSchema.safeParse(serversValue)
+      if (!provider.success || !parsedServers.success) {
         skipped = true
         console.warn(
           `[mcp-config] skipping invalid provider "${providerName}" for "${projectPath}"`,
@@ -67,7 +75,7 @@ function parseConfig(raw: string): { config: ConfigFile; skipped: boolean } {
         continue
       }
       const servers: Record<string, McpServerConfig> = {}
-      for (const [serverId, serverValue] of Object.entries(serversValue)) {
+      for (const [serverId, serverValue] of Object.entries(parsedServers.data)) {
         const server = McpServerConfigSchema.safeParse(serverValue)
         if (!server.success || server.data.id !== serverId) {
           skipped = true

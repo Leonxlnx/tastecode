@@ -1,6 +1,8 @@
 import { readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { z } from 'zod'
+import { propertiesWhen } from './properties-when.js'
 
 /**
  * Live subscription headroom from Anthropic's OAuth usage endpoint — the same
@@ -27,49 +29,64 @@ export type ProviderLimit = {
   valueLabel?: string | undefined
 }
 
-type ClaudeOauth = {
-  accessToken: string
-  refreshToken?: string
-  expiresAt?: number
-  [key: string]: unknown
-}
+const LooseObjectSchema = z.looseObject({})
+const BoundaryValueSchema = z.unknown()
+const FiniteNumberSchema = z.number().finite()
+const PercentSchema = z
+  .union([FiniteNumberSchema, z.string().trim().min(1).transform(Number)])
+  .pipe(FiniteNumberSchema)
+  .transform((value) => Math.max(0, Math.min(100, value)))
+const ResetTimestampSchema = z
+  .string()
+  .transform((value) => Date.parse(value))
+  .pipe(FiniteNumberSchema)
+const UsageWindowSchema = z.looseObject({
+  utilization: PercentSchema,
+  resets_at: ResetTimestampSchema.optional(),
+})
+const UsageLimitSchema = z.looseObject({
+  kind: z.string(),
+  percent: PercentSchema,
+})
+const ModelDisplayNameSchema = z.looseObject({
+  scope: z.looseObject({ model: z.looseObject({ display_name: z.string() }) }),
+})
+const ClaudeOauthSchema = z.looseObject({
+  accessToken: z.string().trim().min(1),
+  refreshToken: z.string().optional(),
+  expiresAt: FiniteNumberSchema.optional(),
+})
+const ClaudeCredentialsSchema = z.looseObject({
+  claudeAiOauth: ClaudeOauthSchema.optional(),
+})
+const RefreshResponseSchema = z.looseObject({
+  access_token: z.string().trim().min(1),
+  refresh_token: z.string().optional(),
+  expires_in: FiniteNumberSchema.optional(),
+})
+const FileSystemErrorSchema = z.object({ code: z.string() })
+
+type ClaudeOauth = z.infer<typeof ClaudeOauthSchema>
+type ClaudeCredentials = z.infer<typeof ClaudeCredentialsSchema>
+type BoundaryValue = z.input<typeof BoundaryValueSchema>
 
 function credentialsPath(): string {
   const configDir = process.env['CLAUDE_CONFIG_DIR']?.trim()
   return join(configDir || join(homedir(), '.claude'), '.credentials.json')
 }
 
-function object(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-function clampPercent(value: unknown): number | undefined {
-  const numeric = typeof value === 'string' && value.trim() ? Number(value) : value
-  if (typeof numeric !== 'number' || !Number.isFinite(numeric)) return undefined
-  return Math.max(0, Math.min(100, numeric))
-}
-
-function parseResetsAt(value: unknown): number | undefined {
-  if (typeof value !== 'string') return undefined
-  const parsed = Date.parse(value)
-  return Number.isFinite(parsed) ? parsed : undefined
-}
-
-function windowRow(label: string, window: unknown): ProviderLimit[] {
-  if (typeof window !== 'object' || window === null) return []
-  const record = window as Record<string, unknown>
-  const usedPercent = clampPercent(record['utilization'])
-  if (usedPercent === undefined) return []
-  const resetsAt = parseResetsAt(record['resets_at'])
-  return [{ label, usedPercent, ...(resetsAt === undefined ? {} : { resetsAt }) }]
+function windowRow(label: string, window: BoundaryValue): ProviderLimit[] {
+  const result = UsageWindowSchema.safeParse(window)
+  if (!result.success) return []
+  const { utilization: usedPercent, resets_at: resetsAt } = result.data
+  return [{ label, usedPercent, ...propertiesWhen(resetsAt !== undefined, () => ({ resetsAt })) }]
 }
 
 /** Pure mapping so the shape logic is testable without the network. */
-export function mapClaudeUsage(body: unknown): ProviderLimit[] {
-  if (typeof body !== 'object' || body === null) return []
-  const record = body as Record<string, unknown>
+export function mapClaudeUsage(body: BoundaryValue): ProviderLimit[] {
+  const result = LooseObjectSchema.safeParse(body)
+  if (!result.success) return []
+  const record = result.data
   const rows = [
     ...windowRow('Session', record['five_hour']),
     ...windowRow('Weekly', record['seven_day']),
@@ -78,71 +95,56 @@ export function mapClaudeUsage(body: unknown): ProviderLimit[] {
     ...windowRow('OAuth apps weekly', record['seven_day_oauth_apps']),
   ]
   // Newer responses carry per-model weekly windows in `limits[]` instead.
-  if (Array.isArray(record['limits'])) {
-    for (const entry of record['limits'] as unknown[]) {
-      if (typeof entry !== 'object' || entry === null) continue
-      const limit = entry as Record<string, unknown>
-      if (limit['kind'] !== 'weekly_scoped') continue
-      const usedPercent = clampPercent(limit['percent'])
-      if (usedPercent === undefined) continue
-      const scope = limit['scope'] as Record<string, unknown> | undefined
-      const model = scope?.['model'] as Record<string, unknown> | undefined
-      const displayName = model?.['display_name']
-      const name = typeof displayName === 'string' && displayName.trim() ? displayName : 'Model'
+  const limits = z.array(UsageLimitSchema).safeParse(record['limits'])
+  if (limits.success) {
+    for (const limit of limits.data) {
+      if (limit.kind !== 'weekly_scoped') continue
+      const usedPercent = limit.percent
+      const modelName = ModelDisplayNameSchema.safeParse(limit)
+      const displayName = modelName.success ? modelName.data.scope.model.display_name.trim() : ''
+      const name = displayName || 'Model'
       const label = `${name.charAt(0).toUpperCase()}${name.slice(1)} weekly`
-      const resetsAt = parseResetsAt(limit['resets_at'])
+      const reset = ResetTimestampSchema.safeParse(limit['resets_at'])
+      const resetsAt = reset.success ? reset.data : undefined
       if (!rows.some((row) => row.label === label)) {
-        rows.push({ label, usedPercent, ...(resetsAt === undefined ? {} : { resetsAt }) })
+        rows.push({
+          label,
+          usedPercent,
+          ...propertiesWhen(!(resetsAt === undefined), () => ({ resetsAt })),
+        })
       }
     }
   }
   return rows
 }
 
-async function readOauth(): Promise<
-  { oauth: ClaudeOauth; raw: Record<string, unknown> } | undefined
-> {
+async function readOauth(): Promise<{ oauth: ClaudeOauth; raw: ClaudeCredentials } | undefined> {
   let text: string
   try {
     text = await readFile(credentialsPath(), 'utf8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+  } catch (cause) {
+    const error = FileSystemErrorSchema.safeParse(cause)
+    if (error.success && error.data.code === 'ENOENT') return undefined
     throw new Error('Claude credentials could not be read.')
   }
-  let parsed: unknown
+  let parsed: BoundaryValue
   try {
     parsed = JSON.parse(text)
   } catch {
     throw new Error('Claude credentials could not be parsed.')
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+  const result = ClaudeCredentialsSchema.safeParse(parsed)
+  if (!result.success) {
     throw new Error('Claude credentials could not be parsed.')
   }
-  const raw = parsed as Record<string, unknown>
-  const candidate = raw['claudeAiOauth']
-  if (candidate === undefined) return undefined
-  if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
-    throw new Error('Claude credentials could not be parsed.')
-  }
-  const oauth = candidate as ClaudeOauth
-  if (typeof oauth.accessToken !== 'string' || !oauth.accessToken.trim()) {
-    throw new Error('Claude credentials could not be parsed.')
-  }
-  if (oauth.refreshToken !== undefined && typeof oauth.refreshToken !== 'string') {
-    throw new Error('Claude credentials could not be parsed.')
-  }
-  if (
-    oauth.expiresAt !== undefined &&
-    (typeof oauth.expiresAt !== 'number' || !Number.isFinite(oauth.expiresAt))
-  ) {
-    throw new Error('Claude credentials could not be parsed.')
-  }
-  return { oauth, raw }
+  const raw = result.data
+  if (!raw.claudeAiOauth) return undefined
+  return { oauth: raw.claudeAiOauth, raw }
 }
 
 async function refreshAccessToken(
   oauth: ClaudeOauth,
-  raw: Record<string, unknown>,
+  raw: ClaudeCredentials,
 ): Promise<string | undefined> {
   if (!oauth.refreshToken?.trim()) return undefined
   let response: Response
@@ -165,30 +167,28 @@ async function refreshAccessToken(
   if (!response.ok) {
     throw new Error(`Claude credential refresh failed (HTTP ${response.status})`)
   }
-  let body: Record<string, unknown> | undefined
+  let responseBody: BoundaryValue
   try {
-    body = object(await response.json())
+    responseBody = await response.json()
   } catch {
     throw new Error('Claude credential refresh response was invalid.')
   }
-  const accessToken = body?.['access_token']
-  const refreshToken = body?.['refresh_token']
-  const expiresIn = body?.['expires_in']
-  if (
-    typeof accessToken !== 'string' ||
-    !accessToken.trim() ||
-    (refreshToken !== undefined && typeof refreshToken !== 'string') ||
-    (expiresIn !== undefined && (typeof expiresIn !== 'number' || !Number.isFinite(expiresIn)))
-  ) {
+  const result = RefreshResponseSchema.safeParse(responseBody)
+  if (!result.success) {
     throw new Error('Claude credential refresh response was invalid.')
   }
+  const {
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    expires_in: expiresIn,
+  } = result.data
   const next: ClaudeOauth = {
     ...oauth,
     accessToken,
-    ...(typeof refreshToken === 'string' && refreshToken.trim() ? { refreshToken } : {}),
   }
+  if (refreshToken?.trim()) next.refreshToken = refreshToken
   delete next.expiresAt
-  if (typeof expiresIn === 'number' && expiresIn > 0) {
+  if (expiresIn !== undefined && expiresIn > 0) {
     next.expiresAt = Date.now() + expiresIn * 1000
   }
   // The refresh token rotates: losing the new one signs the CLI out, so the
@@ -216,17 +216,14 @@ const CLAUDE_USAGE_WINDOWS = [
   'seven_day_oauth_apps',
 ] as const
 
-function isUsageWindow(value: unknown): boolean {
-  if (value === null) return true
-  const window = object(value)
-  if (!window || clampPercent(window['utilization']) === undefined) return false
-  const reset = window['resets_at']
-  return reset === undefined || reset === null || parseResetsAt(reset) !== undefined
+function isUsageWindow(value: BoundaryValue): boolean {
+  return value === null || UsageWindowSchema.safeParse(value).success
 }
 
-function isClaudeUsageBody(value: unknown): value is Record<string, unknown> {
-  const body = object(value)
-  if (!body) return false
+function isClaudeUsageBody(value: BoundaryValue): boolean {
+  const result = LooseObjectSchema.safeParse(value)
+  if (!result.success) return false
+  const body = result.data
   let known = false
   for (const key of CLAUDE_USAGE_WINDOWS) {
     if (!Object.hasOwn(body, key)) continue
@@ -236,23 +233,12 @@ function isClaudeUsageBody(value: unknown): value is Record<string, unknown> {
   if (Object.hasOwn(body, 'limits')) {
     known = true
     const limits = body['limits']
-    if (
-      limits !== null &&
-      (!Array.isArray(limits) ||
-        !limits.every((entry) => {
-          const limit = object(entry)
-          return Boolean(
-            limit &&
-            typeof limit['kind'] === 'string' &&
-            clampPercent(limit['percent']) !== undefined,
-          )
-        }))
-    )
-      return false
+    if (limits !== null && !z.array(UsageLimitSchema).safeParse(limits).success) return false
   }
   if (Object.hasOwn(body, 'extra_usage')) {
     known = true
-    if (body['extra_usage'] !== null && !object(body['extra_usage'])) return false
+    if (body['extra_usage'] !== null && !LooseObjectSchema.safeParse(body['extra_usage']).success)
+      return false
   }
   return known
 }
@@ -262,7 +248,7 @@ export async function claudeLimitSource(): Promise<ClaudeLimitSource> {
   if (!stored) return { status: 'unavailable' }
   let token = stored.oauth.accessToken
   const expiresAt = stored.oauth.expiresAt
-  if (typeof expiresAt === 'number' && expiresAt - Date.now() <= REFRESH_MARGIN_MS) {
+  if (expiresAt !== undefined && expiresAt - Date.now() <= REFRESH_MARGIN_MS) {
     token = (await refreshAccessToken(stored.oauth, stored.raw)) ?? token
   }
   let response: Response
@@ -281,7 +267,7 @@ export async function claudeLimitSource(): Promise<ClaudeLimitSource> {
     throw new Error('Claude usage request failed.')
   }
   if (!response.ok) throw new Error(`Claude usage request failed (HTTP ${response.status})`)
-  let body: unknown
+  let body: BoundaryValue
   try {
     body = await response.json()
   } catch {

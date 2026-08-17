@@ -2,15 +2,20 @@ import { once } from 'node:events'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFileSync } from 'node:fs'
 import type { DomainEvent } from '@harness/contracts'
+import { JsonRpcValueSchema, type JsonRpcValue } from '@harness/proc'
 import type { Event } from '@opencode-ai/sdk'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   OpenCodeAdapter,
   OPENCODE_CAPABILITIES,
   openCodeMcpConfig,
   openCodeReasoningEfforts,
 } from './adapter.js'
+import type { OpenCodeV2Event, OpenCodeWireEvent } from './events.js'
 
+// SAFETY: This immutable fixture is a direct capture of the SDK event stream and
+// every entry is exercised by the mapper before its fields are used in assertions.
 const CAPTURED = JSON.parse(
   readFileSync(new URL('./fixtures/events.json', import.meta.url), 'utf8'),
 ) as Event[]
@@ -104,8 +109,11 @@ describe('OpenCode adapter', () => {
     const busy = {
       type: 'session.status',
       properties: { sessionID: 'session-1', status: { type: 'busy' } },
-    } as unknown as Event
-    const idle = { type: 'session.idle', properties: { sessionID: 'session-1' } } as Event
+    } satisfies OpenCodeWireEvent
+    const idle = {
+      type: 'session.idle',
+      properties: { sessionID: 'session-1' },
+    } satisfies OpenCodeWireEvent
 
     await adapter.sendTurn(thread.id, 'First prompt')
     mock.broadcast(busy)
@@ -427,12 +435,13 @@ describe('OpenCode adapter', () => {
   })
 })
 
-type RequestRecord = { method: string; url: string; body: unknown }
+type RequestRecord = { method: string; url: string; body: JsonRpcValue | undefined }
+const ServerAddressSchema = z.object({ port: z.number() })
 
 async function serveOpenCode(): Promise<{
   baseUrl: string
   requests: RequestRecord[]
-  broadcast(event: Event): void
+  broadcast(event: OpenCodeWireEvent): void
   waitFor(url: string): Promise<RequestRecord>
 }> {
   const requests: RequestRecord[] = []
@@ -506,8 +515,7 @@ async function serveOpenCode(): Promise<{
   servers.push(server)
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('mock server did not bind')
+  const address = ServerAddressSchema.parse(server.address())
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     requests,
@@ -529,7 +537,7 @@ async function serveOpenCodeV2(
 ): Promise<{
   baseUrl: string
   requests: RequestRecord[]
-  broadcast(event: unknown): void
+  broadcast(event: OpenCodeV2Event): void
   waitFor(url: string): Promise<RequestRecord>
   releaseHeldPermissionReply(): Promise<void>
 }> {
@@ -634,8 +642,7 @@ async function serveOpenCodeV2(
   servers.push(server)
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('mock server did not bind')
+  const address = ServerAddressSchema.parse(server.address())
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     requests,
@@ -658,7 +665,7 @@ async function serveOpenCodeV2(
   }
 }
 
-function permissionAsked(id: string): unknown {
+function permissionAsked(id: string): OpenCodeV2Event {
   return {
     type: 'permission.asked',
     data: { id, sessionID: 'session-v2', action: 'bash', resources: ['pnpm test'] },
@@ -669,13 +676,13 @@ function isPermissionReply(request: RequestRecord): boolean {
   return request.method === 'POST' && request.url.includes('/permission/')
 }
 
-async function requestBody(request: IncomingMessage): Promise<unknown> {
+async function requestBody(request: IncomingMessage): Promise<JsonRpcValue | undefined> {
   let body = ''
   for await (const chunk of request) body += chunk
-  return body ? JSON.parse(body) : undefined
+  return body ? JsonRpcValueSchema.parse(JSON.parse(body)) : undefined
 }
 
-function json(response: ServerResponse, value: unknown): void {
+function json(response: ServerResponse, value: JsonRpcValue): void {
   response.writeHead(200, { 'content-type': 'application/json' })
   response.end(JSON.stringify(value))
 }

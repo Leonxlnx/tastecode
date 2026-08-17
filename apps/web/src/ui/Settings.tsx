@@ -9,9 +9,12 @@ import {
   useState,
   useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ComponentProps,
+  type ComponentType,
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { BackgroundModelSettingsSchema } from '@harness/contracts'
 import type {
   Account,
   BackgroundModelSettings as BackgroundModelSettingsState,
@@ -26,6 +29,7 @@ import type {
   ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
+import { z } from 'zod'
 import {
   ArrowLeft,
   CircleAlert,
@@ -35,6 +39,7 @@ import {
   Database,
   Info,
   Boxes,
+  Keyboard,
   KeyRound,
   Network,
   Palette,
@@ -72,6 +77,7 @@ import {
   signedInEmail,
   subscribeInstalls,
   type InstallTarget,
+  type ProviderLoginTerminalTarget,
 } from '../provider-install.js'
 import type { Transport } from '../transport.js'
 import type {
@@ -103,10 +109,19 @@ import { ProfileSettings } from './ProfileSettings.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
+import { propertiesWhen } from '../properties-when.js'
+import {
+  DEFAULT_KEYBINDINGS,
+  type KeybindingId,
+  type Keybindings,
+  type Shortcut,
+} from '../shortcuts.js'
+import { KeybindSettings } from './KeybindSettings.js'
 
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
 )
+type InstallTerminalView = ComponentType<ComponentProps<typeof InstallTerminal>>
 
 export type SettingsSection =
   | 'profile'
@@ -116,6 +131,7 @@ export type SettingsSection =
   | 'skills'
   | 'workflows'
   | 'appearance'
+  | 'keybinds'
   | 'data'
   | 'about'
 
@@ -170,6 +186,9 @@ const MCP_PROVIDER_OPTIONS = [
 const FOCUSABLE_SELECTOR =
   'a[href]:not([tabindex="-1"]), button:not([disabled]):not([tabindex="-1"]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
+function noop(): void {}
+function noopKeybindingChange(_action: KeybindingId, _shortcut: Shortcut | null): void {}
+
 /**
  * Settings stays intentionally small: the sidebar reorganizes the decisions
  * the app already exposes without inventing preferences for their own sake.
@@ -206,11 +225,18 @@ function SettingsComponent(props: {
   showMacOSFontSmoothing: boolean
   macOSFontSmoothing: boolean
   onMacOSFontSmoothingChange: (enabled: boolean) => void
+  macOS?: boolean | undefined
+  keybindings?: Keybindings | undefined
+  onKeybindingChange?: ((action: KeybindingId, shortcut: Shortcut | null) => void) | undefined
+  onKeybindingsReset?: (() => void) | undefined
   showMacOSHaptics?: boolean | undefined
   onAccountChange: (provider: ProviderId, account: Account) => void
+  authRefreshRevision?: number | undefined
   initialSection?: SettingsSection | undefined
   onReset: () => void
   onClose: () => void
+  onProviderLoginTerminalOpen?: ((target: ProviderLoginTerminalTarget) => void) | undefined
+  installTerminalComponent?: InstallTerminalView | undefined
 }) {
   const [section, setSection] = useState<SettingsSection>(props.initialSection ?? 'providers')
 
@@ -295,6 +321,12 @@ function SettingsComponent(props: {
             onClick={() => setSection('appearance')}
           />
           <SettingsNavItem
+            active={section === 'keybinds'}
+            icon={<Keyboard size={15} aria-hidden />}
+            label="Keybinds"
+            onClick={() => setSection('keybinds')}
+          />
+          <SettingsNavItem
             active={section === 'providers'}
             icon={<UserRound size={15} aria-hidden />}
             label="Providers"
@@ -351,6 +383,14 @@ function SettingsComponent(props: {
           {section === 'skills' ? <SkillsSettings {...props} /> : null}
           {section === 'workflows' ? <WorkflowSettings {...props} /> : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
+          {section === 'keybinds' ? (
+            <KeybindSettings
+              keybindings={props.keybindings ?? DEFAULT_KEYBINDINGS}
+              macOS={props.macOS ?? false}
+              onChange={props.onKeybindingChange ?? noopKeybindingChange}
+              onReset={props.onKeybindingsReset ?? noop}
+            />
+          ) : null}
           {section === 'data' ? <DataSettings {...props} /> : null}
           {section === 'about' ? <AboutSettings transport={props.transport} /> : null}
         </div>
@@ -448,10 +488,7 @@ function SettingsNavItem(props: {
   )
 }
 
-const CONNECTION_PRESETS: Record<
-  ModelConnectionPreset,
-  { label: string; transport: ModelTransport; baseUrl: string; placeholder: string }
-> = {
+const CONNECTION_PRESETS = {
   openai: {
     label: 'OpenAI API',
     transport: 'openai-responses',
@@ -488,7 +525,10 @@ const CONNECTION_PRESETS: Record<
     baseUrl: 'http://127.0.0.1:11434/v1',
     placeholder: 'model-id',
   },
-}
+} satisfies Record<
+  ModelConnectionPreset,
+  { label: string; transport: ModelTransport; baseUrl: string; placeholder: string }
+>
 
 type ProviderMap<T> = Partial<Record<ProviderId, T>>
 
@@ -500,6 +540,9 @@ export function ProviderSettings(props: {
   transport: Transport
   onConnectionsChanged: () => void
   onAccountChange: (provider: ProviderId, account: Account) => void
+  authRefreshRevision?: number | undefined
+  onProviderLoginTerminalOpen?: ((target: ProviderLoginTerminalTarget) => void) | undefined
+  installTerminalComponent?: InstallTerminalView | undefined
 }) {
   type AuthReadState =
     | { phase: 'loading' }
@@ -630,7 +673,7 @@ export function ProviderSettings(props: {
         delete statusRequests.current[provider]
       }
     }
-  }, [props.transport, authProviderKey, completeLogin, refreshAccount])
+  }, [props.transport, props.authRefreshRevision, authProviderKey, completeLogin, refreshAccount])
 
   useEffect(() => {
     operations.current = {}
@@ -699,6 +742,7 @@ export function ProviderSettings(props: {
           target={{ provider: status.id }}
           transport={props.transport}
           onInstalled={props.onConnectionsChanged}
+          InstallTerminalComponent={props.installTerminalComponent ?? InstallTerminal}
         />
       )
     }
@@ -732,6 +776,10 @@ export function ProviderSettings(props: {
           target={{ provider: status.id }}
           transport={props.transport}
           onSignedIn={() => void refreshAccount(status.id, true)}
+          onOpenExpandedTerminal={
+            status.id === 'claude-code' ? props.onProviderLoginTerminalOpen : undefined
+          }
+          InstallTerminalComponent={props.installTerminalComponent ?? InstallTerminal}
         />
       )
     }
@@ -943,14 +991,16 @@ function BackgroundModelSettings(props: { transport: Transport }) {
                 mode: 'manual',
                 target: {
                   provider: choice.source.provider,
-                  ...(choice.source.connectionId
-                    ? { connectionId: choice.source.connectionId }
-                    : {}),
-                  ...(choice.source.agent ? { agent: choice.source.agent } : {}),
+                  ...propertiesWhen(choice.source.connectionId, (includedValue) => ({
+                    connectionId: includedValue,
+                  })),
+                  ...propertiesWhen(choice.source.agent, (includedValue) => ({
+                    agent: includedValue,
+                  })),
                   model: choice.model.id,
-                  ...(choice.model.reasoningEfforts[0]
-                    ? { effort: choice.model.reasoningEfforts[0] }
-                    : {}),
+                  ...propertiesWhen(choice.model.reasoningEfforts[0], (includedValue) => ({
+                    effort: includedValue,
+                  })),
                 },
               })
             }}
@@ -987,13 +1037,10 @@ function BackgroundModelSettings(props: { transport: Transport }) {
   )
 }
 
-function isBackgroundModelSettingsState(value: unknown): value is BackgroundModelSettingsState {
-  if (!value || typeof value !== 'object') return false
-  const candidate = value as Partial<BackgroundModelSettingsState>
-  return (
-    Array.isArray(candidate.sources) &&
-    (candidate.preference?.mode === 'automatic' || candidate.preference?.mode === 'manual')
-  )
+function isBackgroundModelSettingsState(
+  value: z.input<typeof BackgroundModelSettingsSchema>,
+): value is BackgroundModelSettingsState {
+  return BackgroundModelSettingsSchema.safeParse(value).success
 }
 
 function findBackgroundModel(sources: BackgroundModelSource[], target: BackgroundModelTarget) {
@@ -1013,7 +1060,7 @@ function backgroundModelValue(sourceId: string, modelId: string): string {
 
 function backgroundModelFromValue(sources: BackgroundModelSource[], value: string) {
   try {
-    const [sourceId, modelId] = JSON.parse(value) as [string, string]
+    const [sourceId, modelId] = z.tuple([z.string(), z.string()]).parse(JSON.parse(value))
     const source = sources.find((candidate) => candidate.id === sourceId)
     const model = source?.models.find((candidate) => candidate.id === modelId)
     return source && model ? { source, model } : undefined
@@ -1030,7 +1077,6 @@ function ModelVisibilityGroup(props: {
 }) {
   const visibleCount = props.choices.filter((choice) => !props.hiddenModels.has(choice.key)).length
   const allVisible = visibleCount === props.choices.length
-  const mixedVisibility = visibleCount > 0 && !allVisible
 
   return (
     <section className="model-visibility" aria-label={props.source}>
@@ -1041,11 +1087,11 @@ function ModelVisibilityGroup(props: {
           </h3>
         ) : null}
         <button
-          className={`switch model-visibility__source-switch${allVisible ? ' is-on' : ''}${mixedVisibility ? ' is-mixed' : ''}`}
+          className={`switch model-visibility__source-switch${allVisible ? ' is-on' : ''}`}
           type="button"
-          role="checkbox"
+          role="switch"
           aria-label={`Include models from ${props.source} in model picker`}
-          aria-checked={mixedVisibility ? 'mixed' : allVisible}
+          aria-checked={allVisible}
           onClick={() => {
             const visible = !allVisible
             for (const choice of props.choices) {
@@ -1428,7 +1474,8 @@ function ResetConfirmation(props: { onCancel: () => void; onConfirm: () => void 
       panel.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
     ).filter((element) => !element.hasAttribute('disabled'))
     if (focusable.length === 0) return
-    const current = focusable.indexOf(document.activeElement as HTMLElement)
+    const current =
+      document.activeElement instanceof HTMLElement ? focusable.indexOf(document.activeElement) : -1
     const next =
       current < 0
         ? event.shiftKey
@@ -1627,6 +1674,7 @@ function InstallableRow(props: {
   target: InstallTarget
   transport: Transport
   onInstalled: () => void
+  InstallTerminalComponent: InstallTerminalView
 }) {
   const key = installKey(props.target)
   const detailsId = useId()
@@ -1726,7 +1774,13 @@ function InstallableRow(props: {
       />
       {install ? (
         <div id={detailsId} className="provider-terminal" hidden={!showTerminal}>
-          {showTerminal ? <ProviderTerminal transport={props.transport} installKey={key} /> : null}
+          {showTerminal ? (
+            <ProviderTerminal
+              transport={props.transport}
+              installKey={key}
+              InstallTerminalComponent={props.InstallTerminalComponent}
+            />
+          ) : null}
         </div>
       ) : null}
     </>
@@ -1735,16 +1789,18 @@ function InstallableRow(props: {
 
 /**
  * Sign-in for a provider whose login lives inside its own CLI. The button
- * launches that CLI in a server-side pty and hands the user the terminal
- * right away — the OAuth flow happens in there, not on a docs page. A clean
- * exit means the user finished and quit, so the row refreshes; a dirty exit
- * keeps the log around for reading before a retry.
+ * launches that CLI in a server-side pty. Claude hands the attached terminal
+ * to the expanded workspace pane; other provider flows keep the guided card
+ * and attachable details here. A clean exit refreshes the account, while a
+ * dirty exit keeps the log available for a retry.
  */
 function CliSignInRow(props: {
   provider: ProviderStatus
   target: InstallTarget
   transport: Transport
   onSignedIn: () => void
+  onOpenExpandedTerminal?: ((target: ProviderLoginTerminalTarget) => void) | undefined
+  InstallTerminalComponent: InstallTerminalView
 }) {
   const key = loginKey(props.target)
   const detailsId = useId()
@@ -1769,13 +1825,13 @@ function CliSignInRow(props: {
     if (login?.phase === 'succeeded') {
       if (!notifiedLogin.current) {
         notifiedLogin.current = true
-        clearInstall(key)
+        if (!props.onOpenExpandedTerminal) clearInstall(key)
         onSignedIn()
       }
     } else {
       notifiedLogin.current = false
     }
-  }, [login?.phase, key, onSignedIn])
+  }, [login?.phase, key, onSignedIn, props.onOpenExpandedTerminal])
 
   useEffect(() => {
     if (login?.phase === 'failed') setShowTerminal(true)
@@ -1785,9 +1841,17 @@ function CliSignInRow(props: {
     setStartError(undefined)
     setShowTerminal(false)
     setCopied(false)
-    void beginLogin(props.transport, props.target).catch((cause: unknown) =>
-      setStartError(cause instanceof Error ? cause.message : String(cause)),
-    )
+    void beginLogin(props.transport, props.target)
+      .then(() => {
+        props.onOpenExpandedTerminal?.({
+          provider: props.provider.id,
+          displayName: props.provider.displayName,
+          installKey: key,
+        })
+      })
+      .catch((cause: unknown) =>
+        setStartError(cause instanceof Error ? cause.message : String(cause)),
+      )
   }
 
   const running = login?.phase === 'running'
@@ -1870,17 +1934,27 @@ function CliSignInRow(props: {
       ) : null}
       {login ? (
         <div id={detailsId} className="provider-terminal" hidden={!showTerminal}>
-          {showTerminal ? <ProviderTerminal transport={props.transport} installKey={key} /> : null}
+          {showTerminal ? (
+            <ProviderTerminal
+              transport={props.transport}
+              installKey={key}
+              InstallTerminalComponent={props.InstallTerminalComponent}
+            />
+          ) : null}
         </div>
       ) : null}
     </>
   )
 }
 
-function ProviderTerminal(props: { transport: Transport; installKey: string }) {
+function ProviderTerminal(props: {
+  transport: Transport
+  installKey: string
+  InstallTerminalComponent: InstallTerminalView
+}) {
   return (
     <Suspense fallback={<div className="install-terminal" aria-label="Install terminal" />}>
-      <InstallTerminal {...props} />
+      <props.InstallTerminalComponent transport={props.transport} installKey={props.installKey} />
     </Suspense>
   )
 }

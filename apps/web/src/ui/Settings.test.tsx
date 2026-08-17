@@ -1,40 +1,35 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { Account, ProviderId, ResultOf } from '@harness/contracts'
+import { methods, type Account, type ProviderId, type ResultOf } from '@harness/contracts'
 import { customModelChoice, type ModelChoice } from '../model-catalog.js'
 import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker-layout.js'
 import { resetInstalls } from '../provider-install.js'
 import { HAPTICS_KEY, writeAppHaptics } from '../haptics.js'
 import type { Transport } from '../transport.js'
+import { TestTransport, type TestRequestResolver } from '../test-transport.js'
+import { requiredInstance, requiredValue } from '../test-dom.js'
 import { ProviderSettings, Settings } from './Settings.js'
+import { propertiesWhen } from '../properties-when.js'
+import { createDefaultKeybindings, type KeybindingId, type Shortcut } from '../shortcuts.js'
 
 type ProviderStatus = ResultOf<'providers.list'>['providers'][number]
-
-// The real component boots xterm, which needs a canvas happy-dom does not
-// have. What these tests care about is *when* a terminal is offered, not how
-// it paints.
-vi.mock('./InstallTerminal.js', () => ({
-  InstallTerminal: (props: { installKey: string }) => (
-    <div data-testid="install-terminal" data-install-key={props.installKey} />
-  ),
-}))
+function TestInstallTerminal(props: { installKey: string }) {
+  return <div data-testid="install-terminal" data-install-key={props.installKey} />
+}
 
 function renderSettings(
   options: {
-    initialSection?: 'appearance' | 'models' | 'data' | 'about'
+    initialSection?: 'appearance' | 'models' | 'keybinds' | 'data' | 'about'
     onClose?: () => void
     onReset?: () => void
     transport?: Transport
     showMacOSHaptics?: boolean
+    onKeybindingChange?: (action: KeybindingId, shortcut: Shortcut | null) => void
+    onKeybindingsReset?: () => void
   } = {},
 ) {
-  const transport =
-    options.transport ??
-    ({
-      request: vi.fn(),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport)
+  const transport = options.transport ?? new TestTransport()
 
   return render(
     <Settings
@@ -67,11 +62,16 @@ function renderSettings(
       showMacOSFontSmoothing={false}
       macOSFontSmoothing={true}
       onMacOSFontSmoothingChange={() => {}}
+      macOS={true}
+      keybindings={createDefaultKeybindings()}
+      onKeybindingChange={options.onKeybindingChange ?? (() => {})}
+      onKeybindingsReset={options.onKeybindingsReset ?? (() => {})}
       showMacOSHaptics={options.showMacOSHaptics ?? false}
       onAccountChange={() => {}}
       initialSection={options.initialSection ?? 'appearance'}
       onReset={options.onReset ?? (() => {})}
       onClose={options.onClose ?? (() => {})}
+      installTerminalComponent={TestInstallTerminal}
     />,
   )
 }
@@ -150,13 +150,13 @@ describe('about status grammar', () => {
     ['unavailable', { localCommit: '1234567890' }, 'Unavailable · No verdict'],
   ] as const)('separates %s update state from build metadata', async (state, result, label) => {
     const update = deferred<ResultOf<'system.updateCheck'>>()
-    const request = vi.fn((method: string) => {
+    const transport = new TestTransport((method) => {
       if (method === 'system.updateCheck') return update.promise
       throw new Error(`unexpected ${method}`)
     })
     const { container } = renderSettings({
       initialSection: 'about',
-      transport: { request, on: vi.fn(() => () => {}) } as unknown as Transport,
+      transport,
     })
 
     expect(screen.getByText('Browser · pre-release').className).toBe('settings-meta')
@@ -166,7 +166,7 @@ describe('about status grammar', () => {
     await act(async () => update.resolve(result))
 
     expect((await screen.findByRole('status', { name: label })).className).toContain(`is-${state}`)
-    expect(request).toHaveBeenCalledWith('system.updateCheck', {})
+    expect(transport.requests).toContainEqual({ method: 'system.updateCheck', params: {} })
     expect(container.querySelector('.settings__status')).toBeNull()
   })
 })
@@ -290,7 +290,7 @@ describe('settings reset confirmation', () => {
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  let reject!: (reason?: unknown) => void
+  let reject!: (reason?: Error) => void
   const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise
     reject = rejectPromise
@@ -300,17 +300,10 @@ function deferred<T>() {
 
 function renderProviders(
   statuses: ProviderStatus[],
-  request: (method: string, params: { provider?: ProviderId }) => unknown,
+  request: TestRequestResolver,
   account?: Account,
 ) {
-  let listener: ((event: unknown) => void) | undefined
-  const transport = {
-    request: (method: string, params: { provider?: ProviderId }) => request(method, params),
-    on: (_channel: string, next: (event: unknown) => void) => {
-      listener = next
-      return () => {}
-    },
-  } as unknown as Transport
+  const transport = new TestTransport(request)
   render(
     <ProviderSettings
       provider="codex"
@@ -319,18 +312,19 @@ function renderProviders(
       transport={transport}
       onConnectionsChanged={() => {}}
       onAccountChange={() => {}}
+      installTerminalComponent={TestInstallTerminal}
     />,
   )
   return (loginId: string, success: boolean, error: string | null = null) =>
-    act(() => listener?.({ provider: 'codex', loginId, success, error }))
+    act(() => transport.emit('auth.event', { provider: 'codex', loginId, success, error }))
 }
 function installedProvider(id: ProviderId, displayName: string): ProviderStatus {
   return { id, displayName, installed: true, auth: 'unknown' }
 }
 const providerRow = (name: string) =>
-  screen.getByText(name).closest<HTMLElement>('.settings__row') as HTMLElement
+  requiredValue(screen.getByText(name).closest<HTMLElement>('.settings__row'), 'provider row')
 const action = (row: HTMLElement, name: string) =>
-  within(row).getByRole('button', { name }) as HTMLButtonElement
+  requiredInstance(within(row).getByRole('button', { name }), HTMLButtonElement)
 describe('provider authentication states', () => {
   it('keeps loading and failure distinct from signed out, then retries', async () => {
     const status = deferred<Account>()
@@ -371,7 +365,8 @@ describe('provider authentication states', () => {
       ],
       (method, params) => {
         if (method !== 'auth.status') throw new Error(`unexpected ${method}`)
-        return { signedIn: params.provider === 'codex' }
+        const request = methods[method].params.parse(params)
+        return { signedIn: request.provider === 'codex' }
       },
     )
 
@@ -415,9 +410,12 @@ describe('provider authentication states', () => {
     renderProviders(
       [installedProvider('codex', 'Codex'), installedProvider('claude-code', 'Claude Code')],
       (method, params) => {
-        if (method === 'auth.status')
-          return params.provider === 'codex' ? codexStatus.promise : { signedIn: true }
-        return params.provider === 'codex' ? codexSignOut.promise : claudeSignOut.promise
+        if (method === 'auth.status') {
+          const { provider } = methods[method].params.parse(params)
+          return provider === 'codex' ? codexStatus.promise : { signedIn: true }
+        }
+        const { provider } = methods['auth.signOut'].params.parse(params)
+        return provider === 'codex' ? codexSignOut.promise : claudeSignOut.promise
       },
       { signedIn: true },
     )
@@ -504,7 +502,7 @@ describe('model settings', () => {
         ],
       },
     ]
-    const request = vi.fn(async (method: string, params: unknown) => {
+    const transport = new TestTransport(async (method, params) => {
       if (method === 'backgroundModel.settings') {
         return {
           preference: { mode: 'automatic' as const },
@@ -519,27 +517,25 @@ describe('model settings', () => {
         }
       }
       if (method === 'backgroundModel.updateSettings') {
-        const preference = params as ResultOf<'backgroundModel.settings'>['preference']
+        const preference = methods[method].params.parse(params)
         const target = preference.mode === 'manual' ? preference.target : undefined
         return {
           preference,
           sources,
-          ...(target
-            ? {
-                resolved: {
-                  ...target,
-                  sourceName: 'Codex',
-                  automatic: false,
-                },
-              }
-            : {}),
+          ...propertiesWhen(target, (includedValue) => ({
+            resolved: {
+              ...includedValue,
+              sourceName: 'Codex',
+              automatic: false,
+            },
+          })),
         }
       }
       throw new Error(`unexpected ${method}`)
     })
     renderSettings({
       initialSection: 'models',
-      transport: { request, on: vi.fn(() => () => {}) } as unknown as Transport,
+      transport,
     })
 
     const picker = await screen.findByRole('combobox', { name: 'Background model' })
@@ -549,12 +545,15 @@ describe('model settings', () => {
     fireEvent.click(screen.getByRole('option', { name: 'GPT-5.6 Luna' }))
 
     await waitFor(() =>
-      expect(request).toHaveBeenCalledWith('backgroundModel.updateSettings', {
-        mode: 'manual',
-        target: {
-          provider: 'codex',
-          model: 'gpt-5.6-luna',
-          effort: 'low',
+      expect(transport.requests).toContainEqual({
+        method: 'backgroundModel.updateSettings',
+        params: {
+          mode: 'manual',
+          target: {
+            provider: 'codex',
+            model: 'gpt-5.6-luna',
+            effort: 'low',
+          },
         },
       }),
     )
@@ -563,19 +562,22 @@ describe('model settings', () => {
     fireEvent.click(effort)
     fireEvent.click(screen.getByRole('option', { name: 'high' }))
     await waitFor(() =>
-      expect(request).toHaveBeenCalledWith('backgroundModel.updateSettings', {
-        mode: 'manual',
-        target: {
-          provider: 'codex',
-          model: 'gpt-5.6-luna',
-          effort: 'high',
+      expect(transport.requests).toContainEqual({
+        method: 'backgroundModel.updateSettings',
+        params: {
+          mode: 'manual',
+          target: {
+            provider: 'codex',
+            model: 'gpt-5.6-luna',
+            effort: 'high',
+          },
         },
       }),
     )
   })
 
   it('keeps a disconnected manual choice visible so Automatic can replace it', async () => {
-    const request = vi.fn(async (method: string, params: unknown) => {
+    const transport = new TestTransport(async (method, params) => {
       if (method === 'backgroundModel.settings') {
         return {
           preference: {
@@ -586,13 +588,13 @@ describe('model settings', () => {
         }
       }
       if (method === 'backgroundModel.updateSettings') {
-        return { preference: params as { mode: 'automatic' }, sources: [] }
+        return { preference: methods[method].params.parse(params), sources: [] }
       }
       throw new Error(`unexpected ${method}`)
     })
     renderSettings({
       initialSection: 'models',
-      transport: { request, on: vi.fn(() => () => {}) } as unknown as Transport,
+      transport,
     })
 
     const picker = await screen.findByRole('combobox', { name: 'Background model' })
@@ -602,13 +604,14 @@ describe('model settings', () => {
     fireEvent.click(screen.getByRole('option', { name: 'Automatic (recommended)' }))
 
     await waitFor(() =>
-      expect(request).toHaveBeenCalledWith('backgroundModel.updateSettings', {
-        mode: 'automatic',
+      expect(transport.requests).toContainEqual({
+        method: 'backgroundModel.updateSettings',
+        params: { mode: 'automatic' },
       }),
     )
   })
 
-  it('toggles a whole provider while exposing partial model visibility honestly', () => {
+  it('shows a partially visible provider as off and turns every model on', () => {
     const models: ModelChoice[] = [
       {
         key: 'opencode:ling',
@@ -640,10 +643,7 @@ describe('model settings', () => {
       },
     ]
     const onModelVisibilityChange = vi.fn()
-    const transport = {
-      request: vi.fn(),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport
+    const transport = new TestTransport()
 
     const settings = (hiddenModels: Set<string>) => (
       <Settings
@@ -692,7 +692,7 @@ describe('model settings', () => {
     expect(sourceHeading?.querySelector('svg')?.getAttribute('width')).toBe('15')
     expect(screen.queryByRole('searchbox')).toBeNull()
     expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
-    const providerToggle = screen.getByRole('checkbox', {
+    const providerToggle = screen.getByRole('switch', {
       name: 'Include models from OpenCode in model picker',
     })
     const ling = screen.getByRole('switch', {
@@ -701,8 +701,8 @@ describe('model settings', () => {
     const qwen = screen.getByRole('switch', {
       name: 'Include OpenCode Go · Qwen3.8 Max in model picker',
     })
-    expect(providerToggle.getAttribute('aria-checked')).toBe('mixed')
-    expect(providerToggle.classList.contains('is-mixed')).toBe(true)
+    expect(providerToggle.getAttribute('aria-checked')).toBe('false')
+    expect(providerToggle.classList.contains('is-on')).toBe(false)
     expect(ling.getAttribute('aria-checked')).toBe('false')
     expect(qwen.getAttribute('aria-checked')).toBe('true')
 
@@ -712,7 +712,7 @@ describe('model settings', () => {
 
     onModelVisibilityChange.mockClear()
     view.rerender(settings(new Set()))
-    const enabledProvider = screen.getByRole('checkbox', {
+    const enabledProvider = screen.getByRole('switch', {
       name: 'Include models from OpenCode in model picker',
     })
     expect(enabledProvider.getAttribute('aria-checked')).toBe('true')
@@ -724,7 +724,7 @@ describe('model settings', () => {
 
     onModelVisibilityChange.mockClear()
     view.rerender(settings(new Set(['opencode:ling', 'opencode:qwen'])))
-    const disabledProvider = screen.getByRole('checkbox', {
+    const disabledProvider = screen.getByRole('switch', {
       name: 'Include models from OpenCode in model picker',
     })
     expect(disabledProvider.getAttribute('aria-checked')).toBe('false')
@@ -751,10 +751,7 @@ describe('model settings', () => {
     )
     const onCustomModelAdd = vi.fn()
     const onCustomModelRemove = vi.fn()
-    const transport = {
-      request: vi.fn(),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport
+    const transport = new TestTransport()
 
     render(
       <Settings
@@ -820,10 +817,7 @@ describe('model settings', () => {
       },
     ]
     const onCustomModelAdd = vi.fn()
-    const transport = {
-      request: vi.fn(),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport
+    const transport = new TestTransport()
 
     render(
       <Settings
@@ -897,27 +891,31 @@ describe('provider settings', () => {
   })
 
   it('shows one account action per provider and runs that provider flow', async () => {
-    const accounts: Record<string, Account> = {
+    const accounts = {
       codex: { signedIn: true, email: 'private@example.com', plan: 'pro' },
       'claude-code': { signedIn: true, email: 'claude@example.com', plan: 'pro' },
       grok: { signedIn: false },
+    } satisfies Partial<Record<ProviderId, Account>>
+    const accountFor = (provider: ProviderId): Account | undefined => {
+      if (provider === 'codex') return accounts.codex
+      if (provider === 'claude-code') return accounts['claude-code']
+      if (provider === 'grok') return accounts.grok
+      return undefined
     }
-    const transport = {
-      request: vi.fn(async (method: string, params: { provider?: ProviderId; agent?: string }) => {
-        if (method === 'auth.status') {
-          // The Kimi CLI on this machine is already logged in; Qwen is not.
-          if (params.agent) return { signedIn: params.agent === 'kimi' }
-          return accounts[params.provider ?? '']
-        }
-        if (method === 'auth.startLogin') {
-          return { loginId: 'login-1', authUrl: 'https://auth.example.test/' }
-        }
-        if (method === 'auth.signOut') return {}
-        if (method === 'providers.install') return { terminalId: 'term-install-1' }
-        throw new Error(`unexpected ${method}`)
-      }),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'auth.status') {
+        const request = methods[method].params.parse(params)
+        // The Kimi CLI on this machine is already logged in; Qwen is not.
+        if (request.agent) return { signedIn: request.agent === 'kimi' }
+        return accountFor(request.provider)
+      }
+      if (method === 'auth.startLogin') {
+        return { loginId: 'login-1', authUrl: 'https://auth.example.test/' }
+      }
+      if (method === 'auth.signOut') return {}
+      if (method === 'providers.install') return { terminalId: 'term-install-1' }
+      throw new Error(`unexpected ${method}`)
+    })
     const onAccountChange = vi.fn()
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
 
@@ -1038,8 +1036,9 @@ describe('provider settings', () => {
     if (!claudeRow || !grokRow) throw new Error('provider row missing')
     fireEvent.click(within(claudeRow).getByRole('button', { name: 'Sign out' }))
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('auth.signOut', {
-        provider: 'claude-code',
+      expect(transport.requests).toContainEqual({
+        method: 'auth.signOut',
+        params: { provider: 'claude-code' },
       }),
     )
 
@@ -1049,20 +1048,11 @@ describe('provider settings', () => {
   })
 
   it('runs installs in the background and refreshes once the install exits cleanly', async () => {
-    const channels = new Map<string, Set<(data: unknown) => void>>()
-    const transport = {
-      request: vi.fn(async (method: string) => {
-        if (method === 'providers.install') return { terminalId: 'term-install-2' }
-        if (method === 'auth.status') return { signedIn: false }
-        throw new Error(`unexpected ${method}`)
-      }),
-      on: vi.fn((channel: string, listener: (data: unknown) => void) => {
-        const listeners = channels.get(channel) ?? new Set()
-        listeners.add(listener)
-        channels.set(channel, listeners)
-        return () => listeners.delete(listener)
-      }),
-    } as unknown as Transport
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.install') return { terminalId: 'term-install-2' }
+      if (method === 'auth.status') return { signedIn: false }
+      throw new Error(`unexpected ${method}`)
+    })
     const onConnectionsChanged = vi.fn()
 
     const settingsFor = (onChanged: () => void) => (
@@ -1111,23 +1101,23 @@ describe('provider settings', () => {
         onAccountChange={() => {}}
         onReset={() => {}}
         onClose={() => {}}
+        installTerminalComponent={TestInstallTerminal}
       />
     )
     const view = render(settingsFor(onConnectionsChanged))
 
     fireEvent.click(screen.getByRole('button', { name: 'Install' }))
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('providers.install', {
-        provider: 'opencode',
-        columns: 100,
-        rows: 30,
+      expect(transport.requests).toContainEqual({
+        method: 'providers.install',
+        params: { provider: 'opencode', columns: 100, rows: 30 },
       }),
     )
 
-    const emit = (channel: string, data: unknown) => {
-      for (const listener of channels.get(channel) ?? []) listener(data)
-    }
-    emit('terminal.output', { terminalId: 'term-install-2', data: 'added 12 packages\r\n' })
+    transport.emit('terminal.output', {
+      terminalId: 'term-install-2',
+      data: 'added 12 packages\r\n',
+    })
     const installRow = providerRow('OpenCode')
     expect(within(installRow).getByRole('status').textContent).toContain('Installing…')
     expect(screen.queryByText('added 12 packages')).toBeNull()
@@ -1138,7 +1128,7 @@ describe('provider settings', () => {
     expect(await screen.findByTestId('install-terminal')).toBeTruthy()
     details.focus()
 
-    emit('terminal.exit', { terminalId: 'term-install-2', exitCode: 0 })
+    transport.emit('terminal.exit', { terminalId: 'term-install-2', exitCode: 0 })
     await waitFor(() => expect(onConnectionsChanged).toHaveBeenCalled())
     const successDetails = within(installRow).getByRole('button', { name: 'Hide details' })
     expect(successDetails.getAttribute('aria-expanded')).toBe('true')
@@ -1157,21 +1147,12 @@ describe('provider settings', () => {
   })
 
   it('signs in to provider-CLI-managed logins in an in-app terminal, not a docs page', async () => {
-    const channels = new Map<string, Set<(data: unknown) => void>>()
     let signedIn = false
-    const transport = {
-      request: vi.fn(async (method: string) => {
-        if (method === 'providers.launch') return { terminalId: 'term-login-3' }
-        if (method === 'auth.status') return { signedIn }
-        throw new Error(`unexpected ${method}`)
-      }),
-      on: vi.fn((channel: string, listener: (data: unknown) => void) => {
-        const listeners = channels.get(channel) ?? new Set()
-        listeners.add(listener)
-        channels.set(channel, listeners)
-        return () => listeners.delete(listener)
-      }),
-    } as unknown as Transport
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.launch') return { terminalId: 'term-login-3' }
+      if (method === 'auth.status') return { signedIn }
+      throw new Error(`unexpected ${method}`)
+    })
     const onConnectionsChanged = vi.fn()
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
 
@@ -1232,6 +1213,7 @@ describe('provider settings', () => {
         onAccountChange={() => {}}
         onReset={() => {}}
         onClose={() => {}}
+        installTerminalComponent={TestInstallTerminal}
       />,
     )
 
@@ -1240,10 +1222,9 @@ describe('provider settings', () => {
     if (!grokRow) throw new Error('Grok row missing')
     fireEvent.click(within(grokRow).getByRole('button', { name: 'Sign in' }))
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('providers.launch', {
-        provider: 'grok',
-        columns: 320,
-        rows: 30,
+      expect(transport.requests).toContainEqual({
+        method: 'providers.launch',
+        params: { provider: 'grok', columns: 320, rows: 30 },
       }),
     )
     expect(open).not.toHaveBeenCalled()
@@ -1251,10 +1232,7 @@ describe('provider settings', () => {
     await waitFor(() => expect(screen.getByText('Starting the provider sign-in…')).toBeTruthy())
     expect(screen.queryByTestId('install-terminal')).toBeNull()
 
-    const emit = (channel: string, data: unknown) => {
-      for (const listener of channels.get(channel) ?? []) listener(data)
-    }
-    emit('terminal.output', {
+    transport.emit('terminal.output', {
       terminalId: 'term-login-3',
       data: 'Visit https://example.test/device then enter code: WDJB-MJHT \r\n',
     })
@@ -1270,7 +1248,7 @@ describe('provider settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Details' }))
     await waitFor(() => expect(screen.getByTestId('install-terminal')).toBeTruthy())
 
-    emit('terminal.output', {
+    transport.emit('terminal.output', {
       terminalId: 'term-login-3',
       data: '\u001b[32m✓ Signed in as grok.user@example.com\u001b[0m\r\n',
     })
@@ -1278,7 +1256,7 @@ describe('provider settings', () => {
       expect(localStorage.getItem('harness.providerEmail.grok')).toBe('grok.user@example.com'),
     )
     signedIn = true
-    emit('terminal.exit', { terminalId: 'term-login-3', exitCode: 0 })
+    transport.emit('terminal.exit', { terminalId: 'term-login-3', exitCode: 0 })
     await waitFor(() => expect(screen.queryByTestId('install-terminal')).toBeNull())
     await waitFor(() => expect(providerRow('Grok').textContent).toContain('grok.user@example.com'))
 
@@ -1286,5 +1264,54 @@ describe('provider settings', () => {
     expect(screen.queryByText('Kimi CLI')).toBeNull()
     expect(open).toHaveBeenCalledTimes(1)
     expect(onConnectionsChanged).not.toHaveBeenCalled()
+  })
+
+  it('hands Claude login to the expanded workspace terminal', async () => {
+    const transport = new TestTransport(async (method) => {
+      if (method === 'auth.status') return { signedIn: false }
+      if (method === 'providers.launch') return { terminalId: 'term-claude-login' }
+      throw new Error(`unexpected ${method}`)
+    })
+    const onProviderLoginTerminalOpen = vi.fn()
+
+    render(
+      <ProviderSettings
+        provider="codex"
+        account={undefined}
+        providerStatuses={[
+          {
+            id: 'claude-code',
+            displayName: 'Claude Code',
+            installed: true,
+            auth: 'unknown',
+            setup: {
+              installUrl: 'https://code.claude.com/docs/en/getting-started',
+              login: 'provider',
+            },
+          },
+        ]}
+        transport={transport}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+        onProviderLoginTerminalOpen={onProviderLoginTerminalOpen}
+        installTerminalComponent={TestInstallTerminal}
+      />,
+    )
+
+    const signIn = await screen.findByRole('button', { name: 'Sign in' })
+    fireEvent.click(signIn)
+
+    await waitFor(() =>
+      expect(onProviderLoginTerminalOpen).toHaveBeenCalledWith({
+        provider: 'claude-code',
+        displayName: 'Claude Code',
+        installKey: 'login:claude-code',
+      }),
+    )
+    expect(transport.requests).toContainEqual({
+      method: 'providers.launch',
+      params: { provider: 'claude-code', columns: 320, rows: 30 },
+    })
+    expect(screen.queryByTestId('install-terminal')).toBeNull()
   })
 })

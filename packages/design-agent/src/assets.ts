@@ -1,5 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { type BoundaryValue, member, optionalString, record, string, strings } from './parse.js'
+import { propertiesWhen } from './properties-when.js'
 
 const ASSET_KINDS = ['image', 'illustration', 'video', 'icon', 'font', 'component'] as const
 const ASSET_STATUSES = ['existing', 'needed', 'ready'] as const
@@ -28,7 +30,7 @@ export interface AssetManifest {
   assets: DesignAsset[]
 }
 
-export function parseAssetManifest(value: unknown): AssetManifest {
+export function parseAssetManifest(value: BoundaryValue): AssetManifest {
   const manifest = record(value, 'asset manifest')
   if (manifest.version !== 1) throw new Error('asset manifest version must be 1')
   if (!Array.isArray(manifest.assets)) throw new Error('assets must be an array')
@@ -63,8 +65,8 @@ export function parseAssetManifest(value: unknown): AssetManifest {
       status,
       purpose: string(asset.purpose, `assets[${index}].purpose`),
       requirements: strings(asset.requirements, `assets[${index}].requirements`),
-      ...(source ? { source } : {}),
-      ...(destination ? { destination } : {}),
+      ...propertiesWhen(source, (source) => ({ source })),
+      ...propertiesWhen(destination, (destination) => ({ destination })),
     }
   })
 
@@ -79,7 +81,7 @@ export function readAssetManifest(workspacePath: string): AssetManifest {
   return parseAssetManifest(JSON.parse(readFileSync(assetPath(workspacePath), 'utf8')))
 }
 
-export function writeAssetManifest(workspacePath: string, value: unknown): AssetManifest {
+export function writeAssetManifest(workspacePath: string, value: BoundaryValue): AssetManifest {
   const manifest = parseAssetManifest(value)
   const outputPath = assetPath(workspacePath)
   mkdirSync(path.dirname(outputPath), { recursive: true })
@@ -91,45 +93,13 @@ function assetPath(workspacePath: string): string {
   return path.join(workspacePath, '.taste', 'assets.json')
 }
 
-function optionalSource(value: unknown, field: string): DesignAsset['source'] {
+function optionalSource(value: BoundaryValue, field: string): DesignAsset['source'] {
   if (value === undefined) return undefined
   const source = record(value, field)
   const license = optionalString(source.license, `${field}.license`)
   return {
     kind: member(source.kind, SOURCE_KINDS, `${field}.kind`),
     reference: string(source.reference, `${field}.reference`),
-    ...(license ? { license } : {}),
+    ...propertiesWhen(license, (license) => ({ license })),
   }
-}
-
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${field} must be an object`)
-  }
-  return value as Record<string, unknown>
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`${field} must be a non-empty string`)
-  }
-  return value
-}
-
-function optionalString(value: unknown, field: string): string | undefined {
-  return value === undefined ? undefined : string(value, field)
-}
-
-function strings(value: unknown, field: string): string[] {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string' && item.trim())) {
-    throw new Error(`${field} must be a string array`)
-  }
-  return value
-}
-
-function member<T extends string>(value: unknown, values: readonly T[], field: string): T {
-  if (typeof value !== 'string' || !values.includes(value as T)) {
-    throw new Error(`${field} must be one of ${values.join(', ')}`)
-  }
-  return value as T
 }

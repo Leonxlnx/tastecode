@@ -9,6 +9,7 @@ describe('preview capture settling', () => {
     const frame = vi.fn((resolve: () => void) => resolve())
     const scrollTo = vi.fn()
 
+    // SAFETY: PREVIEW_SETTLE_SCRIPT ends with an async IIFE and returns Promise<void>.
     const settled = vm.runInNewContext(PREVIEW_SETTLE_SCRIPT, {
       Array,
       Promise,

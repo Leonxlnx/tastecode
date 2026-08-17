@@ -3,6 +3,7 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { CustomHarness } from '@harness/contracts'
+import { z } from 'zod'
 import { killTree, spawnCli } from '@harness/proc'
 
 type SpawnOptions = NonNullable<Parameters<typeof spawnCli>[2]>
@@ -117,7 +118,8 @@ export function customHarnessRun(harness: CustomHarness, fallbackWorkspacePath?:
 
 export function actionableLaunchError(harness: CustomHarness, cause: unknown): Error {
   const error = cause instanceof Error ? cause : new Error(String(cause))
-  const code = (error as NodeJS.ErrnoException).code
+  const parsed = z.object({ code: z.string().optional() }).safeParse(error)
+  const code = parsed.success ? parsed.data.code : undefined
   if (code === 'ENOENT') {
     return new Error(
       `${harness.displayName} executable was not found. Shell aliases and functions are unavailable; use an absolute path or an executable shim on PATH.`,

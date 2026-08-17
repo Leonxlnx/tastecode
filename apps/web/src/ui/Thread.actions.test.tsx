@@ -1,39 +1,81 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render as renderView, screen, waitFor } from '@testing-library/react'
 import type { Item } from '@harness/contracts'
-import { StrictMode } from 'react'
-import { Thread, isRepeatedDesignRow, workLabel } from './Thread.js'
+import { StrictMode, type ReactElement, type ReactNode } from 'react'
+import type { PickedAttachment } from '../bridge.js'
+import {
+  defaultThreadDependencies,
+  Thread,
+  ThreadDependenciesProvider,
+  isRepeatedDesignRow,
+  workLabel,
+  type ThreadDependencies,
+  type ThreadVirtualizer,
+  type ThreadVirtualizerOptions,
+} from './Thread.js'
 
-const { previewViewedImage, revealPath, writeClipboardText } = vi.hoisted(() => ({
-  previewViewedImage: vi.fn(async (): Promise<unknown> => undefined),
-  revealPath: vi.fn(async () => undefined),
-  writeClipboardText: vi.fn(async () => undefined),
-}))
+const previewViewedImage = vi.fn(
+  async (_reference: string): Promise<PickedAttachment | undefined> => undefined,
+)
+const revealPath = vi.fn(async (_path: string) => undefined)
+const writeClipboardText = vi.fn(async (_text: string) => undefined)
 
-vi.mock('../bridge.js', () => ({ previewViewedImage, revealPath, writeClipboardText }))
-
-vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: ({ count }: { count: number }) => ({
-    getVirtualItems: () =>
-      Array.from({ length: count }, (_, index) => ({
-        index,
-        key: index,
-        start: index * 72,
-      })),
+function useTestVirtualizer({ count, getItemKey }: ThreadVirtualizerOptions): ThreadVirtualizer {
+  const rows = Array.from({ length: count }, (_, index) => ({
+    index,
+    key: getItemKey(index),
+    start: index * 72,
+    end: (index + 1) * 72,
+  }))
+  return {
+    getVirtualItems: () => rows,
     getTotalSize: () => count * 72,
-    measureElement: () => undefined,
-    measurementsCache: [],
-    getOffsetForIndex: () => [0],
+    getOffsetForIndex: () => [0, 'start'],
     scrollToIndex: () => undefined,
-  }),
-}))
+    measureElement: () => undefined,
+    measurementsCache: rows,
+  }
+}
+
+const dependencies: ThreadDependencies = {
+  ...defaultThreadDependencies,
+  useVirtualizer: useTestVirtualizer,
+  previewViewedImage,
+  revealPath,
+  writeClipboardText,
+}
+
+function Dependencies({ children }: { children: ReactNode }) {
+  return (
+    <ThreadDependenciesProvider dependencies={dependencies}>{children}</ThreadDependenciesProvider>
+  )
+}
+
+function render(view: ReactElement) {
+  return renderView(view, { wrapper: Dependencies })
+}
+
+function mediaQueryList(query: string): MediaQueryList {
+  return {
+    matches: query === '(prefers-reduced-motion: reduce)',
+    media: query,
+    onchange: null,
+    addListener: () => undefined,
+    removeListener: () => undefined,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    dispatchEvent: () => true,
+  }
+}
 
 afterEach(() => {
   cleanup()
   previewViewedImage.mockReset()
   previewViewedImage.mockResolvedValue(undefined)
   revealPath.mockReset()
+  writeClipboardText.mockReset()
+  writeClipboardText.mockResolvedValue(undefined)
 })
 
 function turnItem(id: string, createdAt: number, fields: Partial<Item>): Item {
@@ -196,6 +238,13 @@ describe('provider activity labels', () => {
 })
 
 describe('empty thread', () => {
+  it('keeps the transcript shell as the only root grid row', () => {
+    const rendered = renderCompleted([])
+
+    expect(rendered.container.childNodes).toHaveLength(1)
+    expect(rendered.container.firstElementChild?.classList.contains('thread-shell')).toBe(true)
+  })
+
   it('explains how to start an idle thread', () => {
     const rendered = renderCompleted([])
 
@@ -317,12 +366,7 @@ describe('completed activity disclosure', () => {
   })
 
   it('closes immediately when reduced motion is enabled', () => {
-    const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(
-      (query) =>
-        ({
-          matches: query === '(prefers-reduced-motion: reduce)',
-        }) as MediaQueryList,
-    )
+    const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(mediaQueryList)
     const { container } = renderCompleted([
       turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
       turnItem('command-1', 2, { type: 'command', command: 'pnpm test' }),
@@ -342,7 +386,7 @@ describe('completed activity disclosure', () => {
     matchMedia.mockRestore()
   })
 
-  it('keeps narration visible while work uses one disclosure', () => {
+  it('shows only the explicit final answer after Codex completes the turn', () => {
     const items: Item[] = [
       turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
       turnItem('update-1', 2, {
@@ -367,29 +411,39 @@ describe('completed activity disclosure', () => {
         text: 'Fixed.',
       }),
     ]
-    renderCompleted(items)
+    const { container } = renderCompleted(items)
 
     const disclosure = screen.getByRole('button', { name: 'Ran commands, edited files' })
     expect(screen.getAllByRole('button', { name: /Ran commands|Edited files/ })).toHaveLength(1)
+    expect(screen.queryByText('I found the cause.')).toBeNull()
+    expect(screen.queryByText('The focused test passes.')).toBeNull()
+    expect(screen.getByText('Fixed.')).toBeTruthy()
+    expect(container.querySelectorAll('.reply')).toHaveLength(1)
     fireEvent.click(disclosure)
 
-    const firstNarration = screen.getByText('I found the cause.')
-    const command = screen.getByText('Ran pnpm test')
-    const secondNarration = screen.getByText('The focused test passes.')
-    const file = screen.getByText('Edited src/chat.ts')
-    const answer = screen.getByText('Fixed.')
+    expect(screen.getByText('Ran pnpm test')).toBeTruthy()
+    expect(screen.getByText('Edited src/chat.ts')).toBeTruthy()
     expect(screen.getByText(/12 passed/)).toBeTruthy()
     expect(screen.getByText('2 lines added')).toBeTruthy()
-    expect(
-      firstNarration.compareDocumentPosition(command) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).not.toBe(0)
-    expect(command.compareDocumentPosition(file) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
-    expect(
-      file.compareDocumentPosition(secondNarration) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).not.toBe(0)
-    expect(
-      secondNarration.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).not.toBe(0)
+  })
+
+  it('uses Codex message phases instead of guessing from the text', () => {
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
+      turnItem('update-1', 2, {
+        role: 'assistant',
+        phase: 'commentary',
+        text: 'Everything is fixed.',
+      }),
+      turnItem('answer-1', 3, {
+        role: 'assistant',
+        phase: 'final_answer',
+        text: 'I am checking one last detail.',
+      }),
+    ])
+
+    expect(screen.queryByText('Everything is fixed.')).toBeNull()
+    expect(screen.getByText('I am checking one last detail.')).toBeTruthy()
   })
 
   it('keeps every completed activity kind accessible after replay', () => {

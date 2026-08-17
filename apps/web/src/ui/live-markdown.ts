@@ -1,3 +1,5 @@
+import { propertiesWhen } from '../properties-when.js'
+import { z } from 'zod'
 export const LIVE_MARKDOWN_LEAF_LIMIT = 256
 export const LIVE_MARKDOWN_CARRY_LIMIT = 64
 
@@ -30,6 +32,15 @@ export type LiveMarkdownUpdate = {
   mutableLeafCharacters: number
   carryCharacters: number
 }
+
+const HeadingNodeSchema = z.enum([
+  'heading-1',
+  'heading-2',
+  'heading-3',
+  'heading-4',
+  'heading-5',
+  'heading-6',
+])
 
 export class LiveMarkdownParser {
   private source: string[] = []
@@ -154,7 +165,7 @@ export class LiveMarkdownParser {
     }
     if (/^`{1,2}$/.test(this.prefix) || /^#{1,6}$/.test(this.prefix)) return
     if (/^#{1,6} $/.test(this.prefix)) {
-      this.openBlock(`heading-${this.prefix.trim().length}` as LiveMarkdownNode)
+      this.openBlock(HeadingNodeSchema.parse(`heading-${this.prefix.trim().length}`))
       this.finishPrefix()
       return
     }
@@ -232,7 +243,11 @@ export class LiveMarkdownParser {
 
   private openBlock(node: LiveMarkdownNode, language?: string): void {
     if (this.block || this.listOpen) this.closeBlock()
-    this.operations.push({ type: 'node.open', node, ...(language ? { language } : {}) })
+    this.operations.push({
+      type: 'node.open',
+      node,
+      ...propertiesWhen(language, (language) => ({ language })),
+    })
     this.block = node
   }
 
@@ -251,7 +266,7 @@ export class LiveMarkdownParser {
     this.operations.push({
       type: 'node.open',
       node: 'code-block',
-      ...(language ? { language } : {}),
+      ...propertiesWhen(language, (language) => ({ language })),
     })
     this.block = 'code-block'
   }

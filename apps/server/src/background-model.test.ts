@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events'
 import { describe, expect, it } from 'vitest'
 import type {
   BackgroundModelPreference,
@@ -201,7 +202,7 @@ const CAPABILITIES: Capabilities = {
 class CompletingSession implements AgentSession {
   readonly capabilities = CAPABILITIES
   disposed = false
-  #listeners: Array<(event: DomainEvent) => void> = []
+  #events = new EventEmitter()
 
   async sendTurn(): Promise<string> {
     queueMicrotask(() => {
@@ -229,9 +230,9 @@ class CompletingSession implements AgentSession {
     this.disposed = true
   }
   on(event: 'event' | 'log', listener: (value: never) => void): void {
-    if (event === 'event') this.#listeners.push(listener as (event: DomainEvent) => void)
+    this.#events.on(event, listener)
   }
   #emit(event: DomainEvent): void {
-    for (const listener of this.#listeners) listener(event)
+    this.#events.emit('event', event)
   }
 }

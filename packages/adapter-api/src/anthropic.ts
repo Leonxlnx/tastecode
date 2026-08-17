@@ -1,8 +1,13 @@
 import { ModelEndpointSchema, type Model } from '@harness/contracts'
+import {
+  type JsonObject,
+  JsonValueSchema,
+  jsonNumber as number,
+  jsonObject as object,
+  jsonString as string,
+} from './json.js'
 import type { ApiMessage, ApiStreamEvent, ApiTool, ApiTransport } from './runtime.js'
 import { httpError, serverSentEvents } from './sse.js'
-
-type JsonObject = Record<string, unknown>
 
 export type AnthropicOptions = {
   apiKey: string
@@ -68,7 +73,7 @@ export function createAnthropicMessagesTransport(options: AnthropicOptions): Api
         const block = blocks.get(index) ?? {}
         if (block.type === 'tool_use') {
           const input = json.get(index)
-          block.input = input ? JSON.parse(input) : (block.input ?? {})
+          block.input = JsonValueSchema.parse(input ? JSON.parse(input) : (block.input ?? {}))
           yield {
             type: 'tool_call',
             call: {
@@ -196,12 +201,13 @@ function toTool(tool: ApiTool): JsonObject {
   return { name: tool.name, description: tool.description, input_schema: tool.inputSchema }
 }
 
-function headers(apiKey: string, json = false): Record<string, string> {
-  return {
+function headers(apiKey: string, json = false): Headers {
+  const result = new Headers({
     'x-api-key': apiKey,
     'anthropic-version': '2023-06-01',
-    ...(json ? { 'content-type': 'application/json' } : {}),
-  }
+  })
+  if (json) result.set('content-type', 'application/json')
+  return result
 }
 
 function endpointFor(baseUrl = 'https://api.anthropic.com/v1', path: string): URL {
@@ -212,16 +218,4 @@ function endpointFor(baseUrl = 'https://api.anthropic.com/v1', path: string): UR
 function requiredKey(value: string): string {
   if (!value.trim()) throw new Error('Anthropic API key is required')
   return value
-}
-
-function object(value: unknown): JsonObject {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonObject) : {}
-}
-
-function string(value: unknown): string {
-  return typeof value === 'string' ? value : ''
-}
-
-function number(value: unknown): number {
-  return typeof value === 'number' ? value : 0
 }

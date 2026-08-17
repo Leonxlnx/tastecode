@@ -1,5 +1,6 @@
 import type { Account } from '@harness/contracts'
 import { killTree, runCli, spawnCli } from '@harness/proc'
+import { z } from 'zod'
 import {
   claudeSdkSpawner,
   createClaudeQuery,
@@ -7,11 +8,27 @@ import {
   type ClaudeQueryFactory,
   type ClaudeSpawn,
 } from './sdk-runtime.js'
+import { propertiesWhen } from './properties-when.js'
 
-export async function claudeAccount(
-  options: { createQuery?: ClaudeQueryFactory; spawn?: ClaudeSpawn } = {},
-): Promise<Account> {
-  const result = await runCli('claude', ['auth', 'status'])
+const ClaudeAccountSchema = z.object({
+  loggedIn: z.boolean(),
+  email: z.string().optional(),
+  subscriptionType: z.string().optional(),
+})
+
+export type ClaudeAccountOptions = {
+  createQuery?: ClaudeQueryFactory
+  spawn?: ClaudeSpawn
+  run?: typeof runCli
+}
+
+export type ClaudeLogin = {
+  loginId: string
+  cancel: () => void
+}
+
+export async function claudeAccount(options: ClaudeAccountOptions = {}): Promise<Account> {
+  const result = await (options.run ?? runCli)('claude', ['auth', 'status'])
   try {
     const account = parseClaudeAccount(result.stdout)
     if (!account.signedIn || (account.email && account.plan)) return account
@@ -28,9 +45,7 @@ export async function claudeAccount(
  * the email/plan fields older `claude auth status` versions omit and never
  * starts an Anthropic API request.
  */
-export async function probeClaudeAccount(
-  options: { createQuery?: ClaudeQueryFactory; spawn?: ClaudeSpawn } = {},
-): Promise<Account> {
+export async function probeClaudeAccount(options: ClaudeAccountOptions = {}): Promise<Account> {
   const abort = new AbortController()
   const query = (options.createQuery ?? createClaudeQuery)({
     prompt: waitForAbort(abort.signal),
@@ -57,8 +72,8 @@ export async function probeClaudeAccount(
     )
     return {
       signedIn,
-      ...(account?.email ? { email: account.email } : {}),
-      ...(account?.subscriptionType ? { plan: account.subscriptionType } : {}),
+      ...propertiesWhen(account?.email, (includedValue) => ({ email: includedValue })),
+      ...propertiesWhen(account?.subscriptionType, (includedValue) => ({ plan: includedValue })),
     }
   } finally {
     abort.abort()
@@ -81,19 +96,21 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 }
 
 export function parseClaudeAccount(output: string): Account {
-  const value = JSON.parse(output) as Record<string, unknown>
-  if (typeof value.loggedIn !== 'boolean')
+  const result = ClaudeAccountSchema.safeParse(JSON.parse(output))
+  if (!result.success) {
     throw new Error('Claude Code returned invalid auth status')
+  }
+  const value = result.data
   return {
     signedIn: value.loggedIn,
-    ...(typeof value.email === 'string' ? { email: value.email } : {}),
-    ...(typeof value.subscriptionType === 'string' ? { plan: value.subscriptionType } : {}),
+    ...propertiesWhen(value.email, (email) => ({ email })),
+    ...propertiesWhen(value.subscriptionType, (plan) => ({ plan })),
   }
 }
 
 export function startClaudeLogin(
   onComplete: (result: { loginId: string; success: boolean; error: string | null }) => void,
-): { loginId: string; cancel: () => void } {
+): ClaudeLogin {
   const loginId = crypto.randomUUID()
   const child = spawnCli('claude', ['auth', 'login'])
   let settled = false

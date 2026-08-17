@@ -1,4 +1,7 @@
 import type { DomainEvent, Item, Usage } from '@harness/contracts'
+import { JsonRpcValueSchema } from '@harness/proc'
+import { z } from 'zod'
+import { propertiesWhen } from './properties-when.js'
 
 /**
  * The Claude Code stream-json envelope, as the binary actually emits it.
@@ -9,39 +12,51 @@ import type { DomainEvent, Item, Usage } from '@harness/contracts'
  * `unknown` item instead of throwing. Verified against claude-code 2.1.220.
  */
 
-export type ClaudeEvent = {
-  type?: string
-  subtype?: string
-  session_id?: string
-  uuid?: string
-  message?: {
-    id?: string
-    role?: string
-    model?: string
-    content?: ContentBlock[]
-    usage?: ClaudeUsage
-  }
-  /** Present on `result`. */
-  result?: string
-  is_error?: boolean
-  duration_ms?: number
-  total_cost_usd?: number
-  usage?: ClaudeUsage
-}
+const JsonObjectSchema = z.record(z.string(), JsonRpcValueSchema)
+const ResultPartSchema = z.union([z.string(), z.object({ text: z.string().optional() })])
+const ToolResultContentSchema = z.union([z.string(), z.array(ResultPartSchema)])
+const ContentBlockSchema = z.object({
+  type: z.string(),
+  text: z.string().optional(),
+  thinking: z.string().optional(),
+  id: z.string().optional(),
+  name: z.string().optional(),
+  input: JsonObjectSchema.optional(),
+  tool_use_id: z.string().optional(),
+  content: ToolResultContentSchema.optional(),
+  is_error: z.boolean().optional(),
+})
+const ClaudeUsageSchema = z.object({
+  input_tokens: z.number().optional(),
+  output_tokens: z.number().optional(),
+  cache_read_input_tokens: z.number().optional(),
+  cache_creation_input_tokens: z.number().optional(),
+})
+export const ClaudeEventSchema = z.object({
+  type: z.string().optional(),
+  subtype: z.string().optional(),
+  session_id: z.string().optional(),
+  uuid: z.string().optional(),
+  message: z
+    .object({
+      id: z.string().optional(),
+      role: z.string().optional(),
+      model: z.string().optional(),
+      content: z.array(ContentBlockSchema).optional(),
+      usage: ClaudeUsageSchema.optional(),
+    })
+    .optional(),
+  result: z.string().optional(),
+  is_error: z.boolean().optional(),
+  duration_ms: z.number().optional(),
+  total_cost_usd: z.number().optional(),
+  usage: ClaudeUsageSchema.optional(),
+})
 
-type ContentBlock =
-  | { type: 'text'; text?: string }
-  | { type: 'thinking'; thinking?: string }
-  | { type: 'tool_use'; id?: string; name?: string; input?: Record<string, unknown> }
-  | { type: 'tool_result'; tool_use_id?: string; content?: unknown; is_error?: boolean }
-  | { type: string }
-
-type ClaudeUsage = {
-  input_tokens?: number
-  output_tokens?: number
-  cache_read_input_tokens?: number
-  cache_creation_input_tokens?: number
-}
+export type ClaudeEvent = z.infer<typeof ClaudeEventSchema>
+type ContentBlock = z.infer<typeof ContentBlockSchema>
+type ToolResultContent = z.infer<typeof ToolResultContentSchema>
+type ClaudeUsage = z.infer<typeof ClaudeUsageSchema>
 
 /** Tools whose call is really a shell command, so it reads as one. */
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
@@ -71,16 +86,15 @@ export function toDomainEvents(event: ClaudeEvent, turnId: string): DomainEvent[
     // the user speaking.
     return event.message.content.flatMap((block) => {
       if (block.type !== 'tool_result') return []
-      const result = block as Extract<ContentBlock, { type: 'tool_result' }>
-      const text = flattenContent(result.content)
+      const text = flattenContent(block.content)
       if (!text) return []
       return [
         {
           type: 'item.completed' as const,
           item: {
-            id: `${result.tool_use_id ?? at}-result`,
+            id: `${block.tool_use_id ?? at}-result`,
             turnId,
-            type: result.is_error ? ('error' as const) : ('tool_call' as const),
+            type: block.is_error ? ('error' as const) : ('tool_call' as const),
             status: 'completed' as const,
             text,
             createdAt: at,
@@ -112,8 +126,7 @@ function assistantBlockId(
   fallback: number,
 ): string {
   if (block.type === 'tool_use') {
-    const toolUseId = (block as Extract<ContentBlock, { type: 'tool_use' }>).id
-    if (toolUseId) return `${toolUseId}-call`
+    if (block.id) return `${block.id}-call`
   }
   return `${event.message?.id ?? event.uuid ?? fallback}-${block.type}-${index}`
 }
@@ -128,19 +141,18 @@ function blockToItem(
 
   switch (block.type) {
     case 'text': {
-      const text = (block as { text?: string }).text
-      return text ? { ...base, type: 'message', role: 'assistant', text } : undefined
+      return block.text
+        ? { ...base, type: 'message', role: 'assistant', text: block.text }
+        : undefined
     }
 
     case 'thinking': {
-      const text = (block as { thinking?: string }).thinking
-      return text ? { ...base, type: 'reasoning', text } : undefined
+      return block.thinking ? { ...base, type: 'reasoning', text: block.thinking } : undefined
     }
 
     case 'tool_use': {
-      const call = block as Extract<ContentBlock, { type: 'tool_use' }>
-      const name = call.name ?? 'tool'
-      const input = call.input ?? {}
+      const name = block.name ?? 'tool'
+      const input = block.input ?? {}
 
       if (SHELL_TOOLS.has(name)) {
         return { ...base, type: 'command', command: String(input['command'] ?? name) }
@@ -157,11 +169,19 @@ function blockToItem(
 }
 
 /** Tool results are sometimes a string, sometimes a content-block array. */
-function flattenContent(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-  return content
-    .map((part) => (typeof part === 'string' ? part : ((part as { text?: string }).text ?? '')))
+function flattenContent(content: ToolResultContent | undefined): string {
+  if (content === undefined) return ''
+  const text = z.string().safeParse(content)
+  if (text.success) return text.data
+  return z
+    .array(ResultPartSchema)
+    .parse(content)
+    .map((part) => {
+      const partText = z.string().safeParse(part)
+      return partText.success
+        ? partText.data
+        : (z.object({ text: z.string().optional() }).parse(part).text ?? '')
+    })
     .join('')
     .trim()
 }
@@ -179,6 +199,6 @@ export function toUsage(usage: ClaudeUsage | undefined, costUsd?: number): Usage
     reasoningTokens: 0,
     totalTokens: input + output + cached + (usage.cache_creation_input_tokens ?? 0),
     inputIncludesCached: false,
-    ...(costUsd === undefined ? {} : { costUsd }),
+    ...propertiesWhen(!(costUsd === undefined), () => ({ costUsd })),
   }
 }

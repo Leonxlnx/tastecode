@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { z } from 'zod'
 import { killTree } from './kill.js'
 
 /**
@@ -15,23 +16,55 @@ import { killTree } from './kill.js'
 
 export type JsonRpcId = number | string
 
+export const JsonRpcValueSchema = z.json()
+const JsonRpcInputSchema = z.unknown()
+const JsonRpcFrameSchema = z.object({
+  id: z.union([z.number(), z.string()]).optional(),
+  method: z.string().optional(),
+  params: JsonRpcValueSchema.optional(),
+  result: JsonRpcValueSchema.optional(),
+  error: z
+    .object({
+      code: z.number().optional(),
+      message: z.string().optional(),
+      data: JsonRpcValueSchema.optional(),
+    })
+    .optional(),
+})
+
+export type JsonRpcValue = z.infer<typeof JsonRpcValueSchema>
+export type JsonRpcInput = z.input<typeof JsonRpcInputSchema>
+type JsonRpcResult = JsonRpcValue | undefined
+
+export interface JsonRpcResultParser<Result> {
+  parse(value: JsonRpcInput): Result
+}
+
+export interface JsonRpcRequestOptions {
+  timeoutMs?: number
+}
+
+export interface ParsedJsonRpcRequestOptions<Result> extends JsonRpcRequestOptions {
+  result: JsonRpcResultParser<Result>
+}
+
 type PendingCall = {
-  resolve: (value: unknown) => void
+  resolve: (value: JsonRpcResult) => void
   reject: (error: Error) => void
   timer?: ReturnType<typeof setTimeout>
 }
 
 export type ServerRequestHandler = (
   method: string,
-  params: unknown,
-  respond: (result: unknown) => void,
+  params: JsonRpcResult,
+  respond: (result: JsonRpcValue) => void,
 ) => void
 
 export class JsonRpcError extends Error {
   constructor(
     readonly code: number,
     message: string,
-    readonly data?: unknown,
+    readonly data?: JsonRpcValue,
   ) {
     super(message)
     this.name = 'JsonRpcError'
@@ -57,7 +90,7 @@ export class StdioJsonRpc {
   #failure: Error | undefined
   #label: string
 
-  #onNotification: (method: string, params: unknown) => void = () => {}
+  #onNotification: (method: string, params: JsonRpcResult) => void = () => {}
   #onServerRequest: ServerRequestHandler = (_m, _p, respond) => respond(null)
   #onStderr: (text: string) => void = () => {}
 
@@ -84,7 +117,7 @@ export class StdioJsonRpc {
     child.stdin.on('error', (error) => this.#onStderr(`stdin: ${String(error)}`))
   }
 
-  onNotification(handler: (method: string, params: unknown) => void): void {
+  onNotification(handler: (method: string, params: JsonRpcResult) => void): void {
     this.#onNotification = handler
   }
 
@@ -96,18 +129,28 @@ export class StdioJsonRpc {
     this.#onStderr = handler
   }
 
-  request<T = unknown>(
+  request(
     method: string,
-    params: unknown = {},
-    options: { timeoutMs?: number } = {},
-  ): Promise<T> {
+    params?: JsonRpcInput,
+    options?: JsonRpcRequestOptions,
+  ): Promise<JsonRpcResult>
+  request<Result>(
+    method: string,
+    params: JsonRpcInput,
+    options: ParsedJsonRpcRequestOptions<Result>,
+  ): Promise<Result>
+  request<Result>(
+    method: string,
+    params: JsonRpcInput = {},
+    options: JsonRpcRequestOptions | ParsedJsonRpcRequestOptions<Result> = {},
+  ): Promise<JsonRpcResult | Result> {
     // Also when the process is gone: #write silently drops the frame once the
     // child has exited, so a call made after a crash used to sit pending
     // forever — the session stayed at "Working" with no error and no way out.
     if (this.#failure) return Promise.reject(this.#failure)
     if (this.#disposed) return Promise.reject(new Error('transport disposed'))
     const id = this.#nextId++
-    const promise = new Promise<unknown>((resolve, reject) => {
+    const promise = new Promise<JsonRpcResult>((resolve, reject) => {
       const call: PendingCall = { resolve, reject }
       if (options.timeoutMs !== undefined) {
         call.timer = setTimeout(() => {
@@ -118,11 +161,12 @@ export class StdioJsonRpc {
       }
       this.#pending.set(id, call)
     })
-    this.#write({ jsonrpc: '2.0', id, method, params })
-    return promise as Promise<T>
+    const message = { jsonrpc: '2.0', id, method, params: JsonRpcValueSchema.parse(params) }
+    this.#write(message)
+    return 'result' in options ? promise.then((value) => options.result.parse(value)) : promise
   }
 
-  notify(method: string, params: unknown = {}): void {
+  notify(method: string, params: JsonRpcInput = {}): void {
     if (this.#disposed) return
     this.#write({ jsonrpc: '2.0', method, params })
   }
@@ -134,9 +178,9 @@ export class StdioJsonRpc {
     killTree(this.#child)
   }
 
-  #write(message: unknown): void {
+  #write(message: JsonRpcInput): void {
     if (this.#exited || !this.#child.stdin.writable) return
-    this.#child.stdin.write(JSON.stringify(message) + '\n')
+    this.#child.stdin.write(JSON.stringify(JsonRpcValueSchema.parse(message)) + '\n')
   }
 
   #ingest(chunk: string): void {
@@ -150,9 +194,9 @@ export class StdioJsonRpc {
   }
 
   #handleLine(line: string): void {
-    let message: Record<string, unknown>
+    let parsed: JsonRpcInput
     try {
-      message = JSON.parse(line) as Record<string, unknown>
+      parsed = JSON.parse(line)
     } catch {
       // A non-JSON line means the CLI printed something to stdout that is not
       // protocol traffic. Surfacing it beats silently discarding it, because
@@ -161,8 +205,14 @@ export class StdioJsonRpc {
       return
     }
 
-    const id = message['id'] as JsonRpcId | undefined
-    const method = message['method'] as string | undefined
+    const frame = JsonRpcFrameSchema.safeParse(parsed)
+    if (!frame.success) {
+      this.#onStderr(`invalid JSON-RPC on stdout: ${line}`)
+      return
+    }
+    const message = frame.data
+
+    const { id, method } = message
 
     if (id !== undefined && method === undefined) {
       this.#settle(id, message)
@@ -176,33 +226,32 @@ export class StdioJsonRpc {
     try {
       if (id !== undefined && method !== undefined) {
         // A request from the agent — approvals and file access arrive this way.
-        this.#onServerRequest(method, message['params'], (result) => {
+        this.#onServerRequest(method, message.params, (result) => {
           this.#write({ jsonrpc: '2.0', id, result })
         })
         return
       }
 
       if (method !== undefined) {
-        this.#onNotification(method, message['params'])
+        this.#onNotification(method, message.params)
       }
     } catch (error) {
       this.#onStderr(`handler failed for ${method ?? 'response'}: ${String(error)}`)
     }
   }
 
-  #settle(id: JsonRpcId, message: Record<string, unknown>): void {
+  #settle(id: JsonRpcId, message: z.infer<typeof JsonRpcFrameSchema>): void {
     const call = this.#pending.get(id)
     if (!call) return
     this.#pending.delete(id)
     clearTimeout(call.timer)
 
-    const error = message['error'] as
-      { code?: number; message?: string; data?: unknown } | undefined
+    const { error } = message
     if (error) {
       call.reject(new JsonRpcError(error.code ?? 0, error.message ?? 'unknown error', error.data))
       return
     }
-    call.resolve(message['result'])
+    call.resolve(message.result)
   }
 
   #failAll(error: Error): void {

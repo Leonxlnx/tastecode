@@ -6,9 +6,11 @@ import type {
   ProviderId,
   ResultOf,
 } from '@harness/contracts'
+import { McpTransportSchema } from '@harness/contracts'
 import { AlertTriangle, Plus, Trash2 } from 'lucide-react'
 import type { Transport } from '../transport.js'
 import { AppSelect } from './AppSelect.js'
+import { propertiesWhen } from '../properties-when.js'
 
 type Inventory = ResultOf<'mcp.list'>
 type Editor = { mode: 'add' | 'edit'; id: string; displayName: string; transport: string }
@@ -213,7 +215,10 @@ function ProviderMcpSettings(props: {
     }
   }, [props.transport, props.provider, props.projectPath, refresh, completeOAuth])
 
-  async function applyChange(action: () => Promise<unknown>, success: string): Promise<boolean> {
+  async function applyChange<Result>(
+    action: () => Promise<Result>,
+    success: string,
+  ): Promise<boolean> {
     setError(undefined)
     setNotice(undefined)
     try {
@@ -246,13 +251,16 @@ function ProviderMcpSettings(props: {
   async function save(event: FormEvent): Promise<void> {
     event.preventDefault()
     if (!editor || !props.projectPath) return
+    const projectPath = props.projectPath
     let server: McpServerConfig
     try {
       server = {
         id: editor.id.trim(),
         enabled: true,
-        ...(editor.displayName.trim() ? { displayName: editor.displayName.trim() } : {}),
-        transport: JSON.parse(editor.transport) as McpTransport,
+        ...propertiesWhen(editor.displayName.trim(), () => ({
+          displayName: editor.displayName.trim(),
+        })),
+        transport: McpTransportSchema.parse(JSON.parse(editor.transport)),
       }
     } catch {
       setError('Transport must be valid JSON.')
@@ -263,7 +271,7 @@ function ProviderMcpSettings(props: {
       () =>
         props.transport.request(editor.mode === 'add' ? 'mcp.add' : 'mcp.update', {
           provider: props.provider,
-          projectPath: props.projectPath!,
+          projectPath,
           server,
         }),
       editor.mode === 'add' ? 'Server added.' : 'Server updated.',

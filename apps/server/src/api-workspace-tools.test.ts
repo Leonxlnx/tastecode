@@ -2,6 +2,9 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import type { ApiToolCall } from '@harness/adapter-api'
+import type { JsonValue } from '@harness/contracts'
+import { z } from 'zod'
 import { createApiWorkspaceTools } from './api-workspace-tools.js'
 
 function workspace(): string {
@@ -12,7 +15,7 @@ function workspace(): string {
   return root
 }
 
-function call(name: string, input: unknown) {
+function call(name: string, input: JsonValue): ApiToolCall {
   return { id: `call-${name}`, name, input }
 }
 
@@ -22,7 +25,9 @@ describe('direct API workspace tools', () => {
     const tools = createApiWorkspaceTools(root)
     const signal = new AbortController().signal
     const read = await tools.executeTool(call('read_file', { path: 'src/app.ts' }), signal)
-    const result = JSON.parse(read.content) as { sha256: string; content: string }
+    const result = z
+      .object({ sha256: z.string(), content: z.string() })
+      .parse(JSON.parse(read.content))
     expect(result.content).toContain('value = 1')
 
     await tools.executeTool(

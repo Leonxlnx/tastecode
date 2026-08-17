@@ -143,14 +143,16 @@ describe('page blueprint', () => {
       navigationDesign: _navigationDesign,
       ...legacy
     } = validBlueprint
-    const legacySection = { ...legacy.sections[0] }
-    delete (legacySection as Partial<typeof legacySection>).userQuestion
-    delete (legacySection as Partial<typeof legacySection>).layoutFamily
-    delete (legacySection as Partial<typeof legacySection>).layoutCases
-    delete (legacySection as Partial<typeof legacySection>).stage
-    delete (legacySection as Partial<typeof legacySection>).dependencies
-    delete (legacySection as Partial<typeof legacySection>).evidence
-    delete (legacySection as Partial<typeof legacySection>).transformation
+    const {
+      userQuestion: _userQuestion,
+      layoutFamily: _layoutFamily,
+      layoutCases: _layoutCases,
+      stage: _stage,
+      dependencies: _dependencies,
+      evidence: _evidence,
+      transformation: _transformation,
+      ...legacySection
+    } = legacy.sections[0]!
     expect(parsePageBlueprint({ ...legacy, sections: [legacySection] }).architecture.novelty).toBe(
       'medium',
     )

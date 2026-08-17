@@ -38,6 +38,7 @@ const review = {
 
 describe('review and repair phases', () => {
   it('treats the visual anti-slop floor as pass-blocking', () => {
+    // SAFETY: This prompt test checks fixed instructions; the function only serializes these artifact values.
     const prompt = designReviewPrompt(
       {} as Parameters<typeof designReviewPrompt>[0],
       {} as Parameters<typeof designReviewPrompt>[1],

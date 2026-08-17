@@ -1,39 +1,24 @@
 // @vitest-environment happy-dom
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { DomainEvent } from '@harness/contracts'
-import type { Transport } from '../../transport.js'
+import { afterEach, describe, expect, it } from 'vitest'
+import { TestTransport } from '../../test-transport.js'
+import { WorkspaceSideChat, type WorkspaceSideThread } from './WorkspaceSideChat.js'
 
-vi.mock('../Thread.js', () => ({
-  Thread: (props: { items: Array<{ id: string; text?: string | undefined }> }) => (
-    <div data-testid="side-thread">{props.items.map((item) => item.text).join('|')}</div>
-  ),
-}))
-
-import { WorkspaceSideChat } from './WorkspaceSideChat.js'
+const TestThread = (({ items }) => (
+  <div data-testid="side-thread">{items.map((item) => item.text).join('|')}</div>
+)) satisfies WorkspaceSideThread
 
 afterEach(cleanup)
 
 describe('WorkspaceSideChat', () => {
   it('starts a separate ephemeral session and consumes only its event stream', async () => {
-    let sideEvent:
-      | ((payload: { threadId: string; event: DomainEvent; seq?: number | undefined }) => void)
-      | undefined
-    const request = vi.fn(async (method: string) => {
+    const transport = new TestTransport(async (method) => {
       if (method === 'sideChat.start') return { threadId: 'side-1' }
       if (method === 'thread.history') return { events: [], running: false }
       if (method === 'thread.sendTurn') return { queued: false, turnId: 'turn-1' }
-      return {}
+      if (method === 'sideChat.close') return {}
+      throw new Error(`Unexpected request: ${method}`)
     })
-    const transport = {
-      request,
-      on: vi.fn((channel: string, listener: typeof sideEvent) => {
-        if (channel === 'sideChat.event') sideEvent = listener
-        return () => {}
-      }),
-      onState: vi.fn(() => () => {}),
-      onSequenceGap: vi.fn(() => () => {}),
-    } as unknown as Transport
 
     const view = render(
       <WorkspaceSideChat
@@ -42,6 +27,7 @@ describe('WorkspaceSideChat', () => {
         parentStatus="working"
         projectName="TasteCode"
         transport={transport}
+        threadComponent={TestThread}
         startOptions={{ model: 'model-1', effort: 'high', approval: 'ask' }}
         promptRequest={{
           parentThreadId: 'main-1',
@@ -53,17 +39,27 @@ describe('WorkspaceSideChat', () => {
     )
 
     await waitFor(() =>
-      expect(request).toHaveBeenCalledWith('sideChat.start', {
-        parentThreadId: 'main-1',
-        model: 'model-1',
-        effort: 'high',
-        approval: 'ask',
+      expect(transport.requests).toContainEqual({
+        method: 'sideChat.start',
+        params: {
+          parentThreadId: 'main-1',
+          model: 'model-1',
+          effort: 'high',
+          approval: 'ask',
+        },
       }),
     )
     await waitFor(() =>
-      expect(request).toHaveBeenCalledWith(
-        'thread.sendTurn',
-        expect.objectContaining({ threadId: 'side-1', text: 'Explain the failure' }),
+      expect(transport.requests).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: 'thread.sendTurn',
+            params: expect.objectContaining({
+              threadId: 'side-1',
+              text: 'Explain the failure',
+            }),
+          }),
+        ]),
       ),
     )
     expect(screen.queryByText('Main working')).toBeNull()
@@ -71,7 +67,7 @@ describe('WorkspaceSideChat', () => {
     expect(screen.getByLabelText('Message temporary chat')).toBeTruthy()
     expect(screen.getByTestId('side-thread').textContent).toContain('Explain the failure')
 
-    sideEvent?.({
+    transport.emit('sideChat.event', {
       threadId: 'side-1',
       seq: 2,
       event: {
@@ -93,7 +89,10 @@ describe('WorkspaceSideChat', () => {
 
     view.unmount()
     await waitFor(() =>
-      expect(request).toHaveBeenCalledWith('sideChat.close', { threadId: 'side-1' }),
+      expect(transport.requests).toContainEqual({
+        method: 'sideChat.close',
+        params: { threadId: 'side-1' },
+      }),
     )
   })
 
@@ -102,14 +101,8 @@ describe('WorkspaceSideChat', () => {
       <WorkspaceSideChat
         active
         parentStatus="idle"
-        transport={
-          {
-            on: () => () => {},
-            onState: () => () => {},
-            onSequenceGap: () => () => {},
-            request: vi.fn(),
-          } as unknown as Transport
-        }
+        transport={new TestTransport()}
+        threadComponent={TestThread}
         startOptions={{ approval: 'ask' }}
       />,
     )
@@ -118,19 +111,17 @@ describe('WorkspaceSideChat', () => {
   })
 
   it('keeps the normal composer visible while the temporary chat starts', async () => {
+    const transport = new TestTransport(async (method) => {
+      if (method === 'sideChat.start') return new Promise<never>(() => undefined)
+      throw new Error(`Unexpected request: ${method}`)
+    })
     render(
       <WorkspaceSideChat
         active
         parentThreadId="main-1"
         parentStatus="idle"
-        transport={
-          {
-            on: () => () => {},
-            onState: () => () => {},
-            onSequenceGap: () => () => {},
-            request: vi.fn(() => new Promise(() => {})),
-          } as unknown as Transport
-        }
+        transport={transport}
+        threadComponent={TestThread}
         startOptions={{ approval: 'ask' }}
       />,
     )

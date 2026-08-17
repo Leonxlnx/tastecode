@@ -4,8 +4,10 @@ import { execFile, spawn } from 'node:child_process'
 import { realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { z } from 'zod'
 import { takeSnapshot } from './checkpoint.js'
 import type { Store } from './store.js'
+import { propertiesWhen } from './properties-when.js'
 
 const run = promisify(execFile)
 
@@ -123,14 +125,14 @@ async function parseDiff(
     const fileDecision = store.diffDecision(threadId, fileTarget(targetId))
     const value: DiffFile = {
       path: file.path,
-      ...(file.previousPath ? { previousPath: file.previousPath } : {}),
+      ...propertiesWhen(file.previousPath, (includedValue) => ({ previousPath: includedValue })),
       status: file.status,
       binary: patch.includes('GIT binary patch') || patch.includes('Binary files '),
       hunks: hunks.map((hunk) => {
         const decision = store.diffDecision(threadId, hunkTarget(hunk.value.id))
-        return { ...hunk.value, ...(decision ? { decision } : {}) }
+        return { ...hunk.value, ...propertiesWhen(decision, (decision) => ({ decision })) }
       }),
-      ...(fileDecision ? { decision: fileDecision } : {}),
+      ...propertiesWhen(fileDecision, (includedValue) => ({ decision: includedValue })),
     }
     return { value, patch, targetId, hunks }
   }
@@ -310,7 +312,8 @@ async function git(cwd: string, args: string[]): Promise<string> {
     })
     return stdout
   } catch (error) {
-    const stderr = (error as { stderr?: string }).stderr
+    const parsed = z.object({ stderr: z.string().optional() }).safeParse(error)
+    const stderr = parsed.success ? parsed.data.stderr : undefined
     throw new Error(stderr?.trim() || (error instanceof Error ? error.message : String(error)))
   }
 }

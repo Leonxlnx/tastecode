@@ -16,6 +16,7 @@ import {
   nativeImage,
   nativeTheme,
   protocol,
+  screen,
   session,
   shell,
   systemPreferences,
@@ -24,6 +25,7 @@ import {
   type WebContents,
 } from 'electron'
 import updaterPackage from 'electron-updater'
+import { z } from 'zod'
 import {
   PreviewDomAuditSchema,
   PreviewCaptureRequestSchema,
@@ -43,6 +45,7 @@ import {
   type AppUpdateState,
 } from './app-updater.js'
 import { clipboardText } from './clipboard-text.js'
+import type { BoundaryValue } from './boundary.js'
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { LocalDiagnostics } from './local-diagnostics.js'
@@ -57,9 +60,17 @@ import { PREVIEW_PAGE_HEIGHT_SCRIPT, PREVIEW_SETTLE_SCRIPT } from './preview-set
 import { ServerSupervisor } from './server-supervisor.js'
 import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
+import {
+  loadMainWindowState,
+  persistMainWindowState,
+  restoreMainWindowState,
+  saveMainWindowState,
+  type MainWindowStatePersistence,
+} from './window-state.js'
 import { windowThemeOptions, windowThemeSource } from './window-theme.js'
 import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './zoom-shortcuts.js'
 import { viewedImagePath } from './viewed-image-path.js'
+import { propertiesWhen } from './properties-when.js'
 
 const { autoUpdater } = updaterPackage
 
@@ -76,6 +87,9 @@ const require = createRequire(import.meta.url)
 const productIconPath = path.join(here, '../assets/tastecode-app-icon.png')
 const nativeAppName = 'Taste Code'
 const productDataPath = path.join(app.getPath('appData'), 'TasteCode')
+const mainWindowStatePath = path.join(productDataPath, 'window-state.json')
+const defaultMainWindowSize = { width: 1180, height: 820 }
+const minimumMainWindowSize = { width: 720, height: 520 }
 
 // Keep the existing storage location while the OS-facing product name gains a space.
 app.setPath('userData', productDataPath)
@@ -103,7 +117,6 @@ const MAX_ATTACHMENT_THUMBNAILS = 64
 /** Hidden capture windows are real BrowserWindows; lifecycle checks that count
  *  "the app's windows" must not count them. */
 const captureWindows = new Set<BrowserWindow>()
-const MAX_PASTED_IMAGE_BYTES = 25 * 1024 * 1024
 // Windows' native occlusion tracker can wrongly decide the window is fully
 // covered and stick there: the page keeps running with visibilityState
 // 'hidden' while the window shows nothing but its background colour — the
@@ -128,6 +141,7 @@ let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
 let diagnostics: LocalDiagnostics | undefined
 let appUpdater: AppUpdateController | undefined
+let mainWindowStatePersistence: MainWindowStatePersistence | undefined
 const macOSHaptics = new MacOSHaptics()
 
 protocol.registerSchemesAsPrivileged([
@@ -183,13 +197,20 @@ function createWindow(): void {
   }
 
   const initialTheme = windowThemeOptions('dark')
+  const savedWindowState = loadMainWindowState(mainWindowStatePath)
+  const restoredWindowState = restoreMainWindowState(
+    savedWindowState,
+    savedWindowState ? screen.getDisplayMatching(savedWindowState.bounds).workArea : undefined,
+    defaultMainWindowSize,
+    minimumMainWindowSize,
+  )
   const window = new BrowserWindow({
     icon: productIconPath,
     title: nativeAppName,
-    width: 1180,
-    height: 820,
-    minWidth: 720,
-    minHeight: 520,
+    ...restoredWindowState.bounds,
+    ...propertiesWhen(restoredWindowState.fullScreen, () => ({ fullscreen: true })),
+    minWidth: minimumMainWindowSize.width,
+    minHeight: minimumMainWindowSize.height,
     focusable: true,
     movable: true,
     skipTaskbar: false,
@@ -199,8 +220,10 @@ function createWindow(): void {
     // the sidebar column, which is where the material shows through. CSS
     // backdrop-filter cannot do this — inside the page there is nothing
     // behind the sidebar to blur.
-    ...(process.platform === 'win32' ? { backgroundMaterial: 'acrylic' as const } : {}),
-    ...(process.platform === 'darwin' ? { vibrancy: 'sidebar' as const } : {}),
+    ...propertiesWhen(process.platform === 'win32', () => ({
+      backgroundMaterial: 'acrylic' as const,
+    })),
+    ...propertiesWhen(process.platform === 'darwin', () => ({ vibrancy: 'sidebar' as const })),
     // Draw our own top bar, but keep native window controls on Windows.
     titleBarStyle: 'hidden',
     // Height and colour must match --titlebar-h and --titlebar-bg in the renderer's
@@ -228,8 +251,23 @@ function createWindow(): void {
   mainWindow = window
   configureEmbeddedBrowser(window.webContents)
   restoreMainWindowPresence(process.platform, app, window)
+  const windowStatePersistence = persistMainWindowState(
+    window,
+    restoredWindowState,
+    (state) => saveMainWindowState(mainWindowStatePath, state),
+    (error) => console.warn('[desktop] failed to save main window state', error),
+  )
+  mainWindowStatePersistence = windowStatePersistence
   const stopWatchdog = startVisibilityWatchdog(window, (line) => console.warn('[desktop]', line))
   window.on('closed', stopWatchdog)
+  window.on('closed', () => {
+    windowStatePersistence.stop()
+    if (mainWindowStatePersistence === windowStatePersistence) {
+      mainWindowStatePersistence = undefined
+    }
+  })
+
+  if (restoredWindowState.maximized && !restoredWindowState.fullScreen) window.maximize()
 
   window.on('close', (event) => {
     if (!shouldHideWindowOnClose(process.platform, appIsQuitting)) return
@@ -335,7 +373,7 @@ function createBackgroundTray(): void {
   tray.on('click', showMainWindow)
 }
 
-ipcMain.handle('harness:setZoom', (event, action: unknown) => {
+ipcMain.handle('harness:setZoom', (event, action: BoundaryValue) => {
   requireOwnRenderer(event.sender)
   if (!isZoomAction(action)) throw new Error('Invalid zoom action')
   const window = BrowserWindow.fromWebContents(event.sender)
@@ -348,10 +386,11 @@ ipcMain.handle('harness:getDiagnosticsEnabled', (event) => {
   return diagnostics?.isEnabled() ?? false
 })
 
-ipcMain.handle('harness:setDiagnosticsEnabled', (event, enabled: unknown) => {
+ipcMain.handle('harness:setDiagnosticsEnabled', (event, enabled: BoundaryValue) => {
   requireOwnRenderer(event.sender)
-  if (typeof enabled !== 'boolean') throw new Error('Invalid diagnostics preference')
-  return diagnostics?.setEnabled(enabled) ?? false
+  const parsed = z.boolean().safeParse(enabled)
+  if (!parsed.success) throw new Error('Invalid diagnostics preference')
+  return diagnostics?.setEnabled(parsed.data) ?? false
 })
 
 ipcMain.handle('harness:openDiagnostics', async (event) => {
@@ -361,9 +400,10 @@ ipcMain.handle('harness:openDiagnostics', async (event) => {
   return (await shell.openPath(diagnostics.directory)) === ''
 })
 
-ipcMain.on('harness:reportRendererError', (event, value: unknown) => {
-  if (!isOwnRenderer(event.sender) || typeof value !== 'string') return
-  void diagnostics?.record('renderer', value)
+ipcMain.on('harness:reportRendererError', (event, value: BoundaryValue) => {
+  const parsed = z.string().safeParse(value)
+  if (!isOwnRenderer(event.sender) || !parsed.success) return
+  void diagnostics?.record('renderer', parsed.data)
 })
 
 ipcMain.handle('harness:getUpdateState', (event): AppUpdateState => {
@@ -386,7 +426,7 @@ ipcMain.handle('harness:installUpdate', (event) => {
   return appUpdater?.install() ?? false
 })
 
-ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
+ipcMain.handle('harness:setTheme', (event, preference: BoundaryValue) => {
   requireOwnRenderer(event.sender)
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window) throw new Error('No window for theme change')
@@ -409,24 +449,24 @@ ipcMain.on('harness:hapticsPrepare', (event) => {
   macOSHaptics.prepare()
 })
 
-ipcMain.on('harness:hapticFeedback', (event, pattern: unknown) => {
+ipcMain.on('harness:hapticFeedback', (event, pattern: BoundaryValue) => {
   if (!isOwnRenderer(event.sender) || !isMacHapticPattern(pattern)) return
   macOSHaptics.perform(pattern)
 })
 
-ipcMain.handle('harness:writeClipboardText', (event, value: unknown) => {
+ipcMain.handle('harness:writeClipboardText', (event, value: BoundaryValue) => {
   requireOwnRenderer(event.sender)
   clipboard.writeText(clipboardText(value))
 })
 
-ipcMain.handle('harness:capturePreview', async (event, value: unknown) => {
+ipcMain.handle('harness:capturePreview', async (event, value: BoundaryValue) => {
   if (!isOwnRenderer(event.sender)) throw new Error('Preview capture requires the app renderer')
   const parsed = PreviewCaptureRequestSchema.safeParse(value)
   if (!parsed.success) throw new Error('Invalid preview capture request')
   return capturePreview(parsed.data)
 })
 
-ipcMain.handle('harness:openExternal', async (event, url: unknown) => {
+ipcMain.handle('harness:openExternal', async (event, url: BoundaryValue) => {
   requireOwnRenderer(event.sender)
   await shell.openExternal(browserGuestUrl(url))
 })
@@ -601,7 +641,7 @@ ipcMain.handle('harness:pickFiles', async (event) => {
     : result.filePaths.map((filePath) => pickedAttachment(filePath, attachmentPreviewSecret))
 })
 
-ipcMain.handle('harness:previewViewedImage', async (event, reference: unknown) => {
+ipcMain.handle('harness:previewViewedImage', async (event, reference: BoundaryValue) => {
   requireOwnRenderer(event.sender)
   const filePath = await viewedImagePath(
     reference,
@@ -612,17 +652,20 @@ ipcMain.handle('harness:previewViewedImage', async (event, reference: unknown) =
   return attachment.mediaType ? attachment : undefined
 })
 
-ipcMain.handle('harness:revealPath', (event, value: unknown) => {
+ipcMain.handle('harness:revealPath', (event, value: BoundaryValue) => {
   requireOwnRenderer(event.sender)
   shell.showItemInFolder(revealablePath(value))
 })
 
-ipcMain.handle('harness:revealProjectFile', (event, value: unknown, projectRootValue: unknown) => {
-  requireOwnRenderer(event.sender)
-  shell.showItemInFolder(projectFilePath(value, projectRootValue))
-})
+ipcMain.handle(
+  'harness:revealProjectFile',
+  (event, value: BoundaryValue, projectRootValue: BoundaryValue) => {
+    requireOwnRenderer(event.sender)
+    shell.showItemInFolder(projectFilePath(value, projectRootValue))
+  },
+)
 
-ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
+ipcMain.handle('harness:savePastedFile', async (event, payload: BoundaryValue) => {
   requireOwnRenderer(event.sender)
   const file = pastedFile(payload)
   const directory = path.join(app.getPath('temp'), 'TasteCode', 'pasted-files')
@@ -636,6 +679,7 @@ if (ownsSingleInstance) {
   app.on('second-instance', showMainWindow)
   app.on('before-quit', () => {
     appIsQuitting = true
+    mainWindowStatePersistence?.saveAndStop()
   })
   app.on('will-quit', () => {
     appUpdater?.dispose()
@@ -735,14 +779,14 @@ function configureAttachmentPreviews(): void {
 
       const start = range?.start ?? 0
       const end = range?.end ?? Math.max(0, info.size - 1)
-      const headers: Record<string, string> = {
+      const headers = new Headers({
         'Accept-Ranges': 'bytes',
         'Cache-Control': 'no-store',
         'Content-Length': String(info.size === 0 ? 0 : end - start + 1),
         'Content-Type': preview.mimeType,
         'X-Content-Type-Options': 'nosniff',
-      }
-      if (range) headers['Content-Range'] = `bytes ${start}-${end}/${info.size}`
+      })
+      if (range) headers.set('Content-Range', `bytes ${start}-${end}/${info.size}`)
       const status = range ? 206 : 200
       if (request.method === 'HEAD' || info.size === 0) {
         return new Response(null, { status, headers })

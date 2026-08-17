@@ -1,6 +1,19 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { Ellipsis, GitBranch, PanelRightClose, PanelRightOpen, SquareTerminal } from 'lucide-react'
+import {
+  Archive,
+  Ellipsis,
+  FolderOpen,
+  GitBranch,
+  History,
+  PanelRightClose,
+  PanelRightOpen,
+  Pencil,
+  Pin,
+  PinOff,
+  SquareTerminal,
+} from 'lucide-react'
 import { isDesktop, revealPath } from '../bridge.js'
+import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
 
 /** Chat identity and direct workspace actions above the thread. */
@@ -13,6 +26,7 @@ function StageHeaderComponent(props: {
   worktreeBranch: string | undefined
   terminalOpen: boolean
   workspacePanelOpen: boolean
+  keybindings?: Keybindings | undefined
   onOpenRollback: () => void
   onToggleWorkspace: () => void
   onToggleTerminal: () => void
@@ -20,6 +34,7 @@ function StageHeaderComponent(props: {
   onToggleSessionPin: (id: string) => void
   onArchiveSession: (id: string) => void
 }) {
+  const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(props.title ?? '')
   const renameInput = useRef<HTMLInputElement>(null)
@@ -73,6 +88,10 @@ function StageHeaderComponent(props: {
               <>
                 <MenuItem
                   title={props.pinned ? 'Unpin chat' : 'Pin chat'}
+                  shortcutAria={shortcutAria(keybindings.toggleSessionPin)}
+                  icon={
+                    props.pinned ? <PinOff size={14} aria-hidden /> : <Pin size={14} aria-hidden />
+                  }
                   onClick={() => {
                     props.onToggleSessionPin(props.sessionId!)
                     close()
@@ -80,6 +99,7 @@ function StageHeaderComponent(props: {
                 />
                 <MenuItem
                   title="Rename chat"
+                  icon={<Pencil size={14} aria-hidden />}
                   onClick={() => {
                     setRenaming(true)
                     close()
@@ -87,6 +107,8 @@ function StageHeaderComponent(props: {
                 />
                 <MenuItem
                   title="Archive chat"
+                  shortcutAria={shortcutAria(keybindings.archiveSession)}
+                  icon={<Archive size={14} aria-hidden />}
                   onClick={() => {
                     props.onArchiveSession(props.sessionId!)
                     close()
@@ -95,6 +117,7 @@ function StageHeaderComponent(props: {
                 {isDesktop && props.projectPath ? (
                   <MenuItem
                     title="Open in Explorer"
+                    icon={<FolderOpen size={14} aria-hidden />}
                     onClick={() => {
                       void revealPath(props.projectPath!)
                       close()
@@ -104,6 +127,8 @@ function StageHeaderComponent(props: {
                 {props.checkpointCount > 0 ? (
                   <MenuItem
                     title={`Checkpoint history (${props.checkpointCount})`}
+                    shortcutAria={shortcutAria(keybindings.rollback)}
+                    icon={<History size={14} aria-hidden />}
                     onClick={() => {
                       props.onOpenRollback()
                       close()
@@ -114,7 +139,7 @@ function StageHeaderComponent(props: {
                   <MenuItem
                     title="Isolated checkout"
                     detail={props.worktreeBranch}
-                    icon={<GitBranch size={13} aria-hidden />}
+                    icon={<GitBranch size={14} aria-hidden />}
                     disabled
                     onClick={() => {}}
                   />
@@ -131,6 +156,7 @@ function StageHeaderComponent(props: {
           className="stagehead__action stagehead__action--workspace"
           aria-label={props.workspacePanelOpen ? 'Hide workspace tools' : 'Show workspace tools'}
           aria-pressed={props.workspacePanelOpen}
+          aria-keyshortcuts={shortcutAria(keybindings.toggleWorkspace)}
           title="Workspace tools"
           onClick={props.onToggleWorkspace}
         >
@@ -146,6 +172,7 @@ function StageHeaderComponent(props: {
             className={`stagehead__action${props.terminalOpen ? ' is-open' : ''}`}
             aria-label={props.terminalOpen ? 'Close terminal' : 'Open terminal'}
             aria-pressed={props.terminalOpen}
+            aria-keyshortcuts={shortcutAria(keybindings.toggleTerminal)}
             title="Terminal"
             onClick={props.onToggleTerminal}
           >

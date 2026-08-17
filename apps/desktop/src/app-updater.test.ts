@@ -1,6 +1,5 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AppUpdater, UpdateInfo } from 'electron-updater'
 import { createAppUpdateController } from './app-updater.js'
 
 function fakeUpdater() {
@@ -13,10 +12,10 @@ function fakeUpdater() {
     checkForUpdates: vi.fn().mockResolvedValue(null),
     downloadUpdate: vi.fn().mockResolvedValue([]),
     quitAndInstall: vi.fn(),
-  }) as unknown as AppUpdater
+  })
 }
 
-const info = { version: '0.1.0-beta.2' } as UpdateInfo
+const info = { version: '0.1.0-beta.2' }
 
 afterEach(() => vi.useRealTimers())
 

@@ -1,23 +1,26 @@
 import { realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
+import { z } from 'zod'
+import type { BoundaryValue } from './boundary.js'
+
+const ImageReferenceSchema = z
+  .string()
+  .min(1)
+  .max(32_768)
+  .refine((value) => !value.includes('\0'))
 
 /** Resolve old and current transcript references inside TasteCode's own paste folder. */
 export async function viewedImagePath(
-  referenceValue: unknown,
+  referenceValue: BoundaryValue,
   pastedRoot: string,
 ): Promise<string | undefined> {
-  if (
-    typeof referenceValue !== 'string' ||
-    referenceValue.length === 0 ||
-    referenceValue.length > 32_768 ||
-    referenceValue.includes('\0') ||
-    path.posix.isAbsolute(referenceValue) ||
-    path.win32.isAbsolute(referenceValue)
-  ) {
+  const parsed = ImageReferenceSchema.safeParse(referenceValue)
+  if (!parsed.success) return undefined
+  if (path.posix.isAbsolute(parsed.data) || path.win32.isAbsolute(parsed.data)) {
     return undefined
   }
 
-  const reference = path.normalize(referenceValue)
+  const reference = path.normalize(parsed.data)
   if (path.basename(reference) !== reference) return undefined
   return confinedFile(pastedRoot, path.join(pastedRoot, reference))
 }

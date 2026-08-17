@@ -1,8 +1,12 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { PullRequestDetail, PullRequestMetadataOptions } from '@harness/contracts'
-import type { Transport } from '../../transport.js'
+import {
+  methods,
+  type PullRequestDetail,
+  type PullRequestMetadataOptions,
+} from '@harness/contracts'
+import { TestTransport, type TestRequestResolver } from '../../test-transport.js'
 import { PullRequestDetailPane } from './PullRequestDetailPane.js'
 
 afterEach(cleanup)
@@ -75,19 +79,19 @@ const metadataOptions: PullRequestMetadataOptions = {
 }
 
 function setup(detailValue: PullRequestDetail = detail) {
-  const request = vi.fn((method: string, _params?: unknown) => {
-    if (method === 'pullRequests.detail') return Promise.resolve(detailValue)
-    if (method === 'pullRequests.metadataOptions') return Promise.resolve(metadataOptions)
+  const request = vi.fn<TestRequestResolver>(async (method) => {
+    if (method === 'pullRequests.detail') return detailValue
+    if (method === 'pullRequests.metadataOptions') return metadataOptions
     if (method === 'pullRequests.action') {
-      return Promise.resolve({ message: 'Pull request updated' })
+      return { message: 'Pull request updated' }
     }
-    return Promise.reject(new Error(`Unexpected request: ${method}`))
+    throw new Error(`Unexpected request: ${method}`)
   })
   const onChanged = vi.fn()
   const view = render(
     <PullRequestDetailPane
       item={detailValue}
-      transport={{ request } as unknown as Transport}
+      transport={new TestTransport(request)}
       onOpenChat={vi.fn()}
       onChanged={onChanged}
     />,
@@ -256,20 +260,20 @@ describe('PullRequestDetailPane metadata controls', () => {
     const action = deferred<{ message: string }>()
     const revalidation = deferred<PullRequestDetail>()
     let detailRequests = 0
-    const request = vi.fn((method: string) => {
+    const request = vi.fn<TestRequestResolver>(async (method) => {
       if (method === 'pullRequests.detail') {
         detailRequests += 1
-        return detailRequests === 1 ? Promise.resolve(detail) : revalidation.promise
+        return detailRequests === 1 ? detail : revalidation.promise
       }
-      if (method === 'pullRequests.metadataOptions') return Promise.resolve(metadataOptions)
+      if (method === 'pullRequests.metadataOptions') return metadataOptions
       if (method === 'pullRequests.action') return action.promise
-      return Promise.reject(new Error(`Unexpected request: ${method}`))
+      throw new Error(`Unexpected request: ${method}`)
     })
     const onChanged = vi.fn()
     render(
       <PullRequestDetailPane
         item={detail}
-        transport={{ request } as unknown as Transport}
+        transport={new TestTransport(request)}
         onOpenChat={vi.fn()}
         onChanged={onChanged}
       />,
@@ -422,7 +426,7 @@ describe('PullRequestDetailPane metadata controls', () => {
     await waitFor(() => {
       const actions = request.mock.calls
         .filter(([method]) => method === 'pullRequests.action')
-        .map(([, params]) => (params as { action: unknown }).action)
+        .map(([, params]) => methods['pullRequests.action'].params.parse(params).action)
       expect(actions).toEqual([{ type: 'reopen' }, { type: 'set_draft', draft: false }])
     })
   })

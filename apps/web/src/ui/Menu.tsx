@@ -71,7 +71,7 @@ export function Menu(props: {
   panelRole?: 'menu' | 'dialog'
   panelLabel?: string
   panelClassName?: string
-  shortcutAria?: string
+  shortcutAria?: string | undefined
   contextMenuTargetRef?: RefObject<HTMLElement | null>
 }) {
   const [open, setOpen] = useState(false)
@@ -142,7 +142,8 @@ export function Menu(props: {
   useEffect(() => {
     if (!open) return
     const onPointer = (event: MouseEvent) => {
-      const target = event.target as Node
+      const target = event.target
+      if (!(target instanceof Node)) return
       if (!wrap.current?.contains(target) && !panel.current?.contains(target)) closeMenu()
     }
     const onKey = (event: KeyboardEvent) => {
@@ -254,8 +255,9 @@ export function Menu(props: {
       if (event.target instanceof Node && panel.current?.contains(event.target)) return
       updatePosition()
     }
-    const resizeObserver =
-      typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(updatePosition)
+    const resizeObserver = globalThis.ResizeObserver
+      ? new globalThis.ResizeObserver(updatePosition)
+      : undefined
     if (panel.current) resizeObserver?.observe(panel.current)
     window.addEventListener('resize', updatePosition)
     document.addEventListener('scroll', onScroll, true)
@@ -390,7 +392,10 @@ export function Menu(props: {
               onKeyDown={onPanelKeyDown}
               onFocus={(event) => {
                 if (panelRole !== 'menu') return
-                const item = (event.target as HTMLElement).closest<HTMLElement>(MENU_ITEM_SELECTOR)
+                const item =
+                  event.target instanceof Element
+                    ? event.target.closest<HTMLElement>(MENU_ITEM_SELECTOR)
+                    : null
                 if (!item || !event.currentTarget.contains(item)) return
                 menuItems(event.currentTarget).forEach((candidate) => {
                   candidate.tabIndex = candidate === item ? 0 : -1
@@ -428,9 +433,9 @@ export function MenuItem(props: {
   disabled?: boolean
   title: string
   detail?: string | undefined
-  icon?: ReactNode
+  icon: ReactNode
   className?: string
-  shortcutAria?: string
+  shortcutAria?: string | undefined
 }) {
   return (
     <button

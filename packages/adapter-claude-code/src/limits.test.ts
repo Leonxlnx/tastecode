@@ -1,7 +1,9 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { JsonRpcValue } from '@harness/proc'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { claudeLimitSource, claudeLimits, mapClaudeUsage } from './limits.js'
 
 let configDir: string | undefined
@@ -13,11 +15,21 @@ afterEach(async () => {
   configDir = undefined
 })
 
-async function credentials(body: unknown): Promise<string> {
+const SavedCredentialsSchema = z.object({
+  theme: z.string().optional(),
+  claudeAiOauth: z.object({
+    accessToken: z.string(),
+    refreshToken: z.string().optional(),
+    accountUuid: z.string().optional(),
+  }),
+})
+
+async function credentials(body: JsonRpcValue): Promise<string> {
   configDir = await mkdtemp(join(tmpdir(), 'harness-claude-limits-'))
   vi.stubEnv('CLAUDE_CONFIG_DIR', configDir)
   const path = join(configDir, '.credentials.json')
-  await writeFile(path, typeof body === 'string' ? body : JSON.stringify(body), 'utf8')
+  const text = z.string().safeParse(body)
+  await writeFile(path, text.success ? text.data : JSON.stringify(body), 'utf8')
   return path
 }
 
@@ -155,7 +167,7 @@ describe('mapClaudeUsage', () => {
     })
     const fetch = vi
       .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ new_shape: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ['new_shape']: true }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ five_hour: 'broken' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ five_hour: {} }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ limits: {} }), { status: 200 }))
@@ -222,9 +234,9 @@ describe('mapClaudeUsage', () => {
     vi.stubGlobal('fetch', fetch)
 
     await expect(claudeLimits()).resolves.toEqual([{ label: 'Session', usedPercent: 25 }])
-    const saved = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
-    expect(saved['theme']).toBe('dark')
-    expect(saved['claudeAiOauth']).toEqual({
+    const saved = SavedCredentialsSchema.parse(JSON.parse(await readFile(path, 'utf8')))
+    expect(saved.theme).toBe('dark')
+    expect(saved.claudeAiOauth).toEqual({
       accessToken: 'new-access',
       refreshToken: 'rotated-refresh',
       accountUuid: 'account-1',

@@ -1,3 +1,4 @@
+import type { WebContents } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
 import { browserGuestUrl, browserUserAgent, configureEmbeddedBrowser } from './embedded-browser.js'
 
@@ -19,7 +20,8 @@ describe('embedded browser guest', () => {
 
   it('hardens guests before attachment and rejects privileged bootstrap URLs', () => {
     const owner = ownerHarness()
-    configureEmbeddedBrowser(owner.contents as never)
+    // SAFETY: The harness implements the only WebContents method used here: event registration.
+    configureEmbeddedBrowser(owner.contents as WebContents)
     const willAttach = owner.listener('will-attach-webview')
     const event = { preventDefault: vi.fn() }
     const preferences = {
@@ -46,7 +48,8 @@ describe('embedded browser guest', () => {
 
   it('denies permissions and keeps new-window links inside the guest', async () => {
     const owner = ownerHarness()
-    configureEmbeddedBrowser(owner.contents as never)
+    // SAFETY: The harness implements the only WebContents method used here: event registration.
+    configureEmbeddedBrowser(owner.contents as WebContents)
     const session = {
       setPermissionCheckHandler: vi.fn(),
       setPermissionRequestHandler: vi.fn(),

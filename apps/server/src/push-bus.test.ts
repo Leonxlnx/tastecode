@@ -1,23 +1,23 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { WebSocket } from 'ws'
-import { PushBus } from './push-bus.js'
+import { z } from 'zod'
+import { PushBus, type PushSocket } from './push-bus.js'
 
 /**
  * The push path had no tests at all, and its failure mode is the worst kind:
  * a client that stops receiving without either side noticing.
  */
 
-type FakeSocket = WebSocket & {
+type FakeSocket = PushSocket & {
   sent: string[]
   terminated: number
   failNextSend: boolean
 }
 
 function socket(): FakeSocket {
-  const fake = {
+  const fake: FakeSocket = {
     OPEN: 1,
     readyState: 1,
-    sent: [] as string[],
+    sent: [],
     terminated: 0,
     failNextSend: false,
     send(payload: string, callback?: (error?: Error) => void) {
@@ -33,11 +33,12 @@ function socket(): FakeSocket {
       fake.terminated += 1
     },
   }
-  return fake as unknown as FakeSocket
+  return fake
 }
 
+const SequencedFrameSchema = z.object({ sequence: z.number() })
 const sequences = (client: FakeSocket): number[] =>
-  client.sent.map((frame) => (JSON.parse(frame) as { sequence: number }).sequence)
+  client.sent.map((frame) => SequencedFrameSchema.parse(JSON.parse(frame)).sequence)
 
 describe('PushBus', () => {
   it('numbers every connection from one, independently', () => {

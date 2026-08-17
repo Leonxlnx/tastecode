@@ -5,6 +5,7 @@ import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import { gradientSetForBrand } from './gradients.js'
 import type { PageBlueprint } from './page.js'
+import { record, string, strings } from './parse.js'
 
 export type BuildPhaseOutput =
   | { status: 'complete'; summary: string; files: string[]; checks: string[] }
@@ -131,27 +132,6 @@ export function parseBuildPhaseOutput(text: string): BuildPhaseOutput {
     return { status: 'failed', error: string(value.error, 'build error'), files, checks }
   }
   throw new Error('build status must be complete or failed')
-}
-
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${field} must be an object`)
-  }
-  return value as Record<string, unknown>
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`${field} must be a non-empty string`)
-  }
-  return value
-}
-
-function strings(value: unknown, field: string): string[] {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string' && item.trim())) {
-    throw new Error(`${field} must be a string array`)
-  }
-  return value
 }
 
 function exactBuildFiles(brief: DesignBrief): string[] | undefined {

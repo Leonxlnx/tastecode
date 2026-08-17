@@ -1,128 +1,203 @@
 import path from 'node:path'
 import type { Item, ItemStatus } from '@harness/contracts'
-import type { ThreadItem } from './generated/v2/ThreadItem'
+import type { JsonRpcValue } from '@harness/proc'
+import { z } from 'zod'
+import { propertiesWhen } from './properties-when.js'
 
-/**
- * Translate a Codex `ThreadItem` into our provider-agnostic `Item`.
- *
- * Codex's union is much wider than ours and grows with every release. Anything
- * we do not map explicitly becomes an `unknown` item carrying its raw type name,
- * which the UI renders as plain text. That is deliberate: dropping unrecognised
- * output would silently lose work the agent actually did, and throwing would
- * break a session because the vendor shipped a new item kind.
- */
+const ItemEnvelopeSchema = z.object({ type: z.string(), id: z.string().optional() })
+const UserMessageSchema = z.object({
+  type: z.literal('userMessage'),
+  content: z.array(z.object({ type: z.string(), text: z.string().optional() })),
+})
+const AgentMessageSchema = z.object({
+  type: z.literal('agentMessage'),
+  text: z.string(),
+  phase: z.enum(['commentary', 'final_answer']).nullable(),
+})
+const ReasoningSchema = z.object({
+  type: z.literal('reasoning'),
+  summary: z.array(z.string()),
+  content: z.array(z.string()),
+})
+const TextItemSchema = z.object({ type: z.string(), text: z.string() })
+const CommandSchema = z.object({
+  type: z.literal('commandExecution'),
+  command: z.string(),
+  aggregatedOutput: z.string().nullable(),
+  exitCode: z.number().nullable(),
+  durationMs: z.number().nullable(),
+})
+const FileChangeSchema = z.object({
+  type: z.literal('fileChange'),
+  changes: z.array(z.object({ path: z.string() })),
+})
+const McpToolCallSchema = z.object({
+  type: z.literal('mcpToolCall'),
+  server: z.string(),
+  tool: z.string(),
+  durationMs: z.number().nullable(),
+})
+const DynamicToolCallSchema = z.object({
+  type: z.literal('dynamicToolCall'),
+  tool: z.string(),
+  durationMs: z.number().nullable(),
+})
+const CollabAgentSchema = z.object({
+  type: z.literal('collabAgentToolCall'),
+  tool: z.enum(['spawnAgent', 'sendInput', 'resumeAgent', 'wait', 'closeAgent']),
+  status: z.enum(['inProgress', 'completed', 'failed']),
+  receiverThreadIds: z.array(z.string()),
+  agentsStates: z.record(
+    z.string(),
+    z.object({
+      status: z.enum([
+        'pendingInit',
+        'running',
+        'interrupted',
+        'completed',
+        'errored',
+        'shutdown',
+        'notFound',
+      ]),
+    }),
+  ),
+})
+const SubAgentActivitySchema = z.object({
+  type: z.literal('subAgentActivity'),
+  kind: z.enum(['started', 'interacted', 'interrupted']),
+})
+const ImageViewSchema = z.object({ type: z.literal('imageView'), path: z.string() })
+const SleepSchema = z.object({ type: z.literal('sleep'), durationMs: z.number() })
+
+/** Translate a Codex thread item into the provider-neutral transcript model. */
 export function mapThreadItem(
-  raw: ThreadItem,
+  value: JsonRpcValue,
   context: { turnId: string; status: ItemStatus; createdAt: number },
 ): Item {
+  const envelope = ItemEnvelopeSchema.parse(value)
   const base = {
-    id: itemId(raw),
+    id: envelope.id ?? crypto.randomUUID(),
     turnId: context.turnId,
     status: context.status,
     createdAt: context.createdAt,
   }
 
-  switch (raw.type) {
-    case 'userMessage':
-      return { ...base, type: 'message', role: 'user', text: userInputToText(raw.content) }
+  switch (envelope.type) {
+    case 'userMessage': {
+      const item = UserMessageSchema.parse(value)
+      return { ...base, type: 'message', role: 'user', text: userInputToText(item.content) }
+    }
 
     case 'hookPrompt':
       return { ...base, type: 'tool_call', text: 'hook prompt' }
 
-    case 'agentMessage':
+    case 'agentMessage': {
+      const item = AgentMessageSchema.parse(value)
       return {
         ...base,
         type: 'message',
         role: 'assistant',
-        ...(raw.phase === null ? {} : { phase: raw.phase }),
-        text: raw.text,
-      }
-
-    case 'reasoning':
-      return {
-        ...base,
-        type: 'reasoning',
-        text: [...raw.summary, ...raw.content].join('\n\n'),
-      }
-
-    case 'plan':
-      return { ...base, type: 'plan', text: raw.text }
-
-    case 'commandExecution':
-      return {
-        ...base,
-        type: 'command',
-        command: raw.command,
-        ...(raw.aggregatedOutput === null ? {} : { text: raw.aggregatedOutput }),
-        ...(raw.exitCode === null ? {} : { exitCode: raw.exitCode }),
-        ...(raw.durationMs === null ? {} : { durationMs: raw.durationMs }),
-      }
-
-    case 'fileChange': {
-      // Codex reports a batch of file edits as one item; we surface the first
-      // path and the aggregate counts until the diff view exists (M3).
-      const first = raw.changes[0]
-      return {
-        ...base,
-        type: 'file_change',
-        ...(first === undefined ? {} : { path: String(first.path) }),
-        text: `${raw.changes.length} file(s) changed`,
+        ...propertiesWhen(item.phase, (phase) => ({ phase })),
+        text: item.text,
       }
     }
 
-    case 'mcpToolCall':
+    case 'reasoning': {
+      const item = ReasoningSchema.parse(value)
       return {
         ...base,
-        type: 'tool_call',
-        text: `${raw.server}.${raw.tool}`,
-        ...(raw.durationMs === null ? {} : { durationMs: raw.durationMs }),
+        type: 'reasoning',
+        text: [...item.summary, ...item.content].join('\n\n'),
       }
+    }
 
-    case 'dynamicToolCall':
+    case 'plan': {
+      const item = TextItemSchema.parse(value)
+      return { ...base, type: 'plan', text: item.text }
+    }
+
+    case 'commandExecution': {
+      const item = CommandSchema.parse(value)
+      return {
+        ...base,
+        type: 'command',
+        command: item.command,
+        ...propertiesWhen(item.aggregatedOutput, (text) => ({ text })),
+        ...propertiesWhen(item.exitCode, (exitCode) => ({ exitCode })),
+        ...propertiesWhen(item.durationMs, (durationMs) => ({ durationMs })),
+      }
+    }
+
+    case 'fileChange': {
+      const item = FileChangeSchema.parse(value)
+      const first = item.changes[0]
+      return {
+        ...base,
+        type: 'file_change',
+        ...propertiesWhen(first, ({ path }) => ({ path })),
+        text: `${item.changes.length} file(s) changed`,
+      }
+    }
+
+    case 'mcpToolCall': {
+      const item = McpToolCallSchema.parse(value)
       return {
         ...base,
         type: 'tool_call',
-        text: raw.tool,
-        ...(raw.durationMs === null ? {} : { durationMs: raw.durationMs }),
+        text: `${item.server}.${item.tool}`,
+        ...propertiesWhen(item.durationMs, (durationMs) => ({ durationMs })),
       }
+    }
+
+    case 'dynamicToolCall': {
+      const item = DynamicToolCallSchema.parse(value)
+      return {
+        ...base,
+        type: 'tool_call',
+        text: item.tool,
+        ...propertiesWhen(item.durationMs, (durationMs) => ({ durationMs })),
+      }
+    }
 
     case 'collabAgentToolCall': {
-      const failed = failedAgentCount(raw)
-      const targets = new Set([...raw.receiverThreadIds, ...Object.keys(raw.agentsStates)]).size
+      const item = CollabAgentSchema.parse(value)
+      const failed = failedAgentCount(item)
+      const targets = new Set([...item.receiverThreadIds, ...Object.keys(item.agentsStates)]).size
       const status: ItemStatus =
-        raw.status === 'failed' || failed > 0
+        item.status === 'failed' || failed > 0
           ? 'failed'
-          : raw.status === 'inProgress'
+          : item.status === 'inProgress'
             ? 'started'
             : 'completed'
       return {
         ...base,
         type: 'tool_call',
         status,
-        text: collabAgentLabel(raw.tool, status, targets, failed),
+        text: collabAgentLabel(item.tool, status, targets, failed),
       }
     }
 
-    case 'subAgentActivity':
+    case 'subAgentActivity': {
+      const item = SubAgentActivitySchema.parse(value)
       return {
         ...base,
         type: 'tool_call',
-        status: raw.kind === 'interrupted' ? 'failed' : context.status,
+        status: item.kind === 'interrupted' ? 'failed' : context.status,
         text:
-          raw.kind === 'started'
+          item.kind === 'started'
             ? 'Subagent started'
-            : raw.kind === 'interrupted'
+            : item.kind === 'interrupted'
               ? 'Subagent interrupted'
               : 'Subagent active',
       }
+    }
 
     case 'webSearch':
       return { ...base, type: 'tool_call', text: 'web search' }
 
     case 'imageView': {
-      // Keep enough context to distinguish repeated inspections without
-      // persisting a user's full local path in the provider-neutral transcript.
-      const name = path.win32.basename(path.posix.basename(String(raw.path)))
+      const item = ImageViewSchema.parse(value)
+      const name = path.win32.basename(path.posix.basename(item.path))
       return {
         ...base,
         type: 'tool_call',
@@ -130,43 +205,32 @@ export function mapThreadItem(
       }
     }
 
-    case 'sleep':
-      return { ...base, type: 'tool_call', text: 'sleep', durationMs: raw.durationMs }
+    case 'sleep': {
+      const item = SleepSchema.parse(value)
+      return { ...base, type: 'tool_call', text: 'sleep', durationMs: item.durationMs }
+    }
 
     case 'imageGeneration':
       return { ...base, type: 'tool_call', text: 'image generation' }
-
     case 'enteredReviewMode':
       return { ...base, type: 'tool_call', text: 'enter review mode' }
-
     case 'exitedReviewMode':
       return { ...base, type: 'tool_call', text: 'exit review mode' }
-
     case 'contextCompaction':
       return { ...base, type: 'tool_call', text: 'context compaction' }
-
-    default: {
-      const wireType = (raw as unknown as { type?: unknown }).type
-      return {
-        ...base,
-        type: 'unknown',
-        text: `[${typeof wireType === 'string' ? wireType : 'unknown'}]`,
-      }
-    }
+    default:
+      return { ...base, type: 'unknown', text: `[${envelope.type}]` }
   }
 }
 
-function failedAgentCount(raw: Extract<ThreadItem, { type: 'collabAgentToolCall' }>): number {
-  return Object.values(raw.agentsStates).filter(
-    (state) =>
-      state?.status === 'errored' ||
-      state?.status === 'notFound' ||
-      state?.status === 'interrupted',
+function failedAgentCount(item: z.infer<typeof CollabAgentSchema>): number {
+  return Object.values(item.agentsStates).filter(
+    ({ status }) => status === 'errored' || status === 'notFound' || status === 'interrupted',
   ).length
 }
 
 function collabAgentLabel(
-  tool: Extract<ThreadItem, { type: 'collabAgentToolCall' }>['tool'],
+  tool: z.infer<typeof CollabAgentSchema>['tool'],
   status: ItemStatus,
   targets: number,
   failed: number,
@@ -194,13 +258,7 @@ function collabAgentLabel(
   }
 }
 
-/** Every Codex item variant carries an id except the ones we treat as unknown. */
-function itemId(raw: ThreadItem): string {
-  const candidate = (raw as { id?: unknown }).id
-  return typeof candidate === 'string' ? candidate : crypto.randomUUID()
-}
-
-function userInputToText(content: Array<{ type: string; text?: string }>): string {
+function userInputToText(content: Array<{ type: string; text?: string | undefined }>): string {
   return content
     .filter((part) => part.type === 'text')
     .map((part) => part.text ?? '')

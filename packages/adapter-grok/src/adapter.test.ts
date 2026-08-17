@@ -1,10 +1,9 @@
-import { EventEmitter } from 'node:events'
+import { ChildProcess } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { pathToFileURL } from 'node:url'
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { DomainEvent } from '@harness/contracts'
 import { describe, expect, it } from 'vitest'
 import {
@@ -16,14 +15,21 @@ import {
   parseGrokModels,
 } from './adapter.js'
 
-class FakeChild extends EventEmitter {
-  readonly stdin = new PassThrough()
-  readonly stdout = new PassThrough()
-  readonly stderr = new PassThrough()
-  killed = false
+class FakeChild extends ChildProcess {
+  override stdin = new PassThrough()
+  override stdout = new PassThrough()
+  override stderr = new PassThrough()
+  override stdio: [PassThrough, PassThrough, PassThrough, null, null] = [
+    this.stdin,
+    this.stdout,
+    this.stderr,
+    null,
+    null,
+  ]
+  wasKilled = false
 
-  kill(): boolean {
-    this.killed = true
+  override kill(): boolean {
+    this.wasKilled = true
     setImmediate(() => {
       this.stdout.end()
       this.stderr.end()
@@ -80,7 +86,7 @@ describe('Grok adapter', () => {
         args = value
         const child = new FakeChild()
         children.push(child)
-        return child as unknown as ChildProcessWithoutNullStreams
+        return child
       },
     })
     const events: DomainEvent[] = []
@@ -168,12 +174,12 @@ describe('Grok adapter', () => {
   it('keeps sequential tool and authored-text lifecycles distinct', async () => {
     const child = new FakeChild()
     const adapter = new GrokAdapter({
-      spawn: () => child as unknown as ChildProcessWithoutNullStreams,
+      spawn: () => child,
     })
     const events: DomainEvent[] = []
     adapter.on('event', (event) => events.push(event))
     const thread = await adapter.startThread('C:\\repo')
-    const turnId = await adapter.sendTurn(thread.id, 'Create two files')
+    await adapter.sendTurn(thread.id, 'Create two files')
     const completed = new Promise<void>((resolve) => {
       adapter.on('event', (event) => {
         if (event.type === 'turn.completed') resolve()
@@ -242,7 +248,7 @@ describe('Grok adapter', () => {
     const adapter = new GrokAdapter({
       spawn: (_command, value) => {
         args = value
-        return child as unknown as ChildProcessWithoutNullStreams
+        return child
       },
     })
     const text = `Grüße 🧪\n${'x'.repeat(40_000)}`
@@ -262,7 +268,7 @@ describe('Grok adapter', () => {
   it('fails the turn when the process dies without an end frame', async () => {
     const child = new FakeChild()
     const adapter = new GrokAdapter({
-      spawn: () => child as unknown as ChildProcessWithoutNullStreams,
+      spawn: () => child,
     })
     const events: DomainEvent[] = []
     adapter.on('event', (event) => events.push(event))
@@ -287,7 +293,7 @@ describe('Grok adapter', () => {
       spawn: () => {
         const child = new FakeChild()
         children.push(child)
-        return child as unknown as ChildProcessWithoutNullStreams
+        return child
       },
     })
     const events: DomainEvent[] = []
@@ -299,7 +305,7 @@ describe('Grok adapter', () => {
     await adapter.sendTurn(thread.id, 'replace me')
     await new Promise((resolve) => setImmediate(resolve))
 
-    expect(children[0]?.killed).toBe(true)
+    expect(children[0]?.wasKilled).toBe(true)
     expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
       { type: 'turn.completed', turnId: interruptedTurnId, status: 'interrupted' },
     ])
@@ -307,20 +313,20 @@ describe('Grok adapter', () => {
     await adapter.sendTurn(thread.id, 'replacement')
     await new Promise((resolve) => setImmediate(resolve))
 
-    expect(children[1]?.killed).toBe(true)
+    expect(children[1]?.wasKilled).toBe(true)
     expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(1)
 
     adapter.dispose()
     await new Promise((resolve) => setImmediate(resolve))
 
-    expect(children[2]?.killed).toBe(true)
+    expect(children[2]?.wasKilled).toBe(true)
     expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(1)
   })
 
   it('drains a final end frame before classifying process close', async () => {
     const child = new FakeChild()
     const adapter = new GrokAdapter({
-      spawn: () => child as unknown as ChildProcessWithoutNullStreams,
+      spawn: () => child,
     })
     const events: DomainEvent[] = []
     adapter.on('event', (event) => events.push(event))

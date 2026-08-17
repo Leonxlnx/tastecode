@@ -1,4 +1,3 @@
-import { EventEmitter } from 'node:events'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -7,6 +6,7 @@ import type {
   Options,
   SDKControlInitializeResponse,
   SDKMessage,
+  SDKPartialAssistantMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk'
 import type { DomainEvent } from '@harness/contracts'
@@ -57,7 +57,14 @@ class FakeQuery implements ClaudeQueryRuntime {
   }
 
   async initializationResult(): Promise<SDKControlInitializeResponse> {
-    return { models: this.models } as SDKControlInitializeResponse
+    return {
+      commands: [],
+      agents: [],
+      output_style: 'default',
+      available_output_styles: [],
+      models: this.models,
+      account: {},
+    }
   }
 
   [Symbol.asyncIterator](): AsyncIterator<SDKMessage> {
@@ -150,12 +157,11 @@ describe('Claude Agent SDK session', () => {
     const thread = await adapter.startThread('/repo')
     await adapter.sendTurn(thread.id, 'Answer')
     const query = fake.queries[0]!
-    query.emitMessage(streamEvent('wire-1', { type: 'message_start', message: { id: 'msg-1' } }))
     query.emitMessage(
       streamEvent('wire-2', {
         type: 'content_block_start',
         index: 0,
-        content_block: { type: 'text', text: '' },
+        content_block: { type: 'text', text: '', citations: null },
       }),
     )
     query.emitMessage(
@@ -372,17 +378,22 @@ describe('Claude SDK user messages', () => {
   })
 })
 
-function streamEvent(uuid: string, event: Record<string, unknown>): SDKMessage {
+function streamEvent(
+  uuid: string,
+  event: SDKPartialAssistantMessage['event'],
+): SDKPartialAssistantMessage {
   return {
     type: 'stream_event',
     event,
     uuid,
     session_id: 'session-1',
     parent_tool_use_id: null,
-  } as unknown as SDKMessage
+  }
 }
 
 function resultMessage(isError: boolean): SDKMessage {
+  // SAFETY: This captured result fixture contains every field read by the adapter;
+  // the SDK's expanding NonNullableUsage contract adds unrelated telemetry fields.
   return {
     type: 'result',
     subtype: isError ? 'error_during_execution' : 'success',
@@ -404,5 +415,5 @@ function resultMessage(isError: boolean): SDKMessage {
     result: isError ? undefined : 'ok',
     uuid: crypto.randomUUID(),
     session_id: 'session-1',
-  } as unknown as SDKMessage
+  } as SDKMessage
 }

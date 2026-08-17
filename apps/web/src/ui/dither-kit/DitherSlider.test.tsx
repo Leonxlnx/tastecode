@@ -23,8 +23,10 @@ function createCanvasContext(draws: Draw[]) {
     set fillStyle(value: string | CanvasGradient | CanvasPattern) {
       fillStyle = String(value)
     },
-  } as unknown as CanvasRenderingContext2D
+  }
 }
+
+const canvasGetContext = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'getContext')
 
 function getAlpha(style: string): number {
   return Number(style.slice(style.lastIndexOf(',') + 1, -1))
@@ -51,6 +53,11 @@ afterEach(() => {
   cleanup()
   vi.useRealTimers()
   vi.restoreAllMocks()
+  if (canvasGetContext) {
+    Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', canvasGetContext)
+  } else {
+    Reflect.deleteProperty(HTMLCanvasElement.prototype, 'getContext')
+  }
 })
 
 describe('DitherSlider', () => {
@@ -60,10 +67,12 @@ describe('DitherSlider', () => {
     const textureContext = createCanvasContext(textureDraws)
     const bloomContext = createCanvasContext(bloomDraws)
 
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (
-      this: HTMLCanvasElement,
-    ) {
-      return this.classList.contains('dither-slider__texture') ? textureContext : bloomContext
+    Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
+      configurable: true,
+      writable: true,
+      value: vi.fn(function (this: HTMLCanvasElement) {
+        return this.classList.contains('dither-slider__texture') ? textureContext : bloomContext
+      }),
     })
 
     render(

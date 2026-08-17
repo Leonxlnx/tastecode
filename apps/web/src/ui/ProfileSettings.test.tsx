@@ -79,9 +79,11 @@ describe('profile settings', () => {
   it('ignores an image read that finishes after the profile closes', async () => {
     let finishRead: (value: ArrayBuffer) => void = () => {}
     const file = new File(['avatar'], 'avatar.png', { type: 'image/png' })
-    vi.spyOn(file, 'slice').mockReturnValue({
-      arrayBuffer: () => new Promise((resolve) => (finishRead = resolve)),
-    } as Blob)
+    const slicedFile = new Blob()
+    vi.spyOn(slicedFile, 'arrayBuffer').mockImplementation(
+      () => new Promise((resolve) => (finishRead = resolve)),
+    )
+    vi.spyOn(file, 'slice').mockReturnValue(slicedFile)
     const onIdentityChange = vi.fn()
     const view = render(
       <ProfileSettings

@@ -1,5 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { request as httpsRequest } from 'node:https'
+import type { JsonRpcInput, JsonRpcResultParser } from '@harness/proc'
+import { propertiesWhen } from './properties-when.js'
+import {
+  ChatGptTokenPayloadSchema,
+  VoiceAuthStatusResponseSchema,
+  VoiceErrorResponseSchema,
+  VoiceTranscriptResponseSchema,
+} from './schemas.js'
 
 export const VOICE_SAMPLE_RATE = 24_000
 export const MAX_VOICE_DURATION_MS = 120_000
@@ -22,7 +30,11 @@ export type VoiceCapability = {
   reason?: 'sign_in_required' | 'unsupported_auth' | 'codex_too_old'
 }
 
-type RpcCall = <T>(method: string, params: unknown) => Promise<T>
+type RpcCall = <Result>(
+  method: string,
+  params: JsonRpcInput,
+  result: JsonRpcResultParser<Result>,
+) => Promise<Result>
 
 type VoiceHttpResponse = {
   status: number
@@ -61,10 +73,11 @@ export class CodexVoiceTranscriber {
   async capability(): Promise<VoiceCapability> {
     let authMethod: string | null
     try {
-      const response = await this.#call<{ authMethod: string | null }>('getAuthStatus', {
-        includeToken: false,
-        refreshToken: false,
-      })
+      const response = await this.#call(
+        'getAuthStatus',
+        { includeToken: false, refreshToken: false },
+        VoiceAuthStatusResponseSchema,
+      )
       authMethod = response.authMethod
     } catch {
       return { available: false, reason: 'codex_too_old' }
@@ -94,24 +107,22 @@ export class CodexVoiceTranscriber {
       const text = readTranscript(response.body)
       if (!text) throw new VoiceTranscriptionError('upstream_failure', 'No speech was detected.')
       return text
-    } catch (error) {
-      if (error instanceof VoiceTranscriptionError) throw error
+    } catch (cause) {
+      if (cause instanceof VoiceTranscriptionError) throw cause
       if (signal?.aborted) throw cancelled()
       throw new VoiceTranscriptionError(
         'upstream_failure',
-        error instanceof Error ? error.message : 'Voice transcription failed.',
+        cause instanceof Error ? cause.message : 'Voice transcription failed.',
       )
     }
   }
 
   async #resolveToken(refreshToken: boolean): Promise<string> {
-    const response = await this.#call<{
-      authMethod: string | null
-      authToken: string | null
-    }>('getAuthStatus', {
-      includeToken: true,
-      refreshToken,
-    })
+    const response = await this.#call(
+      'getAuthStatus',
+      { includeToken: true, refreshToken },
+      VoiceAuthStatusResponseSchema,
+    )
     if (!isChatGptAuth(response.authMethod)) {
       throw new VoiceTranscriptionError(
         'unsupported_auth',
@@ -158,7 +169,9 @@ async function requestChatGptTranscription(
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
-          ...(accountId ? { 'ChatGPT-Account-ID': accountId } : {}),
+          ...propertiesWhen(accountId, (includedValue) => ({
+            'ChatGPT-Account-ID': includedValue,
+          })),
           'Content-Type': `multipart/form-data; boundary=${boundary}`,
           'Content-Length': String(body.byteLength),
           'Accept-Encoding': 'identity',
@@ -213,16 +226,12 @@ export function chatGptAccountIdFromToken(token: string): string | undefined {
   try {
     const parts = token.split('.')
     if (parts.length !== 3 || !parts[1]) return undefined
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as Record<
-      string,
-      unknown
-    >
-    const auth = payload['https://api.openai.com/auth']
-    if (!auth || typeof auth !== 'object') return undefined
-    const accountId = (auth as Record<string, unknown>).chatgpt_account_id
-    return typeof accountId === 'string' && accountId && !/[\r\n]/u.test(accountId)
-      ? accountId
-      : undefined
+    const parsed = ChatGptTokenPayloadSchema.safeParse(
+      JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')),
+    )
+    if (!parsed.success) return undefined
+    const accountId = parsed.data['https://api.openai.com/auth'].chatgpt_account_id
+    return accountId && !/[\r\n]/u.test(accountId) ? accountId : undefined
   } catch {
     return undefined
   }
@@ -230,9 +239,9 @@ export function chatGptAccountIdFromToken(token: string): string | undefined {
 
 function readTranscript(body: string): string | undefined {
   try {
-    const payload = JSON.parse(body) as { text?: unknown; transcript?: unknown }
-    const value = typeof payload.text === 'string' ? payload.text : payload.transcript
-    return typeof value === 'string' && value.trim() ? value.trim() : undefined
+    const payload = VoiceTranscriptResponseSchema.parse(JSON.parse(body))
+    const value = payload.text ?? payload.transcript
+    return value?.trim() || undefined
   } catch {
     throw new VoiceTranscriptionError(
       'upstream_failure',
@@ -244,16 +253,8 @@ function readTranscript(body: string): string | undefined {
 function transcriptionError(response: VoiceHttpResponse): VoiceTranscriptionError {
   let message = `Transcription failed with status ${response.status}.`
   try {
-    const payload = JSON.parse(response.body) as {
-      error?: { message?: unknown }
-      message?: unknown
-    }
-    const providerMessage =
-      typeof payload.error?.message === 'string'
-        ? payload.error.message
-        : typeof payload.message === 'string'
-          ? payload.message
-          : undefined
+    const payload = VoiceErrorResponseSchema.parse(JSON.parse(response.body))
+    const providerMessage = payload.error?.message ?? payload.message
     if (providerMessage?.trim()) message = providerMessage.trim()
   } catch {
     // Keep the status-based message when the provider body is empty or invalid.

@@ -1,6 +1,7 @@
 import { open, readdir, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { assertPublicWorkspaceFile, isSecretWorkspaceName } from './api-workspace-paths.js'
+import { propertiesWhen } from './properties-when.js'
 
 const MAX_TEXT_BYTES = 2 * 1024 * 1024
 const BINARY_SAMPLE_BYTES = 8 * 1024
@@ -98,12 +99,12 @@ export async function readWorkspaceTextFile(
     size: metadata.size,
     binary,
     truncated: metadata.size > bytesRead,
-    ...(binary ? {} : { content: bytes.toString('utf8') }),
+    ...propertiesWhen(!binary, () => ({ content: bytes.toString('utf8') })),
   }
 }
 
 async function containedRealPath(workspace: string, relativePath: string): Promise<string> {
-  if (typeof relativePath !== 'string' || relativePath.includes('\0')) {
+  if (relativePath.includes('\0')) {
     throw new Error('workspace path must be a string')
   }
   if (path.isAbsolute(relativePath)) throw new Error('workspace path must be relative')

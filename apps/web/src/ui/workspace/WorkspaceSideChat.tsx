@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ComponentType,
+} from 'react'
 import type { ApprovalDecision, ApprovalMode, DomainEvent } from '@harness/contracts'
 import { ArrowUp, CircleAlert, Square } from 'lucide-react'
 import { parseSideChatCommand } from '../../side-chat-command.js'
@@ -15,6 +23,7 @@ import {
 import type { Transport } from '../../transport.js'
 import { Thread } from '../Thread.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
+import { propertiesWhen } from '../../properties-when.js'
 
 export type SideChatParentStatus = 'idle' | 'working' | 'approval' | 'input' | 'failed'
 
@@ -32,6 +41,8 @@ export type SideChatStartOptions = {
   approval?: ApprovalMode | undefined
 }
 
+export type WorkspaceSideThread = ComponentType<ComponentProps<typeof Thread>>
+
 type SequencedEvent = { event: DomainEvent; seq?: number | undefined }
 let submissionSequence = 0
 
@@ -43,6 +54,7 @@ export function WorkspaceSideChat(props: {
   transport: Transport
   startOptions: SideChatStartOptions
   promptRequest?: SideChatPromptRequest | undefined
+  threadComponent?: WorkspaceSideThread | undefined
 }) {
   const [draft, setDraft] = useState('')
   const [sideThreadId, setSideThreadId] = useState<string>()
@@ -61,6 +73,7 @@ export function WorkspaceSideChat(props: {
   const historyBufferRef = useRef<SequencedEvent[]>([])
   const promptRequestRef = useRef(0)
   const reviews = useMemo(() => Object.values(thread.reviews), [thread.reviews])
+  const ThreadComponent = props.threadComponent ?? Thread
 
   threadRef.current = thread
   sideThreadIdRef.current = sideThreadId
@@ -262,12 +275,16 @@ export function WorkspaceSideChat(props: {
           threadId,
           text,
           clientSubmissionId,
-          ...(attachments.length > 0 ? { attachments } : {}),
-          ...(props.startOptions.model ? { model: props.startOptions.model } : {}),
-          ...(props.startOptions.effort ? { effort: props.startOptions.effort } : {}),
-          ...(props.startOptions.serviceTier
-            ? { serviceTier: props.startOptions.serviceTier }
-            : {}),
+          ...propertiesWhen(attachments.length > 0, () => ({ attachments })),
+          ...propertiesWhen(props.startOptions.model, (includedValue) => ({
+            model: includedValue,
+          })),
+          ...propertiesWhen(props.startOptions.effort, (includedValue) => ({
+            effort: includedValue,
+          })),
+          ...propertiesWhen(props.startOptions.serviceTier, (includedValue) => ({
+            serviceTier: includedValue,
+          })),
         })
         setError(undefined)
       } catch (reason) {
@@ -347,7 +364,7 @@ export function WorkspaceSideChat(props: {
           </div>
         ) : null}
         {hasConversation && props.active ? (
-          <Thread
+          <ThreadComponent
             items={thread.items}
             running={thread.running}
             activeTurn={thread.activeTurn}

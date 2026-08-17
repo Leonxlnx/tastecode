@@ -35,7 +35,7 @@ function boot(): void {
       runtime = created
       announce()
     })
-    .catch((error: unknown) => {
+    .catch((error) => {
       // Code stays plain rather than failing a message — but a silent catch
       // here cost an hour once, so it says why.
       console.warn('[highlighter] Shiki failed to load; code stays plain', error)
@@ -52,7 +52,7 @@ export const shikiPlugin: CodeHighlighterPlugin = {
   highlight(options) {
     if (!runtime) {
       boot()
-      return plainHighlight(options.code) as never
+      return plainHighlight(options.code)
     }
     return runtime.highlight(options)
   },
@@ -61,5 +61,5 @@ export const shikiPlugin: CodeHighlighterPlugin = {
 /** Streaming code stays cheap; the completed message swaps in Shiki once. */
 export const plainCodePlugin: CodeHighlighterPlugin = {
   ...shikiPlugin,
-  highlight: (options) => plainHighlight(options.code) as never,
+  highlight: (options) => plainHighlight(options.code),
 }

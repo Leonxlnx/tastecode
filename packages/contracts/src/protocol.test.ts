@@ -19,7 +19,10 @@ import {
   SkillCapabilitiesSchema,
   SkillSchema,
   ThreadLifecycleSchema,
+  type ProviderLimit,
+  type ProviderLimitSource,
 } from './protocol.js'
+import { propertiesWhen } from './properties-when.js'
 
 describe('domain events', () => {
   it('accepts a streaming delta', () => {
@@ -529,12 +532,12 @@ describe('protocol envelopes', () => {
       reasoningTokens: 0,
       totalTokens: 0,
     }
-    const parse = (limits: unknown[], limitSource?: unknown) =>
+    const parse = (limits: ProviderLimit[], limitSource?: ProviderLimitSource) =>
       methods['usage.summary'].result.parse({
         session: usage,
         today: usage,
         limits,
-        ...(limitSource === undefined ? {} : { limitSource }),
+        ...propertiesWhen(!(limitSource === undefined), () => ({ limitSource })),
       })
 
     expect(parse([]).limitSource).toBeUndefined()

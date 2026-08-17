@@ -1,3 +1,12 @@
+import { propertiesWhen } from './properties-when.js'
+import {
+  boundedInteger,
+  type BoundaryValue,
+  optionalString,
+  record,
+  string,
+  stringsAllowEmpty,
+} from './parse.js'
 interface PreviewPlanBase {
   version: 1
   cwd: string
@@ -45,7 +54,7 @@ export function parsePreviewPhaseOutput(text: string): PreviewPlan {
   return parsePreviewPlan(JSON.parse(fenced?.[1] ?? text))
 }
 
-export function parsePreviewPlan(value: unknown): PreviewPlan {
+export function parsePreviewPlan(value: BoundaryValue): PreviewPlan {
   const plan = record(value, 'preview plan')
   if (plan.version !== 1) throw new Error('preview plan version must be 1')
   const url = localUrl(plan.url)
@@ -94,12 +103,12 @@ export function parsePreviewPlan(value: unknown): PreviewPlan {
     ...shared,
     kind: 'command',
     command: executable(plan.command),
-    args: strings(plan.args, 'preview args'),
-    ...(readyPattern ? { readyPattern } : {}),
+    args: stringsAllowEmpty(plan.args, 'preview args'),
+    ...propertiesWhen(readyPattern, (readyPattern) => ({ readyPattern })),
   }
 }
 
-function localUrl(value: unknown): string {
+function localUrl(value: BoundaryValue): string {
   const result = new URL(string(value, 'preview url'))
   if (result.protocol !== 'http:' || result.hostname !== '127.0.0.1') {
     throw new Error('preview url must use http://127.0.0.1')
@@ -113,7 +122,7 @@ function localUrl(value: unknown): string {
  *  hard flow failure when the plan is executed. */
 const ALLOWED_COMMANDS = new Set(['bun', 'node', 'npm', 'pnpm', 'yarn'])
 
-function executable(value: unknown): string {
+function executable(value: BoundaryValue): string {
   const result = string(value, 'preview command')
   if (result.includes('/') || result.includes('\\') || /[\s;&|<>]/.test(result)) {
     throw new Error('preview command must be an executable name')
@@ -126,7 +135,7 @@ function executable(value: unknown): string {
   return result
 }
 
-function relativePath(value: unknown, field: string): string {
+function relativePath(value: BoundaryValue, field: string): string {
   const result = string(value, field)
   if (/^(?:[a-z]:|[\\/])/i.test(result) || result.split(/[\\/]/).includes('..')) {
     throw new Error(`${field} must stay inside the workspace`)
@@ -134,34 +143,10 @@ function relativePath(value: unknown, field: string): string {
   return result
 }
 
-function dimension(value: unknown, minimum: number, maximum: number, field: string): number {
-  if (!Number.isInteger(value) || (value as number) < minimum || (value as number) > maximum) {
+function dimension(value: BoundaryValue, minimum: number, maximum: number, field: string): number {
+  const result = boundedInteger(value, minimum, maximum)
+  if (result === undefined) {
     throw new Error(`${field} must be an integer between ${minimum} and ${maximum}`)
   }
-  return value as number
-}
-
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${field} must be an object`)
-  }
-  return value as Record<string, unknown>
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`${field} must be a non-empty string`)
-  }
-  return value
-}
-
-function optionalString(value: unknown, field: string): string | undefined {
-  return value === undefined ? undefined : string(value, field)
-}
-
-function strings(value: unknown, field: string): string[] {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
-    throw new Error(`${field} must be a string array`)
-  }
-  return value
+  return result
 }

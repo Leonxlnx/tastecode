@@ -1,16 +1,34 @@
 import type { DomainEvent, Item } from '@harness/contracts'
+import { JsonRpcValueSchema, type JsonRpcValue } from '@harness/proc'
+import { z } from 'zod'
+import { propertiesWhen } from './properties-when.js'
 
-export type CursorEvent = {
-  type?: string
-  subtype?: string
-  session_id?: string
-  duration_ms?: number
-  is_error?: boolean
-  result?: string
-  call_id?: string
-  message?: { content?: Array<{ type?: string; text?: string }> }
-  tool_call?: Record<string, { args?: Record<string, unknown>; result?: unknown }>
-}
+const JsonObjectSchema = z.record(z.string(), JsonRpcValueSchema)
+
+export const CursorEventSchema = z.object({
+  type: z.string().optional(),
+  subtype: z.string().optional(),
+  session_id: z.string().optional(),
+  duration_ms: z.number().optional(),
+  is_error: z.boolean().optional(),
+  result: z.string().optional(),
+  call_id: z.string().optional(),
+  message: z
+    .object({
+      content: z
+        .array(z.object({ type: z.string().optional(), text: z.string().optional() }))
+        .optional(),
+    })
+    .optional(),
+  tool_call: z
+    .record(
+      z.string(),
+      z.object({ args: JsonObjectSchema.optional(), result: JsonRpcValueSchema.optional() }),
+    )
+    .optional(),
+})
+
+export type CursorEvent = z.infer<typeof CursorEventSchema>
 
 export class CursorEventMapper {
   readonly #turnId: string
@@ -117,7 +135,9 @@ export class CursorEventMapper {
           status: event.is_error ? 'failed' : 'completed',
           text: this.#message,
           createdAt: Date.now(),
-          ...(event.duration_ms === undefined ? {} : { durationMs: event.duration_ms }),
+          ...propertiesWhen(!(event.duration_ms === undefined), () => ({
+            durationMs: event.duration_ms,
+          })),
         },
       })
     }
@@ -134,7 +154,12 @@ export class CursorEventMapper {
   }
 }
 
-function toolItem(id: string, turnId: string, name: string, args: Record<string, unknown>): Item {
+function toolItem(
+  id: string,
+  turnId: string,
+  name: string,
+  args: Record<string, JsonRpcValue>,
+): Item {
   const base = { id, turnId, status: 'started' as const, createdAt: Date.now() }
   if (/shell|terminal|command/i.test(name)) {
     return { ...base, type: 'command', command: string(args['command']) || name }
@@ -149,6 +174,7 @@ function toolItem(id: string, turnId: string, name: string, args: Record<string,
   return { ...base, type: 'tool_call', text: name }
 }
 
-function string(value: unknown): string {
-  return typeof value === 'string' ? value : ''
+function string(value: JsonRpcValue | undefined): string {
+  const parsed = z.string().safeParse(value)
+  return parsed.success ? parsed.data : ''
 }

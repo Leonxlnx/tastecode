@@ -11,7 +11,7 @@ const FEATURE_CASES = [
   ...numbered('feature-spatial', 3),
 ]
 
-const SECTION_CASES: Record<PageLayoutFamily, Set<string>> = {
+const SECTION_CASES = {
   hero: new Set([...numbered('hero-text', 7), ...numbered('hero-visual', 7)]),
   about: new Set([...numbered('about', 7), ...numbered('about-text', 2)]),
   feature: new Set(FEATURE_CASES),
@@ -23,7 +23,7 @@ const SECTION_CASES: Record<PageLayoutFamily, Set<string>> = {
   pricing: new Set(numbered('pricing', 4)),
   contact: new Set(['contact-split', 'contact-centered']),
   footer: new Set(numbered('footer', 7)),
-}
+} satisfies Record<PageLayoutFamily, Set<string>>
 
 export function assertPageLayoutSelections(page: PageBlueprint): PageBlueprint {
   const navigationCase = page.navigationDesign?.layoutCase

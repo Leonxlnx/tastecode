@@ -1,4 +1,5 @@
 import type { DomainEvent, Item } from '@harness/contracts'
+import { propertiesWhen } from './properties-when.js'
 
 const MAX_SNAPSHOT_ENTRIES = 80
 const MAX_SNAPSHOT_CHARACTERS = 64_000
@@ -92,7 +93,7 @@ export function projectHistoryItems(history: ReadonlyArray<{ event: DomainEvent 
       } else if (existing.status === 'started' || existing.turnId === '') {
         items.set(event.item.id, {
           ...event.item,
-          ...(event.item.text || !existing.text ? {} : { text: existing.text }),
+          ...propertiesWhen(!(event.item.text || !existing.text), () => ({ text: existing.text })),
         })
       }
       continue
@@ -120,7 +121,10 @@ export function projectHistoryItems(history: ReadonlyArray<{ event: DomainEvent 
       const existing = items.get(event.item.id)
       items.set(event.item.id, {
         ...event.item,
-        ...(event.item.text || !existing ? {} : { text: existing.text }),
+        ...propertiesWhen(
+          !event.item.text && existing ? { text: existing.text } : undefined,
+          (retainedText) => retainedText,
+        ),
       })
       continue
     }
@@ -155,12 +159,14 @@ function toSnapshotEntry(item: Item): SideChatSnapshotEntry | undefined {
     kind: 'activity',
     type: item.type,
     status: item.status,
-    ...(text ? { text: boundedText(text) } : {}),
-    ...(item.command ? { command: boundedText(item.command) } : {}),
-    ...(item.path ? { path: boundedText(item.path) } : {}),
-    ...(item.exitCode === undefined ? {} : { exitCode: item.exitCode }),
-    ...(item.linesAdded === undefined ? {} : { linesAdded: item.linesAdded }),
-    ...(item.linesRemoved === undefined ? {} : { linesRemoved: item.linesRemoved }),
+    ...propertiesWhen(text, (includedValue) => ({ includedValue: boundedText(includedValue) })),
+    ...propertiesWhen(item.command, (includedValue) => ({ command: boundedText(includedValue) })),
+    ...propertiesWhen(item.path, (includedValue) => ({ path: boundedText(includedValue) })),
+    ...propertiesWhen(!(item.exitCode === undefined), () => ({ exitCode: item.exitCode })),
+    ...propertiesWhen(!(item.linesAdded === undefined), () => ({ linesAdded: item.linesAdded })),
+    ...propertiesWhen(!(item.linesRemoved === undefined), () => ({
+      linesRemoved: item.linesRemoved,
+    })),
   }
 }
 

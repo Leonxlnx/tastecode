@@ -215,6 +215,9 @@ describe('InboxSidebar', () => {
     fireEvent.click(first, { metaKey: true })
     fireEvent.click(second, { metaKey: true })
     fireEvent.contextMenu(second)
+    for (const item of screen.getAllByRole('menuitem')) {
+      expect(item.querySelector('svg')).not.toBeNull()
+    }
     fireEvent.click(screen.getByRole('menuitem', { name: 'Settle 2 threads' }))
 
     expect(onSettleMany).toHaveBeenCalledWith(['one', 'two'])

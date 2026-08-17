@@ -29,7 +29,8 @@
     "@harness/proc": "workspace:*",
     "@napi-rs/keyring": "1.3.0",
     "node-pty": "1.2.0-beta.15",
-    "ws": "^8.21.1"
+    "ws": "^8.21.1",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

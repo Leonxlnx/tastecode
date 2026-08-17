@@ -1,118 +1,153 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { DomainEvent, QueuedTurn, ResultOf } from '@harness/contracts'
-import { StrictMode, type ComponentProps } from 'react'
-import { App } from './App.js'
+import {
+  channels,
+  methods,
+  type ChannelName,
+  type DataOf,
+  type DomainEvent,
+  type MethodName,
+  type ParamsOf,
+  type QueuedTurn,
+  type ResultOf,
+} from '@harness/contracts'
+import { forwardRef, memo, StrictMode, type ComponentProps } from 'react'
+import { z } from 'zod'
+import { App as RealApp, type AppComponents, type AppDependencies } from './App.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
 import type { ModelChoice } from './model-catalog.js'
-import { IndeterminateRequestError } from './transport.js'
+import { IndeterminateRequestError, type ConnectionState, type Transport } from './transport.js'
+import { propertiesWhen } from './properties-when.js'
+import { resetInstalls } from './provider-install.js'
+import { Thread as RealThread } from './ui/Thread.js'
+import { Sidebar as RealSidebar } from './ui/Sidebar.js'
+import { Composer as RealComposer } from './ui/Composer.js'
+import { StageHeader as RealStageHeader } from './ui/StageHeader.js'
+import { CommandPalette as RealCommandPalette } from './ui/CommandPalette.js'
+import { Settings as RealSettings } from './ui/Settings.js'
+import { SessionSearch as RealSessionSearch } from './ui/SessionSearch.js'
+import {
+  SessionSearchHost as RealSessionSearchHost,
+  type SessionSearchHandle,
+} from './ui/SessionSearchHost.js'
+import { TerminalPane as RealTerminalPane } from './ui/TerminalPane.js'
+import { requiredElement, requiredInstance, requiredValue } from './test-dom.js'
 
-const transport = vi.hoisted(() => ({
-  request: vi.fn(),
-  listeners: new Map<string, (data: unknown) => void>(),
-  stateListeners: new Set<(state: string) => void>(),
+const TestBoundarySchema = z.unknown()
+const SessionOrderSchema = z.record(z.string(), z.array(z.string()))
+type TestBoundary = z.input<typeof TestBoundarySchema>
+type TestRequest = (method: string, params: TestBoundary) => TestBoundary | Promise<TestBoundary>
+type ServerProject = ResultOf<'projects.list'>['projects'][number]
+type ServerSession = ServerProject['sessions'][number]
+type ServerProvider = ResultOf<'providers.list'>['providers'][number]
+type SidebarSettings = ResultOf<'sidebar.settings'>
+type TestServerSession = Pick<ServerSession, 'id'> & Partial<Omit<ServerSession, 'id'>>
+interface TestServerProject extends Omit<ServerProject, 'sessions'> {
+  sessions: TestServerSession[]
+}
+interface TestServerProvider extends Omit<
+  Partial<ServerProvider>,
+  'id' | 'displayName' | 'capabilities'
+> {
+  id: ServerProvider['id']
+  displayName: string
+  capabilities?: Partial<NonNullable<ServerProvider['capabilities']>>
+}
+
+function openConnectionState(): ConnectionState {
+  return 'open'
+}
+
+const transport = {
+  request: vi.fn<TestRequest>(),
+  listeners: new Map<ChannelName, (data: TestBoundary) => void>(),
+  stateListeners: new Set<(state: ConnectionState) => void>(),
   sequenceGapListeners: new Set<(expected: number, received: number) => void>(),
-  urls: [] as string[],
+  urls: new Array<string>(),
+  state: openConnectionState(),
   connect: vi.fn(),
   close: vi.fn(),
-  ensureHealthy: vi.fn(),
-}))
+  ensureHealthy: vi.fn(() => Promise.resolve()),
+}
 
-const shellRenders = vi.hoisted(() => ({
+const shellRenders = {
   composer: vi.fn(),
   sidebar: vi.fn(),
   stageHeader: vi.fn(),
-}))
+}
 
-const utilityRenders = vi.hoisted(() => ({
+const utilityRenders = {
   commandPalette: vi.fn(),
   sessionSearch: vi.fn(),
   settings: vi.fn(),
   terminalPane: vi.fn(),
-}))
+}
 
-const appRenders = vi.hoisted(() => vi.fn())
-const threadCallbacks = vi.hoisted(() => ({
-  answerUserInput: undefined as
-    ((id: string, answers: Record<string, string[]>) => void | Promise<void>) | undefined,
-  undoChanges: undefined as
-    ((threadId: string, turnId: string, expectedDiff: string) => Promise<void>) | undefined,
-}))
-const pickFolder = vi.hoisted(() => vi.fn())
+const appRenders = vi.fn()
+type ThreadProps = ComponentProps<typeof RealThread>
+interface ThreadCallbacks {
+  answerUserInput: ThreadProps['onAnswerUserInput'] | undefined
+  undoChanges: ThreadProps['onUndoChanges'] | undefined
+}
+const threadCallbacks: ThreadCallbacks = {
+  answerUserInput: undefined,
+  undoChanges: undefined,
+}
+const pickFolder = vi.fn<() => Promise<string | undefined>>()
 
-vi.mock('./transport.js', () => ({
-  IndeterminateRequestError: class IndeterminateRequestError extends Error {
-    override name = 'IndeterminateRequestError'
-  },
-  isIndeterminateRequestError: (error: unknown) =>
-    error instanceof Error && error.name === 'IndeterminateRequestError',
-  Transport: class {
-    constructor(url: string) {
-      transport.urls.push(url)
-    }
-    connect() {
-      transport.connect()
-    }
-    close() {
-      transport.close()
-    }
-    ensureHealthy() {
-      return transport.ensureHealthy()
-    }
-    on(channel: string, listener: (data: unknown) => void) {
-      transport.listeners.set(channel, listener)
-      return () => {
-        transport.listeners.delete(channel)
-      }
-    }
-    onState(listener: (state: string) => void) {
-      transport.stateListeners.add(listener)
-      return () => {
-        transport.stateListeners.delete(listener)
-      }
-    }
-    onSequenceGap(listener: (expected: number, received: number) => void) {
-      transport.sequenceGapListeners.add(listener)
-      return () => {
-        transport.sequenceGapListeners.delete(listener)
-      }
-    }
-    request(method: string, params: unknown) {
-      return transport.request(method, params)
-    }
-  },
-}))
-
-vi.mock('./ui/highlighter.js', () => {
-  const plugin = {
-    type: 'code-highlighter',
-    name: 'test-highlighter',
-    getSupportedLanguages: () => [],
-    getThemes: () => [],
-    supportsLanguage: () => true,
-    highlight: () => ({ tokens: [] }),
+class AppTestTransport implements Transport {
+  constructor(url: string) {
+    transport.urls.push(url)
   }
-  return {
-    onHighlighterChange: () => () => {},
-    shikiPlugin: plugin,
-    plainCodePlugin: plugin,
-    warmHighlighter: () => {},
+
+  get state(): ConnectionState {
+    return transport.state
   }
-})
+
+  connect(): void {
+    transport.connect()
+  }
+
+  close(): void {
+    transport.close()
+  }
+
+  ensureHealthy(): Promise<void> {
+    return transport.ensureHealthy()
+  }
+
+  on<C extends ChannelName>(channel: C, listener: (data: DataOf<C>) => void): () => void {
+    const dispatch = (data: TestBoundary) => {
+      // SAFETY: The schema for this same channel validates the test event before dispatch.
+      listener(channels[channel].parse(data) as DataOf<C>)
+    }
+    transport.listeners.set(channel, dispatch)
+    return () => transport.listeners.delete(channel)
+  }
+
+  onState(listener: (state: ConnectionState) => void): () => void {
+    transport.stateListeners.add(listener)
+    return () => transport.stateListeners.delete(listener)
+  }
+
+  onSequenceGap(listener: (expected: number, received: number) => void): () => void {
+    transport.sequenceGapListeners.add(listener)
+    return () => transport.sequenceGapListeners.delete(listener)
+  }
+
+  async request<M extends MethodName>(method: M, params: ParamsOf<M>): Promise<ResultOf<M>> {
+    const result = await transport.request(method, params)
+    // SAFETY: The result schema for this same method validates the fake server response.
+    return methods[method].result.parse(result) as ResultOf<M>
+  }
+}
 
 // App tests exercise session routing, while Thread's own tests cover its
 // virtualized renderer. happy-dom intentionally renders no virtual rows.
-vi.mock('./ui/Thread.js', () => ({
-  Thread: (props: {
-    items: { id: string; text?: string }[]
-    liveItems?: ReadonlyMap<number, { item: { id: string; text?: string } }>
-    running: boolean
-    activeTurn?: { id: string; startedAt: number }
-    onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
-    onUndoChanges?: (threadId: string, turnId: string, expectedDiff: string) => Promise<void>
-  }) => (
+function TestThread(props: ThreadProps) {
+  return (
     <div
       data-testid="thread"
       data-started-at={props.activeTurn?.startedAt}
@@ -128,117 +163,126 @@ vi.mock('./ui/Thread.js', () => ({
       ))}
       {props.running && props.activeTurn ? <span>Working</span> : null}
     </div>
-  ),
-}))
+  )
+}
 
-vi.mock('./ui/Sidebar.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('./ui/Sidebar.js')>()
-  const { memo } = await import('react')
-  const Sidebar = memo((props: ComponentProps<typeof original.Sidebar>) => {
-    shellRenders.sidebar()
-    return <original.Sidebar {...props} />
-  })
-  return { ...original, Sidebar }
+const TestSidebar = memo((props: ComponentProps<typeof RealSidebar>) => {
+  shellRenders.sidebar()
+  return <RealSidebar {...props} />
+})
+const TestComposer = memo((props: ComponentProps<typeof RealComposer>) => {
+  shellRenders.composer()
+  return <RealComposer {...props} />
+})
+const TestStageHeader = memo((props: ComponentProps<typeof RealStageHeader>) => {
+  shellRenders.stageHeader()
+  return <RealStageHeader {...props} />
+})
+const TestCommandPalette = memo((props: ComponentProps<typeof RealCommandPalette>) => {
+  utilityRenders.commandPalette()
+  return <RealCommandPalette {...props} />
+})
+const TestSettings = memo((props: ComponentProps<typeof RealSettings>) => {
+  utilityRenders.settings()
+  return <RealSettings {...props} />
+})
+const TestSessionSearch = memo((props: ComponentProps<typeof RealSessionSearch>) => {
+  utilityRenders.sessionSearch()
+  return <RealSessionSearch {...props} />
+})
+const TestSessionSearchHost = forwardRef<
+  SessionSearchHandle,
+  ComponentProps<typeof RealSessionSearchHost>
+>(function TestSessionSearchHost(props, ref) {
+  return <RealSessionSearchHost {...props} ref={ref} SearchComponent={TestSessionSearch} />
+})
+const TestTerminalPane = memo((props: ComponentProps<typeof RealTerminalPane>) => {
+  utilityRenders.terminalPane()
+  return <div data-testid="terminal-pane">{'threadId' in props ? props.threadId : ''}</div>
 })
 
-vi.mock('./ui/Composer.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('./ui/Composer.js')>()
-  const { memo } = await import('react')
-  const Composer = memo((props: ComponentProps<typeof original.Composer>) => {
-    shellRenders.composer()
-    return <original.Composer {...props} />
-  })
-  return { ...original, Composer }
-})
+const APP_COMPONENTS: Partial<AppComponents> = {
+  Thread: TestThread,
+  Sidebar: TestSidebar,
+  Composer: TestComposer,
+  StageHeader: TestStageHeader,
+  CommandPalette: TestCommandPalette,
+  Settings: TestSettings,
+  SessionSearchHost: TestSessionSearchHost,
+  TerminalPane: TestTerminalPane,
+}
 
-vi.mock('./ui/StageHeader.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('./ui/StageHeader.js')>()
-  const { memo } = await import('react')
-  const StageHeader = memo((props: ComponentProps<typeof original.StageHeader>) => {
-    shellRenders.stageHeader()
-    return <original.StageHeader {...props} />
-  })
-  return { ...original, StageHeader }
-})
-
-vi.mock('./ui/CommandPalette.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('./ui/CommandPalette.js')>()
-  const { memo } = await import('react')
-  const CommandPalette = memo((props: ComponentProps<typeof original.CommandPalette>) => {
-    utilityRenders.commandPalette()
-    return <original.CommandPalette {...props} />
-  })
-  return { ...original, CommandPalette }
-})
-
-vi.mock('./ui/Settings.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('./ui/Settings.js')>()
-  const { memo } = await import('react')
-  const Settings = memo((props: ComponentProps<typeof original.Settings>) => {
-    utilityRenders.settings()
-    return <original.Settings {...props} />
-  })
-  return { ...original, Settings }
-})
-
-vi.mock('./ui/SessionSearch.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('./ui/SessionSearch.js')>()
-  const { memo } = await import('react')
-  const SessionSearch = memo((props: ComponentProps<typeof original.SessionSearch>) => {
-    utilityRenders.sessionSearch()
-    return <original.SessionSearch {...props} />
-  })
-  return { ...original, SessionSearch }
-})
-
-vi.mock('./ui/TerminalPane.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('./ui/TerminalPane.js')>()
-  const { memo } = await import('react')
-  const TerminalPane = memo((props: ComponentProps<typeof original.TerminalPane>) => {
-    utilityRenders.terminalPane()
-    return <div data-testid="terminal-pane">{props.threadId}</div>
-  })
-  return { ...original, TerminalPane }
-})
-
-vi.mock('./bridge.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./bridge.js')>()),
+const APP_DEPENDENCIES: Partial<AppDependencies> = {
+  createTransport: (url) => new AppTestTransport(url),
+  warmHighlighter: () => undefined,
   pickFolder,
   isMacOS: () => {
-    // App samples the platform once per render, so this catches root work
-    // without adding test-only instrumentation to production code.
     appRenders()
     return true
   },
-}))
-
-vi.mock('./voice-recorder.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./voice-recorder.js')>()),
   canCaptureVoice: () => true,
-}))
+}
+
+function App() {
+  return <RealApp dependencies={APP_DEPENDENCIES} components={APP_COMPONENTS} />
+}
 
 /** What the server reports. Projects live there now, not in localStorage. */
-let serverProjects: unknown[] = []
-let serverProviders: unknown[] = []
+let serverProjects: TestServerProject[] = []
+let serverProviders: TestServerProvider[] = []
 let serverUnsavedWork = { isolated: false, uncommitted: false }
-let serverSidebarSettings: {
-  mode: 'classic' | 'inbox'
-  autoSettleDays: number | null
-} = { mode: 'classic', autoSettleDays: 3 }
+let serverSidebarSettings: SidebarSettings = { mode: 'classic', autoSettleDays: 3 }
 
-function contractValidServerProjects(): unknown[] {
-  return serverProjects.map((project) => {
-    if (typeof project !== 'object' || project === null) return project
-    const record = project as Record<string, unknown>
-    if (!Array.isArray(record.sessions)) return project
-    return {
-      ...record,
-      sessions: record.sessions.map((session) =>
-        typeof session === 'object' && session !== null
-          ? { provider: 'codex', createdAt: 0, ...session }
-          : session,
-      ),
+function serverSession(input: TestServerSession): ServerSession {
+  return {
+    title: input.id,
+    provider: 'codex',
+    createdAt: 0,
+    running: false,
+    ...input,
+  }
+}
+
+function serverProject(
+  path: string,
+  name: string,
+  sessions: TestServerSession[] = [],
+): TestServerProject {
+  return {
+    path,
+    name,
+    pinned: false,
+    createdAt: 0,
+    sessions,
+  }
+}
+
+function contractValidServerProjects(): ServerProject[] {
+  return serverProjects.map((project) => ({
+    ...project,
+    sessions: project.sessions.map(serverSession),
+  }))
+}
+
+function contractValidServerProviders(): ServerProvider[] {
+  return serverProviders.map(({ capabilities, ...provider }) => {
+    const result: ServerProvider = {
+      installed: true,
+      auth: 'authenticated',
+      ...provider,
     }
+    if (capabilities) {
+      result.capabilities = {
+        steer: false,
+        fork: false,
+        interrupt: false,
+        reasoningItems: false,
+        approvals: false,
+        images: false,
+        ...capabilities,
+      }
+    }
+    return result
   })
 }
 
@@ -300,10 +344,10 @@ beforeEach(() => {
     },
   ]
 
-  transport.request.mockImplementation((method: string, params: unknown) => {
+  transport.request.mockImplementation((method: string, params: TestBoundary) => {
     switch (method) {
       case 'providers.list':
-        return Promise.resolve({ providers: serverProviders })
+        return Promise.resolve({ providers: contractValidServerProviders() })
       case 'harnesses.list':
         return Promise.resolve({ harnesses: [] })
       case 'models.list':
@@ -312,25 +356,29 @@ beforeEach(() => {
         return Promise.resolve({ branch: 'main', added: 0, removed: 0, dirtyFiles: 0 })
       case 'workspace.branches':
         return Promise.resolve({ branches: ['main', 'feature/shelf'] })
-      case 'workspace.switchBranch':
+      case 'workspace.switchBranch': {
+        const request = methods['workspace.switchBranch'].params.parse(params)
         return Promise.resolve({
-          branch: (params as { branch: string }).branch,
+          branch: request.branch,
           added: 0,
           removed: 0,
           dirtyFiles: 0,
         })
+      }
       case 'auth.status':
         return Promise.resolve({ signedIn: true })
       case 'projects.list':
         return Promise.resolve({ projects: contractValidServerProjects() })
       case 'sidebar.settings':
         return Promise.resolve(serverSidebarSettings)
-      case 'sidebar.updateSettings':
-        serverSidebarSettings = {
+      case 'sidebar.updateSettings': {
+        const request = methods['sidebar.updateSettings'].params.parse(params)
+        serverSidebarSettings = methods['sidebar.settings'].result.parse({
           ...serverSidebarSettings,
-          ...(params as Partial<typeof serverSidebarSettings>),
-        }
+          ...request,
+        })
         return Promise.resolve(serverSidebarSettings)
+      }
       case 'thread.history':
         return Promise.resolve({ events: [], running: false })
       case 'thread.queue':
@@ -342,21 +390,25 @@ beforeEach(() => {
       case 'thread.unsettle':
       case 'thread.unsnooze':
         return Promise.resolve({ lifecycle: { state: 'active', keepActive: false } })
-      case 'thread.snooze':
+      case 'thread.snooze': {
+        const request = methods['thread.snooze'].params.parse(params)
         return Promise.resolve({
           lifecycle: {
             state: 'snoozed',
             snoozedAt: 100,
-            wakeAt: (params as { wakeAt: number }).wakeAt,
+            wakeAt: request.wakeAt,
           },
         })
-      case 'thread.setKeepActive':
+      }
+      case 'thread.setKeepActive': {
+        const request = methods['thread.setKeepActive'].params.parse(params)
         return Promise.resolve({
           lifecycle: {
             state: 'active',
-            keepActive: (params as { keepActive: boolean }).keepActive,
+            keepActive: request.keepActive,
           },
         })
+      }
       case 'usage.summary':
         return Promise.resolve({
           session: {
@@ -399,31 +451,30 @@ beforeEach(() => {
         return Promise.resolve({})
       case 'thread.delete': {
         // The server really does drop it, so the next listing must agree.
-        const { threadId } = params as { threadId: string }
+        const { threadId } = methods['thread.delete'].params.parse(params)
         serverProjects = serverProjects.map((project) => {
-          const p = project as { sessions: Array<{ id: string }> }
-          return { ...p, sessions: p.sessions.filter((s) => s.id !== threadId) }
+          return {
+            ...project,
+            sessions: project.sessions.filter((session) => session.id !== threadId),
+          }
         })
         return Promise.resolve({})
       }
       case 'thread.start': {
         // The real server records the session as it starts it, so the next
         // listing has to show it or the rail would stay empty.
-        const { workspacePath, isolate } = params as { workspacePath: string; isolate?: boolean }
+        const { workspacePath, isolate } = methods['thread.start'].params.parse(params)
         serverProjects = serverProjects.map((project) => {
-          const p = project as { path: string; sessions: unknown[] }
-          if (p.path !== workspacePath) return p
+          if (project.path !== workspacePath) return project
           return {
-            ...p,
+            ...project,
             sessions: [
-              ...p.sessions,
+              ...project.sessions,
               {
                 id: 'thread-1',
                 title: 'New session',
-                provider: 'codex',
                 createdAt: 1,
-                running: false,
-                ...(isolate ? { worktreeBranch: 'harness/thread-1' } : {}),
+                ...propertiesWhen(isolate, () => ({ worktreeBranch: 'harness/thread-1' })),
               },
             ],
           }
@@ -431,12 +482,13 @@ beforeEach(() => {
         return Promise.resolve({ threadId: 'thread-1' })
       }
       case 'thread.rename': {
-        const { threadId, title } = params as { threadId: string; title: string }
+        const { threadId, title } = methods['thread.rename'].params.parse(params)
         serverProjects = serverProjects.map((project) => {
-          const p = project as { sessions: Array<{ id: string }> }
           return {
-            ...p,
-            sessions: p.sessions.map((s) => (s.id === threadId ? { ...s, title } : s)),
+            ...project,
+            sessions: project.sessions.map((session) =>
+              session.id === threadId ? { ...session, title } : session,
+            ),
           }
         })
         return Promise.resolve({})
@@ -451,6 +503,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  resetInstalls()
+  vi.unstubAllGlobals()
   vi.clearAllMocks()
   vi.restoreAllMocks()
 })
@@ -481,11 +535,81 @@ function cachedCodexChoice(): ModelChoice {
     },
   }
 }
+interface ProjectProbe {
+  resolve: (value: ResultOf<'projects.list'>) => void
+  reject: (reason?: TestBoundary) => void
+}
 
-// prettier-ignore
-const workspaceTest = { projectsSnapshot: (running: boolean) => ({ projects: serverProjects.map((entry) => { const project = entry as { sessions: Array<Record<string, unknown>> }; return { ...project, sessions: project.sessions.map((session) => ({ ...session, running })) } }) }), renderWithDeferredProjectProbes: async () => { type Probe = { resolve: (value: { projects: unknown[] }) => void; reject: (reason?: unknown) => void }; const request = transport.request.getMockImplementation()!, probes: Probe[] = []; let capture = false; transport.request.mockImplementation((method: string, params: unknown) => method === 'projects.list' && capture ? new Promise((resolve, reject) => probes.push({ resolve, reject })) : request(method, params)); await openNewSession(); transport.request.mockClear(); capture = true; return probes }, rpcCount: (method: string) => transport.request.mock.calls.filter(([called]) => called === method).length, completeTurn: (threadId: string, turnId: string) => emitThreadEvent(threadId, { type: 'turn.completed', turnId, status: 'completed' }), startTurn: (threadId: string, turnId: string) => emitThreadEvent(threadId, { type: 'turn.started', turn: { id: turnId, threadId, status: 'running', createdAt: 1 } }), submitTurn: (text: string) => { const composer = screen.getByPlaceholderText('Do anything'); fireEvent.change(composer, { target: { value: text } }); fireEvent.keyDown(composer, { key: 'Enter' }) }, waitForWorkspace: (count: number) => waitFor(() => expect(rpcCount('workspace.info')).toBe(count)), waitForInitialWorkspace: () => waitFor(() => expect(transport.request).toHaveBeenCalledWith('workspace.branches', { path: '/work/project' })), openNewSession: async () => { render(<App />); fireEvent.click(await screen.findByRole('button', { name: /^New session,/ })); await waitForInitialWorkspace() }, setConnectionState: (state: string) => { for (const listener of transport.stateListeners) listener(state) }, serverProject: (path: string, name: string, sessions: unknown[] = []) => ({ path, name, sessions }) }
-// prettier-ignore
-const { projectsSnapshot, renderWithDeferredProjectProbes, rpcCount, completeTurn, startTurn, submitTurn, waitForWorkspace, waitForInitialWorkspace, openNewSession, setConnectionState, serverProject } = workspaceTest
+function projectsSnapshot(running: boolean): ResultOf<'projects.list'> {
+  return {
+    projects: contractValidServerProjects().map((project) => ({
+      ...project,
+      sessions: project.sessions.map((session) => ({ ...session, running })),
+    })),
+  }
+}
+
+async function renderWithDeferredProjectProbes(): Promise<ProjectProbe[]> {
+  const request = transport.request.getMockImplementation()
+  if (!request) throw new Error('missing request mock')
+  const probes: ProjectProbe[] = []
+  let capture = false
+  transport.request.mockImplementation((method: string, params: TestBoundary) =>
+    method === 'projects.list' && capture
+      ? new Promise<ResultOf<'projects.list'>>((resolve, reject) =>
+          probes.push({ resolve, reject }),
+        )
+      : request(method, params),
+  )
+  await openNewSession()
+  transport.request.mockClear()
+  capture = true
+  return probes
+}
+
+function rpcCount(method: string): number {
+  return transport.request.mock.calls.filter(([called]) => called === method).length
+}
+
+function completeTurn(threadId: string, turnId: string): void {
+  emitThreadEvent(threadId, { type: 'turn.completed', turnId, status: 'completed' })
+}
+
+function startTurn(threadId: string, turnId: string): void {
+  emitThreadEvent(threadId, {
+    type: 'turn.started',
+    turn: { id: turnId, threadId, status: 'running', createdAt: 1 },
+  })
+}
+
+function submitTurn(text: string): void {
+  const composer = screen.getByPlaceholderText('Do anything')
+  fireEvent.change(composer, { target: { value: text } })
+  fireEvent.keyDown(composer, { key: 'Enter' })
+}
+
+function waitForWorkspace(count: number): Promise<void> {
+  return waitFor(() => expect(rpcCount('workspace.info')).toBe(count))
+}
+
+function waitForInitialWorkspace(): Promise<void> {
+  return waitFor(() =>
+    expect(transport.request).toHaveBeenCalledWith('workspace.branches', {
+      path: '/work/project',
+    }),
+  )
+}
+
+async function openNewSession(): Promise<void> {
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+  await waitForInitialWorkspace()
+}
+
+function setConnectionState(state: ConnectionState): void {
+  for (const listener of transport.stateListeners) listener(state)
+}
+
 describe('web client', () => {
   it('routes edited-file undo through the exact thread, turn, and patch', async () => {
     await openNewSession()
@@ -505,11 +629,11 @@ describe('web client', () => {
   it('persists curated model defaults only after the first catalog arrives', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    let releaseModels!: (value: unknown) => void
+    let releaseModels!: (value: TestBoundary) => void
     const models = new Promise((resolve) => {
       releaseModels = resolve
     })
-    transport.request.mockImplementation((method: string, params: unknown) =>
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
       method === 'models.list' ? models : request(method, params),
     )
 
@@ -562,9 +686,9 @@ describe('web client', () => {
       ]
       const request = transport.request.getMockImplementation()
       if (!request) throw new Error('missing request mock')
-      transport.request.mockImplementation((method: string, params: unknown) => {
+      transport.request.mockImplementation((method: string, params: TestBoundary) => {
         if (method !== 'models.list') return request(method, params)
-        if ((params as { provider: string }).provider === 'claude-code') {
+        if (methods['models.list'].params.parse(params).provider === 'claude-code') {
           return claudeCatalog === 'failed'
             ? Promise.reject(new Error('Claude catalog unavailable'))
             : Promise.resolve({ models: [] })
@@ -600,11 +724,11 @@ describe('web client', () => {
     )
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    let releaseModels!: (value: unknown) => void
+    let releaseModels!: (value: TestBoundary) => void
     const models = new Promise((resolve) => {
       releaseModels = resolve
     })
-    transport.request.mockImplementation((method: string, params: unknown) =>
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
       method === 'models.list' ? models : request(method, params),
     )
 
@@ -638,7 +762,7 @@ describe('web client', () => {
     localStorage.setItem('harness.hiddenModels', saved)
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) =>
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
       method === 'models.list'
         ? Promise.resolve({
             models: [
@@ -673,7 +797,7 @@ describe('web client', () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     let attempts = 0
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'projects.list' && attempts++ === 0) {
         return Promise.reject(new Error('server unavailable'))
       }
@@ -702,7 +826,7 @@ describe('web client', () => {
     pickFolder.mockResolvedValue('/work/new-project')
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'projects.add') {
         serverProjects = [
           {
@@ -713,7 +837,12 @@ describe('web client', () => {
             sessions: [],
           },
         ]
-        return Promise.resolve({})
+        return Promise.resolve({
+          path: '/work/new-project',
+          name: 'new-project',
+          pinned: false,
+          createdAt: 0,
+        })
       }
       return request(method, params)
     })
@@ -727,9 +856,9 @@ describe('web client', () => {
         path: '/work/new-project',
       })
     })
-    expect((await screen.findByRole('heading')).textContent).toContain(
-      'What should we build in new-project?',
-    )
+    expect(
+      await screen.findByRole('heading', { name: 'What should we build in new-project?' }),
+    ).toBeTruthy()
   })
 
   it('opens the workspace directly on first launch', async () => {
@@ -764,10 +893,10 @@ describe('web client', () => {
   it('routes /side with an inline prompt into an ephemeral Side chat', async () => {
     localStorage.setItem('harness.models.cache', serializeModelCatalogCache([cachedCodexChoice()]))
     const fallback = transport.request.getMockImplementation()!
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (
         method === 'thread.history' &&
-        (params as { threadId?: string }).threadId === 'untouched-thread'
+        methods['thread.history'].params.parse(params).threadId === 'untouched-thread'
       ) {
         return Promise.resolve({
           events: [
@@ -791,7 +920,10 @@ describe('web client', () => {
         })
       }
       if (method === 'sideChat.start') return Promise.resolve({ threadId: 'side-1' })
-      if (method === 'thread.history' && (params as { threadId?: string }).threadId === 'side-1') {
+      if (
+        method === 'thread.history' &&
+        methods['thread.history'].params.parse(params).threadId === 'side-1'
+      ) {
         return Promise.resolve({ events: [], running: false })
       }
       return fallback(method, params)
@@ -822,7 +954,7 @@ describe('web client', () => {
   it('discovers a custom Pi source and binds new sessions to its harness id', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'harnesses.list') {
         return Promise.resolve({
           harnesses: [
@@ -836,7 +968,10 @@ describe('web client', () => {
           ],
         })
       }
-      if (method === 'models.list' && (params as { agent?: string }).agent === 'deepseek-pi') {
+      if (
+        method === 'models.list' &&
+        methods['models.list'].params.parse(params).agent === 'deepseek-pi'
+      ) {
         return Promise.resolve({
           models: [
             {
@@ -939,7 +1074,7 @@ describe('web client', () => {
       permissions: { canPush: true, canAdmin: false },
       mergeMethods: { merge: true, rebase: true, squash: true, deleteBranchOnMerge: false },
     }
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'pullRequests.list') {
         return Promise.resolve({
           account: { available: true, authenticated: true, login: 'Blueemi' },
@@ -961,11 +1096,16 @@ describe('web client', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('projects.list', {})
     })
-    // prettier-ignore
-    const rejected = (fireEvent.click(screen.getByRole('button', { name: /^New session,/ })), await screen.findByPlaceholderText('Do anything'))
-    // prettier-ignore
-    fireEvent.keyDown((fireEvent.change(rejected, { target: { value: 'Rejected draft' } }), rejected), { key: 'Enter' })
-    await waitFor(() => expect((rejected as HTMLTextAreaElement).value).toBe('Rejected draft'))
+    const rejected =
+      (fireEvent.click(screen.getByRole('button', { name: /^New session,/ })),
+      await screen.findByPlaceholderText('Do anything'))
+    fireEvent.keyDown(
+      (fireEvent.change(rejected, { target: { value: 'Rejected draft' } }), rejected),
+      { key: 'Enter' },
+    )
+    await waitFor(() =>
+      expect(requiredInstance(rejected, HTMLTextAreaElement).value).toBe('Rejected draft'),
+    )
     fireEvent.click(await screen.findByRole('button', { name: 'Pull requests' }))
 
     fireEvent.click(await screen.findByRole('button', { name: 'Chat' }))
@@ -974,7 +1114,7 @@ describe('web client', () => {
     expect(screen.queryByRole('region', { name: 'Pull requests' })).toBeNull()
     const composer = await screen.findByPlaceholderText('Do anything')
     await waitFor(() => {
-      expect((composer as HTMLTextAreaElement).value).toBe(
+      expect(requiredInstance(composer, HTMLTextAreaElement).value).toBe(
         'I wanted to work on https://github.com/Blueemi/harness/pull/1 (Add the parser).',
       )
     })
@@ -983,7 +1123,7 @@ describe('web client', () => {
   it('restores the selected model immediately on the first cache-enabled launch', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'models.list') return Promise.reject(new Error('provider unavailable'))
       return request(method, params)
     })
@@ -1036,7 +1176,7 @@ describe('web client', () => {
   it('shows a validated model snapshot while discovery refreshes in the background', () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'providers.list') return new Promise(() => {})
       return request(method, params)
     })
@@ -1055,11 +1195,11 @@ describe('web client', () => {
   it('keeps the cached source when its discovery request fails', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    let rejectModels!: (reason?: unknown) => void
+    let rejectModels!: (reason?: TestBoundary) => void
     const failedDiscovery = new Promise<never>((_resolve, reject) => {
       rejectModels = reject
     })
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'models.list') return failedDiscovery
       return request(method, params)
     })
@@ -1089,7 +1229,7 @@ describe('web client', () => {
   it('does not turn a custom bootstrap into a server cache on failed discovery', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'models.list') return Promise.reject(new Error('provider unavailable'))
       return request(method, params)
     })
@@ -1112,16 +1252,19 @@ describe('web client', () => {
     if (!request) throw new Error('missing request mock')
     serverProviders = [
       ...serverProviders,
-      { ...(serverProviders[0] as Record<string, unknown>), id: 'grok', displayName: 'Grok' },
+      { ...serverProviders[0]!, id: 'grok', displayName: 'Grok' },
     ]
     let releaseProviders!: () => void
     const providersGate = new Promise<void>((resolve) => {
       releaseProviders = resolve
     })
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'providers.list')
         return providersGate.then(() => ({ providers: serverProviders }))
-      if (method === 'models.list' && (params as { provider: string }).provider === 'grok')
+      if (
+        method === 'models.list' &&
+        methods['models.list'].params.parse(params).provider === 'grok'
+      )
         return new Promise(() => {})
       return request(method, params)
     })
@@ -1143,11 +1286,14 @@ describe('web client', () => {
       })
     })
     const composer = screen.getByPlaceholderText('Do anything')
-    const sendButton = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
+    const sendButton = requiredInstance(
+      screen.getByRole('button', { name: 'Send' }),
+      HTMLButtonElement,
+    )
     fireEvent.change(composer, { target: { value: 'Use what the UI shows' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
 
-    expect((composer as HTMLTextAreaElement).value).toBe('Use what the UI shows')
+    expect(requiredInstance(composer, HTMLTextAreaElement).value).toBe('Use what the UI shows')
     expect(screen.queryByText('Checking providers…')).toBeNull()
     expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
     await act(async () => {
@@ -1177,7 +1323,7 @@ describe('web client', () => {
   it('never fetches ACP agent models in the beta scope', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'acp.agents') {
         return Promise.resolve({
           agents: [{ id: 'kimi', name: 'Kimi CLI', installed: true, verified: true }],
@@ -1210,7 +1356,7 @@ describe('web client', () => {
       autoReview: false,
       images: false,
     }
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'providers.list') {
         return Promise.resolve({
           providers: [
@@ -1241,7 +1387,7 @@ describe('web client', () => {
       if (method === 'models.list') {
         return Promise.resolve({
           models:
-            (params as { provider?: string }).provider === 'claude-code'
+            methods['models.list'].params.parse(params).provider === 'claude-code'
               ? [
                   {
                     id: 'fable',
@@ -1276,7 +1422,7 @@ describe('web client', () => {
       images: false,
     }
     serverProviders = [
-      ...(serverProviders as Array<Record<string, unknown>>),
+      ...serverProviders,
       {
         id: 'claude-code',
         displayName: 'Claude Code',
@@ -1287,9 +1433,9 @@ describe('web client', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'models.list') {
-        const provider = (params as { provider: string }).provider
+        const { provider } = methods['models.list'].params.parse(params)
         return Promise.resolve({
           models: [
             {
@@ -1343,7 +1489,7 @@ describe('new chats', () => {
     if (!request) throw new Error('missing request mock')
     let firstUsage = true
     let firstSocketClosed = false
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'usage.summary' && firstUsage) {
         firstUsage = false
         if (firstSocketClosed) return Promise.reject(new Error('Connection to server was closed'))
@@ -1451,8 +1597,8 @@ describe('new chats', () => {
     transport.request.mockClear()
 
     act(() => {
-      workspaceTest.setConnectionState('reconnecting')
-      workspaceTest.setConnectionState('open')
+      setConnectionState('reconnecting')
+      setConnectionState('open')
     })
 
     await waitFor(() =>
@@ -1515,7 +1661,7 @@ describe('new chats', () => {
     const startGate = new Promise<void>((resolve) => {
       releaseStart = resolve
     })
-    transport.request.mockImplementation(async (method: string, params: unknown) => {
+    transport.request.mockImplementation(async (method: string, params: TestBoundary) => {
       if (method === 'thread.start') await startGate
       return request(method, params)
     })
@@ -1562,19 +1708,26 @@ describe('new chats', () => {
       ).toHaveLength(2)
     })
     expect(screen.getByTestId('thread')).toBe(threadElement)
-
-    // prettier-ignore
-    emitThreadEvent('thread-1', { type: 'turn.completed', turnId: 'turn-1', status: 'completed' }, 1)
+    emitThreadEvent(
+      'thread-1',
+      { type: 'turn.completed', turnId: 'turn-1', status: 'completed' },
+      1,
+    )
     await waitFor(() =>
       expect(
         transport.request.mock.calls.filter(([method]) => method === 'usage.summary'),
       ).toHaveLength(3),
     )
     transport.request.mockClear()
-    // prettier-ignore
-    act(() => { for (const listener of transport.sequenceGapListeners) listener(2, 4) })
-    // prettier-ignore
-    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('thread.history', { threadId: 'thread-1', afterSeq: 1 }))
+    act(() => {
+      for (const listener of transport.sequenceGapListeners) listener(2, 4)
+    })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'thread-1',
+        afterSeq: 1,
+      }),
+    )
   })
 
   it('replaces the prompt fallback with a generated session title', async () => {
@@ -1583,14 +1736,13 @@ describe('new chats', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation(async (method: string, params: unknown) => {
+    transport.request.mockImplementation(async (method: string, params: TestBoundary) => {
       if (method !== 'backgroundModel.generateTitle') return request(method, params)
-      const { threadId } = params as { threadId: string }
+      const { threadId } = methods['backgroundModel.generateTitle'].params.parse(params)
       serverProjects = serverProjects.map((entry) => {
-        const project = entry as { sessions: Array<Record<string, unknown>> }
         return {
-          ...project,
-          sessions: project.sessions.map((session) =>
+          ...entry,
+          sessions: entry.sessions.map((session) =>
             session.id === threadId ? { ...session, title: 'Fix checkout cleanup' } : session,
           ),
         }
@@ -1625,7 +1777,7 @@ describe('new chats', () => {
     const startGate = new Promise<void>((resolve) => {
       releaseStart = resolve
     })
-    transport.request.mockImplementation(async (method: string, params: unknown) => {
+    transport.request.mockImplementation(async (method: string, params: TestBoundary) => {
       if (method === 'thread.start') await startGate
       return request(method, params)
     })
@@ -1637,7 +1789,8 @@ describe('new chats', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
 
     expect(
-      ((await screen.findByRole('button', { name: 'Send' })) as HTMLButtonElement).disabled,
+      requiredInstance(await screen.findByRole('button', { name: 'Send' }), HTMLButtonElement)
+        .disabled,
     ).toBe(true)
     expect(transport.request).not.toHaveBeenCalledWith('thread.interrupt', expect.anything())
 
@@ -1662,7 +1815,9 @@ describe('new chats', () => {
     expect((await screen.findByRole('alert')).textContent).toContain(
       'Choose a project before sending.',
     )
-    expect((composer as HTMLTextAreaElement).value).toBe('Start after I choose a project')
+    expect(requiredInstance(composer, HTMLTextAreaElement).value).toBe(
+      'Start after I choose a project',
+    )
     expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
   })
 
@@ -1689,7 +1844,7 @@ describe('new chats', () => {
   it('offers setup without clearing a loaded-thread draft when its provider cannot run', async () => {
     serverProviders = [
       {
-        ...(serverProviders[0] as Record<string, unknown>),
+        ...serverProviders[0]!,
         installed: false,
         setup: { installUrl: 'https://example.test/codex', login: 'app' },
         problem: 'codex is not on PATH',
@@ -1700,19 +1855,21 @@ describe('new chats', () => {
     const composer = await screen.findByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Send after setup' } })
     const setup = await screen.findByRole('button', { name: 'Set up a provider' })
-    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(
+      requiredInstance(screen.getByRole('button', { name: 'Send' }), HTMLButtonElement).disabled,
+    ).toBe(true)
     fireEvent.click(setup)
     expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeTruthy()
-    expect((composer as HTMLTextAreaElement).value).toBe('Send after setup')
+    expect(requiredInstance(composer, HTMLTextAreaElement).value).toBe('Send after setup')
   })
 
   it('keeps a newer sign-out when the initial account read finishes late', async () => {
-    serverProviders = [{ ...(serverProviders[0] as object), auth: 'unknown' }]
+    serverProviders = [{ ...serverProviders[0]!, auth: 'unknown' }]
     let finishInitial!: (account: { signedIn: boolean }) => void
     let accountReads = 0
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'auth.status') {
         accountReads += 1
         return accountReads === 1
@@ -1729,7 +1886,86 @@ describe('new chats', () => {
     await screen.findByRole('button', { name: 'Sign in' })
     await act(async () => finishInitial({ signedIn: true }))
     expect(screen.getByRole('status').textContent).toContain('Provider setup required')
-    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(
+      requiredInstance(screen.getByRole('button', { name: 'Send' }), HTMLButtonElement).disabled,
+    ).toBe(true)
+  })
+
+  it('opens Claude login in the expanded workspace and restores Settings after success', async () => {
+    serverProviders = [
+      ...serverProviders,
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        installed: true,
+        auth: 'unknown',
+        setup: {
+          installUrl: 'https://code.claude.com/docs/en/getting-started',
+          login: 'provider',
+        },
+      },
+    ]
+    let claudeSignedIn = false
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
+      if (method === 'auth.status') {
+        const provider = methods['auth.status'].params.parse(params).provider
+        return Promise.resolve({ signedIn: provider === 'claude-code' ? claudeSignedIn : true })
+      }
+      if (method === 'providers.launch') {
+        return Promise.resolve({ terminalId: 'term-claude-login' })
+      }
+      return request(method, params)
+    })
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      },
+    )
+
+    render(<App />)
+    openSettings()
+    await screen.findByText('Claude Code')
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
+    const workspace = requiredElement(document, '.workspace-layout', HTMLElement)
+    expect(workspace.classList.contains('is-panel-open')).toBe(true)
+    expect(workspace.classList.contains('is-panel-expanded')).toBe(true)
+    expect(await screen.findByRole('tab', { name: 'Claude Code login' })).toBeTruthy()
+    expect(transport.request).toHaveBeenCalledWith('providers.launch', {
+      provider: 'claude-code',
+      columns: 320,
+      rows: 30,
+    })
+
+    claudeSignedIn = true
+    act(() => {
+      requiredValue(
+        transport.listeners.get('terminal.exit'),
+        'terminal exit listener',
+      )({
+        terminalId: 'term-claude-login',
+        exitCode: 0,
+      })
+    })
+
+    await screen.findByRole('dialog', { name: 'Settings' })
+    await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(false))
+    expect(workspace.classList.contains('is-panel-expanded')).toBe(false)
+    expect(screen.queryByRole('tab', { name: 'Claude Code login' })).toBeNull()
+    await waitFor(() =>
+      expect(
+        requiredValue(
+          screen.getByText('Claude Code').closest<HTMLElement>('.settings__row'),
+          'refreshed Claude provider row',
+        ).textContent,
+      ).toContain('Authenticated'),
+    )
   })
 
   it('preserves a parked custom model without blocking a catalogless beta source', async () => {
@@ -1738,8 +1974,14 @@ describe('new chats', () => {
     localStorage.setItem('harness.model', 'custom:cursor:cursor-large')
     localStorage.setItem('harness.customModels.v1', parked)
     render(<App />)
-    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
-    const sendButton = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
+    const composer = requiredInstance(
+      screen.getByPlaceholderText('Do anything'),
+      HTMLTextAreaElement,
+    )
+    const sendButton = requiredInstance(
+      screen.getByRole('button', { name: 'Send' }),
+      HTMLButtonElement,
+    )
     fireEvent.change(composer, { target: { value: 'Use the provider default' } })
     await waitFor(() => expect(sendButton.disabled).toBe(false))
     expect(screen.queryByText('Cursor Large')).toBeNull()
@@ -1757,7 +1999,7 @@ describe('new chats', () => {
     let failing = true
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'providers.list' && failing)
         return Promise.reject(new Error('provider discovery unavailable'))
       return request(method, params)
@@ -1773,11 +2015,11 @@ describe('new chats', () => {
       setConnectionState('open')
     })
     await waitFor(() => {
-      expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
-        false,
-      )
+      expect(
+        requiredInstance(screen.getByRole('button', { name: 'Send' }), HTMLButtonElement).disabled,
+      ).toBe(false)
     })
-    expect((composer as HTMLTextAreaElement).value).toBe('Recover this draft')
+    expect(requiredInstance(composer, HTMLTextAreaElement).value).toBe('Recover this draft')
   })
 
   it('moves the composer from the centered new-chat layout after the first prompt', async () => {
@@ -1866,10 +2108,10 @@ describe('new chats', () => {
     if (!request) throw new Error('missing request mock')
     // Since 174d079 a provider with an empty catalog has no selectable model,
     // so the adapter's real alias list is mirrored here.
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (
         method === 'models.list' &&
-        (params as { provider?: string }).provider === 'claude-code'
+        methods['models.list'].params.parse(params).provider === 'claude-code'
       ) {
         return Promise.resolve({
           models: [
@@ -1903,13 +2145,13 @@ describe('new chats', () => {
     )
     expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe('true')
     expect(screen.queryByRole('alert')).toBeNull()
-    expect((composer as HTMLTextAreaElement).value).toBe('')
+    expect(requiredInstance(composer, HTMLTextAreaElement).value).toBe('')
   })
 
   it('passes a rejected brief-answer request back through the thread', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) =>
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
       method === 'thread.respondToUserInput'
         ? Promise.reject(new Error('disconnected'))
         : request(method, params),
@@ -1957,7 +2199,9 @@ describe('new chats', () => {
     render(<App />)
 
     const branchPicker = await screen.findByRole('button', { name: 'Choose branch' })
-    await waitFor(() => expect((branchPicker as HTMLButtonElement).disabled).toBe(false))
+    await waitFor(() =>
+      expect(requiredInstance(branchPicker, HTMLButtonElement).disabled).toBe(false),
+    )
     fireEvent.click(branchPicker)
     fireEvent.click(screen.getByRole('menuitem', { name: 'feature/shelf' }))
 
@@ -1971,51 +2215,1039 @@ describe('new chats', () => {
       )
     })
   })
-
-  // prettier-ignore
-  it('starts workspace info and branch reads together', async () => { const request = transport.request.getMockImplementation()!; let resolveInfo!: (value: ResultOf<'workspace.info'>) => void; const info = new Promise<Parameters<typeof resolveInfo>[0]>((resolve) => (resolveInfo = resolve)); transport.request.mockImplementation((method: string, params: unknown) => method === 'workspace.info' ? info : request(method, params)); render(<App />); await waitForInitialWorkspace(); await act(async () => resolveInfo({ branch: 'main', added: 0, removed: 0, dirtyFiles: 0 })) })
-  // prettier-ignore
-  it('refreshes workspace metadata after completion but not on submit', async () => { await openNewSession(); transport.request.mockClear(); submitTurn('Do the work'); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', expect.objectContaining({ threadId: 'untouched-thread', text: 'Do the work' }))); expect(rpcCount('workspace.info')).toBe(0); startTurn('untouched-thread', 'turn-1'); completeTurn('untouched-thread', 'turn-1'); await waitForWorkspace(1) })
-  // prettier-ignore
-  it('coalesces overlapping completion probes before refreshing workspace metadata', async () => { const probes = await renderWithDeferredProjectProbes(); for (const turnId of ['turn-1', 'turn-2', 'turn-3']) completeTurn('untouched-thread', turnId); await waitFor(() => expect(probes).toHaveLength(1)); expect(rpcCount('projects.list')).toBe(1); await act(async () => probes[0]?.resolve(projectsSnapshot(true))); await waitFor(() => expect(probes).toHaveLength(2)); expect(rpcCount('projects.list')).toBe(2); await act(async () => probes[1]?.resolve(projectsSnapshot(false))); await waitForWorkspace(1) })
-  // prettier-ignore
-  it.each(['reject', 'missing', 'started', 'submitted', 'unrelated', 'sole reject', 'rejected before probe', 'rejected after probe', 'rejected after retained idle', 'switched reject'] as const)('settles workspace metadata when the probe sequence ends with %s', async (scenario) => { let rejectSend!: (reason: Error) => void; if (scenario.startsWith('rejected')) { const request = transport.request.getMockImplementation()!; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? new Promise((_, reject) => (rejectSend = reject)) : request(method, params)) } if (scenario === 'switched reject') { serverProjects.push(serverProject('/work/another-project', 'Another Project', [{ id: 'background-thread', title: 'Background', running: false }])); (serverProjects[0] as { sessions: unknown[] }).sessions.push({ id: 'idle-thread', title: 'Idle work', running: false }) } const submitted = scenario === 'submitted' || scenario === 'unrelated'; if (scenario === 'unrelated') (serverProjects[0] as { sessions: unknown[] }).sessions.push({ id: 'background-thread', running: false }); const probes = await renderWithDeferredProjectProbes(); if (scenario === 'switched reject') { startTurn('untouched-thread', 'turn-1'); transport.request.mockClear(); fireEvent.click(screen.getByRole('button', { name: /^Idle work,/ })); expect(rpcCount('workspace.info')).toBe(0) } completeTurn('untouched-thread', 'turn-1'); await waitFor(() => expect(probes).toHaveLength(1)); if (scenario.startsWith('rejected')) { if (scenario === 'rejected after retained idle') { completeTurn('untouched-thread', 'turn-2'); await act(async () => probes[0]?.resolve(projectsSnapshot(false))); await waitFor(() => expect(probes).toHaveLength(2)) } submitTurn('Rejected start'); if (scenario === 'rejected before probe') await act(async () => rejectSend(new Error('no'))); if (scenario !== 'rejected after retained idle') await act(async () => probes[0]?.resolve(projectsSnapshot(false))); else await act(async () => probes[1]?.reject(new Error('trailing failed'))); if (scenario === 'rejected after probe') { await act(async () => rejectSend(new Error('no'))); await waitFor(() => expect(probes).toHaveLength(2)); await act(async () => probes[1]?.resolve(projectsSnapshot(false))) } else if (scenario === 'rejected after retained idle') { await act(async () => rejectSend(new Error('no'))); await waitFor(() => expect(probes).toHaveLength(3)); await act(async () => probes[2]?.resolve(projectsSnapshot(false))) } await waitForWorkspace(1); return } if (scenario === 'sole reject') { await act(async () => probes[0]?.reject(new Error('probe failed'))); await waitFor(() => expect(probes).toHaveLength(2)); await act(async () => probes[1]?.resolve(projectsSnapshot(false))) } else { completeTurn('untouched-thread', 'turn-2'); if (submitted) { submitTurn('Start again'); if (scenario === 'unrelated') { startTurn('background-thread', 'background'); completeTurn('background-thread', 'background') } } await act(async () => probes[0]?.resolve(projectsSnapshot(false))); await waitFor(() => expect(probes).toHaveLength(2)); if (scenario === 'switched reject') { fireEvent.keyDown(window, { key: 'p', metaKey: true }); fireEvent.click(screen.getByRole('option', { name: /^Another Project / })); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('workspace.info', { path: '/work/another-project' })); transport.request.mockClear(); completeTurn('background-thread', 'background'); await act(async () => probes[1]?.reject(new Error('old project failed'))); await waitFor(() => expect(probes).toHaveLength(3)); await act(async () => probes[2]?.reject(new Error('new project failed'))); await waitFor(() => expect(probes).toHaveLength(4)); await act(async () => probes[3]?.resolve(projectsSnapshot(false))); await waitForWorkspace(1); return } if (scenario === 'started') startTurn('untouched-thread', 'turn-3'); await act(async () => scenario === 'missing' ? probes[1]?.resolve({ projects: [] }) : submitted ? probes[1]?.resolve(projectsSnapshot(false)) : probes[1]?.reject(new Error('probe failed'))) } if (scenario === 'started' || submitted) { await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); return } await waitForWorkspace(1) })
-  // prettier-ignore
-  it.each(['indeterminate', 'approval', 'inactive queue', 'durable queue', 'overlap'] as const)('refreshes after reconnect reconciles %s as idle', async (scenario) => { const request = transport.request.getMockImplementation()!; if (scenario === 'approval' || scenario === 'overlap') (serverProjects[0] as { sessions: Array<{ status?: string }> }).sessions[0]!.status = scenario === 'approval' ? 'approval' : 'working'; else if (scenario === 'inactive queue' || scenario === 'durable queue') (serverProjects[0] as { sessions: unknown[] }).sessions.push({ id: 'background-thread', title: 'Background', running: false }); const queuedTurn = { id: 'queued-turn', text: 'Reconnect me', attachments: [], createdAt: 1 }; let reconnecting = false; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? scenario === 'indeterminate' ? Promise.reject(new IndeterminateRequestError('socket lost')) : Promise.resolve({ queued: true, queuedTurn }) : method === 'thread.queue' && scenario === 'durable queue' && reconnecting ? Promise.resolve({ items: [queuedTurn], canSteer: true }) : method === 'thread.history' && scenario === 'inactive queue' && reconnecting ? Promise.resolve({ events: [{ seq: 1, event: { type: 'item.completed', item: { id: queuedTurn.id, turnId: 'offline', type: 'message', role: 'user', status: 'completed', text: queuedTurn.text, createdAt: 1 } } }], running: false }) : request(method, params)); await openNewSession(); if (scenario === 'overlap') { const histories: Array<(value: { events: []; running: false }) => void> = []; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.history' ? new Promise((resolve) => histories.push(resolve)) : request(method, params)); transport.request.mockClear(); act(() => { for (const listener of transport.sequenceGapListeners) { listener(1, 2); listener(2, 3) } }); await waitFor(() => expect(histories).toHaveLength(2)); await act(async () => histories[0]?.({ events: [], running: false })); await act(async () => histories[1]?.({ events: [], running: false })); await waitForWorkspace(1); return } if (scenario !== 'approval') { if (scenario === 'inactive queue' || scenario === 'durable queue') startTurn('untouched-thread', 'active-turn'); submitTurn('Reconnect me'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); if (scenario === 'inactive queue' || scenario === 'durable queue') fireEvent.click(screen.getByRole('button', { name: /^Background,/ })) } transport.request.mockClear(); reconnecting = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); if (scenario === 'durable queue') { await waitFor(() => expect(rpcCount('thread.queue')).toBeGreaterThan(0)); expect(rpcCount('workspace.info')).toBe(0); return } await waitForWorkspace(1) })
-  // prettier-ignore
-  it.each(['delete', 'steer'] as const)('releases queued ownership after %s', async (action) => { const request = transport.request.getMockImplementation()!, queuedTurn = { id: 'queued', text: 'Queue next', attachments: [], createdAt: 1 }; let accept!: (value: { queued: true; queuedTurn: typeof queuedTurn }) => void; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? new Promise((resolve) => { accept = resolve }) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'active'); transport.request.mockClear(); submitTurn('Queue next'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); await act(async () => accept({ queued: true, queuedTurn })); fireEvent.click(screen.getByRole('button', { name: action === 'delete' ? 'Remove Queue next from queue' : 'Steer' })); await waitFor(() => expect(transport.request).toHaveBeenCalledWith(`thread.${action === 'delete' ? 'delete' : 'steer'}QueuedTurn`, { threadId: 'untouched-thread', queuedTurnId: 'queued' })); emitQueue('untouched-thread', []); completeTurn('untouched-thread', 'active'); await waitForWorkspace(1) })
-  // prettier-ignore
-  it.each(['next', 'restored', 'historical'] as const)('keeps %s queued work ahead of workspace refresh', async (scenario) => { const request = transport.request.getMockImplementation()!, turns = [{ id: 'q1', text: 'First queued', attachments: [], createdAt: 1 }, { id: 'q2', text: 'Second queued', attachments: [], createdAt: 2 }]; let sent = 0; if (scenario === 'historical') { (serverProjects[0] as { sessions: Array<{ running: boolean }> }).sessions[0]!.running = true; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.history' ? Promise.resolve({ events: [{ seq: 1, event: { type: 'turn.started', turn: { id: 'old', threadId: 'untouched-thread', status: 'running', createdAt: 1 } } }], running: true }) : method === 'thread.sendTurn' ? Promise.resolve({ queued: true, queuedTurn: turns[sent++]! }) : request(method, params)) } else transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? Promise.resolve({ queued: true, queuedTurn: turns[sent++]! }) : request(method, params)); await openNewSession(); if (scenario !== 'historical') startTurn('untouched-thread', 'active'); transport.request.mockClear(); submitTurn('First queued'); if (scenario === 'next') submitTurn('Second queued'); await screen.findByRole('button', { name: `Remove ${scenario === 'next' ? 'Second' : 'First'} queued from queue` }); if (scenario === 'next') { emitQueue('untouched-thread', [turns[1]!]); startTurn('untouched-thread', 'q1-turn'); completeTurn('untouched-thread', 'q1-turn') } else if (scenario === 'restored') { emitQueue('untouched-thread', []); emitQueue('untouched-thread', [turns[0]!]); completeTurn('untouched-thread', 'active') } else { (serverProjects[0] as { sessions: Array<{ running: boolean }> }).sessions[0]!.running = false; completeTurn('untouched-thread', 'old') } await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); const remaining = scenario === 'next' ? turns[1]! : turns[0]!; fireEvent.click(screen.getByRole('button', { name: `Remove ${remaining.text} from queue` })); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('thread.deleteQueuedTurn', { threadId: 'untouched-thread', queuedTurnId: remaining.id })); emitQueue('untouched-thread', []); await waitForWorkspace(1) })
-  // prettier-ignore
-  it('refreshes after terminal thread errors', async () => { await openNewSession(); transport.request.mockClear(); emitThreadEvent('untouched-thread', { type: 'thread.error', threadId: 'untouched-thread', message: 'Design failed' }); await waitForWorkspace(1) })
-  // prettier-ignore
-  it('gives a switched project its own unknown-result retry', async () => { serverProjects.push(serverProject('/work/another-project', 'Another Project', [{ id: 'background-thread', title: 'Background', running: false }])); const probes = await renderWithDeferredProjectProbes(); completeTurn('untouched-thread', 'a'); await waitFor(() => expect(probes).toHaveLength(1)); await act(async () => probes[0]?.reject(new Error('A failed'))); await waitFor(() => expect(probes).toHaveLength(2)); fireEvent.keyDown(window, { key: 'p', metaKey: true }); fireEvent.click(screen.getByRole('option', { name: /^Another Project / })); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('workspace.info', { path: '/work/another-project' })); transport.request.mockClear(); completeTurn('background-thread', 'b'); await act(async () => probes[1]?.reject(new Error('A retry failed'))); await waitFor(() => expect(probes).toHaveLength(3)); await act(async () => probes[2]?.reject(new Error('B failed'))); await waitFor(() => expect(probes).toHaveLength(4)); await act(async () => probes[3]?.resolve(projectsSnapshot(false))); await waitForWorkspace(1) })
-  // prettier-ignore
-  it('reconciles an inactive project owner without letting it block the active project', async () => { const request = transport.request.getMockImplementation()!; serverProjects.push(serverProject('/work/another-project', 'Another Project', [{ id: 'background-thread', title: 'Background', running: false }])); transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? Promise.reject(new IndeterminateRequestError('lost')) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'a'); submitTurn('Lost submit'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); fireEvent.keyDown(window, { key: 'p', metaKey: true }); fireEvent.click(screen.getByRole('option', { name: /^Another Project / })); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('workspace.info', { path: '/work/another-project' })); (serverProjects[0] as { sessions: Array<{ running: boolean }> }).sessions[0]!.running = false; transport.request.mockClear(); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('thread.history', { threadId: 'untouched-thread' })); fireEvent.keyDown(window, { key: 'p', metaKey: true }); fireEvent.click(screen.getByRole('option', { name: /^project /i })); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('workspace.info', { path: '/work/project' })); transport.request.mockClear(); completeTurn('untouched-thread', 'a'); await waitForWorkspace(1) })
-  // prettier-ignore
-  it('scopes reconnect idle consensus to the active project', async () => { const request = transport.request.getMockImplementation()!, queued = { id: 'foreign', text: 'Foreign queue', attachments: [], createdAt: 1 }; let reconnecting = false; serverProjects.push(serverProject('/work/another-project', 'Another Project', [{ id: 'background-thread', title: 'Background', running: true }])); transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? Promise.reject(new IndeterminateRequestError('lost')) : reconnecting && method === 'thread.history' && (params as { threadId: string }).threadId === 'untouched-thread' ? Promise.resolve({ events: [], running: true }) : reconnecting && method === 'thread.queue' && (params as { threadId: string }).threadId === 'untouched-thread' ? Promise.resolve({ items: [queued], canSteer: true }) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'a'); submitTurn('Lost submit'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); fireEvent.keyDown(window, { key: 'p', metaKey: true }); fireEvent.click(screen.getByRole('option', { name: /^Another Project / })); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('workspace.info', { path: '/work/another-project' })); startTurn('background-thread', 'b'); (serverProjects[1] as { sessions: Array<{ running: boolean }> }).sessions[0]!.running = false; transport.request.mockClear(); reconnecting = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitForWorkspace(1) })
-  // prettier-ignore
-  it('reconciles workspace ownership when a running session is archived', async () => { await openNewSession(); startTurn('untouched-thread', 'active'); transport.request.mockClear(); fireEvent.click(screen.getByRole('button', { name: 'Archive New session' })); await waitFor(() => expect(transport.request).toHaveBeenCalledWith('thread.delete', { threadId: 'untouched-thread' })); await waitForWorkspace(1) })
-  // prettier-ignore
-  it('keeps a claimed steer blocked until its exact outcome', async () => { const request = transport.request.getMockImplementation()!, queued = { id: 'steer-q', text: 'Steer later', attachments: [], createdAt: 1 }; let rejectSteer!: (reason: Error) => void; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? Promise.resolve({ queued: true, queuedTurn: queued }) : method === 'thread.steerQueuedTurn' ? new Promise((_, reject) => (rejectSteer = reject)) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'active'); transport.request.mockClear(); submitTurn('Steer later'); await screen.findByRole('button', { name: 'Remove Steer later from queue' }); fireEvent.click(screen.getByRole('button', { name: 'Steer' })); await waitFor(() => expect(rpcCount('thread.steerQueuedTurn')).toBe(1)); emitQueue('untouched-thread', []); completeTurn('untouched-thread', 'active'); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); emitQueue('untouched-thread', [queued]); await act(async () => rejectSteer(new Error('restored'))); fireEvent.click(screen.getByRole('button', { name: 'Remove Steer later from queue' })); emitQueue('untouched-thread', []); await waitForWorkspace(1) })
-  // prettier-ignore
-  it('keeps a reconnect queue claim blocked until durable evidence', async () => { const request = transport.request.getMockImplementation()!, queued = { id: 'claim-q', text: 'Claim later', attachments: [], createdAt: 1 }; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? Promise.resolve({ queued: true, queuedTurn: queued }) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'active'); submitTurn('Claim later'); await screen.findByRole('button', { name: 'Remove Claim later from queue' }); transport.request.mockClear(); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(rpcCount('thread.queue')).toBeGreaterThan(0)); expect(rpcCount('workspace.info')).toBe(0); emitQueue('untouched-thread', [queued]); fireEvent.click(screen.getByRole('button', { name: 'Remove Claim later from queue' })); emitQueue('untouched-thread', []); await waitForWorkspace(1) })
-  // prettier-ignore
-  it('retries unknown queue evidence on the next completion', async () => { const request = transport.request.getMockImplementation()!, queued = { id: 'stale', text: 'Offline queue', attachments: [], createdAt: 1 }; let failing = true; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.queue' && failing ? Promise.reject(new Error('offline')) : request(method, params)); await openNewSession(); emitQueue('untouched-thread', [queued]); transport.request.mockClear(); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(rpcCount('thread.queue')).toBeGreaterThan(0)); expect(rpcCount('workspace.info')).toBe(0); failing = false; completeTurn('untouched-thread', 'later'); await waitForWorkspace(1) })
-  // prettier-ignore
-  it.each(['clean', 'projects.list', 'thread.history', 'thread.queue'] as const)('refreshes after a turn runs wholly during an outage with %s reconciliation', async (scenario) => { const request = transport.request.getMockImplementation()!; await openNewSession(); let fail = scenario !== 'clean'; transport.request.mockImplementation((method: string, params: unknown) => method === scenario && fail ? (fail = false, Promise.reject(new Error('transient'))) : request(method, params)); transport.request.mockClear(); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitForWorkspace(1) })
-  // prettier-ignore
-  it('does not clear a submit owner created during resync', async () => { const request = transport.request.getMockImplementation()!; serverProjects = [serverProject('/work/project', 'project', [{ id: 'untouched-thread', title: 'New session', running: false }, { id: 'background-thread', title: 'Background', running: false, status: 'working' }])]; let accept!: (value: { queued: false; turnId: string }) => void; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? new Promise((resolve) => (accept = resolve)) : request(method, params)); await openNewSession(); (serverProjects[0] as { sessions: Array<{ status?: string }> }).sessions[1]!.status = 'ready'; transport.request.mockClear(); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); submitTurn('During resync'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); await act(async () => accept({ queued: false, turnId: 'new' })); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); startTurn('untouched-thread', 'new'); completeTurn('untouched-thread', 'new'); await waitForWorkspace(1) })
-  // prettier-ignore
-  it('blocks on authoritative queued status without a local queue cache', async () => { serverProjects = [serverProject('/work/project', 'project', [{ id: 'untouched-thread', title: 'New session', running: false }, { id: 'background-thread', title: 'Background', running: false, status: 'queued' }])]; await openNewSession(); transport.request.mockClear(); completeTurn('untouched-thread', 'a'); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); (serverProjects[0] as { sessions: Array<{ status?: string }> }).sessions[1]!.status = 'ready'; completeTurn('untouched-thread', 'b'); await waitForWorkspace(1) })
-  // prettier-ignore
-  it.each(['unknown authority', 'retained steer', 'project failure', 'remote claim', 'remote deletion', 'path return', 'overlapping action', 'duplicate consensus', 'stale submission'] as const)('settles final workspace audit case: %s', async (scenario) => { const request = transport.request.getMockImplementation()!, queued = { id: 'audit-q', text: 'Audit queue', attachments: [], createdAt: 1 }; if (scenario === 'unknown authority') { let failing = true; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.queue' && failing ? Promise.reject(new Error('unknown')) : request(method, params)); await openNewSession(); transport.request.mockClear(); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(rpcCount('thread.queue')).toBeGreaterThan(0)); completeTurn('untouched-thread', 'unknown'); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); failing = false; completeTurn('untouched-thread', 'known'); return waitForWorkspace(1) } if (scenario === 'retained steer') { let reject!: (error: Error) => void, running = true; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.steerQueuedTurn' ? new Promise((_, fail) => (reject = fail)) : method === 'thread.history' ? Promise.resolve({ events: [], running }) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'active'); emitQueue('untouched-thread', [queued]); fireEvent.click(screen.getByRole('button', { name: 'Steer' })); await act(async () => reject(new IndeterminateRequestError('lost'))); emitQueue('untouched-thread', []); transport.request.mockClear(); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(rpcCount('thread.queue')).toBeGreaterThan(0)); running = false; completeTurn('untouched-thread', 'active'); return waitForWorkspace(1) } if (scenario === 'project failure') { let failProjects = false; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? Promise.reject(new IndeterminateRequestError('lost')) : method === 'projects.list' && failProjects ? Promise.reject(new Error('projects')) : request(method, params)); await openNewSession(); submitTurn('Lost'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); transport.request.mockClear(); failProjects = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(rpcCount('thread.history')).toBeGreaterThan(0)); failProjects = false; completeTurn('untouched-thread', 'later'); return waitForWorkspace(1) } if (scenario === 'remote claim') { transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.steerQueuedTurn' ? new Promise(() => undefined) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'active'); emitQueue('untouched-thread', [queued]); transport.request.mockClear(); fireEvent.click(screen.getByRole('button', { name: 'Steer' })); emitQueue('untouched-thread', []); completeTurn('untouched-thread', 'active'); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); return } if (scenario === 'remote deletion') { transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? Promise.reject(new IndeterminateRequestError('lost')) : request(method, params)); await openNewSession(); submitTurn('Lost'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); (serverProjects[0] as { sessions: unknown[] }).sessions = []; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitForWorkspace(1); transport.request.mockClear(); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('thread.history')).toBe(0); return } if (scenario === 'path return') { serverProjects.push(serverProject('/work/another-project', 'Another Project', [{ id: 'background-thread', title: 'Background', running: false }])); const probes = await renderWithDeferredProjectProbes(); completeTurn('untouched-thread', 'old'); await waitFor(() => expect(probes).toHaveLength(1)); fireEvent.keyDown(window, { key: 'p', metaKey: true }); fireEvent.click(screen.getByRole('option', { name: /^Another Project / })); await waitForWorkspace(1); startTurn('untouched-thread', 'new'); fireEvent.keyDown(window, { key: 'p', metaKey: true }); fireEvent.click(screen.getByRole('option', { name: /^project /i })); await waitForWorkspace(2); transport.request.mockClear(); await act(async () => probes[0]?.resolve(projectsSnapshot(false))); expect(rpcCount('workspace.info')).toBe(0); return } if (scenario === 'overlapping action') { let calls = 0; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.steerQueuedTurn' ? ++calls === 1 ? new Promise(() => undefined) : Promise.reject(new Error('busy')) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'active'); emitQueue('untouched-thread', [queued]); transport.request.mockClear(); const steer = screen.getByRole('button', { name: 'Steer' }); fireEvent.click(steer); fireEvent.click(steer); await waitFor(() => expect(rpcCount('thread.steerQueuedTurn')).toBe(2)); emitQueue('untouched-thread', []); completeTurn('untouched-thread', 'active'); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); return } if (scenario === 'duplicate consensus') { let resolveHistory!: (value: { events: []; running: false }) => void, reconnecting = false; transport.request.mockImplementation((method: string, params: unknown) => reconnecting && method === 'thread.history' ? new Promise((resolve) => (resolveHistory = resolve)) : request(method, params)); await openNewSession(); transport.request.mockClear(); reconnecting = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(rpcCount('thread.history')).toBe(1)); completeTurn('untouched-thread', 'live'); await waitForWorkspace(1); await act(async () => resolveHistory({ events: [], running: false })); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(1); return } let lostId = '', reconnectQueue: QueuedTurn[] = [], lost = true; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' && lost ? (lostId = (params as { clientSubmissionId: string }).clientSubmissionId, Promise.reject(new IndeterminateRequestError('lost'))) : method === 'thread.queue' ? Promise.resolve({ items: reconnectQueue, canSteer: true }) : request(method, params)); await openNewSession(); submitTurn('Lost'); await waitFor(() => expect(lostId).not.toBe('')); act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitForWorkspace(1); reconnectQueue = [{ ...queued, id: lostId }]; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(screen.getByRole('button', { name: 'Remove Audit queue from queue' })).toBeTruthy()); emitQueue('untouched-thread', []); lost = false; transport.request.mockClear(); submitTurn('Fresh'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); startTurn('untouched-thread', 'fresh'); completeTurn('untouched-thread', 'fresh'); await waitForWorkspace(1) })
-  // prettier-ignore
-  it('blocks a remote queue claim until reconciliation', async () => { const request = transport.request.getMockImplementation()!, queued = { id: 'remote-q', text: 'Remote queue', attachments: [], createdAt: 1 }; let resolveHistory!: (value: { events: []; running: false }) => void; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.history' ? new Promise((resolve) => (resolveHistory = resolve)) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'active'); emitQueue('untouched-thread', [queued]); transport.request.mockClear(); emitQueue('untouched-thread', []); completeTurn('untouched-thread', 'active'); await waitFor(() => expect(rpcCount('thread.history')).toBe(1)); expect(rpcCount('workspace.info')).toBe(0); await act(async () => resolveHistory({ events: [], running: false })); await waitForWorkspace(1) })
-  // prettier-ignore
-  it('coalesces sequential live and reconnect consensus', async () => { const request = transport.request.getMockImplementation()!; let resolveHistory!: (value: { events: []; running: false }) => void, reconnecting = false; transport.request.mockImplementation((method: string, params: unknown) => reconnecting && method === 'thread.history' ? new Promise((resolve) => (resolveHistory = resolve)) : request(method, params)); await openNewSession(); transport.request.mockClear(); reconnecting = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await waitFor(() => expect(rpcCount('thread.history')).toBe(1)); completeTurn('untouched-thread', 'live'); await waitForWorkspace(1); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); await act(async () => resolveHistory({ events: [], running: false })); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(1) })
-  // prettier-ignore
-  it.each(['composer steer', 'lost reply delete', 'lost delete', 'late terminal', 'offline claim', 'remote delete', 'remote queue', 'new chat cleanup'] as const)('settles reviewed workspace ownership for %s', async (scenario) => { const request = transport.request.getMockImplementation()!, queued = { id: 'review-q', text: 'Reviewed queue', attachments: [], createdAt: 1 }; let rejectAction!: (reason: Error) => void, reconnecting = false, sends = 0, lostId = ''; transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? scenario === 'lost reply delete' ? (lostId = (params as { clientSubmissionId: string }).clientSubmissionId, Promise.reject(new IndeterminateRequestError('lost'))) : Promise.resolve({ queued: true, queuedTurn: { ...queued, id: sends++ ? 'steer-q' : queued.id } }) : method === 'thread.steerQueuedTurn' && scenario === 'composer steer' ? new Promise(() => undefined) : method === 'thread.deleteQueuedTurn' && scenario === 'lost delete' ? new Promise((_, reject) => (rejectAction = reject)) : reconnecting && method === 'thread.queue' && scenario === 'lost reply delete' ? Promise.resolve({ items: [{ ...queued, id: lostId }], canSteer: true }) : reconnecting && method === 'thread.history' && scenario === 'offline claim' ? Promise.resolve({ events: [{ seq: 1, event: { type: 'item.completed', item: { id: queued.id, turnId: 'queued', type: 'message', role: 'user', status: 'completed', text: queued.text, createdAt: 1 } } }], running: true }) : request(method, params)); await openNewSession(); startTurn('untouched-thread', 'active'); if (scenario === 'remote queue' || scenario === 'new chat cleanup') { emitQueue('untouched-thread', [queued]); transport.request.mockClear(); completeTurn('untouched-thread', 'active'); if (scenario === 'new chat cleanup') fireEvent.click(screen.getByRole('button', { name: 'New chat' })); else emitQueue('untouched-thread', []); return waitForWorkspace(1) } submitTurn('Reviewed queue'); await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1)); await screen.findByRole('button', { name: /Remove Reviewed queue from queue/ }).catch(() => undefined); transport.request.mockClear(); if (scenario === 'composer steer') { const composer = screen.getByPlaceholderText('Do anything'); fireEvent.change(composer, { target: { value: 'Steer now' } }); fireEvent.click(screen.getByRole('button', { name: 'Steer' })); await waitFor(() => expect(rpcCount('thread.steerQueuedTurn')).toBe(1)); emitQueue('untouched-thread', []); completeTurn('untouched-thread', 'active'); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); return } if (scenario === 'late terminal') { completeTurn('untouched-thread', 'old'); await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0))); expect(rpcCount('workspace.info')).toBe(0); return } if (scenario === 'remote delete') { (serverProjects[0] as { sessions: unknown[] }).sessions = []; reconnecting = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); return waitForWorkspace(1) } if (scenario === 'lost reply delete') { reconnecting = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); await screen.findByRole('button', { name: /Remove Reviewed queue from queue/ }) } if (scenario === 'offline claim') { emitQueue('untouched-thread', []); reconnecting = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }); completeTurn('untouched-thread', 'queued'); return waitForWorkspace(1) } fireEvent.click(screen.getByRole('button', { name: /Remove Reviewed queue from queue/ })); if (scenario === 'lost delete') { emitQueue('untouched-thread', []); await act(async () => rejectAction(new IndeterminateRequestError('lost'))); reconnecting = true; act(() => { setConnectionState('reconnecting'); setConnectionState('open') }) } else emitQueue('untouched-thread', []); await waitForWorkspace(1) })
+  it('starts workspace info and branch reads together', async () => {
+    const request = transport.request.getMockImplementation()!
+    let resolveInfo!: (value: ResultOf<'workspace.info'>) => void
+    const info = new Promise<Parameters<typeof resolveInfo>[0]>(
+      (resolve) => (resolveInfo = resolve),
+    )
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
+      method === 'workspace.info' ? info : request(method, params),
+    )
+    render(<App />)
+    await waitForInitialWorkspace()
+    await act(async () => resolveInfo({ branch: 'main', added: 0, removed: 0, dirtyFiles: 0 }))
+  })
+  it('refreshes workspace metadata after completion but not on submit', async () => {
+    await openNewSession()
+    transport.request.mockClear()
+    submitTurn('Do the work')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.sendTurn',
+        expect.objectContaining({ threadId: 'untouched-thread', text: 'Do the work' }),
+      ),
+    )
+    expect(rpcCount('workspace.info')).toBe(0)
+    startTurn('untouched-thread', 'turn-1')
+    completeTurn('untouched-thread', 'turn-1')
+    await waitForWorkspace(1)
+  })
+  it('coalesces overlapping completion probes before refreshing workspace metadata', async () => {
+    const probes = await renderWithDeferredProjectProbes()
+    for (const turnId of ['turn-1', 'turn-2', 'turn-3']) completeTurn('untouched-thread', turnId)
+    await waitFor(() => expect(probes).toHaveLength(1))
+    expect(rpcCount('projects.list')).toBe(1)
+    await act(async () => probes[0]?.resolve(projectsSnapshot(true)))
+    await waitFor(() => expect(probes).toHaveLength(2))
+    expect(rpcCount('projects.list')).toBe(2)
+    await act(async () => probes[1]?.resolve(projectsSnapshot(false)))
+    await waitForWorkspace(1)
+  })
+  it.each([
+    'reject',
+    'missing',
+    'started',
+    'submitted',
+    'unrelated',
+    'sole reject',
+    'rejected before probe',
+    'rejected after probe',
+    'rejected after retained idle',
+    'switched reject',
+  ] as const)(
+    'settles workspace metadata when the probe sequence ends with %s',
+    async (scenario) => {
+      let rejectSend!: (reason: Error) => void
+      if (scenario.startsWith('rejected')) {
+        const request = transport.request.getMockImplementation()!
+        transport.request.mockImplementation((method: string, params: TestBoundary) =>
+          method === 'thread.sendTurn'
+            ? new Promise((_, reject) => (rejectSend = reject))
+            : request(method, params),
+        )
+      }
+      if (scenario === 'switched reject') {
+        serverProjects.push(
+          serverProject('/work/another-project', 'Another Project', [
+            { id: 'background-thread', title: 'Background', running: false },
+          ]),
+        )
+        serverProjects[0]!.sessions.push({
+          id: 'idle-thread',
+          title: 'Idle work',
+          running: false,
+        })
+      }
+      const submitted = scenario === 'submitted' || scenario === 'unrelated'
+      if (scenario === 'unrelated')
+        serverProjects[0]!.sessions.push({
+          id: 'background-thread',
+          running: false,
+        })
+      const probes = await renderWithDeferredProjectProbes()
+      if (scenario === 'switched reject') {
+        startTurn('untouched-thread', 'turn-1')
+        transport.request.mockClear()
+        fireEvent.click(screen.getByRole('button', { name: /^Idle work,/ }))
+        expect(rpcCount('workspace.info')).toBe(0)
+      }
+      completeTurn('untouched-thread', 'turn-1')
+      await waitFor(() => expect(probes).toHaveLength(1))
+      if (scenario.startsWith('rejected')) {
+        if (scenario === 'rejected after retained idle') {
+          completeTurn('untouched-thread', 'turn-2')
+          await act(async () => probes[0]?.resolve(projectsSnapshot(false)))
+          await waitFor(() => expect(probes).toHaveLength(2))
+        }
+        submitTurn('Rejected start')
+        if (scenario === 'rejected before probe') await act(async () => rejectSend(new Error('no')))
+        if (scenario !== 'rejected after retained idle')
+          await act(async () => probes[0]?.resolve(projectsSnapshot(false)))
+        else await act(async () => probes[1]?.reject(new Error('trailing failed')))
+        if (scenario === 'rejected after probe') {
+          await act(async () => rejectSend(new Error('no')))
+          await waitFor(() => expect(probes).toHaveLength(2))
+          await act(async () => probes[1]?.resolve(projectsSnapshot(false)))
+        } else if (scenario === 'rejected after retained idle') {
+          await act(async () => rejectSend(new Error('no')))
+          await waitFor(() => expect(probes).toHaveLength(3))
+          await act(async () => probes[2]?.resolve(projectsSnapshot(false)))
+        }
+        await waitForWorkspace(1)
+        return
+      }
+      if (scenario === 'sole reject') {
+        await act(async () => probes[0]?.reject(new Error('probe failed')))
+        await waitFor(() => expect(probes).toHaveLength(2))
+        await act(async () => probes[1]?.resolve(projectsSnapshot(false)))
+      } else {
+        completeTurn('untouched-thread', 'turn-2')
+        if (submitted) {
+          submitTurn('Start again')
+          if (scenario === 'unrelated') {
+            startTurn('background-thread', 'background')
+            completeTurn('background-thread', 'background')
+          }
+        }
+        await act(async () => probes[0]?.resolve(projectsSnapshot(false)))
+        await waitFor(() => expect(probes).toHaveLength(2))
+        if (scenario === 'switched reject') {
+          fireEvent.keyDown(window, { key: 'p', metaKey: true })
+          fireEvent.click(screen.getByRole('option', { name: /^Another Project / }))
+          await waitFor(() =>
+            expect(transport.request).toHaveBeenCalledWith('workspace.info', {
+              path: '/work/another-project',
+            }),
+          )
+          transport.request.mockClear()
+          completeTurn('background-thread', 'background')
+          await act(async () => probes[1]?.reject(new Error('old project failed')))
+          await waitFor(() => expect(probes).toHaveLength(3))
+          await act(async () => probes[2]?.reject(new Error('new project failed')))
+          await waitFor(() => expect(probes).toHaveLength(4))
+          await act(async () => probes[3]?.resolve(projectsSnapshot(false)))
+          await waitForWorkspace(1)
+          return
+        }
+        if (scenario === 'started') startTurn('untouched-thread', 'turn-3')
+        await act(async () =>
+          scenario === 'missing'
+            ? probes[1]?.resolve({ projects: [] })
+            : submitted
+              ? probes[1]?.resolve(projectsSnapshot(false))
+              : probes[1]?.reject(new Error('probe failed')),
+        )
+      }
+      if (scenario === 'started' || submitted) {
+        await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+        expect(rpcCount('workspace.info')).toBe(0)
+        return
+      }
+      await waitForWorkspace(1)
+    },
+  )
+  it.each(['indeterminate', 'approval', 'inactive queue', 'durable queue', 'overlap'] as const)(
+    'refreshes after reconnect reconciles %s as idle',
+    async (scenario) => {
+      const request = transport.request.getMockImplementation()!
+      if (scenario === 'approval' || scenario === 'overlap')
+        serverProjects[0]!.sessions[0]!.status = scenario === 'approval' ? 'approval' : 'working'
+      else if (scenario === 'inactive queue' || scenario === 'durable queue')
+        serverProjects[0]!.sessions.push({
+          id: 'background-thread',
+          title: 'Background',
+          running: false,
+        })
+      const queuedTurn = { id: 'queued-turn', text: 'Reconnect me', attachments: [], createdAt: 1 }
+      let reconnecting = false
+      transport.request.mockImplementation((method: string, params: TestBoundary) =>
+        method === 'thread.sendTurn'
+          ? scenario === 'indeterminate'
+            ? Promise.reject(new IndeterminateRequestError('socket lost'))
+            : Promise.resolve({ queued: true, queuedTurn })
+          : method === 'thread.queue' && scenario === 'durable queue' && reconnecting
+            ? Promise.resolve({ items: [queuedTurn], canSteer: true })
+            : method === 'thread.history' && scenario === 'inactive queue' && reconnecting
+              ? Promise.resolve({
+                  events: [
+                    {
+                      seq: 1,
+                      event: {
+                        type: 'item.completed',
+                        item: {
+                          id: queuedTurn.id,
+                          turnId: 'offline',
+                          type: 'message',
+                          role: 'user',
+                          status: 'completed',
+                          text: queuedTurn.text,
+                          createdAt: 1,
+                        },
+                      },
+                    },
+                  ],
+                  running: false,
+                })
+              : request(method, params),
+      )
+      await openNewSession()
+      if (scenario === 'overlap') {
+        const histories: Array<(value: { events: []; running: false }) => void> = []
+        transport.request.mockImplementation((method: string, params: TestBoundary) =>
+          method === 'thread.history'
+            ? new Promise((resolve) => histories.push(resolve))
+            : request(method, params),
+        )
+        transport.request.mockClear()
+        act(() => {
+          for (const listener of transport.sequenceGapListeners) {
+            listener(1, 2)
+            listener(2, 3)
+          }
+        })
+        await waitFor(() => expect(histories).toHaveLength(2))
+        await act(async () => histories[0]?.({ events: [], running: false }))
+        await act(async () => histories[1]?.({ events: [], running: false }))
+        await waitForWorkspace(1)
+        return
+      }
+      if (scenario !== 'approval') {
+        if (scenario === 'inactive queue' || scenario === 'durable queue')
+          startTurn('untouched-thread', 'active-turn')
+        submitTurn('Reconnect me')
+        await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+        if (scenario === 'inactive queue' || scenario === 'durable queue')
+          fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
+      }
+      transport.request.mockClear()
+      reconnecting = true
+      act(() => {
+        setConnectionState('reconnecting')
+        setConnectionState('open')
+      })
+      if (scenario === 'durable queue') {
+        await waitFor(() => expect(rpcCount('thread.queue')).toBeGreaterThan(0))
+        expect(rpcCount('workspace.info')).toBe(0)
+        return
+      }
+      await waitForWorkspace(1)
+    },
+  )
+  it.each(['delete', 'steer'] as const)('releases queued ownership after %s', async (action) => {
+    const request = transport.request.getMockImplementation()!,
+      queuedTurn = { id: 'queued', text: 'Queue next', attachments: [], createdAt: 1 }
+    let accept!: (value: { queued: true; queuedTurn: typeof queuedTurn }) => void
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
+      method === 'thread.sendTurn'
+        ? new Promise((resolve) => {
+            accept = resolve
+          })
+        : request(method, params),
+    )
+    await openNewSession()
+    startTurn('untouched-thread', 'active')
+    transport.request.mockClear()
+    submitTurn('Queue next')
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+    await act(async () => accept({ queued: true, queuedTurn }))
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: action === 'delete' ? 'Remove Queue next from queue' : 'Steer',
+      }),
+    )
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        `thread.${action === 'delete' ? 'delete' : 'steer'}QueuedTurn`,
+        { threadId: 'untouched-thread', queuedTurnId: 'queued' },
+      ),
+    )
+    emitQueue('untouched-thread', [])
+    completeTurn('untouched-thread', 'active')
+    await waitForWorkspace(1)
+  })
+  it.each(['next', 'restored', 'historical'] as const)(
+    'keeps %s queued work ahead of workspace refresh',
+    async (scenario) => {
+      const request = transport.request.getMockImplementation()!,
+        turns = [
+          { id: 'q1', text: 'First queued', attachments: [], createdAt: 1 },
+          { id: 'q2', text: 'Second queued', attachments: [], createdAt: 2 },
+        ]
+      let sent = 0
+      if (scenario === 'historical') {
+        serverProjects[0]!.sessions[0]!.running = true
+        transport.request.mockImplementation((method: string, params: TestBoundary) =>
+          method === 'thread.history'
+            ? Promise.resolve({
+                events: [
+                  {
+                    seq: 1,
+                    event: {
+                      type: 'turn.started',
+                      turn: {
+                        id: 'old',
+                        threadId: 'untouched-thread',
+                        status: 'running',
+                        createdAt: 1,
+                      },
+                    },
+                  },
+                ],
+                running: true,
+              })
+            : method === 'thread.sendTurn'
+              ? Promise.resolve({ queued: true, queuedTurn: turns[sent++]! })
+              : request(method, params),
+        )
+      } else
+        transport.request.mockImplementation((method: string, params: TestBoundary) =>
+          method === 'thread.sendTurn'
+            ? Promise.resolve({ queued: true, queuedTurn: turns[sent++]! })
+            : request(method, params),
+        )
+      await openNewSession()
+      if (scenario !== 'historical') startTurn('untouched-thread', 'active')
+      transport.request.mockClear()
+      submitTurn('First queued')
+      if (scenario === 'next') submitTurn('Second queued')
+      await screen.findByRole('button', {
+        name: `Remove ${scenario === 'next' ? 'Second' : 'First'} queued from queue`,
+      })
+      if (scenario === 'next') {
+        emitQueue('untouched-thread', [turns[1]!])
+        startTurn('untouched-thread', 'q1-turn')
+        completeTurn('untouched-thread', 'q1-turn')
+      } else if (scenario === 'restored') {
+        emitQueue('untouched-thread', [])
+        emitQueue('untouched-thread', [turns[0]!])
+        completeTurn('untouched-thread', 'active')
+      } else {
+        serverProjects[0]!.sessions[0]!.running = false
+        completeTurn('untouched-thread', 'old')
+      }
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(rpcCount('workspace.info')).toBe(0)
+      const remaining = scenario === 'next' ? turns[1]! : turns[0]!
+      fireEvent.click(screen.getByRole('button', { name: `Remove ${remaining.text} from queue` }))
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith('thread.deleteQueuedTurn', {
+          threadId: 'untouched-thread',
+          queuedTurnId: remaining.id,
+        }),
+      )
+      emitQueue('untouched-thread', [])
+      await waitForWorkspace(1)
+    },
+  )
+  it('refreshes after terminal thread errors', async () => {
+    await openNewSession()
+    transport.request.mockClear()
+    emitThreadEvent('untouched-thread', {
+      type: 'thread.error',
+      threadId: 'untouched-thread',
+      message: 'Design failed',
+    })
+    await waitForWorkspace(1)
+  })
+  it('gives a switched project its own unknown-result retry', async () => {
+    serverProjects.push(
+      serverProject('/work/another-project', 'Another Project', [
+        { id: 'background-thread', title: 'Background', running: false },
+      ]),
+    )
+    const probes = await renderWithDeferredProjectProbes()
+    completeTurn('untouched-thread', 'a')
+    await waitFor(() => expect(probes).toHaveLength(1))
+    await act(async () => probes[0]?.reject(new Error('A failed')))
+    await waitFor(() => expect(probes).toHaveLength(2))
+    fireEvent.keyDown(window, { key: 'p', metaKey: true })
+    fireEvent.click(screen.getByRole('option', { name: /^Another Project / }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('workspace.info', {
+        path: '/work/another-project',
+      }),
+    )
+    transport.request.mockClear()
+    completeTurn('background-thread', 'b')
+    await act(async () => probes[1]?.reject(new Error('A retry failed')))
+    await waitFor(() => expect(probes).toHaveLength(3))
+    await act(async () => probes[2]?.reject(new Error('B failed')))
+    await waitFor(() => expect(probes).toHaveLength(4))
+    await act(async () => probes[3]?.resolve(projectsSnapshot(false)))
+    await waitForWorkspace(1)
+  })
+  it('reconciles an inactive project owner without letting it block the active project', async () => {
+    const request = transport.request.getMockImplementation()!
+    serverProjects.push(
+      serverProject('/work/another-project', 'Another Project', [
+        { id: 'background-thread', title: 'Background', running: false },
+      ]),
+    )
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
+      method === 'thread.sendTurn'
+        ? Promise.reject(new IndeterminateRequestError('lost'))
+        : request(method, params),
+    )
+    await openNewSession()
+    startTurn('untouched-thread', 'a')
+    submitTurn('Lost submit')
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+    fireEvent.keyDown(window, { key: 'p', metaKey: true })
+    fireEvent.click(screen.getByRole('option', { name: /^Another Project / }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('workspace.info', {
+        path: '/work/another-project',
+      }),
+    )
+    serverProjects[0]!.sessions[0]!.running = false
+    transport.request.mockClear()
+    act(() => {
+      setConnectionState('reconnecting')
+      setConnectionState('open')
+    })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'untouched-thread',
+      }),
+    )
+    fireEvent.keyDown(window, { key: 'p', metaKey: true })
+    fireEvent.click(screen.getByRole('option', { name: /^project /i }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('workspace.info', { path: '/work/project' }),
+    )
+    transport.request.mockClear()
+    completeTurn('untouched-thread', 'a')
+    await waitForWorkspace(1)
+  })
+  it('scopes reconnect idle consensus to the active project', async () => {
+    const request = transport.request.getMockImplementation()!,
+      queued = { id: 'foreign', text: 'Foreign queue', attachments: [], createdAt: 1 }
+    let reconnecting = false
+    serverProjects.push(
+      serverProject('/work/another-project', 'Another Project', [
+        { id: 'background-thread', title: 'Background', running: true },
+      ]),
+    )
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
+      method === 'thread.sendTurn'
+        ? Promise.reject(new IndeterminateRequestError('lost'))
+        : reconnecting &&
+            method === 'thread.history' &&
+            methods['thread.history'].params.parse(params).threadId === 'untouched-thread'
+          ? Promise.resolve({ events: [], running: true })
+          : reconnecting &&
+              method === 'thread.queue' &&
+              methods['thread.queue'].params.parse(params).threadId === 'untouched-thread'
+            ? Promise.resolve({ items: [queued], canSteer: true })
+            : request(method, params),
+    )
+    await openNewSession()
+    startTurn('untouched-thread', 'a')
+    submitTurn('Lost submit')
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+    fireEvent.keyDown(window, { key: 'p', metaKey: true })
+    fireEvent.click(screen.getByRole('option', { name: /^Another Project / }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('workspace.info', {
+        path: '/work/another-project',
+      }),
+    )
+    startTurn('background-thread', 'b')
+    serverProjects[1]!.sessions[0]!.running = false
+    transport.request.mockClear()
+    reconnecting = true
+    act(() => {
+      setConnectionState('reconnecting')
+      setConnectionState('open')
+    })
+    await waitForWorkspace(1)
+  })
+  it('reconciles workspace ownership when a running session is archived', async () => {
+    await openNewSession()
+    startTurn('untouched-thread', 'active')
+    transport.request.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'Archive New session' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.delete', {
+        threadId: 'untouched-thread',
+      }),
+    )
+    await waitForWorkspace(1)
+  })
+  it('keeps a claimed steer blocked until its exact outcome', async () => {
+    const request = transport.request.getMockImplementation()!,
+      queued = { id: 'steer-q', text: 'Steer later', attachments: [], createdAt: 1 }
+    let rejectSteer!: (reason: Error) => void
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
+      method === 'thread.sendTurn'
+        ? Promise.resolve({ queued: true, queuedTurn: queued })
+        : method === 'thread.steerQueuedTurn'
+          ? new Promise((_, reject) => (rejectSteer = reject))
+          : request(method, params),
+    )
+    await openNewSession()
+    startTurn('untouched-thread', 'active')
+    transport.request.mockClear()
+    submitTurn('Steer later')
+    await screen.findByRole('button', { name: 'Remove Steer later from queue' })
+    fireEvent.click(screen.getByRole('button', { name: 'Steer' }))
+    await waitFor(() => expect(rpcCount('thread.steerQueuedTurn')).toBe(1))
+    emitQueue('untouched-thread', [])
+    completeTurn('untouched-thread', 'active')
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+    expect(rpcCount('workspace.info')).toBe(0)
+    emitQueue('untouched-thread', [queued])
+    await act(async () => rejectSteer(new Error('restored')))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Steer later from queue' }))
+    emitQueue('untouched-thread', [])
+    await waitForWorkspace(1)
+  })
+  it('keeps a reconnect queue claim blocked until durable evidence', async () => {
+    const request = transport.request.getMockImplementation()!,
+      queued = { id: 'claim-q', text: 'Claim later', attachments: [], createdAt: 1 }
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
+      method === 'thread.sendTurn'
+        ? Promise.resolve({ queued: true, queuedTurn: queued })
+        : request(method, params),
+    )
+    await openNewSession()
+    startTurn('untouched-thread', 'active')
+    submitTurn('Claim later')
+    await screen.findByRole('button', { name: 'Remove Claim later from queue' })
+    transport.request.mockClear()
+    act(() => {
+      setConnectionState('reconnecting')
+      setConnectionState('open')
+    })
+    await waitFor(() => expect(rpcCount('thread.queue')).toBeGreaterThan(0))
+    expect(rpcCount('workspace.info')).toBe(0)
+    emitQueue('untouched-thread', [queued])
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Claim later from queue' }))
+    emitQueue('untouched-thread', [])
+    await waitForWorkspace(1)
+  })
+  it('retries unknown queue evidence on the next completion', async () => {
+    const request = transport.request.getMockImplementation()!,
+      queued = { id: 'stale', text: 'Offline queue', attachments: [], createdAt: 1 }
+    let failing = true
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
+      method === 'thread.queue' && failing
+        ? Promise.reject(new Error('offline'))
+        : request(method, params),
+    )
+    await openNewSession()
+    emitQueue('untouched-thread', [queued])
+    transport.request.mockClear()
+    act(() => {
+      setConnectionState('reconnecting')
+      setConnectionState('open')
+    })
+    await waitFor(() => expect(rpcCount('thread.queue')).toBeGreaterThan(0))
+    expect(rpcCount('workspace.info')).toBe(0)
+    failing = false
+    completeTurn('untouched-thread', 'later')
+    await waitForWorkspace(1)
+  })
+  it.each(['clean', 'projects.list', 'thread.history', 'thread.queue'] as const)(
+    'refreshes after a turn runs wholly during an outage with %s reconciliation',
+    async (scenario) => {
+      const request = transport.request.getMockImplementation()!
+      await openNewSession()
+      let fail = scenario !== 'clean'
+      transport.request.mockImplementation((method: string, params: TestBoundary) =>
+        method === scenario && fail
+          ? ((fail = false), Promise.reject(new Error('transient')))
+          : request(method, params),
+      )
+      transport.request.mockClear()
+      act(() => {
+        setConnectionState('reconnecting')
+        setConnectionState('open')
+      })
+      await waitForWorkspace(1)
+    },
+  )
+  it('does not clear a submit owner created during resync', async () => {
+    const request = transport.request.getMockImplementation()!
+    serverProjects = [
+      serverProject('/work/project', 'project', [
+        { id: 'untouched-thread', title: 'New session', running: false },
+        { id: 'background-thread', title: 'Background', running: false, status: 'working' },
+      ]),
+    ]
+    let accept!: (value: { queued: false; turnId: string }) => void
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
+      method === 'thread.sendTurn'
+        ? new Promise((resolve) => (accept = resolve))
+        : request(method, params),
+    )
+    await openNewSession()
+    serverProjects[0]!.sessions[1]!.status = 'ready'
+    transport.request.mockClear()
+    act(() => {
+      setConnectionState('reconnecting')
+      setConnectionState('open')
+    })
+    submitTurn('During resync')
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+    await act(async () => accept({ queued: false, turnId: 'new' }))
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+    expect(rpcCount('workspace.info')).toBe(0)
+    startTurn('untouched-thread', 'new')
+    completeTurn('untouched-thread', 'new')
+    await waitForWorkspace(1)
+  })
+  it('blocks on authoritative queued status without a local queue cache', async () => {
+    serverProjects = [
+      serverProject('/work/project', 'project', [
+        { id: 'untouched-thread', title: 'New session', running: false },
+        { id: 'background-thread', title: 'Background', running: false, status: 'queued' },
+      ]),
+    ]
+    await openNewSession()
+    transport.request.mockClear()
+    completeTurn('untouched-thread', 'a')
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+    expect(rpcCount('workspace.info')).toBe(0)
+    serverProjects[0]!.sessions[1]!.status = 'ready'
+    completeTurn('untouched-thread', 'b')
+    await waitForWorkspace(1)
+  })
+  it.each([
+    'unknown authority',
+    'retained steer',
+    'project failure',
+    'remote claim',
+    'remote deletion',
+    'path return',
+    'overlapping action',
+    'duplicate consensus',
+    'stale submission',
+  ] as const)('settles final workspace audit case: %s', async (scenario) => {
+    const request = transport.request.getMockImplementation()!,
+      queued = { id: 'audit-q', text: 'Audit queue', attachments: [], createdAt: 1 }
+    if (scenario === 'unknown authority') {
+      let failing = true
+      transport.request.mockImplementation((method: string, params: TestBoundary) =>
+        method === 'thread.queue' && failing
+          ? Promise.reject(new Error('unknown'))
+          : request(method, params),
+      )
+      await openNewSession()
+      transport.request.mockClear()
+      act(() => {
+        setConnectionState('reconnecting')
+        setConnectionState('open')
+      })
+      await waitFor(() => expect(rpcCount('thread.queue')).toBeGreaterThan(0))
+      completeTurn('untouched-thread', 'unknown')
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(rpcCount('workspace.info')).toBe(0)
+      failing = false
+      completeTurn('untouched-thread', 'known')
+      return waitForWorkspace(1)
+    }
+    if (scenario === 'retained steer') {
+      let reject!: (error: Error) => void,
+        running = true
+      transport.request.mockImplementation((method: string, params: TestBoundary) =>
+        method === 'thread.steerQueuedTurn'
+          ? new Promise((_, fail) => (reject = fail))
+          : method === 'thread.history'
+            ? Promise.resolve({ events: [], running })
+            : request(method, params),
+      )
+      await openNewSession()
+      startTurn('untouched-thread', 'active')
+      emitQueue('untouched-thread', [queued])
+      fireEvent.click(screen.getByRole('button', { name: 'Steer' }))
+      await act(async () => reject(new IndeterminateRequestError('lost')))
+      emitQueue('untouched-thread', [])
+      transport.request.mockClear()
+      act(() => {
+        setConnectionState('reconnecting')
+        setConnectionState('open')
+      })
+      await waitFor(() => expect(rpcCount('thread.queue')).toBeGreaterThan(0))
+      running = false
+      completeTurn('untouched-thread', 'active')
+      return waitForWorkspace(1)
+    }
+    if (scenario === 'project failure') {
+      let failProjects = false
+      transport.request.mockImplementation((method: string, params: TestBoundary) =>
+        method === 'thread.sendTurn'
+          ? Promise.reject(new IndeterminateRequestError('lost'))
+          : method === 'projects.list' && failProjects
+            ? Promise.reject(new Error('projects'))
+            : request(method, params),
+      )
+      await openNewSession()
+      submitTurn('Lost')
+      await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+      transport.request.mockClear()
+      failProjects = true
+      act(() => {
+        setConnectionState('reconnecting')
+        setConnectionState('open')
+      })
+      await waitFor(() => expect(rpcCount('thread.history')).toBeGreaterThan(0))
+      failProjects = false
+      completeTurn('untouched-thread', 'later')
+      return waitForWorkspace(1)
+    }
+    if (scenario === 'remote claim') {
+      transport.request.mockImplementation((method: string, params: TestBoundary) =>
+        method === 'thread.steerQueuedTurn'
+          ? new Promise(() => undefined)
+          : request(method, params),
+      )
+      await openNewSession()
+      startTurn('untouched-thread', 'active')
+      emitQueue('untouched-thread', [queued])
+      transport.request.mockClear()
+      fireEvent.click(screen.getByRole('button', { name: 'Steer' }))
+      emitQueue('untouched-thread', [])
+      completeTurn('untouched-thread', 'active')
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(rpcCount('workspace.info')).toBe(0)
+      return
+    }
+    if (scenario === 'remote deletion') {
+      transport.request.mockImplementation((method: string, params: TestBoundary) =>
+        method === 'thread.sendTurn'
+          ? Promise.reject(new IndeterminateRequestError('lost'))
+          : request(method, params),
+      )
+      await openNewSession()
+      submitTurn('Lost')
+      await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+      serverProjects[0]!.sessions = []
+      act(() => {
+        setConnectionState('reconnecting')
+        setConnectionState('open')
+      })
+      await waitForWorkspace(1)
+      transport.request.mockClear()
+      act(() => {
+        setConnectionState('reconnecting')
+        setConnectionState('open')
+      })
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(rpcCount('thread.history')).toBe(0)
+      return
+    }
+    if (scenario === 'path return') {
+      serverProjects.push(
+        serverProject('/work/another-project', 'Another Project', [
+          { id: 'background-thread', title: 'Background', running: false },
+        ]),
+      )
+      const probes = await renderWithDeferredProjectProbes()
+      completeTurn('untouched-thread', 'old')
+      await waitFor(() => expect(probes).toHaveLength(1))
+      fireEvent.keyDown(window, { key: 'p', metaKey: true })
+      fireEvent.click(screen.getByRole('option', { name: /^Another Project / }))
+      await waitForWorkspace(1)
+      startTurn('untouched-thread', 'new')
+      fireEvent.keyDown(window, { key: 'p', metaKey: true })
+      fireEvent.click(screen.getByRole('option', { name: /^project /i }))
+      await waitForWorkspace(2)
+      transport.request.mockClear()
+      await act(async () => probes[0]?.resolve(projectsSnapshot(false)))
+      expect(rpcCount('workspace.info')).toBe(0)
+      return
+    }
+    if (scenario === 'overlapping action') {
+      let calls = 0
+      transport.request.mockImplementation((method: string, params: TestBoundary) =>
+        method === 'thread.steerQueuedTurn'
+          ? ++calls === 1
+            ? new Promise(() => undefined)
+            : Promise.reject(new Error('busy'))
+          : request(method, params),
+      )
+      await openNewSession()
+      startTurn('untouched-thread', 'active')
+      emitQueue('untouched-thread', [queued])
+      transport.request.mockClear()
+      const steer = screen.getByRole('button', { name: 'Steer' })
+      fireEvent.click(steer)
+      fireEvent.click(steer)
+      await waitFor(() => expect(rpcCount('thread.steerQueuedTurn')).toBe(2))
+      emitQueue('untouched-thread', [])
+      completeTurn('untouched-thread', 'active')
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(rpcCount('workspace.info')).toBe(0)
+      return
+    }
+    if (scenario === 'duplicate consensus') {
+      let resolveHistory!: (value: { events: []; running: false }) => void,
+        reconnecting = false
+      transport.request.mockImplementation((method: string, params: TestBoundary) =>
+        reconnecting && method === 'thread.history'
+          ? new Promise((resolve) => (resolveHistory = resolve))
+          : request(method, params),
+      )
+      await openNewSession()
+      transport.request.mockClear()
+      reconnecting = true
+      act(() => {
+        setConnectionState('reconnecting')
+        setConnectionState('open')
+      })
+      await waitFor(() => expect(rpcCount('thread.history')).toBe(1))
+      completeTurn('untouched-thread', 'live')
+      await waitForWorkspace(1)
+      await act(async () => resolveHistory({ events: [], running: false }))
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(rpcCount('workspace.info')).toBe(1)
+      return
+    }
+    let lostId = '',
+      reconnectQueue: QueuedTurn[] = [],
+      lost = true
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
+      method === 'thread.sendTurn' && lost
+        ? ((lostId = requiredValue(
+            methods['thread.sendTurn'].params.parse(params).clientSubmissionId,
+            'client submission ID',
+          )),
+          Promise.reject(new IndeterminateRequestError('lost')))
+        : method === 'thread.queue'
+          ? Promise.resolve({ items: reconnectQueue, canSteer: true })
+          : request(method, params),
+    )
+    await openNewSession()
+    submitTurn('Lost')
+    await waitFor(() => expect(lostId).not.toBe(''))
+    act(() => {
+      setConnectionState('reconnecting')
+      setConnectionState('open')
+    })
+    await waitForWorkspace(1)
+    reconnectQueue = [{ ...queued, id: lostId }]
+    act(() => {
+      setConnectionState('reconnecting')
+      setConnectionState('open')
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Remove Audit queue from queue' })).toBeTruthy(),
+    )
+    emitQueue('untouched-thread', [])
+    lost = false
+    transport.request.mockClear()
+    submitTurn('Fresh')
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+    startTurn('untouched-thread', 'fresh')
+    completeTurn('untouched-thread', 'fresh')
+    await waitForWorkspace(1)
+  })
+  it('blocks a remote queue claim until reconciliation', async () => {
+    const request = transport.request.getMockImplementation()!,
+      queued = { id: 'remote-q', text: 'Remote queue', attachments: [], createdAt: 1 }
+    let resolveHistory!: (value: { events: []; running: false }) => void
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
+      method === 'thread.history'
+        ? new Promise((resolve) => (resolveHistory = resolve))
+        : request(method, params),
+    )
+    await openNewSession()
+    startTurn('untouched-thread', 'active')
+    emitQueue('untouched-thread', [queued])
+    transport.request.mockClear()
+    emitQueue('untouched-thread', [])
+    completeTurn('untouched-thread', 'active')
+    await waitFor(() => expect(rpcCount('thread.history')).toBe(1))
+    expect(rpcCount('workspace.info')).toBe(0)
+    await act(async () => resolveHistory({ events: [], running: false }))
+    await waitForWorkspace(1)
+  })
+  it('coalesces sequential live and reconnect consensus', async () => {
+    const request = transport.request.getMockImplementation()!
+    let resolveHistory!: (value: { events: []; running: false }) => void,
+      reconnecting = false
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
+      reconnecting && method === 'thread.history'
+        ? new Promise((resolve) => (resolveHistory = resolve))
+        : request(method, params),
+    )
+    await openNewSession()
+    transport.request.mockClear()
+    reconnecting = true
+    act(() => {
+      setConnectionState('reconnecting')
+      setConnectionState('open')
+    })
+    await waitFor(() => expect(rpcCount('thread.history')).toBe(1))
+    completeTurn('untouched-thread', 'live')
+    await waitForWorkspace(1)
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+    await act(async () => resolveHistory({ events: [], running: false }))
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+    expect(rpcCount('workspace.info')).toBe(1)
+  })
+  it.each([
+    'composer steer',
+    'lost reply delete',
+    'lost delete',
+    'late terminal',
+    'offline claim',
+    'remote delete',
+    'remote queue',
+    'new chat cleanup',
+  ] as const)('settles reviewed workspace ownership for %s', async (scenario) => {
+    const request = transport.request.getMockImplementation()!,
+      queued = { id: 'review-q', text: 'Reviewed queue', attachments: [], createdAt: 1 }
+    let rejectAction!: (reason: Error) => void,
+      reconnecting = false,
+      sends = 0,
+      lostId = ''
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
+      method === 'thread.sendTurn'
+        ? scenario === 'lost reply delete'
+          ? ((lostId = requiredValue(
+              methods['thread.sendTurn'].params.parse(params).clientSubmissionId,
+              'client submission ID',
+            )),
+            Promise.reject(new IndeterminateRequestError('lost')))
+          : Promise.resolve({
+              queued: true,
+              queuedTurn: { ...queued, id: sends++ ? 'steer-q' : queued.id },
+            })
+        : method === 'thread.steerQueuedTurn' && scenario === 'composer steer'
+          ? new Promise(() => undefined)
+          : method === 'thread.deleteQueuedTurn' && scenario === 'lost delete'
+            ? new Promise((_, reject) => (rejectAction = reject))
+            : reconnecting && method === 'thread.queue' && scenario === 'lost reply delete'
+              ? Promise.resolve({ items: [{ ...queued, id: lostId }], canSteer: true })
+              : reconnecting && method === 'thread.history' && scenario === 'offline claim'
+                ? Promise.resolve({
+                    events: [
+                      {
+                        seq: 1,
+                        event: {
+                          type: 'item.completed',
+                          item: {
+                            id: queued.id,
+                            turnId: 'queued',
+                            type: 'message',
+                            role: 'user',
+                            status: 'completed',
+                            text: queued.text,
+                            createdAt: 1,
+                          },
+                        },
+                      },
+                    ],
+                    running: true,
+                  })
+                : request(method, params),
+    )
+    await openNewSession()
+    startTurn('untouched-thread', 'active')
+    if (scenario === 'remote queue' || scenario === 'new chat cleanup') {
+      emitQueue('untouched-thread', [queued])
+      transport.request.mockClear()
+      completeTurn('untouched-thread', 'active')
+      if (scenario === 'new chat cleanup')
+        fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+      else emitQueue('untouched-thread', [])
+      return waitForWorkspace(1)
+    }
+    submitTurn('Reviewed queue')
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+    await screen
+      .findByRole('button', { name: /Remove Reviewed queue from queue/ })
+      .catch(() => undefined)
+    transport.request.mockClear()
+    if (scenario === 'composer steer') {
+      const composer = screen.getByPlaceholderText('Do anything')
+      fireEvent.change(composer, { target: { value: 'Steer now' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Steer' }))
+      await waitFor(() => expect(rpcCount('thread.steerQueuedTurn')).toBe(1))
+      emitQueue('untouched-thread', [])
+      completeTurn('untouched-thread', 'active')
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(rpcCount('workspace.info')).toBe(0)
+      return
+    }
+    if (scenario === 'late terminal') {
+      completeTurn('untouched-thread', 'old')
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(rpcCount('workspace.info')).toBe(0)
+      return
+    }
+    if (scenario === 'remote delete') {
+      serverProjects[0]!.sessions = []
+      reconnecting = true
+      act(() => {
+        setConnectionState('reconnecting')
+        setConnectionState('open')
+      })
+      return waitForWorkspace(1)
+    }
+    if (scenario === 'lost reply delete') {
+      reconnecting = true
+      act(() => {
+        setConnectionState('reconnecting')
+        setConnectionState('open')
+      })
+      await screen.findByRole('button', { name: /Remove Reviewed queue from queue/ })
+    }
+    if (scenario === 'offline claim') {
+      emitQueue('untouched-thread', [])
+      reconnecting = true
+      act(() => {
+        setConnectionState('reconnecting')
+        setConnectionState('open')
+      })
+      completeTurn('untouched-thread', 'queued')
+      return waitForWorkspace(1)
+    }
+    fireEvent.click(screen.getByRole('button', { name: /Remove Reviewed queue from queue/ }))
+    if (scenario === 'lost delete') {
+      emitQueue('untouched-thread', [])
+      await act(async () => rejectAction(new IndeterminateRequestError('lost')))
+      reconnecting = true
+      act(() => {
+        setConnectionState('reconnecting')
+        setConnectionState('open')
+      })
+    } else emitQueue('untouched-thread', [])
+    await waitForWorkspace(1)
+  })
 
   it('asks before discarding uncommitted work from an isolated session', async () => {
     serverProjects = [
@@ -2117,7 +3349,7 @@ describe('new chats', () => {
     const restoreHistory = new Promise<{ events: never[]; running: false }>((resolve) => {
       releaseRestoreHistory = () => resolve({ events: [], running: false })
     })
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'thread.history' && ++historyReads === 2) return restoreHistory
       if (method === 'thread.restore' && restoreRequests++ === 0)
         return new Promise((_, reject) => (rejectRestore = reject))
@@ -2145,8 +3377,10 @@ describe('new chats', () => {
     await waitFor(() => expect(restoreRequests).toBe(1))
     await act(async () => releaseRestoreHistory?.())
     await act(async () => rejectRestore(new IndeterminateRequestError('restore reply lost')))
-    // prettier-ignore
-    act(() => { for (const listener of transport.stateListeners) listener('reconnecting'); for (const listener of transport.stateListeners) listener('open') })
+    act(() => {
+      for (const listener of transport.stateListeners) listener('reconnecting')
+      for (const listener of transport.stateListeners) listener('open')
+    })
     await waitFor(() => expect(historyReads).toBeGreaterThanOrEqual(3))
     fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
@@ -2156,8 +3390,17 @@ describe('new chats', () => {
         undo: 'undo-token',
       })
     })
-    // prettier-ignore
-    expect(transport.request.mock.calls.filter(([method]) => method === 'thread.history').map(([, params]) => params)).toEqual([{ threadId: 'thread-rollback' }, { threadId: 'thread-rollback', afterSeq: 0 }, { threadId: 'thread-rollback' }, { threadId: 'thread-rollback', afterSeq: 0 }, ...Array.from({ length: 2 }, () => ({ threadId: 'thread-rollback' }))])
+    expect(
+      transport.request.mock.calls
+        .filter(([method]) => method === 'thread.history')
+        .map(([, params]) => params),
+    ).toEqual([
+      { threadId: 'thread-rollback' },
+      { threadId: 'thread-rollback', afterSeq: 0 },
+      { threadId: 'thread-rollback' },
+      { threadId: 'thread-rollback', afterSeq: 0 },
+      ...Array.from({ length: 2 }, () => ({ threadId: 'thread-rollback' })),
+    ])
   })
 
   it('persists the macOS font smoothing setting', async () => {
@@ -2237,7 +3480,7 @@ describe('new chats', () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     let rejectUpdate: ((error: Error) => void) | undefined
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'sidebar.updateSettings') {
         return new Promise((_, reject) => {
           rejectUpdate = reject
@@ -2271,14 +3514,15 @@ describe('new chats', () => {
   it('does not let an older sidebar settings response overwrite a newer save', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    const saves: Array<{
-      params: unknown
-      resolve: (settings: typeof serverSidebarSettings) => void
-    }> = []
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    interface SidebarSave {
+      params: ParamsOf<'sidebar.updateSettings'>
+      resolve: (settings: SidebarSettings) => void
+    }
+    const saves: SidebarSave[] = []
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'sidebar.updateSettings') {
         return new Promise((resolve) => {
-          saves.push({ params, resolve })
+          saves.push({ params: methods[method].params.parse(params), resolve })
         })
       }
       return request(method, params)
@@ -2316,14 +3560,14 @@ describe('new chats', () => {
     if (!request) throw new Error('missing request mock')
     let updateCount = 0
     let rejectSecondUpdate: ((error: Error) => void) | undefined
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method !== 'sidebar.updateSettings') return request(method, params)
       updateCount += 1
       if (updateCount === 1) {
-        serverSidebarSettings = {
+        serverSidebarSettings = methods['sidebar.settings'].result.parse({
           ...serverSidebarSettings,
-          ...(params as Partial<typeof serverSidebarSettings>),
-        }
+          ...methods['sidebar.updateSettings'].params.parse(params),
+        })
         return Promise.reject(new Error('Sidebar response was lost'))
       }
       return new Promise((_, reject) => {
@@ -2356,7 +3600,7 @@ describe('new chats', () => {
 
     const days = screen.getByRole('spinbutton', { name: 'Auto-settle days' })
     fireEvent.change(days, { target: { value: '7' } })
-    expect((days as HTMLInputElement).value).toBe('7')
+    expect(requiredInstance(days, HTMLInputElement).value).toBe('7')
 
     // A second gap read must update the confirmed base without erasing the
     // still-pending local patch layered over it.
@@ -2374,7 +3618,7 @@ describe('new chats', () => {
     await act(async () => {
       await Promise.resolve()
     })
-    expect((days as HTMLInputElement).value).toBe('7')
+    expect(requiredInstance(days, HTMLInputElement).value).toBe('7')
 
     await act(async () => {
       rejectSecondUpdate?.(new Error('Could not save inactivity setting'))
@@ -2382,7 +3626,7 @@ describe('new chats', () => {
     })
 
     expect(inbox.getAttribute('aria-checked')).toBe('true')
-    expect((days as HTMLInputElement).value).toBe('3')
+    expect(requiredInstance(days, HTMLInputElement).value).toBe('3')
   })
 
   it('switches sidebar versions only from settings', async () => {
@@ -2414,7 +3658,7 @@ describe('new chats', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
 
     const lightTheme = screen.getByRole('radio', { name: 'Light' })
-    expect((lightTheme as HTMLInputElement).checked).toBe(false)
+    expect(requiredInstance(lightTheme, HTMLInputElement).checked).toBe(false)
     fireEvent.click(lightTheme)
 
     await waitFor(() => {
@@ -2471,18 +3715,9 @@ describe('new chats', () => {
 
   it('tracks OS appearance while System is selected', async () => {
     const originalMatchMedia = window.matchMedia.bind(window)
-    const listeners = new Set<(event: MediaQueryListEvent) => void>()
     let systemIsDark = false
-    const systemThemeMedia = {
-      get matches() {
-        return systemIsDark
-      },
-      media: '(prefers-color-scheme: dark)',
-      addEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) =>
-        listeners.add(listener),
-      removeEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) =>
-        listeners.delete(listener),
-    } as unknown as MediaQueryList
+    const systemThemeMedia = originalMatchMedia('(prefers-color-scheme: dark)')
+    vi.spyOn(systemThemeMedia, 'matches', 'get').mockImplementation(() => systemIsDark)
 
     vi.spyOn(window, 'matchMedia').mockImplementation((query) =>
       query === systemThemeMedia.media ? systemThemeMedia : originalMatchMedia(query),
@@ -2499,9 +3734,14 @@ describe('new chats', () => {
     })
 
     systemIsDark = true
-    act(() =>
-      listeners.forEach((listener) => listener({ matches: systemIsDark } as MediaQueryListEvent)),
-    )
+    act(() => {
+      systemThemeMedia.dispatchEvent(
+        new MediaQueryListEvent('change', {
+          matches: systemIsDark,
+          media: systemThemeMedia.media,
+        }),
+      )
+    })
 
     expect(document.documentElement.dataset.theme).toBe('dark')
   })
@@ -2675,7 +3915,7 @@ describe('new chats', () => {
   it('forwards model, effort, and the provider fast tier on every turn', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       switch (method) {
         case 'models.list':
           return Promise.resolve({
@@ -2753,7 +3993,7 @@ describe('new chats', () => {
   it('keeps highest reasoning effort at the highest stop when switching models', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       switch (method) {
         case 'models.list':
           return Promise.resolve({
@@ -2851,9 +4091,9 @@ describe('new chats', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'models.list') {
-        if ((params as { provider: string }).provider === 'codex') {
+        if (methods['models.list'].params.parse(params).provider === 'codex') {
           return Promise.resolve({
             models: [
               {
@@ -2946,14 +4186,14 @@ describe('new chats', () => {
   it('restores source memory when discovery replaces a missing selected model', async () => {
     serverProviders = [
       {
-        ...(serverProviders[0] as Record<string, unknown>),
+        ...serverProviders[0]!,
         id: 'claude-code',
         displayName: 'Claude Code',
       },
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'models.list') {
         return Promise.resolve({
           models: [
@@ -2992,16 +4232,16 @@ describe('new chats', () => {
     serverProviders = [
       ...serverProviders,
       {
-        ...(serverProviders[0] as Record<string, unknown>),
+        ...serverProviders[0]!,
         id: 'claude-code',
         displayName: 'Claude Code',
       },
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'models.list') {
-        const claude = (params as { provider: string }).provider === 'claude-code'
+        const claude = methods['models.list'].params.parse(params).provider === 'claude-code'
         return Promise.resolve({
           models: claude
             ? [
@@ -3068,11 +4308,11 @@ describe('new chats', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'models.list') {
         return Promise.resolve({
           models:
-            (params as { provider: string }).provider === 'codex'
+            methods['models.list'].params.parse(params).provider === 'codex'
               ? [
                   {
                     id: 'gpt-5.6-sol',
@@ -3150,7 +4390,7 @@ describe('new chats', () => {
   it('has no internal model setup when every catalog model is hidden', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'models.list') {
         return Promise.resolve({
           models: [
@@ -3196,7 +4436,9 @@ describe('new chats', () => {
     fireEvent.keyDown(composer, { key: 'Enter' })
 
     await waitFor(() => {
-      expect((composer as HTMLTextAreaElement).value).toBe('Do not use a hidden model')
+      expect(requiredInstance(composer, HTMLTextAreaElement).value).toBe(
+        'Do not use a hidden model',
+      )
     })
     expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
   })
@@ -3278,10 +4520,9 @@ describe('sidebar chat ordering', () => {
     fireEvent.drop(target, { clientY: 80, dataTransfer })
 
     await waitFor(() => {
-      const order = JSON.parse(localStorage.getItem('harness.sessionOrder') ?? '{}') as Record<
-        string,
-        string[]
-      >
+      const order = SessionOrderSchema.parse(
+        JSON.parse(localStorage.getItem('harness.sessionOrder') ?? '{}'),
+      )
       expect(order['/work/project']).toEqual(['thread-3', 'thread-1', 'thread-2'])
     })
   })
@@ -3458,7 +4699,7 @@ describe('global shortcuts', () => {
     )
   })
 
-  it('opens the keyboard shortcuts reference from the command palette as a modal', async () => {
+  it('opens the editable keybind settings from the command palette', async () => {
     render(<App />)
     await screen.findByRole('button', { name: /^New session,/ })
 
@@ -3467,16 +4708,48 @@ describe('global shortcuts', () => {
     fireEvent.change(search, { target: { value: 'keyboard' } })
     fireEvent.keyDown(search, { key: 'Enter' })
 
-    const shortcuts = screen.getByRole('dialog', { name: 'Keyboard shortcuts' })
-    expect(shortcuts).toBeTruthy()
-    expect(within(shortcuts).getByText('Command palette')).toBeTruthy()
-    expect(within(shortcuts).getByText('⌘K')).toBeTruthy()
+    const settings = screen.getByRole('dialog', { name: 'Settings' })
+    expect(within(settings).getByRole('heading', { name: 'Keybinds' })).toBeTruthy()
+    expect(within(settings).getByText('Command palette')).toBeTruthy()
+    expect(
+      within(settings).getByRole('button', { name: 'Change Command palette keybind' }).textContent,
+    ).toBe('⌘K')
 
-    fireEvent.keyDown(shortcuts, { key: 'n', metaKey: true })
-    expect(screen.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeTruthy()
+    fireEvent.keyDown(settings, { key: 'n', metaKey: true })
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy()
 
-    fireEvent.keyDown(shortcuts, { key: 'Escape' })
-    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull()
+    fireEvent.keyDown(settings, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull()
+  })
+
+  it('persists a custom keybind and updates both behavior and shortcut hints', async () => {
+    const view = render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    fireEvent.keyDown(window, { key: ',', metaKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Keybinds' }))
+    const recorder = screen.getByRole('button', { name: 'Change New chat keybind' })
+    fireEvent.click(recorder)
+    fireEvent.keyDown(recorder, { key: 'g', metaKey: true })
+
+    expect(recorder.textContent).toBe('⌘G')
+    expect(localStorage.getItem('harness.keybindings.v1')).toContain('newChat')
+    view.unmount()
+
+    transport.request.mockClear()
+    render(<App />)
+    const newChat = await screen.findByRole('button', { name: 'New chat' })
+    expect(newChat.getAttribute('aria-keyshortcuts')).toBe('Meta+G Control+G')
+
+    fireEvent.keyDown(window, { key: 'n', metaKey: true })
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', {
+      threadId: 'untouched-thread',
+    })
+
+    fireEvent.keyDown(window, { key: 'g', metaKey: true })
+    expect(transport.request).toHaveBeenCalledWith('thread.delete', {
+      threadId: 'untouched-thread',
+    })
   })
 
   it('opens the project switcher directly without rendering a top project control', async () => {
@@ -3528,7 +4801,7 @@ describe('global shortcuts', () => {
     })
     expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull()
     expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull()
-    expect((composer as HTMLTextAreaElement).value).toBe('Keep this draft intact')
+    expect(requiredInstance(composer, HTMLTextAreaElement).value).toBe('Keep this draft intact')
 
     composer.blur()
     fireEvent.keyDown(window, { key: 'n', metaKey: true })
@@ -3560,7 +4833,7 @@ describe('live sessions', () => {
     const start = new Promise<{ threadId: string }>((resolve) => {
       resolveStart = resolve
     })
-    transport.request.mockImplementation((method: string, params: unknown) =>
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
       method === 'thread.start' ? start : request(method, params),
     )
 
@@ -3601,8 +4874,13 @@ describe('live sessions', () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     let resolveHistory!: (value: { events: []; running: false }) => void
-    // prettier-ignore
-    transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.history' ? new Promise((resolve) => (resolveHistory = resolve)) : method === 'thread.sendTurn' ? new Promise(() => {}) : request(method, params))
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
+      method === 'thread.history'
+        ? new Promise((resolve) => (resolveHistory = resolve))
+        : method === 'thread.sendTurn'
+          ? new Promise(() => {})
+          : request(method, params),
+    )
 
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: /^Old chat,/ }))
@@ -3622,52 +4900,114 @@ describe('live sessions', () => {
     expect(screen.getByTestId('thread').textContent).toContain('Continue immediately')
     expect(screen.getByTestId('thread').getAttribute('data-started-at')).toBe(startedAt)
   })
-
-  // prettier-ignore
-  it.each([['turn', 'accepted'], ['turn', 'rejected'], ['queue', 'accepted'], ['queue', 'rejected']] as const)(
+  it.each([
+    ['turn', 'accepted'],
+    ['turn', 'rejected'],
+    ['queue', 'accepted'],
+    ['queue', 'rejected'],
+  ] as const)(
     'settles an indeterminate %s as %s only after reconnect history',
     async (kind, outcome) => {
-      // prettier-ignore
-      serverProjects = [{ path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [{ id: 'thread-1', title: 'Existing work', running: false }, { id: 'thread-2', title: 'Background', running: false }] }]
+      serverProjects = [
+        {
+          path: '/work/project',
+          name: 'project',
+          pinned: false,
+          createdAt: 0,
+          sessions: [
+            { id: 'thread-1', title: 'Existing work', running: false },
+            { id: 'thread-2', title: 'Background', running: false },
+          ],
+        },
+      ]
       const request = transport.request.getMockImplementation()!
       let historyCount = 0
-      const resyncs: Array<(value: { events: unknown[]; running: boolean }) => void> = []
+      const resyncs: Array<(value: { events: TestBoundary[]; running: boolean }) => void> = []
       let rejectSend!: (error: Error) => void
-      // prettier-ignore
-      const started = { seq: 1, event: { type: 'turn.started', turn: { id: 't', threadId: 'thread-1', status: 'running', createdAt: 1 } } } as const
-      // prettier-ignore
-      const reconnect = () => act(() => { for (const listener of transport.stateListeners) listener('reconnecting'); for (const listener of transport.stateListeners) listener('open') })
-      // prettier-ignore
-      transport.request.mockImplementation((method: string, params: unknown) => method === 'thread.sendTurn' ? new Promise((_, reject) => (rejectSend = reject)) : method === 'thread.history' && historyCount++ > 0 ? new Promise((resolve) => resyncs.push(resolve)) : request(method, params))
+      const started = {
+        seq: 1,
+        event: {
+          type: 'turn.started',
+          turn: { id: 't', threadId: 'thread-1', status: 'running', createdAt: 1 },
+        },
+      } as const
+      const reconnect = () =>
+        act(() => {
+          for (const listener of transport.stateListeners) listener('reconnecting')
+          for (const listener of transport.stateListeners) listener('open')
+        })
+      transport.request.mockImplementation((method: string, params: TestBoundary) =>
+        method === 'thread.sendTurn'
+          ? new Promise((_, reject) => (rejectSend = reject))
+          : method === 'thread.history' && historyCount++ > 0
+            ? new Promise((resolve) => resyncs.push(resolve))
+            : request(method, params),
+      )
       render(<App />)
       fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
       if (kind === 'queue') emitThreadEvent('thread-1', started.event)
       const composer = screen.getByPlaceholderText('Do anything')
-      const draft = () => (composer as HTMLTextAreaElement).value
+      const draft = () => requiredInstance(composer, HTMLTextAreaElement).value
       if (kind === 'queue') await (reconnect(), waitFor(() => expect(resyncs).toHaveLength(1)))
       dropFile(composer, '/work/retry.png')
       fireEvent.change(composer, { target: { value: 'Submit exactly once' } })
       fireEvent.keyDown(composer, { key: 'Enter' })
-      // prettier-ignore
-      const submissionId = (transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')?.[1] as { clientSubmissionId: string }).clientSubmissionId
-      // prettier-ignore
-      const accepted = { seq: 2, event: { type: 'item.completed', item: { id: submissionId, turnId: 'turn-1', type: 'message', role: 'user', status: 'completed', text: 'Submit exactly once', createdAt: 1 } } } as const
+      const sendCall = transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')
+      if (!sendCall) throw new Error('missing thread.sendTurn call')
+      const submissionId = requiredValue(
+        methods['thread.sendTurn'].params.parse(sendCall[1]).clientSubmissionId,
+        'client submission ID',
+      )
+      const accepted = {
+        seq: 2,
+        event: {
+          type: 'item.completed',
+          item: {
+            id: submissionId,
+            turnId: 'turn-1',
+            type: 'message',
+            role: 'user',
+            status: 'completed',
+            text: 'Submit exactly once',
+            createdAt: 1,
+          },
+        },
+      } as const
       await act(async () => rejectSend(new IndeterminateRequestError('socket lost')))
-      if (kind === 'queue') await act(async () => resyncs[0]?.({ events: [started], running: true }))
+      if (kind === 'queue')
+        await act(async () => resyncs[0]?.({ events: [started], running: true }))
       else reconnect()
       await waitFor(() => expect(resyncs).toHaveLength(kind === 'queue' ? 2 : 1))
-      // prettier-ignore
-      expect([kind === 'queue' ? screen.queryByLabelText('Queued prompts')?.textContent : screen.getByTestId('thread').textContent, draft()]).toEqual([expect.stringContaining('Submit exactly once'), ''])
+      expect([
+        kind === 'queue'
+          ? screen.queryByLabelText('Queued prompts')?.textContent
+          : screen.getByTestId('thread').textContent,
+        draft(),
+      ]).toEqual([expect.stringContaining('Submit exactly once'), ''])
       if (kind === 'turn' && outcome === 'accepted') emitThreadEvent('thread-1', started.event)
-      // prettier-ignore
-      await act(async () => resyncs.at(-1)?.({ events: outcome === 'rejected' && kind === 'turn' ? [started] : outcome === 'accepted' && kind === 'queue' ? [accepted] : [], running: kind === 'queue' }))
+      await act(async () =>
+        resyncs.at(-1)?.({
+          events:
+            outcome === 'rejected' && kind === 'turn'
+              ? [started]
+              : outcome === 'accepted' && kind === 'queue'
+                ? [accepted]
+                : [],
+          running: kind === 'queue',
+        }),
+      )
       if (outcome === 'accepted') {
         emitThreadEvent('thread-1', accepted.event)
-        // prettier-ignore
-        expect([draft(), screen.getByText('Submit exactly once').dataset.itemId]).toEqual(['', submissionId])
+        expect([draft(), screen.getByText('Submit exactly once').dataset.itemId]).toEqual([
+          '',
+          submissionId,
+        ])
       } else {
-        // prettier-ignore
-        expect([within(screen.getByTestId('thread')).queryByText('Submit exactly once'), kind === 'turn' ? screen.queryByText('Working') : null, draft()]).toEqual([null, null, 'Submit exactly once'])
+        expect([
+          within(screen.getByTestId('thread')).queryByText('Submit exactly once'),
+          kind === 'turn' ? screen.queryByText('Working') : null,
+          draft(),
+        ]).toEqual([null, null, 'Submit exactly once'])
         expect(screen.getByRole('button', { name: 'Remove retry.png' })).toBeTruthy()
       }
       if (kind !== 'queue') return
@@ -3703,7 +5043,7 @@ describe('live sessions', () => {
     const pendingSend = new Promise((_, reject) => {
       rejectSend = reject
     })
-    transport.request.mockImplementation((method: string, params: unknown) =>
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
       method === 'thread.sendTurn' ? pendingSend : request(method, params),
     )
 
@@ -3718,7 +5058,7 @@ describe('live sessions', () => {
 
     expect(screen.getByTestId('thread').textContent).toContain('Keep this if restore wins')
     expect(screen.getByText('Working')).toBeTruthy()
-    expect((composer as HTMLTextAreaElement).value).toBe('')
+    expect(requiredInstance(composer, HTMLTextAreaElement).value).toBe('')
 
     await act(async () => {
       rejectSend?.(new Error('cannot start a turn while restoring a checkpoint'))
@@ -3726,7 +5066,9 @@ describe('live sessions', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('thread').textContent).not.toContain('Keep this if restore wins')
-      expect((composer as HTMLTextAreaElement).value).toBe('Keep this if restore wins')
+      expect(requiredInstance(composer, HTMLTextAreaElement).value).toBe(
+        'Keep this if restore wins',
+      )
       expect(screen.getByRole('button', { name: 'Remove reference.png' })).toBeTruthy()
     })
     expect(screen.queryByText('Working')).toBeNull()
@@ -3737,7 +5079,7 @@ describe('live sessions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove reference.png' }))
     fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
     fireEvent.click(screen.getByRole('button', { name: /^Old chat,/ }))
-    expect((composer as HTMLTextAreaElement).value).toBe('Keep this if restore wins')
+    expect(requiredInstance(composer, HTMLTextAreaElement).value).toBe('Keep this if restore wins')
     expect(screen.queryByRole('button', { name: 'Remove reference.png' })).toBeNull()
   })
 
@@ -3753,11 +5095,11 @@ describe('live sessions', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    let resolveSend: ((result: unknown) => void) | undefined
+    let resolveSend: ((result: TestBoundary) => void) | undefined
     const sendResult = new Promise((resolve) => {
       resolveSend = resolve
     })
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'thread.sendTurn') {
         return sendResult
       }
@@ -3782,7 +5124,12 @@ describe('live sessions', () => {
     let submissionId = ''
     await waitFor(() => {
       const call = transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')
-      submissionId = (call?.[1] as { clientSubmissionId?: string }).clientSubmissionId ?? ''
+      submissionId = call
+        ? requiredValue(
+            methods['thread.sendTurn'].params.parse(call[1]).clientSubmissionId,
+            'client submission ID',
+          )
+        : ''
       expect(submissionId).toMatch(/^local:/)
     })
     await act(async () =>
@@ -3820,7 +5167,7 @@ describe('live sessions', () => {
         queuedTurn: { id: string; text: string; attachments: string[]; createdAt: number }
       }) => void
     > = []
-    transport.request.mockImplementation((method: string, params: unknown) =>
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
       method === 'thread.sendTurn'
         ? new Promise((resolve) => sends.push(resolve))
         : request(method, params),
@@ -3881,7 +5228,9 @@ describe('live sessions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
     expect(transport.request).toHaveBeenCalledWith('thread.interrupt', { threadId: 'thread-1' })
 
-    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(
+      requiredInstance(screen.getByRole('button', { name: 'Send' }), HTMLButtonElement).disabled,
+    ).toBe(true)
     expect(screen.queryByText('Working')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Stopping…' })).toBeNull()
 
@@ -3907,7 +5256,7 @@ describe('live sessions', () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     let submissionId = ''
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'thread.history') {
         return Promise.resolve({
           events: [
@@ -3928,7 +5277,10 @@ describe('live sessions', () => {
         })
       }
       if (method === 'thread.sendTurn') {
-        submissionId = (params as { clientSubmissionId?: string }).clientSubmissionId ?? ''
+        submissionId = requiredValue(
+          methods[method].params.parse(params).clientSubmissionId,
+          'client submission ID',
+        )
         return Promise.resolve({
           queued: true,
           queuedTurn: {
@@ -4193,7 +5545,9 @@ describe('live sessions', () => {
     render(<App />)
     await screen.findByRole('button', { name: /^New session,/ })
     const branchPicker = await screen.findByRole('button', { name: 'Choose branch' })
-    await waitFor(() => expect((branchPicker as HTMLButtonElement).disabled).toBe(false))
+    await waitFor(() =>
+      expect(requiredInstance(branchPicker, HTMLButtonElement).disabled).toBe(false),
+    )
     appRenders.mockClear()
 
     const opener = screen.getByRole('button', { name: 'Search chats' })
@@ -4291,7 +5645,7 @@ describe('live sessions', () => {
     const history = new Promise<{ events: []; running: false }>((resolve) => {
       resolveHistory = resolve
     })
-    transport.request.mockImplementation((method: string, params: unknown) =>
+    transport.request.mockImplementation((method: string, params: TestBoundary) =>
       method === 'thread.history' ? history : defaultRequest(method, params),
     )
     render(<App />)
@@ -4457,8 +5811,21 @@ function emitThreadEvent(threadId: string, event: DomainEvent, seq?: number) {
 }
 
 function completedHistoryEvent(seq: number, id: string, text: string) {
-  // prettier-ignore
-  return { seq, event: { type: 'item.completed' as const, item: { id, turnId: 'turn-1', type: 'message' as const, role: 'assistant' as const, status: 'completed' as const, text, createdAt: seq } } }
+  return {
+    seq,
+    event: {
+      type: 'item.completed' as const,
+      item: {
+        id,
+        turnId: 'turn-1',
+        type: 'message' as const,
+        role: 'assistant' as const,
+        status: 'completed' as const,
+        text,
+        createdAt: seq,
+      },
+    },
+  }
 }
 
 function emitQueue(
@@ -4503,7 +5870,7 @@ describe('reopening a session', () => {
   it('uses a visible same-source model when the remembered one is hidden', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'models.list') {
         return Promise.resolve({
           models: [
@@ -4592,7 +5959,7 @@ describe('reopening a session', () => {
     })
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'providers.list') {
         return modelsGate.then(() => ({ providers: serverProviders }))
       }
@@ -4629,7 +5996,7 @@ describe('reopening a session', () => {
   it('preserves exact parked ACP memory without offering its loaded source', async () => {
     serverProjects = [
       {
-        ...(serverProjects[0] as Record<string, unknown>),
+        ...serverProjects[0]!,
         sessions: [
           {
             id: 'acp-thread',
@@ -4660,7 +6027,10 @@ describe('reopening a session', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
     const composer = screen.getByPlaceholderText('Do anything')
-    const sendButton = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
+    const sendButton = requiredInstance(
+      screen.getByRole('button', { name: 'Send' }),
+      HTMLButtonElement,
+    )
     fireEvent.change(composer, { target: { value: 'Start on the beta source' } })
     await waitFor(() => expect(sendButton.disabled).toBe(false))
     fireEvent.keyDown(composer, { key: 'Enter' })
@@ -4672,16 +6042,16 @@ describe('reopening a session', () => {
     serverProviders = [
       ...serverProviders,
       {
-        ...(serverProviders[0] as Record<string, unknown>),
+        ...serverProviders[0]!,
         id: 'claude-code',
         displayName: 'Claude Code',
       },
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'models.list') {
-        const claude = (params as { provider: string }).provider === 'claude-code'
+        const claude = methods['models.list'].params.parse(params).provider === 'claude-code'
         return Promise.resolve({
           models: [
             {
@@ -4730,7 +6100,7 @@ describe('reopening a session', () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     let historyRead = 0
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'thread.history') {
         historyRead += 1
         return Promise.resolve(
@@ -4812,9 +6182,9 @@ describe('reopening a session', () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     let foregroundReads = 0
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method !== 'thread.history') return request(method, params)
-      const { threadId } = params as { threadId: string }
+      const { threadId } = methods['thread.history'].params.parse(params)
       if (threadId !== 'thread-1') return Promise.resolve({ events: [], running: false })
       foregroundReads += 1
       return Promise.resolve({
@@ -4851,7 +6221,7 @@ describe('reopening a session', () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     let historyRead = 0
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method !== 'thread.history') return request(method, params)
       historyRead += 1
       return Promise.resolve(
@@ -4982,7 +6352,7 @@ describe('reopening a session', () => {
     const historyResolvers: Array<
       (value: { events: Array<{ seq: number; event: DomainEvent }>; running: boolean }) => void
     > = []
-    transport.request.mockImplementation((method: string, params: unknown) => {
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
       if (method === 'thread.history') {
         return new Promise((resolve) => historyResolvers.push(resolve))
       }
@@ -5011,10 +6381,17 @@ describe('reopening a session', () => {
         createdAt: 3,
       },
     })
-    // prettier-ignore
-    emitThreadEvent('untouched-thread', { type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+    emitThreadEvent('untouched-thread', {
+      type: 'turn.completed',
+      turnId: 'turn-1',
+      status: 'completed',
+    })
 
-    const historyEvent = (id: string, text: string): { seq: number; event: DomainEvent } => ({
+    interface HistoryEnvelope {
+      seq: number
+      event: DomainEvent
+    }
+    const historyEvent = (id: string, text: string): HistoryEnvelope => ({
       seq: 1,
       event: {
         type: 'item.completed',

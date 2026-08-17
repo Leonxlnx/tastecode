@@ -1,9 +1,22 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { killTree } from './kill.js'
+import { propertiesWhen } from './properties-when.js'
+import { JsonRpcValueSchema, type JsonRpcValue } from './jsonrpc.js'
 
 export { killTree } from './kill.js'
 
-export { JsonRpcError, StdioJsonRpc, type JsonRpcId, type ServerRequestHandler } from './jsonrpc.js'
+export {
+  JsonRpcError,
+  JsonRpcValueSchema,
+  StdioJsonRpc,
+  type JsonRpcId,
+  type JsonRpcInput,
+  type JsonRpcRequestOptions,
+  type JsonRpcResultParser,
+  type JsonRpcValue,
+  type ParsedJsonRpcRequestOptions,
+  type ServerRequestHandler,
+} from './jsonrpc.js'
 
 /**
  * Spawn a CLI that may have been installed as an npm shim.
@@ -22,7 +35,7 @@ export function spawnCli(
   options: { cwd?: string; env?: NodeJS.ProcessEnv; replaceEnv?: boolean } = {},
 ): ChildProcessWithoutNullStreams {
   const spawnOptions = {
-    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    ...propertiesWhen(!(options.cwd === undefined), () => ({ cwd: options.cwd })),
     env: options.replaceEnv ? options.env : { ...process.env, ...options.env },
     stdio: ['pipe', 'pipe', 'pipe'] satisfies Array<'pipe'>,
     windowsHide: true,
@@ -127,7 +140,7 @@ export function runCli(
  */
 export function readNdjson(
   stream: NodeJS.ReadableStream,
-  onValue: (value: unknown) => void,
+  onValue: (value: JsonRpcValue) => void,
   onUnparsable?: (line: string) => void,
 ): void {
   let buffer = ''
@@ -140,7 +153,7 @@ export function readNdjson(
       buffer = buffer.slice(newline + 1)
       if (line === '') continue
       try {
-        onValue(JSON.parse(line))
+        onValue(JsonRpcValueSchema.parse(JSON.parse(line)))
       } catch {
         onUnparsable?.(line)
       }
@@ -152,7 +165,7 @@ export function readNdjson(
     const line = buffer.trim()
     if (line === '') return
     try {
-      onValue(JSON.parse(line))
+      onValue(JsonRpcValueSchema.parse(JSON.parse(line)))
     } catch {
       onUnparsable?.(line)
     }

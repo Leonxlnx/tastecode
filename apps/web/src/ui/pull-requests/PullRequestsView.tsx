@@ -7,19 +7,27 @@ import type {
 import {
   ChevronLeft,
   CircleAlert,
+  FolderGit2,
+  GitBranch,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
   GitPullRequestDraft,
   Inbox,
   ListFilter,
+  MessageSquareText,
   RefreshCw,
+  RotateCcw,
   Search,
+  UserRound,
+  type LucideIcon,
 } from 'lucide-react'
 import type { Transport } from '../../transport.js'
+import { errorMessage as messageOf } from '../../boundary.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { PullRequestDetailPane } from './PullRequestDetailPane.js'
 import './pull-requests.css'
+import { propertiesWhen } from '../../properties-when.js'
 
 type PullRequestFilter = 'all' | 'reviewing' | 'authored'
 type PullRequestStatusFilter = 'all' | 'open' | 'draft' | 'merged' | 'closed'
@@ -34,6 +42,19 @@ type PullRequestFilters = {
   author: string | undefined
   base: string | undefined
 }
+
+const PULL_REQUEST_FILTER_CATEGORIES: ReadonlyArray<{
+  value: PullRequestFilterCategory
+  label: string
+  icon: LucideIcon
+}> = [
+  { value: 'status', label: 'State', icon: GitPullRequest },
+  { value: 'review', label: 'Review', icon: MessageSquareText },
+  { value: 'merge', label: 'Merge status', icon: GitMerge },
+  { value: 'repository', label: 'Repository', icon: FolderGit2 },
+  { value: 'author', label: 'Author', icon: UserRound },
+  { value: 'base', label: 'Base branch', icon: GitBranch },
+]
 
 const DEFAULT_PULL_REQUEST_FILTERS: PullRequestFilters = {
   status: 'all',
@@ -373,15 +394,8 @@ function PullRequestFilterMenu(props: {
 }) {
   const [category, setCategory] = useState<PullRequestFilterCategory>()
   const activeCount = countActivePullRequestFilters(props.value)
-  const categories: Array<{ value: PullRequestFilterCategory; label: string }> = [
-    { value: 'status', label: 'State' },
-    { value: 'review', label: 'Review' },
-    { value: 'merge', label: 'Merge status' },
-    { value: 'repository', label: 'Repository' },
-    { value: 'author', label: 'Author' },
-    { value: 'base', label: 'Base branch' },
-  ]
-  const selectedCategory = categories.find((entry) => entry.value === category)
+  const selectedCategory = PULL_REQUEST_FILTER_CATEGORIES.find((entry) => entry.value === category)
+  const SelectedCategoryIcon = selectedCategory?.icon
   const options = selectedCategory
     ? pullRequestFilterOptions(selectedCategory.value, props.items, props.value)
     : []
@@ -416,6 +430,13 @@ function PullRequestFilterMenu(props: {
                 <MenuItem
                   key={option.key}
                   title={option.label}
+                  icon={
+                    SelectedCategoryIcon ? (
+                      <SelectedCategoryIcon size={14} aria-hidden />
+                    ) : (
+                      <ListFilter size={14} aria-hidden />
+                    )
+                  }
                   detail={`${option.count.toLocaleString()} pull requests`}
                   active={option.selected}
                   onClick={() => {
@@ -435,15 +456,18 @@ function PullRequestFilterMenu(props: {
                   disabled={activeCount === 0}
                   onClick={() => props.onChange(DEFAULT_PULL_REQUEST_FILTERS)}
                 >
-                  Clear all
+                  <RotateCcw size={12} aria-hidden />
+                  <span>Clear all</span>
                 </button>
               </div>
-              {categories.map((entry) => {
+              {PULL_REQUEST_FILTER_CATEGORIES.map((entry) => {
                 const selection = pullRequestFilterSelectionLabel(entry.value, props.value)
+                const CategoryIcon = entry.icon
                 return (
                   <MenuItem
                     key={entry.value}
                     title={entry.label}
+                    icon={<CategoryIcon size={14} aria-hidden />}
                     detail={selection}
                     active={pullRequestFilterCategoryIsActive(entry.value, props.value)}
                     onClick={() => setCategory(entry.value)}
@@ -514,10 +538,16 @@ function listItemFromDetail(detail: PullRequestDetail): PullRequestListItem {
     commentsCount: detail.commentsCount,
     headRefName: detail.headRefName,
     baseRefName: detail.baseRefName,
-    ...(detail.reviewDecision ? { reviewDecision: detail.reviewDecision } : {}),
-    ...(detail.mergeStateStatus ? { mergeStateStatus: detail.mergeStateStatus } : {}),
+    ...propertiesWhen(detail.reviewDecision, (includedValue) => ({
+      reviewDecision: includedValue,
+    })),
+    ...propertiesWhen(detail.mergeStateStatus, (includedValue) => ({
+      mergeStateStatus: includedValue,
+    })),
     relationship: detail.relationship,
-    ...(detail.localProjectPath ? { localProjectPath: detail.localProjectPath } : {}),
+    ...propertiesWhen(detail.localProjectPath, (includedValue) => ({
+      localProjectPath: includedValue,
+    })),
   }
 }
 
@@ -777,8 +807,4 @@ function relativeTime(value: string): string {
 
 function capitalize(value: string): string {
   return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

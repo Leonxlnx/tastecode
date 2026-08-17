@@ -1,6 +1,7 @@
 import type { DesignBrief } from './brief.js'
 import { parseBrandSystem, type BrandSystem } from './brand.js'
 import { generatePalette, paletteColorRecords } from './palette.js'
+import { type BoundaryValue, record } from './parse.js'
 
 const BRAND_PROTOCOL = `Return the final brand system as JSON only, without Markdown fences:
 
@@ -38,8 +39,14 @@ ${JSON.stringify(brief, null, 2)}
 
 export function parseBrandPhaseOutput(text: string): BrandSystem {
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
-  const value: unknown = JSON.parse(fenced?.[1] ?? text)
-  if (!isRecord(value) || value.paletteRecipe === undefined) return parseBrandSystem(value)
+  const parsed: BoundaryValue = JSON.parse(fenced?.[1] ?? text)
+  let value
+  try {
+    value = record(parsed, 'brand output')
+  } catch {
+    return parseBrandSystem(parsed)
+  }
+  if (value.paletteRecipe === undefined) return parseBrandSystem(value)
   if (value.colorPalette !== undefined) {
     throw new Error('brand output must contain paletteRecipe or colorPalette, not both')
   }
@@ -51,8 +58,4 @@ export function parseBrandPhaseOutput(text: string): BrandSystem {
   }
   const { paletteRecipe: _, ...brand } = value
   return parseBrandSystem({ ...brand, colorPalette: paletteColorRecords(palette.value) })
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

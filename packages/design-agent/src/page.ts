@@ -1,5 +1,16 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import {
+  array,
+  type BoundaryValue,
+  integer,
+  list,
+  member,
+  record,
+  string,
+  strings,
+} from './parse.js'
+import { propertiesWhen } from './properties-when.js'
 
 export interface PageLink {
   label: string
@@ -115,7 +126,7 @@ export interface PageBlueprint {
   acceptanceCriteria: string[]
 }
 
-export function parsePageBlueprint(value: unknown): PageBlueprint {
+export function parsePageBlueprint(value: BoundaryValue): PageBlueprint {
   const blueprint = record(value, 'page blueprint')
   if (blueprint.version !== 1) throw new Error('page blueprint version must be 1')
 
@@ -132,18 +143,16 @@ export function parsePageBlueprint(value: unknown): PageBlueprint {
     }
     return {
       id: string(section.id, `sections[${index}].id`),
-      ...(section.layoutFamily === undefined
-        ? {}
-        : {
-            layoutFamily: member(
-              section.layoutFamily,
-              PAGE_LAYOUT_FAMILIES,
-              `sections[${index}].layoutFamily`,
-            ),
-          }),
-      ...(section.layoutCases === undefined
-        ? {}
-        : { layoutCases: strings(section.layoutCases, `sections[${index}].layoutCases`) }),
+      ...propertiesWhen(!(section.layoutFamily === undefined), () => ({
+        layoutFamily: member(
+          section.layoutFamily,
+          PAGE_LAYOUT_FAMILIES,
+          `sections[${index}].layoutFamily`,
+        ),
+      })),
+      ...propertiesWhen(!(section.layoutCases === undefined), () => ({
+        layoutCases: strings(section.layoutCases, `sections[${index}].layoutCases`),
+      })),
       purpose: string(section.purpose, `sections[${index}].purpose`),
       userQuestion:
         section.userQuestion === undefined
@@ -180,7 +189,9 @@ export function parsePageBlueprint(value: unknown): PageBlueprint {
         callsToAction: links(copy.callsToAction, `sections[${index}].copy.callsToAction`),
       },
       layout: string(section.layout, `sections[${index}].layout`),
-      ...(section.motion === undefined ? {} : { motion: parseMotion(section.motion, index) }),
+      ...propertiesWhen(!(section.motion === undefined), () => ({
+        motion: parseMotion(section.motion, index),
+      })),
       componentNeeds: strings(section.componentNeeds, `sections[${index}].componentNeeds`),
       assetNeeds: strings(section.assetNeeds, `sections[${index}].assetNeeds`),
       transformation:
@@ -249,9 +260,9 @@ export function parsePageBlueprint(value: unknown): PageBlueprint {
           rhythm: 'Preserve the recorded section order.',
         },
     navigation: links(blueprint.navigation, 'navigation'),
-    ...(blueprint.navigationDesign === undefined
-      ? {}
-      : { navigationDesign: parseNavigationDesign(blueprint.navigationDesign) }),
+    ...propertiesWhen(!(blueprint.navigationDesign === undefined), () => ({
+      navigationDesign: parseNavigationDesign(blueprint.navigationDesign),
+    })),
     sections,
     responsive: strings(blueprint.responsive, 'responsive'),
     interactions: strings(blueprint.interactions, 'interactions'),
@@ -259,13 +270,13 @@ export function parsePageBlueprint(value: unknown): PageBlueprint {
   }
 }
 
-function parseNavigationDesign(value: unknown): PageNavigationDesign {
+function parseNavigationDesign(value: BoundaryValue): PageNavigationDesign {
   const navigation = record(value, 'navigationDesign')
   const responsive = record(navigation.transformation, 'navigationDesign.transformation')
   return {
-    ...(navigation.layoutCase === undefined
-      ? {}
-      : { layoutCase: string(navigation.layoutCase, 'navigationDesign.layoutCase') }),
+    ...propertiesWhen(!(navigation.layoutCase === undefined), () => ({
+      layoutCase: string(navigation.layoutCase, 'navigationDesign.layoutCase'),
+    })),
     layout: string(navigation.layout, 'navigationDesign.layout'),
     behavior: strings(navigation.behavior, 'navigationDesign.behavior'),
     transformation: {
@@ -277,7 +288,7 @@ function parseNavigationDesign(value: unknown): PageNavigationDesign {
 }
 
 function transformation(
-  value: unknown,
+  value: BoundaryValue,
   index: number,
 ): PageBlueprint['sections'][number]['transformation'] {
   const item = record(value, `sections[${index}].transformation`)
@@ -288,7 +299,7 @@ function transformation(
   }
 }
 
-function parseMotion(value: unknown, index: number): PageSectionMotion {
+function parseMotion(value: BoundaryValue, index: number): PageSectionMotion {
   const motion = record(value, `sections[${index}].motion`)
   const purpose = member(motion.purpose, PAGE_MOTION_PURPOSES, `sections[${index}].motion.purpose`)
   const trigger = member(motion.trigger, PAGE_MOTION_TRIGGERS, `sections[${index}].motion.trigger`)
@@ -313,7 +324,7 @@ export function readPageBlueprint(workspacePath: string): PageBlueprint {
   return parsePageBlueprint(JSON.parse(readFileSync(pagePath(workspacePath), 'utf8')))
 }
 
-export function writePageBlueprint(workspacePath: string, value: unknown): PageBlueprint {
+export function writePageBlueprint(workspacePath: string, value: BoundaryValue): PageBlueprint {
   const blueprint = parsePageBlueprint(value)
   const outputPath = pagePath(workspacePath)
   mkdirSync(path.dirname(outputPath), { recursive: true })
@@ -325,9 +336,8 @@ function pagePath(workspacePath: string): string {
   return path.join(workspacePath, '.taste', 'page.json')
 }
 
-function links(value: unknown, field: string): PageLink[] {
-  if (!Array.isArray(value)) throw new Error(`${field} must be an array`)
-  return value.map((value, index) => {
+function links(value: BoundaryValue, field: string): PageLink[] {
+  return list(value, field).map((value, index) => {
     const link = record(value, `${field}[${index}]`)
     return {
       label: string(link.label, `${field}[${index}].label`),
@@ -336,50 +346,8 @@ function links(value: unknown, field: string): PageLink[] {
   })
 }
 
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${field} must be an object`)
-  }
-  return value as Record<string, unknown>
-}
-
-function array(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error(`${field} must be a non-empty array`)
-  }
-  return value
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`${field} must be a non-empty string`)
-  }
-  return value
-}
-
-function strings(value: unknown, field: string): string[] {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string' && item.trim())) {
-    throw new Error(`${field} must be a string array`)
-  }
-  return value
-}
-
-function route(value: unknown): string {
+function route(value: BoundaryValue): string {
   const result = string(value, 'page.route')
   if (!result.startsWith('/')) throw new Error('page.route must start with /')
   return result
-}
-
-function integer(value: unknown, field: string, minimum: number, maximum: number): number {
-  if (!Number.isInteger(value) || (value as number) < minimum || (value as number) > maximum) {
-    throw new Error(`${field} must be an integer from ${minimum} to ${maximum}`)
-  }
-  return value as number
-}
-
-function member<T extends string>(value: unknown, values: readonly T[], field: string): T {
-  if (typeof value !== 'string' || !values.includes(value as T)) {
-    throw new Error(`${field} must be one of ${values.join(', ')}`)
-  }
-  return value as T
 }

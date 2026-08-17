@@ -1,4 +1,6 @@
 import type { Session, WebContents } from 'electron'
+import { z } from 'zod'
+import type { BoundaryValue } from './boundary.js'
 
 const BROWSER_PARTITION = 'persist:harness-browser'
 const configuredSessions = new WeakSet<Session>()
@@ -33,7 +35,7 @@ export function configureEmbeddedBrowser(owner: WebContents): void {
 
     guest.setWindowOpenHandler(({ url }) => {
       if (isBrowserGuestUrl(url)) {
-        void guest.loadURL(url).catch((error: unknown) => {
+        void guest.loadURL(url).catch((error) => {
           console.warn('[browser] failed to open guest link', error)
         })
       }
@@ -49,18 +51,20 @@ export function configureEmbeddedBrowser(owner: WebContents): void {
   })
 }
 
-export function browserGuestUrl(value: unknown): string {
-  if (typeof value !== 'string' || !isBrowserGuestUrl(value)) {
+export function browserGuestUrl(value: BoundaryValue): string {
+  const parsed = z.string().safeParse(value)
+  if (!parsed.success || !isBrowserGuestUrl(parsed.data)) {
     throw new Error('Invalid browser URL')
   }
-  return value
+  return parsed.data
 }
 
-export function isBrowserGuestUrl(value: unknown, allowBlank = false): value is string {
-  if (allowBlank && value === 'about:blank') return true
-  if (typeof value !== 'string') return false
+export function isBrowserGuestUrl(value: BoundaryValue, allowBlank = false): value is string {
+  const parsed = z.string().safeParse(value)
+  if (!parsed.success) return false
+  if (allowBlank && parsed.data === 'about:blank') return true
   try {
-    const url = new URL(value)
+    const url = new URL(parsed.data)
     return url.protocol === 'https:' || url.protocol === 'http:'
   } catch {
     return false

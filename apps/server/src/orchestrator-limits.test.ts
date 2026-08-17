@@ -1,54 +1,43 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { CodexAdapter, type CodexLimitSource } from '@harness/adapter-codex'
+import type { ClaudeLimitSource } from '@harness/adapter-claude-code'
+import type { GrokLimitSource } from '@harness/adapter-grok'
 import { ProviderIdSchema } from '@harness/contracts'
 import { Store } from './store.js'
+import { Orchestrator } from './orchestrator.js'
 
-const sources = vi.hoisted(() => ({
-  codex: vi.fn(),
-  claude: vi.fn(),
-  grok: vi.fn(),
+const disposedIds: number[] = []
+const sources = {
+  codex: vi.fn<() => Promise<CodexLimitSource>>(),
+  claude: vi.fn<() => Promise<ClaudeLimitSource>>(),
+  grok: vi.fn<() => Promise<GrokLimitSource>>(),
   constructed: 0,
-  disposed: [] as number[],
-}))
+  disposed: disposedIds,
+}
 
-vi.mock('@harness/adapter-codex', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@harness/adapter-codex')>()
-  return {
-    ...original,
-    CodexAdapter: class {
-      readonly id = ++sources.constructed
-      on(): void {}
-      onUsageChanged(): void {}
-      dispose(): void {
-        sources.disposed.push(this.id)
-      }
-      async start(): Promise<void> {}
-      async account(): Promise<{ signedIn: boolean }> {
-        return { signedIn: true }
-      }
-      rateLimitSource(): Promise<unknown> {
-        return sources.codex()
-      }
-    },
+class TestCodexAdapter extends CodexAdapter {
+  readonly id = ++sources.constructed
+
+  override dispose(): void {
+    sources.disposed.push(this.id)
   }
-})
-
-vi.mock('@harness/adapter-claude-code', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@harness/adapter-claude-code')>()
-  return { ...original, claudeLimitSource: () => sources.claude() }
-})
-
-vi.mock('@harness/adapter-grok', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@harness/adapter-grok')>()
-  return { ...original, grokLimitSource: () => sources.grok() }
-})
-
-const { Orchestrator } = await import('./orchestrator.js')
+  override async start(): Promise<void> {}
+  override async account() {
+    return { signedIn: true }
+  }
+  override rateLimitSource(): Promise<CodexLimitSource> {
+    return sources.codex()
+  }
+}
 
 const orchestrator = () =>
   new Orchestrator(new Store(':memory:'), {
     onEvent: () => {},
     onLog: () => {},
     onLogin: () => {},
+    createCodexAdapter: () => new TestCodexAdapter(),
+    claudeLimitSource: sources.claude,
+    grokLimitSource: sources.grok,
   })
 
 beforeEach(() => {

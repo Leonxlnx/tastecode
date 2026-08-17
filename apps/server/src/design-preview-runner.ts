@@ -5,6 +5,7 @@ import { createServer } from 'node:net'
 import path from 'node:path'
 import type { PreviewPlan } from '@harness/design-agent'
 import { spawnCli } from '@harness/proc'
+import { z } from 'zod'
 import { existingWorkspacePath } from './api-workspace-paths.js'
 import { startStaticDesignPreview } from './design-static-preview.js'
 import { safeCommandEnvironment } from './safe-command-environment.js'
@@ -21,6 +22,10 @@ const PACKAGE_SCOPE_ARG =
   /^-(?:C|F|r|w)|^--(?:cwd|dir|prefix|filter(?:-prod)?|recursive|workspace(?:-root|s)?|include-workspace-root)(?:=|$)/
 const MAX_OUTPUT_BYTES = 100_000
 const startingPreviewPorts = new Set<number>()
+const PackageManifestSchema = z.object({
+  scripts: z.record(z.string(), z.string()).optional(),
+})
+const ErrorCodeSchema = z.object({ code: z.string().optional() })
 
 export type RunningPreview = {
   url: string
@@ -28,6 +33,8 @@ export type RunningPreview = {
   output: () => string
   stop: () => Promise<void>
 }
+
+export type PreviewChild = Pick<ChildProcessWithoutNullStreams, 'exitCode' | 'once'>
 
 export async function startDesignPreview(
   workspacePath: string,
@@ -177,9 +184,9 @@ export function assertRunsWorkspaceCode(
 
 function packageScripts(cwd: string): Set<string> {
   try {
-    const manifest = JSON.parse(readFileSync(path.join(cwd, 'package.json'), 'utf8')) as {
-      scripts?: Record<string, unknown>
-    }
+    const manifest = PackageManifestSchema.parse(
+      JSON.parse(readFileSync(path.join(cwd, 'package.json'), 'utf8')),
+    )
     return new Set(Object.keys(manifest.scripts ?? {}))
   } catch {
     return new Set()
@@ -187,7 +194,7 @@ function packageScripts(cwd: string): Set<string> {
 }
 
 export async function waitForPreview(
-  child: ChildProcessWithoutNullStreams,
+  child: PreviewChild,
   url: string,
   timeoutMs: number,
   output: () => string,
@@ -196,14 +203,14 @@ export async function waitForPreview(
   await Promise.race([pollForPreview(child, url, timeoutMs, output), childFailure])
 }
 
-export function watchPreviewChild(child: ChildProcessWithoutNullStreams): Promise<never> {
+export function watchPreviewChild(child: PreviewChild): Promise<never> {
   return new Promise<never>((_resolve, reject) => {
     child.once('error', (error) => reject(new Error(`preview failed to start: ${error.message}`)))
   })
 }
 
 async function pollForPreview(
-  child: ChildProcessWithoutNullStreams,
+  child: PreviewChild,
   url: string,
   timeoutMs: number,
   output: () => string,
@@ -266,7 +273,8 @@ function processGroupAlive(pid: number): boolean {
     process.kill(-pid, 0)
     return true
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
+    const parsed = ErrorCodeSchema.safeParse(error)
+    const code = parsed.success ? parsed.data.code : undefined
     if (code === 'ESRCH') return false
     if (code === 'EPERM') return true
     throw error
@@ -291,7 +299,8 @@ function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(-pid, signal)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+    const parsed = ErrorCodeSchema.safeParse(error)
+    if (!parsed.success || parsed.data.code !== 'ESRCH') throw error
   }
 }
 

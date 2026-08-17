@@ -20,7 +20,7 @@ type WatchedWindow = {
   isFocused(): boolean
   hide(): void
   show(): void
-  webContents: { executeJavaScript(code: string): Promise<unknown> }
+  webContents: { executeJavaScript(code: string): Promise<BoundaryValue> }
 }
 
 export const WATCHDOG_INTERVAL_MS = 15_000
@@ -55,9 +55,9 @@ export function startVisibilityWatchdog(
     void (async () => {
       try {
         if (window.isDestroyed()) return
-        const pageVisibility = (await window.webContents.executeJavaScript(
-          'document.visibilityState',
-        )) as string
+        const pageVisibility = z
+          .string()
+          .parse(await window.webContents.executeJavaScript('document.visibilityState'))
         if (stopped || window.isDestroyed()) return
         const nudge = needsCompositorNudge({
           destroyed: false,
@@ -82,3 +82,5 @@ export function startVisibilityWatchdog(
     clearInterval(timer)
   }
 }
+import { z } from 'zod'
+import type { BoundaryValue } from './boundary.js'

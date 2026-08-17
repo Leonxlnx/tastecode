@@ -47,17 +47,17 @@ const MEDIA_BY_EXTENSION = new Map<string, Omit<PreviewMediaDescriptor, 'path'>>
 
 export function pickedAttachment(filePath: string, secret: Buffer): PickedAttachment {
   const media = previewMedia(filePath)
-  const previewUrl = media ? signedAttachmentPreviewUrl(filePath, secret) : undefined
-  return {
+  const base = {
     path: filePath,
     name: path.basename(filePath),
-    ...(media && previewUrl
-      ? {
-          mediaType: media.mediaType,
-          previewUrl,
-          thumbnailUrl: `${previewUrl}?thumbnail=1`,
-        }
-      : {}),
+  }
+  if (!media) return base
+  const previewUrl = signedAttachmentPreviewUrl(filePath, secret)
+  return {
+    ...base,
+    mediaType: media.mediaType,
+    previewUrl,
+    thumbnailUrl: `${previewUrl}?thumbnail=1`,
   }
 }
 

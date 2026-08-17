@@ -1,6 +1,8 @@
 import type { WebSocket } from 'ws'
 import type { ChannelName, DataOf } from '@harness/contracts'
 
+export type PushSocket = Pick<WebSocket, 'OPEN' | 'readyState' | 'send' | 'terminate'>
+
 /**
  * All outbound pushes go through one ordered path.
  *
@@ -8,14 +10,14 @@ import type { ChannelName, DataOf } from '@harness/contracts'
  * missed something and can resync instead of silently diverging — the failure
  * mode that is impossible to debug after the fact.
  */
-export class PushBus {
-  #sockets = new Map<WebSocket, number>()
+export class PushBus<Socket extends PushSocket = WebSocket> {
+  #sockets = new Map<Socket, number>()
 
-  add(socket: WebSocket): void {
+  add(socket: Socket): void {
     this.#sockets.set(socket, 0)
   }
 
-  remove(socket: WebSocket): void {
+  remove(socket: Socket): void {
     this.#sockets.delete(socket)
   }
 
@@ -24,7 +26,7 @@ export class PushBus {
    * one client resetting its TCP connection cannot be allowed to starve every
    * other connection of the rest of a broadcast.
    */
-  send<C extends ChannelName>(socket: WebSocket, channel: C, data: DataOf<C>): void {
+  send<C extends ChannelName>(socket: Socket, channel: C, data: DataOf<C>): void {
     if (socket.readyState !== socket.OPEN) return
     // Never re-register a socket we have already dropped: restarting its
     // counter at 1 would send sequence numbers backwards mid-connection.

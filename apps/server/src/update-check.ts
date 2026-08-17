@@ -2,6 +2,8 @@ import { execFile } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ResultOf } from '@harness/contracts'
+import { z } from 'zod'
+import { propertiesWhen } from './properties-when.js'
 
 /**
  * Compare the running checkout against the GitHub default branch.
@@ -14,6 +16,15 @@ import type { ResultOf } from '@harness/contracts'
  */
 
 const REPO = 'Leonxlnx/tastecode'
+const GitHubCommitSchema = z.object({
+  sha: z.string().optional(),
+  commit: z
+    .object({
+      message: z.string().optional(),
+      committer: z.object({ date: z.string().optional() }).optional(),
+    })
+    .optional(),
+})
 
 type Probe = {
   head(): Promise<string | undefined>
@@ -40,13 +51,12 @@ const REAL_PROBE: Probe = {
       signal: AbortSignal.timeout(8_000),
     }).catch(() => undefined)
     if (response?.ok) {
-      const data = (await response.json()) as {
-        sha?: string
-        commit?: { message?: string; committer?: { date?: string } }
-      }
-      if (data.sha) {
+      const parsed = GitHubCommitSchema.safeParse(await response.json())
+      const sha = parsed.success ? parsed.data.sha : undefined
+      if (parsed.success && sha) {
+        const data = parsed.data
         return {
-          sha: data.sha,
+          sha,
           message: (data.commit?.message ?? '').split('\n')[0] ?? '',
           date: data.commit?.committer?.date ?? '',
         }
@@ -92,11 +102,14 @@ export async function checkForUpdates(
   }
 
   if ('error' in latest) {
-    return { ...(localCommit ? { localCommit } : {}), error: latest.error }
+    return {
+      ...propertiesWhen(localCommit, (localCommit) => ({ localCommit })),
+      error: latest.error,
+    }
   }
   return {
-    ...(localCommit ? { localCommit } : {}),
+    ...propertiesWhen(localCommit, (localCommit) => ({ localCommit })),
     remote: latest,
-    ...(localCommit ? { upToDate: localCommit === latest.sha } : {}),
+    ...propertiesWhen(localCommit, (includedValue) => ({ upToDate: includedValue === latest.sha })),
   }
 }

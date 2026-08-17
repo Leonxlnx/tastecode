@@ -1,5 +1,17 @@
 import type { AppUpdater, UpdateInfo } from 'electron-updater'
 
+type UpdateClient = Pick<
+  AppUpdater,
+  | 'allowDowngrade'
+  | 'allowPrerelease'
+  | 'autoDownload'
+  | 'autoInstallOnAppQuit'
+  | 'checkForUpdates'
+  | 'downloadUpdate'
+  | 'on'
+  | 'quitAndInstall'
+>
+
 export type AppUpdateState = {
   status: 'unsupported' | 'idle' | 'checking' | 'downloading' | 'current' | 'ready' | 'error'
   currentVersion: string
@@ -11,7 +23,7 @@ export type AppUpdateState = {
 type Timer = ReturnType<typeof setTimeout>
 
 export function createAppUpdateController(options: {
-  updater: AppUpdater
+  updater: UpdateClient
   currentVersion: string
   enabled: boolean
   setTimeoutFn?: typeof setTimeout

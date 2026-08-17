@@ -4,7 +4,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { McpConfigStore } from './mcp-config.js'
 
-function setup(): { project: string; location: string; store: McpConfigStore } {
+function setup() {
   const root = mkdtempSync(path.join(tmpdir(), 'harness-mcp-config-'))
   const project = path.join(root, 'project')
   mkdirSync(project)

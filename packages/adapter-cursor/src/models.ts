@@ -1,4 +1,5 @@
 import type { Model } from '@harness/contracts'
+import { propertiesWhen } from './properties-when.js'
 
 /**
  * Collapse cursor-agent's per-variant listing into base models.
@@ -95,10 +96,12 @@ function isUnmarked(variant: Variant): boolean {
   return !variant.fast && !DISPLAY_EFFORT_WORDS.test(variant.displayName)
 }
 
-export function collapseCursorModels(raw: RawCursorModel[]): {
+export type CollapsedCursorModels = {
   models: Model[]
   index: CursorModelIndex
-} {
+}
+
+export function collapseCursorModels(raw: RawCursorModel[]): CollapsedCursorModels {
   type Group = { stem: string; variants: Variant[] }
   const groups: Group[] = []
   for (const model of raw) {
@@ -144,11 +147,11 @@ export function collapseCursorModels(raw: RawCursorModel[]): {
       reasoningEfforts: hasEffortChoice
         ? [...efforts].sort((a, b) => effortRank(a) - effortRank(b))
         : [],
-      ...(hasEffortChoice && entry.defaultEffort
-        ? { defaultReasoningEffort: entry.defaultEffort }
-        : {}),
+      ...propertiesWhen(hasEffortChoice && entry.defaultEffort, () => ({
+        defaultReasoningEffort: entry.defaultEffort,
+      })),
       serviceTiers: hasFastTwin ? [STANDARD_TIER, FAST_TIER] : [],
-      ...(hasFastTwin ? { defaultServiceTier: STANDARD_TIER.id } : {}),
+      ...propertiesWhen(hasFastTwin, () => ({ defaultServiceTier: STANDARD_TIER.id })),
     })
   }
 

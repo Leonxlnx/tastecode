@@ -174,9 +174,7 @@ describe('page phase', () => {
   })
 
   it('rejects page-phase output without a concrete layout selection', () => {
-    const section = { ...page.sections[0] }
-    delete (section as Partial<typeof section>).layoutFamily
-    delete (section as Partial<typeof section>).layoutCases
+    const { layoutFamily: _layoutFamily, layoutCases: _layoutCases, ...section } = page.sections[0]!
 
     expect(() => parsePagePhaseOutput(JSON.stringify({ ...page, sections: [section] }))).toThrow(
       'must select a layoutFamily and layoutCases',

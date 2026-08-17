@@ -2,7 +2,7 @@
 import { createRef, useRef, useState } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Transport } from '../transport.js'
+import { TestTransport } from '../test-transport.js'
 import { SessionSearchHost, type SessionSearchHandle } from './SessionSearchHost.js'
 
 const PROJECTS = [
@@ -20,9 +20,10 @@ const PROJECTS = [
   },
 ]
 
-const transport = {
-  request: vi.fn(async () => ({ results: [], nextCursor: null })),
-} as unknown as Transport
+const transport = new TestTransport(async (method) => {
+  if (method === 'search.sessions') return { results: [], nextCursor: null }
+  throw new Error(`Unexpected request: ${method}`)
+})
 
 function SearchHost(props: { onSelect?: () => void }) {
   const search = useRef<SessionSearchHandle>(null)

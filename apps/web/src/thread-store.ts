@@ -7,6 +7,7 @@ import type {
   Usage,
   UserInputRequest,
 } from '@harness/contracts'
+import { propertiesWhen } from './properties-when.js'
 
 /**
  * Folds the domain event stream into what the UI renders.
@@ -220,14 +221,15 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       const existingIndex = state.items.findIndex((item) => item.id === event.item.id)
       if (existingIndex < 0) return { ...state, items: [...state.items, event.item] }
       const existing = state.items[existingIndex]
-      const optimistic = existing?.id.startsWith(OPTIMISTIC_PREFIX) && existing.turnId === ''
+      if (!existing) return state
+      const optimistic = existing.id.startsWith(OPTIMISTIC_PREFIX) && existing.turnId === ''
       // Completion is terminal. A buffered or retried start may arrive after
       // restored history and must never resurrect finished canonical work.
-      if (!optimistic && existing?.status !== 'started') return state
+      if (!optimistic && existing.status !== 'started') return state
       const items = state.items.slice()
       items[existingIndex] = {
         ...event.item,
-        ...(event.item.text || !existing?.text ? {} : { text: existing.text }),
+        ...propertiesWhen(!event.item.text && existing.text, (text) => ({ text })),
       }
       return { ...state, items }
     }
@@ -244,7 +246,10 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       // Keep streamed text when the completed payload carries none, so a
       // finished message never blanks out what the user just watched arrive.
       const streamed = items[index]?.text
-      items[index] = { ...event.item, ...(event.item.text ? {} : { text: streamed }) }
+      items[index] = {
+        ...event.item,
+        ...propertiesWhen(!event.item.text, () => ({ text: streamed })),
+      }
       return { ...state, items }
     }
 
@@ -381,11 +386,12 @@ class ReplayItems {
     }
 
     const existing = this.items[existingIndex]
-    const optimistic = existing?.id.startsWith(OPTIMISTIC_PREFIX) && existing.turnId === ''
-    if (!optimistic && existing?.status !== 'started') return
+    if (!existing) return
+    const optimistic = existing.id.startsWith(OPTIMISTIC_PREFIX) && existing.turnId === ''
+    if (!optimistic && existing.status !== 'started') return
     this.items[existingIndex] = {
       ...item,
-      ...(item.text || !existing?.text ? {} : { text: existing.text }),
+      ...propertiesWhen(!item.text && existing.text, (text) => ({ text })),
     }
   }
 
@@ -398,7 +404,10 @@ class ReplayItems {
     }
 
     const streamed = this.items[existingIndex]?.text
-    this.items[existingIndex] = { ...item, ...(item.text ? {} : { text: streamed }) }
+    this.items[existingIndex] = {
+      ...item,
+      ...propertiesWhen(!item.text, () => ({ text: streamed })),
+    }
   }
 
   appendDeltas(deltas: ItemDeltaEvent[], activeTurnId: string | undefined): void {
@@ -548,7 +557,7 @@ export function appendUserMessage(
         role: 'user',
         status: 'completed',
         text,
-        ...(attachments.length > 0 ? { attachments } : {}),
+        ...propertiesWhen(attachments.length > 0, () => ({ attachments })),
         createdAt,
       },
     ],

@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
+import { z } from 'zod'
 import type { AppUpdateState } from './app-updater.js'
+import type { BoundaryValue } from './boundary.js'
 import { clipboardText } from './clipboard-text.js'
 
 type PickedAttachment = {
@@ -57,15 +59,16 @@ const api = {
   checkForUpdates: (): Promise<AppUpdateState> => ipcRenderer.invoke('harness:checkForUpdates'),
   installUpdate: (): Promise<boolean> => ipcRenderer.invoke('harness:installUpdate'),
   onUpdateState: (listener: (state: AppUpdateState) => void): (() => void) => {
-    const handler = (_event: IpcRendererEvent, state: unknown) => {
+    const handler = (_event: IpcRendererEvent, state: BoundaryValue) => {
       if (isAppUpdateState(state)) listener(state)
     }
     ipcRenderer.on('harness:updateState', handler)
     return () => ipcRenderer.removeListener('harness:updateState', handler)
   },
   onZoomChange: (listener: (factor: number) => void): (() => void) => {
-    const handler = (_event: IpcRendererEvent, factor: unknown) => {
-      if (typeof factor === 'number' && Number.isFinite(factor)) listener(factor)
+    const handler = (_event: IpcRendererEvent, factor: BoundaryValue) => {
+      const parsed = z.number().finite().safeParse(factor)
+      if (parsed.success) listener(parsed.data)
     }
     ipcRenderer.on('harness:zoomChanged', handler)
     return () => ipcRenderer.removeListener('harness:zoomChanged', handler)
@@ -89,12 +92,14 @@ const updateStatuses = new Set<AppUpdateState['status']>([
   'error',
 ])
 
-function isAppUpdateState(value: unknown): value is AppUpdateState {
-  if (!value || typeof value !== 'object') return false
-  const state = value as Partial<AppUpdateState>
-  return (
-    typeof state.status === 'string' &&
-    updateStatuses.has(state.status as AppUpdateState['status']) &&
-    typeof state.currentVersion === 'string'
-  )
+const AppUpdateStateSchema = z.object({
+  status: z.enum([...updateStatuses]),
+  currentVersion: z.string(),
+  version: z.string().optional(),
+  progress: z.number().optional(),
+  error: z.string().optional(),
+})
+
+function isAppUpdateState(value: BoundaryValue): value is AppUpdateState {
+  return AppUpdateStateSchema.safeParse(value).success
 }

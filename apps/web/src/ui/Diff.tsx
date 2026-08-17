@@ -16,6 +16,13 @@ import { DiffReview } from './DiffReview.js'
 
 type Line = { text: string; kind: 'add' | 'del' | 'meta' | 'hunk' | 'ctx' }
 type FileEntry = { path: string; added: number; removed: number }
+type ParsedDiff = {
+  lines: Line[]
+  added: number
+  removed: number
+  files: number
+  fileEntries: FileEntry[]
+}
 
 export function Diff({
   diff,
@@ -172,13 +179,7 @@ function FilePath({ path }: { path: string }) {
   )
 }
 
-export function parseDiff(diff: string): {
-  lines: Line[]
-  added: number
-  removed: number
-  files: number
-  fileEntries: FileEntry[]
-} {
+export function parseDiff(diff: string): ParsedDiff {
   const lines: Line[] = []
   const fileEntries: FileEntry[] = []
   let added = 0

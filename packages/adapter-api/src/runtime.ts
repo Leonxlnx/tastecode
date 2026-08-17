@@ -8,18 +8,19 @@ import type {
   Thread,
   Usage,
 } from '@harness/contracts'
+import type { JsonObject, JsonValue } from './json.js'
 
-export type ApiToolCall = { id: string; name: string; input: unknown }
+export type ApiToolCall = { id: string; name: string; input: JsonValue }
 
 export type ApiMessage =
   | { role: 'user'; content: string }
-  | { role: 'assistant'; content: string; toolCalls: ApiToolCall[]; transportState?: unknown }
+  | { role: 'assistant'; content: string; toolCalls: ApiToolCall[]; transportState?: JsonValue }
   | { role: 'tool'; content: string; toolCallId: string; isError: boolean }
 
 export type ApiTool = {
   name: string
   description: string
-  inputSchema: Record<string, unknown>
+  inputSchema: JsonObject
 }
 
 export type ApiStreamEvent =
@@ -27,7 +28,7 @@ export type ApiStreamEvent =
   | { type: 'reasoning'; delta: string }
   | { type: 'tool_call'; call: ApiToolCall }
   | { type: 'usage'; usage: Usage }
-  | { type: 'state'; value: unknown }
+  | { type: 'state'; value: JsonValue }
   | { type: 'finish'; reason: 'stop' | 'tool_calls' }
 
 export type ApiTransport = (request: {
@@ -50,6 +51,18 @@ export const API_CAPABILITIES: Capabilities = {
 }
 
 type Events = { event: [DomainEvent]; log: [string] }
+
+interface StreamResult {
+  text: string
+  calls: ApiToolCall[]
+  finish: 'stop' | 'tool_calls'
+  state: JsonValue | undefined
+}
+
+interface RedactedDelta {
+  chunk: string
+  pending: string
+}
 
 export class ApiAgentSession extends EventEmitter<Events> {
   readonly capabilities = API_CAPABILITIES
@@ -187,12 +200,13 @@ export class ApiAgentSession extends EventEmitter<Events> {
       while (true) {
         signal.throwIfAborted()
         const response = await this.#stream(turnId, signal)
-        this.#messages.push({
+        const assistant: ApiMessage = {
           role: 'assistant',
           content: response.text,
           toolCalls: response.calls,
-          ...(response.state === undefined ? {} : { transportState: response.state }),
-        })
+        }
+        if (response.state !== undefined) assistant.transportState = response.state
+        this.#messages.push(assistant)
         if (response.finish === 'stop') break
         if (response.calls.length === 0) throw new Error('missing tool calls')
 
@@ -250,15 +264,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
     }
   }
 
-  async #stream(
-    turnId: string,
-    signal: AbortSignal,
-  ): Promise<{
-    text: string
-    calls: ApiToolCall[]
-    finish: 'stop' | 'tool_calls'
-    state: unknown
-  }> {
+  async #stream(turnId: string, signal: AbortSignal): Promise<StreamResult> {
     const itemId = `${turnId}-assistant-${this.#messages.length}`
     const reasoningId = `${itemId}-reasoning`
     let started = false
@@ -266,7 +272,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
     let text = ''
     let reasoning = ''
     let finish: 'stop' | 'tool_calls' | undefined
-    let state: unknown
+    let state: JsonValue | undefined
     const calls: ApiToolCall[] = []
     // Per-delta redaction misses a secret split across two chunks. Redact a
     // rolling window instead: only the unemitted tail is scanned, holding
@@ -280,7 +286,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
       this.#secrets.length > 0 ? Math.max(...this.#secrets.map((secret) => secret.length)) - 1 : 0
     let pendingText = ''
     let pendingReasoning = ''
-    const safeDelta = (pending: string): { chunk: string; pending: string } => {
+    const safeDelta = (pending: string): RedactedDelta => {
       const redacted = this.#redact(pending)
       const safe = Math.max(0, redacted.length - holdback)
       return { chunk: redacted.slice(0, safe), pending: redacted.slice(safe) }

@@ -1,12 +1,31 @@
 import {
+  JsonValueSchema,
   PreviewCaptureRequestSchema,
+  PushSchema,
+  ResponseSchema,
+  channels,
+  methods,
   type ChannelName,
   type DataOf,
   type MethodName,
   type ParamsOf,
   type ResultOf,
+  type JsonValue,
 } from '@harness/contracts'
+import { z } from 'zod'
 import { canCapturePreview, capturePreview } from './bridge.js'
+
+const LegacyErrorResponseSchema = z.object({
+  id: z.string(),
+  error: z
+    .object({
+      message: z.string().min(1).optional(),
+      detail: z.string().min(1).optional(),
+    })
+    .passthrough(),
+})
+
+const WireResponseSchema = z.union([ResponseSchema, LegacyErrorResponseSchema])
 
 /**
  * Client side of the wire protocol.
@@ -17,18 +36,37 @@ import { canCapturePreview, capturePreview } from './bridge.js'
  */
 export type ConnectionState = 'connecting' | 'open' | 'reconnecting' | 'closed'
 
-type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void }
+export interface Transport {
+  readonly state: ConnectionState
+  connect(): void
+  close(): void
+  ensureHealthy(timeoutMs?: number): Promise<void>
+  onState(listener: (state: ConnectionState) => void): () => void
+  onSequenceGap(listener: (expected: number, received: number) => void): () => void
+  on<C extends ChannelName>(channel: C, listener: (data: DataOf<C>) => void): () => void
+  request<M extends MethodName>(method: M, params: ParamsOf<M>): Promise<ResultOf<M>>
+}
+
+type Pending = { resolve: (value: JsonValue) => void; reject: (error: Error) => void }
+
+function parseChannelData<C extends ChannelName>(channel: C, value: JsonValue): DataOf<C> {
+  // SAFETY: The schema indexed by this same channel validates the value before it is returned.
+  return channels[channel].parse(value) as DataOf<C>
+}
+
+function parseMethodResult<M extends MethodName>(method: M, value: JsonValue): ResultOf<M> {
+  // SAFETY: The result schema indexed by this same method validates the value before it is returned.
+  return methods[method].result.parse(value) as ResultOf<M>
+}
 
 /** The server may have accepted a transmitted mutation before its reply was lost. */
 export class IndeterminateRequestError extends Error {
   override name = 'IndeterminateRequestError'
 }
 
-export function isIndeterminateRequestError(error: unknown): error is IndeterminateRequestError {
-  return error instanceof IndeterminateRequestError
-}
+export const IndeterminateRequestErrorSchema = z.instanceof(IndeterminateRequestError)
 
-export class Transport {
+export class WebSocketTransport implements Transport {
   #url: string
   #socket: WebSocket | undefined
   #pending = new Map<string, Pending>()
@@ -45,7 +83,7 @@ export class Transport {
 
   #stateListeners = new Set<(s: ConnectionState) => void>()
   #sequenceGapListeners = new Set<(expected: number, received: number) => void>()
-  #channelListeners = new Map<string, Set<(data: unknown) => void>>()
+  #channelListeners = new Map<string, Set<(data: JsonValue) => void>>()
 
   constructor(url: string) {
     this.#url = url
@@ -129,17 +167,21 @@ export class Transport {
       set = new Set()
       this.#channelListeners.set(channel, set)
     }
-    set.add(listener as (data: unknown) => void)
-    return () => set.delete(listener as (data: unknown) => void)
+    const dispatch = (data: JsonValue) => listener(parseChannelData(channel, data))
+    set.add(dispatch)
+    return () => set.delete(dispatch)
   }
 
   request<M extends MethodName>(method: M, params: ParamsOf<M>): Promise<ResultOf<M>> {
     const id = String(this.#nextId++)
-    const promise = new Promise<unknown>((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject })
+    const promise = new Promise<ResultOf<M>>((resolve, reject) => {
+      this.#pending.set(id, {
+        resolve: (value) => resolve(parseMethodResult(method, value)),
+        reject,
+      })
     })
     this.#send(JSON.stringify({ id, method, params }), id)
-    return promise as Promise<ResultOf<M>>
+    return promise
   }
 
   #send(payload: string, id?: string): void {
@@ -243,34 +285,35 @@ export class Transport {
   }
 
   #receive(raw: string): void {
-    let message: Record<string, unknown>
+    let value: JsonValue
     try {
-      message = JSON.parse(raw) as Record<string, unknown>
+      value = JsonValueSchema.parse(JSON.parse(raw))
     } catch {
       return
     }
 
-    const id = message['id']
-    if (typeof id === 'string') {
-      const call = this.#pending.get(id)
+    const response = WireResponseSchema.safeParse(value)
+    if (response.success) {
+      const message = response.data
+      const call = this.#pending.get(message.id)
       if (!call) return
-      this.#pending.delete(id)
-      this.#inFlight.delete(id)
-      const error = message['error'] as { message?: string; detail?: string } | undefined
-      if (error) {
+      this.#pending.delete(message.id)
+      this.#inFlight.delete(message.id)
+      if ('error' in message) {
         // A frame without a message must not surface as the literal string
         // "undefined" in the notice bar.
-        const text = error.message ?? 'The server reported an error.'
-        call.reject(new Error(error.detail ? `${text} (${error.detail})` : text))
+        const text = message.error.message || 'The server reported an error.'
+        call.reject(new Error(message.error.detail ? `${text} (${message.error.detail})` : text))
       } else {
-        call.resolve(message['result'])
+        call.resolve(JsonValueSchema.parse(message.result))
       }
       return
     }
 
-    const channel = message['channel']
-    const sequence = message['sequence']
-    if (typeof channel !== 'string' || typeof sequence !== 'number') return
+    const push = PushSchema.safeParse(value)
+    if (!push.success) return
+    const { channel, sequence } = push.data
+    const data = JsonValueSchema.parse(push.data.data)
 
     const expected = this.#lastSequence + 1
     if (this.#lastSequence !== 0 && sequence <= this.#lastSequence) {
@@ -286,7 +329,7 @@ export class Transport {
     this.#lastSequence = sequence
 
     if (channel === 'preview.captureRequested' && canCapturePreview) {
-      const request = PreviewCaptureRequestSchema.safeParse(message['data'])
+      const request = PreviewCaptureRequestSchema.safeParse(data)
       if (request.success) {
         void capturePreview(request.data)
           .then((result) => this.request('preview.captureResult', result))
@@ -295,7 +338,7 @@ export class Transport {
     }
 
     for (const listener of this.#channelListeners.get(channel) ?? []) {
-      listener(message['data'])
+      listener(data)
     }
   }
 
@@ -305,3 +348,5 @@ export class Transport {
     for (const listener of this.#stateListeners) listener(state)
   }
 }
+
+export const Transport = WebSocketTransport

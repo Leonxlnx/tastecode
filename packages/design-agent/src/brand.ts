@@ -1,5 +1,15 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import {
+  array,
+  type BoundaryValue,
+  fontWeights,
+  list,
+  member,
+  record,
+  string,
+  strings,
+} from './parse.js'
 
 export interface BrandSystem {
   version: 1
@@ -58,7 +68,7 @@ export interface BrandSystem {
   }
 }
 
-export function parseBrandSystem(value: unknown): BrandSystem {
+export function parseBrandSystem(value: BoundaryValue): BrandSystem {
   const brand = record(value, 'brand system')
   if (brand.version !== 1) throw new Error('brand system version must be 1')
 
@@ -74,7 +84,7 @@ export function parseBrandSystem(value: unknown): BrandSystem {
       family: string(typeface.family, `typefaces[${index}].family`),
       source: string(typeface.source, `typefaces[${index}].source`),
       roles: strings(typeface.roles, `typefaces[${index}].roles`),
-      weights: weights(typeface.weights, `typefaces[${index}].weights`),
+      weights: fontWeights(typeface.weights, `typefaces[${index}].weights`),
     }
   })
   if (typefaces.length > 2) throw new Error('brand system must use at most two typeface families')
@@ -180,7 +190,9 @@ export function parseBrandSystem(value: unknown): BrandSystem {
   }
 }
 
-function parseSignatureDevice(value: unknown): BrandSystem['creativeDirection']['signatureDevice'] {
+function parseSignatureDevice(
+  value: BoundaryValue,
+): BrandSystem['creativeDirection']['signatureDevice'] {
   const device = record(value, 'creativeDirection.signatureDevice')
   return {
     description: string(device.description, 'creativeDirection.signatureDevice.description'),
@@ -197,7 +209,7 @@ export function readBrandSystem(workspacePath: string): BrandSystem {
   return parseBrandSystem(JSON.parse(readFileSync(brandPath(workspacePath), 'utf8')))
 }
 
-export function writeBrandSystem(workspacePath: string, value: unknown): BrandSystem {
+export function writeBrandSystem(workspacePath: string, value: BoundaryValue): BrandSystem {
   const brand = parseBrandSystem(value)
   const outputPath = brandPath(workspacePath)
   mkdirSync(path.dirname(outputPath), { recursive: true })
@@ -207,57 +219,4 @@ export function writeBrandSystem(workspacePath: string, value: unknown): BrandSy
 
 function brandPath(workspacePath: string): string {
   return path.join(workspacePath, '.taste', 'brand.json')
-}
-
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${field} must be an object`)
-  }
-  return value as Record<string, unknown>
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`${field} must be a non-empty string`)
-  }
-  return value
-}
-
-function array(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error(`${field} must be a non-empty array`)
-  }
-  return value
-}
-
-function list(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value)) throw new Error(`${field} must be an array`)
-  return value
-}
-
-function strings(value: unknown, field: string): string[] {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string' && item.trim())) {
-    throw new Error(`${field} must be a string array`)
-  }
-  return value
-}
-
-function weights(value: unknown, field: string): number[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error(`${field} must contain font weights between 1 and 1000`)
-  }
-  const normalized = value.map((item) =>
-    typeof item === 'string' && /^\d{1,4}$/.test(item) ? Number(item) : item,
-  )
-  if (!normalized.every((item) => Number.isInteger(item) && item >= 1 && item <= 1000)) {
-    throw new Error(`${field} must contain font weights between 1 and 1000`)
-  }
-  return normalized as number[]
-}
-
-function member<T extends string>(value: unknown, values: readonly T[], field: string): T {
-  if (typeof value !== 'string' || !values.includes(value as T)) {
-    throw new Error(`${field} must be one of ${values.join(', ')}`)
-  }
-  return value as T
 }

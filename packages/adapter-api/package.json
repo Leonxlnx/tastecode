@@ -17,7 +17,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@harness/contracts": "workspace:*"
+    "@harness/contracts": "workspace:*",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

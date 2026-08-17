@@ -1,29 +1,32 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { Sidebar } from './Sidebar.js'
+import { requiredElement } from '../test-dom.js'
+import { Sidebar, type SidebarHaptics } from './Sidebar.js'
 
-const haptics = vi.hoisted(() => ({
-  performAppHaptic: vi.fn(),
-  prepareAppHaptics: vi.fn(),
-}))
+const performHaptic = vi.fn<SidebarHaptics['perform']>()
+const prepareHaptics = vi.fn<SidebarHaptics['prepare']>()
+const haptics = {
+  perform: performHaptic,
+  prepare: prepareHaptics,
+} satisfies SidebarHaptics
 
-vi.mock('../bridge.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../bridge.js')>()),
-  isMacOS: () => true,
-}))
-
-vi.mock('../haptics.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../haptics.js')>()),
-  appHapticsSupported: () => true,
-  performAppHaptic: haptics.performAppHaptic,
-  prepareAppHaptics: haptics.prepareAppHaptics,
-}))
+class TestMediaQueryList extends EventTarget implements MediaQueryList {
+  onchange: ((this: MediaQueryList, ev: MediaQueryListEvent) => void) | null = null
+  constructor(
+    readonly matches: boolean,
+    readonly media: string,
+  ) {
+    super()
+  }
+  addListener(): void {}
+  removeListener(): void {}
+}
 
 afterEach(() => {
   cleanup()
-  haptics.performAppHaptic.mockClear()
-  haptics.prepareAppHaptics.mockClear()
+  performHaptic.mockClear()
+  prepareHaptics.mockClear()
 })
 
 const session = (id: string, title: string) => ({
@@ -61,6 +64,7 @@ describe('Sidebar chat actions', () => {
         onReorderSession={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenSettings={vi.fn()}
+        haptics={haptics}
       />,
     )
 
@@ -81,7 +85,7 @@ describe('Sidebar chat actions', () => {
   it('toggles an empty project without leaving the current chat', () => {
     const onClose = vi.fn()
     vi.spyOn(window, 'matchMedia').mockImplementation(
-      (query) => ({ matches: query === '(max-width: 700px)' }) as MediaQueryList,
+      (query) => new TestMediaQueryList(query === '(max-width: 700px)', query),
     )
     render(
       <Sidebar
@@ -200,7 +204,7 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByText('15% left')).toBeTruthy()
     const limitBar = screen.getByRole('progressbar', { name: 'Codex 7 days left' })
     expect(limitBar.getAttribute('aria-valuenow')).toBe('15')
-    expect((limitBar.firstElementChild as HTMLElement).style.width).toBe('15%')
+    expect(requiredElement(limitBar, ':scope > *', HTMLElement).style.width).toBe('15%')
     expect(document.activeElement?.textContent).toContain('Plan limits')
 
     expect(screen.queryAllByRole('menuitem')).toHaveLength(0)
@@ -386,6 +390,9 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByText('Pinned')).toBeTruthy()
     expect(screen.getAllByText('Pinned chat')).toHaveLength(1)
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Pinned chat, Codex' }))
+    for (const item of screen.getAllByRole('menuitem')) {
+      expect(item.querySelector('svg')).not.toBeNull()
+    }
     fireEvent.click(screen.getByRole('menuitem', { name: 'Unpin chat' }))
     expect(onToggleSessionPin).toHaveBeenCalledWith('thread-1')
   })
@@ -566,6 +573,7 @@ describe('Sidebar chat actions', () => {
         onReorderSession={onReorderSession}
         onOpenSearch={vi.fn()}
         onOpenSettings={vi.fn()}
+        haptics={haptics}
       />,
     )
 
@@ -592,9 +600,9 @@ describe('Sidebar chat actions', () => {
     fireEvent.dragOver(target, { clientY: 80, dataTransfer })
     fireEvent.dragOver(target, { clientY: 80, dataTransfer })
     expect(target.dataset.dropPosition).toBe('after')
-    expect(haptics.prepareAppHaptics).toHaveBeenCalledOnce()
-    expect(haptics.performAppHaptic).toHaveBeenCalledOnce()
-    expect(haptics.performAppHaptic).toHaveBeenCalledWith('alignment')
+    expect(prepareHaptics).toHaveBeenCalledOnce()
+    expect(performHaptic).toHaveBeenCalledOnce()
+    expect(performHaptic).toHaveBeenCalledWith('alignment')
     fireEvent.drop(target, { clientY: 80, dataTransfer })
 
     expect(onReorderSession).toHaveBeenCalledWith('/work/harness', 'thread-1', 'thread-2', 'after')

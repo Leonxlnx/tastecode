@@ -10,6 +10,7 @@ import {
 import type { McpServer, ProviderId, ResultOf, Skill } from '@harness/contracts'
 import { Box, Server } from 'lucide-react'
 import type { Transport } from '../transport.js'
+import { propertiesWhen } from '../properties-when.js'
 
 type SkillsInventory = ResultOf<'skills.list'>
 type McpInventory = ResultOf<'mcp.list'>
@@ -222,7 +223,10 @@ export const ComposerResourcePicker = forwardRef<
     <div
       className="composer-resource-picker"
       onMouseDown={(event) => {
-        if ((event.target as Element).closest('.composer-resource-picker__option')) {
+        if (
+          event.target instanceof Element &&
+          event.target.closest('.composer-resource-picker__option')
+        ) {
           event.preventDefault()
         }
       }}
@@ -287,16 +291,16 @@ function skillResource(skill: Skill): ComposerResource {
     scope: skillScope(skill.scope),
     token: skill.name.startsWith('$') ? skill.name : `$${skill.name}`,
     available: unavailableReason === undefined,
-    ...(unavailableReason ? { unavailableReason } : {}),
+    ...propertiesWhen(unavailableReason, (unavailableReason) => ({ unavailableReason })),
   }
 }
 
 function mcpResource(server: McpServer): ComposerResource {
   const unavailableReason = !server.enabled
     ? 'Disabled'
-    : server.auth.status === 'sign_in_required'
+    : server.auth?.status === 'sign_in_required'
       ? 'Sign in required'
-      : server.startup.state === 'failed'
+      : server.startup?.state === 'failed'
         ? server.startup.message
         : undefined
   return {
@@ -312,7 +316,7 @@ function mcpResource(server: McpServer): ComposerResource {
     scope: server.scope === 'project' ? 'Project' : 'Personal',
     token: server.id.startsWith('@') ? server.id : `@${server.id}`,
     available: unavailableReason === undefined,
-    ...(unavailableReason ? { unavailableReason } : {}),
+    ...propertiesWhen(unavailableReason, (unavailableReason) => ({ unavailableReason })),
   }
 }
 

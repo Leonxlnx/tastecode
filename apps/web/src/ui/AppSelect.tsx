@@ -92,7 +92,8 @@ export function AppSelect<Value extends string>(props: {
   useEffect(() => {
     if (!open) return
     const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node
+      const target = event.target
+      if (!(target instanceof Node)) return
       if (!trigger.current?.contains(target) && !listbox.current?.contains(target)) {
         closeListbox()
       }
@@ -162,8 +163,9 @@ export function AppSelect<Value extends string>(props: {
       if (event.target instanceof Node && listbox.current?.contains(event.target)) return
       updatePosition()
     }
-    const resizeObserver =
-      typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(updatePosition)
+    const resizeObserver = globalThis.ResizeObserver
+      ? new globalThis.ResizeObserver(updatePosition)
+      : undefined
     if (listbox.current) resizeObserver?.observe(listbox.current)
     window.addEventListener('resize', updatePosition)
     document.addEventListener('scroll', onScroll, true)

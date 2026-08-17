@@ -4,7 +4,15 @@ import { onAppZoomChange, setAppZoom } from '../bridge.js'
 
 const HIDE_DELAY_MS = 3_000
 
-export function ZoomHud() {
+export type ZoomHudServices = {
+  onAppZoomChange: typeof onAppZoomChange
+  setAppZoom: typeof setAppZoom
+}
+
+const defaultZoomHudServices: ZoomHudServices = { onAppZoomChange, setAppZoom }
+
+export function ZoomHud(props: { services?: ZoomHudServices | undefined }) {
+  const services = props.services ?? defaultZoomHudServices
   const [percent, setPercent] = useState<number>()
   const hideTimer = useRef<number | undefined>(undefined)
 
@@ -15,11 +23,11 @@ export function ZoomHud() {
 
   useEffect(
     () =>
-      onAppZoomChange((factor) => {
+      services.onAppZoomChange((factor) => {
         setPercent(Math.round(factor * 100))
         hideLater()
       }),
-    [],
+    [services],
   )
 
   useEffect(
@@ -41,11 +49,11 @@ export function ZoomHud() {
       }}
       onPointerLeave={hideLater}
     >
-      <button type="button" aria-label="Zoom out" onClick={() => void setAppZoom('out')}>
+      <button type="button" aria-label="Zoom out" onClick={() => void services.setAppZoom('out')}>
         <Minus size={14} aria-hidden />
       </button>
       <output aria-live="polite">{percent}%</output>
-      <button type="button" aria-label="Zoom in" onClick={() => void setAppZoom('in')}>
+      <button type="button" aria-label="Zoom in" onClick={() => void services.setAppZoom('in')}>
         <Plus size={14} aria-hidden />
       </button>
       <span className="zoom-hud__rule" aria-hidden />
@@ -53,7 +61,7 @@ export function ZoomHud() {
         type="button"
         className="zoom-hud__reset"
         disabled={percent === 100}
-        onClick={() => void setAppZoom('reset')}
+        onClick={() => void services.setAppZoom('reset')}
       >
         <RotateCcw size={13} aria-hidden />
         Reset

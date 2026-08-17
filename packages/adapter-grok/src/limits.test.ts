@@ -1,39 +1,72 @@
+import { ChildProcess } from 'node:child_process'
+import { PassThrough } from 'node:stream'
+import { JsonRpcValueSchema, type JsonRpcInput, type JsonRpcValue } from '@harness/proc'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { grokCommand } from './adapter.js'
+import {
+  grokLimitSource,
+  grokLimits,
+  mapGrokBilling,
+  type GrokBillingDependencies,
+  type GrokBillingRpc,
+} from './limits.js'
 
-const fake = vi.hoisted(() => ({
-  calls: [] as Array<{ method: string; params: unknown }>,
-  spawns: [] as Array<{ command: string; args: string[]; options: unknown }>,
+type RpcCall = { method: string; params: JsonRpcValue | undefined }
+type SpawnOptions = { stdio: ['pipe', 'pipe', 'pipe']; windowsHide: boolean }
+type SpawnCall = { command: string; args: string[]; options: SpawnOptions }
+
+type FakeState = {
+  calls: RpcCall[]
+  spawns: SpawnCall[]
+  disposed: number
+  billing: JsonRpcValue | Promise<JsonRpcValue>
+  error: Error | undefined
+  hangs: Set<string>
+}
+
+const fake: FakeState = {
+  calls: [],
+  spawns: [],
   disposed: 0,
-  billing: {} as unknown,
-  error: undefined as Error | undefined,
+  billing: {},
+  error: undefined,
   hangs: new Set<string>(),
-}))
+}
 
-vi.mock('node:child_process', () => ({
-  spawn: vi.fn((command: string, args: string[], options: unknown) => {
+class FakeChild extends ChildProcess {
+  override stdout = new PassThrough()
+  override stderr = new PassThrough()
+  override stdin = new PassThrough()
+  override stdio: [PassThrough, PassThrough, PassThrough, null, null] = [
+    this.stdin,
+    this.stdout,
+    this.stderr,
+    null,
+    null,
+  ]
+}
+
+class FakeBillingRpc implements GrokBillingRpc {
+  request(method: string, params: JsonRpcInput = {}): Promise<JsonRpcValue | undefined> {
+    const parsedParams = JsonRpcValueSchema.parse(params)
+    fake.calls.push({ method, params: parsedParams })
+    if (fake.hangs.has(method)) return new Promise(() => undefined)
+    if (method === 'initialize') return Promise.resolve({ protocolVersion: 1 })
+    return fake.error ? Promise.reject(fake.error) : Promise.resolve(fake.billing)
+  }
+
+  dispose(): void {
+    fake.disposed += 1
+  }
+}
+
+const fakeDependencies: GrokBillingDependencies = {
+  spawn: (command, args, options) => {
     fake.spawns.push({ command, args, options })
-    return { pid: 1 }
-  }),
-}))
-
-vi.mock('@harness/proc', () => ({
-  killTree: vi.fn(),
-  readNdjson: vi.fn(),
-  StdioJsonRpc: class {
-    request(method: string, params: unknown): Promise<unknown> {
-      fake.calls.push({ method, params })
-      if (fake.hangs.has(method)) return new Promise(() => undefined)
-      if (method === 'initialize') return Promise.resolve({ protocolVersion: 1 })
-      return fake.error ? Promise.reject(fake.error) : Promise.resolve(fake.billing)
-    }
-    dispose(): void {
-      fake.disposed += 1
-    }
+    return new FakeChild()
   },
-}))
-
-const { grokCommand } = await import('./adapter.js')
-const { grokLimitSource, grokLimits, mapGrokBilling } = await import('./limits.js')
+  connect: () => new FakeBillingRpc(),
+}
 
 beforeEach(() => {
   fake.calls = []
@@ -222,7 +255,9 @@ describe('mapGrokBilling', () => {
   it('reports signed-out billing as unavailable without starting provider ACP', async () => {
     const account = vi.fn().mockResolvedValue({ signedIn: false })
 
-    await expect(grokLimitSource(account)).resolves.toEqual({ status: 'unavailable' })
+    await expect(grokLimitSource(account, fakeDependencies)).resolves.toEqual({
+      status: 'unavailable',
+    })
     expect(account).toHaveBeenCalledOnce()
     expect(fake.spawns).toEqual([])
   })
@@ -235,18 +270,20 @@ describe('mapGrokBilling', () => {
       },
     }
 
-    await expect(grokLimitSource(async () => ({ signedIn: true }))).resolves.toEqual({
+    await expect(
+      grokLimitSource(async () => ({ signedIn: true }), fakeDependencies),
+    ).resolves.toEqual({
       status: 'ready',
       limits: [{ label: 'Weekly', usedPercent: 12 }],
     })
   })
 
   it('rejects an unrecognized signed-in billing response', async () => {
-    fake.billing = { futureBillingShape: true }
+    fake.billing = { ['futureBillingShape']: true }
 
-    await expect(grokLimitSource(async () => ({ signedIn: true }))).rejects.toThrow(
-      'Grok billing response was invalid.',
-    )
+    await expect(
+      grokLimitSource(async () => ({ signedIn: true }), fakeDependencies),
+    ).rejects.toThrow('Grok billing response was invalid.')
   })
 
   it('reads billing through the resolved Grok binary and provider ACP', async () => {
@@ -257,7 +294,9 @@ describe('mapGrokBilling', () => {
       },
     }
 
-    await expect(grokLimits()).resolves.toEqual([{ label: 'Weekly', usedPercent: 12 }])
+    await expect(grokLimits(fakeDependencies)).resolves.toEqual([
+      { label: 'Weekly', usedPercent: 12 },
+    ])
     expect(fake.calls.map((call) => call.method)).toEqual(['initialize', '_x.ai/billing'])
     expect(fake.spawns).toEqual([
       {
@@ -275,7 +314,7 @@ describe('mapGrokBilling', () => {
       vi.useFakeTimers()
       fake.hangs.add(method)
 
-      const result = grokLimits()
+      const result = grokLimits(fakeDependencies)
       const rejected = expect(result).rejects.toThrow('grok billing did not answer in time')
       await settle()
       expect(fake.calls.map((call) => call.method)).toContain(method)
@@ -287,13 +326,13 @@ describe('mapGrokBilling', () => {
   )
 
   it('coalesces concurrent reads and retries after a provider failure', async () => {
-    let resolveBilling!: (value: unknown) => void
+    let resolveBilling!: (value: JsonRpcValue) => void
     fake.billing = new Promise((resolve) => {
       resolveBilling = resolve
     })
 
-    const first = grokLimits()
-    const second = grokLimits()
+    const first = grokLimits(fakeDependencies)
+    const second = grokLimits(fakeDependencies)
     await settle()
     expect(fake.spawns).toHaveLength(1)
     expect(fake.calls.filter((call) => call.method === '_x.ai/billing')).toHaveLength(1)
@@ -309,7 +348,7 @@ describe('mapGrokBilling', () => {
     ])
 
     fake.error = new Error('billing unavailable')
-    await expect(grokLimits()).rejects.toThrow('billing unavailable')
+    await expect(grokLimits(fakeDependencies)).rejects.toThrow('billing unavailable')
     fake.error = undefined
     fake.billing = {
       config: {
@@ -317,7 +356,9 @@ describe('mapGrokBilling', () => {
         currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' },
       },
     }
-    await expect(grokLimits()).resolves.toEqual([{ label: 'Weekly', usedPercent: 34 }])
+    await expect(grokLimits(fakeDependencies)).resolves.toEqual([
+      { label: 'Weekly', usedPercent: 34 },
+    ])
     expect(fake.spawns).toHaveLength(3)
     expect(fake.disposed).toBe(3)
   })

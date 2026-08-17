@@ -3,13 +3,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  ItemTypeSchema,
-  type DiffDecision,
-  type DomainEvent,
-  type ItemType,
-} from '@harness/contracts'
+import { z } from 'zod'
+import { ItemTypeSchema, type DomainEvent, type ItemType } from '@harness/contracts'
 import { Store } from './store.js'
+import { propertiesWhen } from './properties-when.js'
 
 let store: Store
 
@@ -38,8 +35,11 @@ const usage = (totalTokens: number, costUsd?: number, cumulative = false): Domai
     outputTokens: 0,
     reasoningTokens: 0,
     totalTokens,
-    ...(cumulative ? { cumulative: true } : {}),
-    ...(costUsd === undefined ? {} : { costUsd }),
+    ...propertiesWhen(cumulative, () => ({ cumulative: true })),
+    ...propertiesWhen(
+      costUsd === undefined ? undefined : { costUsd },
+      (includedCost) => includedCost,
+    ),
   },
 })
 
@@ -873,7 +873,7 @@ describe('cross-session search', () => {
       const page = store.searchSessions({
         query: 'longpagination',
         limit: 2,
-        ...(cursor ? { cursor } : {}),
+        ...propertiesWhen(cursor, (cursor) => ({ cursor })),
       })
       for (const result of page.results) {
         const text = result.snippet.map((part) => part.text).join('')
@@ -881,9 +881,9 @@ describe('cross-session search', () => {
         seen.add(text)
       }
       if (page.nextCursor) {
-        const continuation = JSON.parse(
-          Buffer.from(page.nextCursor, 'base64url').toString('utf8'),
-        ) as { position: number }
+        const continuation = z
+          .object({ position: z.number() })
+          .parse(JSON.parse(Buffer.from(page.nextCursor, 'base64url').toString('utf8')))
         expect(continuation.position).toBeGreaterThan(pages * 2)
       }
       cursor = page.nextCursor ?? undefined
@@ -1020,9 +1020,7 @@ describe('diff review decisions', () => {
   })
 
   it('rejects invalid persisted decisions', () => {
-    expect(() => store.setDiffDecision('t1', 'hunk:one', 'invalid' as DiffDecision)).toThrow(
-      /CHECK constraint failed/,
-    )
+    expect(() => store.setDiffDecision('t1', 'hunk:one', 'invalid')).toThrow()
   })
 })
 

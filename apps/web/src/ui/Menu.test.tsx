@@ -2,20 +2,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useRef } from 'react'
+import { Pencil } from 'lucide-react'
+import { requiredInstance, requiredValue } from '../test-dom.js'
 import { Menu, MenuItem } from './Menu.js'
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
-  return {
-    x: left,
-    y: top,
-    left,
-    top,
-    width,
-    height,
-    right: left + width,
-    bottom: top + height,
-    toJSON: () => ({}),
-  }
+  return new DOMRect(left, top, width, height)
 }
 
 function ContextMenuHarness() {
@@ -30,7 +22,9 @@ function ContextMenuHarness() {
         contextMenuTargetRef={target}
         trigger={() => <span>Open</span>}
       >
-        {(close) => <MenuItem title="Rename" onClick={close} />}
+        {(close) => (
+          <MenuItem title="Rename" icon={<Pencil size={14} aria-hidden />} onClick={close} />
+        )}
       </Menu>
     </>
   )
@@ -63,7 +57,9 @@ describe('Menu', () => {
     render(
       <div data-testid="clip">
         <Menu drop="down" align="right" label="Options" trigger={() => <span>Open</span>}>
-          {(close) => <MenuItem title="Rename" onClick={close} />}
+          {(close) => (
+            <MenuItem title="Rename" icon={<Pencil size={14} aria-hidden />} onClick={close} />
+          )}
         </Menu>
       </div>,
     )
@@ -161,6 +157,7 @@ describe('Menu', () => {
               <MenuItem
                 key={title}
                 title={title}
+                icon={<Pencil size={14} aria-hidden />}
                 disabled={title === 'Bravo'}
                 onClick={() => {
                   onSelect(title)
@@ -183,7 +180,7 @@ describe('Menu', () => {
     const charlie = screen.getByRole('menuitem', { name: 'Charlie' })
     const delta = screen.getByRole('menuitem', { name: 'Delta' })
     expect(document.activeElement).toBe(alpha)
-    expect((bravo as HTMLButtonElement).disabled).toBe(true)
+    expect(requiredInstance(bravo, HTMLButtonElement).disabled).toBe(true)
     expect(screen.getByRole('menu').dataset.inputModality).toBe('keyboard')
 
     fireEvent.keyDown(alpha, { key: 'ArrowDown' })
@@ -199,7 +196,7 @@ describe('Menu', () => {
 
     fireEvent.keyDown(trigger, { key: 'ArrowUp' })
     expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Delta' }))
-    fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' })
+    fireEvent.keyDown(requiredValue(document.activeElement, 'active menu item'), { key: 'Escape' })
     expect(document.activeElement).toBe(trigger)
 
     fireEvent.keyDown(trigger, { key: 'ArrowDown' })

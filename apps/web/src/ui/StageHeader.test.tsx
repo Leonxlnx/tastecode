@@ -31,6 +31,9 @@ describe('StageHeader', () => {
 
     expect(screen.getByText('Build the landing page')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Options for Build the landing page' }))
+    for (const item of screen.getAllByRole('menuitem')) {
+      expect(item.querySelector('svg')).not.toBeNull()
+    }
     fireEvent.click(screen.getByRole('menuitem', { name: 'Pin chat' }))
     expect(stage.onToggleSessionPin).toHaveBeenCalledWith('thread-1')
 

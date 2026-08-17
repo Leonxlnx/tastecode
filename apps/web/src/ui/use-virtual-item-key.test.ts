@@ -19,18 +19,21 @@ function message(id: string, text = id): Item {
   }
 }
 
-function trackedItems(items: Item[]): {
-  items: Item[]
-  reads: () => number
-} {
+function trackedItems(items: Item[]) {
   let reads = 0
-  return {
-    items: new Proxy(items, {
-      get(target, property, receiver) {
-        if (typeof property === 'string' && /^\d+$/.test(property)) reads += 1
-        return Reflect.get(target, property, receiver)
+  const tracked = items.slice()
+  for (const [index, value] of items.entries()) {
+    Object.defineProperty(tracked, index, {
+      configurable: true,
+      enumerable: true,
+      get() {
+        reads += 1
+        return value
       },
-    }),
+    })
+  }
+  return {
+    items: tracked,
     reads: () => reads,
   }
 }

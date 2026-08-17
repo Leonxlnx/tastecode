@@ -8,9 +8,12 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ComponentProps,
+  type ComponentType,
 } from 'react'
 import type { CSSProperties } from 'react'
 import { LoaderCircle } from 'lucide-react'
+import { ProviderIdSchema } from '@harness/contracts'
 import type {
   Account,
   ApprovalDecision,
@@ -24,10 +27,21 @@ import type {
   ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
+import { z } from 'zod'
 import { isDesktop, isMacOS, pickFolder, setDesktopTheme } from './bridge.js'
-import { isEditableTarget, matchesShortcut, SHORTCUTS } from './shortcuts.js'
+import {
+  createDefaultKeybindings,
+  isEditableTarget,
+  KEYBINDING_DEFINITIONS,
+  matchesShortcut,
+  readKeybindings,
+  shortcutLabel,
+  writeKeybindings,
+  type KeybindingId,
+  type Shortcut,
+} from './shortcuts.js'
 import { warmHighlighter } from './ui/highlighter.js'
-import { isIndeterminateRequestError, Transport } from './transport.js'
+import { IndeterminateRequestErrorSchema, Transport } from './transport.js'
 import {
   activeTurnIsSearching,
   appendUserMessage,
@@ -44,12 +58,15 @@ import {
 import { CommandPalette, type CommandScope, type PaletteCommand } from './ui/CommandPalette.js'
 import { CheckoutDiscardDialog } from './ui/CheckoutDiscardDialog.js'
 import { Composer, type SendAvailability, type WorkspaceInfo } from './ui/Composer.js'
-import { getFastModeOffValue, getNextServiceTierForModel } from './ui/ModelSelector.js'
+import {
+  getFastModeOffValue,
+  getFastServiceTier,
+  getNextServiceTierForModel,
+} from './ui/ModelSelector.js'
 import { RollbackDialog, type Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchHost.js'
 import { Settings, type SettingsSection } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
-import { ShortcutsDialog } from './ui/ShortcutsDialog.js'
 import { StageHeader } from './ui/StageHeader.js'
 import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
@@ -77,6 +94,12 @@ import {
 } from './model-catalog.js'
 import { parseModelCatalogCache, serializeModelCatalogCache } from './model-catalog-cache.js'
 import { parseSideChatCommand } from './side-chat-command.js'
+import {
+  clearInstall,
+  installState,
+  subscribeInstalls,
+  type ProviderLoginTerminalTarget,
+} from './provider-install.js'
 import type {
   SideChatParentStatus,
   SideChatPromptRequest,
@@ -111,6 +134,7 @@ import {
   type ThemePreference,
   type FontPreference,
 } from './theme.js'
+import { propertiesWhen } from './properties-when.js'
 
 const SERVER_BASE_URL = serverBaseUrl(import.meta.env.VITE_HARNESS_SERVER_URL)
 const SETUP_KEY = 'harness.provider'
@@ -130,6 +154,7 @@ const PUBLIC_BETA_PROVIDER_IDS = new Set<ProviderId>(['codex', 'claude-code', 'g
 /** Engines a custom model can be attached to — ACP agents and API
  *  connections carry their own roster concepts and stay out of this list. */
 const DIRECT_PROVIDER_IDS = PROVIDER_IDS.filter((id) => id !== 'acp' && id !== 'api' && id !== 'pi')
+const DIRECT_PROVIDER_ID_SET = new Set<ProviderId>(DIRECT_PROVIDER_IDS)
 /** Which named agent or custom harness source was chosen. */
 const AGENT_KEY = 'harness.acpAgent'
 const AGENT_NAME_KEY = 'harness.acpAgentName'
@@ -170,6 +195,55 @@ const WorkspacePanel = lazy(() =>
   })),
 )
 
+export type AppDependencies = {
+  createTransport: (url: string) => Transport
+  warmHighlighter: () => void
+  pickFolder: typeof pickFolder
+  isMacOS: typeof isMacOS
+  setDesktopTheme: typeof setDesktopTheme
+  canCaptureVoice: typeof canCaptureVoice
+  isDesktop: boolean
+}
+
+export type AppComponents = {
+  Thread: ComponentType<ComponentProps<typeof Thread>>
+  Sidebar: ComponentType<ComponentProps<typeof Sidebar>>
+  Composer: ComponentType<ComponentProps<typeof Composer>>
+  StageHeader: ComponentType<ComponentProps<typeof StageHeader>>
+  CommandPalette: ComponentType<ComponentProps<typeof CommandPalette>>
+  Settings: ComponentType<ComponentProps<typeof Settings>>
+  SessionSearchHost: ComponentType<ComponentProps<typeof SessionSearchHost>>
+  TerminalPane: ComponentType<ComponentProps<typeof TerminalPane>>
+}
+
+const DEFAULT_APP_DEPENDENCIES: AppDependencies = {
+  createTransport: (url) => new Transport(url),
+  warmHighlighter,
+  pickFolder,
+  isMacOS,
+  setDesktopTheme,
+  canCaptureVoice,
+  isDesktop,
+}
+
+const DEFAULT_APP_COMPONENTS: AppComponents = {
+  Thread,
+  Sidebar,
+  Composer,
+  StageHeader,
+  CommandPalette,
+  Settings,
+  SessionSearchHost,
+  TerminalPane,
+}
+
+export type AppProps = {
+  dependencies?: Partial<AppDependencies>
+  components?: Partial<AppComponents>
+}
+
+const LegacyProjectsSchema = z.array(z.object({ path: z.string(), name: z.string().optional() }))
+
 /**
  * Projects and sessions used to live here. The server owns them now, so this
  * only exists to hand what it finds over once and then get out of the way —
@@ -179,10 +253,10 @@ function takeLegacyProjects(): Array<{ path: string; name?: string }> {
   try {
     const raw = readSetting(PROJECTS_KEY)
     if (!raw) return []
-    const parsed = JSON.parse(raw) as Array<{ path?: string; name?: string }>
-    return parsed
-      .filter((entry): entry is { path: string; name?: string } => typeof entry.path === 'string')
-      .map(({ path, name }) => ({ path, ...(name ? { name } : {}) }))
+    return LegacyProjectsSchema.parse(JSON.parse(raw)).map(({ path, name }) => ({
+      path,
+      ...propertiesWhen(name, (name) => ({ name })),
+    }))
   } catch {
     return []
   }
@@ -194,6 +268,16 @@ type CustomModel = {
   displayName: string
 }
 
+const CustomModelSchema: z.ZodType<CustomModel> = z.object({
+  provider: ProviderIdSchema.refine((provider) => DIRECT_PROVIDER_ID_SET.has(provider)),
+  modelId: z.string().trim().min(1),
+  displayName: z
+    .string()
+    .catch('')
+    .transform((name) => name.trim()),
+})
+const CustomModelsInputSchema = z.array(z.unknown())
+
 type RecoverableDraft = { text: string; attachments: string[] }
 type PendingSubmission = RecoverableDraft & {
   id: string
@@ -204,9 +288,45 @@ type PendingSubmission = RecoverableDraft & {
   optimisticTurn?: NonNullable<ThreadState['activeTurn']>
   precedingTurnId?: string
 }
+type PendingThreadDeltaBatch = { events: ItemDeltaEvent[]; sequence?: number }
 
 type CatalogAvailability = 'loading' | 'ready' | 'failed'
 type AccountCheck = { provider: ProviderId; state: CatalogAvailability; account?: Account }
+
+type WorkspaceIdleProbe = {
+  inFlight: Promise<void> | undefined
+  pendingPath: string | undefined
+  idlePath: string | undefined
+  blockedPath: string | undefined
+  pendingStarts: Map<string, { path: string; tokens: number[] }>
+  submissionStarts: Map<string, { threadId: string; token: number }>
+  queuedStarts: Map<string, { threadId: string; token: number }>
+  claimedStarts: Set<string>
+  queueActions: Map<string, { threadId: string; count: number; pending: number; steers: number }>
+  unknownQueues: Set<string>
+  nextStart: number
+  revision: number
+  transportRevision: number
+  refreshedRevision: number
+  refreshedPath: string | undefined
+}
+
+type ShellStyle = CSSProperties & { '--rail-w': string }
+type WorkspaceLayoutStyle = CSSProperties & { '--workspace-panel-w': string }
+type ProviderLoginTerminalSession = ProviderLoginTerminalTarget & {
+  id: number
+  visible: boolean
+  restorePanelOpen: boolean
+  restorePanelExpanded: boolean
+}
+
+function shellStyle(width: number): ShellStyle {
+  return { '--rail-w': `${width}px` }
+}
+
+function workspaceLayoutStyle(width: number): WorkspaceLayoutStyle {
+  return { '--workspace-panel-w': `${width}px` }
+}
 
 function resolveSendAvailability(input: {
   catalog: CatalogAvailability
@@ -247,20 +367,11 @@ function readCustomModels(): CustomModel[] {
   try {
     const raw = readSetting(CUSTOM_MODELS_KEY)
     if (!raw) return []
-    const parsed = JSON.parse(raw) as unknown
-    if (!Array.isArray(parsed)) return []
-    const direct = new Set<string>(DIRECT_PROVIDER_IDS)
+    const entries = CustomModelsInputSchema.parse(JSON.parse(raw))
     const models: CustomModel[] = []
-    for (const entry of parsed) {
-      if (typeof entry !== 'object' || entry === null) continue
-      const candidate = entry as Record<string, unknown>
-      if (typeof candidate.provider !== 'string' || !direct.has(candidate.provider)) continue
-      if (typeof candidate.modelId !== 'string' || candidate.modelId.trim().length === 0) continue
-      models.push({
-        provider: candidate.provider as ProviderId,
-        modelId: candidate.modelId.trim(),
-        displayName: typeof candidate.displayName === 'string' ? candidate.displayName.trim() : '',
-      })
+    for (const entry of entries) {
+      const model = CustomModelSchema.safeParse(entry)
+      if (model.success) models.push(model.data)
     }
     return models
   } catch {
@@ -300,8 +411,13 @@ function latestSequence(
   return latest
 }
 
-export function App() {
-  const transport = useMemo(() => new Transport(SERVER_BASE_URL), [])
+export function App(props: AppProps = {}) {
+  const dependencies = { ...DEFAULT_APP_DEPENDENCIES, ...props.dependencies }
+  const components = { ...DEFAULT_APP_COMPONENTS, ...props.components }
+  const transport = useMemo(
+    () => dependencies.createTransport(SERVER_BASE_URL),
+    [dependencies.createTransport],
+  )
   // StrictMode replays effect cleanup against this same memoized instance.
   const usageController = useMemo(
     () => new UsageLimitsController((params) => transport.request('usage.summary', params)),
@@ -387,9 +503,7 @@ export function App() {
   const historyOwners = useRef(
     new Map<string, Array<{ seq: number | undefined; event: DomainEvent }>>(),
   )
-  const pendingThreadDeltas = useRef(
-    new Map<string, { events: ItemDeltaEvent[]; sequence?: number }>(),
-  )
+  const pendingThreadDeltas = useRef(new Map<string, PendingThreadDeltaBatch>())
   const queueStates = useRef(new Map<string, { items: QueuedTurn[]; canSteer: boolean }>())
   const localQueueRevisions = useRef(new Map<string, number>())
   const serverQueueRevisions = useRef(new Map<string, number>())
@@ -434,7 +548,7 @@ export function App() {
   const [catalogAvailability, setCatalogAvailability] = useState<CatalogAvailability>('loading')
   const [hiddenModels, setHiddenModels] = useState<Set<string>>(() => {
     try {
-      return new Set(JSON.parse(readSetting(HIDDEN_MODELS_KEY) ?? '[]') as string[])
+      return new Set(z.array(z.string()).parse(JSON.parse(readSetting(HIDDEN_MODELS_KEY) ?? '[]')))
     } catch {
       return new Set()
     }
@@ -487,9 +601,10 @@ export function App() {
   const accountRequestRevision = useRef(0)
   const [voiceAvailable, setVoiceAvailable] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [keybindings, setKeybindings] = useState(readKeybindings)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('providers')
+  const [providerAuthRefreshRevision, setProviderAuthRefreshRevision] = useState(0)
   const [sidebarSettings, setSidebarSettings] = useState(DEFAULT_SIDEBAR_SETTINGS)
   const confirmedSidebarSettings = useRef(DEFAULT_SIDEBAR_SETTINGS)
   const confirmedSidebarSettingsRevision = useRef(0)
@@ -532,7 +647,7 @@ export function App() {
     { id: string; title: string; branch: string } | undefined
   >()
   const [checkoutDeleteBusy, setCheckoutDeleteBusy] = useState(false)
-  const macOS = isMacOS()
+  const macOS = dependencies.isMacOS()
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference)
   const [fontPreference, setFontPreference] = useState<FontPreference>(readFontPreference)
   const [accentPreference, setAccentPreference] = useState<AccentPreference>(readAccentPreference)
@@ -549,6 +664,11 @@ export function App() {
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false)
   const [workspacePanelExpanded, setWorkspacePanelExpanded] = useState(false)
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(readWorkspacePanelWidth)
+  const [providerLoginTerminal, setProviderLoginTerminal] = useState<ProviderLoginTerminalSession>()
+  const nextProviderLoginTerminalId = useRef(1)
+  const providerLoginState = useSyncExternalStore(subscribeInstalls, () =>
+    providerLoginTerminal ? installState(providerLoginTerminal.installKey) : undefined,
+  )
   const [sideChatPromptRequest, setSideChatPromptRequest] = useState<SideChatPromptRequest>()
   /** The live catalog with user-defined models appended. Everything below
    *  reads this merged list; the cache only ever stores the server catalog. */
@@ -584,7 +704,9 @@ export function App() {
               provider,
               sourceName: providerName(provider, acpAgentName),
               mark: provider === 'acp' && acpAgent ? agentMark(acpAgent) : providerMark(provider),
-              ...(acpAgent ? { agent: { id: acpAgent, name: acpAgentName ?? acpAgent } } : {}),
+              ...propertiesWhen(acpAgent, (includedValue) => ({
+                agent: { id: includedValue, name: acpAgentName ?? includedValue },
+              })),
             },
             [],
             true,
@@ -677,7 +799,7 @@ export function App() {
 
   // Syntax grammars load in the background from the first frame, so the first
   // code block an agent produces is already coloured.
-  useEffect(warmHighlighter, [])
+  useEffect(dependencies.warmHighlighter, [dependencies.warmHighlighter])
 
   useEffect(() => {
     const checkConnection = () => void transport.ensureHealthy()
@@ -696,8 +818,8 @@ export function App() {
 
   useLayoutEffect(() => {
     applyTheme(theme)
-    void setDesktopTheme(themePreference)
-  }, [theme, themePreference])
+    void dependencies.setDesktopTheme(themePreference)
+  }, [dependencies.setDesktopTheme, theme, themePreference])
 
   useEffect(() => {
     writeSetting(THEME_KEY, themePreference)
@@ -803,8 +925,23 @@ export function App() {
   }, [])
   const projectsRef = useRef(projects)
   projectsRef.current = projects
-  // prettier-ignore
-  const workspaceIdleProbe = useRef({ inFlight: undefined as Promise<void> | undefined, pendingPath: undefined as string | undefined, idlePath: undefined as string | undefined, blockedPath: undefined as string | undefined, pendingStarts: new Map<string, { path: string; tokens: number[] }>(), submissionStarts: new Map<string, { threadId: string; token: number }>(), queuedStarts: new Map<string, { threadId: string; token: number }>(), claimedStarts: new Set<string>(), queueActions: new Map<string, { threadId: string; count: number; pending: number; steers: number }>(), unknownQueues: new Set<string>(), nextStart: 0, revision: 0, transportRevision: 0, refreshedRevision: -1, refreshedPath: undefined as string | undefined })
+  const workspaceIdleProbe = useRef<WorkspaceIdleProbe>({
+    inFlight: undefined,
+    pendingPath: undefined,
+    idlePath: undefined,
+    blockedPath: undefined,
+    pendingStarts: new Map(),
+    submissionStarts: new Map(),
+    queuedStarts: new Map(),
+    claimedStarts: new Set(),
+    queueActions: new Map(),
+    unknownQueues: new Set(),
+    nextStart: 0,
+    revision: 0,
+    transportRevision: 0,
+    refreshedRevision: -1,
+    refreshedPath: undefined,
+  })
   useEffect(() => {
     workspaceIdleProbe.current.revision += 1
   }, [activePath])
@@ -941,10 +1078,9 @@ export function App() {
             pendingDeltas.sequence = Math.max(pendingSequence ?? durableSequence, seq)
           }
         } else {
-          pendingThreadDeltas.current.set(threadId, {
-            events: [event],
-            ...(seq !== undefined && durableSequence !== undefined ? { sequence: seq } : {}),
-          })
+          const nextDeltas: PendingThreadDeltaBatch = { events: [event] }
+          if (seq !== undefined && durableSequence !== undefined) nextDeltas.sequence = seq
+          pendingThreadDeltas.current.set(threadId, nextDeltas)
         }
         liveFlush ??= requestAnimationFrame(flushLive)
         return
@@ -998,9 +1134,9 @@ export function App() {
               ...session,
               status,
               statusSince: status === session.status ? session.statusSince : Date.now(),
-              ...(event.type === 'turn.completed'
-                ? { unread: threadId !== activeIdRef.current }
-                : {}),
+              ...propertiesWhen(event.type === 'turn.completed', () => ({
+                unread: threadId !== activeIdRef.current,
+              })),
             }
           })
           return event.type === 'turn.started' && sidebarSettingsRef.current.mode === 'classic'
@@ -1149,9 +1285,10 @@ export function App() {
       if (cancelled) return
       setProviderStatuses(providers)
       setCatalogAvailability('ready')
+      const storedProvider = ProviderIdSchema.safeParse(readSetting(SETUP_KEY))
       if (
         !activeIdRef.current &&
-        !PUBLIC_BETA_PROVIDER_IDS.has(readSetting(SETUP_KEY) as ProviderId)
+        (!storedProvider.success || !PUBLIC_BETA_PROVIDER_IDS.has(storedProvider.data))
       ) {
         const fallback = providers.find(
           (status) =>
@@ -1377,7 +1514,7 @@ export function App() {
   }, [transport, catalogRequest])
 
   useEffect(() => {
-    if (!isDesktop || !canCaptureVoice() || selectedModelChoice?.agent) {
+    if (!dependencies.isDesktop || !dependencies.canCaptureVoice() || selectedModelChoice?.agent) {
       setVoiceAvailable(false)
       return
     }
@@ -1393,7 +1530,14 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [transport, provider, account?.signedIn, selectedModelChoice?.agent])
+  }, [
+    dependencies.canCaptureVoice,
+    dependencies.isDesktop,
+    transport,
+    provider,
+    account?.signedIn,
+    selectedModelChoice?.agent,
+  ])
 
   useEffect(() => {
     let cancelled = false
@@ -1449,9 +1593,10 @@ export function App() {
     void transport
       .request('auth.status', {
         provider,
-        ...(provider === 'acp' && (selectedModelChoice?.agent?.id ?? acpAgent)
-          ? { agent: selectedModelChoice?.agent?.id ?? acpAgent }
-          : {}),
+        ...propertiesWhen(
+          provider === 'acp' && (selectedModelChoice?.agent?.id ?? acpAgent),
+          () => ({ agent: selectedModelChoice?.agent?.id ?? acpAgent }),
+        ),
       })
       .then((nextAccount) => {
         if (cancelled || revision !== accountRequestRevision.current) return
@@ -1484,14 +1629,16 @@ export function App() {
               id: session.id,
               title: session.title,
               provider: session.provider,
-              ...(session.agent ? { agent: session.agent } : {}),
+              ...propertiesWhen(session.agent, (includedValue) => ({ agent: includedValue })),
               createdAt: session.createdAt,
               statusSince: session.running ? Date.now() : session.createdAt,
               status,
               lifecycle: session.lifecycle ?? { state: 'active', keepActive: false },
               unread: session.unread ?? false,
               pinned: session.pinned ?? false,
-              ...(session.worktreeBranch ? { worktreeBranch: session.worktreeBranch } : {}),
+              ...propertiesWhen(session.worktreeBranch, (includedValue) => ({
+                worktreeBranch: includedValue,
+              })),
             }
           }),
           savedOrder,
@@ -1803,7 +1950,9 @@ export function App() {
     usageController.select(
       usageProviders.map((sourceProvider) => ({
         provider: sourceProvider,
-        ...(sourceProvider === provider && usageThreadId ? { threadId: usageThreadId } : {}),
+        ...propertiesWhen(sourceProvider === provider && usageThreadId, () => ({
+          threadId: usageThreadId,
+        })),
       })),
     )
   }, [usageController, usageThreadId, provider, usageProviders])
@@ -1899,8 +2048,8 @@ export function App() {
     const selections = readSourceSelections()
     const entry: SourceSelection = {
       modelKey: selectedModelChoice.key,
-      ...(selectedEffort ? { effort: selectedEffort } : {}),
-      ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+      ...propertiesWhen(selectedEffort, (includedValue) => ({ effort: includedValue })),
+      ...propertiesWhen(selectedServiceTier, (includedValue) => ({ serviceTier: includedValue })),
     }
     const current = selections[source]
     if (
@@ -2031,7 +2180,7 @@ export function App() {
   )
 
   const addProject = useCallback(async () => {
-    const path = await pickFolder()
+    const path = await dependencies.pickFolder()
     if (!path) return
     await transport.request('projects.add', { path })
     await refreshProjects()
@@ -2039,7 +2188,7 @@ export function App() {
     activeIdRef.current = undefined
     setActiveId(undefined)
     setThread(emptyThread)
-  }, [transport, refreshProjects])
+  }, [dependencies.pickFolder, transport, refreshProjects])
 
   const generateSessionTitle = useCallback(
     async (threadId: string, prompt: string, expectedTitle: string) => {
@@ -2079,12 +2228,16 @@ export function App() {
           provider: choice.provider,
           workspacePath: projectPath,
           approval: sessionApproval,
-          ...(choice.agent ? { agent: choice.agent.id } : {}),
-          ...(choice.connectionId ? { connectionId: choice.connectionId } : {}),
-          ...(choice.model.id ? { model: choice.model.id } : {}),
-          ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
-          ...(selectedEffort ? { effort: selectedEffort } : {}),
-          ...(isolateSession ? { isolate: true } : {}),
+          ...propertiesWhen(choice.agent, (includedValue) => ({ agent: includedValue.id })),
+          ...propertiesWhen(choice.connectionId, (includedValue) => ({
+            connectionId: includedValue,
+          })),
+          ...propertiesWhen(choice.model.id, (includedValue) => ({ model: includedValue })),
+          ...propertiesWhen(selectedServiceTier, (includedValue) => ({
+            serviceTier: includedValue,
+          })),
+          ...propertiesWhen(selectedEffort, (includedValue) => ({ effort: includedValue })),
+          ...propertiesWhen(isolateSession, () => ({ isolate: true })),
         })
         const provisional = threadStates.current.get(provisionalId) ?? emptyThread
         threadStates.current.delete(provisionalId)
@@ -2114,7 +2267,9 @@ export function App() {
                             id: threadId,
                             title: canonicalTitle,
                             provider: choice.provider,
-                            ...(choice.agent ? { agent: choice.agent.id } : {}),
+                            ...propertiesWhen(choice.agent, (includedValue) => ({
+                              agent: includedValue.id,
+                            })),
                             createdAt: Date.now(),
                             statusSince: Date.now(),
                             status: 'starting',
@@ -2356,7 +2511,9 @@ export function App() {
                       id: provisionalId,
                       title: titleFrom(text),
                       provider: choice.provider,
-                      ...(choice.agent ? { agent: choice.agent.id } : {}),
+                      ...propertiesWhen(choice.agent, (includedValue) => ({
+                        agent: includedValue.id,
+                      })),
                       createdAt: Date.now(),
                       statusSince: Date.now(),
                       status: 'starting',
@@ -2459,6 +2616,7 @@ export function App() {
       rejectedDrafts.current.delete(threadId)
       if (rejectedDraftOwner.current === threadId) rejectedDraftOwner.current = undefined
       const pendingOptimisticTurn = optimisticState.activeTurn
+      const precedingTurn = wasRunning ? before.activeTurn : undefined
       const pendingSubmission: PendingSubmission = {
         id: optimisticItemId,
         text,
@@ -2467,7 +2625,9 @@ export function App() {
         kind: wasRunning ? (steering ? 'steer' : 'queue') : 'turn',
         accepted: false,
         indeterminate: false,
-        ...(wasRunning && before.activeTurn ? { precedingTurnId: before.activeTurn.id } : {}),
+        ...propertiesWhen(precedingTurn, (turn) => ({
+          precedingTurnId: turn.id,
+        })),
       }
       if (pendingOptimisticTurn && pendingOptimisticTurn.id === optimisticTurnId) {
         pendingSubmission.optimisticTurn = pendingOptimisticTurn
@@ -2516,10 +2676,12 @@ export function App() {
           threadId,
           text,
           clientSubmissionId: optimisticItemId,
-          ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
-          ...(turnChoice?.model.id ? { model: turnChoice.model.id } : {}),
-          ...(turnChoice && selectedEffort ? { effort: selectedEffort } : {}),
-          ...(turnChoice && selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+          ...propertiesWhen(turnAttachments.length > 0, () => ({ attachments: turnAttachments })),
+          ...propertiesWhen(turnChoice?.model.id, (includedValue) => ({ model: includedValue })),
+          ...propertiesWhen(turnChoice && selectedEffort, () => ({ effort: selectedEffort })),
+          ...propertiesWhen(turnChoice && selectedServiceTier, () => ({
+            serviceTier: selectedServiceTier,
+          })),
         })
         // A new chat can be stopped while thread.start is still resolving.
         // Preserve that intent, put sendTurn on the wire first, then interrupt
@@ -2578,7 +2740,7 @@ export function App() {
           }
         }
       } catch (error) {
-        if (isIndeterminateRequestError(error)) {
+        if (IndeterminateRequestErrorSchema.safeParse(error).success) {
           const pending = pendingSubmissions.current.get(threadId)?.get(optimisticItemId)
           if (pending) pending.indeterminate = true
           if (queuedActionId) settleQueueAction(queuedActionId, 'steer', true)
@@ -2690,8 +2852,24 @@ export function App() {
     [provider],
   )
 
+  useEffect(() => {
+    if (!providerLoginTerminal || providerLoginState?.phase !== 'succeeded') return
+    const completed = providerLoginTerminal
+    clearInstall(completed.installKey)
+    setProviderLoginTerminal(undefined)
+    setWorkspacePanelOpen(completed.restorePanelOpen)
+    setWorkspacePanelExpanded(completed.restorePanelExpanded)
+    setSettingsSection('providers')
+    setSettingsOpen(true)
+    setProviderAuthRefreshRevision((revision) => revision + 1)
+    void transport
+      .request('auth.status', { provider: completed.provider })
+      .then((account) => handleAccountChange(completed.provider, account))
+      .catch(() => undefined)
+  }, [handleAccountChange, providerLoginState?.phase, providerLoginTerminal, transport])
+
   // prettier-ignore
-  const deleteQueuedTurn = useCallback((queuedTurnId: string) => { if (!activeId) return; holdQueueAction(queuedTurnId, activeId, 'delete'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; void transport.request('thread.deleteQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'delete'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath) }).catch((error) => { settleQueueAction(queuedTurnId, 'delete', isIndeterminateRequestError(error)); setNotice(error instanceof Error ? error.message : String(error)) }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
+  const deleteQueuedTurn = useCallback((queuedTurnId: string) => { if (!activeId) return; holdQueueAction(queuedTurnId, activeId, 'delete'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; void transport.request('thread.deleteQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'delete'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath) }).catch((error) => { settleQueueAction(queuedTurnId, 'delete', IndeterminateRequestErrorSchema.safeParse(error).success); setNotice(error instanceof Error ? error.message : String(error)) }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
 
   const moveQueuedTurn = useCallback(
     (queuedTurnId: string, direction: 'up' | 'down') => {
@@ -2708,7 +2886,7 @@ export function App() {
   )
 
   // prettier-ignore
-  const steerQueuedTurn = useCallback((queuedTurnId: string) => { if (!activeId) return; holdQueueAction(queuedTurnId, activeId, 'steer'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; void transport.request('thread.steerQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'steer'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath) }).catch((error) => { settleQueueAction(queuedTurnId, 'steer', isIndeterminateRequestError(error)); setNotice(error instanceof Error ? error.message : String(error)) }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
+  const steerQueuedTurn = useCallback((queuedTurnId: string) => { if (!activeId) return; holdQueueAction(queuedTurnId, activeId, 'steer'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; void transport.request('thread.steerQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'steer'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath) }).catch((error) => { settleQueueAction(queuedTurnId, 'steer', IndeterminateRequestErrorSchema.safeParse(error).success); setNotice(error instanceof Error ? error.message : String(error)) }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
 
   const selectProject = useCallback(
     (path: string) => {
@@ -3162,73 +3340,6 @@ export function App() {
     [transport],
   )
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat) return
-      if (shortcutsOpen) return
-
-      // The Settings sheet owns the keyboard. Without this, Ctrl+N started a
-      // chat underneath it. Its own shortcut still closes it; everything else waits.
-      if (settingsOpen) {
-        if (matchesShortcut(event, SHORTCUTS.settings)) {
-          event.preventDefault()
-          setSettingsOpen(false)
-        }
-        return
-      }
-      if (matchesShortcut(event, SHORTCUTS.searchSessions)) {
-        event.preventDefault()
-        setPaletteScope(null)
-        sessionSearch.current?.open()
-        return
-      }
-      if (isEditableTarget(event.target)) return
-
-      if (matchesShortcut(event, SHORTCUTS.commandPalette)) {
-        event.preventDefault()
-        setSettingsOpen(false)
-        setPaletteScope('all')
-        return
-      }
-      if (matchesShortcut(event, SHORTCUTS.switchProject)) {
-        event.preventDefault()
-        setSettingsOpen(false)
-        setPaletteScope('projects')
-        return
-      }
-      if (matchesShortcut(event, SHORTCUTS.newChat)) {
-        event.preventDefault()
-        startNewChat()
-        return
-      }
-      if (matchesShortcut(event, SHORTCUTS.newProject)) {
-        event.preventDefault()
-        void addProject()
-        return
-      }
-      if (matchesShortcut(event, SHORTCUTS.settings)) {
-        event.preventDefault()
-        setPaletteScope(null)
-        setSettingsSection('providers')
-        setSettingsOpen(true)
-        return
-      }
-      if (matchesShortcut(event, SHORTCUTS.focusComposer) && activePath) {
-        event.preventDefault()
-        setPaletteScope(null)
-        setComposerFocusRequest((request) => request + 1)
-        return
-      }
-      if (matchesShortcut(event, SHORTCUTS.toggleSidebar)) {
-        event.preventDefault()
-        setCollapsed((current) => !current)
-      }
-    }
-
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [activePath, addProject, provider, shortcutsOpen, startNewChat, settingsOpen])
-
   const sidebarInbox = useMemo(
     () => ({
       onSettle: (id: string) => void hideSession(id, 'settle'),
@@ -3395,6 +3506,22 @@ export function App() {
   const openSidebarSearch = useCallback((projectPath?: string) => {
     sessionSearch.current?.open(projectPath)
   }, [])
+  const cycleChat = useCallback(
+    (direction: -1 | 1) => {
+      const sessions = projects.flatMap((project) => project.sessions)
+      if (sessions.length === 0) return
+      const current = activeId ? sessions.findIndex((session) => session.id === activeId) : -1
+      const nextIndex =
+        current < 0
+          ? direction > 0
+            ? 0
+            : sessions.length - 1
+          : (current + direction + sessions.length) % sessions.length
+      const next = sessions[nextIndex]
+      if (next) void selectSession(next.id)
+    },
+    [projects, activeId, selectSession],
+  )
   const selectSessionSearchResult = useCallback(
     (threadId: string, turnId?: string) => {
       setSearchJump((current) =>
@@ -3413,6 +3540,18 @@ export function App() {
   const openSettings = useCallback((section: SettingsSection = 'providers') => {
     setSettingsSection(section)
     setSettingsOpen(true)
+  }, [])
+  const changeKeybinding = useCallback((action: KeybindingId, shortcut: Shortcut | null) => {
+    setKeybindings((current) => {
+      const next = { ...current, [action]: shortcut }
+      writeKeybindings(next)
+      return next
+    })
+  }, [])
+  const resetKeybindings = useCallback(() => {
+    const defaults = createDefaultKeybindings()
+    writeKeybindings(defaults)
+    setKeybindings(defaults)
   }, [])
   const openProviderSetup = useCallback(() => {
     refreshCatalog()
@@ -3452,11 +3591,177 @@ export function App() {
     setWorkspacePanelOpen(false)
     setWorkspacePanelExpanded(false)
   }, [])
+  const openProviderLoginTerminal = useCallback(
+    (target: ProviderLoginTerminalTarget) => {
+      setProviderLoginTerminal({
+        ...target,
+        id: nextProviderLoginTerminalId.current++,
+        visible: true,
+        restorePanelOpen: workspacePanelOpen,
+        restorePanelExpanded: workspacePanelExpanded,
+      })
+      setSettingsOpen(false)
+      setWorkspacePanelOpen(true)
+      setWorkspacePanelExpanded(true)
+    },
+    [workspacePanelExpanded, workspacePanelOpen],
+  )
+  const closeProviderLoginTerminal = useCallback(
+    (id: number) => {
+      if (!providerLoginTerminal || providerLoginTerminal.id !== id) return
+      setProviderLoginTerminal(
+        providerLoginState?.phase === 'running'
+          ? { ...providerLoginTerminal, visible: false }
+          : undefined,
+      )
+      setWorkspacePanelOpen(providerLoginTerminal.restorePanelOpen)
+      setWorkspacePanelExpanded(providerLoginTerminal.restorePanelExpanded)
+      setSettingsSection('providers')
+      setSettingsOpen(true)
+    },
+    [providerLoginState?.phase, providerLoginTerminal],
+  )
+  const toggleWorkspacePanel = useCallback(() => {
+    if (workspacePanelOpen) setWorkspacePanelExpanded(false)
+    setWorkspacePanelOpen((open) => !open)
+  }, [workspacePanelOpen])
+  const toggleExpandedWorkspacePanel = useCallback(() => {
+    if (!workspacePanelOpen) {
+      setWorkspacePanelOpen(true)
+      setWorkspacePanelExpanded(true)
+      return
+    }
+    setWorkspacePanelExpanded((expanded) => !expanded)
+  }, [workspacePanelOpen])
+  const toggleFastMode = useCallback(() => {
+    const model = selectedModelChoice?.model
+    const fast = getFastServiceTier(model)
+    if (!fast) return
+    setServiceTier((current) => (current === fast.id ? getFastModeOffValue(model) : fast.id))
+  }, [selectedModelChoice])
   const active = useMemo(() => findSession(projects, activeId), [projects, activeId])
   const activeProject = useMemo(
     () => projects.find((project) => project.path === activePath),
     [projects, activePath],
   )
+  const keybindingActions = useMemo<Record<KeybindingId, () => void>>(
+    () => ({
+      commandPalette: () => {
+        setSettingsOpen(false)
+        setPaletteScope('all')
+      },
+      settings: () => {
+        setPaletteScope(null)
+        openSettings('providers')
+      },
+      keybindings: () => {
+        setPaletteScope(null)
+        openSettings('keybinds')
+      },
+      toggleSidebar: toggleRail,
+      newChat: startNewChat,
+      searchSessions: () => {
+        setPaletteScope(null)
+        sessionSearch.current?.open()
+      },
+      focusComposer: () => {
+        if (!activePath) return
+        setPaletteScope(null)
+        setComposerFocusRequest((request) => request + 1)
+      },
+      interrupt: () => {
+        if (thread.running) interrupt()
+      },
+      previousChat: () => cycleChat(-1),
+      nextChat: () => cycleChat(1),
+      toggleSessionPin: () => {
+        if (activeId) toggleSidebarSessionPin(activeId)
+      },
+      archiveSession: () => {
+        if (activeId) deleteSidebarSession(activeId)
+      },
+      rollback: () => {
+        if (activeId && checkpoints.length > 0) openRollback()
+      },
+      switchProject: () => {
+        setSettingsOpen(false)
+        setPaletteScope('projects')
+      },
+      newProject: () => void addProject(),
+      openPullRequests,
+      toggleTerminal: () => {
+        if (activeId) toggleTerminal()
+      },
+      toggleWorkspace: () => {
+        if (activePath) toggleWorkspacePanel()
+      },
+      expandWorkspace: () => {
+        if (activePath) toggleExpandedWorkspacePanel()
+      },
+      toggleFastMode,
+      toggleDesignMode: () => {
+        if (!thread.running) setDesignMode((enabled) => !enabled)
+      },
+      toggleIsolatedSession: () => {
+        if (!activeId) setIsolateSession((enabled) => !enabled)
+      },
+    }),
+    [
+      activeId,
+      activePath,
+      addProject,
+      checkpoints.length,
+      cycleChat,
+      deleteSidebarSession,
+      interrupt,
+      openPullRequests,
+      openRollback,
+      openSettings,
+      startNewChat,
+      thread.running,
+      toggleExpandedWorkspacePanel,
+      toggleFastMode,
+      toggleRail,
+      toggleSidebarSessionPin,
+      toggleTerminal,
+      toggleWorkspacePanel,
+    ],
+  )
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) return
+
+      // Settings owns all keys while open. Its two app shortcuts can close
+      // the sheet or jump directly to the keybind editor.
+      if (settingsOpen) {
+        if (matchesShortcut(event, keybindings.settings)) {
+          event.preventDefault()
+          setSettingsOpen(false)
+        } else if (matchesShortcut(event, keybindings.keybindings)) {
+          event.preventDefault()
+          setSettingsSection('keybinds')
+        }
+        return
+      }
+      if (paletteScope || rollbackOpen || checkoutDelete) return
+
+      const definition = KEYBINDING_DEFINITIONS.find((candidate) =>
+        matchesShortcut(event, keybindings[candidate.id]),
+      )
+      if (!definition) return
+      // Chat search intentionally stays reachable from the composer. Every
+      // other global command leaves editable controls alone.
+      if (definition.id !== 'searchSessions' && isEditableTarget(event.target)) return
+
+      event.preventDefault()
+      keybindingActions[definition.id]()
+    }
+
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [checkoutDelete, keybindingActions, keybindings, paletteScope, rollbackOpen, settingsOpen])
+
   const sideChatParentStatus: SideChatParentStatus =
     thread.approvals.length > 0
       ? 'approval'
@@ -3469,9 +3774,11 @@ export function App() {
             : 'idle'
   const sideChatStartOptions = useMemo<SideChatStartOptions>(
     () => ({
-      ...(selectedModelChoice?.model.id ? { model: selectedModelChoice.model.id } : {}),
-      ...(selectedEffort ? { effort: selectedEffort } : {}),
-      ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+      ...propertiesWhen(selectedModelChoice?.model.id, (includedValue) => ({
+        model: includedValue,
+      })),
+      ...propertiesWhen(selectedEffort, (includedValue) => ({ effort: includedValue })),
+      ...propertiesWhen(selectedServiceTier, (includedValue) => ({ serviceTier: includedValue })),
       approval: approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval,
     }),
     [
@@ -3490,12 +3797,17 @@ export function App() {
   )
   const commands = useMemo<PaletteCommand[]>(() => {
     if (!paletteScope) return EMPTY_PALETTE_COMMANDS
+    const keybind = (id: KeybindingId) => {
+      const shortcut = keybindings[id]
+      return shortcut ? shortcutLabel(shortcut, macOS) : undefined
+    }
     return [
       {
         id: 'search-sessions',
         title: 'Search all chats',
         detail: 'Titles, messages, commands, and tool output across projects',
         group: 'Actions',
+        shortcut: keybind('searchSessions'),
         run: () => {
           sessionSearch.current?.open()
         },
@@ -3506,6 +3818,7 @@ export function App() {
         detail: activePath ? `Start in ${basename(activePath)}` : 'Choose a project folder',
         group: 'Actions',
         keywords: 'session conversation',
+        shortcut: keybind('newChat'),
         run: startNewChat,
       },
       {
@@ -3514,6 +3827,7 @@ export function App() {
         detail: 'Choose another workspace',
         group: 'Actions',
         keywords: 'folder workspace',
+        shortcut: keybind('switchProject'),
         run: () => setPaletteScope('projects'),
       },
       {
@@ -3523,6 +3837,7 @@ export function App() {
         group: 'Actions',
         keywords: 'add open folder workspace',
         projectCommand: true,
+        shortcut: keybind('newProject'),
         run: () => void addProject(),
       },
       ...(activePath
@@ -3533,6 +3848,7 @@ export function App() {
               detail: 'Move the cursor to your prompt',
               group: 'Actions' as const,
               keywords: 'prompt message type',
+              shortcut: keybind('focusComposer'),
               run: () => setComposerFocusRequest((request) => request + 1),
             },
           ]
@@ -3542,23 +3858,89 @@ export function App() {
         title: collapsed ? 'Show sidebar' : 'Hide sidebar',
         group: 'Actions',
         keywords: 'rail navigation',
+        shortcut: keybind('toggleSidebar'),
         run: () => setCollapsed((current) => !current),
       },
       {
         id: 'open-settings',
         title: 'Settings',
-        detail: 'Providers, appearance, storage',
+        detail: 'General, appearance, keybinds, providers, and data',
         group: 'Actions',
+        shortcut: keybind('settings'),
         run: () => openSettings(),
       },
       {
         id: 'keyboard-shortcuts',
-        title: 'Keyboard shortcuts',
-        detail: 'View every app shortcut',
+        title: 'Keybinds',
+        detail: 'View and customize every app keybind',
         group: 'Actions',
-        keywords: 'help hotkeys key bindings',
-        run: () => setShortcutsOpen(true),
+        keywords: 'help keyboard shortcuts hotkeys key bindings',
+        shortcut: keybind('keybindings'),
+        run: () => openSettings('keybinds'),
       },
+      {
+        id: 'open-pull-requests',
+        title: 'Pull requests',
+        detail: 'Open the pull request inbox',
+        group: 'Actions',
+        keywords: 'github prs review',
+        shortcut: keybind('openPullRequests'),
+        run: openPullRequests,
+      },
+      ...(activeId
+        ? [
+            {
+              id: 'toggle-terminal',
+              title: terminalOpen ? 'Hide terminal' : 'Show terminal',
+              group: 'Actions' as const,
+              keywords: 'console shell',
+              shortcut: keybind('toggleTerminal'),
+              run: toggleTerminal,
+            },
+            {
+              id: 'toggle-chat-pin',
+              title: active?.session.pinned ? 'Unpin current chat' : 'Pin current chat',
+              group: 'Actions' as const,
+              shortcut: keybind('toggleSessionPin'),
+              run: () => toggleSidebarSessionPin(activeId),
+            },
+            ...(thread.running
+              ? [
+                  {
+                    id: 'stop-response',
+                    title: 'Stop response',
+                    group: 'Actions' as const,
+                    shortcut: keybind('interrupt'),
+                    run: interrupt,
+                  },
+                ]
+              : []),
+            ...(checkpoints.length > 0
+              ? [
+                  {
+                    id: 'open-restore-points',
+                    title: 'Restore points',
+                    detail: 'Review chat checkpoints',
+                    group: 'Actions' as const,
+                    shortcut: keybind('rollback'),
+                    run: openRollback,
+                  },
+                ]
+              : []),
+          ]
+        : []),
+      ...(activePath
+        ? [
+            {
+              id: 'toggle-workspace',
+              title: workspacePanelOpen ? 'Hide workspace tools' : 'Show workspace tools',
+              detail: 'Files, review, browser, and side chat',
+              group: 'Actions' as const,
+              shortcut: keybind('toggleWorkspace'),
+              run: toggleWorkspacePanel,
+            },
+          ]
+        : []),
       ...projects.map((project): PaletteCommand => ({
         id: `project-${encodeURIComponent(project.path)}`,
         title: displayName(project),
@@ -3594,28 +3976,39 @@ export function App() {
     startNewChat,
     addProject,
     openSettings,
+    openPullRequests,
+    active,
+    activeId,
     collapsed,
+    checkpoints.length,
+    interrupt,
+    keybindings,
+    macOS,
     projects,
     selectProject,
     beginSession,
     selectSession,
+    terminalOpen,
+    thread.running,
+    toggleSidebarSessionPin,
+    toggleTerminal,
+    toggleWorkspacePanel,
+    workspacePanelOpen,
   ])
 
   return (
-    <div
-      className={`shell ${collapsed ? 'is-narrow' : ''}`}
-      style={{ '--rail-w': `${railWidth}px` } as CSSProperties}
-    >
-      <TitleBar collapsed={collapsed} onToggleRail={toggleRail} />
-      {isDesktop ? <ZoomHud /> : null}
+    <div className={`shell ${collapsed ? 'is-narrow' : ''}`} style={shellStyle(railWidth)}>
+      <TitleBar collapsed={collapsed} keybindings={keybindings} onToggleRail={toggleRail} />
+      {dependencies.isDesktop ? <ZoomHud /> : null}
 
       <div className="shell__body">
-        <Sidebar
+        <components.Sidebar
           projects={projects}
           activeProjectPath={activePath}
           activeSessionId={surface === 'chat' ? activeId : undefined}
           pullRequestsActive={surface === 'pull-requests'}
           providerName={providerName(provider, acpAgentName)}
+          keybindings={keybindings}
           usageStates={usageState}
           onRetryUsage={refreshUsage}
           mode={sidebarSettings.mode}
@@ -3645,7 +4038,7 @@ export function App() {
 
         <div
           className={`workspace-layout${workspacePanelOpen ? ' is-panel-open' : ''}${workspacePanelExpanded ? ' is-panel-expanded' : ''}`}
-          style={{ '--workspace-panel-w': `${workspacePanelWidth}px` } as CSSProperties}
+          style={workspaceLayoutStyle(workspacePanelWidth)}
         >
           <main className="stage">
             {surface === 'pull-requests' ? (
@@ -3654,7 +4047,7 @@ export function App() {
               </Suspense>
             ) : (
               <>
-                <StageHeader
+                <components.StageHeader
                   sessionId={active?.session.id}
                   title={active?.session.title}
                   pinned={active?.session.pinned ?? false}
@@ -3663,6 +4056,7 @@ export function App() {
                   worktreeBranch={active?.session.worktreeBranch}
                   terminalOpen={terminalOpen}
                   workspacePanelOpen={workspacePanelOpen}
+                  keybindings={keybindings}
                   onOpenRollback={openRollback}
                   onToggleWorkspace={workspacePanelOpen ? closeWorkspacePanel : openWorkspacePanel}
                   onToggleTerminal={toggleTerminal}
@@ -3675,7 +4069,7 @@ export function App() {
                   className={`stage__body${activeId ? '' : ' is-new-session'}${active && terminalOpen ? ' has-terminal' : ''}`}
                 >
                   {activeId ? (
-                    <Thread
+                    <components.Thread
                       items={thread.items}
                       loading={loadingThreadId === activeId}
                       liveItems={thread.liveItems}
@@ -3715,7 +4109,7 @@ export function App() {
 
                   {active && terminalOpen ? (
                     <Suspense fallback={null}>
-                      <TerminalPane
+                      <components.TerminalPane
                         key={activeId}
                         transport={transport}
                         threadId={active.session.id}
@@ -3727,7 +4121,7 @@ export function App() {
                     </Suspense>
                   ) : null}
 
-                  <Composer
+                  <components.Composer
                     transport={transport}
                     provider={provider}
                     projects={projects}
@@ -3744,13 +4138,16 @@ export function App() {
                     approval={approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval}
                     autoReviewSupported={autoReviewSupported}
                     attachmentsSupported={attachmentsSupported}
-                    voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
+                    voiceAvailable={
+                      dependencies.isDesktop && provider === 'codex' && voiceAvailable
+                    }
                     disabled={stopping}
                     sendAvailability={sendAvailability}
                     running={visibleRunning}
                     newSession={!activeId}
                     isolate={active?.session.worktreeBranch ? true : isolateSession}
                     designMode={designMode}
+                    keybindings={keybindings}
                     focusRequest={composerFocusRequest}
                     draftRequest={composerDraft}
                     onDraftChange={updateRejectedDraft}
@@ -3797,23 +4194,29 @@ export function App() {
               sideChatStartOptions={sideChatStartOptions}
               sideChatPromptRequest={sideChatPromptRequest}
               nativeSurfacesVisible={
-                !settingsOpen &&
-                !shortcutsOpen &&
-                paletteScope === null &&
-                !rollbackOpen &&
-                !checkoutDelete
+                !settingsOpen && paletteScope === null && !rollbackOpen && !checkoutDelete
               }
               onOpen={openWorkspacePanel}
               onClose={closeWorkspacePanel}
               onExpandedChange={setWorkspacePanelExpanded}
               onWidthChange={setWorkspacePanelWidth}
+              providerLogin={
+                providerLoginTerminal?.visible
+                  ? {
+                      id: providerLoginTerminal.id,
+                      title: `${providerLoginTerminal.displayName} login`,
+                      installKey: providerLoginTerminal.installKey,
+                    }
+                  : undefined
+              }
+              onProviderLoginClose={closeProviderLoginTerminal}
             />
           </Suspense>
         </div>
       </div>
 
       {settingsOpen ? (
-        <Settings
+        <components.Settings
           initialSection={settingsSection}
           provider={provider}
           providerName={providerName(provider, acpAgentName)}
@@ -3846,14 +4249,20 @@ export function App() {
           showMacOSFontSmoothing={macOS}
           macOSFontSmoothing={macOSFontSmoothing}
           onMacOSFontSmoothingChange={setMacOSFontSmoothing}
-          showMacOSHaptics={isDesktop && macOS}
+          macOS={macOS}
+          keybindings={keybindings}
+          onKeybindingChange={changeKeybinding}
+          onKeybindingsReset={resetKeybindings}
+          showMacOSHaptics={dependencies.isDesktop && macOS}
           onAccountChange={handleAccountChange}
+          authRefreshRevision={providerAuthRefreshRevision}
+          onProviderLoginTerminalOpen={openProviderLoginTerminal}
           onReset={resetSettings}
           onClose={closeSettings}
         />
       ) : null}
 
-      {isDesktop &&
+      {dependencies.isDesktop &&
       projectsStatus === 'ready' &&
       projects.length === 0 &&
       !onboardingDismissed &&
@@ -3869,10 +4278,8 @@ export function App() {
         />
       ) : null}
 
-      {shortcutsOpen ? <ShortcutsDialog onClose={() => setShortcutsOpen(false)} /> : null}
-
       {paletteScope ? (
-        <CommandPalette
+        <components.CommandPalette
           commands={commands}
           scope={paletteScope}
           preferredCommandId={
@@ -3884,7 +4291,7 @@ export function App() {
         />
       ) : null}
 
-      <SessionSearchHost
+      <components.SessionSearchHost
         ref={sessionSearch}
         transport={transport}
         projects={projects}
@@ -4200,11 +4607,12 @@ function renameSession(projects: Project[], threadId: string, title: string): Pr
 }
 
 type SessionOrder = Record<string, string[]>
+const ProjectOrderSchema = z.array(z.string())
+const SessionOrderSchema = z.record(z.string(), z.array(z.string()))
 
 function loadProjectOrder(): string[] {
   try {
-    const parsed = JSON.parse(readSetting(PROJECT_ORDER_KEY) ?? '[]') as unknown
-    return Array.isArray(parsed) && parsed.every((path) => typeof path === 'string') ? parsed : []
+    return ProjectOrderSchema.parse(JSON.parse(readSetting(PROJECT_ORDER_KEY) ?? '[]'))
   } catch {
     return []
   }
@@ -4232,14 +4640,7 @@ function saveProjectOrder(projects: Project[]): void {
 
 function loadSessionOrder(): SessionOrder {
   try {
-    const parsed = JSON.parse(readSetting(SESSION_ORDER_KEY) ?? '{}') as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    return Object.fromEntries(
-      Object.entries(parsed).filter(
-        (entry): entry is [string, string[]] =>
-          Array.isArray(entry[1]) && entry[1].every((id) => typeof id === 'string'),
-      ),
-    )
+    return SessionOrderSchema.parse(JSON.parse(readSetting(SESSION_ORDER_KEY) ?? '{}'))
   } catch {
     return {}
   }
@@ -4276,29 +4677,17 @@ function saveSessionOrder(projects: Project[]): void {
   writeSetting(SESSION_ORDER_KEY, serialized)
 }
 
-type SourceSelection = { modelKey: string; effort?: string; serviceTier?: string }
+const SourceSelectionSchema = z.object({
+  modelKey: z.string(),
+  effort: z.string().optional(),
+  serviceTier: z.string().optional(),
+})
+const SourceSelectionsSchema = z.record(z.string(), SourceSelectionSchema)
+type SourceSelection = z.infer<typeof SourceSelectionSchema>
 
 function readSourceSelections(): Record<string, SourceSelection> {
   try {
-    const parsed: unknown = JSON.parse(readSetting(MODEL_BY_SOURCE_KEY) ?? '{}')
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
-    return Object.fromEntries(
-      Object.entries(parsed as Record<string, unknown>).flatMap(([source, value]) => {
-        if (typeof value !== 'object' || value === null) return []
-        const entry = value as Record<string, unknown>
-        if (typeof entry.modelKey !== 'string') return []
-        return [
-          [
-            source,
-            {
-              modelKey: entry.modelKey,
-              ...(typeof entry.effort === 'string' ? { effort: entry.effort } : {}),
-              ...(typeof entry.serviceTier === 'string' ? { serviceTier: entry.serviceTier } : {}),
-            },
-          ],
-        ]
-      }),
-    )
+    return SourceSelectionsSchema.parse(JSON.parse(readSetting(MODEL_BY_SOURCE_KEY) ?? '{}'))
   } catch {
     return {}
   }
@@ -4364,19 +4753,20 @@ function readStoredModelChoice(customModels: CustomModel[] = []): ModelChoice | 
   const key = canonical ? storedKey : modelChoiceKey(expectedSource, modelId)
 
   const effort = readSetting(EFFORT_KEY) ?? undefined
+  const agent = agentId && agentName ? { id: agentId, name: agentName } : undefined
   return {
     key,
     provider,
     sourceName: provider === 'api' ? 'API connection' : providerName(provider, agentName),
     mark: provider === 'acp' && agentId ? agentMark(agentId) : providerMark(provider),
-    ...(connectionId ? { connectionId } : {}),
-    ...(agentId && agentName ? { agent: { id: agentId, name: agentName } } : {}),
+    ...propertiesWhen(connectionId, (connectionId) => ({ connectionId })),
+    ...propertiesWhen(agent, (agent) => ({ agent })),
     model: {
       id: modelId,
       displayName: modelId || 'Provider default',
       isDefault: true,
       reasoningEfforts: effort ? [effort] : [],
-      ...(effort ? { defaultReasoningEffort: effort } : {}),
+      ...propertiesWhen(effort, (includedValue) => ({ defaultReasoningEffort: includedValue })),
       serviceTiers: [],
     },
   }

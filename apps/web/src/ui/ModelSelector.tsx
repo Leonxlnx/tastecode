@@ -4,8 +4,10 @@ import {
   useState,
   useSyncExternalStore,
   type CSSProperties,
+  type ComponentType,
   type KeyboardEvent,
   type PointerEvent,
+  type ReactNode,
 } from 'react'
 import { performAppHaptic, prepareAppHaptics } from '../haptics.js'
 import { readModelPickerLayout, subscribeModelPickerLayout } from '../model-picker-layout.js'
@@ -36,6 +38,32 @@ type ModelSelectorProps = {
   onModelChange: (id: string) => void
   onEffortChange: (value: string) => void
   onServiceTierChange: (value: string | undefined) => void
+  haptics?: ModelSelectorHaptics | undefined
+  menuComponent?: ModelSelectorMenu | undefined
+}
+
+export type ModelSelectorHaptics = {
+  perform: typeof performAppHaptic
+  prepare: typeof prepareAppHaptics
+}
+
+export type ModelSelectorMenuProps = {
+  align: 'right'
+  disabled: boolean
+  label: string
+  triggerClassName: string
+  panelRole: 'dialog'
+  panelLabel: string
+  panelClassName: string
+  trigger: (open: boolean) => ReactNode
+  children: (close: () => void) => ReactNode
+}
+
+export type ModelSelectorMenu = ComponentType<ModelSelectorMenuProps>
+
+const defaultModelSelectorHaptics: ModelSelectorHaptics = {
+  perform: performAppHaptic,
+  prepare: prepareAppHaptics,
 }
 
 export function getCompactModelName(displayName: string | undefined): string {
@@ -350,19 +378,28 @@ export function getNextServiceTierForModel(input: {
 }
 
 function setPointerCaptureSafe(target: HTMLDivElement, pointerId: number) {
-  if (typeof target.setPointerCapture === 'function') {
-    target.setPointerCapture(pointerId)
-  }
+  target.setPointerCapture?.(pointerId)
 }
 
 function releasePointerCaptureSafe(target: HTMLDivElement, pointerId: number) {
-  if (typeof target.releasePointerCapture === 'function') {
-    target.releasePointerCapture(pointerId)
-  }
+  target.releasePointerCapture?.(pointerId)
 }
 
 function hasPointerCaptureSafe(target: HTMLDivElement, pointerId: number): boolean {
-  return typeof target.hasPointerCapture === 'function' ? target.hasPointerCapture(pointerId) : true
+  return target.hasPointerCapture?.(pointerId) ?? true
+}
+
+type SliderStyle = CSSProperties & {
+  '--model-selector-slider-width': string
+  '--model-selector-slider-inset': string
+}
+
+type SliderStopStyle = CSSProperties & {
+  '--model-selector-stop': number
+}
+
+function sliderStopStyle(index: number, count: number): SliderStopStyle {
+  return { '--model-selector-stop': index / Math.max(1, count - 1) }
 }
 
 function DitherChoiceRow(props: {
@@ -373,6 +410,7 @@ function DitherChoiceRow(props: {
   disabled: boolean
   onPreviewIndex: (index: number | null) => void
   onCommitIndex: (index: number) => void
+  haptics: ModelSelectorHaptics
 }) {
   const [pointerIndex, setPointerIndex] = useState<number | null>(null)
   const pointerIndexRef = useRef<number | null>(null)
@@ -387,10 +425,10 @@ function DitherChoiceRow(props: {
   const ditherWidthOffset =
     (1 - selectedProgress) * SLIDER_DITHER_MIN_WIDTH - selectedProgress * SLIDER_DITHER_INSET * 2
   const ditherWidth = `calc(${selectedProgress * 100}% + ${ditherWidthOffset}px)`
-  const sliderVars = {
+  const sliderVars: SliderStyle = {
     '--model-selector-slider-width': ditherWidth,
     '--model-selector-slider-inset': `${SLIDER_DITHER_INSET}px`,
-  } as CSSProperties
+  }
 
   const previewFromPointer = (event: PointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect()
@@ -405,7 +443,7 @@ function DitherChoiceRow(props: {
       pointerIndexRef.current = nextIndex
       setPointerIndex(nextIndex)
       props.onPreviewIndex(nextIndex)
-      if (nextIndex !== previousIndex) performAppHaptic('alignment')
+      if (nextIndex !== previousIndex) props.haptics.perform('alignment')
     }
   }
 
@@ -449,14 +487,14 @@ function DitherChoiceRow(props: {
         event.stopPropagation()
       }}
       onPointerEnter={() => {
-        if (!props.disabled) prepareAppHaptics()
+        if (!props.disabled) props.haptics.prepare()
       }}
       onKeyDown={handleKeyDown}
       onPointerDown={(event) => {
         if (props.disabled) return
         event.preventDefault()
         event.stopPropagation()
-        prepareAppHaptics()
+        props.haptics.prepare()
         setPointerCaptureSafe(event.currentTarget, event.pointerId)
         previewFromPointer(event)
       }}
@@ -511,11 +549,7 @@ function DitherChoiceRow(props: {
           {props.optionLabels.map((option, index) => (
             <span
               className={`model-selector__slider-stop${index <= displayIndex ? ' is-active' : ''}`}
-              style={
-                {
-                  '--model-selector-stop': index / Math.max(1, props.optionLabels.length - 1),
-                } as CSSProperties
-              }
+              style={sliderStopStyle(index, props.optionLabels.length)}
               key={option}
             />
           ))}
@@ -526,6 +560,8 @@ function DitherChoiceRow(props: {
 }
 
 export function ModelSelector(props: ModelSelectorProps) {
+  const haptics = props.haptics ?? defaultModelSelectorHaptics
+  const MenuComponent = props.menuComponent ?? Menu
   const [previewEffortIndex, setPreviewEffortIndex] = useState<number | null>(null)
   const pickerLayout = useSyncExternalStore(subscribeModelPickerLayout, readModelPickerLayout)
   const choice = getSelectedChoice(props.models, props.modelId)
@@ -557,7 +593,7 @@ export function ModelSelector(props: ModelSelectorProps) {
     }
   }
   return (
-    <Menu
+    <MenuComponent
       align="right"
       disabled={props.disabled}
       label={TRIGGER_LABEL}
@@ -642,12 +678,13 @@ export function ModelSelector(props: ModelSelectorProps) {
                   disabled={props.disabled || effortOptions.length <= 1}
                   onPreviewIndex={setPreviewEffortIndex}
                   onCommitIndex={commitEffortIndex}
+                  haptics={haptics}
                 />
               ) : null}
             </div>
           ) : null}
         </div>
       )}
-    </Menu>
+    </MenuComponent>
   )
 }

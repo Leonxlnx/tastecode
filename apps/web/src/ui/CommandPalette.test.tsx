@@ -5,7 +5,7 @@ import { CommandPalette, type PaletteCommand } from './CommandPalette.js'
 
 afterEach(cleanup)
 
-function makeCommands(): { commands: PaletteCommand[]; ran: string[] } {
+function makeCommands() {
   const ran: string[] = []
   const commands: PaletteCommand[] = [
     { id: 'new-chat', title: 'New chat', group: 'Actions', run: () => ran.push('new-chat') },

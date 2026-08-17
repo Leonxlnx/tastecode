@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { SessionSearchResult } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Transport } from '../transport.js'
+import { TestTransport } from '../test-transport.js'
 import { SessionSearch } from './SessionSearch.js'
 
 const RESULT: SessionSearchResult = {
@@ -58,7 +58,7 @@ describe('cross-session search', () => {
   it('contains forward and reverse Tab navigation inside the modal', () => {
     render(
       <SessionSearch
-        transport={{ request: vi.fn() } as unknown as Transport}
+        transport={new TestTransport()}
         projects={PROJECTS}
         onSelect={() => undefined}
         onClose={() => undefined}
@@ -87,7 +87,7 @@ describe('cross-session search', () => {
     const onSelect = vi.fn()
     render(
       <SessionSearch
-        transport={{ request } as unknown as Transport}
+        transport={new TestTransport((method, params) => request(method, params))}
         projects={PROJECTS}
         onSelect={onSelect}
         onClose={() => undefined}
@@ -166,7 +166,7 @@ describe('cross-session search', () => {
       )
     render(
       <SessionSearch
-        transport={{ request } as unknown as Transport}
+        transport={new TestTransport((method, params) => request(method, params))}
         projects={PROJECTS}
         onSelect={() => undefined}
         onClose={() => undefined}
@@ -219,7 +219,7 @@ describe('cross-session search', () => {
       )
     render(
       <SessionSearch
-        transport={{ request } as unknown as Transport}
+        transport={new TestTransport((method, params) => request(method, params))}
         projects={PROJECTS}
         onSelect={() => undefined}
         onClose={() => undefined}
@@ -259,17 +259,15 @@ describe('cross-session search', () => {
   })
 
   it('shows ACP title and content matches with their source product name', async () => {
-    const transport = {
-      request: vi.fn(async () => ({
-        results: [
-          { ...RESULT, threadId: 'gemini-thread', threadTitle: 'Gemini roadmap', provider: 'acp' },
-        ],
-        nextCursor: null,
-      })),
-    }
+    const transport = new TestTransport(async () => ({
+      results: [
+        { ...RESULT, threadId: 'gemini-thread', threadTitle: 'Gemini roadmap', provider: 'acp' },
+      ],
+      nextCursor: null,
+    }))
     render(
       <SessionSearch
-        transport={transport as unknown as Transport}
+        transport={transport}
         projects={PROJECTS}
         onSelect={() => undefined}
         onClose={() => undefined}
@@ -291,18 +289,16 @@ describe('cross-session search', () => {
   it('keeps same-turn, same-timestamp content hits distinct by server identity', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const onSelect = vi.fn()
-    const transport = {
-      request: vi.fn(async () => ({
-        results: [
-          { ...RESULT, resultId: 'message:item-1' },
-          { ...RESULT, resultId: 'tool:item-2' },
-        ],
-        nextCursor: null,
-      })),
-    }
+    const transport = new TestTransport(async () => ({
+      results: [
+        { ...RESULT, resultId: 'message:item-1' },
+        { ...RESULT, resultId: 'tool:item-2' },
+      ],
+      nextCursor: null,
+    }))
     render(
       <SessionSearch
-        transport={transport as unknown as Transport}
+        transport={transport}
         projects={[]}
         onSelect={onSelect}
         onClose={() => undefined}
@@ -323,15 +319,13 @@ describe('cross-session search', () => {
   })
 
   it('keeps the focused result selected when title rows are inserted ahead of it', async () => {
-    const transport = {
-      request: vi.fn(async () => ({
-        results: [{ ...RESULT, resultId: 'message:item-1' }],
-        nextCursor: null,
-      })),
-    }
+    const transport = new TestTransport(async () => ({
+      results: [{ ...RESULT, resultId: 'message:item-1' }],
+      nextCursor: null,
+    }))
     const view = render(
       <SessionSearch
-        transport={transport as unknown as Transport}
+        transport={transport}
         projects={PROJECTS}
         onSelect={() => undefined}
         onClose={() => undefined}
@@ -346,7 +340,7 @@ describe('cross-session search', () => {
 
     view.rerender(
       <SessionSearch
-        transport={transport as unknown as Transport}
+        transport={transport}
         projects={[
           {
             ...PROJECTS[0]!,
@@ -385,7 +379,7 @@ describe('cross-session search', () => {
       })
     render(
       <SessionSearch
-        transport={{ request } as unknown as Transport}
+        transport={new TestTransport((method, params) => request(method, params))}
         projects={[]}
         onSelect={() => undefined}
         onClose={() => undefined}
@@ -405,15 +399,13 @@ describe('cross-session search', () => {
   })
 
   it('retains title and content row instances across equivalent rerenders', async () => {
-    const transport = {
-      request: vi.fn(async () => ({
-        results: [{ ...RESULT, resultId: 'message:item-1' }],
-        nextCursor: null,
-      })),
-    }
+    const transport = new TestTransport(async () => ({
+      results: [{ ...RESULT, resultId: 'message:item-1' }],
+      nextCursor: null,
+    }))
     const view = render(
       <SessionSearch
-        transport={transport as unknown as Transport}
+        transport={transport}
         projects={PROJECTS}
         onSelect={() => undefined}
         onClose={() => undefined}
@@ -427,7 +419,7 @@ describe('cross-session search', () => {
 
     view.rerender(
       <SessionSearch
-        transport={transport as unknown as Transport}
+        transport={transport}
         projects={PROJECTS.map((project) => ({
           ...project,
           sessions: project.sessions.map((session) => ({ ...session })),
@@ -444,12 +436,13 @@ describe('cross-session search', () => {
   it('keeps duplicate legacy results usable when resultId is omitted', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const onSelect = vi.fn()
-    const transport = {
-      request: vi.fn(async () => ({ results: [RESULT, { ...RESULT }], nextCursor: null })),
-    }
+    const transport = new TestTransport(async () => ({
+      results: [RESULT, { ...RESULT }],
+      nextCursor: null,
+    }))
     const view = render(
       <SessionSearch
-        transport={transport as unknown as Transport}
+        transport={transport}
         projects={[]}
         onSelect={onSelect}
         onClose={() => undefined}
@@ -467,7 +460,7 @@ describe('cross-session search', () => {
 
     view.rerender(
       <SessionSearch
-        transport={transport as unknown as Transport}
+        transport={transport}
         projects={[{ path: 'D:\\other', name: 'Other', sessions: [] }]}
         onSelect={onSelect}
         onClose={() => undefined}

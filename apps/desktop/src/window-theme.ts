@@ -1,5 +1,13 @@
-export function windowThemeOptions(theme: unknown) {
-  if (theme !== 'light' && theme !== 'dark') throw new Error('Invalid window theme')
+import { z } from 'zod'
+import type { BoundaryValue } from './boundary.js'
+
+const WindowThemeSchema = z.enum(['light', 'dark'])
+const WindowThemePreferenceSchema = z.enum(['system', 'light', 'dark'])
+
+export function windowThemeOptions(themeValue: BoundaryValue) {
+  const result = WindowThemeSchema.safeParse(themeValue)
+  if (!result.success) throw new Error('Invalid window theme')
+  const theme = result.data
 
   // The overlay colour must match the renderer's --bg-rail: the native caption
   // buttons sit on the title bar, and that bar carries the sidebar colour so
@@ -15,9 +23,8 @@ export function windowThemeOptions(theme: unknown) {
       }
 }
 
-export function windowThemeSource(preference: unknown): 'system' | 'light' | 'dark' {
-  if (preference === 'system' || preference === 'light' || preference === 'dark') {
-    return preference
-  }
-  throw new Error('Invalid window theme preference')
+export function windowThemeSource(preference: BoundaryValue): 'system' | 'light' | 'dark' {
+  const result = WindowThemePreferenceSchema.safeParse(preference)
+  if (!result.success) throw new Error('Invalid window theme preference')
+  return result.data
 }

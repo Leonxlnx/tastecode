@@ -1,3 +1,5 @@
+import { propertiesWhen } from './properties-when.js'
+import { boundedInteger, type BoundaryValue, member, record, string } from './parse.js'
 export const DESIGN_PHASES = [
   'brief',
   'brand',
@@ -43,7 +45,7 @@ export function nextDesignPhase(completed: readonly DesignPhase[]): DesignRunPha
   return DESIGN_PHASES[completed.length] ?? 'complete'
 }
 
-export function parseDesignRunState(value: unknown): DesignRunState {
+export function parseDesignRunState(value: BoundaryValue): DesignRunState {
   const state = record(value, 'design run')
   if (state.version !== 1) throw new Error('design run version must be 1')
   if (!Array.isArray(state.completed)) throw new Error('design run completed must be an array')
@@ -79,7 +81,7 @@ export function parseDesignRunState(value: unknown): DesignRunState {
       preview: count(attempts.preview, 'design run attempts.preview'),
       review: count(attempts.review, 'design run attempts.review'),
     },
-    ...(error ? { error } : {}),
+    ...propertiesWhen(error, (error) => ({ error })),
   }
 }
 
@@ -94,7 +96,7 @@ function validateCompleted(completed: readonly DesignPhase[]): void {
   }
 }
 
-function optionalError(value: unknown): DesignRunState['error'] {
+function optionalError(value: BoundaryValue): DesignRunState['error'] {
   if (value === undefined) return undefined
   const error = record(value, 'design run error')
   return {
@@ -103,30 +105,10 @@ function optionalError(value: unknown): DesignRunState['error'] {
   }
 }
 
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${field} must be an object`)
-  }
-  return value as Record<string, unknown>
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`${field} must be a non-empty string`)
-  }
-  return value
-}
-
-function count(value: unknown, field: string): number {
-  if (!Number.isInteger(value) || (value as number) < 0) {
+function count(value: BoundaryValue, field: string): number {
+  const result = boundedInteger(value, 0, Number.MAX_SAFE_INTEGER)
+  if (result === undefined) {
     throw new Error(`${field} must be a non-negative integer`)
   }
-  return value as number
-}
-
-function member<T extends string>(value: unknown, values: readonly T[], field: string): T {
-  if (typeof value !== 'string' || !values.includes(value as T)) {
-    throw new Error(`${field} must be one of ${values.join(', ')}`)
-  }
-  return value as T
+  return result
 }

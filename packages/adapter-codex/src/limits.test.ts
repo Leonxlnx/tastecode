@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { GetAccountRateLimitsResponse } from './generated/v2/GetAccountRateLimitsResponse.js'
 import { mapCodexRateLimits } from './adapter.js'
+import type { CodexRateLimitResponse, CodexRateLimitSnapshot } from './schemas.js'
 
-const snapshot = (overrides: Record<string, unknown> = {}) => ({
+const snapshot = (overrides: Partial<CodexRateLimitSnapshot> = {}): CodexRateLimitSnapshot => ({
   limitId: 'codex',
   limitName: null,
   primary: null,
@@ -14,13 +14,12 @@ const snapshot = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
-const response = (overrides: Record<string, unknown>): GetAccountRateLimitsResponse =>
-  ({
-    rateLimits: snapshot(),
-    rateLimitsByLimitId: null,
-    rateLimitResetCredits: null,
-    ...overrides,
-  }) as GetAccountRateLimitsResponse
+const response = (overrides: Partial<CodexRateLimitResponse>): CodexRateLimitResponse => ({
+  rateLimits: snapshot(),
+  rateLimitsByLimitId: null,
+  rateLimitResetCredits: null,
+  ...overrides,
+})
 
 describe('mapCodexRateLimits', () => {
   it('maps and clamps every reported bucket', () => {

@@ -1,30 +1,20 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { ReactNode } from 'react'
 import type { PullRequestDetail } from '@harness/contracts'
-import type { Transport } from '../../transport.js'
-import { PullRequestFiles } from './PullRequestFiles.js'
+import { TestTransport } from '../../test-transport.js'
+import { PullRequestFiles, type PullRequestDiffView } from './PullRequestFiles.js'
 
-vi.mock('./PullRequestDiffRenderer.js', () => ({
-  PullRequestDiffRenderer: (props: {
-    annotations: unknown[]
-    renderAnnotation: (annotation: unknown) => ReactNode
-    onCommentLine: (target: { lineNumber: number; side: 'additions' }) => void
-  }) => (
-    <div data-testid="diffs-renderer">
-      <button
-        type="button"
-        onClick={() => props.onCommentLine({ lineNumber: 2, side: 'additions' })}
-      >
-        Comment on rendered line
-      </button>
-      {props.annotations.map((annotation, index) => (
-        <div key={index}>{props.renderAnnotation(annotation)}</div>
-      ))}
-    </div>
-  ),
-}))
+const TestDiffRenderer = ((props) => (
+  <div data-testid="diffs-renderer">
+    <button type="button" onClick={() => props.onCommentLine({ lineNumber: 2, side: 'additions' })}>
+      Comment on rendered line
+    </button>
+    {props.annotations.map((annotation, index) => (
+      <div key={index}>{props.renderAnnotation(annotation)}</div>
+    ))}
+  </div>
+)) satisfies PullRequestDiffView
 
 afterEach(cleanup)
 
@@ -91,8 +81,9 @@ const detail: PullRequestDetail = {
 
 describe('PullRequestFiles', () => {
   it('keeps review conversations and inline comments wired through Diffs annotations', async () => {
-    const request = vi.fn(() =>
-      Promise.resolve({
+    const transport = new TestTransport(async (method) => {
+      if (method !== 'pullRequests.files') throw new Error(`unexpected ${method}`)
+      return {
         files: [
           {
             sha: 'file-oid',
@@ -106,17 +97,18 @@ describe('PullRequestFiles', () => {
         ],
         page: 1,
         hasMore: false,
-      }),
-    )
+      }
+    })
     const onAction = vi.fn(() => Promise.resolve(true))
 
     render(
       <PullRequestFiles
         detail={detail}
-        transport={{ request } as unknown as Transport}
+        transport={transport}
         onAction={onAction}
         onConfirmAction={vi.fn()}
         actionBusy={false}
+        diffRendererComponent={TestDiffRenderer}
       />,
     )
 
