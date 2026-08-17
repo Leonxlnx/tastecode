@@ -102,7 +102,7 @@ export class StdioJsonRpc {
     child.stdout.on('data', (chunk: string) => this.#ingest(chunk))
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => this.#onStderr(chunk))
-    child.on('exit', (code) => {
+    child.on('close', (code) => {
       this.#exited = true
       this.#failure ??= new Error(`${this.#label} exited (code ${code})`)
       this.#failAll(this.#failure)

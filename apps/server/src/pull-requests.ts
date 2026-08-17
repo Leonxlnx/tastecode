@@ -1409,7 +1409,7 @@ export function runGh(args: string[], options: GhRunOptions = {}): Promise<strin
       stderr += chunk
     })
     child.on('error', (error) => finish(error))
-    child.on('exit', (code) => {
+    child.on('close', (code) => {
       if (code === 0) finish(stdout)
       else
         finish(new Error(firstUsefulLine(stderr) || firstUsefulLine(stdout) || 'GitHub CLI failed'))
