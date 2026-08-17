@@ -2,14 +2,8 @@ export { ClaudeCodeAdapter, CLAUDE_CAPABILITIES, type ClaudeStartOptions } from 
 export {
   claudeAccount,
   parseClaudeAccount,
-  probeClaudeAccount,
   signOutClaude,
   startClaudeLogin,
 } from './auth.js'
-export {
-  claudeLimitSource,
-  claudeLimits,
-  mapClaudeUsage,
-  type ClaudeLimitSource,
-} from './limits.js'
+export { claudeLimitSource, type ClaudeLimitSource } from './limits.js'
 export { toDomainEvents, toUsage, type ClaudeEvent } from './events.js'
