@@ -76,6 +76,9 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Verify production license graph
+        run: pnpm licenses:verify
+
       - name: Format and lint
         run: pnpm lint
 
@@ -101,6 +104,14 @@ jobs:
       - name: Package macOS Apple Silicon
         if: matrix.platform == 'macos'
         run: pnpm --filter @harness/desktop exec electron-builder --mac dmg zip --arm64 --publish never
+
+      - name: Prove packaged Windows native bindings
+        if: matrix.platform == 'windows'
+        run: pnpm --filter @harness/desktop verify:native-bindings -- "../../release/win-unpacked/TasteCode.exe"
+
+      - name: Prove packaged macOS native bindings
+        if: matrix.platform == 'macos'
+        run: pnpm --filter @harness/desktop verify:native-bindings -- "../../release/mac-arm64/Taste Code.app"
 
       - name: Smoke-test unsigned Windows installer
         if: matrix.platform == 'windows'

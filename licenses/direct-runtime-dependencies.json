@@ -1,0 +1,198 @@
+{
+  "workspaceRoots": ["apps/desktop", "apps/web"],
+  "runtimeDevDependencies": {
+    "@harness/desktop": ["electron"]
+  },
+  "dependencies": [
+    {
+      "name": "@anthropic-ai/claude-agent-sdk",
+      "use": "Claude Code adapter runtime",
+      "license": "LicenseRef-Anthropic-Commercial-Terms",
+      "metadataLicenses": ["SEE LICENSE IN LICENSE.md"],
+      "source": "https://github.com/anthropics/claude-agent-sdk-typescript"
+    },
+    {
+      "name": "@fontsource-variable/geist",
+      "use": "Geist variable font",
+      "license": "OFL-1.1",
+      "metadataLicenses": ["OFL-1.1"],
+      "source": "https://github.com/fontsource/font-files"
+    },
+    {
+      "name": "@fontsource-variable/geist-mono",
+      "use": "Geist Mono variable font",
+      "license": "OFL-1.1",
+      "metadataLicenses": ["OFL-1.1"],
+      "source": "https://github.com/fontsource/font-files"
+    },
+    {
+      "name": "@fontsource-variable/jetbrains-mono",
+      "use": "JetBrains Mono variable font",
+      "license": "OFL-1.1",
+      "metadataLicenses": ["OFL-1.1"],
+      "source": "https://github.com/fontsource/font-files"
+    },
+    {
+      "name": "@napi-rs/keyring",
+      "use": "OS credential-store integration",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/Brooooooklyn/keyring-node"
+    },
+    {
+      "name": "@opencode-ai/sdk",
+      "use": "OpenCode adapter client",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/anomalyco/opencode"
+    },
+    {
+      "name": "@pierre/diffs",
+      "use": "Pull-request diff rendering",
+      "license": "Apache-2.0",
+      "metadataLicenses": ["Apache-2.0"],
+      "source": "https://github.com/pierrecomputer/pierre"
+    },
+    {
+      "name": "@tanstack/react-virtual",
+      "use": "Thread virtualization",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/TanStack/virtual"
+    },
+    {
+      "name": "@xterm/addon-fit",
+      "use": "Terminal sizing",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/xtermjs/xterm.js"
+    },
+    {
+      "name": "@xterm/addon-unicode11",
+      "use": "Terminal Unicode width support",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/xtermjs/xterm.js"
+    },
+    {
+      "name": "@xterm/addon-web-links",
+      "use": "Terminal link detection",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/xtermjs/xterm.js"
+    },
+    {
+      "name": "@xterm/addon-webgl",
+      "use": "Terminal WebGL renderer",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/xtermjs/xterm.js"
+    },
+    {
+      "name": "@xterm/xterm",
+      "use": "Terminal UI",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/xtermjs/xterm.js"
+    },
+    {
+      "name": "border-beam",
+      "use": "Animated border effect",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/Jakubantalik/border-beam"
+    },
+    {
+      "name": "electron",
+      "use": "Desktop runtime",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/electron/electron"
+    },
+    {
+      "name": "electron-updater",
+      "use": "Desktop update client",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/electron-userland/electron-builder"
+    },
+    {
+      "name": "lucide-react",
+      "use": "Interface icons",
+      "license": "ISC AND MIT",
+      "metadataLicenses": ["ISC"],
+      "source": "https://github.com/lucide-icons/lucide"
+    },
+    {
+      "name": "micromark",
+      "use": "Markdown parsing",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/micromark/micromark"
+    },
+    {
+      "name": "micromark-util-decode-string",
+      "use": "Markdown string decoding",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/micromark/micromark"
+    },
+    {
+      "name": "node-pty",
+      "use": "Pseudoterminal integration",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/microsoft/node-pty"
+    },
+    {
+      "name": "react",
+      "use": "Renderer UI",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/facebook/react"
+    },
+    {
+      "name": "react-dom",
+      "use": "Renderer DOM integration",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/facebook/react"
+    },
+    {
+      "name": "shiki",
+      "use": "Syntax highlighting",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/shikijs/shiki"
+    },
+    {
+      "name": "streamdown",
+      "use": "Streaming Markdown rendering",
+      "license": "Apache-2.0",
+      "metadataLicenses": ["Apache-2.0"],
+      "source": "https://github.com/vercel/streamdown"
+    },
+    {
+      "name": "thinking-orbs",
+      "use": "Agent activity indicators",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/Jakubantalik/thinking-orbs"
+    },
+    {
+      "name": "ws",
+      "use": "WebSocket runtime",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/websockets/ws"
+    },
+    {
+      "name": "zod",
+      "use": "Runtime schema validation",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/colinhacks/zod"
+    }
+  ],
+  "reviewedTransitiveExceptions": []
+}

@@ -14,7 +14,8 @@
     "start": "tsc -b && node scripts/build-preload.js && node scripts/start.js",
     "test": "vitest run --passWithNoTests",
     "dist": "pnpm -w build && node scripts/build-preload.js && electron-builder",
-    "dist:dir": "pnpm -w build && node scripts/build-preload.js && electron-builder --dir"
+    "dist:dir": "pnpm -w build && node scripts/build-preload.js && electron-builder --dir",
+    "verify:native-bindings": "node scripts/run-native-binding-proof.js"
   },
   "dependencies": {
     "@harness/contracts": "workspace:*",
