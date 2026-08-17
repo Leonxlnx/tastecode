@@ -608,6 +608,24 @@ describe('completed activity disclosure', () => {
     expect(previewViewedImage).toHaveBeenCalled()
   })
 
+  it('finishes a missing sent image preview with an unavailable state', async () => {
+    const path = '/tmp/TasteCode/pasted-files/missing-reference.png'
+    previewViewedImage.mockResolvedValueOnce(undefined)
+
+    renderCompleted([
+      turnItem('prompt-1', 1, {
+        role: 'user',
+        text: 'Missing preview',
+        attachments: [path],
+      }),
+    ])
+
+    expect(
+      await screen.findByRole('status', { name: 'Preview unavailable for missing-reference.png' }),
+    ).toBeTruthy()
+    expect(screen.getByText('missing-reference.png')).toBeTruthy()
+  })
+
   it('shows a safe image preview when completed work is revealed', async () => {
     previewViewedImage.mockResolvedValueOnce({
       path: '/tmp/TasteCode/pasted-files/uuid-layout.png',
