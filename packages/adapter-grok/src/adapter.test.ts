@@ -90,7 +90,9 @@ describe('Grok adapter', () => {
       },
     })
     const events: DomainEvent[] = []
+    const providerSessionIds: string[] = []
     adapter.on('event', (event) => events.push(event))
+    adapter.on('providerSessionId', (sessionId) => providerSessionIds.push(sessionId))
     const thread = await adapter.startThread('C:\\repo', {
       model: 'grok-4.5',
       effort: 'high',
@@ -157,6 +159,7 @@ describe('Grok adapter', () => {
         expect.objectContaining({ type: 'turn.completed', status: 'completed' }),
       ]),
     )
+    expect(providerSessionIds).toEqual(['019fd9b0-1c9b-7dd3-85a2-2b7b628382d3'])
 
     // The end frame's session id resumes the CLI's own session next turn.
     await adapter.sendTurn(thread.id, 'And now?', [], {
@@ -169,6 +172,62 @@ describe('Grok adapter', () => {
       args.slice(args.indexOf('--reasoning-effort'), args.indexOf('--reasoning-effort') + 2),
     ).toEqual(['--reasoning-effort', 'low'])
     adapter.dispose()
+  })
+
+  it('resumes a stable TasteCode thread through its separate Grok session id', async () => {
+    const child = new FakeChild()
+    let args: string[] = []
+    const adapter = new GrokAdapter({
+      spawn: (_command, value) => {
+        args = value
+        return child
+      },
+    })
+    const providerSessionIds: string[] = []
+    adapter.on('providerSessionId', (sessionId) => providerSessionIds.push(sessionId))
+
+    const thread = await adapter.resumeThread(
+      'grok-tastecode-thread',
+      'grok-native-session',
+      'C:\\repo',
+      { instructions: 'Already present in the native session.' },
+    )
+    const turnId = await adapter.sendTurn(thread.id, 'Continue')
+
+    expect(thread.id).toBe('grok-tastecode-thread')
+    expect(turnId).toMatch(/^grok-tastecode-thread-turn-/)
+    expect(args.slice(args.indexOf('-r'))).toEqual(['-r', 'grok-native-session'])
+    expect(args).not.toContain('grok-tastecode-thread')
+    const promptFile = args[args.indexOf('--prompt-file') + 1]!
+    expect(readFileSync(promptFile, 'utf8')).toBe('Continue')
+
+    const learned = new Promise<void>((resolve) =>
+      adapter.once('providerSessionId', () => resolve()),
+    )
+    child.stdout.end(
+      JSON.stringify({
+        type: 'end',
+        stopReason: 'end_turn',
+        sessionId: 'grok-native-session-rotated',
+      }),
+    )
+    await learned
+    expect(providerSessionIds).toEqual(['grok-native-session-rotated'])
+    adapter.dispose()
+  })
+
+  it('does not reuse synthetic turn ids after an adapter restart', async () => {
+    const first = new GrokAdapter({ spawn: () => new FakeChild() })
+    const second = new GrokAdapter({ spawn: () => new FakeChild() })
+    await first.resumeThread('grok-thread', 'native-session', 'C:\\repo')
+    await second.resumeThread('grok-thread', 'native-session', 'C:\\repo')
+
+    const firstTurn = await first.sendTurn('grok-thread', 'one')
+    const secondTurn = await second.sendTurn('grok-thread', 'two')
+
+    expect(firstTurn).not.toBe(secondTurn)
+    first.dispose()
+    second.dispose()
   })
 
   it('keeps sequential tool and authored-text lifecycles distinct', async () => {

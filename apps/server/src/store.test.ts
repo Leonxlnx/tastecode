@@ -386,12 +386,15 @@ describe('opening a database written by an older build', () => {
       expect(migrated.thread('t1')?.title).toBe('Old session')
       expect(migrated.thread('t1')?.pinned).toBe(false)
       expect(migrated.thread('t1')?.worktreePath).toBeUndefined()
+      expect(migrated.thread('t1')?.providerSessionId).toBeUndefined()
       expect(migrated.thread('t1')?.lifecycle).toEqual({ state: 'active', keepActive: false })
 
       migrated.setPinned('/repo', true)
       expect(migrated.project('/repo')?.pinned).toBe(true)
       migrated.setThreadPinned('t1', true)
       expect(migrated.thread('t1')?.pinned).toBe(true)
+      migrated.setProviderSessionId('t1', 'native-session-after-migration')
+      expect(migrated.thread('t1')?.providerSessionId).toBe('native-session-after-migration')
       expect(migrated.searchSessions({ query: 'legacy' }).results[0]?.threadId).toBe('t1')
     } finally {
       migrated.close()
@@ -516,6 +519,18 @@ describe('threads', () => {
   it('leaves the agent unset for providers that are a single engine', () => {
     store.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'One' })
     expect(store.thread('t1')?.agent).toBeUndefined()
+  })
+
+  it('keeps the opaque provider session id separate from the TasteCode thread id', () => {
+    store.addThread({ id: 'grok-tastecode', projectPath: '/repo', provider: 'grok', title: 'One' })
+
+    store.setProviderSessionId('grok-tastecode', 'grok-native')
+
+    expect(store.thread('grok-tastecode')).toMatchObject({
+      id: 'grok-tastecode',
+      providerSessionId: 'grok-native',
+    })
+    expect(() => store.setProviderSessionId('missing', 'grok-native')).toThrow('thread not found')
   })
 
   it('refuses to delete an isolated checkout before it is discarded', () => {

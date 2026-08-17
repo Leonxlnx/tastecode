@@ -84,6 +84,11 @@ export type StartOptions = {
   /** Internal project overrides and their already-resolved OS credentials. */
   mcpServers?: McpServerConfig[] | undefined
   mcpCredentials?: Record<string, string> | undefined
+  /**
+   * Server-owned, opaque provider resume identity. It is intentionally
+   * separate from the stable TasteCode thread id passed to `resume`.
+   */
+  providerSessionId?: string | undefined
 }
 
 export function apiRuntime(
@@ -177,6 +182,8 @@ export interface AgentSession {
   ): void
   /** Provider-owned subscription usage changed; the server should refetch. */
   onUsageChanged?(listener: () => void): void
+  /** Provider reported or rotated the opaque identity needed after a restart. */
+  onProviderSessionId?(listener: (providerSessionId: string) => void): void
   respondToApproval(approvalId: string, decision: ApprovalDecision): void
   respondToUserInput?(requestId: string, answers: Record<string, string[]>): void
   /**
@@ -509,26 +516,42 @@ function grokRuntime(
   resolveHarness: (id: string) => CustomHarness | undefined,
   factories: ProviderAdapterFactories,
 ): ProviderRuntime {
+  const acpAdapterFor = (harness: CustomHarness | undefined, options: StartOptions) =>
+    factories.acp('grok', {
+      name: harness?.displayName ?? 'Grok',
+      command: grokCommand(),
+      args: [
+        'agent',
+        ...(options.model ? ['--model', options.model] : []),
+        ...(options.effort ? ['--reasoning-effort', options.effort] : []),
+        'stdio',
+      ],
+      provider: 'grok',
+      mcpServers: prepareAcpMcpServers(options.mcpServers ?? [], options.mcpCredentials ?? {}),
+      ...propertiesWhen(harness, (includedValue) => ({
+        spawn: customHarnessSpawn(includedValue),
+      })),
+    })
+
+  const printSessionFor = (adapter: GrokAdapter): AgentSession => ({
+    capabilities: adapter.capabilities,
+    sendTurn: (threadId, text, attachments, turnOptions) =>
+      adapter.sendTurn(threadId, text, attachments, turnOptions),
+    interrupt: () => adapter.interrupt(),
+    // Print mode decides permissions from the launch switches; there is no
+    // mid-turn callback to answer.
+    respondToApproval: () => {},
+    onProviderSessionId: (listener) => adapter.on('providerSessionId', listener),
+    dispose: () => adapter.dispose(),
+    on: (event: 'event' | 'log', listener: never) => adapter.on(event, listener),
+  })
+
   return {
     async start(workspacePath, options) {
       const harness = harnessFor('grok', options.agent, resolveHarness)
       const projectMcp = options.mcpServers?.some((server) => server.enabled) ?? false
       if (projectMcp) {
-        const adapter = factories.acp('grok', {
-          name: harness?.displayName ?? 'Grok',
-          command: grokCommand(),
-          args: [
-            'agent',
-            ...(options.model ? ['--model', options.model] : []),
-            ...(options.effort ? ['--reasoning-effort', options.effort] : []),
-            'stdio',
-          ],
-          provider: 'grok',
-          mcpServers: prepareAcpMcpServers(options.mcpServers ?? [], options.mcpCredentials ?? {}),
-          ...propertiesWhen(harness, (includedValue) => ({
-            spawn: customHarnessSpawn(includedValue),
-          })),
-        })
+        const adapter = acpAdapterFor(harness, options)
         adapter.on('log', onLog)
         try {
           const starting = adapter.startThread(workspacePath, {
@@ -553,20 +576,50 @@ function grokRuntime(
         approval: options.approval,
         instructions: options.instructions,
       })
-      return {
-        thread,
-        session: {
-          capabilities: adapter.capabilities,
-          sendTurn: (threadId, text, attachments, turnOptions) =>
-            adapter.sendTurn(threadId, text, attachments, turnOptions),
-          interrupt: () => adapter.interrupt(),
-          // Print mode decides permissions from the launch switches; there is
-          // no mid-turn callback to answer.
-          respondToApproval: () => {},
-          dispose: () => adapter.dispose(),
-          on: (event: 'event' | 'log', listener: never) => adapter.on(event, listener),
-        },
+      return { thread, session: printSessionFor(adapter) }
+    },
+    async resume(threadId, workspacePath, options) {
+      const harness = harnessFor('grok', options.agent, resolveHarness)
+      // MCP-enabled Grok runs over ACP. Its provider session id is already
+      // encoded in the stable `acp-grok-*` thread id, and AcpAdapter performs
+      // the protocol capability check before loading it.
+      if (threadId.startsWith('acp-grok-')) {
+        const adapter = acpAdapterFor(harness, options)
+        adapter.on('log', onLog)
+        try {
+          const resuming = adapter.resumeThread(threadId, workspacePath, {
+            model: options.model,
+            approval: options.approval,
+            instructions: options.instructions,
+          })
+          const thread = harness
+            ? await customHarnessOperation(harness, 'resume an MCP-enabled ACP session', resuming)
+            : await resuming
+          return { thread, session: adapter }
+        } catch (error) {
+          adapter.dispose()
+          throw error
+        }
       }
+      if (!options.providerSessionId) {
+        throw new Error(
+          'This Grok chat cannot resume because TasteCode restarted before Grok returned a native session id. Start a new Grok chat; the local history of this chat is still available.',
+        )
+      }
+      const adapter = factories.grok(harness ? { spawn: customHarnessSpawn(harness) } : {})
+      adapter.on('log', onLog)
+      const thread = await adapter.resumeThread(
+        threadId,
+        options.providerSessionId,
+        workspacePath,
+        {
+          model: options.model,
+          effort: options.effort,
+          approval: options.approval,
+          instructions: options.instructions,
+        },
+      )
+      return { thread, session: printSessionFor(adapter) }
     },
     async listModels(agent) {
       const harness = harnessFor('grok', agent, resolveHarness)

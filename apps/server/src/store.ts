@@ -60,6 +60,8 @@ export type StoredThread = {
   provider: ProviderId
   /** Which ACP agent, when the provider is `acp`. */
   agent?: string | undefined
+  /** Opaque provider-owned resume identity. Never used as the TasteCode id. */
+  providerSessionId?: string | undefined
   title: string
   pinned: boolean
   createdAt: number
@@ -193,6 +195,7 @@ CREATE TABLE IF NOT EXISTS threads (
   project_path TEXT NOT NULL,
   provider     TEXT NOT NULL,
   agent        TEXT,
+  provider_session_id TEXT,
   title        TEXT NOT NULL,
   pinned       INTEGER NOT NULL DEFAULT 0,
   created_at   INTEGER NOT NULL,
@@ -339,6 +342,7 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'last_active_at', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'ephemeral', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'parent_thread_id', definition: 'TEXT' },
+  { table: 'threads', column: 'provider_session_id', definition: 'TEXT' },
 ]
 
 const SqliteIntegerSchema = z.union([z.number(), z.bigint()]).transform(Number)
@@ -362,6 +366,7 @@ const SqliteThreadRowSchema = z.object({
   project_path: z.string(),
   provider: ProviderIdSchema,
   agent: z.string().nullable(),
+  provider_session_id: z.string().nullable(),
   title: z.string(),
   pinned: SqliteIntegerSchema,
   created_at: SqliteIntegerSchema,
@@ -613,15 +618,17 @@ export class Store {
     this.#db
       .prepare(
         `INSERT INTO threads
-          (id, project_path, provider, agent, title, created_at, worktree_path, worktree_branch,
+          (id, project_path, provider, agent, provider_session_id, title, created_at,
+            worktree_path, worktree_branch,
             lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
       )
       .run(
         stored.id,
         stored.projectPath,
         stored.provider,
         stored.agent ?? null,
+        stored.providerSessionId ?? null,
         stored.title,
         stored.createdAt,
         stored.worktreePath ?? null,
@@ -694,6 +701,16 @@ export class Store {
 
   setThreadPinned(id: string, pinned: boolean): void {
     this.#db.prepare(`UPDATE threads SET pinned = ? WHERE id = ?`).run(pinned ? 1 : 0, id)
+  }
+
+  /** Persist the provider's opaque resume identity as thread recovery metadata. */
+  setProviderSessionId(id: string, providerSessionId: string): void {
+    if (!providerSessionId) throw new Error('provider session id cannot be empty')
+    this.#updateThread(
+      `UPDATE threads SET provider_session_id = ? WHERE id = ?`,
+      providerSessionId,
+      id,
+    )
   }
 
   settleThread(
@@ -2070,6 +2087,12 @@ function toThread(row: SqliteRow): StoredThread {
     ...propertiesWhen(
       r.agent === null ? undefined : { agent: r.agent },
       (includedAgent) => includedAgent,
+    ),
+    ...propertiesWhen(
+      r.provider_session_id === null
+        ? undefined
+        : { providerSessionId: r.provider_session_id },
+      (includedProviderSessionId) => includedProviderSessionId,
     ),
     title: r.title,
     pinned: r.pinned === 1,

@@ -27,6 +27,10 @@ type TurnAdapterRecord = {
   adapter: RecordedAdapter
   provider: 'grok' | 'antigravity' | 'claude-code'
   startOptions?: object | undefined
+  resume?:
+    | { threadId: string; providerSessionId: string; workspacePath: string }
+    | undefined
+  acpResume?: { threadId: string; workspacePath: string } | undefined
   turnOptions?: object | undefined
   launchOptions: RecordedLaunch
 }
@@ -62,6 +66,18 @@ class FakeGrokAdapter extends GrokAdapter {
     return thread('grok', args[0])
   }
 
+  override async resumeThread(
+    ...args: Parameters<GrokAdapter['resumeThread']>
+  ): Promise<Thread> {
+    this.record.resume = {
+      threadId: args[0],
+      providerSessionId: args[1],
+      workspacePath: args[2],
+    }
+    this.record.startOptions = args[3] ?? {}
+    return { ...thread('grok', args[2]), id: args[0] }
+  }
+
   override async sendTurn(...args: Parameters<GrokAdapter['sendTurn']>): Promise<string> {
     this.record.turnOptions = args[3] ?? {}
     return 'grok-turn'
@@ -88,6 +104,12 @@ class FakeAcpAdapter extends AcpAdapter {
   override async startThread(...args: Parameters<AcpAdapter['startThread']>): Promise<Thread> {
     this.record.startOptions = args[1] ?? {}
     return thread('grok', args[0])
+  }
+
+  override async resumeThread(...args: Parameters<AcpAdapter['resumeThread']>): Promise<Thread> {
+    this.record.acpResume = { threadId: args[0], workspacePath: args[1] }
+    this.record.startOptions = args[2] ?? {}
+    return { ...thread('grok', args[1]), id: args[0] }
   }
 
   override dispose(): void {}
@@ -247,6 +269,85 @@ describe('one-shot provider turn options', () => {
       args: ['agent', '--model', 'grok-4.6', '--reasoning-effort', 'xhigh', 'stdio'],
       mcpServers: [{ name: 'test-tools' }],
     })
+  })
+
+  it('resumes Grok with separate TasteCode and provider session identities', async () => {
+    const runtime = providerRuntime(
+      'grok',
+      () => {},
+      () => undefined,
+      TEST_ADAPTER_FACTORIES,
+    )
+
+    const { thread: resumed, session } = await runtime.resume!(
+      'grok-tastecode-thread',
+      'C:\\repo',
+      {
+        providerSessionId: 'grok-native-session',
+        model: 'grok-4.6',
+      },
+    )
+    const learned: string[] = []
+    session.onProviderSessionId?.((sessionId) => learned.push(sessionId))
+    const record = turnAdapters.at(-1)!
+    if (!(record.adapter instanceof GrokAdapter)) throw new Error('expected Grok adapter')
+    record.adapter.emit('providerSessionId', 'grok-native-session-rotated')
+
+    expect(resumed.id).toBe('grok-tastecode-thread')
+    expect(record.resume).toEqual({
+      threadId: 'grok-tastecode-thread',
+      providerSessionId: 'grok-native-session',
+      workspacePath: 'C:\\repo',
+    })
+    expect(record.startOptions).toMatchObject({ model: 'grok-4.6' })
+    expect(learned).toEqual(['grok-native-session-rotated'])
+  })
+
+  it('resumes an MCP-enabled Grok thread through its ACP identity', async () => {
+    const runtime = providerRuntime(
+      'grok',
+      () => {},
+      () => undefined,
+      TEST_ADAPTER_FACTORIES,
+    )
+
+    const { thread: resumed } = await runtime.resume!('acp-grok-native-session', '/repo', {
+      model: 'grok-4.6',
+      effort: 'xhigh',
+      mcpServers: [
+        {
+          id: 'test-tools',
+          enabled: true,
+          transport: { type: 'stdio', command: 'node', args: ['test-mcp.js'] },
+        },
+      ],
+    })
+
+    expect(resumed.id).toBe('acp-grok-native-session')
+    expect(turnAdapters).toHaveLength(1)
+    expect(turnAdapters[0]?.adapter).toBeInstanceOf(FakeAcpAdapter)
+    expect(turnAdapters[0]?.acpResume).toEqual({
+      threadId: 'acp-grok-native-session',
+      workspacePath: '/repo',
+    })
+    expect(turnAdapters[0]?.launchOptions).toMatchObject({
+      provider: 'grok',
+      args: ['agent', '--model', 'grok-4.6', '--reasoning-effort', 'xhigh', 'stdio'],
+      mcpServers: [{ name: 'test-tools' }],
+    })
+  })
+
+  it('explains how to recover when Grok never reported a native session id', async () => {
+    const runtime = providerRuntime(
+      'grok',
+      () => {},
+      () => undefined,
+      TEST_ADAPTER_FACTORIES,
+    )
+
+    await expect(runtime.resume!('grok-thread', 'C:\\repo', {})).rejects.toThrow(
+      'Start a new Grok chat; the local history of this chat is still available.',
+    )
   })
 
   it('fails instead of silently falling back after a custom source is removed', async () => {

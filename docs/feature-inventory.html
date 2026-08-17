@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-17 ab3e88c8</span>
+        <span class="meta">2026-08-18 bfc88477</span>
       </div>
     </div>
 
@@ -499,10 +499,12 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Effort low to max, session resume, interrupt
+                >Effort low to max, restart-safe session resume, interrupt
                 <span class="d"
-                  >explicit Stop emits one interrupted terminal state after process shutdown and
-                  restores sending without a duplicate completion</span
+                  >the stable TasteCode thread id stays separate from Grok's persisted native resume
+                  id, while MCP-enabled sessions reload their ACP identity; explicit Stop emits one
+                  interrupted terminal state after process shutdown and restores sending without a
+                  duplicate completion</span
                 ></span
               ></label
             >

@@ -2558,6 +2558,9 @@ export class Orchestrator {
     const workspacePath = stored.worktreePath ?? resolveWorkspacePath(stored.projectPath)
     const result = await runtime.resume(threadId, workspacePath, {
       ...propertiesWhen(stored.agent, (includedValue) => ({ agent: includedValue })),
+      ...propertiesWhen(stored.providerSessionId, (includedValue) => ({
+        providerSessionId: includedValue,
+      })),
       ...propertiesWhen(this.#threadApprovals.has(threadId), () => ({
         approval: this.#threadApprovals.get(threadId)!,
       })),
@@ -3448,6 +3451,14 @@ export class Orchestrator {
     session.onUsageChanged?.(() => {
       if (this.#threads.get(thread.id)?.session === session) {
         this.#onUsageChanged(thread.provider)
+      }
+    })
+    session.onProviderSessionId?.((providerSessionId) => {
+      // A disposed provider may still flush its terminal frame. Only the
+      // session currently attached to this TasteCode thread may rotate the
+      // persisted resume identity.
+      if (this.#threads.get(thread.id)?.session === session) {
+        this.#store.setProviderSessionId(thread.id, providerSessionId)
       }
     })
     session.on('event', (event) => this.#handleSessionEvent(thread.id, event))

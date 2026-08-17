@@ -145,6 +145,13 @@ disclosed. Parked built-ins stay hidden unless the user explicitly registers one
 reasoning. The UI reads capabilities and hides what's unavailable rather than showing a
 button that fails.
 
+**TasteCode thread ids and provider resume ids are separate identities.** The stable TasteCode
+id owns the event log, queue, worktree, and UI route. When a provider reports a different opaque
+session id, the adapter emits it as recovery metadata and the server persists it separately.
+Restarted runtimes receive both ids and must return the original TasteCode id; the provider id is
+used only at that adapter's resume boundary. A provider that never reported one fails with a
+recoverable new-chat instruction rather than passing a synthetic TasteCode id to the provider.
+
 **Tier 3 will break** — it's coupled to someone else's output shape. Each Tier 3 adapter
 needs a declared version range, a CI contract test that runs the real binary, graceful
 degradation to an `unknown` item (never a crash, never silent loss), and a visible
@@ -348,3 +355,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-08-14 | Removed phone and remote-client support from active product scope.      |
 | 2026-08-14 | Routed project-enabled Grok MCP sessions through ACP stdio.             |
 | 2026-08-15 | Archived the Rust + GPUI rewrite and restored Electron on `main`.       |
+| 2026-08-18 | Separated stable TasteCode ids from provider-native resume identities.  |

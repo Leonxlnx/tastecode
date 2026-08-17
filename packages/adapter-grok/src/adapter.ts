@@ -204,6 +204,8 @@ type OpenTool = {
 export type GrokAdapterEvents = {
   event: [DomainEvent]
   log: [string]
+  /** Grok's opaque resume identity. It is not the TasteCode thread id. */
+  providerSessionId: [string]
 }
 
 type SpawnFn = (
@@ -216,13 +218,14 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   readonly #spawn: SpawnFn
   #workspacePath = ''
   #options: GrokStartOptions = {}
-  /** grok's own session id, so follow-up turns resume rather than restart. */
-  #sessionId: string | undefined
+  /** Stable TasteCode identity, kept separate from Grok's opaque resume id. */
+  #threadId: string | undefined
+  /** Grok's own session id, so follow-up turns resume rather than restart. */
+  #providerSessionId: string | undefined
   #child: ChildProcessWithoutNullStreams | undefined
   /** Why we killed a child: only an explicit Stop completes the turn. */
   #killReasons = new WeakMap<ChildProcessWithoutNullStreams, 'interrupt' | 'silent'>()
   #promptDirectories = new WeakMap<ChildProcessWithoutNullStreams, string>()
-  #turnCounter = 0
   /** Session instructions ride in front of the first prompt: the CLI's
    *  --system-prompt-override would REPLACE the agent's own prompt, which is
    *  more than session instructions should do. */
@@ -243,10 +246,43 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     }
     this.#workspacePath = workspacePath
     this.#options = options
-    this.#sessionId = undefined
+    const threadId = `grok-${crypto.randomUUID()}`
+    this.#threadId = threadId
+    this.#providerSessionId = undefined
     this.#instructionsPending = Boolean(options.instructions)
     return {
-      id: `grok-${crypto.randomUUID()}`,
+      id: threadId,
+      provider: 'grok',
+      workspacePath,
+      createdAt: Date.now(),
+    }
+  }
+
+  /**
+   * Reattach a persisted TasteCode thread to Grok's separate native session.
+   * The two ids are deliberately explicit here: passing the TasteCode id to
+   * `grok -r` would start from an identity the CLI has never heard of.
+   */
+  async resumeThread(
+    threadId: string,
+    providerSessionId: string,
+    workspacePath: string,
+    options: GrokStartOptions = {},
+  ): Promise<Thread> {
+    if (options.approval === 'auto-review') {
+      throw new Error('Grok does not support automatic approval review')
+    }
+    if (!threadId) throw new Error('TasteCode thread id is required to resume Grok')
+    if (!providerSessionId) throw new Error('Grok native session id is required to resume')
+    this.#workspacePath = workspacePath
+    this.#options = options
+    this.#threadId = threadId
+    this.#providerSessionId = providerSessionId
+    // The provider session already received its initial instructions. Adding
+    // them to the next user message would duplicate and expose them as text.
+    this.#instructionsPending = false
+    return {
+      id: threadId,
       provider: 'grok',
       workspacePath,
       createdAt: Date.now(),
@@ -259,8 +295,13 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     attachments: string[] = [],
     options: GrokTurnOptions = {},
   ): Promise<string> {
+    if (threadId !== this.#threadId) {
+      throw new Error(`Grok adapter is attached to a different TasteCode thread`)
+    }
     this.#options = applyGrokTurnOptions(this.#options, options)
-    const turnId = `${threadId}-turn-${++this.#turnCounter}`
+    // A process restart resets in-memory counters. Random ids cannot collide
+    // with turns already persisted for this thread before the restart.
+    const turnId = `${threadId}-turn-${crypto.randomUUID()}`
     const prompt =
       this.#instructionsPending && this.#options.instructions
         ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${text}`
@@ -278,7 +319,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
       rmSync(promptDirectory, { recursive: true, force: true })
       throw error
     }
-    const args = grokTurnArgs(promptFile, this.#options, this.#sessionId)
+    const args = grokTurnArgs(promptFile, this.#options, this.#providerSessionId)
 
     // A turn already in flight would be orphaned by the reassignment below.
     if (this.#child) this.#stop(this.#child)
@@ -401,7 +442,10 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         if (frame.type === 'end') {
           if (terminal) return
           terminal = true
-          if (frame.sessionId) this.#sessionId = frame.sessionId
+          if (frame.sessionId && frame.sessionId !== this.#providerSessionId) {
+            this.#providerSessionId = frame.sessionId
+            this.emit('providerSessionId', frame.sessionId)
+          }
           reasoning.complete(turnId, 'reasoning', this)
           message.complete(turnId, 'message', this)
           const usage = frame.usage
