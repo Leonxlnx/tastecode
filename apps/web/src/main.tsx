@@ -14,6 +14,7 @@ import {
 } from './theme.js'
 import './styles/tokens.css'
 import './styles/app.css'
+import './styles/keybinds.css'
 
 const root = document.getElementById('root')
 if (!root) throw new Error('missing #root')

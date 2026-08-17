@@ -29,7 +29,17 @@ import type {
 } from '@harness/contracts'
 import { z } from 'zod'
 import { isDesktop, isMacOS, pickFolder, setDesktopTheme } from './bridge.js'
-import { isEditableTarget, matchesShortcut, SHORTCUTS } from './shortcuts.js'
+import {
+  createDefaultKeybindings,
+  isEditableTarget,
+  KEYBINDING_DEFINITIONS,
+  matchesShortcut,
+  readKeybindings,
+  shortcutLabel,
+  writeKeybindings,
+  type KeybindingId,
+  type Shortcut,
+} from './shortcuts.js'
 import { warmHighlighter } from './ui/highlighter.js'
 import { IndeterminateRequestErrorSchema, Transport } from './transport.js'
 import {
@@ -48,12 +58,15 @@ import {
 import { CommandPalette, type CommandScope, type PaletteCommand } from './ui/CommandPalette.js'
 import { CheckoutDiscardDialog } from './ui/CheckoutDiscardDialog.js'
 import { Composer, type SendAvailability, type WorkspaceInfo } from './ui/Composer.js'
-import { getFastModeOffValue, getNextServiceTierForModel } from './ui/ModelSelector.js'
+import {
+  getFastModeOffValue,
+  getFastServiceTier,
+  getNextServiceTierForModel,
+} from './ui/ModelSelector.js'
 import { RollbackDialog, type Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchHost.js'
 import { Settings, type SettingsSection } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
-import { ShortcutsDialog } from './ui/ShortcutsDialog.js'
 import { StageHeader } from './ui/StageHeader.js'
 import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
@@ -81,6 +94,12 @@ import {
 } from './model-catalog.js'
 import { parseModelCatalogCache, serializeModelCatalogCache } from './model-catalog-cache.js'
 import { parseSideChatCommand } from './side-chat-command.js'
+import {
+  clearInstall,
+  installState,
+  subscribeInstalls,
+  type ProviderLoginTerminalTarget,
+} from './provider-install.js'
 import type {
   SideChatParentStatus,
   SideChatPromptRequest,
@@ -294,6 +313,12 @@ type WorkspaceIdleProbe = {
 
 type ShellStyle = CSSProperties & { '--rail-w': string }
 type WorkspaceLayoutStyle = CSSProperties & { '--workspace-panel-w': string }
+type ProviderLoginTerminalSession = ProviderLoginTerminalTarget & {
+  id: number
+  visible: boolean
+  restorePanelOpen: boolean
+  restorePanelExpanded: boolean
+}
 
 function shellStyle(width: number): ShellStyle {
   return { '--rail-w': `${width}px` }
@@ -576,9 +601,10 @@ export function App(props: AppProps = {}) {
   const accountRequestRevision = useRef(0)
   const [voiceAvailable, setVoiceAvailable] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [keybindings, setKeybindings] = useState(readKeybindings)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('providers')
+  const [providerAuthRefreshRevision, setProviderAuthRefreshRevision] = useState(0)
   const [sidebarSettings, setSidebarSettings] = useState(DEFAULT_SIDEBAR_SETTINGS)
   const confirmedSidebarSettings = useRef(DEFAULT_SIDEBAR_SETTINGS)
   const confirmedSidebarSettingsRevision = useRef(0)
@@ -638,6 +664,11 @@ export function App(props: AppProps = {}) {
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false)
   const [workspacePanelExpanded, setWorkspacePanelExpanded] = useState(false)
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(readWorkspacePanelWidth)
+  const [providerLoginTerminal, setProviderLoginTerminal] = useState<ProviderLoginTerminalSession>()
+  const nextProviderLoginTerminalId = useRef(1)
+  const providerLoginState = useSyncExternalStore(subscribeInstalls, () =>
+    providerLoginTerminal ? installState(providerLoginTerminal.installKey) : undefined,
+  )
   const [sideChatPromptRequest, setSideChatPromptRequest] = useState<SideChatPromptRequest>()
   /** The live catalog with user-defined models appended. Everything below
    *  reads this merged list; the cache only ever stores the server catalog. */
@@ -2821,6 +2852,22 @@ export function App(props: AppProps = {}) {
     [provider],
   )
 
+  useEffect(() => {
+    if (!providerLoginTerminal || providerLoginState?.phase !== 'succeeded') return
+    const completed = providerLoginTerminal
+    clearInstall(completed.installKey)
+    setProviderLoginTerminal(undefined)
+    setWorkspacePanelOpen(completed.restorePanelOpen)
+    setWorkspacePanelExpanded(completed.restorePanelExpanded)
+    setSettingsSection('providers')
+    setSettingsOpen(true)
+    setProviderAuthRefreshRevision((revision) => revision + 1)
+    void transport
+      .request('auth.status', { provider: completed.provider })
+      .then((account) => handleAccountChange(completed.provider, account))
+      .catch(() => undefined)
+  }, [handleAccountChange, providerLoginState?.phase, providerLoginTerminal, transport])
+
   // prettier-ignore
   const deleteQueuedTurn = useCallback((queuedTurnId: string) => { if (!activeId) return; holdQueueAction(queuedTurnId, activeId, 'delete'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; void transport.request('thread.deleteQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'delete'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath) }).catch((error) => { settleQueueAction(queuedTurnId, 'delete', IndeterminateRequestErrorSchema.safeParse(error).success); setNotice(error instanceof Error ? error.message : String(error)) }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
 
@@ -3293,73 +3340,6 @@ export function App(props: AppProps = {}) {
     [transport],
   )
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat) return
-      if (shortcutsOpen) return
-
-      // The Settings sheet owns the keyboard. Without this, Ctrl+N started a
-      // chat underneath it. Its own shortcut still closes it; everything else waits.
-      if (settingsOpen) {
-        if (matchesShortcut(event, SHORTCUTS.settings)) {
-          event.preventDefault()
-          setSettingsOpen(false)
-        }
-        return
-      }
-      if (matchesShortcut(event, SHORTCUTS.searchSessions)) {
-        event.preventDefault()
-        setPaletteScope(null)
-        sessionSearch.current?.open()
-        return
-      }
-      if (isEditableTarget(event.target)) return
-
-      if (matchesShortcut(event, SHORTCUTS.commandPalette)) {
-        event.preventDefault()
-        setSettingsOpen(false)
-        setPaletteScope('all')
-        return
-      }
-      if (matchesShortcut(event, SHORTCUTS.switchProject)) {
-        event.preventDefault()
-        setSettingsOpen(false)
-        setPaletteScope('projects')
-        return
-      }
-      if (matchesShortcut(event, SHORTCUTS.newChat)) {
-        event.preventDefault()
-        startNewChat()
-        return
-      }
-      if (matchesShortcut(event, SHORTCUTS.newProject)) {
-        event.preventDefault()
-        void addProject()
-        return
-      }
-      if (matchesShortcut(event, SHORTCUTS.settings)) {
-        event.preventDefault()
-        setPaletteScope(null)
-        setSettingsSection('providers')
-        setSettingsOpen(true)
-        return
-      }
-      if (matchesShortcut(event, SHORTCUTS.focusComposer) && activePath) {
-        event.preventDefault()
-        setPaletteScope(null)
-        setComposerFocusRequest((request) => request + 1)
-        return
-      }
-      if (matchesShortcut(event, SHORTCUTS.toggleSidebar)) {
-        event.preventDefault()
-        setCollapsed((current) => !current)
-      }
-    }
-
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [activePath, addProject, provider, shortcutsOpen, startNewChat, settingsOpen])
-
   const sidebarInbox = useMemo(
     () => ({
       onSettle: (id: string) => void hideSession(id, 'settle'),
@@ -3526,6 +3506,22 @@ export function App(props: AppProps = {}) {
   const openSidebarSearch = useCallback((projectPath?: string) => {
     sessionSearch.current?.open(projectPath)
   }, [])
+  const cycleChat = useCallback(
+    (direction: -1 | 1) => {
+      const sessions = projects.flatMap((project) => project.sessions)
+      if (sessions.length === 0) return
+      const current = activeId ? sessions.findIndex((session) => session.id === activeId) : -1
+      const nextIndex =
+        current < 0
+          ? direction > 0
+            ? 0
+            : sessions.length - 1
+          : (current + direction + sessions.length) % sessions.length
+      const next = sessions[nextIndex]
+      if (next) void selectSession(next.id)
+    },
+    [projects, activeId, selectSession],
+  )
   const selectSessionSearchResult = useCallback(
     (threadId: string, turnId?: string) => {
       setSearchJump((current) =>
@@ -3544,6 +3540,18 @@ export function App(props: AppProps = {}) {
   const openSettings = useCallback((section: SettingsSection = 'providers') => {
     setSettingsSection(section)
     setSettingsOpen(true)
+  }, [])
+  const changeKeybinding = useCallback((action: KeybindingId, shortcut: Shortcut | null) => {
+    setKeybindings((current) => {
+      const next = { ...current, [action]: shortcut }
+      writeKeybindings(next)
+      return next
+    })
+  }, [])
+  const resetKeybindings = useCallback(() => {
+    const defaults = createDefaultKeybindings()
+    writeKeybindings(defaults)
+    setKeybindings(defaults)
   }, [])
   const openProviderSetup = useCallback(() => {
     refreshCatalog()
@@ -3583,11 +3591,177 @@ export function App(props: AppProps = {}) {
     setWorkspacePanelOpen(false)
     setWorkspacePanelExpanded(false)
   }, [])
+  const openProviderLoginTerminal = useCallback(
+    (target: ProviderLoginTerminalTarget) => {
+      setProviderLoginTerminal({
+        ...target,
+        id: nextProviderLoginTerminalId.current++,
+        visible: true,
+        restorePanelOpen: workspacePanelOpen,
+        restorePanelExpanded: workspacePanelExpanded,
+      })
+      setSettingsOpen(false)
+      setWorkspacePanelOpen(true)
+      setWorkspacePanelExpanded(true)
+    },
+    [workspacePanelExpanded, workspacePanelOpen],
+  )
+  const closeProviderLoginTerminal = useCallback(
+    (id: number) => {
+      if (!providerLoginTerminal || providerLoginTerminal.id !== id) return
+      setProviderLoginTerminal(
+        providerLoginState?.phase === 'running'
+          ? { ...providerLoginTerminal, visible: false }
+          : undefined,
+      )
+      setWorkspacePanelOpen(providerLoginTerminal.restorePanelOpen)
+      setWorkspacePanelExpanded(providerLoginTerminal.restorePanelExpanded)
+      setSettingsSection('providers')
+      setSettingsOpen(true)
+    },
+    [providerLoginState?.phase, providerLoginTerminal],
+  )
+  const toggleWorkspacePanel = useCallback(() => {
+    if (workspacePanelOpen) setWorkspacePanelExpanded(false)
+    setWorkspacePanelOpen((open) => !open)
+  }, [workspacePanelOpen])
+  const toggleExpandedWorkspacePanel = useCallback(() => {
+    if (!workspacePanelOpen) {
+      setWorkspacePanelOpen(true)
+      setWorkspacePanelExpanded(true)
+      return
+    }
+    setWorkspacePanelExpanded((expanded) => !expanded)
+  }, [workspacePanelOpen])
+  const toggleFastMode = useCallback(() => {
+    const model = selectedModelChoice?.model
+    const fast = getFastServiceTier(model)
+    if (!fast) return
+    setServiceTier((current) => (current === fast.id ? getFastModeOffValue(model) : fast.id))
+  }, [selectedModelChoice])
   const active = useMemo(() => findSession(projects, activeId), [projects, activeId])
   const activeProject = useMemo(
     () => projects.find((project) => project.path === activePath),
     [projects, activePath],
   )
+  const keybindingActions = useMemo<Record<KeybindingId, () => void>>(
+    () => ({
+      commandPalette: () => {
+        setSettingsOpen(false)
+        setPaletteScope('all')
+      },
+      settings: () => {
+        setPaletteScope(null)
+        openSettings('providers')
+      },
+      keybindings: () => {
+        setPaletteScope(null)
+        openSettings('keybinds')
+      },
+      toggleSidebar: toggleRail,
+      newChat: startNewChat,
+      searchSessions: () => {
+        setPaletteScope(null)
+        sessionSearch.current?.open()
+      },
+      focusComposer: () => {
+        if (!activePath) return
+        setPaletteScope(null)
+        setComposerFocusRequest((request) => request + 1)
+      },
+      interrupt: () => {
+        if (thread.running) interrupt()
+      },
+      previousChat: () => cycleChat(-1),
+      nextChat: () => cycleChat(1),
+      toggleSessionPin: () => {
+        if (activeId) toggleSidebarSessionPin(activeId)
+      },
+      archiveSession: () => {
+        if (activeId) deleteSidebarSession(activeId)
+      },
+      rollback: () => {
+        if (activeId && checkpoints.length > 0) openRollback()
+      },
+      switchProject: () => {
+        setSettingsOpen(false)
+        setPaletteScope('projects')
+      },
+      newProject: () => void addProject(),
+      openPullRequests,
+      toggleTerminal: () => {
+        if (activeId) toggleTerminal()
+      },
+      toggleWorkspace: () => {
+        if (activePath) toggleWorkspacePanel()
+      },
+      expandWorkspace: () => {
+        if (activePath) toggleExpandedWorkspacePanel()
+      },
+      toggleFastMode,
+      toggleDesignMode: () => {
+        if (!thread.running) setDesignMode((enabled) => !enabled)
+      },
+      toggleIsolatedSession: () => {
+        if (!activeId) setIsolateSession((enabled) => !enabled)
+      },
+    }),
+    [
+      activeId,
+      activePath,
+      addProject,
+      checkpoints.length,
+      cycleChat,
+      deleteSidebarSession,
+      interrupt,
+      openPullRequests,
+      openRollback,
+      openSettings,
+      startNewChat,
+      thread.running,
+      toggleExpandedWorkspacePanel,
+      toggleFastMode,
+      toggleRail,
+      toggleSidebarSessionPin,
+      toggleTerminal,
+      toggleWorkspacePanel,
+    ],
+  )
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) return
+
+      // Settings owns all keys while open. Its two app shortcuts can close
+      // the sheet or jump directly to the keybind editor.
+      if (settingsOpen) {
+        if (matchesShortcut(event, keybindings.settings)) {
+          event.preventDefault()
+          setSettingsOpen(false)
+        } else if (matchesShortcut(event, keybindings.keybindings)) {
+          event.preventDefault()
+          setSettingsSection('keybinds')
+        }
+        return
+      }
+      if (paletteScope || rollbackOpen || checkoutDelete) return
+
+      const definition = KEYBINDING_DEFINITIONS.find((candidate) =>
+        matchesShortcut(event, keybindings[candidate.id]),
+      )
+      if (!definition) return
+      // Chat search intentionally stays reachable from the composer. Every
+      // other global command leaves editable controls alone.
+      if (definition.id !== 'searchSessions' && isEditableTarget(event.target)) return
+
+      event.preventDefault()
+      keybindingActions[definition.id]()
+    }
+
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [checkoutDelete, keybindingActions, keybindings, paletteScope, rollbackOpen, settingsOpen])
+
   const sideChatParentStatus: SideChatParentStatus =
     thread.approvals.length > 0
       ? 'approval'
@@ -3623,12 +3797,17 @@ export function App(props: AppProps = {}) {
   )
   const commands = useMemo<PaletteCommand[]>(() => {
     if (!paletteScope) return EMPTY_PALETTE_COMMANDS
+    const keybind = (id: KeybindingId) => {
+      const shortcut = keybindings[id]
+      return shortcut ? shortcutLabel(shortcut, macOS) : undefined
+    }
     return [
       {
         id: 'search-sessions',
         title: 'Search all chats',
         detail: 'Titles, messages, commands, and tool output across projects',
         group: 'Actions',
+        shortcut: keybind('searchSessions'),
         run: () => {
           sessionSearch.current?.open()
         },
@@ -3639,6 +3818,7 @@ export function App(props: AppProps = {}) {
         detail: activePath ? `Start in ${basename(activePath)}` : 'Choose a project folder',
         group: 'Actions',
         keywords: 'session conversation',
+        shortcut: keybind('newChat'),
         run: startNewChat,
       },
       {
@@ -3647,6 +3827,7 @@ export function App(props: AppProps = {}) {
         detail: 'Choose another workspace',
         group: 'Actions',
         keywords: 'folder workspace',
+        shortcut: keybind('switchProject'),
         run: () => setPaletteScope('projects'),
       },
       {
@@ -3656,6 +3837,7 @@ export function App(props: AppProps = {}) {
         group: 'Actions',
         keywords: 'add open folder workspace',
         projectCommand: true,
+        shortcut: keybind('newProject'),
         run: () => void addProject(),
       },
       ...(activePath
@@ -3666,6 +3848,7 @@ export function App(props: AppProps = {}) {
               detail: 'Move the cursor to your prompt',
               group: 'Actions' as const,
               keywords: 'prompt message type',
+              shortcut: keybind('focusComposer'),
               run: () => setComposerFocusRequest((request) => request + 1),
             },
           ]
@@ -3675,23 +3858,89 @@ export function App(props: AppProps = {}) {
         title: collapsed ? 'Show sidebar' : 'Hide sidebar',
         group: 'Actions',
         keywords: 'rail navigation',
+        shortcut: keybind('toggleSidebar'),
         run: () => setCollapsed((current) => !current),
       },
       {
         id: 'open-settings',
         title: 'Settings',
-        detail: 'Providers, appearance, storage',
+        detail: 'General, appearance, keybinds, providers, and data',
         group: 'Actions',
+        shortcut: keybind('settings'),
         run: () => openSettings(),
       },
       {
         id: 'keyboard-shortcuts',
-        title: 'Keyboard shortcuts',
-        detail: 'View every app shortcut',
+        title: 'Keybinds',
+        detail: 'View and customize every app keybind',
         group: 'Actions',
-        keywords: 'help hotkeys key bindings',
-        run: () => setShortcutsOpen(true),
+        keywords: 'help keyboard shortcuts hotkeys key bindings',
+        shortcut: keybind('keybindings'),
+        run: () => openSettings('keybinds'),
       },
+      {
+        id: 'open-pull-requests',
+        title: 'Pull requests',
+        detail: 'Open the pull request inbox',
+        group: 'Actions',
+        keywords: 'github prs review',
+        shortcut: keybind('openPullRequests'),
+        run: openPullRequests,
+      },
+      ...(activeId
+        ? [
+            {
+              id: 'toggle-terminal',
+              title: terminalOpen ? 'Hide terminal' : 'Show terminal',
+              group: 'Actions' as const,
+              keywords: 'console shell',
+              shortcut: keybind('toggleTerminal'),
+              run: toggleTerminal,
+            },
+            {
+              id: 'toggle-chat-pin',
+              title: active?.session.pinned ? 'Unpin current chat' : 'Pin current chat',
+              group: 'Actions' as const,
+              shortcut: keybind('toggleSessionPin'),
+              run: () => toggleSidebarSessionPin(activeId),
+            },
+            ...(thread.running
+              ? [
+                  {
+                    id: 'stop-response',
+                    title: 'Stop response',
+                    group: 'Actions' as const,
+                    shortcut: keybind('interrupt'),
+                    run: interrupt,
+                  },
+                ]
+              : []),
+            ...(checkpoints.length > 0
+              ? [
+                  {
+                    id: 'open-restore-points',
+                    title: 'Restore points',
+                    detail: 'Review chat checkpoints',
+                    group: 'Actions' as const,
+                    shortcut: keybind('rollback'),
+                    run: openRollback,
+                  },
+                ]
+              : []),
+          ]
+        : []),
+      ...(activePath
+        ? [
+            {
+              id: 'toggle-workspace',
+              title: workspacePanelOpen ? 'Hide workspace tools' : 'Show workspace tools',
+              detail: 'Files, review, browser, and side chat',
+              group: 'Actions' as const,
+              shortcut: keybind('toggleWorkspace'),
+              run: toggleWorkspacePanel,
+            },
+          ]
+        : []),
       ...projects.map((project): PaletteCommand => ({
         id: `project-${encodeURIComponent(project.path)}`,
         title: displayName(project),
@@ -3727,16 +3976,29 @@ export function App(props: AppProps = {}) {
     startNewChat,
     addProject,
     openSettings,
+    openPullRequests,
+    active,
+    activeId,
     collapsed,
+    checkpoints.length,
+    interrupt,
+    keybindings,
+    macOS,
     projects,
     selectProject,
     beginSession,
     selectSession,
+    terminalOpen,
+    thread.running,
+    toggleSidebarSessionPin,
+    toggleTerminal,
+    toggleWorkspacePanel,
+    workspacePanelOpen,
   ])
 
   return (
     <div className={`shell ${collapsed ? 'is-narrow' : ''}`} style={shellStyle(railWidth)}>
-      <TitleBar collapsed={collapsed} onToggleRail={toggleRail} />
+      <TitleBar collapsed={collapsed} keybindings={keybindings} onToggleRail={toggleRail} />
       {dependencies.isDesktop ? <ZoomHud /> : null}
 
       <div className="shell__body">
@@ -3746,6 +4008,7 @@ export function App(props: AppProps = {}) {
           activeSessionId={surface === 'chat' ? activeId : undefined}
           pullRequestsActive={surface === 'pull-requests'}
           providerName={providerName(provider, acpAgentName)}
+          keybindings={keybindings}
           usageStates={usageState}
           onRetryUsage={refreshUsage}
           mode={sidebarSettings.mode}
@@ -3793,6 +4056,7 @@ export function App(props: AppProps = {}) {
                   worktreeBranch={active?.session.worktreeBranch}
                   terminalOpen={terminalOpen}
                   workspacePanelOpen={workspacePanelOpen}
+                  keybindings={keybindings}
                   onOpenRollback={openRollback}
                   onToggleWorkspace={workspacePanelOpen ? closeWorkspacePanel : openWorkspacePanel}
                   onToggleTerminal={toggleTerminal}
@@ -3883,6 +4147,7 @@ export function App(props: AppProps = {}) {
                     newSession={!activeId}
                     isolate={active?.session.worktreeBranch ? true : isolateSession}
                     designMode={designMode}
+                    keybindings={keybindings}
                     focusRequest={composerFocusRequest}
                     draftRequest={composerDraft}
                     onDraftChange={updateRejectedDraft}
@@ -3929,16 +4194,22 @@ export function App(props: AppProps = {}) {
               sideChatStartOptions={sideChatStartOptions}
               sideChatPromptRequest={sideChatPromptRequest}
               nativeSurfacesVisible={
-                !settingsOpen &&
-                !shortcutsOpen &&
-                paletteScope === null &&
-                !rollbackOpen &&
-                !checkoutDelete
+                !settingsOpen && paletteScope === null && !rollbackOpen && !checkoutDelete
               }
               onOpen={openWorkspacePanel}
               onClose={closeWorkspacePanel}
               onExpandedChange={setWorkspacePanelExpanded}
               onWidthChange={setWorkspacePanelWidth}
+              providerLogin={
+                providerLoginTerminal?.visible
+                  ? {
+                      id: providerLoginTerminal.id,
+                      title: `${providerLoginTerminal.displayName} login`,
+                      installKey: providerLoginTerminal.installKey,
+                    }
+                  : undefined
+              }
+              onProviderLoginClose={closeProviderLoginTerminal}
             />
           </Suspense>
         </div>
@@ -3978,8 +4249,14 @@ export function App(props: AppProps = {}) {
           showMacOSFontSmoothing={macOS}
           macOSFontSmoothing={macOSFontSmoothing}
           onMacOSFontSmoothingChange={setMacOSFontSmoothing}
+          macOS={macOS}
+          keybindings={keybindings}
+          onKeybindingChange={changeKeybinding}
+          onKeybindingsReset={resetKeybindings}
           showMacOSHaptics={dependencies.isDesktop && macOS}
           onAccountChange={handleAccountChange}
+          authRefreshRevision={providerAuthRefreshRevision}
+          onProviderLoginTerminalOpen={openProviderLoginTerminal}
           onReset={resetSettings}
           onClose={closeSettings}
         />
@@ -3999,10 +4276,6 @@ export function App(props: AppProps = {}) {
             setOnboardingDismissed(true)
           }}
         />
-      ) : null}
-
-      {shortcutsOpen ? (
-        <ShortcutsDialog macOS={macOS} onClose={() => setShortcutsOpen(false)} />
       ) : null}
 
       {paletteScope ? (

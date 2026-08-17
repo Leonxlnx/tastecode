@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { PanelLeft } from 'lucide-react'
-import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
+import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 
 /**
  * Title bar. Holds the window-level sidebar control.
@@ -8,7 +8,12 @@ import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
  * Height comes from --titlebar-h, which the main process also uses for the
  * native caption buttons.
  */
-function TitleBarComponent(props: { collapsed: boolean; onToggleRail: () => void }) {
+function TitleBarComponent(props: {
+  collapsed: boolean
+  keybindings?: Keybindings | undefined
+  onToggleRail: () => void
+}) {
+  const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   return (
     <header className="titlebar">
       <button
@@ -16,7 +21,7 @@ function TitleBarComponent(props: { collapsed: boolean; onToggleRail: () => void
         onClick={props.onToggleRail}
         title={props.collapsed ? 'Show sidebar' : 'Hide sidebar'}
         aria-pressed={!props.collapsed}
-        aria-keyshortcuts={shortcutAria(SHORTCUTS.toggleSidebar)}
+        aria-keyshortcuts={shortcutAria(keybindings.toggleSidebar)}
       >
         <PanelLeft size={15} aria-hidden />
       </button>

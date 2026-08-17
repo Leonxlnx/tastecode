@@ -42,7 +42,7 @@ import {
 } from '../haptics.js'
 import { sessionSourcePresentation } from '../provider-presentation.js'
 import { profileInitials, type ProfileIdentityPreferences } from '../profile-preferences.js'
-import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
+import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
 import { AccountLimits, type AccountLimitsState } from './AccountLimits.js'
 import { useDialogFocus } from './dialog-focus.js'
@@ -128,6 +128,7 @@ function SidebarComponent(props: {
   account: Account | undefined
   profileIdentity?: ProfileIdentityPreferences | undefined
   providerName: string
+  keybindings?: Keybindings | undefined
   usageStates?: AccountLimitsState[] | undefined
   onRetryUsage?: ((provider: ProviderId) => void) | undefined
   mode?: 'classic' | 'inbox'
@@ -159,6 +160,7 @@ function SidebarComponent(props: {
   onOpenSettings: (section?: 'profile') => void
   haptics?: SidebarHaptics | undefined
 }) {
+  const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   const hapticServices = props.haptics ?? defaultSidebarHaptics
   const profileDisplayName = props.profileIdentity?.displayName.trim()
   const [edgeRevealed, setEdgeRevealed] = useState(false)
@@ -443,7 +445,7 @@ function SidebarComponent(props: {
               <div className="rail__row">
                 <button
                   className="navitem rail__new-chat"
-                  aria-keyshortcuts={shortcutAria(SHORTCUTS.newChat)}
+                  aria-keyshortcuts={shortcutAria(keybindings.newChat)}
                   onClick={() => {
                     const project =
                       props.projects.find(
@@ -465,7 +467,7 @@ function SidebarComponent(props: {
                   onClick={() => props.onOpenSearch()}
                   aria-label="Search chats"
                   title="Search chats"
-                  aria-keyshortcuts={shortcutAria(SHORTCUTS.searchSessions)}
+                  aria-keyshortcuts={shortcutAria(keybindings.searchSessions)}
                 >
                   <Search size={15} aria-hidden />
                 </button>
@@ -476,7 +478,7 @@ function SidebarComponent(props: {
                   props.onAddProject()
                   closeOnNarrowViewport()
                 }}
-                aria-keyshortcuts={shortcutAria(SHORTCUTS.newProject)}
+                aria-keyshortcuts={shortcutAria(keybindings.newProject)}
               >
                 <FolderPen size={15} aria-hidden />
                 <span>New project</span>
@@ -486,6 +488,7 @@ function SidebarComponent(props: {
                   type="button"
                   className={`navitem rail__pull-requests${props.pullRequestsActive ? ' is-active' : ''}`}
                   aria-current={props.pullRequestsActive ? 'page' : undefined}
+                  aria-keyshortcuts={shortcutAria(keybindings.openPullRequests)}
                   onClick={openPullRequests}
                 >
                   <GitPullRequest size={15} aria-hidden />
@@ -646,7 +649,7 @@ function SidebarComponent(props: {
                 <button
                   type="button"
                   className="menu__item"
-                  aria-keyshortcuts={shortcutAria(SHORTCUTS.settings)}
+                  aria-keyshortcuts={shortcutAria(keybindings.settings)}
                   onClick={() => {
                     props.onOpenSettings()
                     closeOnNarrowViewport()

@@ -45,7 +45,7 @@ import {
   savePastedFile,
   type PickedAttachment,
 } from '../bridge.js'
-import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
+import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
 import {
   describeMicrophoneError,
@@ -381,6 +381,7 @@ function ComposerComponent(props: {
   newSession: boolean
   isolate: boolean
   designMode: boolean
+  keybindings?: Keybindings | undefined
   focusRequest: number
   draftRequest?: { text: string; attachments?: string[]; request: number } | undefined
   onDraftChange?: ((text: string) => void) | undefined
@@ -410,6 +411,7 @@ function ComposerComponent(props: {
   composerBridge?: ComposerBridge | undefined
   voiceRecorder?: ComposerVoiceRecorder | undefined
 }) {
+  const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState<string>()
@@ -1008,6 +1010,7 @@ function ComposerComponent(props: {
                 className="shelf-control shelf-control--mode"
                 aria-label="Workspace mode"
                 aria-pressed={props.isolate}
+                aria-keyshortcuts={shortcutAria(keybindings.toggleIsolatedSession)}
                 onClick={() => props.onIsolateChange(!props.isolate)}
                 title="Switch between the project checkout and an isolated worktree"
               >
@@ -1283,7 +1286,7 @@ function ComposerComponent(props: {
                   rows={2}
                   spellCheck={false}
                   disabled={props.disabled}
-                  aria-keyshortcuts={shortcutAria(SHORTCUTS.focusComposer)}
+                  aria-keyshortcuts={shortcutAria(keybindings.focusComposer)}
                   aria-controls={resourceTrigger ? COMPOSER_RESOURCE_LIST_ID : undefined}
                   aria-expanded={resourceTrigger !== undefined}
                   aria-haspopup="listbox"
@@ -1444,6 +1447,7 @@ function ComposerComponent(props: {
                     type="button"
                     className={`menutrigger tool composer__design${props.designMode ? ' is-active' : ''}`}
                     aria-pressed={props.designMode}
+                    aria-keyshortcuts={shortcutAria(keybindings.toggleDesignMode)}
                     onClick={() => props.onDesignModeChange(!props.designMode)}
                     title={props.designMode ? 'Turn off Design mode' : 'Turn on Design mode'}
                   >

@@ -11,6 +11,7 @@ export type PaletteCommand = {
   keywords?: string
   projectCommand?: boolean
   newThreadProject?: boolean
+  shortcut?: string | undefined
   run: () => void
 }
 
@@ -168,6 +169,9 @@ function CommandPaletteComponent(props: {
                         <span className="command-palette__detail">{command.detail}</span>
                       ) : null}
                     </span>
+                    {command.shortcut ? (
+                      <kbd className="command-palette__shortcut">{command.shortcut}</kbd>
+                    ) : null}
                   </button>
                 </div>
               )
