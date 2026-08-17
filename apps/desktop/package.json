@@ -31,6 +31,7 @@
   },
   "build": {
     "appId": "dev.tastecode.desktop",
+    "executableName": "TasteCode",
     "icon": "assets/tastecode-app-icon.png",
     "asar": true,
     "npmRebuild": false,

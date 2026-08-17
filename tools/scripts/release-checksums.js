@@ -1,49 +1,42 @@
-import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { readdir, stat, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
+import {
+  checksumName,
+  checksumPayloadAssets,
+  platformFromChecksumName,
+  sha256File,
+  verifyReleasePayload,
+} from './release-manifest.js'
 
-const releaseDirectory = path.resolve(process.argv[2] ?? 'release')
-const outputName = process.argv[3] ?? 'SHA256SUMS.txt'
-const releaseExtensions = new Set(['.exe', '.dmg', '.zip', '.blockmap'])
+export async function generateReleaseChecksums(releaseDirectory, platform) {
+  const resolvedDirectory = path.resolve(releaseDirectory)
+  await verifyReleasePayload(resolvedDirectory, platform)
 
-function isReleaseArtifact(name) {
-  if (name === 'beta.yml' || name === 'beta-mac.yml') return true
-  return name.startsWith('TasteCode-') && releaseExtensions.has(path.extname(name))
-}
-
-const entries = await readdir(releaseDirectory)
-const files = []
-
-for (const entry of entries.sort()) {
-  const filePath = path.join(releaseDirectory, entry)
-  const fileStat = await stat(filePath)
-
-  if (fileStat.isFile() && isReleaseArtifact(entry)) {
-    files.push({ entry, filePath })
+  const rows = []
+  for (const name of checksumPayloadAssets(platform)) {
+    const digest = await sha256File(path.join(resolvedDirectory, name))
+    rows.push(`${digest}  ${name}`)
   }
+
+  const outputPath = path.join(resolvedDirectory, checksumName(platform))
+  await writeFile(outputPath, `${rows.join('\n')}\n`, 'utf8')
+  return { outputPath, rows }
 }
 
-if (files.length === 0) {
-  throw new Error(`No release files found in ${releaseDirectory}`)
+const isMain =
+  process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url
+
+if (isMain) {
+  const releaseDirectory = process.argv[2] ?? 'release'
+  const requestedOutput = process.argv[3]
+  const platform = process.argv[4] ?? platformFromChecksumName(requestedOutput)
+
+  if (requestedOutput && requestedOutput !== checksumName(platform)) {
+    throw new Error(`Checksum output for ${platform} must be ${checksumName(platform)}`)
+  }
+
+  const { outputPath, rows } = await generateReleaseChecksums(releaseDirectory, platform)
+  console.log(`Wrote ${rows.length} checksums to ${outputPath}`)
+  console.log(rows.join('\n'))
 }
-
-const rows = []
-
-for (const { entry, filePath } of files) {
-  const hash = createHash('sha256')
-
-  await new Promise((resolve, reject) => {
-    const stream = createReadStream(filePath)
-    stream.on('data', (chunk) => hash.update(chunk))
-    stream.on('error', reject)
-    stream.on('end', resolve)
-  })
-
-  rows.push(`${hash.digest('hex')}  ${entry}`)
-}
-
-const outputPath = path.join(releaseDirectory, outputName)
-await writeFile(outputPath, `${rows.join('\n')}\n`, 'utf8')
-console.log(`Wrote ${rows.length} checksums to ${outputPath}`)
-console.log(rows.join('\n'))

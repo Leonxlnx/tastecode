@@ -2,17 +2,45 @@ name: Release artifact proof
 
 on:
   workflow_dispatch:
+    inputs:
+      approved_sha:
+        description: Exact 40-character main commit approved for this release proof
+        required: true
+        type: string
 
-# Hosted Actions are manual so release proof never consumes minutes on a normal push.
+# Hosted Actions stay manual. Every build job is read-only; only the final serial writer can
+# update the private draft release.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: release-artifact-proof-${{ github.ref }}
-  cancel-in-progress: true
+  group: release-artifact-proof-v0.1.0-beta.1
+  cancel-in-progress: false
 
 jobs:
+  verify-input:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact approved main commit
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+          EVENT_SHA: ${{ github.sha }}
+          EVENT_REF: ${{ github.ref }}
+        run: node tools/scripts/verify-release-input.js
+
   package:
+    needs: verify-input
+    permissions:
+      contents: read
+
     strategy:
       fail-fast: false
       matrix:
@@ -30,29 +58,38 @@ jobs:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
     steps:
-      - uses: actions/checkout@v5
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
-          node-version: 22
+          ref: ${{ inputs.approved_sha }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 11.8.0
+          run_install: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
           cache: pnpm
 
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Format
+      - name: Format and lint
         run: pnpm lint
 
       - name: Typecheck
-        run: pnpm -r typecheck
+        run: pnpm typecheck
 
       - name: Test
-        run: pnpm -r test
+        run: pnpm test
+
+      - name: Test release tooling
+        run: node --test tools/scripts/release-tools.test.js
 
       - name: Build
-        run: pnpm -r build
+        run: pnpm build
 
       - name: Build preload
         run: pnpm --filter @harness/desktop exec node scripts/build-preload.js
@@ -69,23 +106,29 @@ jobs:
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
-          $installer = Get-ChildItem release -File -Filter 'TasteCode-*-win-x64.exe' | Select-Object -First 1
-          if ($null -eq $installer) { throw 'Windows installer was not created' }
+          $installer = Get-ChildItem release -File -Filter 'TasteCode-*-win-x64.exe'
+          if ($installer.Count -ne 1) { throw "Expected one Windows installer, found $($installer.Count)" }
 
-          $signature = Get-AuthenticodeSignature $installer.FullName
+          $signature = Get-AuthenticodeSignature $installer[0].FullName
           if ($signature.Status -ne 'NotSigned') {
             throw "Expected an unsigned beta installer, got $($signature.Status)"
           }
 
-          $install = Start-Process -FilePath $installer.FullName -ArgumentList '/S' -PassThru -Wait
+          $install = Start-Process -FilePath $installer[0].FullName -ArgumentList '/S' -PassThru -Wait
           if ($install.ExitCode -ne 0) { throw "Silent install failed with $($install.ExitCode)" }
 
-          $installed = Join-Path $env:LOCALAPPDATA 'Programs\TasteCode\TasteCode.exe'
-          if (-not (Test-Path $installed)) { throw "Installed app was not found at $installed" }
+          $programsRoot = Join-Path $env:LOCALAPPDATA 'Programs'
+          $installed = @(Get-ChildItem $programsRoot -File -Filter 'TasteCode.exe' -Recurse)
+          if ($installed.Count -ne 1) {
+            throw "Expected one installed TasteCode.exe, found $($installed.Count)"
+          }
 
-          $uninstaller = Join-Path $env:LOCALAPPDATA 'Programs\TasteCode\Uninstall TasteCode.exe'
-          if (-not (Test-Path $uninstaller)) { throw "Uninstaller was not found at $uninstaller" }
-          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru -Wait
+          $uninstaller = @(Get-ChildItem $installed[0].Directory.FullName -File -Filter 'Uninstall*.exe')
+          if ($uninstaller.Count -ne 1) {
+            throw "Expected one uninstaller beside TasteCode.exe, found $($uninstaller.Count)"
+          }
+
+          $uninstall = Start-Process -FilePath $uninstaller[0].FullName -ArgumentList '/S' -PassThru -Wait
           if ($uninstall.ExitCode -ne 0) { throw "Silent uninstall failed with $($uninstall.ExitCode)" }
 
       - name: Verify macOS containers
@@ -98,10 +141,49 @@ jobs:
           unzip -t "$zip"
 
       - name: Generate SHA-256 checksums
-        run: node tools/scripts/release-checksums.js release SHA256SUMS-${{ matrix.label }}.txt
+        run: node tools/scripts/release-checksums.js release SHA256SUMS-${{ matrix.label }}.txt ${{ matrix.platform }}
 
-      - name: Upload to private draft release
+      - name: Stage exact platform manifest
+        run: node tools/scripts/stage-release-assets.js release release-proof ${{ matrix.platform }}
+
+      - name: Upload immutable workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-${{ matrix.label }}-${{ inputs.approved_sha }}
+          path: release-proof
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  publish-draft:
+    needs: [verify-input, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ inputs.approved_sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+
+      - name: Download both immutable platform artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          pattern: release-*-${{ inputs.approved_sha }}
+          path: release-final
+          merge-multiple: true
+
+      - name: Verify exact combined release manifest
+        run: node tools/scripts/verify-release-assets.js release-final all
+
+      - name: Reconcile one private draft release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_SHA: ${{ inputs.approved_sha }}
           RELEASE_TAG: v0.1.0-beta.1
-        run: node tools/scripts/upload-draft-release.js release
+        run: node tools/scripts/upload-draft-release.js release-final
