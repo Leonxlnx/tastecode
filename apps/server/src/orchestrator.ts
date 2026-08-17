@@ -134,6 +134,7 @@ import {
   type AvailableBackgroundModelSource,
 } from './background-model.js'
 import { propertiesWhen } from './properties-when.js'
+import { VoiceService, type VoiceTranscriber } from './voice.js'
 
 type UserSubmission = {
   id: string
@@ -462,6 +463,7 @@ export class Orchestrator {
   #backgroundSourcesStarting: Promise<AvailableBackgroundModelSource[]> | undefined
   #backgroundSourcesRevision = 0
   #readCredential: (reference: string) => string
+  #voice: VoiceService
   #terminals: TerminalManager
   #createCodexAdapter: () => CodexAdapter
   #claudeLimitSource: () => Promise<AdapterLimitSource>
@@ -505,6 +507,7 @@ export class Orchestrator {
       modelConnections?: ModelConnectionStore
       customHarnesses?: CustomHarnessStore
       readCredential?: (reference: string) => string
+      voiceTranscriber?: VoiceTranscriber
       onTerminalOutput?: (terminalId: string, data: string) => void
       onTerminalExit?: (terminalId: string, exitCode: number | null) => void
       runtimeFor?: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
@@ -533,6 +536,11 @@ export class Orchestrator {
     this.#modelConnections = handlers.modelConnections ?? new ModelConnectionStore()
     this.#customHarnesses = handlers.customHarnesses ?? new CustomHarnessStore()
     this.#readCredential = handlers.readCredential ?? readCredential
+    this.#voice = new VoiceService(
+      this.#modelConnections,
+      this.#readCredential,
+      handlers.voiceTranscriber,
+    )
     this.#createCodexAdapter = handlers.createCodexAdapter ?? (() => new CodexAdapter())
     this.#claudeLimitSource = handlers.claudeLimitSource ?? claudeLimitSource
     this.#grokLimitSource = handlers.grokLimitSource ?? grokLimitSource
@@ -1142,8 +1150,7 @@ export class Orchestrator {
     available: boolean
     reason?: 'provider_unsupported' | 'sign_in_required' | 'unsupported_auth' | 'codex_too_old'
   }> {
-    if (provider !== 'codex') return { available: false, reason: 'provider_unsupported' }
-    return (await this.#controlAdapter()).voiceCapability()
+    return this.#voice.status(provider)
   }
 
   async transcribeVoice(input: ParamsOf<'voice.transcribe'>): Promise<{ text: string }> {
@@ -1153,17 +1160,7 @@ export class Orchestrator {
     const controller = new AbortController()
     this.#voiceRequests.set(input.requestId, controller)
     try {
-      const text = await (
-        await this.#controlAdapter()
-      ).transcribeVoice(
-        {
-          audioBase64: input.audioBase64,
-          mimeType: input.mimeType,
-          sampleRateHz: input.sampleRateHz,
-          durationMs: input.durationMs,
-        },
-        controller.signal,
-      )
+      const text = await this.#voice.transcribe(input, controller.signal)
       return { text }
     } finally {
       this.#voiceRequests.delete(input.requestId)
