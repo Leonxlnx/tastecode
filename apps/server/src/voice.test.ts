@@ -117,10 +117,7 @@ describe('VoiceService', () => {
   })
 })
 
-function connectionStore(): {
-  store: ModelConnectionStore
-  credentials: Map<string, string>
-} {
+function connectionStore() {
   const root = mkdtempSync(path.join(os.tmpdir(), 'tastecode-voice-'))
   roots.push(root)
   const credentials = new Map<string, string>()
