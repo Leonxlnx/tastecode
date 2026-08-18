@@ -3,6 +3,7 @@ import type { BoundaryValue } from './boundary.js'
 
 export type ZoomAction = 'in' | 'out' | 'reset'
 const ZoomActionSchema = z.enum(['in', 'out', 'reset'])
+export const DEFAULT_ZOOM_FACTOR = 1.1
 
 export function isZoomAction(value: BoundaryValue): value is ZoomAction {
   return ZoomActionSchema.safeParse(value).success
@@ -31,7 +32,7 @@ export function zoomShortcut(input: {
 }
 
 export function nextZoomFactor(current: number, action: ZoomAction): number {
-  if (action === 'reset') return 1
+  if (action === 'reset') return DEFAULT_ZOOM_FACTOR
   const delta = action === 'in' ? 0.1 : -0.1
   return Math.min(2, Math.max(0.5, Math.round((current + delta) * 10) / 10))
 }
