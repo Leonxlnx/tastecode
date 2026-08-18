@@ -82,6 +82,7 @@
         "provider": "github",
         "owner": "Leonxlnx",
         "repo": "tastecode",
+        "channel": "beta",
         "releaseType": "prerelease"
       }
     ],

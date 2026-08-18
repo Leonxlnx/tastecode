@@ -156,6 +156,7 @@ test('release manifests and platform staging are exact and checksum-backed', asy
   )
   assert.equal(desktopPackage.version, RELEASE_VERSION)
   assert.equal(desktopPackage.build.executableName, 'TasteCode')
+  assert.equal(desktopPackage.build.publish[0].channel, 'beta')
 
   const staged = await mkdtemp(path.join(os.tmpdir(), 'tastecode-stage-'))
   await stageReleaseAssets(source, staged, 'windows')
