@@ -1,8 +1,331 @@
 # TasteCode launch handoff
 
-Updated: 2026-08-17 19:30 CEST / 2026-08-18 01:30 China Standard Time  
+Updated: 2026-08-18 03:24 CEST / 2026-08-18 09:24 China Standard Time  
 Launch status: paused; the previous target passed and a new time needs an explicit go/no-go  
 GitHub is the authority for current commits, branches, pull requests, and release state.
+
+## 2026-08-18 cloud implementation handoff — current authority
+
+This section supersedes every older SHA, PR status, validation claim, and next-step sequence below.
+Older sections remain only as history and context.
+
+### Exact GitHub state
+
+Product repository: `Leonxlnx/tastecode`  
+Current product `main`: `bfc884773a760de216c1c79e4bf34f1a3f73e22f`
+
+Nothing from this implementation pass was merged to `main`. Nothing was published, made public,
+or deployed. No hosted GitHub Actions were started.
+
+Open draft PRs that contain the launch work:
+
+- #936 — `Prepare the repository and handoff for open source`
+  - branch: `docs/oss-launch-readiness`
+  - head: `97f518b48960feb176eadacacba49d0ef92167fa`
+  - base: `main`
+  - mergeable at this handoff boundary
+  - merged forward to current `main` without rebasing
+- #937 — `Prove Windows and macOS release artifacts in CI`
+  - branch: `agent/release-artifact-proof`
+  - head: `e3380290513bceeeaecd6f7d66edb8642cd9b698`
+  - base: `main`
+  - mergeable at this handoff boundary
+  - merged forward to current `main` without rebasing
+  - contains merge parents from #936 and #971 so the final release gate can exercise their license
+    and native-binding tooling
+- #959 — `fix(ui): restore visible focus and accessible input semantics`
+  - branch: `agent/overnight-a11y-hardening`
+  - head: `c0ca415f210614bb52b2d411aba4b522d98fb540`
+  - currently conflicts with `main`; merge `main` into the branch and resolve locally
+- #960 — `fix(proc): drain stdio before settling child output`
+  - branch: `agent/overnight-stdio-drain`
+  - head: `0990c497df4c6401272566cac9af5cafd78a4e48`
+- #961 — `fix(ui): finish unavailable historical image previews`
+  - branch: `agent/overnight-image-preview-state`
+  - head: `182e0723047c4a99fe36a4468f77f219792c2348`
+- #968 — `fix(adapters): stop handling Claude subscription credentials`
+  - branch: `fix/claude-cli-owned-auth`
+  - head: `4b48926c3d8d3d19ce2647f9712ce5dc65c91303`
+- #969 — `fix(adapters): use the public OpenAI transcription API`
+  - branch: `fix/voice-openai-public-api`
+  - head: `90f5ded0582515ca8bbf0dd79563de83aa80af78`
+- #970 — `fix(server): resolve voice keys from the OS credential store`
+  - branch: `fix/voice-keychain-connection`
+  - head: `f221eeeb1d717078a8634f412f04878e2240bfc4`
+  - currently stacked on #969, not directly on `main`
+- #971 — `Prove packaged PTY and keyring bindings`
+  - branch: `test/packaged-native-binding-proof`
+  - head: `4e802808ea1f0f2659edb112c1be6ffb54933258`
+- #972 — `Resume Grok chats across app restarts`
+  - branch: `fix/grok-restart-resume`
+  - head: `d5da529da036e3e1157965b03137947e2b39dfeb`
+
+Every SHA above was fetched from GitHub immediately before this handoff update. Fetch again before
+working because another contributor may advance `main` or a PR.
+
+### What was implemented in this pass
+
+#### Claude authentication hardening — #968
+
+- Removed reads and writes of `~/.claude/.credentials.json`.
+- Removed the private usage endpoint, OAuth refresh endpoint, Claude Code client ID, direct token
+  rotation, and spoofed Claude Code user agent.
+- `claudeAccount` now trusts only the installed CLI's `claude auth status` result.
+- Login and logout remain delegated to the official installed CLI.
+- Subscription-limit reporting now returns an honest unavailable state.
+- Regression tests reject the removed production markers and prove that account probing performs no
+  network request.
+
+This matches the technical local-CLI ownership pattern used by T3 Code, but it does not resolve
+Anthropic's legal restriction on third-party products routing Free/Pro/Max subscription OAuth.
+Issue #950 must remain open unless Anthropic provides written approval or the subscription-backed
+Claude provider is removed from the public build.
+
+#### Voice migration — #969 and #970
+
+- Replaced `https://chatgpt.com/backend-api/transcribe` with the public
+  `https://api.openai.com/v1/audio/transcriptions` endpoint.
+- Uses `gpt-4o-mini-transcribe` and an explicit OpenAI API key.
+- Removed ChatGPT JWT decoding, account extraction, `includeToken: true`, and session-token export.
+- The server resolves the key from the first enabled official OpenAI connection in the OS credential
+  store. The renderer never receives the key.
+- Custom or lookalike OpenAI endpoints are rejected for voice.
+- #970 is intentionally stacked on #969. Merge #969 first, retarget #970 to `main`, merge current
+  `main` into it if necessary, rerun tests, and only then merge #970.
+
+#### Grok restart resume — #972
+
+- Separates the stable TasteCode thread ID from Grok's opaque native session ID.
+- Persists and migrates the provider session ID in SQLite.
+- Rotated native IDs are persisted only while the emitting session is still attached.
+- Print-mode chats resume with the exact native `-r` identity after a full server/app restart.
+- MCP-enabled Grok chats reconstruct the ACP launch and use `session/load`.
+- Restarted turns use collision-safe random IDs.
+- A chat that ended before Grok supplied a native ID preserves readable history and returns an
+  actionable new-chat error instead of inventing continuity.
+- Tests cover ID capture, rotation, migration, Store/Orchestrator recreation, missing IDs, and ACP
+  resume reconstruction.
+
+#### OSS and production-license audit — #936
+
+- Inventories all 27 direct packaged runtime dependencies, including the Anthropic commercial SDK,
+  OpenCode SDK, Electron updater, JetBrains Mono, Pierre, xterm addons, and micromark packages.
+- Derives the runtime graph from desktop/web workspace roots instead of trusting only the inventory.
+- Audits every resolved production transitive for declared license metadata plus shipped
+  LICENSE/COPYING/NOTICE evidence.
+- Fails closed on direct inventory drift, unknown metadata, missing package evidence, a stale managed
+  Markdown table, or an incomplete top-level project license.
+- Exposes `pnpm licenses:verify` and `pnpm licenses:report`.
+- The generated dependency table is deliberately Prettier-ignored so formatting cannot make the
+  deterministic verifier fail.
+
+The complete official Apache-2.0 root text and the actual third-party license bodies still need a
+maintainer review and final artifact proof. Metadata alone does not clear #952.
+
+#### Packaged native-binding proof — #971
+
+- Runs through the packaged Electron executable with `ELECTRON_RUN_AS_NODE=1`.
+- Resolves `node-pty` and `@napi-rs/keyring` from the packaged `@harness/server` entry, which tests
+  pnpm's strict dependency layout rather than accidental desktop-level hoisting.
+- Requires both module entries and loaded `.node` binaries to come from `app.asar` or
+  `app.asar.unpacked`.
+- Spawns, resizes, observes output from, and cleanly exits a real PTY.
+- Saves, reads, deletes, and verifies an isolated credential with `finally` cleanup.
+- Supports a Windows executable and a macOS `.app` bundle.
+- Final review removed lint-invalid assertions and an `unknown` callback parameter.
+
+Issue #956 remains open until this proof runs successfully against real packaged builds on both
+operating systems.
+
+#### Release uploader and workflow — #937
+
+- Matrix build jobs have only `contents: read`; checkout credentials are not persisted.
+- Exactly one serialized final job receives `contents: write`.
+- All Actions use reviewed full commit SHAs and the workflow uses Node 24.
+- Dispatch accepts only the exact selected 40-character `main` SHA and rechecks that it is still
+  current before any release mutation.
+- The uploader rejects published releases before PATCH, DELETE, or upload.
+- Duplicate drafts and the concurrent-create race fail before asset mutation.
+- Only one private draft can be reconciled to the exact approved target, metadata, names, and sizes.
+- The accepted manifest is exactly ten Windows/macOS artifacts, updater files, and checksum files.
+- Stale files, wrong versions, wrong architectures, empty assets, inconsistent updater metadata,
+  and invalid checksums fail before upload.
+- Windows has an explicit `TasteCode.exe` executable name and robust installed-path discovery.
+- Current `main`'s desktop `zod` dependency and Design Preview test safety changes were preserved
+  during conflict resolution.
+- Both package jobs now run `pnpm licenses:verify` and the packaged native-binding proof.
+
+The duplicate private release IDs `371292479` and `371294326` were not deleted. Deletion is a
+separate destructive operation. Delete both only after confirming their tag and draft state, then
+create one clean private draft through the final single-writer path.
+
+### Validation completed in this pass
+
+- Release helper fixtures: 14/14 passed.
+- License audit fixtures: 4/4 passed.
+- Claude adapter source and focused regression checks passed syntax review.
+- Voice adapter/server source and focused regression checks passed syntax review.
+- Grok's eight changed TypeScript source/test files passed Node syntax checks.
+- Native proof source, runner, tests, archive-path checks, and injected PTY/keyring behavior passed.
+- The release branch preserves `zod`, the intended Design Preview retry hardening, and all exact
+  release-tool tests after merging current `main`.
+- Independent final review found no remaining code-level blocker in the Grok, native-proof, or
+  license-tooling drafts.
+
+Validation not completed in this pass:
+
+- The cloud package cache was incomplete, so a fresh full workspace lint, typecheck, test, and build
+  could not be completed against the final combined PR state.
+- No real Windows package, ConPTY, credential store, installer, SmartScreen, shortcut, provider, or
+  uninstall test ran in the Linux cloud.
+- No real macOS package, Keychain, signing, notarization, stapling, Gatekeeper, Finder launch, or
+  product smoke ran in the Linux cloud.
+- No hosted Actions ran because the account has no available minutes and Leon does not want to pay
+  for more.
+- No full-history/all-refs secret scan was possible in this cloud checkout.
+
+Do not reuse the older full-green cloud totals later in this file as proof for these newer commits.
+They refer to an earlier branch state.
+
+### Required local merge order
+
+Keep one logical PR at a time. Never rebase or force-push these shared branches.
+
+1. Fetch all refs and confirm current `main` and every PR head.
+2. Review #959. Merge current `main` into its branch, resolve the current conflict, run keyboard and
+   theme checks plus all gates, then merge it normally if clean.
+3. Review and merge #960, then #961, with focused tests and full gates after each conflict resolution.
+4. Review and merge #968. Do not close #950 or claim legal clearance.
+5. Review and merge #969.
+6. Retarget #970 from `fix/voice-openai-public-api` to `main`, merge the new current `main` into its
+   branch if necessary, rerun its focused and full gates, then merge #970.
+7. Review and merge #972. Perform one real Grok print-mode restart and one Grok ACP/MCP restart
+   before considering #953 proved.
+8. Finish the full root LICENSE, dependency-license review, security address, and artifact legal
+   contents on #936. Run all gates, then merge #936.
+9. Review #971 and run the packaged native proof on Windows. Blueemi must run it on macOS. Merge it
+   only when the source review and available physical proof are acceptable; keep #956 open until both
+   operating systems pass.
+10. Merge the resulting latest `main` into #937 without rebasing. Preserve both current product work
+    and release-only configuration. Rerun every local gate from that exact branch head.
+11. Do not merge #937 or publish anything until every remaining launch blocker below has an explicit
+    outcome.
+
+### Remaining launch blockers and owner decisions
+
+- #950: written Anthropic approval or remove subscription-backed Claude from the public build.
+- #952: complete official Apache-2.0 root license, reviewed production/transitive inventory, and all
+  required license/notice bodies inside both artifacts.
+- #954: delete both obsolete private drafts and exercise the single-writer flow against one clean
+  private draft.
+- #956: real packaged PTY and credential-store proof on Windows and macOS.
+- #965: harden standalone secret-shaped value redaction before public diagnostics ship.
+- Full-history/all-refs secret scan and rotation/removal of any finding.
+- Final interactive Windows product and installer smoke by Leon.
+- Same-SHA signed, notarized, stapled macOS build and product smoke by Blueemi.
+- Final checksums generated only after all signing is complete.
+- One explicit Leon go/no-go after the private draft and public landing-page dependencies are ready.
+
+Conditional blocker:
+
+- #955 blocks launch if direct API/Connections is visible. Otherwise keep the feature hidden and
+  schedule durable API state, connection identity, model switching, truncation, and context-budget
+  work after beta.
+
+Important hardening still open but separate from the work above:
+
+- #962: terminalize every started adapter item before a terminal turn event.
+- #964: display refresh failures while retaining stale pull-request data.
+- #957, #958, and #963: measured later performance/error-boundary work; do not rush these into the
+  launch merge without profiling and review.
+
+### Exact local validation commands
+
+Run from a clean checkout after resolving each branch against the newest `main`:
+
+```text
+corepack pnpm@11.8.0 install --frozen-lockfile
+corepack pnpm@11.8.0 lint
+corepack pnpm@11.8.0 typecheck
+corepack pnpm@11.8.0 test
+corepack pnpm@11.8.0 build
+node --test tools/scripts/release-licenses.test.js
+node --test tools/scripts/release-tools.test.js
+corepack pnpm@11.8.0 licenses:verify
+```
+
+`licenses:verify` must fail until the complete root license exists. Do not bypass or weaken that
+failure. After the license is fixed, it must pass from the exact final install on both platforms.
+
+Final Windows package and native proof from the updated #937 branch:
+
+```text
+corepack pnpm@11.8.0 --filter @harness/desktop exec node scripts/build-preload.js
+corepack pnpm@11.8.0 --filter @harness/desktop exec electron-builder --win nsis --x64 --publish never
+corepack pnpm@11.8.0 --filter @harness/desktop verify:native-bindings -- "../../release/win-unpacked/TasteCode.exe"
+node tools/scripts/release-checksums.js release SHA256SUMS-windows-x64.txt windows
+```
+
+Blueemi's macOS package and native proof from the exact same final commit:
+
+```text
+corepack pnpm@11.8.0 --filter @harness/desktop exec node scripts/build-preload.js
+corepack pnpm@11.8.0 --filter @harness/desktop exec electron-builder --mac dmg zip --arm64 --publish never
+corepack pnpm@11.8.0 --filter @harness/desktop verify:native-bindings -- "../../release/mac-arm64/Taste Code.app"
+node tools/scripts/release-checksums.js release SHA256SUMS-macos-arm64.txt macos
+```
+
+Signing changes hashes. Blueemi must sign, notarize, staple, and verify before generating the final
+macOS checksum.
+
+### Local Codex Desktop resume prompt — current
+
+```text
+Read AGENTS.md, rules/working-together.md, rules/git.md, rules/code.md,
+rules/security.md, docs/ARCHITECTURE.md, docs/dashboard.html,
+docs/feature-inventory.html, HANDOFF.md, and BLUEMI.md completely before acting.
+
+I am continuing the TasteCode public-beta preparation locally on Windows. GitHub is authoritative.
+The handoff boundary is main bfc884773a760de216c1c79e4bf34f1a3f73e22f, but fetch first because
+main or a PR may have moved. Do not rebase, force-push, push directly to main, run hosted Actions,
+publish a release, change repository visibility, or merge the landing page.
+
+Inspect draft PRs #959, #960, #961, #968, #969, #970, #972, #936, #971, and #937. Verify each
+current head against HANDOFF.md. Keep each PR focused and preserve unrelated contributor work.
+
+Use this order:
+1. Resolve #959 by merging current main into its branch, then review/test/merge #959, #960, #961.
+2. Review/test/merge #968, but keep #950 open because CLI-owned auth does not provide Anthropic
+   legal approval.
+3. Review/test/merge #969. Then retarget #970 to main, merge current main into it if needed,
+   review/test/merge #970.
+4. Review/test #972 and physically prove both Grok print restart and Grok ACP/MCP restart before
+   closing #953.
+5. On #936, add/review the complete official Apache-2.0 root license, run the production license
+   audit, inspect the final transitive inventory and artifact legal files, then merge only if #952
+   is truly cleared.
+6. Review #971. Build the Windows package and run its packaged PTY/keyring proof. Keep #956 open
+   until Blueemi runs the same proof on macOS.
+7. Merge the resulting latest main into #937 without rebasing. Preserve current product changes,
+   zod, native proof, legal resources, exact-manifest release tools, and the single-writer workflow.
+8. From the exact final #937 head run pnpm install --frozen-lockfile, lint, typecheck, test, build,
+   release-license tests, release-tool tests, licenses:verify, Windows NSIS packaging, the packaged
+   native proof, and the full interactive Windows smoke from HANDOFF.md.
+
+Do not bypass failing gates. No hosted Actions are available. Do not delete the duplicate private
+drafts 371292479 and 371294326 until their tag and draft state are manually confirmed. Do not create
+or upload a final draft until all launch PRs are merged and Windows/macOS are built from one exact
+final main SHA.
+
+Before public launch, require an explicit outcome for #950, #952, #954, #956, #965, the full-history
+secret scan, Windows physical QA, Blueemi's signed/notarized/stapled same-SHA macOS QA, final hashes,
+and Leon's go/no-go. Treat #955 as blocking if direct API/Connections is exposed. Keep everything
+private and every release a draft until then.
+
+At the end, update the existing HANDOFF.md current-authority section with exact final SHAs, commands,
+test totals, failures, artifact names and SHA-256 values, remaining owner decisions, and the next
+smallest safe action. Do not create another handoff file.
+```
 
 ## Overnight audit addendum — read this first
 
