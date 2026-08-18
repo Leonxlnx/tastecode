@@ -442,7 +442,11 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         if (frame.type === 'end') {
           if (terminal) return
           terminal = true
-          if (frame.sessionId && frame.sessionId !== this.#providerSessionId) {
+          if (
+            this.#child === child &&
+            frame.sessionId &&
+            frame.sessionId !== this.#providerSessionId
+          ) {
             this.#providerSessionId = frame.sessionId
             this.emit('providerSessionId', frame.sessionId)
           }

@@ -230,6 +230,36 @@ describe('Grok adapter', () => {
     second.dispose()
   })
 
+  it('ignores a native session id flushed by a replaced child', async () => {
+    const children: FakeChild[] = []
+    const adapter = new GrokAdapter({
+      spawn: () => {
+        const child = new FakeChild()
+        children.push(child)
+        return child
+      },
+    })
+    const providerSessionIds: string[] = []
+    adapter.on('providerSessionId', (sessionId) => providerSessionIds.push(sessionId))
+    const thread = await adapter.resumeThread('grok-thread', 'native-session', 'C:\\repo')
+
+    await adapter.sendTurn(thread.id, 'first')
+    await adapter.sendTurn(thread.id, 'replacement')
+    children[0]!.stdout.end(
+      JSON.stringify({ type: 'end', stopReason: 'end_turn', sessionId: 'stale-session' }),
+    )
+    const learned = new Promise<void>((resolve) =>
+      adapter.once('providerSessionId', () => resolve()),
+    )
+    children[1]!.stdout.end(
+      JSON.stringify({ type: 'end', stopReason: 'end_turn', sessionId: 'current-session' }),
+    )
+
+    await learned
+    expect(providerSessionIds).toEqual(['current-session'])
+    adapter.dispose()
+  })
+
   it('keeps sequential tool and authored-text lifecycles distinct', async () => {
     const child = new FakeChild()
     const adapter = new GrokAdapter({
