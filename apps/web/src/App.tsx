@@ -12,6 +12,7 @@ import {
   type ComponentType,
 } from 'react'
 import type { CSSProperties } from 'react'
+import { flushSync } from 'react-dom'
 import { LoaderCircle } from 'lucide-react'
 import { ProviderIdSchema } from '@harness/contracts'
 import type {
@@ -68,6 +69,7 @@ import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchH
 import { Settings, type SettingsSection } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
 import { StageHeader } from './ui/StageHeader.js'
+import { NoticePresence } from './ui/NoticePresence.js'
 import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { ZoomHud } from './ui/ZoomHud.js'
@@ -138,6 +140,17 @@ import { propertiesWhen } from './properties-when.js'
 
 const SERVER_BASE_URL = serverBaseUrl(import.meta.env.VITE_HARNESS_SERVER_URL)
 const SETUP_KEY = 'harness.provider'
+type TerminalOpenUpdate = boolean | ((open: boolean) => boolean)
+type ViewTransitionLike = {
+  finished: Promise<unknown>
+  skipTransition?: () => void
+}
+type DocumentWithViewTransition = Document & {
+  startViewTransition: (callback: () => void) => ViewTransitionLike
+}
+function supportsViewTransitions(value: Document): value is DocumentWithViewTransition {
+  return 'startViewTransition' in value && typeof value.startViewTransition === 'function'
+}
 const ONBOARDING_KEY = 'harness.onboarding.v1'
 const PROVIDER_IDS = [
   'codex',
@@ -3583,8 +3596,36 @@ export function App(props: AppProps = {}) {
     setRollbackInspection(undefined)
     setRollbackOpen(true)
   }, [])
-  const toggleTerminal = useCallback(() => setTerminalOpen((open) => !open), [])
-  const closeTerminal = useCallback(() => setTerminalOpen(false), [])
+  const terminalViewTransition = useRef<ViewTransitionLike | undefined>(undefined)
+  const changeTerminalOpen = useCallback(
+    (update: TerminalOpenUpdate) => {
+      const reduceMotion =
+        globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+
+      if (!activeId || reduceMotion || !supportsViewTransitions(document)) {
+        setTerminalOpen(update)
+        return
+      }
+
+      terminalViewTransition.current?.skipTransition?.()
+      const transition = document.startViewTransition(() => {
+        flushSync(() => setTerminalOpen(update))
+      })
+      terminalViewTransition.current = transition
+      const clearFinishedTransition = () => {
+        if (terminalViewTransition.current === transition) {
+          terminalViewTransition.current = undefined
+        }
+      }
+      void transition.finished.then(clearFinishedTransition, clearFinishedTransition)
+    },
+    [activeId],
+  )
+  const toggleTerminal = useCallback(
+    () => changeTerminalOpen((open) => !open),
+    [changeTerminalOpen],
+  )
+  const closeTerminal = useCallback(() => changeTerminalOpen(false), [changeTerminalOpen])
   const openWorkspacePanel = useCallback(() => {
     setWorkspacePanelOpen(true)
   }, [])
@@ -4326,35 +4367,32 @@ export function App(props: AppProps = {}) {
 
       {/* A dropped connection used to be invisible: requests queued, pushes
           stopped, the working rail kept counting, and nothing said why. */}
-      {offline ? (
-        <div className="notice notice--offline" role="status">
-          <LoaderCircle className="spinner" size={12} aria-hidden />
-          <span className="notice__text">Reconnecting to the server…</span>
-        </div>
-      ) : null}
+      <NoticePresence className="notice notice--offline" role="status" visible={offline}>
+        <LoaderCircle className="spinner" size={12} aria-hidden />
+        <span className="notice__text">Reconnecting to the server…</span>
+      </NoticePresence>
 
-      {notice ? (
-        <div
-          className={`notice${undoRestore || notice === 'Restore undone.' ? ' notice--success' : ''}`}
-          role="alert"
-        >
-          <span className="notice__text">{notice}</span>
-          {undoRestore ? (
-            <button className="ghost" onClick={() => void reverseRestore()}>
-              Undo restore
-            </button>
-          ) : null}
-          <button
-            className="ghost"
-            onClick={() => {
-              setNotice(undefined)
-              setUndoRestore(undefined)
-            }}
-          >
-            Dismiss
+      <NoticePresence
+        className={`notice${undoRestore || notice === 'Restore undone.' ? ' notice--success' : ''}`}
+        role="alert"
+        visible={Boolean(notice)}
+      >
+        <span className="notice__text">{notice}</span>
+        {undoRestore ? (
+          <button className="ghost" onClick={() => void reverseRestore()}>
+            Undo restore
           </button>
-        </div>
-      ) : null}
+        ) : null}
+        <button
+          className="ghost"
+          onClick={() => {
+            setNotice(undefined)
+            setUndoRestore(undefined)
+          }}
+        >
+          Dismiss
+        </button>
+      </NoticePresence>
     </div>
   )
 }

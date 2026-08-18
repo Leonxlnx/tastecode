@@ -202,6 +202,7 @@
   --titlebar-h: env(titlebar-area-height, 34px);
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --dur-press: 140ms;
   --dur-fast: 180ms;
   --dur-slow: 260ms;
@@ -494,8 +495,8 @@ html.is-macos-font-smoothing {
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
-    /* Without this, infinite spinners restart every 0.01ms — a CPU burn
-       instead of stillness. */
+    /* Still-by-default fallback. Component CSS may override this only for
+       finite opacity or color feedback that does not move the UI. */
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;

@@ -19,6 +19,12 @@ describe('sidebar theme CSS', () => {
     )
   })
 
+  it('keeps the collapsed flyout opaque and cheap to animate', () => {
+    expect(appCss).toMatch(
+      /:root\[data-glass='on'\] \.rail-slot\.is-collapsed \.rail \{[^}]*background: var\(--bg-rail\);[^}]*backdrop-filter: none;[^}]*-webkit-backdrop-filter: none;/s,
+    )
+  })
+
   it('paints behind the rounded stage corner in light mode', () => {
     expect(appCss).toMatch(
       /:root\[data-theme='light'\]\[data-glass='on'\]\[data-shell='desktop'\] \.shell__body \{\s*background: var\(--bg-rail-tint\);\s*\}/s,
