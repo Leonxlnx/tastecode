@@ -1,7 +1,7 @@
 # TasteCode launch handoff
 
-Updated: 2026-08-18 10:16 CEST / 2026-08-18 16:16 China Standard Time
-Launch status: no-go; Windows is locally proved, while signing, macOS, legal, security, and release-owner decisions remain open
+Updated: 2026-08-18 10:50 CEST / 2026-08-18 16:50 China Standard Time
+Launch status: no-go; Windows is locally proved, while signing, macOS, legal, physical provider acceptance, and release-owner decisions remain open
 GitHub is the authority for current commits, branches, pull requests, and release state.
 
 ## 2026-08-18 cloud implementation handoff — current authority
@@ -18,19 +18,17 @@ local-validation claims are historical.
 #### Exact commits and pull requests
 
 - Product repository: `Leonxlnx/tastecode`.
-- Current fetched `main`: `e3b98a7f9cee8403f77821790b642231be25840b`.
+- Current fetched `main`: `97ed66c415e347c8be4edcc003bf4500360cdb73`.
 - Draft PR #937 base: exact current `main` above.
-- Exact tested PR #937 implementation head: `daff2153e8b1d4c567bcc9a31d76f5f5ddf84e41`.
+- Exact tested PR #937 implementation head: `5889149bd9bece15d4f20f0e874e774261195ffc`.
   This handoff edit necessarily advances the branch again; fetch the live head before continuing.
 - PR #937 remains private, open, Draft, MERGEABLE, and blocked from merge. Nothing was uploaded or
   published and no hosted GitHub Actions were started.
 - Required implementation PRs are merged: #959 `358b8870`, #960 `f8b6b2d0`, #961 `3d73379c`,
   #968 `925da0b3`, #969 `8129136e`, #970 `af0e9e47`, #972 `2d845221`, #936 `6b6ba915`,
   #971 `e3b98a7f`, and startup/zoom fix #974 `030d37ed`.
-- Security PR #975 is open, Ready, MERGEABLE, and waiting for review at exact head `b60f60d0`.
-  It closes the remaining standalone-secret diagnostics gap in #965. Its full local gates passed:
-  1,690 tests, 15/15 typechecks, 15/15 builds, lint with existing warnings only, and zero Gitleaks
-  findings in `apps/desktop/src`. Do not merge it without the required security review.
+- Security PR #975 merged as `4a5e5554`, closing #965 after focused validation and full local
+  gates. Status PR #976 merged as `97ed66c4`, keeping the dashboard and feature inventory current.
 - PR #937 adds two release-only corrections after merging current `main`: `d246b1a9` makes
   electron-builder emit the required `beta.yml` channel metadata, and `daff2153` emits terminal
   fonts as local files instead of CSP-blocked `data:` URLs. The CSP was not weakened.
@@ -52,12 +50,12 @@ corepack pnpm@11.8.0 --filter @harness/desktop exec node scripts/build-preload.j
 corepack pnpm@11.8.0 --filter @harness/desktop exec electron-builder --win nsis --x64 --publish never
 corepack pnpm@11.8.0 --filter @harness/desktop verify:native-bindings -- "../../release/win-unpacked/TasteCode.exe"
 node tools/scripts/release-checksums.js release SHA256SUMS-windows-x64.txt windows
-node tools/scripts/stage-release-assets.js release C:\Users\User\AppData\Local\Temp\tastecode-release-proof-daff2153 windows
-node tools/scripts/verify-release-assets.js C:\Users\User\AppData\Local\Temp\tastecode-release-proof-daff2153 windows
+node tools/scripts/stage-release-assets.js release C:\Users\User\AppData\Local\Temp\tastecode-release-proof-5889149b windows
+node tools/scripts/verify-release-assets.js C:\Users\User\AppData\Local\Temp\tastecode-release-proof-5889149b windows
 ```
 
 - Lint passed with pre-existing warnings only; all 15 workspace typechecks and builds passed.
-- Workspace tests: 1,688 passed, 0 failed. Release-license fixtures: 5/5. Release-tool fixtures:
+- Workspace tests: 1,690 passed, 0 failed. Release-license fixtures: 5/5. Release-tool fixtures:
   14/14. Production-license verification: 397 packages.
 - The web build contains zero `data:font` CSS URLs and emits JetBrains Mono/Geist as local `.woff2`
   assets. The packaged terminal no longer produces the prior font CSP violation.
@@ -68,14 +66,14 @@ node tools/scripts/verify-release-assets.js C:\Users\User\AppData\Local\Temp\tas
 
 #### Final unsigned Windows artifacts
 
-These hashes apply only to tested head `daff2153`; signing or any code change invalidates them.
+These hashes apply only to tested head `5889149b`; signing or any code change invalidates them.
 
 | File                                          |       Bytes | SHA-256                                                            |
 | --------------------------------------------- | ----------: | ------------------------------------------------------------------ |
-| `TasteCode-0.1.0-beta.1-win-x64.exe`          | 186,038,340 | `7AA9FD6F3043BD021308B07805ADC591B700E07117480564A9C2436047154B85` |
-| `TasteCode-0.1.0-beta.1-win-x64.exe.blockmap` |     193,149 | `A02EE1D75DBF3413E4C338753CB2B9013D24A598713B08CF39E1EB05A4AE1CF9` |
-| `beta.yml`                                    |         372 | `A9B277110D980962F713FBDBB07F5C6F8758805770CD25A812C8E259A090F303` |
-| `SHA256SUMS-windows-x64.txt`                  |         286 | `9356F769B87F54D2707036C9D108924EA54DEB063071D999E0DA1EA75C0C1BD8` |
+| `TasteCode-0.1.0-beta.1-win-x64.exe`          | 186,038,671 | `1967C39D31046E52CEE356BC9854227614C5EF54896D352DE5341E04C73F38E5` |
+| `TasteCode-0.1.0-beta.1-win-x64.exe.blockmap` |     193,064 | `7D30626E3F12D19E8D9E236691AF74CFCEBFE38C5D98C5813B4C9CED232EBD85` |
+| `beta.yml`                                    |         372 | `1A7C3540A0A82109D7F4F91EB0F74D0F66ACC5E09412F0D50CD8D58D831D7093` |
+| `SHA256SUMS-windows-x64.txt`                  |         286 | `C68CFDBEF289BD636D5FA427A4F356AA81820728639D64C29C7855924AA610AA` |
 
 `Get-AuthenticodeSignature` reports `NotSigned` for both the installer and packaged executable.
 They are proof artifacts, not publishable release artifacts.
@@ -91,8 +89,9 @@ They are proof artifacts, not publishable release artifacts.
 - The packaged UI opened a real Windows terminal, opened the native attachment picker, retained data
   across restart, and completed a real Codex smoke prompt with exact response
   `PACKAGED RELEASE SMOKE OK.`
-- Final screenshot: `C:\Users\User\AppData\Local\Temp\tastecode-pr937-qa\packaged-final-daff2153.png`.
-  Other packaged screenshots and the exact runtime trace remain in the same external evidence folder.
+- A live Windows Graphics Capture of the exact installed build showed retained projects, an enabled
+  composer, and no loading or reconnect state after relaunch. Earlier packaged screenshots and the
+  runtime trace remain in `C:\Users\User\AppData\Local\Temp\tastecode-pr937-qa`.
 - Existing Design history renders honestly, but a fresh end-to-end Design build, live approval card,
   live checkpoint restore, Grok print/ACP restart, and OpenAI microphone transcription were not rerun
   on this final installer. Native keyring behavior is proved; a real OpenAI API key was not used.
@@ -127,14 +126,12 @@ They are proof artifacts, not publishable release artifacts.
    Gatekeeper/Finder launch, run native PTY/Keychain proof, and generate hashes only after signing.
 2. Windows installer and executable need the chosen signing outcome; current artifacts are unsigned.
 3. Leon must decide #950 and approve the legal package in #952.
-4. Review and merge #975 before repository visibility changes. The full-history/all-refs scan is
-   complete and clean; the diagnostics redaction fix remains intentionally unmerged pending review.
-5. Exercise the one-writer release path for #954 only after explicitly deciding which two obsolete
+4. Exercise the one-writer release path for #954 only after explicitly deciding which two obsolete
    drafts to delete. Do not delete either draft implicitly.
-6. Keep direct API/Connections hidden or clear #955 before exposing it.
-7. Obtain fresh final-SHA physical evidence for Grok restart resume, OpenAI voice, approvals,
+5. Keep direct API/Connections hidden or clear #955 before exposing it.
+6. Obtain fresh final-SHA physical evidence for Grok restart resume, OpenAI voice, approvals,
    checkpoints, and Design Mode if they remain in the public acceptance scope.
-8. Only then rebuild both platforms from one exact SHA, compute post-signing hashes, request Leon's
+7. Only then rebuild both platforms from one exact SHA, compute post-signing hashes, request Leon's
    explicit go/no-go, and keep the release a private draft until that decision.
 
 ### Exact GitHub state
