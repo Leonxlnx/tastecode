@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { CodexAdapter } from './adapter.js'
 import {
   OpenAiVoiceTranscriber,
   OPENAI_TRANSCRIPTION_MODEL,
@@ -98,6 +99,18 @@ describe('OpenAiVoiceTranscriber', () => {
     const pending = transcriber.transcribe(voiceInput(1_000), 'openai-test-key', controller.signal)
 
     await expect(pending).rejects.toMatchObject({ code: 'cancelled' })
+  })
+})
+
+it('keeps adapter voice unavailable until the server supplies an OpenAI key', async () => {
+  const adapter = new CodexAdapter()
+
+  await expect(adapter.voiceCapability()).resolves.toEqual({
+    available: false,
+    reason: 'unsupported_auth',
+  })
+  await expect(adapter.transcribeVoice(voiceInput(1_000))).rejects.toMatchObject({
+    code: 'unsupported_auth',
   })
 })
 

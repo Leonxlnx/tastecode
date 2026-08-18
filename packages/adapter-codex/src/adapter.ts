@@ -38,6 +38,7 @@ import {
   prepareMcpConfig,
 } from './mcp.js'
 import { mapSkillList } from './skills.js'
+import { VoiceTranscriptionError, type VoiceTranscriptionInput } from './voice.js'
 import { propertiesWhen } from './properties-when.js'
 import {
   AccountLoginCompletedNotificationSchema,
@@ -590,6 +591,19 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
   async signOut(): Promise<void> {
     await this.#call('account/logout', {})
+  }
+
+  voiceCapability(): Promise<{ available: false; reason: 'unsupported_auth' }> {
+    return Promise.resolve({ available: false, reason: 'unsupported_auth' })
+  }
+
+  transcribeVoice(_input: VoiceTranscriptionInput, _signal?: AbortSignal): Promise<string> {
+    return Promise.reject(
+      new VoiceTranscriptionError(
+        'unsupported_auth',
+        'Voice transcription requires an OpenAI API connection.',
+      ),
+    )
   }
 
   /**
