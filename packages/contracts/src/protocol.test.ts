@@ -22,7 +22,6 @@ import {
   type ProviderLimit,
   type ProviderLimitSource,
 } from './protocol.js'
-import { propertiesWhen } from './properties-when.js'
 
 describe('domain events', () => {
   it('accepts a streaming delta', () => {
@@ -537,7 +536,7 @@ describe('protocol envelopes', () => {
         session: usage,
         today: usage,
         limits,
-        ...propertiesWhen(!(limitSource === undefined), () => ({ limitSource })),
+        ...(!(limitSource === undefined) ? { limitSource } : {}),
       })
 
     expect(parse([]).limitSource).toBeUndefined()
