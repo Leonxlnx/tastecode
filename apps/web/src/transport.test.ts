@@ -66,6 +66,22 @@ const completedThreadEvent = (turnId: string) => ({
 })
 
 describe('Transport', () => {
+  it('keeps cold-start retries connecting and caps their delay', () => {
+    const transport = new Transport('ws://test')
+    transport.connect()
+    FakeSocket.instances[0]!.close()
+
+    expect(transport.state).toBe('connecting')
+    vi.advanceTimersByTime(0)
+    FakeSocket.instances[1]!.close()
+    vi.advanceTimersByTime(99)
+    expect(FakeSocket.instances).toHaveLength(2)
+
+    vi.advanceTimersByTime(1)
+    expect(FakeSocket.instances).toHaveLength(3)
+    expect(transport.state).toBe('connecting')
+  })
+
   it('rejects in-flight requests when the socket drops instead of hanging', async () => {
     const transport = new Transport('ws://test')
     transport.connect()

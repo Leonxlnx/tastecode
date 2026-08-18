@@ -79,6 +79,7 @@ export class WebSocketTransport implements Transport {
   #closedByUs = false
   #reconnectTimer: ReturnType<typeof setTimeout> | undefined
   #reconnectDelayMs = 0
+  #hasOpened = false
   #healthCheck: Promise<void> | undefined
 
   #stateListeners = new Set<(s: ConnectionState) => void>()
@@ -209,6 +210,7 @@ export class WebSocketTransport implements Transport {
       // Same replaced-socket guard as onmessage/onclose: an orphan socket
       // must not flush the queue into a connection whose replies are dropped.
       if (this.#socket !== socket) return
+      this.#hasOpened = true
       for (const entry of this.#queue.splice(0)) {
         socket.send(entry.payload)
         if (entry.id) this.#inFlight.add(entry.id)
@@ -269,13 +271,18 @@ export class WebSocketTransport implements Transport {
   #scheduleReconnect(immediate = false): void {
     if (this.#closedByUs) return
     this.#clearReconnectTimer()
-    this.#setState('reconnecting')
-    const delay = immediate ? 0 : this.#reconnectDelayMs
+    const coldStart = !this.#hasOpened
+    this.#setState(coldStart ? 'connecting' : 'reconnecting')
+    const delay = immediate
+      ? 0
+      : coldStart
+        ? Math.min(this.#reconnectDelayMs, 100)
+        : this.#reconnectDelayMs
     if (this.#reconnectDelayMs === 0) this.#reconnectDelayMs = 100
     else if (!immediate) this.#reconnectDelayMs = Math.min(this.#reconnectDelayMs * 2, 1_000)
     this.#reconnectTimer = setTimeout(() => {
       this.#reconnectTimer = undefined
-      this.#open('reconnecting')
+      this.#open(coldStart ? 'connecting' : 'reconnecting')
     }, delay)
   }
 
