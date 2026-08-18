@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render as renderView, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render as renderView, screen, waitFor } from '@testing-library/react'
 import type { Item } from '@harness/contracts'
 import { StrictMode, type ReactElement, type ReactNode } from 'react'
 import type { PickedAttachment } from '../bridge.js'
@@ -624,6 +624,30 @@ describe('completed activity disclosure', () => {
       await screen.findByRole('status', { name: 'Preview unavailable for missing-reference.png' }),
     ).toBeTruthy()
     expect(screen.getByText('missing-reference.png')).toBeTruthy()
+  })
+
+  it('finishes a rejected sent image preview after showing its loading state', async () => {
+    const path = '/tmp/TasteCode/pasted-files/rejected-reference.png'
+    let rejectPreview!: (reason?: unknown) => void
+    previewViewedImage.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectPreview = reject
+      }),
+    )
+
+    renderCompleted([
+      turnItem('prompt-1', 1, {
+        role: 'user',
+        text: 'Rejected preview',
+        attachments: [path],
+      }),
+    ])
+
+    expect(screen.getByRole('status', { name: 'Loading preview of rejected-reference.png' }))
+    await act(async () => rejectPreview(new Error('preview failed')))
+    expect(
+      await screen.findByRole('status', { name: 'Preview unavailable for rejected-reference.png' }),
+    ).toBeTruthy()
   })
 
   it('shows a safe image preview when completed work is revealed', async () => {
