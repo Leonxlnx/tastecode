@@ -324,6 +324,8 @@
 }
 
 .workspace-provider-login {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
   height: 100%;
   min-height: 0;
   background: var(--terminal-workspace-bg);
@@ -340,6 +342,56 @@
   border: 0;
   border-radius: 0;
   box-shadow: none;
+}
+
+.workspace-provider-login__code {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 9px 12px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.workspace-provider-login__code input,
+.workspace-provider-login__code button {
+  min-height: 32px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.workspace-provider-login__code input {
+  min-width: 0;
+  padding: 5px 9px;
+  font-family: var(--font-mono);
+}
+
+.workspace-provider-login__code button {
+  padding: 5px 11px;
+  cursor: pointer;
+}
+
+.workspace-provider-login__code input:focus-visible,
+.workspace-provider-login__code button:focus-visible {
+  outline: 1px solid var(--text-2);
+  outline-offset: 1px;
+}
+
+.workspace-provider-login__code button:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.workspace-provider-login__code button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.workspace-provider-login__code [role='alert'] {
+  grid-column: 1 / -1;
+  color: var(--error);
+  font-size: var(--t-xs);
 }
 
 .terminal-pane--workspace {

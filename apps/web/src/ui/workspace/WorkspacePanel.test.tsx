@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { requiredElement } from '../../test-dom.js'
+import { beginLogin, resetInstalls } from '../../provider-install.js'
+import { requiredElement, requiredInstance } from '../../test-dom.js'
 import { TestTransport } from '../../test-transport.js'
 import {
   WorkspacePanel,
@@ -49,6 +50,7 @@ class TestMediaQueryList extends EventTarget implements MediaQueryList {
 
 afterEach(() => {
   cleanup()
+  resetInstalls()
   performHaptic.mockClear()
   prepareHaptics.mockClear()
 })
@@ -207,6 +209,12 @@ describe('WorkspacePanel', () => {
   })
 
   it('opens a provider login in its own workspace terminal tab', async () => {
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.launch') return { terminalId: 'claude-login-terminal' }
+      if (method === 'terminal.input') return {}
+      throw new Error(`unexpected ${method}`)
+    })
+    await beginLogin(transport, { provider: 'claude-code' }, () => {})
     const onOpen = vi.fn()
     const onProviderLoginClose = vi.fn()
     render(
@@ -214,7 +222,7 @@ describe('WorkspacePanel', () => {
         open
         expanded
         width={400}
-        transport={idleTransport}
+        transport={transport}
         theme="dark"
         sideChatParentStatus="idle"
         sideChatStartOptions={{ approval: 'ask' }}
@@ -239,6 +247,19 @@ describe('WorkspacePanel', () => {
     expect(terminal.getAttribute('data-profile')).toBe('workspace')
     expect(terminal.getAttribute('aria-label')).toBe('Claude Code login terminal')
     expect(onOpen).toHaveBeenCalledOnce()
+
+    const code = requiredInstance(screen.getByLabelText('Claude login code'), HTMLInputElement)
+    expect(code.placeholder).toBe('Paste code here if prompted')
+    expect(code.autocomplete).toBe('one-time-code')
+    fireEvent.change(code, { target: { value: 'test-login-code' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Submit code' }))
+    await waitFor(() =>
+      expect(transport.requests).toContainEqual({
+        method: 'terminal.input',
+        params: { terminalId: 'claude-login-terminal', data: 'test-login-code\r' },
+      }),
+    )
+    expect(code.value).toBe('')
 
     fireEvent.click(screen.getByRole('button', { name: 'Close Claude Code login' }))
     expect(onProviderLoginClose).toHaveBeenCalledWith(7)

@@ -5,6 +5,8 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
+  type FormEvent,
   type ComponentProps,
   type ComponentType,
   type PointerEvent,
@@ -28,6 +30,7 @@ import {
   prepareAppHaptics,
   ResizeHaptics,
 } from '../../haptics.js'
+import { installState, subscribeInstalls } from '../../provider-install.js'
 import type { Transport } from '../../transport.js'
 import type {
   SideChatParentStatus,
@@ -553,6 +556,7 @@ function WorkspaceToolSurface(props: {
           ariaLabel={`${props.tab.title} terminal`}
           profile="workspace"
         />
+        <ProviderLoginCodeInput transport={props.transport} installKey={props.tab.installKey} />
       </div>
     )
   }
@@ -603,6 +607,50 @@ function WorkspaceToolSurface(props: {
       startOptions={props.sideChatStartOptions}
       promptRequest={props.sideChatPromptRequest}
     />
+  )
+}
+
+function ProviderLoginCodeInput(props: { transport: Transport; installKey: string }) {
+  const login = useSyncExternalStore(subscribeInstalls, () => installState(props.installKey))
+  const [code, setCode] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string>()
+
+  if (login?.phase !== 'running') return null
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    const value = code.trim()
+    if (!value || sending) return
+    setSending(true)
+    setError(undefined)
+    void props.transport
+      .request('terminal.input', { terminalId: login.terminalId, data: `${value}\r` })
+      .then(() => setCode(''))
+      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setSending(false))
+  }
+
+  return (
+    <form className="workspace-provider-login__code" onSubmit={submit}>
+      <label className="visually-hidden" htmlFor={`${props.installKey}-code`}>
+        Claude login code
+      </label>
+      <input
+        id={`${props.installKey}-code`}
+        type="text"
+        autoComplete="one-time-code"
+        spellCheck={false}
+        maxLength={2_048}
+        placeholder="Paste code here if prompted"
+        value={code}
+        onChange={(event) => setCode(event.currentTarget.value)}
+      />
+      <button type="submit" disabled={!code.trim() || sending}>
+        {sending ? 'Submitting…' : 'Submit code'}
+      </button>
+      {error ? <span role="alert">{error}</span> : null}
+    </form>
   )
 }
 
