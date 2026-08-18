@@ -27,7 +27,8 @@ Open draft PRs that contain the launch work:
   - merged forward to current `main` without rebasing
 - #937 — `Prove Windows and macOS release artifacts in CI`
   - branch: `agent/release-artifact-proof`
-  - head: `e3380290513bceeeaecd6f7d66edb8642cd9b698`
+  - implementation head before the handoff-only commits: `e3380290513bceeeaecd6f7d66edb8642cd9b698`
+  - fetch the live branch head; committing this file necessarily advances it
   - base: `main`
   - mergeable at this handoff boundary
   - merged forward to current `main` without rebasing
@@ -62,8 +63,9 @@ Open draft PRs that contain the launch work:
   - branch: `fix/grok-restart-resume`
   - head: `d5da529da036e3e1157965b03137947e2b39dfeb`
 
-Every SHA above was fetched from GitHub immediately before this handoff update. Fetch again before
-working because another contributor may advance `main` or a PR.
+Every product implementation SHA above was fetched from GitHub immediately before this handoff
+update. The #937 branch then advanced through handoff-only commits. Fetch again before working
+because this file or another contributor may advance `main` or a PR.
 
 ### What was implemented in this pass
 
