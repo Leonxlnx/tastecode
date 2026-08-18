@@ -109,7 +109,7 @@ describe('CommandPalette', () => {
     const input = screen.getByRole('textbox', { name: 'Search commands' })
 
     expect(document.activeElement).toBe(input)
-    fireEvent.keyDown(input, { key: 'Tab' })
+    expect(fireEvent.keyDown(input, { key: 'Tab' })).toBe(false)
     expect(document.activeElement).toBe(input)
 
     view.unmount()
