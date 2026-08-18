@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Search } from 'lucide-react'
+import { useDialogFocus } from './dialog-focus.js'
 
 export type CommandScope = 'all' | 'projects' | 'new-thread'
 
@@ -25,6 +26,7 @@ function CommandPaletteComponent(props: {
   const [selected, setSelected] = useState(0)
   const input = useRef<HTMLInputElement>(null)
   const results = useRef<HTMLDivElement>(null)
+  const dialog = useDialogFocus<HTMLDivElement>(props.onClose)
 
   useEffect(() => {
     input.current?.focus()
@@ -81,6 +83,8 @@ function CommandPaletteComponent(props: {
       className="command-palette"
       role="dialog"
       aria-modal="true"
+      ref={dialog.panel}
+      tabIndex={-1}
       aria-label={
         props.scope === 'projects'
           ? 'Switch project'
@@ -88,17 +92,13 @@ function CommandPaletteComponent(props: {
             ? 'Choose a project for the new thread'
             : 'Command palette'
       }
-      onKeyDown={(event) => {
-        if (event.key === 'Escape' && !event.defaultPrevented) {
-          event.preventDefault()
-          props.onClose()
-        }
-      }}
+      onKeyDown={dialog.onKeyDown}
     >
       <button
         className="command-palette__scrim"
         onClick={props.onClose}
         aria-label="Close command palette"
+        tabIndex={-1}
       />
       <div className="command-palette__panel">
         <div className="command-palette__search">
@@ -161,6 +161,7 @@ function CommandPaletteComponent(props: {
                     onClick={() => choose(command)}
                     onMouseEnter={() => setSelected(index)}
                     role="option"
+                    tabIndex={-1}
                     aria-selected={index === selected}
                   >
                     <span className="command-palette__copy">
