@@ -40,9 +40,11 @@ Open draft PRs that contain the launch work:
 - #960 — `fix(proc): drain stdio before settling child output`
   - branch: `agent/overnight-stdio-drain`
   - head: `0990c497df4c6401272566cac9af5cafd78a4e48`
+  - one commit behind `main`; merge `main` forward before validation
 - #961 — `fix(ui): finish unavailable historical image previews`
   - branch: `agent/overnight-image-preview-state`
   - head: `182e0723047c4a99fe36a4468f77f219792c2348`
+  - one commit behind `main`; merge `main` forward before validation
 - #968 — `fix(adapters): stop handling Claude subscription credentials`
   - branch: `fix/claude-cli-owned-auth`
   - head: `4b48926c3d8d3d19ce2647f9712ce5dc65c91303`
@@ -194,7 +196,8 @@ Keep one logical PR at a time. Never rebase or force-push these shared branches.
 1. Fetch all refs and confirm current `main` and every PR head.
 2. Review #959. Merge current `main` into its branch, resolve the current conflict, run keyboard and
    theme checks plus all gates, then merge it normally if clean.
-3. Review and merge #960, then #961, with focused tests and full gates after each conflict resolution.
+3. Merge current `main` into #960 and #961 without rebasing. Review and merge #960, then #961,
+   with focused tests and full gates after each update.
 4. Review and merge #968. Do not close #950 or claim legal clearance.
 5. Review and merge #969.
 6. Retarget #970 from `fix/voice-openai-public-api` to `main`, merge the new current `main` into its
@@ -245,6 +248,13 @@ Run from a clean checkout after resolving each branch against the newest `main`:
 
 ```text
 corepack pnpm@11.8.0 install --frozen-lockfile
+corepack pnpm@11.8.0 --filter @harness/web test
+corepack pnpm@11.8.0 --filter @harness/proc test
+corepack pnpm@11.8.0 --filter @harness/adapter-claude-code test
+corepack pnpm@11.8.0 --filter @harness/adapter-codex test -- voice.test.ts
+corepack pnpm@11.8.0 --filter @harness/server test -- voice.test.ts
+corepack pnpm@11.8.0 --filter @harness/adapter-grok test -- adapter.test.ts
+corepack pnpm@11.8.0 --filter @harness/server test -- adapters.test.ts store.test.ts orchestrator.test.ts
 corepack pnpm@11.8.0 lint
 corepack pnpm@11.8.0 typecheck
 corepack pnpm@11.8.0 test
@@ -294,7 +304,8 @@ Inspect draft PRs #959, #960, #961, #968, #969, #970, #972, #936, #971, and #937
 current head against HANDOFF.md. Keep each PR focused and preserve unrelated contributor work.
 
 Use this order:
-1. Resolve #959 by merging current main into its branch, then review/test/merge #959, #960, #961.
+1. Resolve #959 by merging current main into its branch. Merge current main into #960 and #961 as
+   well, then review/test/merge #959, #960, and #961 independently.
 2. Review/test/merge #968, but keep #950 open because CLI-owned auth does not provide Anthropic
    legal approval.
 3. Review/test/merge #969. Then retarget #970 to main, merge current main into it if needed,
