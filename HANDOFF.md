@@ -1,6 +1,6 @@
 # TasteCode launch handoff
 
-Updated: 2026-08-18 10:50 CEST / 2026-08-18 16:50 China Standard Time
+Updated: 2026-08-18 11:56 CEST / 2026-08-18 17:56 China Standard Time
 Launch status: no-go; Windows is locally proved, while signing, macOS, legal, physical provider acceptance, and release-owner decisions remain open
 GitHub is the authority for current commits, branches, pull requests, and release state.
 
@@ -9,11 +9,110 @@ GitHub is the authority for current commits, branches, pull requests, and releas
 This section supersedes every older SHA, PR status, validation claim, and next-step sequence below.
 Older sections remain only as history and context.
 
-### 2026-08-18 Windows finalization — live authority
+### 2026-08-18 11:56 Windows release proof — live authority
 
-This subsection is the newest authority inside the current-authority section. The longer cloud
-handoff below records how the launch branches arrived here, but its branch states and incomplete
-local-validation claims are historical.
+This subsection supersedes every older Windows SHA, artifact hash, test total, and runtime claim
+below it. The exact tested implementation is intentionally recorded separately from the later
+handoff-only commit that updates this file.
+
+#### Exact commits and pull requests
+
+- Product repository: `Leonxlnx/tastecode`; visibility remains `PRIVATE`.
+- Current fetched `main`: `48b22a622fdaa064abca60cdee0d121f3fe06886`.
+- Exact fully tested PR #937 implementation head: `5f9da2d0ee8546c50c445e5f27c20704a573e57b`.
+- PR #937 remains the only open pull request. It is private, open, Draft, MERGEABLE, and BLOCKED;
+  no release asset was uploaded or published and no hosted GitHub Actions were started.
+- PR #977 merged as `3c0c430c296d6602d0c0605c4531b7a1135febb7`, closing #962. The API,
+  Claude Code, and Grok adapters now settle every open streamed, reasoning, and tool item before
+  terminal turn completion while preserving partial text and exactly-once completion.
+- PR #978 merged as `48b22a622fdaa064abca60cdee0d121f3fe06886`, updating the dashboard and
+  feature inventory without changing their lane or checkbox counts.
+- PR #937 merged current `main` into its published branch without rebasing or force-pushing. The
+  merge was conflict-free.
+
+#### Exact final local gates on Windows
+
+Every required command passed from the clean PR #937 worktree at exact implementation head
+`5f9da2d0ee8546c50c445e5f27c20704a573e57b`:
+
+```text
+corepack pnpm@11.8.0 install --frozen-lockfile
+corepack pnpm@11.8.0 lint
+corepack pnpm@11.8.0 typecheck
+corepack pnpm@11.8.0 test
+corepack pnpm@11.8.0 build
+node --test tools/scripts/release-licenses.test.js
+node --test tools/scripts/release-tools.test.js
+corepack pnpm@11.8.0 licenses:verify
+corepack pnpm@11.8.0 --filter @harness/desktop exec node scripts/build-preload.js
+corepack pnpm@11.8.0 --filter @harness/desktop exec electron-builder --win nsis --x64 --publish never
+corepack pnpm@11.8.0 --filter @harness/desktop verify:native-bindings -- "../../release/win-unpacked/TasteCode.exe"
+node tools/scripts/release-checksums.js release SHA256SUMS-windows-x64.txt windows
+node tools/scripts/stage-release-assets.js release C:\Users\User\AppData\Local\Temp\tastecode-release-proof-5f9da2d0 windows
+node tools/scripts/verify-release-assets.js C:\Users\User\AppData\Local\Temp\tastecode-release-proof-5f9da2d0 windows
+```
+
+- Lint passed with pre-existing warnings only; all 15 workspace typechecks and builds passed.
+- Workspace tests: 1,693 passed, 0 failed. Release-license fixtures: 5/5. Release-tool fixtures:
+  14/14. Production-license verification: 397 packages.
+- Packaged native proof passed a real ConPTY session and isolated Windows Credential Manager
+  save/read/delete using modules loaded from the packaged application.
+- The exact staged Windows manifest contains only the four expected release files.
+
+#### Final unsigned Windows artifacts
+
+These hashes apply only to tested implementation head `5f9da2d0`. Signing or any code change
+invalidates them.
+
+| File                                          |       Bytes | SHA-256                                                            |
+| --------------------------------------------- | ----------: | ------------------------------------------------------------------ |
+| `TasteCode-0.1.0-beta.1-win-x64.exe`          | 186,038,874 | `9D96432D2C8D0C55AF815F09F4CE99BB1A62C1BCA8AE5E8D27AD697C45CD694A` |
+| `TasteCode-0.1.0-beta.1-win-x64.exe.blockmap` |     193,258 | `4D9B257C8D4FE9C6CAADB2AC78FA2B6A5125031E158226D08118BDEC12115231` |
+| `beta.yml`                                    |         372 | `8C1ADEF82E55F1E5C5F9ABB809BA78B3AE0230417F8FA55539C3E8E1DC020A84` |
+| `SHA256SUMS-windows-x64.txt`                  |         286 | `ED704C7EEB00DCDEC933D5903AF1D414CB3C3783AA6870C0C9D4519B79E892F1` |
+
+The exact assets are staged at
+`C:\Users\User\AppData\Local\Temp\tastecode-release-proof-5f9da2d0`.
+`Get-AuthenticodeSignature` reports `NotSigned`; these are proof artifacts, not publishable
+release artifacts.
+
+#### Physical packaged-app evidence
+
+- The exact installed executable at `C:\Users\User\AppData\Local\Programs\TasteCode` matches the
+  release build with SHA-256
+  `EA559752958B8FBC10EE307873CCA31403AE853D0ACCD87720F48470BF3F5F07` and is unsigned.
+- Silent uninstall/install completed successfully. The retained database still exists at
+  `%APPDATA%\TasteCode\tastecode.db`, remains 144,302,080 bytes, and has post-install SHA-256
+  `6E40B008029847A232B513BDE3E96289A11365DE4BC2ED72A313B49C8FD9739C`. The pre-install
+  hash could not be read while SQLite held the file, so byte-for-byte hash equality is not claimed.
+- The installed app relaunched and remained responsive. Direct CDP inspection of the installed
+  `file:` renderer at 1120x809 reported DPR 1.375, retained projects, an enabled composer, and no
+  `Loading projects`, `Loading models`, or reconnect state.
+- Earlier exact installer evidence for terminal, attachment picker, relaunch persistence, and the
+  Codex packaged smoke remains valid. Native keyring behavior is proved; no real OpenAI API key was
+  used.
+
+#### Current private release and blockers
+
+- Draft releases `371292479` and `371294326` remain untouched, unpublished prereleases for
+  `v0.1.0-beta.1`, still targeting obsolete commits `a0e5777c` and `244422c1`. Do not delete either
+  without the explicit release-owner decision required by #954.
+- Open `target:main-beta` issues are #950, #952, #954, #955, #956, #964, and #966. #962 is closed.
+- Blueemi still owns #964. Do not take over or rewrite that work.
+- Blueemi must build the exact final release SHA on macOS arm64, then sign, notarize, staple, verify
+  Gatekeeper/Finder launch, run native PTY/Keychain proof, and produce hashes after signing (#956).
+- Windows needs the release owner's signing decision; the current proof artifacts are unsigned.
+- Leon must decide the Claude distribution/legal boundary in #950 and approve the legal package in
+  #952. CLI-owned authentication does not itself grant Anthropic approval.
+- Keep direct API/Connections hidden unless #955 is cleared. #966 remains open until the private
+  release workflow itself is accepted and PR #937 is ready to merge.
+- Only after these blockers and any chosen final physical provider acceptance are complete may both
+  platforms be rebuilt from one exact SHA and Leon be asked for a final go/no-go. Until then the
+  repository, PR, releases, and artifacts remain private and Draft.
+
+### 2026-08-18 10:50 Windows finalization — historical authority
+
+This subsection is retained as history. The 11:56 subsection above is authoritative.
 
 #### Exact commits and pull requests
 
