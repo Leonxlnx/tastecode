@@ -1157,7 +1157,10 @@ function mergeClaudeModels(models: ModelInfo[]): Model[] {
 
   const defaultFamily = defaultResolvedId ? claudeModelFamily(defaultResolvedId) : undefined
   let defaultIndex = defaultFamily
-    ? merged.findIndex((model) => claudeModelFamily(model.id) === defaultFamily)
+    ? merged.findIndex((model) => {
+        const discoveredModel = discovered.find((entry) => entry.model === model)
+        return claudeModelFamily(discoveredModel?.resolvedId ?? model.id) === defaultFamily
+      })
     : -1
   if (defaultIndex < 0) defaultIndex = merged.findIndex((model) => model.isDefault)
   const selectedDefault = defaultIndex >= 0 ? defaultIndex : 0

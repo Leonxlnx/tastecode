@@ -376,6 +376,36 @@ describe('Claude Agent SDK session', () => {
     expect(fake.inputs[0]!.options.persistSession).toBe(false)
     adapter.dispose()
   })
+
+  it('keeps an aliased provider default after deduplicating context variants', async () => {
+    const fake = harness([
+      {
+        value: 'default',
+        resolvedModel: 'claude-sonnet-5',
+        displayName: 'Default',
+        description: 'Provider default',
+      },
+      {
+        value: 'sonnet',
+        resolvedModel: 'claude-sonnet-5',
+        displayName: 'Sonnet',
+        description: 'Sonnet 5',
+      },
+      {
+        value: 'sonnet[1m]',
+        resolvedModel: 'claude-sonnet-5[1m]',
+        displayName: 'Sonnet (1M context)',
+        description: 'Sonnet 5 with 1M context',
+      },
+    ])
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+
+    const models = await adapter.listModels()
+
+    expect(models.filter((model) => model.isDefault).map((model) => model.id)).toEqual(['sonnet'])
+    expect(models.some((model) => model.id.endsWith('[1m]'))).toBe(false)
+    adapter.dispose()
+  })
 })
 
 describe('Claude SDK user messages', () => {

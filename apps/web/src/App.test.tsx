@@ -4228,6 +4228,60 @@ describe('new chats', () => {
     })
   })
 
+  it('migrates a remembered extended-context model to its surviving family row', async () => {
+    serverProviders = [
+      {
+        ...serverProviders[0]!,
+        id: 'claude-code',
+        displayName: 'Claude Code',
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models: [
+            {
+              id: 'fable',
+              displayName: 'Fable 5',
+              isDefault: false,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [],
+            },
+            {
+              id: 'opus',
+              displayName: 'Opus 5',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.provider', 'claude-code')
+    localStorage.setItem('harness.model', 'claude-code:fable%5B1m%5D')
+    localStorage.setItem(
+      'harness.modelBySource',
+      JSON.stringify({
+        'claude-code': { modelKey: 'claude-code:fable%5B1m%5D', effort: 'high' },
+      }),
+    )
+
+    render(<App />)
+
+    await waitFor(() => {
+      const modelButton = screen.getByRole('button', { name: 'Model and reasoning' })
+      expect(modelButton.textContent).toContain('Fable 5')
+      expect(modelButton.textContent).toContain('High')
+      expect(localStorage.getItem('harness.model')).toBe('claude-code:fable')
+    })
+  })
+
   it('prefers current source memory when discovery removes its selected model', async () => {
     serverProviders = [
       ...serverProviders,

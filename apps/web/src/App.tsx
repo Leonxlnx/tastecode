@@ -400,6 +400,16 @@ function modelSource(choice: ModelChoice): string {
   })
 }
 
+function matchesStoredModel(choice: ModelChoice, stored: string | undefined): boolean {
+  if (!stored) return false
+  return (
+    choice.key === stored ||
+    choice.model.id === stored ||
+    modelChoiceKey(modelSource(choice), `${choice.model.id}[1m]`) === stored ||
+    `${choice.model.id}[1m]` === stored
+  )
+}
+
 function latestSequence(
   entries: ReadonlyArray<{ seq: number | undefined }>,
   initial: number,
@@ -1434,16 +1444,14 @@ export function App(props: AppProps = {}) {
           ? preferredPool
           : visible
       const selections = readSourceSelections()
-      const storedSelection =
-        selectionPool.find((choice) => choice.key === stored) ??
-        selectionPool.find((choice) => choice.model.id === stored)
+      const storedSelection = selectionPool.find((choice) => matchesStoredModel(choice, stored))
       const fallback = selectionPool.find((choice) => choice.model.isDefault) ?? selectionPool[0]
       const rememberedFallbackKey = fallback
         ? selections[modelSource(fallback)]?.modelKey
         : undefined
       const selected =
         storedSelection ??
-        selectionPool.find((choice) => choice.key === rememberedFallbackKey) ??
+        selectionPool.find((choice) => matchesStoredModel(choice, rememberedFallbackKey)) ??
         fallback
       if (!selected) {
         setModelId(undefined)
@@ -1455,7 +1463,7 @@ export function App(props: AppProps = {}) {
         modelsRef.current.find((choice) => choice.key === stored) ??
         modelsRef.current.find((choice) => choice.model.id === stored)
       const remembered = selections[modelSource(selected)]
-      const remembersSelected = remembered?.modelKey === selected.key
+      const remembersSelected = matchesStoredModel(selected, remembered?.modelKey)
       setModelId(selected.key)
       setProvider(selected.provider)
       setAcpAgent(selected.agent?.id)
