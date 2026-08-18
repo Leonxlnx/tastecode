@@ -628,10 +628,10 @@ describe('completed activity disclosure', () => {
 
   it('finishes a rejected sent image preview after showing its loading state', async () => {
     const path = '/tmp/TasteCode/pasted-files/rejected-reference.png'
-    let rejectPreview!: (reason?: unknown) => void
+    let rejectPreview!: () => void
     previewViewedImage.mockReturnValueOnce(
       new Promise((_, reject) => {
-        rejectPreview = reject
+        rejectPreview = () => reject(new Error('preview failed'))
       }),
     )
 
@@ -644,7 +644,7 @@ describe('completed activity disclosure', () => {
     ])
 
     expect(screen.getByRole('status', { name: 'Loading preview of rejected-reference.png' }))
-    await act(async () => rejectPreview(new Error('preview failed')))
+    await act(async () => rejectPreview())
     expect(
       await screen.findByRole('status', { name: 'Preview unavailable for rejected-reference.png' }),
     ).toBeTruthy()
