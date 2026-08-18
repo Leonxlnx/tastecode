@@ -11,6 +11,7 @@ import { TestTransport, type TestRequestResolver } from '../test-transport.js'
 import { requiredInstance, requiredValue } from '../test-dom.js'
 import { ProviderSettings, Settings } from './Settings.js'
 import { propertiesWhen } from '../properties-when.js'
+import { createDefaultKeybindings, type KeybindingId, type Shortcut } from '../shortcuts.js'
 
 type ProviderStatus = ResultOf<'providers.list'>['providers'][number]
 function TestInstallTerminal(props: { installKey: string }) {
@@ -19,11 +20,13 @@ function TestInstallTerminal(props: { installKey: string }) {
 
 function renderSettings(
   options: {
-    initialSection?: 'appearance' | 'models' | 'data' | 'about'
+    initialSection?: 'appearance' | 'models' | 'keybinds' | 'data' | 'about'
     onClose?: () => void
     onReset?: () => void
     transport?: Transport
     showMacOSHaptics?: boolean
+    onKeybindingChange?: (action: KeybindingId, shortcut: Shortcut | null) => void
+    onKeybindingsReset?: () => void
   } = {},
 ) {
   const transport = options.transport ?? new TestTransport()
@@ -59,6 +62,10 @@ function renderSettings(
       showMacOSFontSmoothing={false}
       macOSFontSmoothing={true}
       onMacOSFontSmoothingChange={() => {}}
+      macOS={true}
+      keybindings={createDefaultKeybindings()}
+      onKeybindingChange={options.onKeybindingChange ?? (() => {})}
+      onKeybindingsReset={options.onKeybindingsReset ?? (() => {})}
       showMacOSHaptics={options.showMacOSHaptics ?? false}
       onAccountChange={() => {}}
       initialSection={options.initialSection ?? 'appearance'}
@@ -1257,5 +1264,54 @@ describe('provider settings', () => {
     expect(screen.queryByText('Kimi CLI')).toBeNull()
     expect(open).toHaveBeenCalledTimes(1)
     expect(onConnectionsChanged).not.toHaveBeenCalled()
+  })
+
+  it('hands Claude login to the expanded workspace terminal', async () => {
+    const transport = new TestTransport(async (method) => {
+      if (method === 'auth.status') return { signedIn: false }
+      if (method === 'providers.launch') return { terminalId: 'term-claude-login' }
+      throw new Error(`unexpected ${method}`)
+    })
+    const onProviderLoginTerminalOpen = vi.fn()
+
+    render(
+      <ProviderSettings
+        provider="codex"
+        account={undefined}
+        providerStatuses={[
+          {
+            id: 'claude-code',
+            displayName: 'Claude Code',
+            installed: true,
+            auth: 'unknown',
+            setup: {
+              installUrl: 'https://code.claude.com/docs/en/getting-started',
+              login: 'provider',
+            },
+          },
+        ]}
+        transport={transport}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+        onProviderLoginTerminalOpen={onProviderLoginTerminalOpen}
+        installTerminalComponent={TestInstallTerminal}
+      />,
+    )
+
+    const signIn = await screen.findByRole('button', { name: 'Sign in' })
+    fireEvent.click(signIn)
+
+    await waitFor(() =>
+      expect(onProviderLoginTerminalOpen).toHaveBeenCalledWith({
+        provider: 'claude-code',
+        displayName: 'Claude Code',
+        installKey: 'login:claude-code',
+      }),
+    )
+    expect(transport.requests).toContainEqual({
+      method: 'providers.launch',
+      params: { provider: 'claude-code', columns: 320, rows: 30 },
+    })
+    expect(screen.queryByTestId('install-terminal')).toBeNull()
   })
 })

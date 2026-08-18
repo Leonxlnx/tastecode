@@ -629,6 +629,11 @@
   pointer-events: auto;
 }
 
+.sessrow:hover .sess__source :is(.source-identity__label, .source-identity__qualifier),
+.sessrow:focus-within .sess__source :is(.source-identity__label, .source-identity__qualifier) {
+  opacity: 0;
+}
+
 .dots {
   display: grid;
   place-items: center;
@@ -1601,7 +1606,9 @@
 }
 
 .install-terminal {
+  box-sizing: border-box;
   height: 240px;
+  overflow: hidden;
   padding: 8px 12px;
   background: var(--bg);
   border-top: 1px solid var(--line);
@@ -9848,10 +9855,6 @@
   border: 1px solid var(--line);
   border-radius: var(--r-panel);
   box-shadow: inset 0 1px var(--chrome-highlight);
-}
-
-.install-terminal:focus-within {
-  border-color: color-mix(in srgb, var(--attention) 45%, var(--line));
 }
 
 /* ---------------------------------------------------------------------------

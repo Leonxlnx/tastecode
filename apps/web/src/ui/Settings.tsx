@@ -39,6 +39,7 @@ import {
   Database,
   Info,
   Boxes,
+  Keyboard,
   KeyRound,
   Network,
   Palette,
@@ -76,6 +77,7 @@ import {
   signedInEmail,
   subscribeInstalls,
   type InstallTarget,
+  type ProviderLoginTerminalTarget,
 } from '../provider-install.js'
 import type { Transport } from '../transport.js'
 import type {
@@ -108,6 +110,13 @@ import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
 import { propertiesWhen } from '../properties-when.js'
+import {
+  DEFAULT_KEYBINDINGS,
+  type KeybindingId,
+  type Keybindings,
+  type Shortcut,
+} from '../shortcuts.js'
+import { KeybindSettings } from './KeybindSettings.js'
 
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
@@ -122,6 +131,7 @@ export type SettingsSection =
   | 'skills'
   | 'workflows'
   | 'appearance'
+  | 'keybinds'
   | 'data'
   | 'about'
 
@@ -176,6 +186,9 @@ const MCP_PROVIDER_OPTIONS = [
 const FOCUSABLE_SELECTOR =
   'a[href]:not([tabindex="-1"]), button:not([disabled]):not([tabindex="-1"]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
+function noop(): void {}
+function noopKeybindingChange(_action: KeybindingId, _shortcut: Shortcut | null): void {}
+
 /**
  * Settings stays intentionally small: the sidebar reorganizes the decisions
  * the app already exposes without inventing preferences for their own sake.
@@ -212,11 +225,17 @@ function SettingsComponent(props: {
   showMacOSFontSmoothing: boolean
   macOSFontSmoothing: boolean
   onMacOSFontSmoothingChange: (enabled: boolean) => void
+  macOS?: boolean | undefined
+  keybindings?: Keybindings | undefined
+  onKeybindingChange?: ((action: KeybindingId, shortcut: Shortcut | null) => void) | undefined
+  onKeybindingsReset?: (() => void) | undefined
   showMacOSHaptics?: boolean | undefined
   onAccountChange: (provider: ProviderId, account: Account) => void
+  authRefreshRevision?: number | undefined
   initialSection?: SettingsSection | undefined
   onReset: () => void
   onClose: () => void
+  onProviderLoginTerminalOpen?: ((target: ProviderLoginTerminalTarget) => void) | undefined
   installTerminalComponent?: InstallTerminalView | undefined
 }) {
   const [section, setSection] = useState<SettingsSection>(props.initialSection ?? 'providers')
@@ -302,6 +321,12 @@ function SettingsComponent(props: {
             onClick={() => setSection('appearance')}
           />
           <SettingsNavItem
+            active={section === 'keybinds'}
+            icon={<Keyboard size={15} aria-hidden />}
+            label="Keybinds"
+            onClick={() => setSection('keybinds')}
+          />
+          <SettingsNavItem
             active={section === 'providers'}
             icon={<UserRound size={15} aria-hidden />}
             label="Providers"
@@ -358,6 +383,14 @@ function SettingsComponent(props: {
           {section === 'skills' ? <SkillsSettings {...props} /> : null}
           {section === 'workflows' ? <WorkflowSettings {...props} /> : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
+          {section === 'keybinds' ? (
+            <KeybindSettings
+              keybindings={props.keybindings ?? DEFAULT_KEYBINDINGS}
+              macOS={props.macOS ?? false}
+              onChange={props.onKeybindingChange ?? noopKeybindingChange}
+              onReset={props.onKeybindingsReset ?? noop}
+            />
+          ) : null}
           {section === 'data' ? <DataSettings {...props} /> : null}
           {section === 'about' ? <AboutSettings transport={props.transport} /> : null}
         </div>
@@ -507,6 +540,8 @@ export function ProviderSettings(props: {
   transport: Transport
   onConnectionsChanged: () => void
   onAccountChange: (provider: ProviderId, account: Account) => void
+  authRefreshRevision?: number | undefined
+  onProviderLoginTerminalOpen?: ((target: ProviderLoginTerminalTarget) => void) | undefined
   installTerminalComponent?: InstallTerminalView | undefined
 }) {
   type AuthReadState =
@@ -638,7 +673,7 @@ export function ProviderSettings(props: {
         delete statusRequests.current[provider]
       }
     }
-  }, [props.transport, authProviderKey, completeLogin, refreshAccount])
+  }, [props.transport, props.authRefreshRevision, authProviderKey, completeLogin, refreshAccount])
 
   useEffect(() => {
     operations.current = {}
@@ -741,6 +776,9 @@ export function ProviderSettings(props: {
           target={{ provider: status.id }}
           transport={props.transport}
           onSignedIn={() => void refreshAccount(status.id, true)}
+          onOpenExpandedTerminal={
+            status.id === 'claude-code' ? props.onProviderLoginTerminalOpen : undefined
+          }
           InstallTerminalComponent={props.installTerminalComponent ?? InstallTerminal}
         />
       )
@@ -1751,16 +1789,17 @@ function InstallableRow(props: {
 
 /**
  * Sign-in for a provider whose login lives inside its own CLI. The button
- * launches that CLI in a server-side pty and hands the user the terminal
- * right away — the OAuth flow happens in there, not on a docs page. A clean
- * exit means the user finished and quit, so the row refreshes; a dirty exit
- * keeps the log around for reading before a retry.
+ * launches that CLI in a server-side pty. Claude hands the attached terminal
+ * to the expanded workspace pane; other provider flows keep the guided card
+ * and attachable details here. A clean exit refreshes the account, while a
+ * dirty exit keeps the log available for a retry.
  */
 function CliSignInRow(props: {
   provider: ProviderStatus
   target: InstallTarget
   transport: Transport
   onSignedIn: () => void
+  onOpenExpandedTerminal?: ((target: ProviderLoginTerminalTarget) => void) | undefined
   InstallTerminalComponent: InstallTerminalView
 }) {
   const key = loginKey(props.target)
@@ -1786,13 +1825,13 @@ function CliSignInRow(props: {
     if (login?.phase === 'succeeded') {
       if (!notifiedLogin.current) {
         notifiedLogin.current = true
-        clearInstall(key)
+        if (!props.onOpenExpandedTerminal) clearInstall(key)
         onSignedIn()
       }
     } else {
       notifiedLogin.current = false
     }
-  }, [login?.phase, key, onSignedIn])
+  }, [login?.phase, key, onSignedIn, props.onOpenExpandedTerminal])
 
   useEffect(() => {
     if (login?.phase === 'failed') setShowTerminal(true)
@@ -1802,9 +1841,17 @@ function CliSignInRow(props: {
     setStartError(undefined)
     setShowTerminal(false)
     setCopied(false)
-    void beginLogin(props.transport, props.target).catch((cause: unknown) =>
-      setStartError(cause instanceof Error ? cause.message : String(cause)),
-    )
+    void beginLogin(props.transport, props.target)
+      .then(() => {
+        props.onOpenExpandedTerminal?.({
+          provider: props.provider.id,
+          displayName: props.provider.displayName,
+          installKey: key,
+        })
+      })
+      .catch((cause: unknown) =>
+        setStartError(cause instanceof Error ? cause.message : String(cause)),
+      )
   }
 
   const running = login?.phase === 'running'
