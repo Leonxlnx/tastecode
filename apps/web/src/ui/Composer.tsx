@@ -9,7 +9,6 @@ import {
   type DragEvent,
 } from 'react'
 import type { ApprovalMode, ProviderId, QueuedTurn, Usage } from '@harness/contracts'
-import { z } from 'zod'
 import type { ModelChoice } from '../model-catalog.js'
 import { BorderBeam } from 'border-beam'
 import {
@@ -39,7 +38,6 @@ import {
 } from 'lucide-react'
 import {
   pickFiles,
-  PickedAttachmentSchema,
   previewViewedImage,
   revealPath,
   savePastedFile,
@@ -68,15 +66,12 @@ import { Menu, MenuItem } from './Menu.js'
 import { ModelSearchField } from './ModelSearchField.js'
 import { ModelSelector } from './ModelSelector.js'
 import type { Project } from './Sidebar.js'
-import { propertiesWhen } from '../properties-when.js'
 
 declare global {
   interface File {
     readonly path?: string
   }
 }
-
-const ComposerMarkerSchema = z.enum(['/', '$', '@'])
 
 type ContextUsageStyle = CSSProperties & { '--context-used': number }
 
@@ -235,32 +230,12 @@ type RunningSubmission = 'queue' | 'steer'
 
 export type SendAvailability = 'loading' | 'ready' | 'setup-required' | 'unavailable'
 
-export type ComposerBridge = {
-  pickFiles: typeof pickFiles
-  previewViewedImage: typeof previewViewedImage
-  revealPath: typeof revealPath
-  savePastedFile: typeof savePastedFile
-}
-
-export type ComposerVoiceRecorder = ReturnType<typeof useVoiceRecorder>
-
-const defaultComposerBridge: ComposerBridge = {
-  pickFiles,
-  previewViewedImage,
-  revealPath,
-  savePastedFile,
-}
-
-function QueuedMediaPreview(props: { attachments: string[]; composerBridge: ComposerBridge }) {
-  const { attachments, composerBridge } = props
+function QueuedMediaPreview({ attachments }: { attachments: string[] }) {
   const reference = attachments.find((attachment) => previewMediaType('', attachment))
-  return reference ? (
-    <QueuedMediaPreviewCard key={reference} reference={reference} composerBridge={composerBridge} />
-  ) : null
+  return reference ? <QueuedMediaPreviewCard key={reference} reference={reference} /> : null
 }
 
-function QueuedMediaPreviewCard(props: { reference: string; composerBridge: ComposerBridge }) {
-  const { reference, composerBridge } = props
+function QueuedMediaPreviewCard({ reference }: { reference: string }) {
   const inferredMediaType = previewMediaType('', reference)
   const [preview, setPreview] = useState<PickedAttachment>()
   const [thumbnailFailed, setThumbnailFailed] = useState(false)
@@ -269,13 +244,13 @@ function QueuedMediaPreviewCard(props: { reference: string; composerBridge: Comp
 
   useEffect(() => {
     let cancelled = false
-    void composerBridge.previewViewedImage(reference).then((result) => {
+    void previewViewedImage(reference).then((result) => {
       if (!cancelled) setPreview(result)
     })
     return () => {
       cancelled = true
     }
-  }, [composerBridge, reference])
+  }, [reference])
 
   if (!inferredMediaType) return null
   const mediaType = preview?.mediaType ?? inferredMediaType
@@ -324,7 +299,7 @@ function QueuedMediaPreviewCard(props: { reference: string; composerBridge: Comp
           src={preview.previewUrl}
           name={preview.name}
           mediaType={preview.mediaType}
-          onReveal={() => void composerBridge.revealPath(reference)}
+          onReveal={() => void revealPath(reference)}
           onClose={() => setViewerOpen(false)}
         />
       ) : null}
@@ -339,14 +314,14 @@ export function composerResourceTriggerAt(
   const beforeCursor = text.slice(0, cursor)
   const match = /(^|[\s([{])([/$@])([\w.:-]*)$/.exec(beforeCursor)
   if (!match) return undefined
-  const marker = ComposerMarkerSchema.safeParse(match[2])
-  if (!marker.success) return undefined
+  const marker = match[2]
+  if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
   const query = match[3] ?? ''
   if (match[2] === '/' && /^(?:side|btw)$/i.test(query)) return undefined
   const start = cursor - query.length - 1
   let end = cursor
   while (end < text.length && /[\w.:-]/.test(text[end]!)) end += 1
-  return { marker: marker.data, query, start, end }
+  return { marker, query, start, end }
 }
 
 export function composerPromptWithResources(text: string, resources: ComposerResource[]): string {
@@ -408,8 +383,6 @@ function ComposerComponent(props: {
   onDeleteQueuedTurn: (id: string) => void
   onMoveQueuedTurn: (id: string, direction: 'up' | 'down') => void | Promise<boolean | void>
   onSteerQueuedTurn: (id: string) => void
-  composerBridge?: ComposerBridge | undefined
-  voiceRecorder?: ComposerVoiceRecorder | undefined
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   const [text, setText] = useState('')
@@ -446,9 +419,7 @@ function ComposerComponent(props: {
   const previousComposerRect = useRef<DOMRect | null>(null)
   const dockAnimation = useRef<Animation | null>(null)
   const mounted = useRef(true)
-  const defaultRecorder = useVoiceRecorder()
-  const recorder = props.voiceRecorder ?? defaultRecorder
-  const composerBridge = props.composerBridge ?? defaultComposerBridge
+  const recorder = useVoiceRecorder()
   const selectedResourceKeys = useMemo(
     () => new Set(selectedResources.map((resource) => resource.key)),
     [selectedResources],
@@ -593,7 +564,7 @@ function ComposerComponent(props: {
   }, [props.draftRequest?.request])
 
   const hydrateAttachmentPreview = (reference: string) => {
-    void composerBridge.previewViewedImage(reference).then((preview) => {
+    void previewViewedImage(reference).then((preview) => {
       if (!mounted.current || !preview?.mediaType || !preview.previewUrl) return
       const { mediaType, name, previewUrl, thumbnailUrl } = preview
       setAttachments((current) =>
@@ -604,7 +575,7 @@ function ComposerComponent(props: {
                 name,
                 mediaType,
                 previewUrl,
-                ...propertiesWhen(thumbnailUrl, (thumbnailUrl) => ({ thumbnailUrl })),
+                ...(thumbnailUrl ? { thumbnailUrl } : {}),
               }
             : attachment,
         ),
@@ -618,10 +589,7 @@ function ComposerComponent(props: {
       const attached = new Set(current.flatMap((attachment) => attachment.path ?? []))
       const additions: ComposerAttachment[] = []
       for (const file of files) {
-        const path = z.string().safeParse(file)
-        const picked = path.success
-          ? { path: path.data, name: basename(path.data) }
-          : PickedAttachmentSchema.parse(file)
+        const picked = typeof file === 'string' ? { path: file, name: basename(file) } : file
         if (attached.has(picked.path)) continue
         attached.add(picked.path)
         const inferredMediaType = previewMediaType('', picked.name)
@@ -629,19 +597,20 @@ function ComposerComponent(props: {
           id: picked.path,
           name: picked.name,
           path: picked.path,
-          ...propertiesWhen(inferredMediaType, (includedValue) => ({ mediaType: includedValue })),
-          ...propertiesWhen(picked.previewUrl, (includedValue) => ({ previewUrl: includedValue })),
-          ...propertiesWhen(picked.thumbnailUrl, (includedValue) => ({
-            thumbnailUrl: includedValue,
-          })),
-          ...propertiesWhen(picked.mediaType, (includedValue) => ({ mediaType: includedValue })),
+          ...(inferredMediaType ? { mediaType: inferredMediaType } : {}),
+          ...(picked.previewUrl ? { previewUrl: picked.previewUrl } : {}),
+          ...(picked.thumbnailUrl
+            ? {
+                thumbnailUrl: picked.thumbnailUrl,
+              }
+            : {}),
+          ...(picked.mediaType ? { mediaType: picked.mediaType } : {}),
         })
       }
       return [...current, ...additions]
     })
     for (const file of files) {
-      const path = z.string().safeParse(file)
-      if (path.success && previewMediaType('', path.data)) hydrateAttachmentPreview(path.data)
+      if (typeof file === 'string' && previewMediaType('', file)) hydrateAttachmentPreview(file)
     }
   }
 
@@ -671,13 +640,12 @@ function ComposerComponent(props: {
         {
           id,
           name: file.name || 'Pasted file',
-          ...propertiesWhen(previewUrl, (previewUrl) => ({ previewUrl })),
-          ...propertiesWhen(mediaType, (mediaType) => ({ mediaType })),
+          ...(previewUrl ? { previewUrl } : {}),
+          ...(mediaType ? { mediaType } : {}),
         },
       ])
 
-      void composerBridge
-        .savePastedFile(file)
+      void savePastedFile(file)
         .then((saved) => {
           if (!mounted.current) return
           if (!saved) {
@@ -692,9 +660,11 @@ function ComposerComponent(props: {
                 ? {
                     ...attachment,
                     path: picked.path,
-                    ...propertiesWhen(picked.thumbnailUrl, (includedValue) => ({
-                      thumbnailUrl: includedValue,
-                    })),
+                    ...(picked.thumbnailUrl
+                      ? {
+                          thumbnailUrl: picked.thumbnailUrl,
+                        }
+                      : {}),
                   }
                 : attachment,
             ),
@@ -755,8 +725,8 @@ function ComposerComponent(props: {
       picked.push({
         path: filePath,
         name: file.name || basename(filePath),
-        ...propertiesWhen(previewUrl, (previewUrl) => ({ previewUrl })),
-        ...propertiesWhen(mediaType, (mediaType) => ({ mediaType })),
+        ...(previewUrl ? { previewUrl } : {}),
+        ...(mediaType ? { mediaType } : {}),
       })
     }
     attachFiles(picked)
@@ -1100,10 +1070,7 @@ function ComposerComponent(props: {
                   >
                     <GripVertical size={14} aria-hidden />
                   </button>
-                  <QueuedMediaPreview
-                    attachments={queuedTurn.attachments}
-                    composerBridge={composerBridge}
-                  />
+                  <QueuedMediaPreview attachments={queuedTurn.attachments} />
                   <span className="queue-row__text" title={queuedTurn.text}>
                     {queuedTurn.text}
                   </span>
@@ -1179,11 +1146,10 @@ function ComposerComponent(props: {
                             src: attachment.previewUrl,
                             name: attachment.name,
                             mediaType: attachment.mediaType,
-                            ...propertiesWhen(
-                              attachment.previewUrl.startsWith('tastecode-attachment:') &&
-                                attachment.path,
-                              () => ({ localPath: attachment.path }),
-                            ),
+                            ...(attachment.previewUrl.startsWith('tastecode-attachment:') &&
+                            attachment.path
+                              ? { localPath: attachment.path }
+                              : {}),
                           })
                         }}
                         aria-label={
@@ -1391,7 +1357,7 @@ function ComposerComponent(props: {
                     className="menutrigger composer__add"
                     disabled={props.disabled}
                     aria-label="Attach files"
-                    onClick={() => void composerBridge.pickFiles().then(attachFiles)}
+                    onClick={() => void pickFiles().then(attachFiles)}
                   >
                     <span className="tool tool--icon">
                       <Plus size={15} aria-hidden />
@@ -1554,7 +1520,9 @@ function ComposerComponent(props: {
           mediaType={viewingMedia.mediaType}
           onReveal={
             viewingMedia.localPath
-              ? () => void composerBridge.revealPath(viewingMedia.localPath!)
+              ? () => {
+                  if (viewingMedia.localPath) void revealPath(viewingMedia.localPath)
+                }
               : undefined
           }
           onClose={() => setViewingMedia(undefined)}

@@ -1,11 +1,10 @@
 import { once } from 'node:events'
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { readFileSync } from 'node:fs'
 import type { DomainEvent } from '@harness/contracts'
 import { JsonRpcValueSchema, type JsonRpcValue } from '@harness/proc'
 import type { Event } from '@opencode-ai/sdk'
 import { afterEach, describe, expect, it } from 'vitest'
-import { z } from 'zod'
 import {
   OpenCodeAdapter,
   OPENCODE_CAPABILITIES,
@@ -436,7 +435,12 @@ describe('OpenCode adapter', () => {
 })
 
 type RequestRecord = { method: string; url: string; body: JsonRpcValue | undefined }
-const ServerAddressSchema = z.object({ port: z.number() })
+
+function serverPort(server: Server): number {
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('missing test port')
+  return address.port
+}
 
 async function serveOpenCode(): Promise<{
   baseUrl: string
@@ -515,9 +519,9 @@ async function serveOpenCode(): Promise<{
   servers.push(server)
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
-  const address = ServerAddressSchema.parse(server.address())
+  const port = serverPort(server)
   return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
+    baseUrl: `http://127.0.0.1:${port}`,
     requests,
     broadcast(event) {
       for (const response of streams) response.write(`data: ${JSON.stringify(event)}\n\n`)
@@ -642,9 +646,9 @@ async function serveOpenCodeV2(
   servers.push(server)
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
-  const address = ServerAddressSchema.parse(server.address())
+  const port = serverPort(server)
   return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
+    baseUrl: `http://127.0.0.1:${port}`,
     requests,
     broadcast(event) {
       for (const response of streams) response.write(`data: ${JSON.stringify(event)}\n\n`)

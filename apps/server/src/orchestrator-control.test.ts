@@ -1,43 +1,40 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { CodexAdapter } from '@harness/adapter-codex'
 import { Store } from './store.js'
-import { Orchestrator } from './orchestrator.js'
 
-type ControlState = {
-  constructed: number
-  started: number
-  releases: Array<() => void>
-  usageChanged?: (() => void) | undefined
-}
-
-const control: ControlState = {
+const control = vi.hoisted(() => ({
   constructed: 0,
   started: 0,
-  releases: [],
-  usageChanged: undefined,
-}
+  releases: [] as Array<() => void>,
+  usageChanged: undefined as (() => void) | undefined,
+}))
 
-class TestControlAdapter extends CodexAdapter {
-  constructor() {
-    super()
-    control.constructed += 1
-  }
+vi.mock('@harness/adapter-codex', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@harness/adapter-codex')>()
+  return {
+    ...original,
+    CodexAdapter: class {
+      constructor() {
+        control.constructed += 1
+      }
 
-  override onUsageChanged(listener: () => void): void {
-    control.usageChanged = listener
-  }
-  override dispose(): void {}
-  override async listModels() {
-    return []
-  }
+      on(): void {}
+      onUsageChanged(listener: () => void): void {
+        control.usageChanged = listener
+      }
+      dispose(): void {}
+      listModels(): [] {
+        return []
+      }
 
-  override start(): Promise<void> {
-    control.started += 1
-    return new Promise((resolve) => control.releases.push(resolve))
+      start(): Promise<void> {
+        control.started += 1
+        return new Promise((resolve) => control.releases.push(resolve))
+      }
+    },
   }
-}
+})
 
-const createControlAdapter = () => new TestControlAdapter()
+import { Orchestrator } from './orchestrator.js'
 
 beforeEach(() => {
   control.constructed = 0
@@ -54,7 +51,6 @@ describe('control adapter startup', () => {
       onLog: () => {},
       onLogin: () => {},
       onUsageChanged: changed,
-      createCodexAdapter: createControlAdapter,
     })
 
     const started = orchestrator.listModels('codex')
@@ -74,7 +70,6 @@ describe('control adapter startup', () => {
       onLog: () => {},
       onLogin: () => {},
       onUsageChanged: changed,
-      createCodexAdapter: createControlAdapter,
     })
     const started = orchestrator.listModels('codex')
     await vi.waitFor(() => expect(control.releases).toHaveLength(1))
@@ -92,7 +87,6 @@ describe('control adapter startup', () => {
       onEvent: () => {},
       onLog: () => {},
       onLogin: () => {},
-      createCodexAdapter: createControlAdapter,
     })
 
     const first = orchestrator.listModels('codex')

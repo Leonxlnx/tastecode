@@ -2,7 +2,6 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
 import { z } from 'zod'
 import type { AppUpdateState } from './app-updater.js'
-import type { BoundaryValue } from './boundary.js'
 import { clipboardText } from './clipboard-text.js'
 
 type PickedAttachment = {
@@ -59,14 +58,14 @@ const api = {
   checkForUpdates: (): Promise<AppUpdateState> => ipcRenderer.invoke('harness:checkForUpdates'),
   installUpdate: (): Promise<boolean> => ipcRenderer.invoke('harness:installUpdate'),
   onUpdateState: (listener: (state: AppUpdateState) => void): (() => void) => {
-    const handler = (_event: IpcRendererEvent, state: BoundaryValue) => {
+    const handler = (_event: IpcRendererEvent, state: unknown) => {
       if (isAppUpdateState(state)) listener(state)
     }
     ipcRenderer.on('harness:updateState', handler)
     return () => ipcRenderer.removeListener('harness:updateState', handler)
   },
   onZoomChange: (listener: (factor: number) => void): (() => void) => {
-    const handler = (_event: IpcRendererEvent, factor: BoundaryValue) => {
+    const handler = (_event: IpcRendererEvent, factor: unknown) => {
       const parsed = z.number().finite().safeParse(factor)
       if (parsed.success) listener(parsed.data)
     }
@@ -100,6 +99,6 @@ const AppUpdateStateSchema = z.object({
   error: z.string().optional(),
 })
 
-function isAppUpdateState(value: BoundaryValue): value is AppUpdateState {
+function isAppUpdateState(value: unknown): value is AppUpdateState {
   return AppUpdateStateSchema.safeParse(value).success
 }

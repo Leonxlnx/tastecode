@@ -21,11 +21,8 @@ export async function createHighlighterRuntime(announce: () => void): Promise<Hi
   const loaded = new Set<string>(COMMON_LANGUAGES)
   const loading = new Set<string>()
   const languageRegistration = (language: string) => {
-    const entry = Object.entries(bundledLanguages).find(([id]) => id === language)
-    if (!entry) return undefined
-    // SAFETY: This id came directly from the keys of Record<BundledLanguage, registration>.
-    const id = entry[0] as BundledLanguage
-    return { id, load: entry[1] }
+    if (!isBundledLanguage(language)) return undefined
+    return { id: language, load: bundledLanguages[language] }
   }
 
   const requestLanguage = (language: string): void => {
@@ -61,4 +58,8 @@ export async function createHighlighterRuntime(announce: () => void): Promise<Hi
       })
     },
   }
+}
+
+function isBundledLanguage(language: string): language is BundledLanguage {
+  return Object.hasOwn(bundledLanguages, language)
 }

@@ -7,54 +7,7 @@ import {
   type ThreadState,
 } from '../thread-store.js'
 import { makeFixtureThread } from './fixture.js'
-import { defaultMarkdownServices } from './Markdown.js'
-import { plainCodePlugin } from './highlighter.js'
-import {
-  defaultThreadDependencies,
-  Thread,
-  type ThreadDependencies,
-  type ThreadThinkingOrbProps,
-  type ThreadVirtualizer,
-  type ThreadVirtualizerOptions,
-} from './Thread.js'
-
-function usePromptProgressVirtualizer({
-  count,
-  getItemKey,
-}: ThreadVirtualizerOptions): ThreadVirtualizer {
-  const first = Math.max(0, count - 20)
-  const rows = Array.from({ length: count - first }, (_, offset) => {
-    const index = first + offset
-    return {
-      index,
-      key: getItemKey(index),
-      start: index * 72,
-      end: (index + 1) * 72,
-    }
-  })
-  return {
-    getVirtualItems: () => rows,
-    getTotalSize: () => count * 72,
-    getOffsetForIndex: (index) => [index * 72, 'start'],
-    scrollToIndex: () => undefined,
-    measureElement: () => undefined,
-    measurementsCache: Array.from({ length: count }, (_, index) => ({ start: index * 72 })),
-  }
-}
-
-function PromptProgressOrb(_props: ThreadThinkingOrbProps) {
-  return <span aria-label="Working…" />
-}
-
-export const promptProgressDependencies: ThreadDependencies = {
-  ...defaultThreadDependencies,
-  useVirtualizer: usePromptProgressVirtualizer,
-  ThinkingOrbComponent: PromptProgressOrb,
-  markdownServices: {
-    ...defaultMarkdownServices,
-    codePlugin: plainCodePlugin,
-  },
-}
+import { Thread } from './Thread.js'
 
 export type PromptProgressScenario = {
   name: string
@@ -82,7 +35,7 @@ const LIVE_DELTAS = new Map(
   ]),
 )
 
-function view(state: ThreadState, dependencies: ThreadDependencies | undefined) {
+function view(state: ThreadState) {
   return (
     <Thread
       items={state.items}
@@ -99,7 +52,6 @@ function view(state: ThreadState, dependencies: ThreadDependencies | undefined) 
       reviews={Object.values(state.reviews)}
       onDecide={() => undefined}
       onAnswerUserInput={() => undefined}
-      dependencies={dependencies}
     />
   )
 }
@@ -125,17 +77,14 @@ export type PromptProgressRun = {
 }
 
 /** Drives the same reducer and renderer boundaries as a live submit without a provider or socket. */
-export function runPromptProgress(
-  scenario: PromptProgressScenario,
-  dependencies?: ThreadDependencies,
-): PromptProgressRun {
+export function runPromptProgress(scenario: PromptProgressScenario): PromptProgressRun {
   let state = beginOptimisticTurn(
     startingState(scenario.historyItems),
     PROMPT,
     SUBMISSION_ID,
     CREATED_AT,
   )
-  const rendered = render(view(state, dependencies))
+  const rendered = render(view(state))
   const optimisticPrompt = promptNode(rendered)
   const optimisticRail = oneWorkingRail(rendered)
 
@@ -160,7 +109,7 @@ export function runPromptProgress(
       createdAt: CREATED_AT + 1,
     },
   })
-  rendered.rerender(view(state, dependencies))
+  rendered.rerender(view(state))
   const canonicalPrompt = promptNode(rendered)
   const canonicalRail = oneWorkingRail(rendered)
 
@@ -176,7 +125,7 @@ export function runPromptProgress(
       createdAt: CREATED_AT + 2,
     },
   })
-  rendered.rerender(view(state, dependencies))
+  rendered.rerender(view(state))
   const startedPrompt = promptNode(rendered)
   const startedReply = streamingReply(rendered)
 
@@ -191,7 +140,7 @@ export function runPromptProgress(
     },
     { type: 'item.delta', turnId: TURN_ID, itemId: ANSWER_ID, textDelta: textDeltas[1] },
   ])
-  rendered.rerender(view(state, dependencies))
+  rendered.rerender(view(state))
   const deltaPrompt = promptNode(rendered)
 
   return {

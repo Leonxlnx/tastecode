@@ -278,9 +278,9 @@ function lintCallsToAction(page: PageBlueprint): CopyLintFinding[] {
 
 function lintEyebrows(page: PageBlueprint): CopyLintFinding[] {
   return page.sections.flatMap((section, index) => {
-    const result = z.object({ eyebrow: z.string().trim().min(1) }).safeParse(section.copy)
-    if (!result.success) return []
-    const eyebrow = result.data.eyebrow
+    if (!('eyebrow' in section.copy) || typeof section.copy.eyebrow !== 'string') return []
+    const eyebrow = section.copy.eyebrow.trim()
+    if (!eyebrow) return []
     return [
       {
         rule: 'copy/decorative-eyebrow',
@@ -344,4 +344,3 @@ function normalize(value: string): string {
     .replace(/\s+/gu, ' ')
     .trim()
 }
-import { z } from 'zod'

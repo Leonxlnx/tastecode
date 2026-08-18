@@ -1339,10 +1339,17 @@
   border-radius: var(--r-pill);
   color: var(--bg);
   cursor: pointer;
+  transition: transform var(--dur-press) var(--ease-out);
 }
 
-.workspace-side-chat__composer button:not(:disabled):hover {
-  transform: scale(1.04);
+@media (hover: hover) and (pointer: fine) {
+  .workspace-side-chat__composer button:not(:disabled):hover {
+    transform: scale(1.04);
+  }
+}
+
+.workspace-side-chat__composer button:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .workspace-side-chat__composer button:disabled {
@@ -1434,5 +1441,10 @@
   .workspace-layout > .stage,
   .workspace-panel {
     transition: none;
+  }
+
+  .workspace-side-chat__composer button:not(:disabled):hover,
+  .workspace-side-chat__composer button:active:not(:disabled) {
+    transform: none !important;
   }
 }

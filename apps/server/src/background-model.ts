@@ -11,7 +11,6 @@ import type {
   SessionDiff,
 } from '@harness/contracts'
 import type { ProviderRuntime, TurnOptions } from './adapters.js'
-import { propertiesWhen } from './properties-when.js'
 
 const BACKGROUND_TIMEOUT_MS = 45_000
 const MAX_COMMIT_DIFF_CHARS = 80_000
@@ -112,10 +111,10 @@ function selection(
 ): BackgroundModelSelection {
   return {
     provider: source.provider,
-    ...propertiesWhen(source.connectionId, (includedValue) => ({ connectionId: includedValue })),
-    ...propertiesWhen(source.agent, (includedValue) => ({ agent: includedValue })),
+    ...(source.connectionId ? { connectionId: source.connectionId } : {}),
+    ...(source.agent ? { agent: source.agent } : {}),
     model: model.id,
-    ...propertiesWhen(effort, (effort) => ({ effort })),
+    ...(effort ? { effort } : {}),
     sourceName: source.displayName,
     automatic,
   }
@@ -166,11 +165,13 @@ export async function runBackgroundCompletion(input: {
   try {
     const started = await input.runtime.start(temporary, {
       model: input.selection.model,
-      ...propertiesWhen(input.selection.effort, (includedValue) => ({ effort: includedValue })),
-      ...propertiesWhen(input.selection.agent, (includedValue) => ({ agent: includedValue })),
-      ...propertiesWhen(input.selection.connectionId, (includedValue) => ({
-        connectionId: includedValue,
-      })),
+      ...(input.selection.effort ? { effort: input.selection.effort } : {}),
+      ...(input.selection.agent ? { agent: input.selection.agent } : {}),
+      ...(input.selection.connectionId
+        ? {
+            connectionId: input.selection.connectionId,
+          }
+        : {}),
       approval: 'ask',
       ephemeral: true,
       instructions: BACKGROUND_INSTRUCTIONS,
@@ -194,7 +195,7 @@ export async function runBackgroundCompletion(input: {
         const current = messages.get(event.item.turnId) ?? []
         current.push({
           text: event.item.text,
-          ...propertiesWhen(event.item.phase, (includedValue) => ({ phase: includedValue })),
+          ...(event.item.phase ? { phase: event.item.phase } : {}),
         })
         messages.set(event.item.turnId, current)
       }
@@ -206,7 +207,7 @@ export async function runBackgroundCompletion(input: {
 
     const options: TurnOptions = {
       model: input.selection.model,
-      ...propertiesWhen(input.selection.effort, (includedValue) => ({ effort: includedValue })),
+      ...(input.selection.effort ? { effort: input.selection.effort } : {}),
     }
     expectedTurnId = await session.sendTurn(started.thread.id, input.prompt, [], options)
     if (completions.has(expectedTurnId)) settle?.()

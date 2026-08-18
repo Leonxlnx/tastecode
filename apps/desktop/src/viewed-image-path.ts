@@ -1,7 +1,6 @@
 import { realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import type { BoundaryValue } from './boundary.js'
 
 const ImageReferenceSchema = z
   .string()
@@ -11,7 +10,7 @@ const ImageReferenceSchema = z
 
 /** Resolve old and current transcript references inside TasteCode's own paste folder. */
 export async function viewedImagePath(
-  referenceValue: BoundaryValue,
+  referenceValue: unknown,
   pastedRoot: string,
 ): Promise<string | undefined> {
   const parsed = ImageReferenceSchema.safeParse(referenceValue)

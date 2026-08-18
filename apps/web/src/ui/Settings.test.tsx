@@ -8,15 +8,16 @@ import { resetInstalls } from '../provider-install.js'
 import { HAPTICS_KEY, writeAppHaptics } from '../haptics.js'
 import type { Transport } from '../transport.js'
 import { TestTransport, type TestRequestResolver } from '../test-transport.js'
-import { requiredInstance, requiredValue } from '../test-dom.js'
 import { ProviderSettings, Settings } from './Settings.js'
-import { propertiesWhen } from '../properties-when.js'
 import { createDefaultKeybindings, type KeybindingId, type Shortcut } from '../shortcuts.js'
 
 type ProviderStatus = ResultOf<'providers.list'>['providers'][number]
-function TestInstallTerminal(props: { installKey: string }) {
-  return <div data-testid="install-terminal" data-install-key={props.installKey} />
-}
+
+vi.mock('./InstallTerminal.js', () => ({
+  InstallTerminal: (props: { installKey: string }) => (
+    <div data-testid="install-terminal" data-install-key={props.installKey} />
+  ),
+}))
 
 function renderSettings(
   options: {
@@ -71,7 +72,6 @@ function renderSettings(
       initialSection={options.initialSection ?? 'appearance'}
       onReset={options.onReset ?? (() => {})}
       onClose={options.onClose ?? (() => {})}
-      installTerminalComponent={TestInstallTerminal}
     />,
   )
 }
@@ -312,7 +312,6 @@ function renderProviders(
       transport={transport}
       onConnectionsChanged={() => {}}
       onAccountChange={() => {}}
-      installTerminalComponent={TestInstallTerminal}
     />,
   )
   return (loginId: string, success: boolean, error: string | null = null) =>
@@ -321,10 +320,9 @@ function renderProviders(
 function installedProvider(id: ProviderId, displayName: string): ProviderStatus {
   return { id, displayName, installed: true, auth: 'unknown' }
 }
-const providerRow = (name: string) =>
-  requiredValue(screen.getByText(name).closest<HTMLElement>('.settings__row'), 'provider row')
+const providerRow = (name: string) => screen.getByText(name).closest<HTMLElement>('.settings__row')!
 const action = (row: HTMLElement, name: string) =>
-  requiredInstance(within(row).getByRole('button', { name }), HTMLButtonElement)
+  within(row).getByRole('button', { name }) as HTMLButtonElement
 describe('provider authentication states', () => {
   it('keeps loading and failure distinct from signed out, then retries', async () => {
     const status = deferred<Account>()
@@ -522,13 +520,15 @@ describe('model settings', () => {
         return {
           preference,
           sources,
-          ...propertiesWhen(target, (includedValue) => ({
-            resolved: {
-              ...includedValue,
-              sourceName: 'Codex',
-              automatic: false,
-            },
-          })),
+          ...(target
+            ? {
+                resolved: {
+                  ...target,
+                  sourceName: 'Codex',
+                  automatic: false,
+                },
+              }
+            : {}),
         }
       }
       throw new Error(`unexpected ${method}`)
@@ -1101,7 +1101,6 @@ describe('provider settings', () => {
         onAccountChange={() => {}}
         onReset={() => {}}
         onClose={() => {}}
-        installTerminalComponent={TestInstallTerminal}
       />
     )
     const view = render(settingsFor(onConnectionsChanged))
@@ -1213,7 +1212,6 @@ describe('provider settings', () => {
         onAccountChange={() => {}}
         onReset={() => {}}
         onClose={() => {}}
-        installTerminalComponent={TestInstallTerminal}
       />,
     )
 
@@ -1294,7 +1292,6 @@ describe('provider settings', () => {
         onConnectionsChanged={() => {}}
         onAccountChange={() => {}}
         onProviderLoginTerminalOpen={onProviderLoginTerminalOpen}
-        installTerminalComponent={TestInstallTerminal}
       />,
     )
 

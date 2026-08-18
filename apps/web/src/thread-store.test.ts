@@ -630,17 +630,12 @@ describe('overnight regression pins', () => {
       item({ id: `history-${index}`, status: 'completed', text: 'done' }),
     )
     const live = item({ id: 'live', turnId: 'active', type, text: '' })
-    const items = [...history, live]
-    for (const [index, value] of items.entries()) {
-      Object.defineProperty(items, index, {
-        configurable: true,
-        enumerable: true,
-        get() {
-          reads += 1
-          return value
-        },
-      })
-    }
+    const items = new Proxy([...history, live], {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && /^\d+$/.test(property)) reads += 1
+        return Reflect.get(target, property, receiver)
+      },
+    })
     const state = {
       ...emptyThread,
       items,

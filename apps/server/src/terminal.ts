@@ -219,7 +219,7 @@ export class TerminalManager {
   async #drainAll(): Promise<void> {
     const waits = new Set<Promise<void>>(this.#closingById.values())
     for (const closingThread of this.#closingThreads.values()) waits.add(closingThread)
-    for (const terminalId of [...this.#byId.keys()]) {
+    for (const terminalId of this.#byId.keys()) {
       try {
         waits.add(this.close(terminalId))
       } catch (error) {

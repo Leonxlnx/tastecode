@@ -17,7 +17,6 @@ import {
   type JsonRpcValue,
 } from '@harness/proc'
 import { z } from 'zod'
-import { propertiesWhen } from './properties-when.js'
 
 export const PI_CAPABILITIES: Capabilities = {
   steer: true,
@@ -108,7 +107,6 @@ const PiStateSchema = z.object({
 })
 const PiAvailableModelsSchema = z.object({ models: z.array(PiModelSchema).optional() })
 const PiThinkingLevelsSchema = z.object({ levels: z.array(z.string()).optional() })
-const JsonObjectSchema = z.record(z.string(), JsonRpcValueSchema)
 const ToolResultSchema = z.object({
   content: z.array(z.object({ text: z.string().optional() })).optional(),
 })
@@ -285,13 +283,12 @@ export class PiAdapter extends EventEmitter<Events> {
           description: model.provider,
           isDefault: selected?.provider === model.provider && selected.id === model.id,
           reasoningEfforts,
-          ...propertiesWhen(
-            selected?.provider === model.provider &&
-              selected.id === model.id &&
-              state.thinkingLevel &&
-              reasoningEfforts.includes(state.thinkingLevel),
-            () => ({ defaultReasoningEffort: state.thinkingLevel }),
-          ),
+          ...(selected?.provider === model.provider &&
+          selected.id === model.id &&
+          state.thinkingLevel &&
+          reasoningEfforts.includes(state.thinkingLevel)
+            ? { defaultReasoningEffort: state.thinkingLevel }
+            : {}),
           serviceTiers: [],
         })
       }
@@ -383,22 +380,24 @@ export class PiAdapter extends EventEmitter<Events> {
   }
 
   #onValue(value: JsonRpcValue): void {
-    const response = PiResponseSchema.safeParse(value)
-    if (response.success) {
-      this.#onResponse(response.data)
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return
+    if (value['type'] === 'response') {
+      const response = PiResponseSchema.safeParse(value)
+      if (response.success) this.#onResponse(response.data)
       return
     }
-    const extensionRequest = ExtensionUiRequestSchema.safeParse(value)
-    if (extensionRequest.success) {
+    if (value['type'] === 'extension_ui_request') {
+      const request = ExtensionUiRequestSchema.safeParse(value)
+      if (!request.success) return
       this.emit(
         'log',
         `${this.#displayName} requested extension UI that this custom integration cannot answer`,
       )
-      if (extensionRequest.data.id && this.#child) {
+      if (request.data.id && this.#child) {
         this.#child.stdin.write(
           `${JSON.stringify({
             type: 'extension_ui_response',
-            id: extensionRequest.data.id,
+            id: request.data.id,
             cancelled: true,
           })}\n`,
         )
@@ -472,7 +471,7 @@ export class PiAdapter extends EventEmitter<Events> {
         turnId,
         type,
         status: 'started',
-        ...propertiesWhen(role, (role) => ({ role })),
+        ...(role ? { role } : {}),
         text: '',
         createdAt: Date.now(),
       }
@@ -496,11 +495,10 @@ export class PiAdapter extends EventEmitter<Events> {
 
   #startTool(toolCallId: string, name: string, args: JsonRpcValue | undefined): void {
     const turnId = this.#activeTurnId!
-    const details = JsonObjectSchema.safeParse(args)
-    const command = details.success ? z.string().safeParse(details.data['command']) : undefined
-    const path = details.success ? z.string().safeParse(details.data['path']) : undefined
-    const commandText = command?.success ? command.data : undefined
-    const filePath = path?.success ? path.data : undefined
+    const details =
+      typeof args === 'object' && args !== null && !Array.isArray(args) ? args : undefined
+    const commandText = typeof details?.['command'] === 'string' ? details['command'] : undefined
+    const filePath = typeof details?.['path'] === 'string' ? details['path'] : undefined
     const itemType =
       name === 'bash'
         ? 'command'
@@ -513,12 +511,16 @@ export class PiAdapter extends EventEmitter<Events> {
       type: itemType,
       status: 'started',
       text: name,
-      ...propertiesWhen(itemType === 'command' && commandText, (includedCommand) => ({
-        command: includedCommand,
-      })),
-      ...propertiesWhen(itemType === 'file_change' && filePath, (includedPath) => ({
-        path: includedPath,
-      })),
+      ...(itemType === 'command' && commandText
+        ? {
+            command: commandText,
+          }
+        : {}),
+      ...(itemType === 'file_change' && filePath
+        ? {
+            path: filePath,
+          }
+        : {}),
       createdAt: Date.now(),
     }
     this.#items.set(`tool:${toolCallId}`, { item, text: '' })
@@ -548,7 +550,7 @@ export class PiAdapter extends EventEmitter<Events> {
       item: {
         ...open.item,
         status: failed ? 'failed' : 'completed',
-        ...propertiesWhen(text, (text) => ({ text })),
+        ...(text ? { text } : {}),
       },
     })
   }
@@ -569,7 +571,7 @@ export class PiAdapter extends EventEmitter<Events> {
         reasoningTokens: number(usage.reasoning),
         totalTokens: number(usage.totalTokens) || input + cached + output,
         inputIncludesCached: false,
-        ...propertiesWhen(cost !== undefined && cost >= 0, () => ({ costUsd: cost })),
+        ...(cost !== undefined && cost >= 0 ? { costUsd: cost } : {}),
       },
     })
   }
@@ -591,7 +593,7 @@ export class PiAdapter extends EventEmitter<Events> {
   #finishTurn(): void {
     const turnId = this.#activeTurnId
     if (!turnId) return
-    for (const key of [...this.#items.keys()]) this.#completeItem(key)
+    for (const key of this.#items.keys()) this.#completeItem(key)
     if (this.#pendingError) {
       this.#turnFailed = true
       this.emit('event', {
@@ -632,8 +634,7 @@ export class PiAdapter extends EventEmitter<Events> {
 }
 
 function resultText(value: JsonRpcValue | undefined): string {
-  const direct = z.string().safeParse(value)
-  if (direct.success) return direct.data
+  if (typeof value === 'string') return value
   const result = ToolResultSchema.safeParse(value)
   return (result.success ? (result.data.content ?? []) : [])
     .map((entry) => entry.text ?? '')

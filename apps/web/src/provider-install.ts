@@ -1,6 +1,5 @@
 import type { ProviderId } from '@harness/contracts'
 import type { Transport } from './transport.js'
-import { propertiesWhen } from './properties-when.js'
 
 /**
  * Provider installs in flight, tracked outside React on purpose: an install
@@ -64,7 +63,7 @@ export function clearInstall(key: string): void {
 
 /** Test isolation only: module state must not leak between test cases. */
 export function resetInstalls(): void {
-  for (const key of [...transportListeners.keys()]) detachTransportListeners(key)
+  for (const key of transportListeners.keys()) detachTransportListeners(key)
   installs.clear()
   notify()
 }
@@ -164,7 +163,7 @@ async function begin(
 
   const { terminalId } = await transport.request(method, {
     provider: target.provider,
-    ...propertiesWhen(target.agent, (includedValue) => ({ agent: includedValue })),
+    ...(target.agent ? { agent: target.agent } : {}),
     // Logins get a wide pty so the OAuth URL is printed on one line — the
     // URL detector depends on that. Installs render at a normal width.
     columns: method === 'providers.launch' ? LOGIN_COLUMNS : 100,
@@ -200,7 +199,7 @@ async function begin(
       ...current,
       log,
       lastLine: lastPrintableLine(log),
-      ...propertiesWhen(openedAuthUrl, (openedAuthUrl) => ({ openedAuthUrl })),
+      ...(openedAuthUrl ? { openedAuthUrl } : {}),
     })
     notify()
   })
@@ -226,6 +225,7 @@ function notify(): void {
 // CSI sequences, OSC sequences (title updates and the like), then any stray
 // control byte that is not a newline. Enough to turn pty output into a note.
 const ANSI =
+  // oxlint-disable-next-line no-control-regex, no-useless-escape -- ANSI parsing requires control bytes.
   /\u001b\[[0-9;?]*[ -\/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f]/g
 
 export function lastPrintableLine(log: string): string {

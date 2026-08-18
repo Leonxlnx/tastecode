@@ -8,7 +8,6 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk'
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { killTree, spawnCli } from '@harness/proc'
-import { propertiesWhen } from './properties-when.js'
 
 export type ClaudeQueryRuntime = Pick<
   Query,
@@ -41,7 +40,7 @@ export function claudeSdkSpawner(
 ) {
   return (options: SpawnOptions): SpawnedProcess => {
     const child = spawn(options.command, options.args, {
-      ...propertiesWhen(options.cwd, (includedValue) => ({ cwd: includedValue })),
+      ...(options.cwd ? { cwd: options.cwd } : {}),
       env: options.env,
       replaceEnv: true,
     })
@@ -57,6 +56,7 @@ export function claudeSdkSpawner(
   }
 }
 
+// oxlint-disable-next-line require-yield -- This prompt intentionally stays empty until abort.
 export async function* waitForAbort(signal: AbortSignal): AsyncGenerator<SDKUserMessage> {
   if (signal.aborted) return
   await new Promise<void>((resolve) =>

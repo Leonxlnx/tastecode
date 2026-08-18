@@ -1,7 +1,6 @@
 import { ModelSchema, ProviderIdSchema } from '@harness/contracts'
 import { z } from 'zod'
 import { modelChoiceKey, sourceKey, type ModelChoice } from './model-catalog.js'
-import { propertiesWhen } from './properties-when.js'
 
 const CACHE_VERSION = 1
 const MAX_CACHE_CHARACTERS = 2_000_000
@@ -76,8 +75,8 @@ export function parseModelCatalogCache(raw: string | null): ModelChoice[] | unde
       provider: candidate.provider,
       sourceName: candidate.sourceName,
       mark: candidate.mark,
-      ...propertiesWhen(connectionId, (connectionId) => ({ connectionId })),
-      ...propertiesWhen(agent, (agent) => ({ agent })),
+      ...(connectionId ? { connectionId } : {}),
+      ...(agent ? { agent } : {}),
       model: candidate.model,
     }
     const expectedKey = modelChoiceKey(

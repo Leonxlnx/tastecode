@@ -1,27 +1,33 @@
 import path from 'node:path'
 import type { Item, ItemStatus } from '@harness/contracts'
-import type { JsonRpcValue } from '@harness/proc'
 import { z } from 'zod'
-import { propertiesWhen } from './properties-when.js'
 
 const ItemEnvelopeSchema = z.object({ type: z.string(), id: z.string().optional() })
 const UserMessageSchema = z.object({
   type: z.literal('userMessage'),
+  id: z.string().optional(),
   content: z.array(z.object({ type: z.string(), text: z.string().optional() })),
 })
 const AgentMessageSchema = z.object({
   type: z.literal('agentMessage'),
+  id: z.string().optional(),
   text: z.string(),
   phase: z.enum(['commentary', 'final_answer']).nullable(),
 })
 const ReasoningSchema = z.object({
   type: z.literal('reasoning'),
+  id: z.string().optional(),
   summary: z.array(z.string()),
   content: z.array(z.string()),
 })
-const TextItemSchema = z.object({ type: z.string(), text: z.string() })
+const PlanSchema = z.object({
+  type: z.literal('plan'),
+  id: z.string().optional(),
+  text: z.string(),
+})
 const CommandSchema = z.object({
   type: z.literal('commandExecution'),
+  id: z.string().optional(),
   command: z.string(),
   aggregatedOutput: z.string().nullable(),
   exitCode: z.number().nullable(),
@@ -29,138 +35,190 @@ const CommandSchema = z.object({
 })
 const FileChangeSchema = z.object({
   type: z.literal('fileChange'),
+  id: z.string().optional(),
   changes: z.array(z.object({ path: z.string() })),
 })
 const McpToolCallSchema = z.object({
   type: z.literal('mcpToolCall'),
+  id: z.string().optional(),
   server: z.string(),
   tool: z.string(),
   durationMs: z.number().nullable(),
 })
 const DynamicToolCallSchema = z.object({
   type: z.literal('dynamicToolCall'),
+  id: z.string().optional(),
   tool: z.string(),
   durationMs: z.number().nullable(),
 })
 const CollabAgentSchema = z.object({
   type: z.literal('collabAgentToolCall'),
+  id: z.string().optional(),
   tool: z.enum(['spawnAgent', 'sendInput', 'resumeAgent', 'wait', 'closeAgent']),
   status: z.enum(['inProgress', 'completed', 'failed']),
   receiverThreadIds: z.array(z.string()),
   agentsStates: z.record(
     z.string(),
-    z.object({
-      status: z.enum([
-        'pendingInit',
-        'running',
-        'interrupted',
-        'completed',
-        'errored',
-        'shutdown',
-        'notFound',
-      ]),
-    }),
+    z
+      .object({
+        status: z.enum([
+          'pendingInit',
+          'running',
+          'interrupted',
+          'completed',
+          'errored',
+          'shutdown',
+          'notFound',
+        ]),
+      })
+      .optional(),
   ),
 })
 const SubAgentActivitySchema = z.object({
   type: z.literal('subAgentActivity'),
+  id: z.string().optional(),
   kind: z.enum(['started', 'interacted', 'interrupted']),
 })
-const ImageViewSchema = z.object({ type: z.literal('imageView'), path: z.string() })
-const SleepSchema = z.object({ type: z.literal('sleep'), durationMs: z.number() })
+const ImageViewSchema = z.object({
+  type: z.literal('imageView'),
+  id: z.string().optional(),
+  path: z.string(),
+})
+const SleepSchema = z.object({
+  type: z.literal('sleep'),
+  id: z.string().optional(),
+  durationMs: z.number(),
+})
+const HookPromptSchema = z.object({ type: z.literal('hookPrompt'), id: z.string().optional() })
+const WebSearchSchema = z.object({ type: z.literal('webSearch'), id: z.string().optional() })
+const ImageGenerationSchema = z.object({
+  type: z.literal('imageGeneration'),
+  id: z.string().optional(),
+})
+const EnteredReviewModeSchema = z.object({
+  type: z.literal('enteredReviewMode'),
+  id: z.string().optional(),
+})
+const ExitedReviewModeSchema = z.object({
+  type: z.literal('exitedReviewMode'),
+  id: z.string().optional(),
+})
+const ContextCompactionSchema = z.object({
+  type: z.literal('contextCompaction'),
+  id: z.string().optional(),
+})
+
+const KnownThreadItemSchema = z.discriminatedUnion('type', [
+  UserMessageSchema,
+  HookPromptSchema,
+  AgentMessageSchema,
+  ReasoningSchema,
+  PlanSchema,
+  CommandSchema,
+  FileChangeSchema,
+  McpToolCallSchema,
+  DynamicToolCallSchema,
+  CollabAgentSchema,
+  SubAgentActivitySchema,
+  WebSearchSchema,
+  ImageViewSchema,
+  SleepSchema,
+  ImageGenerationSchema,
+  EnteredReviewModeSchema,
+  ExitedReviewModeSchema,
+  ContextCompactionSchema,
+])
+const knownThreadItemTypes = new Set<string>(
+  KnownThreadItemSchema.options.map((schema) => schema.shape.type.value),
+)
+const UnknownThreadItemSchema = ItemEnvelopeSchema.refine(
+  ({ type }) => !knownThreadItemTypes.has(type),
+  'known Codex item has an invalid payload',
+).transform(({ type, id }) => ({
+  type: 'unknown' as const,
+  wireType: type,
+  ...(id === undefined ? {} : { id }),
+}))
+
+/** Runtime projection of the Codex item fields this adapter consumes. */
+export const CodexThreadItemSchema = z.union([KnownThreadItemSchema, UnknownThreadItemSchema])
+export type CodexThreadItem = z.infer<typeof CodexThreadItemSchema>
 
 /** Translate a Codex thread item into the provider-neutral transcript model. */
 export function mapThreadItem(
-  value: JsonRpcValue,
+  item: CodexThreadItem,
   context: { turnId: string; status: ItemStatus; createdAt: number },
 ): Item {
-  const envelope = ItemEnvelopeSchema.parse(value)
   const base = {
-    id: envelope.id ?? crypto.randomUUID(),
+    id: item.id ?? crypto.randomUUID(),
     turnId: context.turnId,
     status: context.status,
     createdAt: context.createdAt,
   }
 
-  switch (envelope.type) {
-    case 'userMessage': {
-      const item = UserMessageSchema.parse(value)
+  switch (item.type) {
+    case 'userMessage':
       return { ...base, type: 'message', role: 'user', text: userInputToText(item.content) }
-    }
 
     case 'hookPrompt':
       return { ...base, type: 'tool_call', text: 'hook prompt' }
 
-    case 'agentMessage': {
-      const item = AgentMessageSchema.parse(value)
+    case 'agentMessage':
       return {
         ...base,
         type: 'message',
         role: 'assistant',
-        ...propertiesWhen(item.phase, (phase) => ({ phase })),
+        ...(item.phase === null ? {} : { phase: item.phase }),
         text: item.text,
       }
-    }
 
-    case 'reasoning': {
-      const item = ReasoningSchema.parse(value)
+    case 'reasoning':
       return {
         ...base,
         type: 'reasoning',
         text: [...item.summary, ...item.content].join('\n\n'),
       }
-    }
 
-    case 'plan': {
-      const item = TextItemSchema.parse(value)
+    case 'plan':
       return { ...base, type: 'plan', text: item.text }
-    }
 
-    case 'commandExecution': {
-      const item = CommandSchema.parse(value)
+    case 'commandExecution':
       return {
         ...base,
         type: 'command',
         command: item.command,
-        ...propertiesWhen(item.aggregatedOutput, (text) => ({ text })),
-        ...propertiesWhen(item.exitCode, (exitCode) => ({ exitCode })),
-        ...propertiesWhen(item.durationMs, (durationMs) => ({ durationMs })),
+        ...(item.aggregatedOutput === null ? {} : { text: item.aggregatedOutput }),
+        ...(item.exitCode === null ? {} : { exitCode: item.exitCode }),
+        ...(item.durationMs === null ? {} : { durationMs: item.durationMs }),
       }
-    }
 
     case 'fileChange': {
-      const item = FileChangeSchema.parse(value)
       const first = item.changes[0]
       return {
         ...base,
         type: 'file_change',
-        ...propertiesWhen(first, ({ path }) => ({ path })),
+        ...(first ? { path: first.path } : {}),
         text: `${item.changes.length} file(s) changed`,
       }
     }
 
-    case 'mcpToolCall': {
-      const item = McpToolCallSchema.parse(value)
+    case 'mcpToolCall':
       return {
         ...base,
         type: 'tool_call',
         text: `${item.server}.${item.tool}`,
-        ...propertiesWhen(item.durationMs, (durationMs) => ({ durationMs })),
+        ...(item.durationMs === null ? {} : { durationMs: item.durationMs }),
       }
-    }
 
-    case 'dynamicToolCall': {
-      const item = DynamicToolCallSchema.parse(value)
+    case 'dynamicToolCall':
       return {
         ...base,
         type: 'tool_call',
         text: item.tool,
-        ...propertiesWhen(item.durationMs, (durationMs) => ({ durationMs })),
+        ...(item.durationMs === null ? {} : { durationMs: item.durationMs }),
       }
-    }
 
     case 'collabAgentToolCall': {
-      const item = CollabAgentSchema.parse(value)
       const failed = failedAgentCount(item)
       const targets = new Set([...item.receiverThreadIds, ...Object.keys(item.agentsStates)]).size
       const status: ItemStatus =
@@ -177,8 +235,7 @@ export function mapThreadItem(
       }
     }
 
-    case 'subAgentActivity': {
-      const item = SubAgentActivitySchema.parse(value)
+    case 'subAgentActivity':
       return {
         ...base,
         type: 'tool_call',
@@ -190,13 +247,11 @@ export function mapThreadItem(
               ? 'Subagent interrupted'
               : 'Subagent active',
       }
-    }
 
     case 'webSearch':
       return { ...base, type: 'tool_call', text: 'web search' }
 
     case 'imageView': {
-      const item = ImageViewSchema.parse(value)
       const name = path.win32.basename(path.posix.basename(item.path))
       return {
         ...base,
@@ -205,10 +260,8 @@ export function mapThreadItem(
       }
     }
 
-    case 'sleep': {
-      const item = SleepSchema.parse(value)
+    case 'sleep':
       return { ...base, type: 'tool_call', text: 'sleep', durationMs: item.durationMs }
-    }
 
     case 'imageGeneration':
       return { ...base, type: 'tool_call', text: 'image generation' }
@@ -218,19 +271,22 @@ export function mapThreadItem(
       return { ...base, type: 'tool_call', text: 'exit review mode' }
     case 'contextCompaction':
       return { ...base, type: 'tool_call', text: 'context compaction' }
-    default:
-      return { ...base, type: 'unknown', text: `[${envelope.type}]` }
+    case 'unknown':
+      return { ...base, type: 'unknown', text: `[${item.wireType}]` }
   }
 }
 
-function failedAgentCount(item: z.infer<typeof CollabAgentSchema>): number {
+function failedAgentCount(item: Extract<CodexThreadItem, { type: 'collabAgentToolCall' }>): number {
   return Object.values(item.agentsStates).filter(
-    ({ status }) => status === 'errored' || status === 'notFound' || status === 'interrupted',
+    (state) =>
+      state?.status === 'errored' ||
+      state?.status === 'notFound' ||
+      state?.status === 'interrupted',
   ).length
 }
 
 function collabAgentLabel(
-  tool: z.infer<typeof CollabAgentSchema>['tool'],
+  tool: Extract<CodexThreadItem, { type: 'collabAgentToolCall' }>['tool'],
   status: ItemStatus,
   targets: number,
   failed: number,

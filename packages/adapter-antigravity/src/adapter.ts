@@ -11,7 +11,6 @@ import {
   rememberAntigravityIndex,
   resolveAntigravityModel,
 } from './models.js'
-import { propertiesWhen } from './properties-when.js'
 
 /**
  * Tier 3 adapter: drives Google's Antigravity CLI (`agy`) in headless
@@ -287,9 +286,11 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
             this.emit('event', {
               type: 'usage.updated',
               usage: {
-                ...propertiesWhen(this.#options.model, (includedValue) => ({
-                  model: includedValue,
-                })),
+                ...(this.#options.model
+                  ? {
+                      model: this.#options.model,
+                    }
+                  : {}),
                 inputTokens: usage.input_tokens ?? 0,
                 cachedInputTokens: usage.cache_read_tokens ?? 0,
                 outputTokens: (usage.output_tokens ?? 0) + reasoningTokens,

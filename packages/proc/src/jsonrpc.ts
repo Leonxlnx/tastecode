@@ -16,28 +16,40 @@ import { killTree } from './kill.js'
 
 export type JsonRpcId = number | string
 
+export type StdioJsonRpcProcess = Pick<
+  ChildProcessWithoutNullStreams,
+  'stdin' | 'stdout' | 'stderr' | 'on' | 'exitCode' | 'signalCode' | 'pid' | 'kill'
+>
+
 export const JsonRpcValueSchema = z.json()
-const JsonRpcInputSchema = z.unknown()
+export type JsonRpcValue = z.infer<typeof JsonRpcValueSchema>
+
+// JSON.parse already establishes JSON compatibility. This schema validates
+// only the JSON-RPC envelope instead of walking every payload a second time.
+const ParsedJsonValueSchema = z.custom<JsonRpcValue>()
 const JsonRpcFrameSchema = z.object({
   id: z.union([z.number(), z.string()]).optional(),
   method: z.string().optional(),
-  params: JsonRpcValueSchema.optional(),
-  result: JsonRpcValueSchema.optional(),
+  params: ParsedJsonValueSchema.optional(),
+  result: ParsedJsonValueSchema.optional(),
   error: z
     .object({
       code: z.number().optional(),
       message: z.string().optional(),
-      data: JsonRpcValueSchema.optional(),
+      data: ParsedJsonValueSchema.optional(),
     })
     .optional(),
 })
 
-export type JsonRpcValue = z.infer<typeof JsonRpcValueSchema>
-export type JsonRpcInput = z.input<typeof JsonRpcInputSchema>
 type JsonRpcResult = JsonRpcValue | undefined
 
+export function parseJsonValue(text: string): JsonRpcValue {
+  // SAFETY: JSON.parse can return only JSON primitives, arrays, and objects.
+  return JSON.parse(text) as JsonRpcValue
+}
+
 export interface JsonRpcResultParser<Result> {
-  parse(value: JsonRpcInput): Result
+  parse(value: unknown): Result
 }
 
 export interface JsonRpcRequestOptions {
@@ -72,7 +84,7 @@ export class JsonRpcError extends Error {
 }
 
 export class StdioJsonRpc {
-  #child: ChildProcessWithoutNullStreams
+  #child: StdioJsonRpcProcess
   /**
    * Our outbound calls only.
    *
@@ -95,7 +107,7 @@ export class StdioJsonRpc {
   #onStderr: (text: string) => void = () => {}
 
   /** `label` names the process in errors, so a dead child says which one died. */
-  constructor(child: ChildProcessWithoutNullStreams, label = 'agent') {
+  constructor(child: StdioJsonRpcProcess, label = 'agent') {
     this.#child = child
     this.#label = label
     child.stdout.setEncoding('utf8')
@@ -129,19 +141,15 @@ export class StdioJsonRpc {
     this.#onStderr = handler
   }
 
-  request(
-    method: string,
-    params?: JsonRpcInput,
-    options?: JsonRpcRequestOptions,
-  ): Promise<JsonRpcResult>
+  request(method: string, params?: unknown, options?: JsonRpcRequestOptions): Promise<JsonRpcResult>
   request<Result>(
     method: string,
-    params: JsonRpcInput,
+    params: unknown,
     options: ParsedJsonRpcRequestOptions<Result>,
   ): Promise<Result>
   request<Result>(
     method: string,
-    params: JsonRpcInput = {},
+    params: unknown = {},
     options: JsonRpcRequestOptions | ParsedJsonRpcRequestOptions<Result> = {},
   ): Promise<JsonRpcResult | Result> {
     // Also when the process is gone: #write silently drops the frame once the
@@ -161,12 +169,11 @@ export class StdioJsonRpc {
       }
       this.#pending.set(id, call)
     })
-    const message = { jsonrpc: '2.0', id, method, params: JsonRpcValueSchema.parse(params) }
-    this.#write(message)
+    this.#write({ jsonrpc: '2.0', id, method, params })
     return 'result' in options ? promise.then((value) => options.result.parse(value)) : promise
   }
 
-  notify(method: string, params: JsonRpcInput = {}): void {
+  notify(method: string, params: unknown = {}): void {
     if (this.#disposed) return
     this.#write({ jsonrpc: '2.0', method, params })
   }
@@ -178,9 +185,9 @@ export class StdioJsonRpc {
     killTree(this.#child)
   }
 
-  #write(message: JsonRpcInput): void {
+  #write(message: unknown): void {
     if (this.#exited || !this.#child.stdin.writable) return
-    this.#child.stdin.write(JSON.stringify(JsonRpcValueSchema.parse(message)) + '\n')
+    this.#child.stdin.write(JSON.stringify(message) + '\n')
   }
 
   #ingest(chunk: string): void {
@@ -194,9 +201,9 @@ export class StdioJsonRpc {
   }
 
   #handleLine(line: string): void {
-    let parsed: JsonRpcInput
+    let parsed: unknown
     try {
-      parsed = JSON.parse(line)
+      parsed = parseJsonValue(line)
     } catch {
       // A non-JSON line means the CLI printed something to stdout that is not
       // protocol traffic. Surfacing it beats silently discarding it, because

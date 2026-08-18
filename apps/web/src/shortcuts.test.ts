@@ -1,6 +1,5 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from 'vitest'
-import { requiredValue } from './test-dom.js'
 import {
   createDefaultKeybindings,
   findKeybindingConflict,
@@ -29,10 +28,7 @@ describe('shortcuts', () => {
   })
 
   it('matches the primary modifier on macOS and Windows without stealing shifted variants', () => {
-    const commandPalette = requiredValue(
-      createDefaultKeybindings().commandPalette,
-      'default command palette keybind',
-    )
+    const commandPalette = createDefaultKeybindings().commandPalette!
     expect(
       matchesShortcut(new KeyboardEvent('keydown', { key: 'k', metaKey: true }), commandPalette),
     ).toBe(true)
@@ -48,10 +44,7 @@ describe('shortcuts', () => {
   })
 
   it('formats platform-native hints and recognizes every editable target', () => {
-    const newProject = requiredValue(
-      createDefaultKeybindings().newProject,
-      'default new project keybind',
-    )
+    const newProject = createDefaultKeybindings().newProject!
     expect(shortcutLabel(newProject, true)).toBe('⌘⇧O')
     expect(shortcutLabel(newProject, false)).toBe('Ctrl+Shift+O')
     expect(isEditableTarget(document.createElement('textarea'))).toBe(true)

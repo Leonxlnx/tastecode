@@ -9,7 +9,7 @@ const ClipboardTextSchema = z
   .min(1)
   .refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_CLIPBOARD_TEXT_BYTES)
 
-export function clipboardText(value: BoundaryValue): string {
+export function clipboardText(value: unknown): string {
   const parsed = ClipboardTextSchema.safeParse(value)
   if (!parsed.success) {
     throw new Error('Invalid clipboard text')
@@ -17,4 +17,3 @@ export function clipboardText(value: BoundaryValue): string {
   return parsed.data
 }
 import { z } from 'zod'
-import type { BoundaryValue } from './boundary.js'

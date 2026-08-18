@@ -26,11 +26,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import {
-  agentPresentation,
-  providerDisplayName,
-  sessionSourcePresentation,
-} from '../provider-presentation.js'
+import { sessionSourcePresentation } from '../provider-presentation.js'
 import { AppSelect } from './AppSelect.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { Project, Session } from './Sidebar.js'

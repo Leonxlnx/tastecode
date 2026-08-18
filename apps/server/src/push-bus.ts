@@ -49,6 +49,6 @@ export class PushBus<Socket extends PushSocket = WebSocket> {
 
   /** Push to every connection. Each keeps its own sequence. */
   broadcast<C extends ChannelName>(channel: C, data: DataOf<C>): void {
-    for (const socket of [...this.#sockets.keys()]) this.send(socket, channel, data)
+    for (const socket of this.#sockets.keys()) this.send(socket, channel, data)
   }
 }

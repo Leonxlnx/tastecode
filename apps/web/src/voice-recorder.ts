@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { z } from 'zod'
-import type { BoundaryValue } from './boundary.js'
 
 export const VOICE_SAMPLE_RATE = 24_000
 export const MAX_RECORDING_MS = 120_000
@@ -183,10 +181,9 @@ export function formatRecordingDuration(durationMs: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 }
 
-export function describeMicrophoneError(error: BoundaryValue): string {
-  const parsed = z.instanceof(Error).safeParse(error)
-  if (!parsed.success) return 'The microphone could not be opened.'
-  switch (parsed.data.name) {
+export function describeMicrophoneError(error: unknown): string {
+  if (!(error instanceof Error)) return 'The microphone could not be opened.'
+  switch (error.name) {
     case 'NotAllowedError':
     case 'PermissionDeniedError':
       return 'Microphone access was denied. Allow it in system or browser settings, then try again.'
@@ -199,7 +196,7 @@ export function describeMicrophoneError(error: BoundaryValue): string {
     case 'SecurityError':
       return 'Microphone access is blocked in this environment.'
     default:
-      return parsed.data.message.trim() || 'The microphone could not be opened.'
+      return error.message.trim() || 'The microphone could not be opened.'
   }
 }
 

@@ -2,18 +2,15 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ModelConnectionStore, type ModelCredentialStore } from './model-connections.js'
 
 const credentials = new Map<string, string>()
-const credentialStore: ModelCredentialStore = {
-  has: (reference) => credentials.has(reference),
-  write: (reference, value) => {
-    credentials.set(reference, value)
-  },
-  remove: (reference) => {
-    credentials.delete(reference)
-  },
-}
+vi.mock('./credentials.js', () => ({
+  hasCredential: (reference: string) => credentials.has(reference),
+  writeCredential: (reference: string, value: string) => credentials.set(reference, value),
+  removeCredential: (reference: string) => credentials.delete(reference),
+}))
+
+const { ModelConnectionStore } = await import('./model-connections.js')
 const roots: string[] = []
 
 afterEach(() => {
@@ -26,7 +23,7 @@ describe('model connections', () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'harness-providers-'))
     roots.push(root)
     const location = path.join(root, 'providers.json')
-    const store = new ModelConnectionStore(location, credentialStore)
+    const store = new ModelConnectionStore(location)
     store.upsert({
       id: 'work-openrouter',
       displayName: 'Work OpenRouter',

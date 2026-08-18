@@ -1,21 +1,30 @@
 import { describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
-import { killTree, readNdjson, runCli, spawnCli, StdioJsonRpc } from './index.js'
+import {
+  killTree,
+  readNdjson,
+  runCli,
+  spawnCli,
+  StdioJsonRpc,
+  type StdioJsonRpcProcess,
+} from './index.js'
 
 describe('StdioJsonRpc', () => {
   it('forgets a timed-out request and still accepts the next reply', async () => {
     vi.useFakeTimers()
     try {
-      // SAFETY: StdioJsonRpc uses only these three streams and EventEmitter process events in this test.
-      const child = new EventEmitter() as ChildProcessWithoutNullStreams
-      child.stdin = new PassThrough()
-      child.stdout = new PassThrough()
-      child.stderr = new PassThrough()
+      const child = Object.assign(new EventEmitter(), {
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        exitCode: null,
+        signalCode: null,
+        kill: vi.fn(() => true),
+      }) satisfies StdioJsonRpcProcess
       const rpc = new StdioJsonRpc(child, 'test agent')
 
       const timedOut = rpc.request('slow', {}, { timeoutMs: 10 })

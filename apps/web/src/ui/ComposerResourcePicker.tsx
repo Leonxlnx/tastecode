@@ -10,7 +10,6 @@ import {
 import type { McpServer, ProviderId, ResultOf, Skill } from '@harness/contracts'
 import { Box, Server } from 'lucide-react'
 import type { Transport } from '../transport.js'
-import { propertiesWhen } from '../properties-when.js'
 
 type SkillsInventory = ResultOf<'skills.list'>
 type McpInventory = ResultOf<'mcp.list'>
@@ -291,7 +290,7 @@ function skillResource(skill: Skill): ComposerResource {
     scope: skillScope(skill.scope),
     token: skill.name.startsWith('$') ? skill.name : `$${skill.name}`,
     available: unavailableReason === undefined,
-    ...propertiesWhen(unavailableReason, (unavailableReason) => ({ unavailableReason })),
+    ...(unavailableReason ? { unavailableReason } : {}),
   }
 }
 
@@ -316,7 +315,7 @@ function mcpResource(server: McpServer): ComposerResource {
     scope: server.scope === 'project' ? 'Project' : 'Personal',
     token: server.id.startsWith('@') ? server.id : `@${server.id}`,
     available: unavailableReason === undefined,
-    ...propertiesWhen(unavailableReason, (unavailableReason) => ({ unavailableReason })),
+    ...(unavailableReason ? { unavailableReason } : {}),
   }
 }
 

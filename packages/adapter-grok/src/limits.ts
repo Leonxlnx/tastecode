@@ -1,8 +1,7 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { StdioJsonRpc, type JsonRpcInput, type JsonRpcValue } from '@harness/proc'
+import { spawn } from 'node:child_process'
+import { StdioJsonRpc } from '@harness/proc'
 import { z } from 'zod'
 import { grokAccount, grokCommand, type GrokAccount } from './adapter.js'
-import { propertiesWhen } from './properties-when.js'
 
 /**
  * Weekly credit pool through Grok Build's own ACP extension. The provider
@@ -48,25 +47,6 @@ type NumericValue = z.infer<typeof NumericValueSchema>
 type CentsValue = z.infer<typeof CentsSchema>
 type BillingConfig = z.infer<typeof BillingConfigSchema>
 type GrokBilling = z.infer<typeof GrokBillingSchema>
-
-export interface GrokBillingRpc {
-  request(method: string, params?: JsonRpcInput): Promise<JsonRpcValue | undefined>
-  dispose(): void
-}
-
-export type GrokBillingDependencies = {
-  spawn: (
-    command: string,
-    args: string[],
-    options: { stdio: ['pipe', 'pipe', 'pipe']; windowsHide: boolean },
-  ) => ChildProcessWithoutNullStreams
-  connect: (child: ChildProcessWithoutNullStreams) => GrokBillingRpc
-}
-
-const DEFAULT_DEPENDENCIES: GrokBillingDependencies = {
-  spawn,
-  connect: (child) => new StdioJsonRpc(child, 'grok billing'),
-}
 
 function finiteNumber(value: NumericValue | undefined): number | undefined {
   if (value === undefined) return undefined
@@ -114,9 +94,7 @@ function includedCreditsRow(config: BillingConfig): ProviderLimit[] {
   const resetsAt = timestamp(period?.end ?? config.billingPeriodEnd)
   const usedPercent = percent(config.creditUsagePercent)
   if (usedPercent !== undefined) {
-    return [
-      { label, usedPercent, ...propertiesWhen(!(resetsAt === undefined), () => ({ resetsAt })) },
-    ]
+    return [{ label, usedPercent, ...(!(resetsAt === undefined) ? { resetsAt } : {}) }]
   }
 
   const rawLimit = cents(config.monthlyLimit)
@@ -136,7 +114,7 @@ function includedCreditsRow(config: BillingConfig): ProviderLimit[] {
         label,
         usedPercent:
           limit && includedUsed !== undefined ? percent((includedUsed / limit) * 100)! : 0,
-        ...propertiesWhen(!(resetsAt === undefined), () => ({ resetsAt })),
+        ...(!(resetsAt === undefined) ? { resetsAt } : {}),
         valueLabel,
       },
     ]
@@ -150,10 +128,12 @@ function includedCreditsRow(config: BillingConfig): ProviderLimit[] {
         {
           label,
           usedPercent: 0,
-          ...propertiesWhen(!(resetsAt === undefined), () => ({ resetsAt })),
-          ...propertiesWhen(config.creditUsagePercent !== undefined, () => ({
-            valueLabel: 'Usage not reported',
-          })),
+          ...(!(resetsAt === undefined) ? { resetsAt } : {}),
+          ...(config.creditUsagePercent !== undefined
+            ? {
+                valueLabel: 'Usage not reported',
+              }
+            : {}),
         },
       ]
     : []
@@ -201,7 +181,7 @@ function onDemandCreditsRow(root: GrokBilling, config: BillingConfig): ProviderL
 }
 
 /** Pure mapping so the billing shape is testable without the network. */
-export function mapGrokBilling(body: JsonRpcInput): ProviderLimit[] {
+export function mapGrokBilling(body: unknown): ProviderLimit[] {
   const parsed = GrokBillingSchema.safeParse(body)
   if (!parsed.success) return []
   const root = parsed.data
@@ -223,12 +203,12 @@ function bounded<T>(promise: Promise<T>): Promise<T> {
   ]).finally(() => clearTimeout(timer))
 }
 
-async function readGrokBilling(dependencies: GrokBillingDependencies): Promise<GrokBilling> {
-  const child = dependencies.spawn(grokCommand(), ['agent', '--no-leader', 'stdio'], {
+async function readGrokBilling(): Promise<GrokBilling> {
+  const child = spawn(grokCommand(), ['agent', '--no-leader', 'stdio'], {
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   })
-  const rpc = dependencies.connect(child)
+  const rpc = new StdioJsonRpc(child, 'grok billing')
   try {
     await bounded(
       rpc.request('initialize', {
@@ -247,25 +227,22 @@ async function readGrokBilling(dependencies: GrokBillingDependencies): Promise<G
 
 let billingRead: Promise<GrokBilling> | undefined
 
-function grokBilling(dependencies: GrokBillingDependencies): Promise<GrokBilling> {
-  billingRead ??= readGrokBilling(dependencies).finally(() => {
+function grokBilling(): Promise<GrokBilling> {
+  billingRead ??= readGrokBilling().finally(() => {
     billingRead = undefined
   })
   return billingRead
 }
 
-export async function grokLimits(
-  dependencies: GrokBillingDependencies = DEFAULT_DEPENDENCIES,
-): Promise<ProviderLimit[]> {
-  return mapGrokBilling(await grokBilling(dependencies))
+export async function grokLimits(): Promise<ProviderLimit[]> {
+  return mapGrokBilling(await grokBilling())
 }
 
 /** Provider-local availability keeps shared code free of Grok auth checks. */
 export async function grokLimitSource(
   account: () => Promise<GrokAccount> = grokAccount,
-  dependencies: GrokBillingDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<GrokLimitSource> {
   if (!(await account()).signedIn) return { status: 'unavailable' }
-  const body = await grokBilling(dependencies)
+  const body = await grokBilling()
   return { status: 'ready', limits: mapGrokBilling(body) }
 }

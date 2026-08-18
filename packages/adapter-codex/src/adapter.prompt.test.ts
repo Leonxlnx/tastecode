@@ -1,6 +1,25 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { CodexAdapter } from './adapter.js'
 import { FakeCodexRpc } from './fake-rpc.test-support.js'
+
+const proc = vi.hoisted(() => ({
+  rpc: undefined as FakeCodexRpc | undefined,
+  spawnArgs: [] as string[],
+}))
+
+vi.mock('@harness/proc', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@harness/proc')>()),
+  spawnCli: vi.fn((_command: string, args: string[]) => {
+    proc.spawnArgs = args
+    return { pid: 1 }
+  }),
+  StdioJsonRpc: class {
+    constructor() {
+      if (!proc.rpc) throw new Error('fake Codex RPC was not installed')
+      return proc.rpc
+    }
+  },
+}))
 
 function promptAdapter() {
   const rpc = new FakeCodexRpc((method) => {
@@ -16,14 +35,9 @@ function promptAdapter() {
     if (method === 'turn/start') return { turn: { id: 'turn-1' } }
     return {}
   })
-  let spawnArgs: string[] = []
-  const adapter = new CodexAdapter({
-    connect: (launch) => {
-      spawnArgs = launch.args
-      return rpc
-    },
-  })
-  return { adapter, rpc, spawnArgs: () => spawnArgs }
+  proc.rpc = rpc
+  proc.spawnArgs = []
+  return { adapter: new CodexAdapter(), rpc, spawnArgs: () => proc.spawnArgs }
 }
 
 describe('Codex prompt transport', () => {

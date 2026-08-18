@@ -1,5 +1,4 @@
 import {
-  JsonValueSchema,
   PreviewCaptureRequestSchema,
   PushSchema,
   ResponseSchema,
@@ -10,7 +9,6 @@ import {
   type MethodName,
   type ParamsOf,
   type ResultOf,
-  type JsonValue,
 } from '@harness/contracts'
 import { z } from 'zod'
 import { canCapturePreview, capturePreview } from './bridge.js'
@@ -47,14 +45,14 @@ export interface Transport {
   request<M extends MethodName>(method: M, params: ParamsOf<M>): Promise<ResultOf<M>>
 }
 
-type Pending = { resolve: (value: JsonValue) => void; reject: (error: Error) => void }
+type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void }
 
-function parseChannelData<C extends ChannelName>(channel: C, value: JsonValue): DataOf<C> {
+function parseChannelData<C extends ChannelName>(channel: C, value: unknown): DataOf<C> {
   // SAFETY: The schema indexed by this same channel validates the value before it is returned.
   return channels[channel].parse(value) as DataOf<C>
 }
 
-function parseMethodResult<M extends MethodName>(method: M, value: JsonValue): ResultOf<M> {
+function parseMethodResult<M extends MethodName>(method: M, value: unknown): ResultOf<M> {
   // SAFETY: The result schema indexed by this same method validates the value before it is returned.
   return methods[method].result.parse(value) as ResultOf<M>
 }
@@ -63,8 +61,6 @@ function parseMethodResult<M extends MethodName>(method: M, value: JsonValue): R
 export class IndeterminateRequestError extends Error {
   override name = 'IndeterminateRequestError'
 }
-
-export const IndeterminateRequestErrorSchema = z.instanceof(IndeterminateRequestError)
 
 export class WebSocketTransport implements Transport {
   #url: string
@@ -84,7 +80,7 @@ export class WebSocketTransport implements Transport {
 
   #stateListeners = new Set<(s: ConnectionState) => void>()
   #sequenceGapListeners = new Set<(expected: number, received: number) => void>()
-  #channelListeners = new Map<string, Set<(data: JsonValue) => void>>()
+  #channelListeners = new Map<string, Set<(data: unknown) => void>>()
 
   constructor(url: string) {
     this.#url = url
@@ -168,7 +164,7 @@ export class WebSocketTransport implements Transport {
       set = new Set()
       this.#channelListeners.set(channel, set)
     }
-    const dispatch = (data: JsonValue) => listener(parseChannelData(channel, data))
+    const dispatch = (data: unknown) => listener(parseChannelData(channel, data))
     set.add(dispatch)
     return () => set.delete(dispatch)
   }
@@ -292,9 +288,9 @@ export class WebSocketTransport implements Transport {
   }
 
   #receive(raw: string): void {
-    let value: JsonValue
+    let value: unknown
     try {
-      value = JsonValueSchema.parse(JSON.parse(raw))
+      value = JSON.parse(raw)
     } catch {
       return
     }
@@ -312,7 +308,7 @@ export class WebSocketTransport implements Transport {
         const text = message.error.message || 'The server reported an error.'
         call.reject(new Error(message.error.detail ? `${text} (${message.error.detail})` : text))
       } else {
-        call.resolve(JsonValueSchema.parse(message.result))
+        call.resolve(message.result)
       }
       return
     }
@@ -320,7 +316,7 @@ export class WebSocketTransport implements Transport {
     const push = PushSchema.safeParse(value)
     if (!push.success) return
     const { channel, sequence } = push.data
-    const data = JsonValueSchema.parse(push.data.data)
+    const data = push.data.data
 
     const expected = this.#lastSequence + 1
     if (this.#lastSequence !== 0 && sequence <= this.#lastSequence) {

@@ -7,7 +7,6 @@ import { promisify } from 'node:util'
 import { z } from 'zod'
 import { takeSnapshot } from './checkpoint.js'
 import type { Store } from './store.js'
-import { propertiesWhen } from './properties-when.js'
 
 const run = promisify(execFile)
 
@@ -125,14 +124,14 @@ async function parseDiff(
     const fileDecision = store.diffDecision(threadId, fileTarget(targetId))
     const value: DiffFile = {
       path: file.path,
-      ...propertiesWhen(file.previousPath, (includedValue) => ({ previousPath: includedValue })),
+      ...(file.previousPath ? { previousPath: file.previousPath } : {}),
       status: file.status,
       binary: patch.includes('GIT binary patch') || patch.includes('Binary files '),
       hunks: hunks.map((hunk) => {
         const decision = store.diffDecision(threadId, hunkTarget(hunk.value.id))
-        return { ...hunk.value, ...propertiesWhen(decision, (decision) => ({ decision })) }
+        return { ...hunk.value, ...(decision ? { decision } : {}) }
       }),
-      ...propertiesWhen(fileDecision, (includedValue) => ({ decision: includedValue })),
+      ...(fileDecision ? { decision: fileDecision } : {}),
     }
     return { value, patch, targetId, hunks }
   }

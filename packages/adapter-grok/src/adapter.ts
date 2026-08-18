@@ -7,7 +7,6 @@ import { pathToFileURL } from 'node:url'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { JsonRpcValueSchema, killTree, readNdjson } from '@harness/proc'
 import { z } from 'zod'
-import { propertiesWhen } from './properties-when.js'
 
 /**
  * Tier 3 adapter: drives xAI's Grok Build CLI (`grok`) in headless
@@ -357,17 +356,17 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
           turnId,
           type: entry.itemType,
           status,
-          ...propertiesWhen(entry.itemType === 'command', () => ({
-            command: entry.command ?? entry.label,
-            ...propertiesWhen(output, (includedValue) => ({ text: includedValue })),
-          })),
-          ...propertiesWhen(entry.itemType === 'file_change' && entry.path, () => ({
-            path: entry.path,
-          })),
-          ...propertiesWhen(entry.itemType === 'file_change' && output, () => ({ text: output })),
-          ...propertiesWhen(entry.itemType === 'tool_call', () => ({
-            text: output ? `${entry.label}\n${output}` : entry.label,
-          })),
+          ...(entry.itemType === 'command'
+            ? {
+                command: entry.command ?? entry.label,
+                ...(output ? { text: output } : {}),
+              }
+            : {}),
+          ...(entry.itemType === 'file_change' && entry.path ? { path: entry.path } : {}),
+          ...(entry.itemType === 'file_change' && output ? { text: output } : {}),
+          ...(entry.itemType === 'tool_call'
+            ? { text: output ? `${entry.label}\n${output}` : entry.label }
+            : {}),
           createdAt: Date.now(),
         },
       })
@@ -412,12 +411,16 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
             itemId,
             itemType,
             label: frame.title ?? name,
-            ...propertiesWhen(frame.rawInput?.command, (includedValue) => ({
-              command: includedValue,
-            })),
-            ...propertiesWhen(frame.rawInput?.file_path, (includedValue) => ({
-              path: includedValue,
-            })),
+            ...(frame.rawInput?.command
+              ? {
+                  command: frame.rawInput?.command,
+                }
+              : {}),
+            ...(frame.rawInput?.file_path
+              ? {
+                  path: frame.rawInput?.file_path,
+                }
+              : {}),
           } satisfies OpenTool
           tools.set(frame.toolCallId, entry)
           this.emit('event', {
@@ -427,13 +430,17 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
               turnId,
               type: itemType,
               status: 'started',
-              ...propertiesWhen(itemType === 'command', () => ({
-                command: frame.rawInput?.command ?? entry.label,
-              })),
-              ...propertiesWhen(itemType === 'file_change' && entry.path, () => ({
-                path: entry.path,
-              })),
-              ...propertiesWhen(itemType === 'tool_call', () => ({ text: entry.label })),
+              ...(itemType === 'command'
+                ? {
+                    command: frame.rawInput?.command ?? entry.label,
+                  }
+                : {}),
+              ...(itemType === 'file_change' && entry.path
+                ? {
+                    path: entry.path,
+                  }
+                : {}),
+              ...(itemType === 'tool_call' ? { text: entry.label } : {}),
               createdAt: Date.now(),
             },
           })
@@ -465,18 +472,22 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
             this.emit('event', {
               type: 'usage.updated',
               usage: {
-                ...propertiesWhen(this.#options.model, (includedValue) => ({
-                  model: includedValue,
-                })),
+                ...(this.#options.model
+                  ? {
+                      model: this.#options.model,
+                    }
+                  : {}),
                 inputTokens: usage.input_tokens ?? 0,
                 cachedInputTokens: usage.cache_read_input_tokens ?? 0,
                 outputTokens: (usage.output_tokens ?? 0) + reasoningTokens,
                 reasoningTokens,
                 totalTokens: usage.total_tokens ?? 0,
                 inputIncludesCached: false,
-                ...propertiesWhen(frame.total_cost_usd !== undefined, () => ({
-                  costUsd: frame.total_cost_usd,
-                })),
+                ...(frame.total_cost_usd !== undefined
+                  ? {
+                      costUsd: frame.total_cost_usd,
+                    }
+                  : {}),
               },
             })
           }
@@ -668,7 +679,7 @@ class StreamedItem {
           id: this.#id,
           turnId,
           type,
-          ...propertiesWhen(type === 'message', () => ({ role: 'assistant' as const })),
+          ...(type === 'message' ? { role: 'assistant' as const } : {}),
           status: 'started',
           text: '',
           createdAt: Date.now(),
@@ -694,7 +705,7 @@ class StreamedItem {
         id: this.#id,
         turnId,
         type,
-        ...propertiesWhen(type === 'message', () => ({ role: 'assistant' as const })),
+        ...(type === 'message' ? { role: 'assistant' as const } : {}),
         status,
         text: this.#text.trimEnd(),
         createdAt: Date.now(),
@@ -742,9 +753,11 @@ export function parseGrokModels(output: string): Model[] {
       displayName: grokDisplayName(id),
       isDefault: Boolean(match[2]),
       reasoningEfforts: details ? [...details.reasoningEfforts] : [],
-      ...propertiesWhen(details, (includedValue) => ({
-        defaultReasoningEffort: includedValue.defaultReasoningEffort,
-      })),
+      ...(details
+        ? {
+            defaultReasoningEffort: details.defaultReasoningEffort,
+          }
+        : {}),
       serviceTiers: [],
     })
   }

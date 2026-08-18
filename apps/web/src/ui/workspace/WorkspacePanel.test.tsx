@@ -2,37 +2,49 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { beginLogin, resetInstalls } from '../../provider-install.js'
-import { requiredElement, requiredInstance } from '../../test-dom.js'
 import { TestTransport } from '../../test-transport.js'
-import {
-  WorkspacePanel,
-  type WorkspacePanelHaptics,
-  type WorkspacePanelProviderTerminal,
-  type WorkspacePanelTerminal,
-} from './WorkspacePanel.js'
+import { WorkspacePanel } from './WorkspacePanel.js'
 
-const performHaptic = vi.fn<WorkspacePanelHaptics['perform']>()
-const prepareHaptics = vi.fn<WorkspacePanelHaptics['prepare']>()
-const haptics = {
-  enabled: () => true,
-  perform: performHaptic,
-  prepare: prepareHaptics,
-} satisfies WorkspacePanelHaptics
+const hapticMocks = vi.hoisted(() => ({
+  perform: vi.fn(),
+  prepare: vi.fn(),
+}))
+const performHaptic = hapticMocks.perform
+const prepareHaptics = hapticMocks.prepare
 
-const TestTerminal = (({ onClose }) => (
-  <button type="button" onClick={onClose}>
-    Exit terminal
-  </button>
-)) satisfies WorkspacePanelTerminal
+vi.mock('../../haptics.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../haptics.js')>()),
+  appHapticsEnabled: () => true,
+  performAppHaptic: hapticMocks.perform,
+  prepareAppHaptics: hapticMocks.prepare,
+}))
 
-const TestProviderTerminal = (({ installKey, ariaLabel, profile }) => (
-  <div
-    data-testid="provider-login-terminal"
-    data-install-key={installKey}
-    data-profile={profile}
-    aria-label={ariaLabel}
-  />
-)) satisfies WorkspacePanelProviderTerminal
+vi.mock('./WorkspaceTerminal.js', () => ({
+  WorkspaceTerminal: ({ onClose }: { onClose: () => void }) => (
+    <button type="button" onClick={onClose}>
+      Exit terminal
+    </button>
+  ),
+}))
+
+vi.mock('../InstallTerminal.js', () => ({
+  InstallTerminal: ({
+    installKey,
+    ariaLabel,
+    profile,
+  }: {
+    installKey: string
+    ariaLabel?: string | undefined
+    profile?: 'app' | 'workspace' | undefined
+  }) => (
+    <div
+      data-testid="provider-login-terminal"
+      data-install-key={installKey}
+      data-profile={profile}
+      aria-label={ariaLabel}
+    />
+  ),
+}))
 
 const idleTransport = new TestTransport()
 
@@ -102,7 +114,6 @@ describe('WorkspacePanel', () => {
         onClose={vi.fn()}
         onExpandedChange={vi.fn()}
         onWidthChange={onWidthChange}
-        haptics={haptics}
       />,
     )
 
@@ -116,15 +127,20 @@ describe('WorkspacePanel', () => {
 
     fireEvent.pointerEnter(handle)
     fireEvent.pointerDown(handle, { clientX: 500, pointerId: 7 })
+    expect(container.style.transition).toBe('none')
     fireEvent.pointerMove(window, { clientX: 420, pointerId: 7 })
 
-    expect(onWidthChange).toHaveBeenCalledWith(480)
+    expect(onWidthChange).not.toHaveBeenCalled()
     fireEvent.pointerMove(window, { clientX: 0, pointerId: 7 })
-    expect(onWidthChange).toHaveBeenLastCalledWith(540)
+    expect(onWidthChange).not.toHaveBeenCalled()
     expect(prepareHaptics).toHaveBeenCalled()
-    expect(performHaptic).toHaveBeenCalledWith('alignment')
 
     fireEvent.blur(window)
+    expect(onWidthChange).toHaveBeenCalledOnce()
+    expect(onWidthChange).toHaveBeenCalledWith(540)
+    expect(container.style.getPropertyValue('--workspace-panel-w')).toBe('540px')
+    expect(container.style.transition).toBe('')
+    expect(performHaptic).toHaveBeenCalledWith('alignment')
     const widthCalls = onWidthChange.mock.calls.length
     fireEvent.pointerMove(window, { clientX: 380, pointerId: 7 })
     expect(onWidthChange).toHaveBeenCalledTimes(widthCalls)
@@ -147,7 +163,6 @@ describe('WorkspacePanel', () => {
         onClose={onClose}
         onExpandedChange={vi.fn()}
         onWidthChange={vi.fn()}
-        terminalComponent={TestTerminal}
       />,
     )
 
@@ -171,10 +186,9 @@ describe('WorkspacePanel', () => {
         onClose={onClose}
         onExpandedChange={vi.fn()}
         onWidthChange={vi.fn()}
-        terminalComponent={TestTerminal}
       />,
     )
-    fireEvent.transitionEnd(requiredElement(document, '.workspace-panel', HTMLElement), {
+    fireEvent.transitionEnd(document.querySelector<HTMLElement>('.workspace-panel')!, {
       propertyName: 'transform',
     })
     expect(screen.queryByRole('tab', { name: 'Terminal' })).toBeNull()
@@ -196,7 +210,6 @@ describe('WorkspacePanel', () => {
         onClose={vi.fn()}
         onExpandedChange={onExpandedChange}
         onWidthChange={vi.fn()}
-        terminalComponent={TestTerminal}
       />,
     )
 
@@ -240,19 +253,21 @@ describe('WorkspacePanel', () => {
           title: 'Claude Code login',
           installKey: 'login:claude-code',
         }}
-        providerTerminalComponent={TestProviderTerminal}
         onProviderLoginClose={onProviderLoginClose}
       />,
     )
 
     expect(await screen.findByRole('tab', { name: 'Claude Code login' })).toBeTruthy()
-    const terminal = screen.getByTestId('provider-login-terminal')
+    const terminal = await screen.findByTestId('provider-login-terminal')
     expect(terminal.getAttribute('data-install-key')).toBe('login:claude-code')
     expect(terminal.getAttribute('data-profile')).toBe('workspace')
     expect(terminal.getAttribute('aria-label')).toBe('Claude Code login terminal')
     expect(onOpen).toHaveBeenCalledOnce()
 
-    const code = requiredInstance(screen.getByLabelText('Claude login code'), HTMLInputElement)
+    const codeElement = screen.getByLabelText('Claude login code')
+    expect(codeElement).toBeInstanceOf(HTMLInputElement)
+    if (!(codeElement instanceof HTMLInputElement)) throw new Error('expected Claude login input')
+    const code = codeElement
     expect(code.placeholder).toBe('Paste code here if prompted')
     expect(code.autocomplete).toBe('one-time-code')
     fireEvent.change(code, { target: { value: 'test-login-code' } })
@@ -289,7 +304,6 @@ describe('WorkspacePanel', () => {
         onClose={onClose}
         onExpandedChange={vi.fn()}
         onWidthChange={vi.fn()}
-        terminalComponent={TestTerminal}
       />,
     )
 
@@ -317,7 +331,6 @@ describe('WorkspacePanel', () => {
           onClose={vi.fn()}
           onExpandedChange={vi.fn()}
           onWidthChange={vi.fn()}
-          terminalComponent={TestTerminal}
         />,
       )
 

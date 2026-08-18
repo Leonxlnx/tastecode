@@ -1,4 +1,4 @@
-import { type BoundaryRecord, type BoundaryValue, list, record, string } from './parse.js'
+import { type BoundaryRecord, list, record, string } from './parse.js'
 
 export const DESIGN_BRIEF_ATTACHMENT = 'tastecode://design-brief-v1'
 const LEGACY_DESIGN_BRIEF_ATTACHMENT = 'personal-harness://design-brief-v1'
@@ -143,7 +143,7 @@ export function parseBriefingOutput(text: string): BriefingOutput {
   }
 }
 
-function question(value: BoundaryValue): BriefingQuestion {
+function question(value: unknown): BriefingQuestion {
   const questionRecord = record(value, 'briefing question')
   const options = list(questionRecord.options, 'briefing question options')
   if (options.length === 0) {

@@ -1,7 +1,6 @@
 import { open, readdir, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { assertPublicWorkspaceFile, isSecretWorkspaceName } from './api-workspace-paths.js'
-import { propertiesWhen } from './properties-when.js'
 
 const MAX_TEXT_BYTES = 2 * 1024 * 1024
 const BINARY_SAMPLE_BYTES = 8 * 1024
@@ -99,7 +98,7 @@ export async function readWorkspaceTextFile(
     size: metadata.size,
     binary,
     truncated: metadata.size > bytesRead,
-    ...propertiesWhen(!binary, () => ({ content: bytes.toString('utf8') })),
+    ...(!binary ? { content: bytes.toString('utf8') } : {}),
   }
 }
 

@@ -52,7 +52,6 @@ import { AppSelect } from '../AppSelect.js'
 import { Markdown } from '../Markdown.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { PullRequestFiles } from './PullRequestFiles.js'
-import { propertiesWhen } from '../../properties-when.js'
 import { errorMessage as messageOf } from '../../boundary.js'
 
 type DetailTab = 'summary' | 'files'
@@ -99,7 +98,8 @@ export function PullRequestDetailPane(props: {
     async (refresh = false, silent = false): Promise<PullRequestDetail | undefined> => {
       const id = ++request.current
       if (!silent) {
-        refresh ? setRefreshing(true) : setLoading(true)
+        if (refresh) setRefreshing(true)
+        else setLoading(true)
         setError(undefined)
       }
       try {
@@ -406,7 +406,7 @@ function PullRequestSummary(props: {
       const pending = props.transport
         .request('pullRequests.metadataOptions', {
           repository: detail.repository,
-          ...propertiesWhen(refresh, (includedValue) => ({ includedValue: true })),
+          ...(refresh ? { includedValue: true } : {}),
         })
         .then((next) => {
           metadataOptionsRef.current = next

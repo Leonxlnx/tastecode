@@ -7,7 +7,6 @@ import type {
   Usage,
   UserInputRequest,
 } from '@harness/contracts'
-import { propertiesWhen } from './properties-when.js'
 
 /**
  * Folds the domain event stream into what the UI renders.
@@ -229,7 +228,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       const items = state.items.slice()
       items[existingIndex] = {
         ...event.item,
-        ...propertiesWhen(!event.item.text && existing.text, (text) => ({ text })),
+        ...(!event.item.text && existing.text ? { text: existing.text } : {}),
       }
       return { ...state, items }
     }
@@ -248,7 +247,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       const streamed = items[index]?.text
       items[index] = {
         ...event.item,
-        ...propertiesWhen(!event.item.text, () => ({ text: streamed })),
+        ...(!event.item.text ? { text: streamed } : {}),
       }
       return { ...state, items }
     }
@@ -391,7 +390,7 @@ class ReplayItems {
     if (!optimistic && existing.status !== 'started') return
     this.items[existingIndex] = {
       ...item,
-      ...propertiesWhen(!item.text && existing.text, (text) => ({ text })),
+      ...(!item.text && existing.text ? { text: existing.text } : {}),
     }
   }
 
@@ -406,7 +405,7 @@ class ReplayItems {
     const streamed = this.items[existingIndex]?.text
     this.items[existingIndex] = {
       ...item,
-      ...propertiesWhen(!item.text, () => ({ text: streamed })),
+      ...(!item.text ? { text: streamed } : {}),
     }
   }
 
@@ -557,7 +556,7 @@ export function appendUserMessage(
         role: 'user',
         status: 'completed',
         text,
-        ...propertiesWhen(attachments.length > 0, () => ({ attachments })),
+        ...(attachments.length > 0 ? { attachments } : {}),
         createdAt,
       },
     ],

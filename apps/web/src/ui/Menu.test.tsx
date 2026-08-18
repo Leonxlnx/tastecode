@@ -3,11 +3,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useRef } from 'react'
 import { Pencil } from 'lucide-react'
-import { requiredInstance, requiredValue } from '../test-dom.js'
 import { Menu, MenuItem } from './Menu.js'
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
-  return new DOMRect(left, top, width, height)
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+    toJSON: () => ({}),
+  }
 }
 
 function ContextMenuHarness() {
@@ -180,7 +189,7 @@ describe('Menu', () => {
     const charlie = screen.getByRole('menuitem', { name: 'Charlie' })
     const delta = screen.getByRole('menuitem', { name: 'Delta' })
     expect(document.activeElement).toBe(alpha)
-    expect(requiredInstance(bravo, HTMLButtonElement).disabled).toBe(true)
+    expect((bravo as HTMLButtonElement).disabled).toBe(true)
     expect(screen.getByRole('menu').dataset.inputModality).toBe('keyboard')
 
     fireEvent.keyDown(alpha, { key: 'ArrowDown' })
@@ -196,7 +205,7 @@ describe('Menu', () => {
 
     fireEvent.keyDown(trigger, { key: 'ArrowUp' })
     expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Delta' }))
-    fireEvent.keyDown(requiredValue(document.activeElement, 'active menu item'), { key: 'Escape' })
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' })
     expect(document.activeElement).toBe(trigger)
 
     fireEvent.keyDown(trigger, { key: 'ArrowDown' })

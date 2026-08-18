@@ -3,6 +3,19 @@ import { describe, expect, it, vi } from 'vitest'
 import { CodexAdapter } from './adapter.js'
 import { FakeCodexRpc } from './fake-rpc.test-support.js'
 
+const proc = vi.hoisted(() => ({ rpc: undefined as FakeCodexRpc | undefined }))
+
+vi.mock('@harness/proc', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@harness/proc')>()),
+  spawnCli: vi.fn(() => ({ pid: 1 })),
+  StdioJsonRpc: class {
+    constructor() {
+      if (!proc.rpc) throw new Error('fake Codex RPC was not installed')
+      return proc.rpc
+    }
+  },
+}))
+
 type SourceState = {
   account: JsonRpcValue
   accountResponse?: JsonRpcValue
@@ -37,8 +50,8 @@ function sourceAdapter(initial: Partial<SourceState> = {}) {
     }
     return {}
   })
-  const adapter = new CodexAdapter({ connect: () => rpc })
-  return { adapter, rpc, state }
+  proc.rpc = rpc
+  return { adapter: new CodexAdapter(), rpc, state }
 }
 
 const capturedRateLimitUpdate = {

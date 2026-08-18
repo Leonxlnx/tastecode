@@ -2,61 +2,65 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render } from '@testing-library/react'
 import type { Item } from '@harness/contracts'
-import type { MarkdownProps } from './Markdown.js'
-import { propertiesWhen } from '../properties-when.js'
-import {
-  defaultThreadDependencies,
-  Thread,
-  type ThreadDependencies,
-  type ThreadThinkingOrbProps,
-  type ThreadVirtualizer,
-  type ThreadVirtualizerOptions,
-} from './Thread.js'
 
-const markdownRender = vi.fn()
-const orbRender = vi.fn()
-const virtualizerOptions = vi.fn()
+const markdownRender = vi.hoisted(() => vi.fn())
+const orbRender = vi.hoisted(() => vi.fn())
+const virtualizerOptions = vi.hoisted(() => vi.fn())
 
-function useTestVirtualizer(options: ThreadVirtualizerOptions): ThreadVirtualizer {
-  virtualizerOptions(options)
-  const { count, getItemKey } = options
-  const rows = Array.from({ length: count }, (_, index) => ({
-    index,
-    key: getItemKey(index),
-    start: index * 72,
-    end: (index + 1) * 72,
-  }))
-  return {
-    getVirtualItems: () => rows,
-    getTotalSize: () => count * 72,
-    getOffsetForIndex: (index) => [index * 72, 'start'],
-    scrollToIndex: () => undefined,
-    measureElement: () => undefined,
-    measurementsCache: rows,
-  }
-}
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: (options: { count: number; getItemKey: (index: number) => string | number }) => {
+    virtualizerOptions(options)
+    const { count } = options
+    const rows = Array.from({ length: count }, (_, index) => ({
+      index,
+      key: index,
+      start: index * 72,
+      end: (index + 1) * 72,
+      size: 72,
+      lane: 0,
+    }))
+    return {
+      getVirtualItems: () => rows,
+      getTotalSize: () => count * 72,
+      getOffsetForIndex: (index: number) => [index * 72],
+      getScrollElement: () => null,
+      scrollToIndex: () => undefined,
+      measureElement: () => undefined,
+      measurementsCache: rows,
+    }
+  },
+}))
 
-function TestMarkdown({ text, streaming = false, liveUpdate, updateVersion }: MarkdownProps) {
-  markdownRender({
+vi.mock('./Markdown.js', () => ({
+  Markdown: ({
     text,
-    streaming,
-    ...propertiesWhen(liveUpdate, (update) => ({ liveUpdate: update })),
-    ...propertiesWhen(updateVersion !== undefined, () => ({ updateVersion })),
-  })
-  return <span>{text}</span>
-}
+    streaming = false,
+    liveUpdate,
+    updateVersion,
+  }: {
+    text: string
+    streaming?: boolean
+    liveUpdate?: { kind: 'append'; text: string }
+    updateVersion?: number
+  }) => {
+    markdownRender({
+      text,
+      streaming,
+      ...(liveUpdate ? { liveUpdate } : {}),
+      ...(updateVersion === undefined ? {} : { updateVersion }),
+    })
+    return <span>{text}</span>
+  },
+}))
 
-function TestThinkingOrb(props: ThreadThinkingOrbProps) {
-  orbRender(props)
-  return <canvas aria-label={props.state} />
-}
+vi.mock('thinking-orbs', () => ({
+  ThinkingOrb: (props: { state: string; size: number }) => {
+    orbRender(props)
+    return <canvas aria-label={props.state} />
+  },
+}))
 
-const dependencies: ThreadDependencies = {
-  ...defaultThreadDependencies,
-  useVirtualizer: useTestVirtualizer,
-  MarkdownComponent: TestMarkdown,
-  ThinkingOrbComponent: TestThinkingOrb,
-}
+import { Thread } from './Thread.js'
 
 const onDecide = () => undefined
 const onAnswerUserInput = () => undefined
@@ -110,7 +114,6 @@ function view(
       onAnswerUserInput={onAnswerUserInput}
       onEditMessage={onEditMessage}
       onRevertCheckpoint={onRevertCheckpoint}
-      dependencies={dependencies}
     />
   )
 }

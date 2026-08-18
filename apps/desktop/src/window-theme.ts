@@ -1,10 +1,9 @@
 import { z } from 'zod'
-import type { BoundaryValue } from './boundary.js'
 
 const WindowThemeSchema = z.enum(['light', 'dark'])
 const WindowThemePreferenceSchema = z.enum(['system', 'light', 'dark'])
 
-export function windowThemeOptions(themeValue: BoundaryValue) {
+export function windowThemeOptions(themeValue: unknown) {
   const result = WindowThemeSchema.safeParse(themeValue)
   if (!result.success) throw new Error('Invalid window theme')
   const theme = result.data
@@ -23,7 +22,7 @@ export function windowThemeOptions(themeValue: BoundaryValue) {
       }
 }
 
-export function windowThemeSource(preference: BoundaryValue): 'system' | 'light' | 'dark' {
+export function windowThemeSource(preference: unknown): 'system' | 'light' | 'dark' {
   const result = WindowThemePreferenceSchema.safeParse(preference)
   if (!result.success) throw new Error('Invalid window theme preference')
   return result.data

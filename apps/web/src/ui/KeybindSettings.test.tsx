@@ -2,7 +2,6 @@
 import { useState } from 'react'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { requiredValue } from '../test-dom.js'
 import {
   createDefaultKeybindings,
   type KeybindingId,
@@ -68,10 +67,7 @@ describe('keybind settings', () => {
 
   it('keeps recording when a keybind conflicts or has no safe modifier', () => {
     render(<StatefulKeybindSettings />)
-    const row = requiredValue(
-      screen.getByText('New chat').closest<HTMLElement>('.keybind-row'),
-      'New chat keybind row',
-    )
+    const row = screen.getByText('New chat').closest<HTMLElement>('.keybind-row')!
     const recorder = within(row).getByRole('button', {
       name: 'Change New chat keybind',
     })

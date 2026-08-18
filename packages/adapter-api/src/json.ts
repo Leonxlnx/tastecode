@@ -1,32 +1,27 @@
-import { z } from 'zod'
+export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject
+export type JsonObject = { [key: string]: JsonValue }
 
-export const JsonValueSchema = z.json()
-export const JsonObjectSchema = z.record(z.string(), JsonValueSchema)
-const BoundaryValueSchema = z.unknown()
-const JsonArraySchema = z.array(JsonValueSchema)
-const JsonStringSchema = z.string()
-const JsonNumberSchema = z.number()
-
-export type JsonValue = z.infer<typeof JsonValueSchema>
-export type JsonObject = z.infer<typeof JsonObjectSchema>
-export type JsonInput = z.input<typeof BoundaryValueSchema>
-
-export function jsonObject(value: JsonInput): JsonObject {
-  const result = JsonObjectSchema.safeParse(value)
-  return result.success ? result.data : {}
+export function parseJsonValue(text: string): JsonValue {
+  // SAFETY: JSON.parse can return only JSON primitives, arrays, and objects.
+  return JSON.parse(text) as JsonValue
 }
 
-export function jsonArray(value: JsonInput): JsonValue[] {
-  const result = JsonArraySchema.safeParse(value)
-  return result.success ? result.data : []
+export function isJsonObject(value: JsonValue | undefined): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-export function jsonString(value: JsonInput): string {
-  const result = JsonStringSchema.safeParse(value)
-  return result.success ? result.data : ''
+export function jsonObject(value: JsonValue | undefined): JsonObject {
+  return isJsonObject(value) ? value : {}
 }
 
-export function jsonNumber(value: JsonInput): number {
-  const result = JsonNumberSchema.safeParse(value)
-  return result.success ? result.data : 0
+export function jsonArray(value: JsonValue | undefined): JsonValue[] {
+  return Array.isArray(value) ? value : []
+}
+
+export function jsonString(value: JsonValue | undefined): string {
+  return typeof value === 'string' ? value : ''
+}
+
+export function jsonNumber(value: JsonValue | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }

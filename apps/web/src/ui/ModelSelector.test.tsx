@@ -2,9 +2,52 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { Model } from '@harness/contracts'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { ModelChoice } from '../model-catalog.js'
-import { requiredInstance } from '../test-dom.js'
+
+const haptics = vi.hoisted(() => ({
+  performAppHaptic: vi.fn(),
+  prepareAppHaptics: vi.fn(),
+}))
+
+vi.mock('../haptics.js', () => haptics)
+
+vi.mock('./Menu.js', () => ({
+  Menu(props: {
+    trigger: (open: boolean) => ReactNode
+    children: (close: () => void) => ReactNode
+    disabled?: boolean
+    label?: string
+    panelRole?: string
+    panelLabel?: string
+    panelClassName?: string
+  }) {
+    const [open, setOpen] = useState(false)
+    return (
+      <div>
+        <button
+          type="button"
+          disabled={props.disabled}
+          aria-label={props.label}
+          aria-expanded={open}
+          onClick={() => setOpen((current) => !current)}
+        >
+          {props.trigger(open)}
+        </button>
+        {open ? (
+          <div
+            role={props.panelRole ?? 'menu'}
+            aria-label={props.panelLabel}
+            className={props.panelClassName}
+          >
+            {props.children(() => setOpen(false))}
+          </div>
+        ) : null}
+      </div>
+    )
+  },
+}))
+
 import {
   ModelSelector,
   getCompactModelName,
@@ -13,42 +56,7 @@ import {
   getFastModeOffValue,
   getFriendlyEffortLabel,
   groupModelsBySource,
-  type ModelSelectorHaptics,
-  type ModelSelectorMenu,
 } from './ModelSelector.js'
-
-const performHaptic = vi.fn<ModelSelectorHaptics['perform']>()
-const prepareHaptics = vi.fn<ModelSelectorHaptics['prepare']>()
-const haptics = {
-  perform: performHaptic,
-  prepare: prepareHaptics,
-} satisfies ModelSelectorHaptics
-
-const TestMenu = ((props) => {
-  const [open, setOpen] = useState(false)
-  return (
-    <div>
-      <button
-        type="button"
-        disabled={props.disabled}
-        aria-label={props.label}
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-      >
-        {props.trigger(open)}
-      </button>
-      {open ? (
-        <div
-          role={props.panelRole ?? 'menu'}
-          aria-label={props.panelLabel}
-          className={props.panelClassName}
-        >
-          {props.children(() => setOpen(false))}
-        </div>
-      ) : null}
-    </div>
-  )
-}) satisfies ModelSelectorMenu
 
 const RAW_MODELS: Model[] = [
   {
@@ -100,8 +108,6 @@ function renderSelector(overrides: RenderOverrides = {}) {
       onModelChange={onModelChange}
       onEffortChange={onEffortChange}
       onServiceTierChange={onServiceTierChange}
-      haptics={haptics}
-      menuComponent={TestMenu}
       {...overrides}
     />,
   )
@@ -110,31 +116,29 @@ function renderSelector(overrides: RenderOverrides = {}) {
 }
 
 beforeEach(() => {
-  performHaptic.mockClear()
-  prepareHaptics.mockClear()
+  haptics.performAppHaptic.mockClear()
+  haptics.prepareAppHaptics.mockClear()
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback: FrameRequestCallback) => {
     callback(0)
     return 1
   })
-  const pointerCaptures = new WeakMap<HTMLElement, Set<number>>()
   Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', {
     configurable: true,
     value(this: HTMLElement, pointerId: number) {
-      const captures = pointerCaptures.get(this) ?? new Set<number>()
-      captures.add(pointerId)
-      pointerCaptures.set(this, captures)
+      ;(this as HTMLElement & { __pointerCapture?: number }).__pointerCapture = pointerId
     },
   })
   Object.defineProperty(HTMLElement.prototype, 'releasePointerCapture', {
     configurable: true,
     value(this: HTMLElement, pointerId: number) {
-      pointerCaptures.get(this)?.delete(pointerId)
+      const target = this as HTMLElement & { __pointerCapture?: number }
+      if (target.__pointerCapture === pointerId) delete target.__pointerCapture
     },
   })
   Object.defineProperty(HTMLElement.prototype, 'hasPointerCapture', {
     configurable: true,
     value(this: HTMLElement, pointerId: number) {
-      return pointerCaptures.get(this)?.has(pointerId) ?? false
+      return (this as HTMLElement & { __pointerCapture?: number }).__pointerCapture === pointerId
     },
   })
 })
@@ -245,10 +249,10 @@ describe('ModelSelector', () => {
     expect(slider.querySelectorAll('canvas')).toHaveLength(2)
     expect(slider.querySelectorAll('.model-selector__slider-stop')).toHaveLength(4)
     expect(slider.querySelector('.model-selector__slider-thumb')).toBeNull()
-    expect(prepareHaptics).toHaveBeenCalled()
-    expect(performHaptic).toHaveBeenCalledTimes(2)
-    expect(performHaptic).toHaveBeenNthCalledWith(1, 'alignment')
-    expect(performHaptic).toHaveBeenNthCalledWith(2, 'alignment')
+    expect(haptics.prepareAppHaptics).toHaveBeenCalled()
+    expect(haptics.performAppHaptic).toHaveBeenCalledTimes(2)
+    expect(haptics.performAppHaptic).toHaveBeenNthCalledWith(1, 'alignment')
+    expect(haptics.performAppHaptic).toHaveBeenNthCalledWith(2, 'alignment')
 
     fireEvent.pointerUp(slider, { clientX: 350, pointerId: 4 })
     expect(onEffortChange).toHaveBeenCalledWith('xhigh')
@@ -493,7 +497,7 @@ describe('ModelSelector', () => {
     )
     claudeSearch.focus()
     fireEvent.keyDown(claudeSearch, { key: 'Escape' })
-    expect(requiredInstance(claudeSearch, HTMLInputElement).value).toBe('')
+    expect((claudeSearch as HTMLInputElement).value).toBe('')
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
   })
 

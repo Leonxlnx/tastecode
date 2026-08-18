@@ -40,24 +40,9 @@ function capabilities(connection: StoredModelConnection): ModelConnection['capab
   }
 }
 
-export type ModelCredentialStore = {
-  has(reference: string): boolean
-  write(reference: string, value: string): void
-  remove(reference: string): void
-}
-
-const OS_CREDENTIALS: ModelCredentialStore = {
-  has: hasCredential,
-  write: writeCredential,
-  remove: removeCredential,
-}
-
 /** Human-readable provider configuration. API keys stay in the OS credential store. */
 export class ModelConnectionStore {
-  constructor(
-    private readonly location = defaultLocation(),
-    private readonly credentials: ModelCredentialStore = OS_CREDENTIALS,
-  ) {}
+  constructor(private readonly location = defaultLocation()) {}
 
   list(): ModelConnection[] {
     return this.#read().connections.map((connection) => this.#public(connection))
@@ -85,7 +70,7 @@ export class ModelConnectionStore {
 
   setCredential(id: string, apiKey: string): void {
     const connection = this.get(id)
-    this.credentials.write(connection.credentialRef, apiKey)
+    writeCredential(connection.credentialRef, apiKey)
   }
 
   remove(id: string): void {
@@ -94,14 +79,14 @@ export class ModelConnectionStore {
     if (index < 0) throw new Error(`model connection "${id}" does not exist`)
     const [connection] = file.connections.splice(index, 1)
     this.#write(file)
-    if (connection) this.credentials.remove(connection.credentialRef)
+    if (connection) removeCredential(connection.credentialRef)
   }
 
   #public(connection: StoredModelConnection): ModelConnection {
     const { credentialRef, ...config } = connection
     return {
       ...config,
-      credentialConfigured: this.credentials.has(credentialRef),
+      credentialConfigured: hasCredential(credentialRef),
       capabilities: capabilities(connection),
     }
   }
