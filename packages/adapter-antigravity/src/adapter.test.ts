@@ -68,7 +68,7 @@ describe('Antigravity turn invocation', () => {
     await adapter.sendTurn(thread.id, 'Say only the word MONDLICHT.')
     for (const frame of CAPTURED_FRAMES) child.stdout.write(`${frame}\n`)
     child.stdout.end()
-    child.emit('exit', 0)
+    child.emit('close', 0)
     await new Promise((resolve) => setImmediate(resolve))
 
     expect(record.args).toContain('stream-json')
@@ -104,7 +104,7 @@ describe('Antigravity turn invocation', () => {
     const thread = await adapter.startThread('C:\\repo')
     await adapter.sendTurn(thread.id, 'Hello')
     child.stdout.end()
-    child.emit('exit', 3)
+    child.emit('close', 3)
     await new Promise((resolve) => setImmediate(resolve))
     expect(events).toEqual(
       expect.arrayContaining([
@@ -172,7 +172,7 @@ describe('Antigravity turn invocation', () => {
         'gemini-3.6-flash-low\tGemini 3.6 Flash (Low)\n',
     )
     discovery.stdout.end()
-    discovery.emit('exit', 0)
+    discovery.emit('close', 0)
     await sending
 
     expect(
@@ -194,7 +194,7 @@ describe('Antigravity model list', () => {
     expect(stdinEnded).toBe(true)
     child.stdout.write('gemini-3.6-flash-high\n')
     child.stdout.end()
-    child.emit('exit', 0)
+    child.emit('close', 0)
     await expect(listing).resolves.toMatchObject([{ id: 'gemini-3.6-flash-high' }])
   })
 
