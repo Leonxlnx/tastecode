@@ -48,7 +48,7 @@
   --queue-text: #ededed;
   --queue-action: #8a8a8a;
   --queue-hover: #2b2b2b;
-  --composer-placeholder: #6f6f6f;
+  --composer-placeholder: #828282;
   --composer-review: #65b8ff;
   --composer-danger: #fe8549;
   --composer-shadow: 0 14px 34px -26px rgb(0 0 0 / 70%);
@@ -310,7 +310,7 @@
   --queue-text: #18181b;
   --queue-action: #96969a;
   --queue-hover: #f5f5f6;
-  --composer-placeholder: #c7c7ca;
+  --composer-placeholder: #71717a;
   --composer-review: #2d72dc;
   --composer-danger: #ef4d05;
   --composer-shadow: 0 12px 30px -18px rgb(24 24 27 / 18%);
@@ -464,10 +464,6 @@ html.is-macos-font-smoothing {
   color: var(--text-3);
   padding: 0 10px;
   margin: 0;
-}
-
-:focus-visible {
-  outline: none !important;
 }
 
 /* Keep text selection at the browser default so Electron follows the user's

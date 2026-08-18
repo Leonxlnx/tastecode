@@ -34,6 +34,12 @@ describe('sidebar theme CSS', () => {
     )
   })
 
+  it('hides provider text when chat row actions are visible', () => {
+    expect(appCss).toMatch(
+      /\.sessrow:hover \.sess__source :is\(\.source-identity__label, \.source-identity__qualifier\),\s*\.sessrow:focus-within \.sess__source :is\(\.source-identity__label, \.source-identity__qualifier\) \{[^}]*opacity: 0;/s,
+    )
+  })
+
   it('keeps project chats wide without a nesting rail', () => {
     expect(appCss).not.toContain('.proj__chevron')
     expect(appCss).toMatch(/\.proj__toggle \{[^}]*padding: 4px 8px;/s)
