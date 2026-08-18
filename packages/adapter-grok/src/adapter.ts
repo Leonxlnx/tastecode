@@ -587,7 +587,7 @@ function captureGrok(spawnFn: SpawnFn, args: string[], timeoutMs = 15000): Promi
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => (stdout += chunk))
     child.on('error', (error) => finish(error))
-    child.on('exit', (code) =>
+    child.on('close', (code) =>
       finish(code === 0 ? stdout : new Error(`grok exited with code ${code ?? 'unknown'}`)),
     )
     child.stdin.on('error', () => undefined)

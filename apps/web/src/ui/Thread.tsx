@@ -1118,6 +1118,7 @@ function ViewedImagePreview({
 }) {
   const dependencies = useContext(ThreadDependenciesContext)
   const [preview, setPreview] = useState<PickedAttachment>()
+  const [previewSettled, setPreviewSettled] = useState(false)
   const [viewerOpen, setViewerOpen] = useState(false)
   const [thumbnailFailed, setThumbnailFailed] = useState(false)
   const [imageFailed, setImageFailed] = useState(false)
@@ -1125,13 +1126,21 @@ function ViewedImagePreview({
   useEffect(() => {
     if (!active) return
     let cancelled = false
-    void dependencies.previewViewedImage(reference).then((result) => {
-      if (!cancelled) {
-        setPreview(result)
-        setThumbnailFailed(false)
-        setImageFailed(false)
-      }
-    })
+    setPreview(undefined)
+    setPreviewSettled(false)
+    setThumbnailFailed(false)
+    setImageFailed(false)
+    void dependencies
+      .previewViewedImage(reference)
+      .then((result) => {
+        if (!cancelled) {
+          setPreview(result)
+          setPreviewSettled(true)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPreviewSettled(true)
+      })
     return () => {
       cancelled = true
     }
@@ -1145,11 +1154,21 @@ function ViewedImagePreview({
     }
     return (
       <span
-        className="viewed-image-preview viewed-image-preview--message is-loading"
-        aria-label={`Loading preview of ${attachmentName(reference)}`}
+        className={`viewed-image-preview viewed-image-preview--message ${previewSettled ? 'is-unavailable' : 'is-loading'}`}
+        role="status"
+        aria-label={
+          previewSettled
+            ? `Preview unavailable for ${attachmentName(reference)}`
+            : `Loading preview of ${attachmentName(reference)}`
+        }
       >
         <span className="viewed-image-preview__placeholder" aria-hidden>
           <Images />
+          {previewSettled ? (
+            <span className="viewed-image-preview__unavailable-copy">
+              {attachmentName(reference)}
+            </span>
+          ) : null}
         </span>
       </span>
     )

@@ -187,24 +187,25 @@ _Rejected:_ ACP-only (gives up Codex's richest-in-class surface) · native-only 
 4 engines) · a TasteCode agent loop as the only integration path (throws away richer vendor
 agent features) · a `switch` on provider in the orchestrator.
 
-### Voice dictation uses the active Codex ChatGPT session
+### Voice dictation uses an explicit OpenAI API connection
 
-Voice dictation is the explicit exception to provider independence because it reuses the
-user's existing ChatGPT entitlement instead of making transcription a shared agent feature.
+Voice dictation remains the explicit provider-name exception in the renderer: it is offered for a
+Codex chat, but it never extracts or reuses a ChatGPT or provider-CLI session credential.
 
 The shared renderer records mono 24 kHz PCM WAV, then sends the bounded clip through the
-local server. The Codex adapter asks app-server for the current ChatGPT session token and
-uses it only for a bounded multipart upload to ChatGPT's transcription endpoint. The token
-never crosses the server protocol, renderer bridge, logs, database, or filesystem. A 401 or
-403 refreshes the session through Codex once before failing.
+local server. The server resolves an enabled official OpenAI connection, reads its explicit API
+key from the operating-system credential store, and uploads the clip to OpenAI's documented
+audio-transcription API. The key never crosses the server protocol or renderer bridge and is not
+stored in the database, configuration file, or logs.
 
-The mic is capability-gated to ChatGPT-authenticated Codex sessions. API-key auth, older
-Codex versions without `getAuthStatus`, and other providers hide it rather than falling back
-to browser `SpeechRecognition`, which is unreliable in packaged Electron and inconsistent
-across web clients.
+The mic is capability-gated to Codex chats with a configured OpenAI API connection. Other
+providers and installations without that key hide it rather than falling back to browser
+`SpeechRecognition`, which is unreliable in packaged Electron and inconsistent across web
+clients.
 
-_Rejected:_ Codex realtime websocket transcription (currently requires API-key auth) · Web
-Speech API (unreliable in packaged Electron and inconsistent across web clients).
+_Rejected:_ exporting a ChatGPT subscription token from Codex app-server to an undocumented
+ChatGPT backend · Web Speech API (unreliable in packaged Electron and inconsistent across web
+clients).
 
 ---
 
@@ -342,17 +343,18 @@ registry entry, which is deliberately a good first outside contribution.
 
 ## Change log
 
-| Date       | Change                                                                  |
-| ---------- | ----------------------------------------------------------------------- |
-| 2026-07-28 | Initial decisions.                                                      |
-| 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration.  |
-| 2026-08-02 | Added Codex-backed voice dictation.                                     |
-| 2026-08-03 | Added the provider-neutral direct API runtime decision.                 |
-| 2026-08-06 | Replaced the Electron target with a staged Rust + GPUI migration.       |
-| 2026-08-12 | Added user-owned, protocol-compatible harness commands and Pi RPC.      |
-| 2026-08-12 | Defined provider-neutral ephemeral Side chat sessions.                  |
-| 2026-08-12 | Standardized Electron browser previews on sandboxed `<webview>` guests. |
-| 2026-08-14 | Removed phone and remote-client support from active product scope.      |
-| 2026-08-14 | Routed project-enabled Grok MCP sessions through ACP stdio.             |
-| 2026-08-15 | Archived the Rust + GPUI rewrite and restored Electron on `main`.       |
-| 2026-08-18 | Separated stable TasteCode ids from provider-native resume identities.  |
+| Date       | Change                                                                            |
+| ---------- | --------------------------------------------------------------------------------- |
+| 2026-07-28 | Initial decisions.                                                                |
+| 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration.            |
+| 2026-08-02 | Added Codex-backed voice dictation.                                               |
+| 2026-08-03 | Added the provider-neutral direct API runtime decision.                           |
+| 2026-08-06 | Replaced the Electron target with a staged Rust + GPUI migration.                 |
+| 2026-08-12 | Added user-owned, protocol-compatible harness commands and Pi RPC.                |
+| 2026-08-12 | Defined provider-neutral ephemeral Side chat sessions.                            |
+| 2026-08-12 | Standardized Electron browser previews on sandboxed `<webview>` guests.           |
+| 2026-08-14 | Removed phone and remote-client support from active product scope.                |
+| 2026-08-14 | Routed project-enabled Grok MCP sessions through ACP stdio.                       |
+| 2026-08-15 | Archived the Rust + GPUI rewrite and restored Electron on `main`.                 |
+| 2026-08-18 | Moved voice transcription from ChatGPT session reuse to explicit OpenAI API auth. |
+| 2026-08-18 | Separated stable TasteCode ids from provider-native resume identities.            |
