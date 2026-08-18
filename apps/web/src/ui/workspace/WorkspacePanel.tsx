@@ -620,13 +620,21 @@ function ProviderLoginCodeInput(props: { transport: Transport; installKey: strin
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    const value = code.trim()
+    const submittedCode = code
+    const value = submittedCode.trim()
     if (!value || sending) return
+    const terminalId = login.terminalId
     setSending(true)
     setError(undefined)
     void props.transport
-      .request('terminal.input', { terminalId: login.terminalId, data: `${value}\r` })
-      .then(() => setCode(''))
+      .request('terminal.input', { terminalId, data: `${value}\r` })
+      .then(() =>
+        setCode((current) =>
+          current === submittedCode && installState(props.installKey)?.terminalId === terminalId
+            ? ''
+            : current,
+        ),
+      )
       .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
       .finally(() => setSending(false))
   }

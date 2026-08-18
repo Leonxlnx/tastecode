@@ -209,9 +209,13 @@ describe('WorkspacePanel', () => {
   })
 
   it('opens a provider login in its own workspace terminal tab', async () => {
+    let resolveInput!: (value: object) => void
+    const pendingInput = new Promise<object>((resolve) => {
+      resolveInput = resolve
+    })
     const transport = new TestTransport(async (method) => {
       if (method === 'providers.launch') return { terminalId: 'claude-login-terminal' }
-      if (method === 'terminal.input') return {}
+      if (method === 'terminal.input') return pendingInput
       throw new Error(`unexpected ${method}`)
     })
     await beginLogin(transport, { provider: 'claude-code' }, () => {})
@@ -259,7 +263,9 @@ describe('WorkspacePanel', () => {
         params: { terminalId: 'claude-login-terminal', data: 'test-login-code\r' },
       }),
     )
-    expect(code.value).toBe('')
+    fireEvent.change(code, { target: { value: 'newer-login-code' } })
+    await act(async () => resolveInput({}))
+    expect(code.value).toBe('newer-login-code')
 
     fireEvent.click(screen.getByRole('button', { name: 'Close Claude Code login' }))
     expect(onProviderLoginClose).toHaveBeenCalledWith(7)
