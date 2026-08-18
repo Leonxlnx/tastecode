@@ -1,6 +1,6 @@
 # TasteCode launch handoff
 
-Updated: 2026-08-18 09:42 CEST / 2026-08-18 15:42 China Standard Time
+Updated: 2026-08-18 10:16 CEST / 2026-08-18 16:16 China Standard Time
 Launch status: no-go; Windows is locally proved, while signing, macOS, legal, security, and release-owner decisions remain open
 GitHub is the authority for current commits, branches, pull requests, and release state.
 
@@ -27,6 +27,10 @@ local-validation claims are historical.
 - Required implementation PRs are merged: #959 `358b8870`, #960 `f8b6b2d0`, #961 `3d73379c`,
   #968 `925da0b3`, #969 `8129136e`, #970 `af0e9e47`, #972 `2d845221`, #936 `6b6ba915`,
   #971 `e3b98a7f`, and startup/zoom fix #974 `030d37ed`.
+- Security PR #975 is open, Ready, MERGEABLE, and waiting for review at exact head `b60f60d0`.
+  It closes the remaining standalone-secret diagnostics gap in #965. Its full local gates passed:
+  1,690 tests, 15/15 typechecks, 15/15 builds, lint with existing warnings only, and zero Gitleaks
+  findings in `apps/desktop/src`. Do not merge it without the required security review.
 - PR #937 adds two release-only corrections after merging current `main`: `d246b1a9` makes
   electron-builder emit the required `beta.yml` channel metadata, and `daff2153` emits terminal
   fonts as local files instead of CSP-blocked `data:` URLs. The CSP was not weakened.
@@ -111,6 +115,11 @@ They are proof artifacts, not publishable release artifacts.
   license files. Issue #952 remains open for the maintainer's final legal approval.
 - #950 remains open. CLI-owned Claude authentication removed unsafe credential handling but does not
   grant Anthropic approval for third-party subscription routing.
+- Official Gitleaks 8.30.0 scanned all Git refs: 2,368 commits and approximately 15.20 MB, with zero
+  leaks. A working-tree scan reported five matches only inside the generated binary `app.asar`;
+  scanning the safely extracted payload produced zero findings, confirming container false positives.
+  The scanner archive checksum was verified before use:
+  `54FE94F644B832DD08E8C3A5915EFB3BFA862386D59FB27CA0792CB687A83573`.
 
 #### Remaining go/no-go blockers
 
@@ -118,7 +127,8 @@ They are proof artifacts, not publishable release artifacts.
    Gatekeeper/Finder launch, run native PTY/Keychain proof, and generate hashes only after signing.
 2. Windows installer and executable need the chosen signing outcome; current artifacts are unsigned.
 3. Leon must decide #950 and approve the legal package in #952.
-4. Finish #965 and a full-history/all-refs secret scan before repository visibility changes.
+4. Review and merge #975 before repository visibility changes. The full-history/all-refs scan is
+   complete and clean; the diagnostics redaction fix remains intentionally unmerged pending review.
 5. Exercise the one-writer release path for #954 only after explicitly deciding which two obsolete
    drafts to delete. Do not delete either draft implicitly.
 6. Keep direct API/Connections hidden or clear #955 before exposing it.
