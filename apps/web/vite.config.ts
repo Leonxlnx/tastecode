@@ -23,5 +23,5 @@ export default defineConfig({
     port: 5183,
     strictPort: true,
   },
-  build: { outDir: 'dist', emptyOutDir: true },
+  build: { outDir: 'dist', emptyOutDir: true, assetsInlineLimit: 0 },
 })
