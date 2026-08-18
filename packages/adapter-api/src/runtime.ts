@@ -5,6 +5,7 @@ import type {
   ApprovalRequest,
   Capabilities,
   DomainEvent,
+  Item,
   Thread,
   Usage,
 } from '@harness/contracts'
@@ -79,6 +80,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
   #thread: Thread | undefined
   #messages: ApiMessage[] = []
   #active: { turnId: string; controller: AbortController; done: Promise<void> } | undefined
+  readonly #openItems = new Map<string, Item>()
   #approval: { id: string; resolve: (decision: ApprovalDecision) => void } | undefined
   #approvedTools = new Set<string>()
   #turnCounter = 0
@@ -215,6 +217,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
           await this.#runTool(turnId, call, signal)
         }
       }
+      this.#finishOpenItems('completed')
       this.emit('event', {
         type: 'turn.completed',
         turnId,
@@ -256,6 +259,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
           message: this.#redact(detail) || 'The model request failed.',
         })
       }
+      this.#finishOpenItems('failed')
       this.emit('event', {
         type: 'turn.completed',
         turnId,
@@ -300,17 +304,14 @@ export class ApiAgentSession extends EventEmitter<Events> {
       if (event.type === 'text') {
         if (!started) {
           started = true
-          this.emit('event', {
-            type: 'item.started',
-            item: {
-              id: itemId,
-              turnId,
-              type: 'message',
-              role: 'assistant',
-              status: 'started',
-              text: '',
-              createdAt: Date.now(),
-            },
+          this.#startItem({
+            id: itemId,
+            turnId,
+            type: 'message',
+            role: 'assistant',
+            status: 'started',
+            text: '',
+            createdAt: Date.now(),
           })
         }
         const step = safeDelta(pendingText + event.delta)
@@ -322,16 +323,13 @@ export class ApiAgentSession extends EventEmitter<Events> {
       } else if (event.type === 'reasoning') {
         if (!reasoningStarted) {
           reasoningStarted = true
-          this.emit('event', {
-            type: 'item.started',
-            item: {
-              id: reasoningId,
-              turnId,
-              type: 'reasoning',
-              status: 'started',
-              text: '',
-              createdAt: Date.now(),
-            },
+          this.#startItem({
+            id: reasoningId,
+            turnId,
+            type: 'reasoning',
+            status: 'started',
+            text: '',
+            createdAt: Date.now(),
           })
         }
         const step = safeDelta(pendingReasoning + event.delta)
@@ -379,31 +377,25 @@ export class ApiAgentSession extends EventEmitter<Events> {
       }
     }
     if (started) {
-      this.emit('event', {
-        type: 'item.completed',
-        item: {
-          id: itemId,
-          turnId,
-          type: 'message',
-          role: 'assistant',
-          phase: finish === 'tool_calls' ? 'commentary' : 'final_answer',
-          status: 'completed',
-          text,
-          createdAt: Date.now(),
-        },
+      this.#completeItem({
+        id: itemId,
+        turnId,
+        type: 'message',
+        role: 'assistant',
+        phase: finish === 'tool_calls' ? 'commentary' : 'final_answer',
+        status: 'completed',
+        text,
+        createdAt: Date.now(),
       })
     }
     if (reasoningStarted) {
-      this.emit('event', {
-        type: 'item.completed',
-        item: {
-          id: reasoningId,
-          turnId,
-          type: 'reasoning',
-          status: 'completed',
-          text: reasoning,
-          createdAt: Date.now(),
-        },
+      this.#completeItem({
+        id: reasoningId,
+        turnId,
+        type: 'reasoning',
+        status: 'completed',
+        text: reasoning,
+        createdAt: Date.now(),
       })
     }
     return { text, calls, finish, state }
@@ -412,16 +404,13 @@ export class ApiAgentSession extends EventEmitter<Events> {
   async #runTool(turnId: string, call: ApiToolCall, signal: AbortSignal): Promise<void> {
     const itemId = `${turnId}-tool-${call.id}`
     const createdAt = Date.now()
-    this.emit('event', {
-      type: 'item.started',
-      item: {
-        id: itemId,
-        turnId,
-        type: 'tool_call',
-        status: 'started',
-        text: call.name,
-        createdAt,
-      },
+    this.#startItem({
+      id: itemId,
+      turnId,
+      type: 'tool_call',
+      status: 'started',
+      text: call.name,
+      createdAt,
     })
 
     let result: ApiToolResult
@@ -441,17 +430,32 @@ export class ApiAgentSession extends EventEmitter<Events> {
       toolCallId: call.id,
       isError: result.isError ?? false,
     })
-    this.emit('event', {
-      type: 'item.completed',
-      item: {
-        id: itemId,
-        turnId,
-        type: 'tool_call',
-        status: result.isError ? 'failed' : 'completed',
-        text: `${call.name}\n${content}`,
-        createdAt,
-      },
+    this.#completeItem({
+      id: itemId,
+      turnId,
+      type: 'tool_call',
+      status: result.isError ? 'failed' : 'completed',
+      text: `${call.name}\n${content}`,
+      createdAt,
     })
+  }
+
+  #startItem(item: Item): void {
+    this.#openItems.set(item.id, item)
+    this.emit('event', { type: 'item.started', item })
+  }
+
+  #completeItem(item: Item): void {
+    this.#openItems.delete(item.id)
+    this.emit('event', { type: 'item.completed', item })
+  }
+
+  #finishOpenItems(status: 'completed' | 'failed'): void {
+    for (const item of this.#openItems.values()) {
+      const { text: _streamedText, ...started } = item
+      this.emit('event', { type: 'item.completed', item: { ...started, status } })
+    }
+    this.#openItems.clear()
   }
 
   async #approved(call: ApiToolCall, signal: AbortSignal): Promise<boolean> {

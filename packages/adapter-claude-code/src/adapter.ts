@@ -16,6 +16,7 @@ import type {
   ApprovalRequest,
   Capabilities,
   DomainEvent,
+  Item,
   Model,
   Thread,
   UserInputQuestion,
@@ -336,6 +337,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   readonly #pendingUserInputs = new Map<string, PendingUserInput>()
   #streamMessageId: string | undefined
   readonly #streamBlocks = new Map<number, StreamBlock>()
+  readonly #streamItems = new Map<string, Item>()
   readonly #streamedMessageIds = new Set<string>()
 
   constructor(
@@ -521,6 +523,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#query?.close()
     this.#promptQueue = undefined
     this.#query = undefined
+    this.#completeStreamingItems('failed')
     this.#activeTurnId = undefined
     this.#clearStreamingState()
     this.removeAllListeners()
@@ -682,14 +685,16 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           message: message.errors.join('\n'),
         })
       }
+      const status = this.#interruptRequested
+        ? 'interrupted'
+        : message.is_error
+          ? 'failed'
+          : 'completed'
+      this.#completeStreamingItems(status === 'completed' ? 'completed' : 'failed')
       this.emit('event', {
         type: 'turn.completed',
         turnId,
-        status: this.#interruptRequested
-          ? 'interrupted'
-          : message.is_error
-            ? 'failed'
-            : 'completed',
+        status,
       })
       this.#activeTurnId = undefined
       this.#interruptRequested = false
@@ -749,16 +754,15 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         const name = raw.name ?? 'tool'
         const input = raw.input ?? {}
         const id = `${raw.id ?? `${message.uuid}-${index}`}-call`
-        this.emit('event', {
-          type: 'item.started',
-          item: {
-            id,
-            turnId,
-            status: 'started',
-            ...toolItemFields(name, input),
-            createdAt: Date.now(),
-          },
-        })
+        const item: Item = {
+          id,
+          turnId,
+          status: 'started',
+          ...toolItemFields(name, input),
+          createdAt: Date.now(),
+        }
+        this.#streamItems.set(id, item)
+        this.emit('event', { type: 'item.started', item })
         return
       }
       if (blockType !== 'text' && blockType !== 'thinking') return
@@ -773,18 +777,17 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       }
       this.#streamBlocks.set(index, block)
       this.#streamedMessageIds.add(messageId)
-      this.emit('event', {
-        type: 'item.started',
-        item: {
-          id: block.id,
-          turnId,
-          type: block.type,
-          status: 'started',
-          ...propertiesWhen(block.type === 'message', () => ({ role: 'assistant' as const })),
-          text: '',
-          createdAt: block.createdAt,
-        },
-      })
+      const item: Item = {
+        id: block.id,
+        turnId,
+        type: block.type,
+        status: 'started',
+        ...propertiesWhen(block.type === 'message', () => ({ role: 'assistant' as const })),
+        text: '',
+        createdAt: block.createdAt,
+      }
+      this.#streamItems.set(item.id, item)
+      this.emit('event', { type: 'item.started', item })
       if (text)
         this.emit('event', { type: 'item.delta', turnId, itemId: block.id, textDelta: text })
       return
@@ -809,6 +812,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       const block = this.#streamBlocks.get(index)
       if (!block) return
       this.#streamBlocks.delete(index)
+      this.#streamItems.delete(block.id)
       this.emit('event', {
         type: 'item.completed',
         item: {
@@ -855,6 +859,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 
   #emitDomainEvents(events: DomainEvent[]): void {
     for (const event of events) {
+      if (event.type === 'item.completed') this.#streamItems.delete(event.item.id)
       if (event.type === 'usage.updated' && this.#reportedModel) {
         this.emit('event', { ...event, usage: { ...event.usage, model: this.#reportedModel } })
       } else {
@@ -985,6 +990,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       return
     }
     this.emit('event', { type: 'thread.error', threadId: this.#threadId, message })
+    this.#completeStreamingItems('failed')
     this.emit('event', {
       type: 'turn.completed',
       turnId,
@@ -999,7 +1005,17 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   #clearStreamingState(): void {
     this.#streamMessageId = undefined
     this.#streamBlocks.clear()
+    this.#streamItems.clear()
     this.#streamedMessageIds.clear()
+  }
+
+  #completeStreamingItems(status: 'completed' | 'failed'): void {
+    for (const item of this.#streamItems.values()) {
+      const { text: _streamedText, ...started } = item
+      this.emit('event', { type: 'item.completed', item: { ...started, status } })
+    }
+    this.#streamItems.clear()
+    this.#streamBlocks.clear()
   }
 
   #assertThread(threadId: string): void {

@@ -187,6 +187,39 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it('closes unfinished stream blocks before the turn result', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'Answer')
+    const query = fake.queries[0]!
+    query.emitMessage(
+      streamEvent('wire-text', {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'text', text: 'partial', citations: null },
+      }),
+    )
+    query.emitMessage(
+      streamEvent('wire-tool', {
+        type: 'content_block_start',
+        index: 1,
+        content_block: { type: 'tool_use', id: 'tool-1', name: 'Read', input: {} },
+      }),
+    )
+    query.emitMessage(resultMessage(true))
+    await tick()
+
+    const terminal = events.findIndex((event) => event.type === 'turn.completed')
+    const completed = events.filter((event) => event.type === 'item.completed')
+    expect(completed).toHaveLength(2)
+    expect(completed.every((event) => event.item.status === 'failed')).toBe(true)
+    expect(events.lastIndexOf(completed[1]!)).toBeLessThan(terminal)
+    adapter.dispose()
+  })
+
   it('bridges SDK permission requests to TasteCode approvals', async () => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })

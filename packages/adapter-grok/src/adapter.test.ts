@@ -364,10 +364,22 @@ describe('Grok adapter', () => {
     const thread = await adapter.startThread('C:\\repo')
     await adapter.sendTurn(thread.id, 'go')
 
-    child.stdout.end('')
+    child.stdout.end(
+      [
+        { type: 'thought', data: 'partial thought' },
+        { type: 'tool_call', toolCallId: 'open-tool', toolName: 'read', title: 'read' },
+      ]
+        .map((frame) => JSON.stringify(frame))
+        .join('\n') + '\n',
+    )
     child.emit('close', 1)
     await new Promise((resolve) => setImmediate(resolve))
 
+    const terminal = events.findIndex((event) => event.type === 'turn.completed')
+    const completed = events.filter((event) => event.type === 'item.completed')
+    expect(completed).toHaveLength(2)
+    expect(completed.every((event) => event.item.status === 'failed')).toBe(true)
+    expect(events.lastIndexOf(completed[1]!)).toBeLessThan(terminal)
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ type: 'thread.error' }),
@@ -390,6 +402,8 @@ describe('Grok adapter', () => {
     const thread = await adapter.startThread('C:\\repo')
     const interruptedTurnId = await adapter.sendTurn(thread.id, 'stop me')
 
+    children[0]!.stdout.write(`${JSON.stringify({ type: 'thought', data: 'working' })}\n`)
+    await new Promise((resolve) => setImmediate(resolve))
     await adapter.interrupt()
     await adapter.sendTurn(thread.id, 'replace me')
     await new Promise((resolve) => setImmediate(resolve))
@@ -398,13 +412,27 @@ describe('Grok adapter', () => {
     expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
       { type: 'turn.completed', turnId: interruptedTurnId, status: 'interrupted' },
     ])
+    expect(
+      events.find(
+        (event) => event.type === 'item.completed' && event.item.turnId === interruptedTurnId,
+      ),
+    ).toMatchObject({ item: { status: 'failed' } })
 
+    children[1]!.stdout.write(`${JSON.stringify({ type: 'thought', data: 'replacing' })}\n`)
+    await new Promise((resolve) => setImmediate(resolve))
     await adapter.sendTurn(thread.id, 'replacement')
     await new Promise((resolve) => setImmediate(resolve))
 
     expect(children[1]?.wasKilled).toBe(true)
     expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(1)
+    expect(
+      events.find(
+        (event) => event.type === 'item.completed' && event.item.turnId !== interruptedTurnId,
+      ),
+    ).toMatchObject({ item: { status: 'failed' } })
 
+    children[2]!.stdout.write(`${JSON.stringify({ type: 'thought', data: 'disposing' })}\n`)
+    await new Promise((resolve) => setImmediate(resolve))
     adapter.dispose()
     await new Promise((resolve) => setImmediate(resolve))
 
@@ -424,7 +452,14 @@ describe('Grok adapter', () => {
 
     child.emit('exit', 0)
     const drained = new Promise<void>((resolve) => child.stdout.once('end', resolve))
-    child.stdout.end(JSON.stringify({ type: 'end', stopReason: 'end_turn' }))
+    child.stdout.end(
+      [
+        { type: 'tool_call', toolCallId: 'open-tool', toolName: 'read', title: 'read' },
+        { type: 'end', stopReason: 'end_turn' },
+      ]
+        .map((frame) => JSON.stringify(frame))
+        .join('\n'),
+    )
     await drained
     child.emit('close', 0)
     await new Promise((resolve) => setImmediate(resolve))
@@ -432,6 +467,9 @@ describe('Grok adapter', () => {
     expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
       { type: 'turn.completed', turnId, status: 'completed' },
     ])
+    expect(events.find((event) => event.type === 'item.completed')).toMatchObject({
+      item: { turnId, status: 'completed' },
+    })
   })
 
   it('parses the captured models listing and its auth line', () => {
