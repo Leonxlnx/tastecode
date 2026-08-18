@@ -2626,7 +2626,7 @@ describe('MCP inventory', () => {
   it('reports unsupported providers without starting one', async () => {
     const { orchestrator } = harness()
 
-    await expect(orchestrator.listMcpServers('claude-code', '/repo')).resolves.toEqual({
+    await expect(orchestrator.listMcpServers('cursor', '/repo')).resolves.toEqual({
       capabilities: {
         inventory: false,
         add: false,
@@ -2686,32 +2686,35 @@ describe('MCP inventory', () => {
     })
   })
 
-  it('manages Grok project servers and passes them into new sessions', async () => {
-    const { orchestrator, startedOptions } = harness()
-    orchestrator.addMcpServer('grok', '/repo', {
-      id: 'test-tools',
-      enabled: true,
-      displayName: 'Test tools',
-      transport: { type: 'stdio', command: 'node', args: ['test-mcp.js'] },
-    })
+  it.each(['grok', 'claude-code'] as const)(
+    'manages %s project servers and passes them into new sessions',
+    async (provider) => {
+      const { orchestrator, startedOptions } = harness()
+      orchestrator.addMcpServer(provider, '/repo', {
+        id: 'test-tools',
+        enabled: true,
+        displayName: 'Test tools',
+        transport: { type: 'stdio', command: 'node', args: ['test-mcp.js'] },
+      })
 
-    await expect(orchestrator.listMcpServers('grok', '/repo')).resolves.toMatchObject({
-      capabilities: { inventory: false, add: true, update: true, remove: true, reload: false },
-      servers: [
-        {
-          id: 'test-tools',
-          displayName: 'Test tools',
-          scope: 'project',
-          enabled: true,
-        },
-      ],
-    })
+      await expect(orchestrator.listMcpServers(provider, '/repo')).resolves.toMatchObject({
+        capabilities: { inventory: false, add: true, update: true, remove: true, reload: false },
+        servers: [
+          {
+            id: 'test-tools',
+            displayName: 'Test tools',
+            scope: 'project',
+            enabled: true,
+          },
+        ],
+      })
 
-    await orchestrator.startThread('grok', '/repo')
-    expect(startedOptions[0]).toMatchObject({
-      mcpServers: [{ id: 'test-tools', enabled: true }],
-    })
-  })
+      await orchestrator.startThread(provider, '/repo')
+      expect(startedOptions[0]).toMatchObject({
+        mcpServers: [{ id: 'test-tools', enabled: true }],
+      })
+    },
+  )
 })
 
 describe('skills inventory', () => {

@@ -18,6 +18,7 @@ export type ClaudeQueryRuntime = Pick<
   | 'setModel'
   | 'setPermissionMode'
   | 'supportedModels'
+  | 'toggleMcpServer'
 > &
   AsyncIterable<SDKMessage>
 

@@ -1043,6 +1043,8 @@ function claudeRuntime(
         approval: options.approval,
         instructions: options.instructions,
         ephemeral: options.ephemeral,
+        mcpServers: options.mcpServers,
+        mcpCredentials: options.mcpCredentials,
       })
       return { thread, session: sessionFor(adapter) }
     },
@@ -1053,6 +1055,8 @@ function claudeRuntime(
         effort: options.effort,
         approval: options.approval,
         instructions: options.instructions,
+        mcpServers: options.mcpServers,
+        mcpCredentials: options.mcpCredentials,
       })
       return { thread, session: sessionFor(adapter) }
     },

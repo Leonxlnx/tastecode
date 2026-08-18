@@ -22,6 +22,7 @@ class FakeQuery implements ClaudeQueryRuntime {
   interrupts = 0
   readonly modelsSet: Array<string | undefined> = []
   readonly permissionModes: string[] = []
+  readonly mcpToggles: Array<{ serverName: string; enabled: boolean }> = []
 
   constructor(models: ModelInfo[] = []) {
     this.models = models
@@ -54,6 +55,10 @@ class FakeQuery implements ClaudeQueryRuntime {
 
   async supportedModels(): Promise<ModelInfo[]> {
     return this.models
+  }
+
+  async toggleMcpServer(serverName: string, enabled: boolean): Promise<void> {
+    this.mcpToggles.push({ serverName, enabled })
   }
 
   async initializationResult(): Promise<SDKControlInitializeResponse> {
@@ -132,6 +137,102 @@ describe('Claude Agent SDK session', () => {
 
     expect(fake.inputs[0]!.options.persistSession).toBe(false)
     adapter.dispose()
+  })
+
+  it('passes credential-safe project MCP servers to the SDK and disables inherited overrides', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    await adapter.startThread('/repo', {
+      mcpServers: [
+        {
+          id: 'local-tools',
+          enabled: true,
+          transport: {
+            type: 'stdio',
+            command: 'node',
+            args: ['server.js'],
+            environment: {
+              MODE: { source: 'literal', value: 'test' },
+              TOKEN: { source: 'credential', credentialRef: 'mcp/local/token' },
+            },
+          },
+        },
+        {
+          id: 'docs',
+          enabled: true,
+          transport: {
+            type: 'http',
+            url: 'https://example.test/mcp',
+            headers: {
+              Authorization: { source: 'credential', credentialRef: 'mcp/docs/auth' },
+            },
+          },
+        },
+        { id: 'inherited', enabled: false },
+      ],
+      mcpCredentials: {
+        'mcp/local/token': 'local-secret',
+        'mcp/docs/auth': 'Bearer docs-secret',
+      },
+    })
+
+    expect(fake.inputs[0]!.options.mcpServers).toEqual({
+      'local-tools': {
+        type: 'stdio',
+        command: 'node',
+        args: ['server.js'],
+        env: { MODE: 'test', TOKEN: 'local-secret' },
+      },
+      docs: {
+        type: 'http',
+        url: 'https://example.test/mcp',
+        headers: { Authorization: 'Bearer docs-secret' },
+      },
+    })
+    expect(fake.queries[0]!.mcpToggles).toEqual([{ serverName: 'inherited', enabled: false }])
+    adapter.dispose()
+  })
+
+  it('rejects unsupported MCP working directories before starting Claude', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+
+    await expect(
+      adapter.startThread('/repo', {
+        mcpServers: [
+          {
+            id: 'custom-cwd',
+            enabled: true,
+            transport: { type: 'stdio', command: 'node', cwd: '/elsewhere' },
+          },
+        ],
+      }),
+    ).rejects.toThrow('cannot use a custom cwd through Agent SDK')
+    expect(fake.queries).toHaveLength(0)
+  })
+
+  it('rejects unavailable MCP credentials instead of passing an empty secret', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+
+    await expect(
+      adapter.startThread('/repo', {
+        mcpServers: [
+          {
+            id: 'private-docs',
+            enabled: true,
+            transport: {
+              type: 'http',
+              url: 'https://example.test/mcp',
+              headers: {
+                Authorization: { source: 'credential', credentialRef: 'mcp/docs/auth' },
+              },
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow('MCP credential "mcp/docs/auth" is unavailable')
+    expect(fake.queries).toHaveLength(0)
   })
 
   it('resumes through a fresh SDK query when effort changes between turns', async () => {

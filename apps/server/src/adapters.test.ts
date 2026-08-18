@@ -215,6 +215,32 @@ describe('one-shot provider turn options', () => {
     },
   )
 
+  it('passes project MCP config into Claude session startup', async () => {
+    const runtime = providerRuntime(
+      'claude-code',
+      () => {},
+      () => undefined,
+      TEST_ADAPTER_FACTORIES,
+    )
+    const mcpServers = [
+      {
+        id: 'docs',
+        enabled: true as const,
+        transport: { type: 'http' as const, url: 'https://example.test/mcp' },
+      },
+    ]
+
+    await runtime.start('C:\\repo', {
+      mcpServers,
+      mcpCredentials: { 'mcp/docs/auth': 'resolved-token' },
+    })
+
+    expect(turnAdapters[0]?.startOptions).toMatchObject({
+      mcpServers,
+      mcpCredentials: { 'mcp/docs/auth': 'resolved-token' },
+    })
+  })
+
   it('binds a named custom source to the compatible adapter launch', async () => {
     const runtime = providerRuntime(
       'grok',

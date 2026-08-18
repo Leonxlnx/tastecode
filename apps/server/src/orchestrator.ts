@@ -854,7 +854,7 @@ export class Orchestrator {
     provider: ProviderId,
     projectPath: string,
   ): Promise<{ capabilities: McpCapabilities; servers: McpServer[] }> {
-    if (provider === 'opencode' || provider === 'grok') {
+    if (provider === 'opencode' || provider === 'grok' || provider === 'claude-code') {
       // No vendor inventory over this surface, but the TasteCode-managed
       // project servers are real: each adapter receives them when it starts.
       this.#watchedMcpProjects.add(projectPath)
@@ -1042,12 +1042,23 @@ export class Orchestrator {
   }
 
   #requireMcpManagement(provider: ProviderId): void {
-    if (provider !== 'codex' && provider !== 'grok' && provider !== 'opencode')
+    if (
+      provider !== 'codex' &&
+      provider !== 'grok' &&
+      provider !== 'opencode' &&
+      provider !== 'claude-code'
+    )
       throw new Error(`provider "${provider}" cannot manage MCP servers yet`)
   }
 
   #mcpRuntimeOptions(provider: ProviderId, projectPath: string): StartOptions {
-    if (provider !== 'codex' && provider !== 'grok' && provider !== 'opencode') return {}
+    if (
+      provider !== 'codex' &&
+      provider !== 'grok' &&
+      provider !== 'opencode' &&
+      provider !== 'claude-code'
+    )
+      return {}
     const mcpServers = this.#mcpConfig.list(provider, projectPath)
     const mcpCredentials: Record<string, string> = {}
     for (const server of mcpServers) {

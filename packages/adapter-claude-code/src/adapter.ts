@@ -4,6 +4,7 @@ import path from 'node:path'
 import type {
   CanUseTool,
   ModelInfo,
+  McpServerConfig as ClaudeMcpServerConfig,
   Options as ClaudeQueryOptions,
   PermissionMode,
   PermissionResult,
@@ -17,6 +18,8 @@ import type {
   Capabilities,
   DomainEvent,
   Item,
+  McpConfigValue,
+  McpServerConfig,
   Model,
   Thread,
   UserInputQuestion,
@@ -191,9 +194,61 @@ export type ClaudeStartOptions = {
   effort?: string | undefined
   approval?: ApprovalMode | undefined
   ephemeral?: boolean | undefined
+  mcpServers?: McpServerConfig[] | undefined
+  mcpCredentials?: Record<string, string> | undefined
 }
 
 export type ClaudeTurnOptions = Pick<ClaudeStartOptions, 'model' | 'effort'>
+
+export function prepareClaudeMcpServers(
+  servers: McpServerConfig[],
+  credentials: Record<string, string>,
+) {
+  const prepared: Record<string, ClaudeMcpServerConfig> = {}
+  const disabled: string[] = []
+  const resolve = (value: McpConfigValue): string => {
+    if (value.source === 'literal') return value.value
+    const credential = credentials[value.credentialRef]
+    if (credential === undefined) {
+      throw new Error(`MCP credential "${value.credentialRef}" is unavailable`)
+    }
+    return credential
+  }
+
+  for (const server of servers) {
+    if (!server.enabled) {
+      disabled.push(server.id)
+      continue
+    }
+    if (server.transport.type === 'stdio') {
+      if (server.transport.cwd) {
+        throw new Error(
+          `Claude Code MCP server "${server.id}" cannot use a custom cwd through Agent SDK`,
+        )
+      }
+      prepared[server.id] = {
+        type: 'stdio',
+        command: server.transport.command,
+        args: server.transport.args ?? [],
+        env: Object.fromEntries(
+          Object.entries(server.transport.environment ?? {}).map(([key, value]) => [
+            key,
+            resolve(value),
+          ]),
+        ),
+      }
+      continue
+    }
+    prepared[server.id] = {
+      type: 'http',
+      url: server.transport.url,
+      headers: Object.fromEntries(
+        Object.entries(server.transport.headers ?? {}).map(([key, value]) => [key, resolve(value)]),
+      ),
+    }
+  }
+  return { servers: prepared, disabled }
+}
 
 function applyClaudeTurnOptions(
   current: ClaudeStartOptions,
@@ -360,7 +415,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   async startThread(workspacePath: string, options: ClaudeStartOptions = {}): Promise<Thread> {
     const sessionId = crypto.randomUUID()
     const threadId = `claude-${sessionId}`
-    this.#openSession(threadId, sessionId, workspacePath, options, false)
+    await this.#openSession(threadId, sessionId, workspacePath, options, false)
     return {
       id: threadId,
       provider: 'claude-code',
@@ -375,7 +430,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     options: ClaudeStartOptions = {},
   ): Promise<Thread> {
     const sessionId = threadId.startsWith('claude-') ? threadId.slice('claude-'.length) : threadId
-    this.#openSession(threadId, sessionId, workspacePath, options, true)
+    await this.#openSession(threadId, sessionId, workspacePath, options, true)
     return {
       id: threadId,
       provider: 'claude-code',
@@ -397,7 +452,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     const next = applyClaudeTurnOptions(previous, options)
     this.#options = next
     if (previous.effort !== next.effort) {
-      this.#restartSession()
+      await this.#restartSession()
     } else if (previous.model !== next.model) {
       await this.#requireQuery().setModel(next.model)
     }
@@ -529,13 +584,13 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.removeAllListeners()
   }
 
-  #openSession(
+  async #openSession(
     threadId: string,
     sessionId: string,
     workspacePath: string,
     options: ClaudeStartOptions,
     resume: boolean,
-  ): void {
+  ): Promise<void> {
     if (this.#query || this.#promptQueue) throw new Error('Claude adapter already has a session')
     this.#disposed = false
     this.#threadId = threadId
@@ -543,11 +598,15 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#workspacePath = workspacePath
     this.#options = options
     this.#reportedModel = options.model
-    this.#startQuery(resume ? sessionId : undefined)
+    await this.#startQuery(resume ? sessionId : undefined)
   }
 
-  #startQuery(resume?: string): void {
+  async #startQuery(resume?: string): Promise<void> {
     const promptQueue = new PromptQueue()
+    const mcp = prepareClaudeMcpServers(
+      this.#options.mcpServers ?? [],
+      this.#options.mcpCredentials ?? {},
+    )
     const effort =
       this.#options.effort === undefined
         ? undefined
@@ -572,6 +631,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         includePartialMessages: true,
         canUseTool: this.#canUseTool,
         additionalDirectories: [this.#workspacePath],
+        ...propertiesWhen(Object.keys(mcp.servers).length, () => ({ mcpServers: mcp.servers })),
         ...(resume ? { resume } : this.#sessionId ? { sessionId: this.#sessionId } : {}),
       }),
     })
@@ -579,6 +639,17 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#promptQueue = promptQueue
     this.#query = query
     void this.#consume(query, generation)
+    try {
+      await Promise.all(mcp.disabled.map((serverId) => query.toggleMcpServer(serverId, false)))
+    } catch (error) {
+      promptQueue.close()
+      query.close()
+      if (this.#query === query) {
+        this.#query = undefined
+        this.#promptQueue = undefined
+      }
+      throw error
+    }
   }
 
   #queryOptions(overrides: ClaudeQueryOptions): ClaudeQueryOptions {
@@ -593,7 +664,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
   }
 
-  #restartSession(): void {
+  async #restartSession(): Promise<void> {
     if (this.#activeTurnId) throw new Error('Claude effort cannot change during a running turn')
     this.#queryGeneration += 1
     this.#promptQueue?.close()
@@ -601,7 +672,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#promptQueue = undefined
     this.#query = undefined
     this.#clearStreamingState()
-    this.#startQuery(this.#sessionId)
+    await this.#startQuery(this.#sessionId)
   }
 
   async #consume(query: ClaudeQueryRuntime, generation: number): Promise<void> {

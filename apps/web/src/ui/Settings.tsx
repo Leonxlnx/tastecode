@@ -180,6 +180,7 @@ const BACKDROP_OPTIONS = [
 
 const MCP_PROVIDER_OPTIONS = [
   { provider: 'codex', providerName: 'Codex' },
+  { provider: 'claude-code', providerName: 'Claude Code' },
   { provider: 'grok', providerName: 'Grok' },
 ] satisfies Array<{ provider: ProviderId; providerName: string }>
 

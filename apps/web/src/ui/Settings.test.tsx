@@ -20,7 +20,7 @@ function TestInstallTerminal(props: { installKey: string }) {
 
 function renderSettings(
   options: {
-    initialSection?: 'appearance' | 'models' | 'keybinds' | 'data' | 'about'
+    initialSection?: 'appearance' | 'models' | 'keybinds' | 'mcp' | 'data' | 'about'
     onClose?: () => void
     onReset?: () => void
     transport?: Transport
@@ -124,6 +124,14 @@ describe('settings viewport layout', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Data & privacy' }))
     expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy()
+  })
+
+  it('offers Claude Code for project MCP configuration', async () => {
+    renderSettings({ initialSection: 'mcp' })
+
+    const picker = await screen.findByRole('combobox', { name: 'MCP provider' })
+    fireEvent.click(picker)
+    expect(screen.getByRole('option', { name: 'Claude Code' })).toBeTruthy()
   })
 })
 
