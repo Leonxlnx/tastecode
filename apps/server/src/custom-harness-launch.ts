@@ -94,7 +94,9 @@ export function runCustomHarness(
       if (stderr.length < 16_000) stderr += chunk
     })
     child.on('error', (error) => finish(actionableLaunchError(harness, error)))
-    child.on('exit', (code) => {
+    // `exit` can fire before inherited stdout/stderr pipes have drained. Waiting
+    // for `close` preserves the final protocol bytes emitted during shutdown.
+    child.on('close', (code) => {
       if (code === 0 || code === null) {
         finish({ code, stdout })
         return

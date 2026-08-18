@@ -34,6 +34,7 @@ export function useDialogFocus<T extends HTMLElement>(onClose: () => void) {
       panel.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
     ).filter(
       (element) =>
+        element.tabIndex >= 0 &&
         !element.hasAttribute('disabled') &&
         !element.closest('[hidden], [inert], [aria-hidden="true"]'),
     )

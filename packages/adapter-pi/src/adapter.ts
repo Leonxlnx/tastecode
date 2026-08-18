@@ -341,7 +341,7 @@ export class PiAdapter extends EventEmitter<Events> {
     child.on('error', (error) => {
       if (this.#child === child) this.#processFailed(error.message)
     })
-    child.on('exit', (code) => {
+    child.on('close', (code) => {
       if (this.#child !== child) return
       this.#child = undefined
       if (!this.#intentionalStop) {
