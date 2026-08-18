@@ -93,11 +93,7 @@ class FakeAcpAdapter extends FakeTurnAdapter {
   setApproval(): void {}
   respondToApproval(): void {}
 
-  async resumeThread(
-    threadId: string,
-    workspacePath: string,
-    options: Record<string, unknown>,
-  ) {
+  async resumeThread(threadId: string, workspacePath: string, options: Record<string, unknown>) {
     this.acpResume = { threadId, workspacePath }
     this.startOptions = options
     return { id: threadId, provider: 'grok' as const, workspacePath, createdAt: 1 }

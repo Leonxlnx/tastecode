@@ -1,13 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Item } from '@harness/contracts'
 import { StrictMode } from 'react'
 import { Thread, isRepeatedDesignRow, workLabel } from './Thread.js'

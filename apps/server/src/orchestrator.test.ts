@@ -27,7 +27,7 @@ import {
   type StartOptions,
   type TurnOptions,
 } from './adapters.js'
-import { DESIGN_BRIEF_ATTACHMENT, writeDesignBrief, type PreviewPlan } from '@harness/design-agent'
+import { DESIGN_BRIEF_ATTACHMENT, writeDesignBrief } from '@harness/design-agent'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'

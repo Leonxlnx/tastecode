@@ -2075,9 +2075,7 @@ function toThread(row: ThreadRow): StoredThread {
     projectPath: row.project_path,
     provider: ProviderIdSchema.parse(row.provider),
     ...(row.agent === null ? {} : { agent: row.agent }),
-    ...(row.provider_session_id === null
-      ? {}
-      : { providerSessionId: row.provider_session_id }),
+    ...(row.provider_session_id === null ? {} : { providerSessionId: row.provider_session_id }),
     title: row.title,
     pinned: row.pinned === 1,
     createdAt: Number(row.created_at),
