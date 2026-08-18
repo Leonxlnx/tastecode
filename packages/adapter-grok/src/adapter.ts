@@ -349,10 +349,40 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     let toolCounter = 0
     /** toolCallId -> the open item it maps to. */
     const tools = new Map<string, OpenTool>()
+    const completeTool = (entry: OpenTool, status: 'completed' | 'failed', output?: string) => {
+      this.emit('event', {
+        type: 'item.completed',
+        item: {
+          id: entry.itemId,
+          turnId,
+          type: entry.itemType,
+          status,
+          ...propertiesWhen(entry.itemType === 'command', () => ({
+            command: entry.command ?? entry.label,
+            ...propertiesWhen(output, (includedValue) => ({ text: includedValue })),
+          })),
+          ...propertiesWhen(entry.itemType === 'file_change' && entry.path, () => ({
+            path: entry.path,
+          })),
+          ...propertiesWhen(entry.itemType === 'file_change' && output, () => ({ text: output })),
+          ...propertiesWhen(entry.itemType === 'tool_call', () => ({
+            text: output ? `${entry.label}\n${output}` : entry.label,
+          })),
+          createdAt: Date.now(),
+        },
+      })
+    }
+    const finishItems = (status: 'completed' | 'failed') => {
+      reasoning.complete(turnId, 'reasoning', this, status)
+      message.complete(turnId, 'message', this, status)
+      for (const entry of tools.values()) completeTool(entry, status)
+      tools.clear()
+    }
 
     readNdjson(
       child.stdout,
       (value) => {
+        if (terminal) return
         const parsed = GrokFrameSchema.safeParse(value)
         if (!parsed.success) {
           this.emit('log', `unrecognized Grok frame: ${JSON.stringify(value).slice(0, 200)}`)
@@ -413,29 +443,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
           const entry = tools.get(frame.toolCallId)
           if (!entry) return
           const output = grokToolOutput(frame)
-          this.emit('event', {
-            type: 'item.completed',
-            item: {
-              id: entry.itemId,
-              turnId,
-              type: entry.itemType,
-              status: frame.status === 'failed' ? 'failed' : 'completed',
-              ...propertiesWhen(entry.itemType === 'command', () => ({
-                command: entry.command ?? entry.label,
-                ...propertiesWhen(output, (includedValue) => ({ text: includedValue })),
-              })),
-              ...propertiesWhen(entry.itemType === 'file_change' && entry.path, () => ({
-                path: entry.path,
-              })),
-              ...propertiesWhen(entry.itemType === 'file_change' && output, () => ({
-                text: output,
-              })),
-              ...propertiesWhen(entry.itemType === 'tool_call', () => ({
-                text: output ? `${entry.label}\n${output}` : entry.label,
-              })),
-              createdAt: Date.now(),
-            },
-          })
+          completeTool(entry, frame.status === 'failed' ? 'failed' : 'completed', output)
           tools.delete(frame.toolCallId)
           return
         }
@@ -450,8 +458,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
             this.#providerSessionId = frame.sessionId
             this.emit('providerSessionId', frame.sessionId)
           }
-          reasoning.complete(turnId, 'reasoning', this)
-          message.complete(turnId, 'message', this)
+          finishItems(frame.stopReason === 'end_turn' ? 'completed' : 'failed')
           const usage = frame.usage
           if (usage) {
             const reasoningTokens = usage.reasoning_tokens ?? 0
@@ -499,16 +506,21 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
       terminal = true
       const killReason = this.#killReasons.get(child)
       if (killReason === 'interrupt') {
+        finishItems('failed')
         this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
         return
       }
-      if (killReason === 'silent') return
+      if (killReason === 'silent') {
+        finishItems('failed')
+        return
+      }
       // An exit without an end frame would otherwise look like a hang.
       this.emit('event', {
         type: 'thread.error',
         threadId,
         message: `grok exited with code ${code ?? 'unknown'} before reporting a result`,
       })
+      finishItems('failed')
       this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
     })
 
@@ -521,11 +533,16 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
       terminal = true
       const killReason = this.#killReasons.get(child)
       if (killReason === 'interrupt') {
+        finishItems('failed')
         this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
         return
       }
-      if (killReason === 'silent') return
+      if (killReason === 'silent') {
+        finishItems('failed')
+        return
+      }
       this.emit('event', { type: 'thread.error', threadId, message: String(error) })
+      finishItems('failed')
       this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
     })
 
@@ -667,6 +684,7 @@ class StreamedItem {
     turnId: string,
     type: 'message' | 'reasoning',
     emitter: EventEmitter<GrokAdapterEvents>,
+    status: 'completed' | 'failed' = 'completed',
   ): void {
     if (!this.#started || this.#completed) return
     this.#completed = true
@@ -677,7 +695,7 @@ class StreamedItem {
         turnId,
         type,
         ...propertiesWhen(type === 'message', () => ({ role: 'assistant' as const })),
-        status: 'completed',
+        status,
         text: this.#text.trimEnd(),
         createdAt: Date.now(),
       },

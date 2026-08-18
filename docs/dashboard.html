@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-18 main 4a5e5554</span>
+        <span class="meta">2026-08-18 main 3c0c430c</span>
       </div>
     </div>
 
@@ -591,10 +591,12 @@
               <li>
                 <i class="tick">✓</i>
                 <span
-                  >Claude Code Agent SDK lifecycle
+                  >Provider stream lifecycles
                   <span class="d"
-                    >partial narration and reasoning stream through stable item lifecycles while
-                    tool calls, permission requests, and questions retain their SDK identities</span
+                    >Claude Code, Grok, and direct API sessions settle every partial message,
+                    reasoning block, and tool before the turn terminal; streamed text survives
+                    failures, stops, process exits, replacements, and closes without a permanently
+                    live row</span
                   >
                 </span>
               </li>

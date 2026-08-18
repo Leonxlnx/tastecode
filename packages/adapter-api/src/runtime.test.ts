@@ -265,6 +265,28 @@ describe('ApiAgentSession', () => {
     expect(JSON.stringify({ events, logs })).not.toContain(secret)
   })
 
+  it('closes partial streamed items before a failed turn', async () => {
+    const events: DomainEvent[] = []
+    const session = new ApiAgentSession({
+      model: 'test-model',
+      transport: async function* () {
+        yield { type: 'text', delta: 'partial answer' }
+        yield { type: 'reasoning', delta: 'partial thought' }
+        throw new Error('transport failed')
+      },
+    })
+    session.on('event', (event) => events.push(event))
+    const thread = session.startThread('C:\\repo', 'connection-1')
+    const turnId = await session.sendTurn(thread.id, 'Go')
+    await session.waitForTurn(turnId)
+
+    const terminal = events.findIndex((event) => event.type === 'turn.completed')
+    const completed = events.filter((event) => event.type === 'item.completed')
+    expect(completed).toHaveLength(2)
+    expect(completed.every((event) => event.item.status === 'failed')).toBe(true)
+    expect(events.lastIndexOf(completed[1]!)).toBeLessThan(terminal)
+  })
+
   it('fails safely when a transport exceeds the tool-call bound', async () => {
     const events: unknown[] = []
     const session = new ApiAgentSession({

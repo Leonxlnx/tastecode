@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-18 4a5e5554</span>
+        <span class="meta">2026-08-18 3c0c430c</span>
       </div>
     </div>
 
@@ -372,7 +372,8 @@
                 >Steer, interrupt, streamed text and reasoning, durable session resume
                 <span class="d"
                   >one long-lived prompt stream carries follow-up turns while SDK controls change
-                  the model and stop active work without replacing the process</span
+                  the model and stop active work without replacing the process; incomplete text,
+                  reasoning, and tool blocks settle before every terminal result</span
                 ></span
               ></label
             >
@@ -505,7 +506,8 @@
                   >the stable TasteCode thread id stays separate from Grok's persisted native resume
                   id, while MCP-enabled sessions reload their ACP identity; explicit Stop emits one
                   interrupted terminal state after process shutdown and restores sending without a
-                  duplicate completion</span
+                  duplicate completion; open streamed and tool items settle on end, failure,
+                  interruption, replacement, and close</span
                 ></span
               ></label
             >
@@ -573,7 +575,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >One shared OpenAI-compatible transport, Anthropic native Messages API</span
+                >One shared OpenAI-compatible transport, Anthropic native Messages API
+                <span class="d"
+                  >partial text, reasoning, and tool items settle before completed, failed, or
+                  interrupted turn terminals</span
+                ></span
               ></label
             >
           </li>
