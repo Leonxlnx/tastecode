@@ -62,14 +62,16 @@ export class VoiceService {
   }
 
   #connection(): StoredModelConnection | undefined {
-    const connection = this.connections.list().find(
-      (candidate) =>
-        candidate.enabled &&
-        candidate.credentialConfigured &&
-        candidate.preset === 'openai' &&
-        candidate.transport === 'openai-responses' &&
-        isOfficialOpenAiEndpoint(candidate.baseUrl),
-    )
+    const connection = this.connections
+      .list()
+      .find(
+        (candidate) =>
+          candidate.enabled &&
+          candidate.credentialConfigured &&
+          candidate.preset === 'openai' &&
+          candidate.transport === 'openai-responses' &&
+          isOfficialOpenAiEndpoint(candidate.baseUrl),
+      )
     return connection ? this.connections.get(connection.id) : undefined
   }
 }

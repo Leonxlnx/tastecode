@@ -336,17 +336,17 @@ registry entry, which is deliberately a good first outside contribution.
 
 ## Change log
 
-| Date       | Change                                                                  |
-| ---------- | ----------------------------------------------------------------------- |
-| 2026-07-28 | Initial decisions.                                                      |
-| 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration.  |
-| 2026-08-02 | Added Codex-backed voice dictation.                                     |
-| 2026-08-03 | Added the provider-neutral direct API runtime decision.                 |
-| 2026-08-06 | Replaced the Electron target with a staged Rust + GPUI migration.       |
-| 2026-08-12 | Added user-owned, protocol-compatible harness commands and Pi RPC.      |
-| 2026-08-12 | Defined provider-neutral ephemeral Side chat sessions.                  |
-| 2026-08-12 | Standardized Electron browser previews on sandboxed `<webview>` guests. |
-| 2026-08-14 | Removed phone and remote-client support from active product scope.      |
-| 2026-08-14 | Routed project-enabled Grok MCP sessions through ACP stdio.             |
-| 2026-08-15 | Archived the Rust + GPUI rewrite and restored Electron on `main`.       |
+| Date       | Change                                                                            |
+| ---------- | --------------------------------------------------------------------------------- |
+| 2026-07-28 | Initial decisions.                                                                |
+| 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration.            |
+| 2026-08-02 | Added Codex-backed voice dictation.                                               |
+| 2026-08-03 | Added the provider-neutral direct API runtime decision.                           |
+| 2026-08-06 | Replaced the Electron target with a staged Rust + GPUI migration.                 |
+| 2026-08-12 | Added user-owned, protocol-compatible harness commands and Pi RPC.                |
+| 2026-08-12 | Defined provider-neutral ephemeral Side chat sessions.                            |
+| 2026-08-12 | Standardized Electron browser previews on sandboxed `<webview>` guests.           |
+| 2026-08-14 | Removed phone and remote-client support from active product scope.                |
+| 2026-08-14 | Routed project-enabled Grok MCP sessions through ACP stdio.                       |
+| 2026-08-15 | Archived the Rust + GPUI rewrite and restored Electron on `main`.                 |
 | 2026-08-18 | Moved voice transcription from ChatGPT session reuse to explicit OpenAI API auth. |
