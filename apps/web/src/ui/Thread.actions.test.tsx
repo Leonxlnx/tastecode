@@ -1,6 +1,13 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render as renderView, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as renderView,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import type { Item } from '@harness/contracts'
 import { StrictMode, type ReactElement, type ReactNode } from 'react'
 import type { PickedAttachment } from '../bridge.js'
@@ -606,6 +613,48 @@ describe('completed activity disclosure', () => {
 
     expect(await screen.findByRole('img', { name: 'Preview of strict-reference.png' })).toBeTruthy()
     expect(previewViewedImage).toHaveBeenCalled()
+  })
+
+  it('finishes a missing sent image preview with an unavailable state', async () => {
+    const path = '/tmp/TasteCode/pasted-files/missing-reference.png'
+    previewViewedImage.mockResolvedValueOnce(undefined)
+
+    renderCompleted([
+      turnItem('prompt-1', 1, {
+        role: 'user',
+        text: 'Missing preview',
+        attachments: [path],
+      }),
+    ])
+
+    expect(
+      await screen.findByRole('status', { name: 'Preview unavailable for missing-reference.png' }),
+    ).toBeTruthy()
+    expect(screen.getByText('missing-reference.png')).toBeTruthy()
+  })
+
+  it('finishes a rejected sent image preview after showing its loading state', async () => {
+    const path = '/tmp/TasteCode/pasted-files/rejected-reference.png'
+    let rejectPreview!: () => void
+    previewViewedImage.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectPreview = () => reject(new Error('preview failed'))
+      }),
+    )
+
+    renderCompleted([
+      turnItem('prompt-1', 1, {
+        role: 'user',
+        text: 'Rejected preview',
+        attachments: [path],
+      }),
+    ])
+
+    expect(screen.getByRole('status', { name: 'Loading preview of rejected-reference.png' }))
+    await act(async () => rejectPreview())
+    expect(
+      await screen.findByRole('status', { name: 'Preview unavailable for rejected-reference.png' }),
+    ).toBeTruthy()
   })
 
   it('shows a safe image preview when completed work is revealed', async () => {

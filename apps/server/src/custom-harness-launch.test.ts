@@ -69,4 +69,18 @@ describe('custom harness launch', () => {
 
     expect(() => spawn('ignored', [], {})).toThrow(/Shell aliases and functions are unavailable/)
   })
+
+  it('waits for inherited output pipes to drain before returning', async () => {
+    const lateOutput = "setTimeout(() => process.stdout.write('late'), 50)"
+    const script = [
+      "const { spawn } = require('node:child_process')",
+      `const child = spawn(process.execPath, ['-e', ${JSON.stringify(lateOutput)}], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] })`,
+      'child.unref()',
+      "process.stdout.write('early-')",
+    ].join(';')
+
+    const result = await runCustomHarness(harness({ args: ['-e', script] }), undefined, [], 2_000)
+
+    expect(result.stdout).toBe('early-late')
+  })
 })
