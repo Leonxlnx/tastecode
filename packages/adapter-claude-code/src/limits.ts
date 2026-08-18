@@ -6,8 +6,7 @@ export type ProviderLimit = {
 }
 
 export type ClaudeLimitSource =
-  | { status: 'ready'; limits: ProviderLimit[] }
-  | { status: 'unavailable' }
+  { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
 
 /**
  * Claude Code does not expose subscription limits through a supported CLI or
