@@ -1138,32 +1138,26 @@ function mergeClaudeModels(models: ModelInfo[]): Model[] {
   for (const catalogModel of CLAUDE_MODELS) {
     const family = claudeModelFamily(catalogModel.id)
     const matches = discovered.filter((entry) => claudeModelFamily(entry.resolvedId) === family)
-    const extended = matches.filter((entry) => entry.resolvedId.endsWith('[1m]'))
     const standard = matches.find((entry) => !entry.resolvedId.endsWith('[1m]'))
 
-    for (const entry of extended) {
-      merged.push(entry.model)
-      used.add(entry)
-    }
-    if (standard) {
-      merged.push(standard.model)
-      used.add(standard)
-    } else {
-      merged.push(catalogModel)
-    }
+    matches.forEach((entry) => used.add(entry))
+    merged.push(standard?.model ?? catalogModel)
   }
   for (const entry of discovered) {
-    if (!used.has(entry)) merged.push(entry.model)
+    if (used.has(entry)) continue
+    const family = claudeModelFamily(entry.resolvedId)
+    const matches = discovered.filter(
+      (candidate) => claudeModelFamily(candidate.resolvedId) === family,
+    )
+    matches.forEach((candidate) => used.add(candidate))
+    merged.push(
+      matches.find((candidate) => !candidate.resolvedId.endsWith('[1m]'))?.model ?? entry.model,
+    )
   }
 
-  let defaultIndex = defaultResolvedId
-    ? merged.findIndex(
-        (model) =>
-          model.id === defaultResolvedId ||
-          discovered.some(
-            (entry) => entry.model.id === model.id && entry.resolvedId === defaultResolvedId,
-          ),
-      )
+  const defaultFamily = defaultResolvedId ? claudeModelFamily(defaultResolvedId) : undefined
+  let defaultIndex = defaultFamily
+    ? merged.findIndex((model) => claudeModelFamily(model.id) === defaultFamily)
     : -1
   if (defaultIndex < 0) defaultIndex = merged.findIndex((model) => model.isDefault)
   const selectedDefault = defaultIndex >= 0 ? defaultIndex : 0

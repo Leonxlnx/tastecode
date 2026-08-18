@@ -298,7 +298,7 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
-  it('drops the synthetic default, versions aliases, and keeps the complete catalog', async () => {
+  it('drops the synthetic default and deduplicates context variants by model family', async () => {
     const fake = harness([
       {
         value: 'default',
@@ -338,6 +338,18 @@ describe('Claude Agent SDK session', () => {
         displayName: 'Haiku',
         description: 'Haiku 4.5',
       },
+      {
+        value: 'claude-nova-6[1m]',
+        resolvedModel: 'claude-nova-6[1m]',
+        displayName: 'Nova (1M context)',
+        description: 'Future model with 1M context',
+      },
+      {
+        value: 'claude-nova-6',
+        resolvedModel: 'claude-nova-6',
+        displayName: 'Nova',
+        description: 'Future model',
+      },
     ])
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
     const models = await adapter.listModels()
@@ -348,18 +360,8 @@ describe('Claude Agent SDK session', () => {
         isDefault: model.isDefault,
       })),
     ).toEqual([
-      {
-        id: 'claude-fable-5[1m]',
-        displayName: 'Claude Fable 5 (1M context)',
-        isDefault: false,
-      },
       { id: 'claude-fable-5', displayName: 'Claude Fable 5', isDefault: false },
-      {
-        id: 'opus[1m]',
-        displayName: 'Claude Opus 5 (1M context)',
-        isDefault: true,
-      },
-      { id: 'claude-opus-5', displayName: 'Claude Opus 5', isDefault: false },
+      { id: 'claude-opus-5', displayName: 'Claude Opus 5', isDefault: true },
       { id: 'sonnet', displayName: 'Claude Sonnet 5', isDefault: false },
       { id: 'haiku', displayName: 'Claude Haiku 4.5', isDefault: false },
       { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8', isDefault: false },
@@ -367,6 +369,7 @@ describe('Claude Agent SDK session', () => {
       { id: 'claude-opus-4-6', displayName: 'Claude Opus 4.6', isDefault: false },
       { id: 'claude-opus-4-5', displayName: 'Claude Opus 4.5', isDefault: false },
       { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6', isDefault: false },
+      { id: 'claude-nova-6', displayName: 'Nova', isDefault: false },
     ])
     expect(models.some((model) => model.id === 'default')).toBe(false)
     expect(models.filter((model) => model.isDefault)).toHaveLength(1)
