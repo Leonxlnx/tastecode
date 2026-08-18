@@ -95,7 +95,7 @@ export function commandVersion(command: string, timeoutMs = 5000): Promise<strin
       output += chunk
     })
     child.on('error', () => finish(undefined))
-    child.on('exit', () => {
+    child.on('close', () => {
       const line = output.split('\n').find((entry) => /\d+\.\d+/.test(entry))
       finish(line?.trim() || undefined)
     })
@@ -127,7 +127,7 @@ export function runCli(
       stdout += chunk
     })
     child.on('error', finish)
-    child.on('exit', (code) => finish({ code, stdout }))
+    child.on('close', (code) => finish({ code, stdout }))
   })
 }
 

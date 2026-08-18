@@ -91,7 +91,11 @@ test('the installed graph report includes transitives and license-file evidence'
     reviewedTransitiveExceptions: [],
   }
   const derived = await deriveDirectRuntimeDependencies(fixtureRoot, inventory)
-  const report = await auditInstalledProductionGraph(fixtureRoot, inventory, derived)
+  const { report, licenseBundle } = await auditInstalledProductionGraph(
+    fixtureRoot,
+    inventory,
+    derived,
+  )
 
   assert.equal(report.packageCount, 3)
   assert.deepEqual(
@@ -99,6 +103,8 @@ test('the installed graph report includes transitives and license-file evidence'
     ['external-a', 'external-web', 'transitive-b'],
   )
   assert.deepEqual(report.packages[0].licenseFiles, ['LICENSE.fixture'])
+  assert.match(licenseBundle, /external-web@1\.0\.0/)
+  assert.match(licenseBundle, /fixture license/)
 })
 
 test('unknown license metadata fails closed', async () => {
@@ -132,6 +138,55 @@ test('unknown license metadata fails closed', async () => {
     )
   } finally {
     await writeFile(transitivePackage, original, 'utf8')
+  }
+})
+
+test('an exact reviewed exception can supply missing metadata and bundled license evidence', async () => {
+  const packageRoot = path.join(fixtureRoot, 'node_modules/transitive-b')
+  const packageJsonPath = path.join(packageRoot, 'package.json')
+  const packageJson = await readFile(packageJsonPath, 'utf8')
+  const packageLicense = path.join(packageRoot, 'LICENSE.fixture')
+  const bundledLicense = path.join(fixtureRoot, 'licenses/transitive-b-MIT.txt')
+  await json(packageJsonPath, { name: 'transitive-b', version: '2.0.0' })
+  await rm(packageLicense)
+  await mkdir(path.dirname(bundledLicense), { recursive: true })
+  await writeFile(bundledLicense, `MIT License\n${'reviewed '.repeat(20)}\n`, 'utf8')
+
+  try {
+    const inventory = {
+      workspaceRoots: ['apps/desktop'],
+      runtimeDevDependencies: {},
+      dependencies: [
+        {
+          name: 'external-a',
+          use: 'fixture',
+          license: 'MIT',
+          metadataLicenses: ['MIT'],
+          source: 'https://example.test/a',
+        },
+      ],
+      reviewedTransitiveExceptions: [
+        {
+          name: 'transitive-b',
+          version: '2.0.0',
+          license: 'MIT',
+          allowMissingMetadata: true,
+          bundledLicense: 'licenses/transitive-b-MIT.txt',
+          licenseSource: 'https://example.test/transitive-b-license',
+        },
+      ],
+    }
+    const derived = await deriveDirectRuntimeDependencies(fixtureRoot, inventory)
+    const { report, licenseBundle } = await auditInstalledProductionGraph(
+      fixtureRoot,
+      inventory,
+      derived,
+    )
+    assert.deepEqual(report.packages.at(-1).licenseFiles, ['licenses/transitive-b-MIT.txt'])
+    assert.match(licenseBundle, /transitive-b-MIT\.txt/)
+  } finally {
+    await writeFile(packageJsonPath, packageJson, 'utf8')
+    await writeFile(packageLicense, 'fixture license\n', 'utf8')
   }
 })
 

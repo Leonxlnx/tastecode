@@ -57,7 +57,7 @@ describe('packaged native binding proof', () => {
     await expect(provePtyBinding(pty.module, 'win32')).resolves.toBeUndefined()
     expect(pty.module.spawn).toHaveBeenCalledOnce()
     expect(pty.resize).toHaveBeenCalledWith(100, 30)
-    expect(pty.kill).not.toHaveBeenCalled()
+    expect(pty.kill).toHaveBeenCalledOnce()
   })
 
   it('writes, reads, deletes, and verifies an isolated credential', () => {

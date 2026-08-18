@@ -8,7 +8,7 @@
       "name": "@anthropic-ai/claude-agent-sdk",
       "use": "Claude Code adapter runtime",
       "license": "LicenseRef-Anthropic-Commercial-Terms",
-      "metadataLicenses": ["SEE LICENSE IN LICENSE.md"],
+      "metadataLicenses": ["SEE LICENSE IN LICENSE.md", "SEE LICENSE IN README.md"],
       "source": "https://github.com/anthropics/claude-agent-sdk-typescript"
     },
     {
@@ -44,7 +44,9 @@
       "use": "OpenCode adapter client",
       "license": "MIT",
       "metadataLicenses": ["MIT"],
-      "source": "https://github.com/anomalyco/opencode"
+      "source": "https://github.com/anomalyco/opencode",
+      "bundledLicense": "licenses/npm/opencode-sdk-1.18.11-MIT.txt",
+      "licenseSource": "https://github.com/anomalyco/opencode/blob/012c2f57f976489d88bd4598a056b4bdcdd428ee/LICENSE"
     },
     {
       "name": "@pierre/diffs",
@@ -194,5 +196,58 @@
       "source": "https://github.com/colinhacks/zod"
     }
   ],
-  "reviewedTransitiveExceptions": []
+  "reviewedTransitiveExceptions": [
+    {
+      "name": "@anthropic-ai/claude-agent-sdk-win32-x64",
+      "version": "0.3.232",
+      "license": "LicenseRef-Anthropic-Commercial-Terms",
+      "metadataLicenses": ["SEE LICENSE IN LICENSE.md"]
+    },
+    {
+      "name": "@napi-rs/keyring-win32-x64-msvc",
+      "version": "1.3.0",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "bundledLicense": "licenses/npm/napi-keyring-win32-x64-msvc-1.3.0-MIT.txt",
+      "licenseSource": "https://github.com/Brooooooklyn/keyring-node/blob/875e452d75c7f1f2579e25ef10a598109852fa75/LICENSE"
+    },
+    {
+      "name": "@electron-internal/extract-zip",
+      "version": "1.0.4",
+      "license": "BSD-2-Clause",
+      "metadataLicenses": ["BSD-2-Clause"],
+      "bundledLicense": "licenses/npm/electron-extract-zip-1.0.4-BSD-2-Clause.txt",
+      "licenseSource": "https://github.com/electron/extract-zip/blob/3eb9258c8e5205cd522a84bc5872f3d18daba942/package.json"
+    },
+    {
+      "name": "khroma",
+      "version": "2.1.0",
+      "license": "MIT",
+      "allowMissingMetadata": true
+    },
+    {
+      "name": "lazy-val",
+      "version": "1.0.5",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "bundledLicense": "licenses/npm/lazy-val-1.0.5-MIT.txt",
+      "licenseSource": "https://github.com/develar/lazy-val/blob/b69ad4119f1b19bdab13c61ee2fcc88d46b89071/package.json"
+    },
+    {
+      "name": "lru_map",
+      "version": "0.4.1",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "bundledLicense": "licenses/npm/lru-map-0.4.1-MIT.txt",
+      "licenseSource": "https://github.com/rsms/js-lru/blob/5373f60c42259bca06a99d2bb10d872ebe4ae72b/LICENSE.txt"
+    },
+    {
+      "name": "standardwebhooks",
+      "version": "1.0.0",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "bundledLicense": "licenses/npm/standardwebhooks-1.0.0-MIT.txt",
+      "licenseSource": "https://github.com/standard-webhooks/standard-webhooks/blob/b03a68fe8b1904de92ba1df669dc8bd9c8226df3/libraries/LICENSE"
+    }
+  ]
 }

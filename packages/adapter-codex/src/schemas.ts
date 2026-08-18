@@ -394,18 +394,8 @@ export const McpServerOauthLoginCompletedNotificationSchema = z.object({
   error: z.string().optional(),
 })
 
-export const VoiceAuthStatusResponseSchema = z.object({
-  authMethod: nullableString,
-  authToken: nullableString.optional(),
-})
-
-export const ChatGptTokenPayloadSchema = z.object({
-  'https://api.openai.com/auth': z.object({ chatgpt_account_id: z.string() }),
-})
-
 export const VoiceTranscriptResponseSchema = z.object({
-  text: z.string().optional(),
-  transcript: z.string().optional(),
+  text: z.string(),
 })
 
 export const VoiceErrorResponseSchema = z.object({

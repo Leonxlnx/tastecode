@@ -891,7 +891,7 @@ async function launchOpenCodeServer(
     // can include auth details, and the actionable error is the safe one above.
     child.stderr.on('data', () => undefined)
     child.on('error', (error) => finish(error))
-    child.on('exit', (code) => {
+    child.on('close', (code) => {
       if (!settled) finish(new Error(`OpenCode server exited with code ${code ?? 'unknown'}`))
     })
   })

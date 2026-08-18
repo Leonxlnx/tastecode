@@ -56,16 +56,16 @@ does not receive raw credentials. See [SECURITY.md](./SECURITY.md) and
 
 ## Documentation
 
-| Document | Purpose |
-| --- | --- |
-| [Architecture](./docs/ARCHITECTURE.md) | System shape and decisions |
-| [Providers](./docs/PROVIDERS.md) | Integration model and provider matrix |
-| [Design Agent](./docs/DESIGN-AGENT.md) | Design Mode behavior and acceptance criteria |
-| [UI handoff](./docs/UI-HANDOFF.md) | UI invariants and open work |
-| [Roadmap](./docs/ROADMAP.md) | Product milestones |
-| [Credits](./CREDITS.md) | Contributors and project references |
-| [Third-party notices](./THIRD_PARTY_NOTICES.md) | Dependency and attribution audit |
-| [Licensing](./docs/LICENSING.md) | License status and release obligations |
+| Document                                        | Purpose                                      |
+| ----------------------------------------------- | -------------------------------------------- |
+| [Architecture](./docs/ARCHITECTURE.md)          | System shape and decisions                   |
+| [Providers](./docs/PROVIDERS.md)                | Integration model and provider matrix        |
+| [Design Agent](./docs/DESIGN-AGENT.md)          | Design Mode behavior and acceptance criteria |
+| [UI handoff](./docs/UI-HANDOFF.md)              | UI invariants and open work                  |
+| [Roadmap](./docs/ROADMAP.md)                    | Product milestones                           |
+| [Credits](./CREDITS.md)                         | Contributors and project references          |
+| [Third-party notices](./THIRD_PARTY_NOTICES.md) | Dependency and attribution audit             |
+| [Licensing](./docs/LICENSING.md)                | License status and release obligations       |
 
 ## Contributing
 

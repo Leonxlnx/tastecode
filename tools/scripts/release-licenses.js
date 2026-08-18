@@ -14,6 +14,7 @@ const STANDARD_LICENSES = new Set([
   'CC0-1.0',
   'ISC',
   'MIT',
+  'MPL-2.0',
   'OFL-1.1',
   'Python-2.0',
   'Unicode-3.0',
@@ -30,8 +31,8 @@ async function readJson(filePath) {
 }
 
 function normalizedLicense(value) {
-  if (typeof value === 'string') return value.trim().replaceAll(/\s+/g, ' ')
-  if (value && typeof value === 'object' && typeof value.type === 'string') {
+  if (value?.constructor === String) return value.trim().replaceAll(/\s+/g, ' ')
+  if (value?.constructor === Object && value.type?.constructor === String) {
     return value.type.trim().replaceAll(/\s+/g, ' ')
   }
   return undefined
@@ -63,7 +64,9 @@ function isStandardLicenseExpression(expression) {
       expectsException = false
       continue
     }
-    if (!STANDARD_LICENSES.has(token)) return false
+    if (![...STANDARD_LICENSES].some((license) => license.toLowerCase() === token.toLowerCase())) {
+      return false
+    }
   }
   return !expectsException
 }
@@ -150,6 +153,20 @@ function validateInventory(inventory, derivedDependencies) {
     ) {
       errors.push(`incomplete direct dependency inventory: ${entry.name}`)
     }
+    if (entry.bundledLicense && !entry.licenseSource) {
+      errors.push(`bundled license is missing its source: ${entry.name}`)
+    }
+  }
+
+  const reviewedExceptions = new Set()
+  for (const entry of inventory.reviewedTransitiveExceptions ?? []) {
+    const key = `${entry.name}@${entry.version ?? '*'}`
+    if (reviewedExceptions.has(key)) errors.push(`duplicate reviewed exception: ${key}`)
+    reviewedExceptions.add(key)
+    if (!entry.name || !entry.license) errors.push(`incomplete reviewed exception: ${key}`)
+    if (entry.bundledLicense && !entry.licenseSource) {
+      errors.push(`bundled license is missing its source: ${key}`)
+    }
   }
 
   const derived = new Set(derivedDependencies.map(({ name }) => name))
@@ -157,7 +174,8 @@ function validateInventory(inventory, derivedDependencies) {
     if (!entries.has(name)) errors.push(`direct runtime dependency is not inventoried: ${name}`)
   }
   for (const name of entries.keys()) {
-    if (!derived.has(name)) errors.push(`inventory entry is not a direct runtime dependency: ${name}`)
+    if (!derived.has(name))
+      errors.push(`inventory entry is not a direct runtime dependency: ${name}`)
   }
   if (errors.length > 0) throw new Error(errors.join('\n'))
   return entries
@@ -266,9 +284,26 @@ async function licenseFiles(packageRoot) {
   return matches.sort((left, right) => left.localeCompare(right))
 }
 
+async function bundledLicenseFile(repositoryRoot, reviewed) {
+  if (!reviewed?.bundledLicense) return undefined
+  if (!reviewed.licenseSource?.startsWith('https://')) {
+    throw new Error(`${reviewed.bundledLicense} has no HTTPS source`)
+  }
+  const licensesRoot = path.resolve(repositoryRoot, 'licenses')
+  const absolutePath = path.resolve(repositoryRoot, reviewed.bundledLicense)
+  const relative = path.relative(licensesRoot, absolutePath)
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`${reviewed.bundledLicense} is outside the licenses directory`)
+  }
+  const contents = await readFile(absolutePath, 'utf8')
+  if (contents.trim().length < 100) throw new Error(`${reviewed.bundledLicense} is empty`)
+  return reviewed.bundledLicense.replaceAll(path.sep, '/')
+}
+
 function reviewedException(inventory, packageName, version) {
   return inventory.reviewedTransitiveExceptions?.find(
-    (entry) => entry.name === packageName && (entry.version === undefined || entry.version === version),
+    (entry) =>
+      entry.name === packageName && (entry.version === undefined || entry.version === version),
   )
 }
 
@@ -291,6 +326,7 @@ export async function auditInstalledProductionGraph(
   const errors = []
   const unresolvedOptional = []
   const packages = []
+  const licenseSections = []
   const visited = new Set()
   const queue = derivedDependencies.flatMap(({ name, origins }) =>
     origins.map((fromDirectory) => ({ name, fromDirectory, optional: false, direct: true })),
@@ -316,22 +352,45 @@ export async function auditInstalledProductionGraph(
     const metadataLicense = declaredLicense(packageJson)
     const files = await licenseFiles(resolved.packageRoot)
     const directEntry = directEntries.get(name)
+    const reviewed = directEntry ?? reviewedException(inventory, name, version)
 
     if (!metadataLicense) {
-      errors.push(`${name}@${version} has no package license metadata`)
+      if (!reviewed?.allowMissingMetadata) {
+        errors.push(`${name}@${version} has no package license metadata`)
+      }
     } else if (!metadataIsReviewed(directEntry, name, version, metadataLicense, inventory)) {
       errors.push(`${name}@${version} has unreviewed license metadata: ${metadataLicense}`)
     }
     if (files.length === 0) {
-      errors.push(`${name}@${version} does not ship a license, copying, or notice file`)
+      try {
+        const bundled = await bundledLicenseFile(repositoryRoot, reviewed)
+        if (bundled) files.push(bundled)
+        else errors.push(`${name}@${version} does not ship a license, copying, or notice file`)
+      } catch (error) {
+        errors.push(`${name}@${version}: ${error instanceof Error ? error.message : String(error)}`)
+      }
     }
+
+    const licenseTexts = []
+    for (const file of files) {
+      const filePath = file.startsWith('licenses/')
+        ? path.resolve(repositoryRoot, file)
+        : path.join(resolved.packageRoot, file)
+      const contents = await readFile(filePath, 'utf8')
+      if (contents.trim().length === 0) {
+        errors.push(`${name}@${version} has an empty license file: ${file}`)
+        continue
+      }
+      licenseTexts.push({ file, contents: contents.trim() })
+    }
+    licenseSections.push({ name, version, licenseTexts })
 
     packages.push({
       name,
       version,
       direct: Boolean(directEntry),
       declaredLicense: metadataLicense ?? null,
-      reviewedLicense: directEntry?.license ?? reviewedException(inventory, name, version)?.license ?? null,
+      reviewedLicense: reviewed?.license ?? null,
       licenseFiles: files,
     })
 
@@ -365,15 +424,32 @@ export async function auditInstalledProductionGraph(
   packages.sort((left, right) =>
     `${left.name}@${left.version}`.localeCompare(`${right.name}@${right.version}`),
   )
+  licenseSections.sort((left, right) =>
+    `${left.name}@${left.version}`.localeCompare(`${right.name}@${right.version}`),
+  )
   if (errors.length > 0) throw new Error(errors.join('\n'))
   return {
-    schemaVersion: 1,
-    platform: process.platform,
-    architecture: process.arch,
-    packageCount: packages.length,
-    packages,
-    unresolvedOptional: [...new Set(unresolvedOptional)].sort(),
+    report: {
+      schemaVersion: 1,
+      platform: process.platform,
+      architecture: process.arch,
+      packageCount: packages.length,
+      packages,
+      unresolvedOptional: [...new Set(unresolvedOptional)].sort(),
+    },
+    licenseBundle: renderLicenseBundle(licenseSections),
   }
+}
+
+function renderLicenseBundle(sections) {
+  const output = ['TasteCode third-party license texts', '']
+  for (const { name, version, licenseTexts } of sections) {
+    output.push('='.repeat(80), `${name}@${version}`, '')
+    for (const { file, contents } of licenseTexts) {
+      output.push(`--- ${file} ---`, contents, '')
+    }
+  }
+  return `${output.join('\n').trimEnd()}\n`
 }
 
 export async function verifyReleaseLicenses(repositoryRoot, options = {}) {
@@ -382,8 +458,12 @@ export async function verifyReleaseLicenses(repositoryRoot, options = {}) {
   validateInventory(inventory, derived)
   await verifyDirectRuntimeTable(repositoryRoot, inventory)
   if (options.verifyProjectLicense !== false) await verifyProjectLicense(repositoryRoot)
-  const report = await auditInstalledProductionGraph(repositoryRoot, inventory, derived)
-  return { inventory, report }
+  const { report, licenseBundle } = await auditInstalledProductionGraph(
+    repositoryRoot,
+    inventory,
+    derived,
+  )
+  return { inventory, report, licenseBundle }
 }
 
 function argumentsFrom(argv) {
@@ -403,7 +483,10 @@ function argumentsFrom(argv) {
 async function main() {
   const options = argumentsFrom(process.argv.slice(2))
   const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
-  const { report } = await verifyReleaseLicenses(repositoryRoot)
+  const { report, licenseBundle } = await verifyReleaseLicenses(repositoryRoot)
+  const releaseDirectory = path.join(repositoryRoot, 'release')
+  await mkdir(releaseDirectory, { recursive: true })
+  await writeFile(path.join(releaseDirectory, 'THIRD_PARTY_LICENSES.txt'), licenseBundle, 'utf8')
   const serialized = `${JSON.stringify(report, null, 2)}\n`
   if (options.output) {
     const outputPath = path.resolve(repositoryRoot, options.output)

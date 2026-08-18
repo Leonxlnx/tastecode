@@ -1,8 +1,7 @@
 # Licensing
 
 TasteCode is licensed under the Apache License 2.0. The root
-[LICENSE](../LICENSE) file contains the SPDX identifier, copyright notice, and a link to
-the canonical terms.
+[LICENSE](../LICENSE) file contains the complete license terms.
 
 ## Copyright
 

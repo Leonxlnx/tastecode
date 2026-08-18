@@ -316,7 +316,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))
 
-    child.on('exit', (code) => {
+    child.on('close', (code) => {
       if (this.#child === child) this.#child = undefined
       if (this.#intentionalKills.has(child)) return
       // An exit without a result frame would otherwise look like a hang.
@@ -377,7 +377,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
       child.stdout.setEncoding('utf8')
       child.stdout.on('data', (chunk: string) => (stdout += chunk))
       child.on('error', (error) => finish(error))
-      child.on('exit', (code) =>
+      child.on('close', (code) =>
         finish(
           code === 0
             ? parseAntigravityModels(stdout)

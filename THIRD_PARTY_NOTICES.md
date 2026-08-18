@@ -40,16 +40,18 @@ The table below is generated from `licenses/direct-runtime-dependencies.json` an
 | `thinking-orbs` | Agent activity indicators | MIT | [source](https://github.com/Jakubantalik/thinking-orbs) |
 | `ws` | WebSocket runtime | MIT | [source](https://github.com/websockets/ws) |
 | `zod` | Runtime schema validation | MIT | [source](https://github.com/colinhacks/zod) |
+
 <!-- END DIRECT RUNTIME DEPENDENCIES -->
 
 ## Incorporated material
 
-| Project | Use | License | Source |
-| --- | --- | --- | --- |
-| Codex | Generated app-server protocol types | Apache-2.0 | [openai/codex](https://github.com/openai/codex) |
-| Thinking Orbs | Adapted activity-indicator source | [MIT](./licenses/thinking-orbs-MIT.txt) | [Jakubantalik/thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) |
+| Project       | Use                                 | License                                 | Source                                                                      |
+| ------------- | ----------------------------------- | --------------------------------------- | --------------------------------------------------------------------------- |
+| Codex         | Generated app-server protocol types | Apache-2.0                              | [openai/codex](https://github.com/openai/codex)                             |
+| Thinking Orbs | Adapted activity-indicator source   | [MIT](./licenses/thinking-orbs-MIT.txt) | [Jakubantalik/thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) |
 
 The release gate requires a complete top-level Apache-2.0 `LICENSE`, a clean production install,
 and a license or notice file for every package in the resolved production graph. It emits only
 metadata; it never copies license bodies. The reviewed license files themselves must be bundled
-with each Windows and macOS distribution.
+with each Windows and macOS distribution. When an npm package omits that file, the exact reviewed
+fallback and its upstream source are recorded in `licenses/direct-runtime-dependencies.json`.

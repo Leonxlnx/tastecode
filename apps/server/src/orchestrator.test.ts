@@ -21,7 +21,13 @@ import type {
   ProviderId,
   ThreadLifecycle,
 } from '@harness/contracts'
-import type { AgentSession, ProviderRuntime, StartOptions, TurnOptions } from './adapters.js'
+import {
+  providerRuntime,
+  type AgentSession,
+  type ProviderRuntime,
+  type StartOptions,
+  type TurnOptions,
+} from './adapters.js'
 import { DESIGN_BRIEF_ATTACHMENT, writeDesignBrief, type PreviewPlan } from '@harness/design-agent'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
@@ -100,6 +106,7 @@ class FakeSession implements AgentSession {
   eventDuringSend: DomainEvent | undefined
   lateSendError: Error | undefined
   emitUsageChanged: () => void = () => {}
+  emitProviderSessionId: (providerSessionId: string) => void = () => {}
   afterEventBarrier: Promise<void> | undefined
   steerBarriers: Promise<void>[] = []
   /** Resolves the pending sendTurn, letting a test hold one open. */
@@ -159,6 +166,10 @@ class FakeSession implements AgentSession {
   onUsageChanged(listener: () => void): void {
     this.emitUsageChanged = listener
   }
+
+  onProviderSessionId(listener: (providerSessionId: string) => void): void {
+    this.emitProviderSessionId = listener
+  }
 }
 
 function harness(worktreeRoot?: string, store = new Store(':memory:')) {
@@ -205,7 +216,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     async listModels() {
       return []
     },
-    ...propertiesWhen(provider === 'codex', () => ({
+    ...propertiesWhen(provider === 'codex' || provider === 'grok', () => ({
       async resume(threadId: string, workspacePath: string, options: StartOptions) {
         resumedIds.push(threadId)
         resumedIn.push(workspacePath)
@@ -2524,6 +2535,74 @@ describe('persisted threads', () => {
 
     expect(resumedOptions[0]?.instructions).toContain('clear, capable teammate')
     expect(resumedOptions[0]?.instructions).toContain('Do not use em dashes')
+  })
+
+  it('persists and resumes Grok native identity across store and orchestrator recreation', async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-grok-restart-'))
+    const database = path.join(directory, 'harness.db')
+    let threadId = ''
+    try {
+      const firstStore = new Store(database)
+      const first = harness(undefined, firstStore)
+      const thread = await first.orchestrator.startThread('grok', '/repo')
+      threadId = thread.id
+
+      first.sessions[0]!.emitProviderSessionId('grok-native-session')
+      expect(firstStore.thread(threadId)).toMatchObject({
+        id: threadId,
+        providerSessionId: 'grok-native-session',
+      })
+      await first.orchestrator.disposeAll()
+      firstStore.close()
+
+      const restartedStore = new Store(database)
+      const restarted = harness(undefined, restartedStore)
+      try {
+        await restarted.orchestrator.submitTurn(threadId, 'Continue after restart.')
+
+        expect(restarted.resumedIds).toEqual([threadId])
+        expect(restarted.resumedOptions[0]?.providerSessionId).toBe('grok-native-session')
+        expect(restarted.sessions[0]?.sent).toEqual(['Continue after restart.'])
+
+        restarted.sessions[0]!.emitProviderSessionId('grok-native-session-rotated')
+        expect(restartedStore.thread(threadId)).toMatchObject({
+          id: threadId,
+          providerSessionId: 'grok-native-session-rotated',
+        })
+      } finally {
+        await restarted.orchestrator.disposeAll()
+        restartedStore.close()
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps Grok history readable when restart happened before a native id was learned', async () => {
+    const store = new Store(':memory:')
+    store.addProject('/repo')
+    store.addThread({
+      id: 'grok-without-native-id',
+      projectPath: '/repo',
+      provider: 'grok',
+      title: 'T',
+    })
+    store.append('grok-without-native-id', message('Earlier Grok answer.'))
+    const orchestrator = new Orchestrator(store, {
+      onEvent: () => {},
+      onLog: () => {},
+      onLogin: () => {},
+      runtimeFor: (provider, onLog) => providerRuntime(provider, onLog),
+    })
+    try {
+      await expect(orchestrator.submitTurn('grok-without-native-id', 'Continue.')).rejects.toThrow(
+        'Start a new Grok chat; the local history of this chat is still available.',
+      )
+      expect(store.history('grok-without-native-id')).toHaveLength(1)
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+    }
   })
 
   it('does not invent continuity for a provider without resume support', async () => {

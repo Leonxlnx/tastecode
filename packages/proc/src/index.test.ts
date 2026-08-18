@@ -31,6 +31,22 @@ describe('StdioJsonRpc', () => {
       vi.useRealTimers()
     }
   })
+
+  it('accepts a final reply delivered after process exit but before stdio closes', async () => {
+    // SAFETY: StdioJsonRpc uses only these three streams and EventEmitter process events in this test.
+    const child = new EventEmitter() as ChildProcessWithoutNullStreams
+    child.stdin = new PassThrough()
+    child.stdout = new PassThrough()
+    child.stderr = new PassThrough()
+    const rpc = new StdioJsonRpc(child, 'test agent')
+    const reply = rpc.request('final')
+
+    child.emit('exit', 0)
+    child.stdout.write('{"jsonrpc":"2.0","id":1,"result":"drained"}\n')
+
+    await expect(reply).resolves.toBe('drained')
+    child.emit('close', 0)
+  })
 })
 
 describe('runCli', () => {
@@ -38,6 +54,20 @@ describe('runCli', () => {
     const result = await runCli('node', ['--version'])
     expect(result.code).toBe(0)
     expect(result.stdout).toMatch(/^v\d+\./)
+  })
+
+  it('waits for inherited output pipes to drain before returning', async () => {
+    const lateOutput = "setTimeout(() => process.stdout.write('late'), 50)"
+    const script = [
+      "const { spawn } = require('node:child_process')",
+      `const child = spawn(process.execPath, ['-e', ${JSON.stringify(lateOutput)}], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] })`,
+      'child.unref()',
+      "process.stdout.write('early-')",
+    ].join(';')
+
+    const result = await runCli(process.execPath, ['-e', script], 2_000)
+
+    expect(result).toEqual({ code: 0, stdout: 'early-late' })
   })
 })
 

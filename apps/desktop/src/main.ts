@@ -68,7 +68,13 @@ import {
   type MainWindowStatePersistence,
 } from './window-state.js'
 import { windowThemeOptions, windowThemeSource } from './window-theme.js'
-import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './zoom-shortcuts.js'
+import {
+  DEFAULT_ZOOM_FACTOR,
+  isZoomAction,
+  nextZoomFactor,
+  type ZoomAction,
+  zoomShortcut,
+} from './zoom-shortcuts.js'
 import { viewedImagePath } from './viewed-image-path.js'
 import { propertiesWhen } from './properties-when.js'
 
@@ -249,6 +255,9 @@ function createWindow(): void {
     },
   })
   mainWindow = window
+  window.webContents.once('did-finish-load', () =>
+    window.webContents.setZoomFactor(DEFAULT_ZOOM_FACTOR),
+  )
   configureEmbeddedBrowser(window.webContents)
   restoreMainWindowPresence(process.platform, app, window)
   const windowStatePersistence = persistMainWindowState(

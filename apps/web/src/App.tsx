@@ -1536,6 +1536,7 @@ export function App(props: AppProps = {}) {
     transport,
     provider,
     account?.signedIn,
+    modelConnections,
     selectedModelChoice?.agent,
   ])
 

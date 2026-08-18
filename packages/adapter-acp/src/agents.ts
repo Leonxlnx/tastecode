@@ -249,7 +249,7 @@ function captureCli(command: string, args: string[], timeoutMs = 5000): Promise<
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => (output += chunk))
     child.on('error', (error) => finish(error))
-    child.on('exit', (code) =>
+    child.on('close', (code) =>
       finish(code === 0 ? undefined : new Error(`${command} model discovery failed`)),
     )
   })
