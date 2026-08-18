@@ -20,6 +20,7 @@ import { serializeModelCatalogCache } from './model-catalog-cache.js'
 import type { ModelChoice } from './model-catalog.js'
 import { IndeterminateRequestError, type ConnectionState, type Transport } from './transport.js'
 import { propertiesWhen } from './properties-when.js'
+import { resetInstalls } from './provider-install.js'
 import { Thread as RealThread } from './ui/Thread.js'
 import { Sidebar as RealSidebar } from './ui/Sidebar.js'
 import { Composer as RealComposer } from './ui/Composer.js'
@@ -502,6 +503,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  resetInstalls()
+  vi.unstubAllGlobals()
   vi.clearAllMocks()
   vi.restoreAllMocks()
 })
@@ -1886,6 +1889,83 @@ describe('new chats', () => {
     expect(
       requiredInstance(screen.getByRole('button', { name: 'Send' }), HTMLButtonElement).disabled,
     ).toBe(true)
+  })
+
+  it('opens Claude login in the expanded workspace and restores Settings after success', async () => {
+    serverProviders = [
+      ...serverProviders,
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        installed: true,
+        auth: 'unknown',
+        setup: {
+          installUrl: 'https://code.claude.com/docs/en/getting-started',
+          login: 'provider',
+        },
+      },
+    ]
+    let claudeSignedIn = false
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
+      if (method === 'auth.status') {
+        const provider = methods['auth.status'].params.parse(params).provider
+        return Promise.resolve({ signedIn: provider === 'claude-code' ? claudeSignedIn : true })
+      }
+      if (method === 'providers.launch') {
+        return Promise.resolve({ terminalId: 'term-claude-login' })
+      }
+      return request(method, params)
+    })
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      },
+    )
+
+    render(<App />)
+    openSettings()
+    await screen.findByText('Claude Code')
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
+    const workspace = requiredElement(document, '.workspace-layout', HTMLElement)
+    expect(workspace.classList.contains('is-panel-open')).toBe(true)
+    expect(workspace.classList.contains('is-panel-expanded')).toBe(true)
+    expect(await screen.findByRole('tab', { name: 'Claude Code login' })).toBeTruthy()
+    expect(transport.request).toHaveBeenCalledWith('providers.launch', {
+      provider: 'claude-code',
+      columns: 320,
+      rows: 30,
+    })
+
+    claudeSignedIn = true
+    act(() => {
+      requiredValue(
+        transport.listeners.get('terminal.exit'),
+        'terminal exit listener',
+      )({
+        terminalId: 'term-claude-login',
+        exitCode: 0,
+      })
+    })
+
+    await screen.findByRole('dialog', { name: 'Settings' })
+    await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(false))
+    expect(workspace.classList.contains('is-panel-expanded')).toBe(false)
+    expect(screen.queryByRole('tab', { name: 'Claude Code login' })).toBeNull()
+    await waitFor(() =>
+      expect(
+        requiredValue(
+          screen.getByText('Claude Code').closest<HTMLElement>('.settings__row'),
+          'refreshed Claude provider row',
+        ).textContent,
+      ).toContain('Authenticated'),
+    )
   })
 
   it('preserves a parked custom model without blocking a catalogless beta source', async () => {
@@ -4619,7 +4699,7 @@ describe('global shortcuts', () => {
     )
   })
 
-  it('opens the keyboard shortcuts reference from the command palette as a modal', async () => {
+  it('opens the editable keybind settings from the command palette', async () => {
     render(<App />)
     await screen.findByRole('button', { name: /^New session,/ })
 
@@ -4628,16 +4708,48 @@ describe('global shortcuts', () => {
     fireEvent.change(search, { target: { value: 'keyboard' } })
     fireEvent.keyDown(search, { key: 'Enter' })
 
-    const shortcuts = screen.getByRole('dialog', { name: 'Keyboard shortcuts' })
-    expect(shortcuts).toBeTruthy()
-    expect(within(shortcuts).getByText('Command palette')).toBeTruthy()
-    expect(within(shortcuts).getByText('⌘K')).toBeTruthy()
+    const settings = screen.getByRole('dialog', { name: 'Settings' })
+    expect(within(settings).getByRole('heading', { name: 'Keybinds' })).toBeTruthy()
+    expect(within(settings).getByText('Command palette')).toBeTruthy()
+    expect(
+      within(settings).getByRole('button', { name: 'Change Command palette keybind' }).textContent,
+    ).toBe('⌘K')
 
-    fireEvent.keyDown(shortcuts, { key: 'n', metaKey: true })
-    expect(screen.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeTruthy()
+    fireEvent.keyDown(settings, { key: 'n', metaKey: true })
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy()
 
-    fireEvent.keyDown(shortcuts, { key: 'Escape' })
-    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull()
+    fireEvent.keyDown(settings, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull()
+  })
+
+  it('persists a custom keybind and updates both behavior and shortcut hints', async () => {
+    const view = render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    fireEvent.keyDown(window, { key: ',', metaKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Keybinds' }))
+    const recorder = screen.getByRole('button', { name: 'Change New chat keybind' })
+    fireEvent.click(recorder)
+    fireEvent.keyDown(recorder, { key: 'g', metaKey: true })
+
+    expect(recorder.textContent).toBe('⌘G')
+    expect(localStorage.getItem('harness.keybindings.v1')).toContain('newChat')
+    view.unmount()
+
+    transport.request.mockClear()
+    render(<App />)
+    const newChat = await screen.findByRole('button', { name: 'New chat' })
+    expect(newChat.getAttribute('aria-keyshortcuts')).toBe('Meta+G Control+G')
+
+    fireEvent.keyDown(window, { key: 'n', metaKey: true })
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', {
+      threadId: 'untouched-thread',
+    })
+
+    fireEvent.keyDown(window, { key: 'g', metaKey: true })
+    expect(transport.request).toHaveBeenCalledWith('thread.delete', {
+      threadId: 'untouched-thread',
+    })
   })
 
   it('opens the project switcher directly without rendering a top project control', async () => {

@@ -6,6 +6,7 @@ import { TestTransport } from '../../test-transport.js'
 import {
   WorkspacePanel,
   type WorkspacePanelHaptics,
+  type WorkspacePanelProviderTerminal,
   type WorkspacePanelTerminal,
 } from './WorkspacePanel.js'
 
@@ -22,6 +23,15 @@ const TestTerminal = (({ onClose }) => (
     Exit terminal
   </button>
 )) satisfies WorkspacePanelTerminal
+
+const TestProviderTerminal = (({ installKey, ariaLabel, profile }) => (
+  <div
+    data-testid="provider-login-terminal"
+    data-install-key={installKey}
+    data-profile={profile}
+    aria-label={ariaLabel}
+  />
+)) satisfies WorkspacePanelProviderTerminal
 
 const idleTransport = new TestTransport()
 
@@ -194,6 +204,45 @@ describe('WorkspacePanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Expand workspace tools' }))
     expect(onExpandedChange).toHaveBeenCalledWith(true)
     expect(screen.queryByRole('button', { name: 'Hide workspace tools' })).toBeNull()
+  })
+
+  it('opens a provider login in its own workspace terminal tab', async () => {
+    const onOpen = vi.fn()
+    const onProviderLoginClose = vi.fn()
+    render(
+      <WorkspacePanel
+        open
+        expanded
+        width={400}
+        transport={idleTransport}
+        theme="dark"
+        sideChatParentStatus="idle"
+        sideChatStartOptions={{ approval: 'ask' }}
+        nativeSurfacesVisible
+        onOpen={onOpen}
+        onClose={vi.fn()}
+        onExpandedChange={vi.fn()}
+        onWidthChange={vi.fn()}
+        providerLogin={{
+          id: 7,
+          title: 'Claude Code login',
+          installKey: 'login:claude-code',
+        }}
+        providerTerminalComponent={TestProviderTerminal}
+        onProviderLoginClose={onProviderLoginClose}
+      />,
+    )
+
+    expect(await screen.findByRole('tab', { name: 'Claude Code login' })).toBeTruthy()
+    const terminal = screen.getByTestId('provider-login-terminal')
+    expect(terminal.getAttribute('data-install-key')).toBe('login:claude-code')
+    expect(terminal.getAttribute('data-profile')).toBe('workspace')
+    expect(terminal.getAttribute('aria-label')).toBe('Claude Code login terminal')
+    expect(onOpen).toHaveBeenCalledOnce()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close Claude Code login' }))
+    expect(onProviderLoginClose).toHaveBeenCalledWith(7)
+    expect(screen.queryByRole('tab', { name: 'Claude Code login' })).toBeNull()
   })
 
   it('routes a workspace shell exit through the terminal tab close path', async () => {

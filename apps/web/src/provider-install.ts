@@ -24,6 +24,12 @@ export type InstallState = {
 
 export type InstallTarget = { provider: ProviderId; agent?: string }
 
+export type ProviderLoginTerminalTarget = {
+  provider: ProviderId
+  displayName: string
+  installKey: string
+}
+
 export function installKey(target: InstallTarget): string {
   return target.agent ? `${target.provider}:${target.agent}` : target.provider
 }

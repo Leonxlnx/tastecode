@@ -21,21 +21,24 @@ import {
 export const InstallTerminal = memo(function InstallTerminal(props: {
   transport: Transport
   installKey: string
+  ariaLabel?: string | undefined
+  profile?: 'app' | 'workspace' | undefined
 }) {
   const host = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
     const container = host.current
     if (!container) return
+    const workspace = props.profile === 'workspace'
 
     const instance = new Terminal({
       cursorBlink: true,
-      fontFamily: terminalFont(),
-      fontSize: 12,
-      lineHeight: 1.25,
+      fontFamily: terminalFont(props.profile),
+      fontSize: workspace ? 13 : 12,
+      lineHeight: workspace ? 1 : 1.25,
       screenReaderMode: true,
       scrollback: 5_000,
-      theme: terminalTheme(),
+      theme: terminalTheme(props.profile),
     })
     const fit = new FitAddon()
     instance.loadAddon(fit)
@@ -101,7 +104,13 @@ export const InstallTerminal = memo(function InstallTerminal(props: {
       offStore()
       instance.dispose()
     }
-  }, [props.installKey, props.transport])
+  }, [props.installKey, props.profile, props.transport])
 
-  return <div ref={host} className="install-terminal" aria-label="Install terminal" />
+  return (
+    <div
+      ref={host}
+      className="install-terminal"
+      aria-label={props.ariaLabel ?? 'Install terminal'}
+    />
+  )
 })

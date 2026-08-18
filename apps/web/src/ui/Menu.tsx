@@ -71,7 +71,7 @@ export function Menu(props: {
   panelRole?: 'menu' | 'dialog'
   panelLabel?: string
   panelClassName?: string
-  shortcutAria?: string
+  shortcutAria?: string | undefined
   contextMenuTargetRef?: RefObject<HTMLElement | null>
 }) {
   const [open, setOpen] = useState(false)
@@ -435,7 +435,7 @@ export function MenuItem(props: {
   detail?: string | undefined
   icon: ReactNode
   className?: string
-  shortcutAria?: string
+  shortcutAria?: string | undefined
 }) {
   return (
     <button

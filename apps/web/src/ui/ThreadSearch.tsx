@@ -63,6 +63,7 @@ export function ThreadSearch(props: {
         ref={input}
         value={query}
         spellCheck={false}
+        aria-label="Find in thread"
         placeholder="Find in thread"
         onChange={(e) => {
           setQuery(e.target.value)
@@ -77,13 +78,28 @@ export function ThreadSearch(props: {
       <span className="find__count">
         {term === '' ? '' : hits.length === 0 ? 'None' : `${cursor + 1}/${hits.length}`}
       </span>
-      <button className="icon-btn icon-btn--always" onClick={() => advance(true)} title="Previous">
+      <button
+        className="icon-btn icon-btn--always"
+        onClick={() => advance(true)}
+        title="Previous"
+        aria-label="Previous match"
+      >
         <ChevronUp size={12} aria-hidden />
       </button>
-      <button className="icon-btn icon-btn--always" onClick={() => advance(false)} title="Next">
+      <button
+        className="icon-btn icon-btn--always"
+        onClick={() => advance(false)}
+        title="Next"
+        aria-label="Next match"
+      >
         <ChevronDown size={12} aria-hidden />
       </button>
-      <button className="icon-btn icon-btn--always" onClick={props.onClose} title="Close">
+      <button
+        className="icon-btn icon-btn--always"
+        onClick={props.onClose}
+        title="Close"
+        aria-label="Close thread search"
+      >
         <X size={12} aria-hidden />
       </button>
     </div>

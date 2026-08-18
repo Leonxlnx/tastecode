@@ -262,7 +262,7 @@ function runCommand(
     child.stdout.on('data', append)
     child.stderr.on('data', append)
     child.on('error', finish)
-    child.on('exit', (code) =>
+    child.on('close', (code) =>
       finish({
         content: JSON.stringify({ code, output }),
         ...propertiesWhen(!(code === 0), () => ({ isError: true })),
