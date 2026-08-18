@@ -255,7 +255,9 @@ function createWindow(): void {
     },
   })
   mainWindow = window
-  window.webContents.setZoomFactor(DEFAULT_ZOOM_FACTOR)
+  window.webContents.once('did-finish-load', () =>
+    window.webContents.setZoomFactor(DEFAULT_ZOOM_FACTOR),
+  )
   configureEmbeddedBrowser(window.webContents)
   restoreMainWindowPresence(process.platform, app, window)
   const windowStatePersistence = persistMainWindowState(
