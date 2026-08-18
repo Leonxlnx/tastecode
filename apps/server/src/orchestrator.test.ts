@@ -2595,9 +2595,7 @@ describe('persisted threads', () => {
       runtimeFor: (provider, onLog) => providerRuntime(provider, onLog),
     })
     try {
-      await expect(
-        orchestrator.submitTurn('grok-without-native-id', 'Continue.'),
-      ).rejects.toThrow(
+      await expect(orchestrator.submitTurn('grok-without-native-id', 'Continue.')).rejects.toThrow(
         'Start a new Grok chat; the local history of this chat is still available.',
       )
       expect(store.history('grok-without-native-id')).toHaveLength(1)

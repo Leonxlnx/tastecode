@@ -2089,9 +2089,7 @@ function toThread(row: SqliteRow): StoredThread {
       (includedAgent) => includedAgent,
     ),
     ...propertiesWhen(
-      r.provider_session_id === null
-        ? undefined
-        : { providerSessionId: r.provider_session_id },
+      r.provider_session_id === null ? undefined : { providerSessionId: r.provider_session_id },
       (includedProviderSessionId) => includedProviderSessionId,
     ),
     title: r.title,

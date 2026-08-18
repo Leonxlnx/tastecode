@@ -27,9 +27,7 @@ type TurnAdapterRecord = {
   adapter: RecordedAdapter
   provider: 'grok' | 'antigravity' | 'claude-code'
   startOptions?: object | undefined
-  resume?:
-    | { threadId: string; providerSessionId: string; workspacePath: string }
-    | undefined
+  resume?: { threadId: string; providerSessionId: string; workspacePath: string } | undefined
   acpResume?: { threadId: string; workspacePath: string } | undefined
   turnOptions?: object | undefined
   launchOptions: RecordedLaunch
@@ -66,9 +64,7 @@ class FakeGrokAdapter extends GrokAdapter {
     return thread('grok', args[0])
   }
 
-  override async resumeThread(
-    ...args: Parameters<GrokAdapter['resumeThread']>
-  ): Promise<Thread> {
+  override async resumeThread(...args: Parameters<GrokAdapter['resumeThread']>): Promise<Thread> {
     this.record.resume = {
       threadId: args[0],
       providerSessionId: args[1],
