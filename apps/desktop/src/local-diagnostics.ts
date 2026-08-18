@@ -2,6 +2,10 @@ import { appendFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promis
 import path from 'node:path'
 
 const MAX_LOG_BYTES = 512 * 1024
+const PRIVATE_KEY =
+  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|$)/g
+const STANDALONE_SECRET =
+  /\b(?:sk-(?:proj-|ant-api\d{2}-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,})\b/g
 
 export class LocalDiagnostics {
   readonly directory: string
@@ -84,6 +88,8 @@ export class LocalDiagnostics {
 
 export function scrub(value: string): string {
   return value
+    .replace(PRIVATE_KEY, '[redacted]')
+    .replace(STANDALONE_SECRET, '[redacted]')
     .replace(/\b[A-Z]:\\Users\\[^\\\r\n]+/gi, '[home]')
     .replace(/\/(?:Users|home)\/[^/\r\n]+/g, '[home]')
     .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '[email]')
