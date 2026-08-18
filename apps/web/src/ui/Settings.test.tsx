@@ -875,14 +875,14 @@ describe('provider settings', () => {
 
   it('shows an honest signed-in fallback instead of asking for an email', async () => {
     renderProviders([installedProvider('grok', 'Grok')], (method) => {
-      if (method === 'auth.status') return { signedIn: true }
+      if (method === 'auth.status') return { signedIn: true, plan: 'Team' }
       if (method === 'auth.signOut') return {}
       throw new Error(`unexpected ${method}`)
     })
 
     const grok = providerRow('Grok')
     await waitFor(() =>
-      expect(grok.querySelector('.provider-row__status')?.textContent).toBe('Signed in'),
+      expect(grok.querySelector('.provider-row__status')?.textContent).toBe('Signed in · Team'),
     )
     expect(within(grok).queryByRole('button', { name: 'Add email' })).toBeNull()
 
@@ -1020,6 +1020,9 @@ describe('provider settings', () => {
     expect(emailButton.getAttribute('data-revealed')).toBe('true')
     expect(emailButton.getAttribute('title')).toBe('Click to hide email')
     expect(within(codexRow).queryByText(/\*+@example\.com/)).toBeNull()
+    expect(codexRow.querySelector('.provider-row__status')?.textContent).toBe(
+      'private@example.com · pro',
+    )
 
     // Beta scope: agent rows and the API-connection form stay out entirely,
     // even when the server still reports agents.
@@ -1031,7 +1034,7 @@ describe('provider settings', () => {
     const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
     const grokRow = screen.getByText('Grok').closest<HTMLElement>('.settings__row')
     expect(claudeRow?.querySelector('.provider-row__status')?.textContent).toBe(
-      'Authenticated as claude@example.com · pro',
+      'claude@example.com · pro',
     )
     if (!claudeRow || !grokRow) throw new Error('provider row missing')
     fireEvent.click(within(claudeRow).getByRole('button', { name: 'Sign out' }))

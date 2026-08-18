@@ -1971,20 +1971,10 @@ function providerEmailKey(provider: ProviderId): string {
 function AccountIdentity(props: { provider: ProviderId; account: Account }) {
   const [savedEmail] = useState(() => localStorage.getItem(providerEmailKey(props.provider)))
   const email = props.account.email ?? savedEmail
-  const claude = props.provider === 'claude-code'
 
   return (
     <>
-      {email ? (
-        <>
-          {claude ? 'Authenticated as ' : null}
-          <AccountEmail email={email} />
-        </>
-      ) : claude ? (
-        'Authenticated'
-      ) : (
-        'Signed in'
-      )}
+      {email ? <AccountEmail email={email} /> : 'Signed in'}
       {props.account.plan ? ' · ' : null}
       {props.account.plan}
     </>
