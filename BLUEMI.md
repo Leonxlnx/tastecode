@@ -1,7 +1,7 @@
 # Blueemi launch handoff
 
-Updated: 2026-08-17 19:30 CEST / 2026-08-18 01:30 China Standard Time  
-Launch status: paused pending a new explicit go/no-go  
+Updated: 2026-08-17 19:30 CEST / 2026-08-18 01:30 China Standard Time
+Launch status: paused pending a new explicit go/no-go
 Latest product main audited: `fae4da906c26bb9a0d45c003c01a2801fcd4e753`
 
 ## Overnight audit update
