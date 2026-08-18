@@ -209,9 +209,9 @@ describe('WorkspacePanel', () => {
   })
 
   it('opens a provider login in its own workspace terminal tab', async () => {
-    let resolveInput!: (value: object) => void
-    const pendingInput = new Promise<object>((resolve) => {
-      resolveInput = resolve
+    let resolveInput!: () => void
+    const pendingInput = new Promise<Record<string, never>>((resolve) => {
+      resolveInput = () => resolve({})
     })
     const transport = new TestTransport(async (method) => {
       if (method === 'providers.launch') return { terminalId: 'claude-login-terminal' }
@@ -264,7 +264,7 @@ describe('WorkspacePanel', () => {
       }),
     )
     fireEvent.change(code, { target: { value: 'newer-login-code' } })
-    await act(async () => resolveInput({}))
+    await act(async () => resolveInput())
     expect(code.value).toBe('newer-login-code')
 
     fireEvent.click(screen.getByRole('button', { name: 'Close Claude Code login' }))
