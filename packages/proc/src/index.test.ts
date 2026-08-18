@@ -60,7 +60,7 @@ describe('runCli', () => {
     const lateOutput = "setTimeout(() => process.stdout.write('late'), 50)"
     const script = [
       "const { spawn } = require('node:child_process')",
-      `const child = spawn(process.execPath, ['-e', ${JSON.stringify(lateOutput)}], { stdio: ['ignore', 'inherit', 'inherit'] })`,
+      `const child = spawn(process.execPath, ['-e', ${JSON.stringify(lateOutput)}], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] })`,
       'child.unref()',
       "process.stdout.write('early-')",
     ].join(';')
