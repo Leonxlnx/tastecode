@@ -13,6 +13,9 @@ export type BuildPhaseOutput =
 
 export class ExactBuildFilesError extends Error {}
 
+const IGNORED_WORKSPACE_ENTRIES = new Set(['.git', '.taste'])
+const OPAQUE_WORKSPACE_DIRECTORIES = new Set(['node_modules', '.pnpm-store'])
+
 const BUILD_PROTOCOL = `When implementation and local checks finish, return JSON only as the final response. Set summary to "Verify before publishing: ..." when representative or invented page content needs user confirmation; otherwise summarize the implementation normally:
 
 {"status":"complete","summary":"...","files":["relative/path"],"checks":["command — result"]}
@@ -88,7 +91,7 @@ export function exactBuildFileBaseline(
   brief: DesignBrief,
 ): string[] | undefined {
   const expected = exactBuildFiles(brief)
-  return expected ? workspaceFiles(workspacePath, expected) : undefined
+  return expected ? workspaceFiles(workspacePath) : undefined
 }
 
 export function validateExactBuildFiles(
@@ -99,7 +102,7 @@ export function validateExactBuildFiles(
   const expected = exactBuildFiles(brief)
   if (!expected) return
 
-  const actual = workspaceFiles(workspacePath, expected)
+  const actual = workspaceFiles(workspacePath)
   const expectedSet = new Set(expected)
   const actualSet = new Set(actual)
   const baselineSet = new Set(baseline)
@@ -174,22 +177,21 @@ function normalizeFile(file: string): string | undefined {
     : normalized
 }
 
-function workspaceFiles(workspacePath: string, expected: string[]): string[] {
+function workspaceFiles(workspacePath: string): string[] {
   const files: string[] = []
-  const expectedDirectories = new Set(
-    expected.flatMap((file) => {
-      const parts = file.split('/')
-      return parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join('/'))
-    }),
-  )
   const walk = (directory: string, prefix = ''): void => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (!prefix && (entry.name === '.git' || entry.name === '.taste')) continue
+      if (!prefix && IGNORED_WORKSPACE_ENTRIES.has(entry.name)) continue
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name
-      if (entry.isDirectory() && expectedDirectories.has(relative)) {
-        walk(path.join(directory, entry.name), relative)
-      } else if (entry.isDirectory()) files.push(`${relative}/`)
-      else files.push(relative)
+      if (!entry.isDirectory()) {
+        files.push(relative)
+        continue
+      }
+      if (OPAQUE_WORKSPACE_DIRECTORIES.has(entry.name)) {
+        files.push(`${relative}/`)
+        continue
+      }
+      walk(path.join(directory, entry.name), relative)
     }
   }
   walk(workspacePath)
