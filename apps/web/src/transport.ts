@@ -173,7 +173,13 @@ export class WebSocketTransport implements Transport {
     const id = String(this.#nextId++)
     const promise = new Promise<ResultOf<M>>((resolve, reject) => {
       this.#pending.set(id, {
-        resolve: (value) => resolve(parseMethodResult(method, value)),
+        resolve: (value) => {
+          try {
+            resolve(parseMethodResult(method, value))
+          } catch {
+            reject(new Error(`The server returned an invalid result for "${method}".`))
+          }
+        },
         reject,
       })
     })
