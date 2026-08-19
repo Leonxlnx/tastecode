@@ -21,11 +21,15 @@ import {
 afterEach(() => localStorage.clear())
 
 describe('preference readers', () => {
+  it('defaults to the system theme when no choice is stored', () => {
+    expect(readThemePreference()).toBe('system')
+  })
+
   it('fall back to defaults on unknown stored values', () => {
     localStorage.setItem(THEME_KEY, 'solarized')
     localStorage.setItem(ACCENT_KEY, 'automatic')
     localStorage.setItem(BACKDROP_KEY, '42')
-    expect(readThemePreference()).toBe('dark')
+    expect(readThemePreference()).toBe('system')
     expect(readAccentPreference()).toBe('neutral')
     expect(readBackdropPreference()).toBe('default')
   })

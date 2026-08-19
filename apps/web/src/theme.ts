@@ -28,7 +28,7 @@ export const DARK_THEME_QUERY = '(prefers-color-scheme: dark)'
 
 export function readThemePreference(): ThemePreference {
   const stored = readStored(THEME_KEY)
-  return stored === 'light' || stored === 'system' ? stored : 'dark'
+  return stored === 'dark' || stored === 'light' || stored === 'system' ? stored : 'system'
 }
 
 export function readSystemTheme(): Theme {
