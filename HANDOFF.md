@@ -45,6 +45,7 @@ Exact cloud validation at this head:
 - root build: all 15 included workspace projects passed;
 - recovered Design reference library: 132/132 exact Git blob SHAs and RIFF/WEBP signatures;
 - Design Agent baseline: 16 files / 88 tests passed.
+- local Unlazy Tree-8 gate ledger: 45/45 met across root, domain, binary, fix, and integration ledgers.
 
 The production-license gate remains honestly red:
 
