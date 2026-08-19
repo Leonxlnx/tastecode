@@ -361,13 +361,37 @@ function modelSource(choice: ModelChoice): string {
   })
 }
 
+function legacyStoredModelIds(modelId: string): string[] {
+  const aliases = [`${modelId}[1m]`]
+  const versioned = modelId.match(/^[^-]+-(.+)-\d+$/)
+  if (versioned?.[1]) aliases.push(`${versioned[1]}[1m]`)
+  return aliases
+}
+
+function matchesLegacyStoredModel(choice: ModelChoice, stored: string): boolean {
+  return legacyStoredModelIds(choice.model.id).some(
+    (alias) => alias === stored || modelChoiceKey(modelSource(choice), alias) === stored,
+  )
+}
+
+function findStoredModel(
+  choices: ModelChoice[],
+  stored: string | undefined,
+): ModelChoice | undefined {
+  if (!stored) return undefined
+  return (
+    choices.find((choice) => choice.key === stored) ??
+    choices.find((choice) => choice.model.id === stored) ??
+    choices.find((choice) => matchesLegacyStoredModel(choice, stored))
+  )
+}
+
 function matchesStoredModel(choice: ModelChoice, stored: string | undefined): boolean {
   if (!stored) return false
   return (
     choice.key === stored ||
     choice.model.id === stored ||
-    modelChoiceKey(modelSource(choice), `${choice.model.id}[1m]`) === stored ||
-    `${choice.model.id}[1m]` === stored
+    matchesLegacyStoredModel(choice, stored)
   )
 }
 
@@ -1404,14 +1428,14 @@ export function App() {
           ? preferredPool
           : visible
       const selections = readSourceSelections()
-      const storedSelection = selectionPool.find((choice) => matchesStoredModel(choice, stored))
+      const storedSelection = findStoredModel(selectionPool, stored)
       const fallback = selectionPool.find((choice) => choice.model.isDefault) ?? selectionPool[0]
       const rememberedFallbackKey = fallback
         ? selections[modelSource(fallback)]?.modelKey
         : undefined
       const selected =
         storedSelection ??
-        selectionPool.find((choice) => matchesStoredModel(choice, rememberedFallbackKey)) ??
+        findStoredModel(selectionPool, rememberedFallbackKey) ??
         fallback
       if (!selected) {
         setModelId(undefined)

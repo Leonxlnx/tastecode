@@ -4253,17 +4253,17 @@ describe('new chats', () => {
         return Promise.resolve({
           models: [
             {
-              id: 'fable',
+              id: 'claude-fable-5',
               displayName: 'Fable 5',
-              isDefault: false,
+              isDefault: true,
               reasoningEfforts: ['low', 'high'],
               defaultReasoningEffort: 'low',
               serviceTiers: [],
             },
             {
-              id: 'opus',
+              id: 'claude-opus-5',
               displayName: 'Opus 5',
-              isDefault: true,
+              isDefault: false,
               reasoningEfforts: ['low', 'high'],
               defaultReasoningEffort: 'low',
               serviceTiers: [],
@@ -4274,11 +4274,11 @@ describe('new chats', () => {
       return request(method, params)
     })
     localStorage.setItem('harness.provider', 'claude-code')
-    localStorage.setItem('harness.model', 'claude-code:fable%5B1m%5D')
+    localStorage.setItem('harness.model', 'claude-code:opus%5B1m%5D')
     localStorage.setItem(
       'harness.modelBySource',
       JSON.stringify({
-        'claude-code': { modelKey: 'claude-code:fable%5B1m%5D', effort: 'high' },
+        'claude-code': { modelKey: 'claude-code:opus%5B1m%5D', effort: 'high' },
       }),
     )
 
@@ -4286,9 +4286,66 @@ describe('new chats', () => {
 
     await waitFor(() => {
       const modelButton = screen.getByRole('button', { name: 'Model and reasoning' })
-      expect(modelButton.textContent).toContain('Fable 5')
+      expect(modelButton.textContent).toContain('Opus 5')
       expect(modelButton.textContent).toContain('High')
-      expect(localStorage.getItem('harness.model')).toBe('claude-code:fable')
+      expect(localStorage.getItem('harness.model')).toBe('claude-code:claude-opus-5')
+    })
+  })
+
+  it.each([
+    ['encoded key', 'claude-code:opus%5B1m%5D'],
+    ['raw id', 'opus[1m]'],
+  ])('prefers an exact stored %s over an earlier legacy candidate', async (_case, stored) => {
+    serverProviders = [
+      {
+        ...serverProviders[0]!,
+        id: 'claude-code',
+        displayName: 'Claude Code',
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: TestBoundary) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models: [
+            {
+              id: 'opus',
+              displayName: 'Standard Opus 5',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [],
+            },
+            {
+              id: 'opus[1m]',
+              displayName: 'Extended Opus 5',
+              isDefault: false,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    localStorage.setItem('harness.provider', 'claude-code')
+    localStorage.setItem('harness.model', stored)
+    localStorage.setItem(
+      'harness.modelBySource',
+      JSON.stringify({
+        'claude-code': { modelKey: stored, effort: 'high' },
+      }),
+    )
+
+    render(<App />)
+
+    await waitFor(() => {
+      const modelButton = screen.getByRole('button', { name: 'Model and reasoning' })
+      expect(modelButton.textContent).toContain('Extended Opus 5')
+      expect(modelButton.textContent).toContain('High')
+      expect(localStorage.getItem('harness.model')).toBe('claude-code:opus%5B1m%5D')
     })
   })
 
