@@ -106,13 +106,26 @@
      The content hairline lives on .stage, not here — a bar-positioned line
      tracked --rail-w instantly while the grid column animated behind it. */
   background: var(--bg-rail);
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
   user-select: none;
 }
 
 .titlebar__toggle {
+  position: relative;
+  z-index: 1;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
   color: var(--titlebar-symbol);
+  pointer-events: auto;
   -webkit-app-region: no-drag;
+}
+
+.titlebar__drag-region {
+  align-self: stretch;
+  flex: 1;
+  min-width: 0;
+  -webkit-app-region: drag;
 }
 
 .shell.is-narrow .titlebar {
@@ -198,6 +211,22 @@
   touch-action: none;
 }
 
+.rail__resize::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border-top: 2px solid var(--line-strong);
+  border-left: 2px solid var(--line-strong);
+  border-top-left-radius: 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
 .rail__resize::after {
   content: '';
   position: absolute;
@@ -210,7 +239,10 @@
   transition: opacity var(--dur-fast) var(--ease-out);
 }
 
-.rail__resize:is(:hover, :focus-visible)::after {
+.rail__resize:is(:hover, :focus-visible)::before,
+.rail__resize:is(:hover, :focus-visible)::after,
+.shell[data-resizing] .rail__resize::before,
+.shell[data-resizing] .rail__resize::after {
   opacity: 1;
 }
 
@@ -4463,6 +4495,93 @@
 
 .zoom-hud .zoom-hud__reset {
   padding-inline: 9px;
+}
+
+/* macOS keeps the traffic lights, but they belong to the sidebar rather than
+   an empty full-width row. The stage and every divider start at the window's
+   top edge; only sidebar content keeps the native-control safe area. */
+.shell.is-macos {
+  position: relative;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.shell.is-macos .shell__body {
+  grid-row: 1;
+}
+
+.shell.is-macos .titlebar {
+  position: absolute;
+  z-index: 30;
+  inset: 0 auto auto 0;
+  width: var(--rail-w);
+  height: var(--titlebar-h);
+  background: transparent;
+}
+
+.shell.is-macos.is-narrow .titlebar,
+.shell.is-macos[data-rail-fold-preview] .titlebar {
+  width: calc(max(12px, env(titlebar-area-x, 12px)) + 42px);
+  -webkit-app-region: no-drag;
+}
+
+.shell.is-macos.is-narrow .titlebar__drag-region,
+.shell.is-macos[data-rail-fold-preview] .titlebar__drag-region {
+  -webkit-app-region: no-drag;
+}
+
+.shell.is-macos .rail {
+  padding-top: var(--titlebar-h);
+}
+
+.shell.is-macos .stagehead {
+  -webkit-app-region: no-drag;
+}
+
+.shell.is-macos .stagehead__drag-region {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  display: block;
+  -webkit-app-region: drag;
+}
+
+.shell.is-macos .stagehead :is(button, input),
+.shell.is-macos .pr-list-head :is(button, input) {
+  -webkit-app-region: no-drag;
+}
+
+.shell.is-macos.is-narrow .stagehead,
+.shell.is-macos[data-rail-fold-preview] .stagehead {
+  padding-left: calc(max(12px, env(titlebar-area-x, 12px)) + 42px);
+}
+
+.shell.is-macos.is-narrow .stagehead__drag-region,
+.shell.is-macos[data-rail-fold-preview] .stagehead__drag-region {
+  left: calc(max(12px, env(titlebar-area-x, 12px)) + 42px);
+}
+
+.shell.is-macos .panel-toggles {
+  top: 7px;
+}
+
+.shell.is-macos .zoom-hud {
+  top: 10px;
+}
+
+.shell.is-macos .pr-list-head {
+  -webkit-app-region: drag;
+}
+
+.shell.is-macos .settings__titlebar {
+  left: var(--rail-w);
+  background: transparent;
+  border-bottom: 0;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.shell.is-macos .settings__content {
+  padding-top: 48px;
 }
 
 .terminal-trigger {
