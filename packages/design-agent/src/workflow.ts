@@ -135,10 +135,14 @@ export function parseBriefingOutput(text: string): BriefingOutput {
   ) {
     throw new Error('briefing output must contain questions or a completed brief')
   }
+  const questions = value.questions.map(question)
+  if (new Set(questions.map(({ id }) => id)).size !== questions.length) {
+    throw new Error('briefing question ids must be unique')
+  }
   return {
     status: 'questions',
     message: string(value.message, 'message'),
-    questions: value.questions.map(question),
+    questions,
     brief: null,
   }
 }
