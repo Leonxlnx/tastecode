@@ -44,11 +44,17 @@ import {
   type AppUpdateController,
   type AppUpdateState,
 } from './app-updater.js'
+import { createApplicationMenuTemplate } from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { LocalDiagnostics } from './local-diagnostics.js'
 import { allowsMicrophoneRequest } from './media-permissions.js'
+import {
+  parseNativeMenuShortcuts,
+  type NativeMenuAction,
+  type NativeMenuShortcuts,
+} from './menu-contract.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
 import { pastedFile } from './pasted-file.js'
 import { revealablePath } from './reveal-path.js'
@@ -146,6 +152,7 @@ let serverSupervisor: ServerSupervisor | undefined
 let diagnostics: LocalDiagnostics | undefined
 let appUpdater: AppUpdateController | undefined
 let mainWindowStatePersistence: MainWindowStatePersistence | undefined
+let nativeMenuShortcuts: NativeMenuShortcuts = {}
 const macOSHaptics = new MacOSHaptics()
 
 protocol.registerSchemesAsPrivileged([
@@ -382,6 +389,38 @@ function createBackgroundTray(): void {
   tray.on('click', showMainWindow)
 }
 
+function installApplicationMenu(): void {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate(
+      createApplicationMenuTemplate({
+        appName: nativeAppName,
+        isMacOS: process.platform === 'darwin',
+        isDevelopment: !app.isPackaged,
+        shortcuts: nativeMenuShortcuts,
+        onAction: sendNativeMenuAction,
+        onZoom: (action) => {
+          const window = mainWindow
+          if (window && !window.isDestroyed()) applyZoom(window, action)
+        },
+        onOpenDiagnostics: () => void openDiagnosticsDirectory(),
+      }),
+    ),
+  )
+}
+
+function sendNativeMenuAction(action: NativeMenuAction): void {
+  const window = mainWindow
+  if (!window || window.isDestroyed()) {
+    createWindow()
+    mainWindow?.webContents.once('did-finish-load', () =>
+      mainWindow?.webContents.send('harness:menuAction', action),
+    )
+    return
+  }
+  showMainWindow()
+  window.webContents.send('harness:menuAction', action)
+}
+
 ipcMain.handle('harness:setZoom', (event, action: unknown) => {
   requireOwnRenderer(event.sender)
   if (!isZoomAction(action)) throw new Error('Invalid zoom action')
@@ -404,9 +443,15 @@ ipcMain.handle('harness:setDiagnosticsEnabled', (event, enabled: unknown) => {
 
 ipcMain.handle('harness:openDiagnostics', async (event) => {
   requireOwnRenderer(event.sender)
-  if (!diagnostics) return false
-  await mkdir(diagnostics.directory, { recursive: true, mode: 0o700 })
-  return (await shell.openPath(diagnostics.directory)) === ''
+  return openDiagnosticsDirectory()
+})
+
+ipcMain.on('harness:setMenuShortcuts', (event, value: unknown) => {
+  if (!isOwnRenderer(event.sender)) return
+  const shortcuts = parseNativeMenuShortcuts(value)
+  if (!shortcuts) return
+  nativeMenuShortcuts = shortcuts
+  installApplicationMenu()
 })
 
 ipcMain.on('harness:reportRendererError', (event, value: unknown) => {
@@ -484,6 +529,12 @@ function applyZoom(window: BrowserWindow, action: ZoomAction): void {
   const factor = nextZoomFactor(window.webContents.getZoomFactor(), action)
   window.webContents.setZoomFactor(factor)
   window.webContents.send('harness:zoomChanged', factor)
+}
+
+async function openDiagnosticsDirectory(): Promise<boolean> {
+  if (!diagnostics) return false
+  await mkdir(diagnostics.directory, { recursive: true, mode: 0o700 })
+  return (await shell.openPath(diagnostics.directory)) === ''
 }
 
 async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCaptureResult> {
@@ -728,6 +779,7 @@ if (ownsSingleInstance) {
     configureMediaPermissions()
     void sweepStaleCaptures()
     createWindow()
+    installApplicationMenu()
     createBackgroundTray()
     app.on('activate', showMainWindow)
     if (process.platform === 'darwin') {

@@ -3,6 +3,7 @@ import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contr
 import { z } from 'zod'
 import type { AppUpdateState } from './app-updater.js'
 import { clipboardText } from './clipboard-text.js'
+import { isNativeMenuAction } from './menu-contract.js'
 
 type PickedAttachment = {
   path: string
@@ -57,6 +58,15 @@ const api = {
   getUpdateState: (): Promise<AppUpdateState> => ipcRenderer.invoke('harness:getUpdateState'),
   checkForUpdates: (): Promise<AppUpdateState> => ipcRenderer.invoke('harness:checkForUpdates'),
   installUpdate: (): Promise<boolean> => ipcRenderer.invoke('harness:installUpdate'),
+  setMenuShortcuts: (shortcuts: unknown): void =>
+    ipcRenderer.send('harness:setMenuShortcuts', shortcuts),
+  onMenuAction: (listener: (action: string) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, action: unknown) => {
+      if (isNativeMenuAction(action)) listener(action)
+    }
+    ipcRenderer.on('harness:menuAction', handler)
+    return () => ipcRenderer.removeListener('harness:menuAction', handler)
+  },
   onUpdateState: (listener: (state: AppUpdateState) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, state: unknown) => {
       if (isAppUpdateState(state)) listener(state)
