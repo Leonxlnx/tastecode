@@ -27,7 +27,14 @@ import type {
   SidebarSettings,
 } from '@harness/contracts'
 import { z } from 'zod'
-import { isDesktop, isMacOS, pickFolder, setDesktopTheme } from './bridge.js'
+import {
+  isDesktop,
+  isMacOS,
+  onNativeMenuAction,
+  pickFolder,
+  setDesktopTheme,
+  syncNativeMenuShortcuts,
+} from './bridge.js'
 import {
   createDefaultKeybindings,
   KEYBINDING_DEFINITIONS,
@@ -3723,6 +3730,10 @@ export function App() {
       toggleWorkspacePanel,
     ],
   )
+
+  useEffect(() => syncNativeMenuShortcuts(keybindings), [keybindings])
+
+  useEffect(() => onNativeMenuAction((action) => keybindingActions[action]()), [keybindingActions])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

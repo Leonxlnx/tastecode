@@ -1,5 +1,6 @@
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
 import { z } from 'zod'
+import type { KeybindingId, Keybindings, Shortcut } from './shortcuts.js'
 
 /**
  * The native bridge, when one exists.
@@ -44,6 +45,8 @@ export type Bridge = {
   getUpdateState?: () => Promise<AppUpdateState>
   checkForUpdates?: () => Promise<AppUpdateState>
   installUpdate?: () => Promise<boolean>
+  setMenuShortcuts?: (shortcuts: NativeMenuShortcuts) => void
+  onMenuAction?: (listener: (action: NativeMenuAction) => void) => () => void
   onUpdateState?: (listener: (state: AppUpdateState) => void) => () => void
   onZoomChange: (listener: (factor: number) => void) => () => void
   isDesktop: true
@@ -59,6 +62,32 @@ export type ZoomAction = 'in' | 'out' | 'reset'
 export type AppTheme = 'light' | 'dark'
 export type AppThemePreference = AppTheme | 'system'
 export type NativeHapticPattern = 'alignment' | 'generic'
+const NATIVE_MENU_ACTION_IDS = [
+  'commandPalette',
+  'settings',
+  'keybindings',
+  'toggleSidebar',
+  'newChat',
+  'searchSessions',
+  'focusComposer',
+  'interrupt',
+  'previousChat',
+  'nextChat',
+  'toggleSessionPin',
+  'archiveSession',
+  'rollback',
+  'switchProject',
+  'newProject',
+  'openPullRequests',
+  'toggleTerminal',
+  'toggleWorkspace',
+  'expandWorkspace',
+  'toggleFastMode',
+  'toggleDesignMode',
+  'toggleIsolatedSession',
+] as const satisfies readonly KeybindingId[]
+export type NativeMenuAction = (typeof NATIVE_MENU_ACTION_IDS)[number]
+type NativeMenuShortcuts = Record<NativeMenuAction, Shortcut | null>
 export type AppUpdateState = {
   status: 'unsupported' | 'idle' | 'checking' | 'downloading' | 'current' | 'ready' | 'error'
   currentVersion: string
@@ -172,6 +201,17 @@ export function performNativeHaptic(pattern: NativeHapticPattern): void {
 
 export function onAppZoomChange(listener: (factor: number) => void): () => void {
   return bridge?.onZoomChange(listener) ?? (() => undefined)
+}
+
+export function syncNativeMenuShortcuts(keybindings: Keybindings): void {
+  const shortcuts = Object.fromEntries(
+    NATIVE_MENU_ACTION_IDS.map((action) => [action, keybindings[action]]),
+  ) as NativeMenuShortcuts
+  bridge?.setMenuShortcuts?.(shortcuts)
+}
+
+export function onNativeMenuAction(listener: (action: NativeMenuAction) => void): () => void {
+  return bridge?.onMenuAction?.(listener) ?? (() => undefined)
 }
 
 export async function capturePreview(

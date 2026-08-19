@@ -11,6 +11,7 @@ import {
 import { StrictMode, type ComponentProps } from 'react'
 import { z } from 'zod'
 import { App } from './App.js'
+import type { NativeMenuAction } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
 import type { ModelChoice } from './model-catalog.js'
@@ -70,6 +71,10 @@ const utilityRenders = vi.hoisted(() => ({
 }))
 
 const appRenders = vi.hoisted(() => vi.fn())
+const nativeMenu = vi.hoisted(() => ({
+  listener: undefined as ((action: NativeMenuAction) => void) | undefined,
+  syncShortcuts: vi.fn(),
+}))
 type ThreadProps = ComponentProps<(typeof import('./ui/Thread.js'))['Thread']>
 interface ThreadCallbacks {
   answerUserInput: ThreadProps['onAnswerUserInput'] | undefined
@@ -246,6 +251,13 @@ vi.mock('./ui/TerminalPane.js', async (importOriginal) => {
 vi.mock('./bridge.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./bridge.js')>()),
   pickFolder,
+  syncNativeMenuShortcuts: nativeMenu.syncShortcuts,
+  onNativeMenuAction: (listener: (action: NativeMenuAction) => void) => {
+    nativeMenu.listener = listener
+    return () => {
+      if (nativeMenu.listener === listener) nativeMenu.listener = undefined
+    }
+  },
   isMacOS: () => {
     appRenders()
     return true
@@ -318,6 +330,8 @@ function contractValidServerProviders(): ServerProvider[] {
 
 beforeEach(() => {
   pickFolder.mockReset().mockResolvedValue(undefined)
+  nativeMenu.listener = undefined
+  nativeMenu.syncShortcuts.mockClear()
   appRenders.mockClear()
   shellRenders.composer.mockClear()
   shellRenders.sidebar.mockClear()
@@ -4666,6 +4680,24 @@ describe('inbox lifecycle', () => {
 })
 
 describe('global shortcuts', () => {
+  it('runs sidebar and palette actions from the native menu', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    expect(nativeMenu.syncShortcuts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toggleSidebar: { key: 'b', primary: true },
+        toggleTerminal: { key: 'j', primary: true },
+      }),
+    )
+
+    act(() => nativeMenu.listener?.('toggleSidebar'))
+    expect(document.querySelector('.shell')?.classList).toContain('is-narrow')
+
+    act(() => nativeMenu.listener?.('commandPalette'))
+    expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeTruthy()
+  })
+
   it('opens a searchable palette for actions, projects, and chats', async () => {
     serverProjects = [
       {
