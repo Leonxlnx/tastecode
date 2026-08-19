@@ -1,8 +1,237 @@
 # TasteCode launch handoff
 
-Updated: 2026-08-19 18:06 CEST / 2026-08-20 00:06 China Standard Time
-Launch status: no-go; #980 is code-fixed but still lacks real gates and screenshot QA, #983/#986 remain Draft, and the final release proof, macOS, signing, legal, and owner decisions remain open
+Updated: 2026-08-19 19:13 CEST / 2026-08-20 01:13 China Standard Time
+Launch status: no-go; #980 still needs real screenshot QA, seven audit fixes remain Draft, four new main-beta findings are unimplemented, and release/legal/platform owner gates remain open
 GitHub is the authority for current commits, branches, pull requests, and release state.
+
+## 2026-08-19 Unlazy Tree-8 cloud handoff — current authority
+
+This section supersedes every older SHA, PR state, validation total, audit status, and next-step
+sequence below it. Older sections are historical evidence only. GitHub remains authoritative.
+
+### Stop state and exact authority
+
+- Product repository: `Leonxlnx/tastecode`; keep it private.
+- Exact product `main`: `989054d1bf0bab1a180ddec0856a31aa7215278e`.
+- Exact next-in-order PR #980 head: `e03e8fa67b5ef8946bdec6ba969ab81da2ef9bcb`.
+- PR #937 handoff parent before this handoff-only commit:
+  `bea5f0fd548533e1277b6bdbfffbbafe1ed20a28`; use the live branch head containing this section.
+- Exact Unlazy source used for the eight-level sweep: public `Leonxlnx/unlazy` tree
+  `ed9e8d2b5919698cf2c54bda270d507e10b69617`. It was installed only in the cloud skill store; no
+  skill or hook was committed to TasteCode and no Claude Code Stop hook was silently installed.
+- No pull request was marked Ready or merged. No direct-main push, rebase, force-push, hosted
+  Action, release/draft-release mutation, repository visibility change, landing-page change,
+  announcement, or deployment occurred.
+- Private draft release IDs `371292479` and `371294326` were not touched.
+
+### PR #980 — code and gates complete, physical evidence incomplete
+
+PR #980 remains Draft. Both documented model-selection migration blockers are fixed at exact head
+`e03e8fa67b5ef8946bdec6ba969ab81da2ef9bcb`:
+
+1. a remembered legacy extended-context key migrates to the surviving captured Claude family row;
+2. exact encoded keys and exact raw IDs are exhausted before legacy aliases, so an approximate row
+   cannot shadow a real exact row.
+
+Exact cloud validation at this head:
+
+- `corepack pnpm@11.8.0 install --frozen-lockfile`: passed;
+- focused Claude adapter regression: 13/13 passed;
+- focused `App.test.tsx`: 194/194 passed;
+- root lint: passed;
+- root typecheck: passed;
+- root tests: 222 Vitest files / 1,742 tests plus 5/5 release-license Node tests; 1,747 total,
+  zero failures;
+- root build: all 15 included workspace projects passed;
+- recovered Design reference library: 132/132 exact Git blob SHAs and RIFF/WEBP signatures;
+- Design Agent baseline: 16 files / 88 tests passed.
+
+The production-license gate remains honestly red:
+
+- `@anthropic-ai/claude-agent-sdk-linux-x64@0.3.232`: unreviewed license metadata;
+- `@napi-rs/keyring-linux-x64-gnu@1.3.0`: no accepted bundled license body.
+
+`licenses:verify` was not weakened. Issue #952 remains open. Current product `main` also does not
+contain `tools/scripts/release-tools.test.js`; that release-only suite belongs to final #937.
+
+Do not mark #980 Ready or merge it until real model-picker QA and an exact-head screenshot prove
+one row per Claude family, successful legacy Opus migration, exact-match precedence, effort
+preservation, and no model-picker regression. No screenshot was fabricated in this cloud.
+
+### Seven independent audit-fix Draft PRs
+
+These branches start from exact `main` `989054d1`. They are intentionally separate from #980 and
+must not reorder #980 → #983 → #986. Merge current `main` forward without rebasing before any final
+review, repeat focused and root gates, and keep each Draft until its physical/GUI acceptance is
+complete.
+
+| PR    | Exact head                                 | Scope                                                                                             | Cloud proof still not a merge authorization                                                                                         |
+| ----- | ------------------------------------------ | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| #993  | `6a1d0089a20dbb41c8424f96e447442b344bfba4` | reject malformed method-specific RPC results instead of orphaning pending calls                   | transport 15/15, web typecheck/lint/format; real reconnect/version-skew app smoke remains                                           |
+| #994  | `2f2835e5594935829203b107d7266206e4097ef1` | release recorder resources when async permission/startup becomes stale                            | hook 5/5, web typecheck/lint/format; real microphone permission/cancel/unmount proof remains                                        |
+| #998  | `dd2b768ed49b3064b20e5d0ca7902b5a3ed24a1e` | isolate and validate hostile preview capture height                                               | focused 11/11, desktop 23 files / 88 tests, typecheck/lint/format; packaged hostile-page proof remains                              |
+| #1000 | `41ef96ffd71cbcbb6d27c09f2741df7b52896e70` | redact direct-API provider errors and block normalized workspace credential paths/symlink aliases | 6 files / 68 tests, adapter/server typechecks/lint/format; real Windows filesystem proof remains                                    |
+| #1002 | `065acb5abff5f5b0aee76e957142db2e728b1c41` | fail closed on preview storage/cache cleanup failure                                              | focused 3/3, desktop 23 files / 81 tests, typecheck/lint/format; packaged injected-failure proof remains                            |
+| #1004 | `a556e983c6ca9add65ef01568f04f1de705c044f` | reject duplicate Design briefing question IDs                                                     | focused 8/8, Design Agent 16 files / 89 tests, server integration 9/9, typecheck/lint/format; real two-question Design flow remains |
+| #1006 | `5a59f9bc66ed835311925e6e57b0e8ad1ef98889` | enforce exact nested Design Build files while keeping dependency trees opaque                     | focused 12/12, Design Agent 16 files / 92 tests, typecheck/lint/format; real exact-file Design Build remains                        |
+
+During final review of #1006, a first version was rejected because it would also ignore nested
+`src/.git` and `src/.taste`. The final head ignores only root metadata and includes an explicit
+nested-evasion regression.
+
+The corresponding issue/PR pairs are #996/#993, #995/#994, #997/#998, #999/#1000, #1001/#1002,
+#1003/#1004, and #1005/#1006. All remain open and Draft.
+
+### Whole-repository Tree-8 findings
+
+The audit independently inventoried and adversarially reread web, server/adapters, desktop/release,
+core contracts/Design Agent, binary references, and integration boundaries. The seven bounded
+fixes above were the safe fixes completed in this pass. Do not replace the existing renderer delta
+batching, live Markdown, row virtualization, reconnect queue, history-buffer ownership, or Grok
+native/local session split speculatively; those paths were revalidated as coherent.
+
+New open `target:main-beta` follow-ups without implementation PRs:
+
+- #1007 — queued Side-chat user items can lose their channel and appear on main;
+- #1008 — ACP prompt rejection can leave item/approval lifecycles open on Grok+MCP;
+- #1011 — raw crash dumps need an honest bounded retention/privacy lifecycle;
+- #1012 — malformed media permission details must fail closed.
+
+New measured `target:later` work:
+
+- #1009 — bound child-process framing/capture buffers;
+- #1010 — add a direct-API context budget preserving valid tool pairs;
+- #1013 — lazy-mount heavy collapsed activity details;
+- #1014 — replace plaintext custom-harness secret values with credential references;
+- #1015 — define attachment expiry and cleanup.
+
+Existing measured later issues remain #957 (cold-history pagination/materialization), #958
+(worker/cached Shiki), and #963 (renderer recovery boundary). Existing #964 still owns stale-data
+refresh errors and remains Blueemi-owned. Additional medium findings preserved in the audit report
+but not duplicated into new issues are stale Diff-undo completion, unguarded browser storage,
+modal shortcut leakage, unnamed contextual inputs, developer-port process ownership, parked
+Cursor/Antigravity lifecycle/resume behavior, and direct-API close lifecycle settlement.
+
+The exact open `target:main-beta` issue set at this handoff is:
+
+- owner/release/legal: #950, #952, #954, #955, #956, #966;
+- required focused sequence: #979, #981, #982;
+- existing UI work: #964;
+- implemented audit fixes still Draft: #995, #996, #997, #999, #1001, #1003, #1005;
+- unimplemented audit follow-ups: #1007, #1008, #1011, #1012.
+
+### Required serial order
+
+1. Fetch/prune and inspect local ownership. Never clean/reset/delete foreign worktrees or untracked
+   files.
+2. On #980, run real model-picker QA and attach exact-head screenshot evidence. Re-run focused and
+   root gates if its base or source changes. Only then mark Ready and merge; confirm #979 closes.
+3. Merge the resulting `main` into #983 without rebasing. Preserve its exact two-file scope, fix the
+   Grok no-metadata fallback regression, run all gates, and prove desktop plus 390 px Settings,
+   blurred reveal/hide identity, no overflow, and the non-secret Claude current-login-PTY input
+   race. Only then Ready/merge and confirm #981 closes.
+4. Merge the resulting `main` into #986 without rebasing. Resolve every previously documented MCP
+   blocker: raw credentials only via generated child environment placeholders; runtime argv guard;
+   complete/split external-error redaction; reject ambient environment-expansion injection;
+   atomic cleanup/reuse; hostile-key and reserved-ID hardening; bounded SDK control; a reachable
+   Settings path; and proven pre-start inherited-server suppression. Run full gates plus the real
+   isolated authenticated Claude MCP/canary proof before Ready/merge. Confirm #982 closes.
+5. Review the seven independent audit-fix Drafts against the then-current `main`. Merge only the
+   ones whose repeated gates and physical acceptance pass; leave the others Draft.
+6. Resolve the four new unimplemented `target:main-beta` findings or explicitly remove their
+   affected public surface. Do not silently downgrade them.
+7. Update `docs/dashboard.html` and `docs/feature-inventory.html` from the resulting exact `main`.
+   They were not changed in this pass because the required focused PRs have not landed.
+8. Re-audit the exact open `target:main-beta` set. Keep direct API/Connections hidden unless #955
+   is proved. Do not close #950 without written Anthropic approval or removing the unsupported
+   subscription path.
+9. Only now merge final `main` into #937 without rebasing. Resolve release/OSS/native overlap by
+   preserving final `main`, then run every release gate and build/test Windows from that exact SHA.
+   Blueemi must build, sign, notarize, staple, and test macOS from the same SHA.
+10. Stop with both repositories private and the release Draft. Ask Leon for final go/no-go only
+    after every blocker is fixed, proved, or removed from the public build.
+
+### Exact local gate sequence
+
+Run focused checks named in each PR, then:
+
+```text
+corepack pnpm@11.8.0 install --frozen-lockfile
+corepack pnpm@11.8.0 lint
+corepack pnpm@11.8.0 typecheck
+corepack pnpm@11.8.0 test
+corepack pnpm@11.8.0 build
+node --test tools/scripts/release-licenses.test.js
+corepack pnpm@11.8.0 licenses:verify
+```
+
+Run `node --test tools/scripts/release-tools.test.js` only on the final #937 tree where it exists.
+Do not weaken or skip `licenses:verify`; fix the exact metadata/body failures instead.
+
+For final #937 Windows proof, also run preload build, NSIS x64 packaging, packaged `node-pty` and
+keyring proof, interactive/silent/custom-directory install and uninstall, provider response,
+terminal, attachment, approval, diff/checkpoint, Design Mode, relaunch persistence, checksum
+generation, staging, and exact-manifest verification. Record exact final-SHA artifact names, byte
+sizes, SHA-256 values, Authenticode/SmartScreen state, and UI results. Historical artifacts do not
+count after any source/signing change.
+
+Blueemi must run the equivalent same-SHA macOS arm64 proof, then Developer ID sign, notarize,
+staple, verify Gatekeeper/Finder and DMG/ZIP containers, run PTY/Keychain/full product smoke, and
+generate hashes after signing.
+
+### Physical evidence not produced here
+
+This Linux cloud produced no exact-head model-picker screenshot, Settings screenshot, real
+microphone capture, real isolated Claude login/MCP session, packaged hostile preview, Windows NSIS
+artifact, Windows installed-app run, macOS DMG/ZIP, signature, notarization, stapling, final asset
+size, or final checksum. No old hash or screenshot is promoted as current evidence.
+
+### Owner decisions that remain launch blockers
+
+- #950: written Anthropic approval, a supported API-key/cloud-auth path, or omit the unsupported
+  subscription-backed Claude path.
+- #952: resolve both exact fail-closed dependency-license findings and inspect final packaged
+  notices/bodies on Windows and macOS.
+- #954: manually confirm tag/Draft state and decide deletion of release IDs `371292479` and
+  `371294326`; no agent touched them here.
+- #955: persist direct-API connection/session state or keep Connections hidden.
+- #956: Blueemi's signed/notarized same-final-SHA macOS proof.
+- #966: accept the single-writer exact-manifest workflow only after final platform proof.
+- Windows signing posture and the final private-release publication decision remain Leon's.
+
+### Local Codex resume prompt
+
+```text
+Continue TasteCode from the newest top section of HANDOFF.md on branch
+agent/release-artifact-proof. Read AGENTS.md, rules/working-together.md, rules/git.md,
+rules/code.md, rules/security.md, docs/ARCHITECTURE.md, docs/dashboard.html,
+docs/feature-inventory.html, BLUEMI.md, and HANDOFF.md completely. GitHub is authoritative.
+
+First run git fetch --all --prune, git status --short --branch, and git worktree list. Preserve
+foreign worktrees and untracked files. Never push main, rebase, force-push, run hosted Actions,
+publish/change a release, change visibility, merge the landing page, announce the beta, delete
+draft releases 371292479/371294326, close #950 without the documented legal condition, or weaken
+licenses:verify.
+
+Required order: finish real exact-head model-picker QA/screenshot and repeated gates for #980;
+only then Ready/merge it. Merge new main into #983 without rebasing, finish its regression/full
+gates/desktop + 390 px Settings and non-secret login-input proof, then Ready/merge. Merge resulting
+main into #986 without rebasing, resolve every credential/argv/redaction/env-expansion/pre-start
+suppression/startup cleanup/hostile-key/Settings blocker, then run full gates and the isolated real
+Claude MCP canary proof before Ready/merge.
+
+After the serial three, review independent Draft PRs #993, #994, #998, #1000, #1002, #1004, and
+#1006 against current main. Repeat their focused/root gates and required physical evidence; merge
+only clean proved branches. Resolve or remove public surfaces for #1007, #1008, #1011, and #1012.
+Then update dashboard/feature inventory and re-audit target:main-beta.
+
+Only after all focused work lands, merge final main into #937 without rebasing, fix the two exact
+license failures, run every release test and Windows package/native/product proof from one exact
+SHA, and coordinate Blueemi's same-SHA signed/notarized macOS proof. Update HANDOFF.md with exact
+SHAs, commands, totals, failures, screenshots, artifact names, bytes, hashes, and owner decisions.
+Stop with everything private and the release Draft; ask Leon for go/no-go only when every blocker
+is fixed, proved, or removed from the public build.
+```
 
 ## 2026-08-19 cloud-agent handoff — current authority
 
