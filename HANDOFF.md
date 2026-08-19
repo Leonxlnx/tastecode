@@ -1,8 +1,145 @@
 # TasteCode launch handoff
 
-Updated: 2026-08-18 11:56 CEST / 2026-08-18 17:56 China Standard Time
-Launch status: no-go; Windows is locally proved, while signing, macOS, legal, physical provider acceptance, and release-owner decisions remain open
+Updated: 2026-08-19 17:00 CEST / 2026-08-19 23:00 China Standard Time
+Launch status: no-go; three provider PRs and the final release proof remain Draft, while macOS, signing, legal, and release-owner decisions remain open
 GitHub is the authority for current commits, branches, pull requests, and release state.
+
+## 2026-08-19 cloud-agent handoff — current authority
+
+This section supersedes every older SHA, PR status, owner, validation claim, and next-step
+sequence below it. Older sections remain only as release evidence and history.
+
+### Non-negotiable boundaries
+
+- Repository: `Leonxlnx/tastecode`; keep it private.
+- Exact fetched `origin/main`: `989054d1bf0bab1a180ddec0856a31aa7215278e`.
+- Never push directly to `main`, rebase a working branch, force-push, run hosted Actions, publish a
+  release, change repository visibility, merge the landing page, or announce the beta.
+- If `main` advances, merge it into the working branch and push normally.
+- Preserve every foreign worktree and every untracked file in the root checkout. The root checkout
+  is intentionally stale and contains untracked `.claude/`, `.codex-remote-attachments/`,
+  `.taste/`, `HANDOFF-NIGHT-LOG.md`, `artifacts/`, `design directions/`, and `target/` paths.
+- Keep draft release IDs `371292479` and `371294326` untouched until their tag and Draft state are
+  manually confirmed and the release owner decides how to remove them.
+- #950 stays open: removing unsafe credential handling does not grant Anthropic permission for a
+  third-party product to offer subscription-backed Claude authentication.
+- Do not weaken `licenses:verify`; the legal package must be complete rather than bypassed.
+
+### Exact open pull requests
+
+| PR | Branch / exact remote head | State | Required next action |
+| --- | --- | --- | --- |
+| #980 | `codex/fix-claude-provider-polish` / `af2efcb4` | Draft, mergeable | Finish the two model-selection migration blockers below, full gates, real model-picker QA, screenshot, then Ready/merge. |
+| #983 | `codex/fix-provider-account-identity` / `16c89dd1` | Draft, mergeable, 13 commits behind | Merge current `main`, preserve honest Grok fallback, run full gates and desktop + 390 px Settings QA, screenshot, then Ready/merge. |
+| #986 | `codex/feat-claude-mcp` / `7efdd7f2` | Draft, mergeable, 13 commits behind | Merge current `main`, re-audit against the runtime refactor, run full gates, live Claude MCP proof and screenshot, then Ready/merge. |
+| #937 | `agent/release-artifact-proof` / current live head containing this handoff | Draft, mergeable | Only after the focused PRs land, merge final `main` into this branch, rerun every release gate and rebuild Windows from that exact SHA. Do not publish. |
+
+All four PRs target `main`. Issues #979, #981, and #982 and PRs #980, #983, and #986 are assigned
+to `Leonxlnx`. Worktrees already exist at:
+
+- `D:\personalharness\scratch\claude-provider-polish`
+- `D:\personalharness\scratch\provider-account-identity`
+- `D:\personalharness\scratch\claude-mcp`
+- `D:\personalharness\scratch\release-pr937`
+
+Do not create replacements or delete these worktrees.
+
+### PR #980 — Claude model deduplication
+
+The branch already contains a clean merge of exact current `main`; the merge was pushed normally.
+The provider-default alias regression is fixed. Two review blockers remain:
+
+1. A persisted real selection such as `claude-code:opus%5B1m%5D` must migrate to the surviving
+   canonical Opus 5 row. The current helper only strips `[1m]` from the same base id and therefore
+   misses `opus[1m]` -> `claude-opus-5`. Add a focused regression based on captured adapter output.
+2. Exhaust exact stored-key/id matches before any legacy-family fallback. The current single
+   `.find(matchesStoredModel)` may choose an earlier approximate base row before a later exact row.
+
+Keep provider-specific behavior in the Claude adapter; do not add provider-name branches to shared
+renderer logic. Use the smallest fix that preserves a user's existing selected family. Rerun the
+Claude adapter tests, focused App tests, then all four root gates and real Settings model-picker QA.
+
+### PR #983 — provider account identity
+
+Scope is exactly `Settings.tsx` and `Settings.test.tsx`. Existing focused evidence at old head:
+Settings 27/27, web typecheck, Prettier, and diff-check green. Required final behavior:
+
+- one grammar: `<email> · <plan>` when provider-owned metadata exists;
+- `Signed in · <plan>` when no email exists;
+- retain the click-to-reveal privacy treatment;
+- never fabricate Grok email or plan and never read credential files/private APIs.
+
+The installed Grok 1.0.0 public CLI exposes signed-in state and models but no account email/plan.
+TasteCode may show an email only when the existing login flow captured provider-confirmed output.
+
+### PR #986 — Claude project MCP
+
+Current diff is 9 files, 264 additions / 38 deletions. Existing old-head evidence: root build and
+lint green; Claude adapter 31/31, server 387/387, Settings 28/28. This is not final evidence.
+After merging current `main`, verify:
+
+- project stdio and HTTP definitions reach the Agent SDK through existing shared contracts;
+- secrets resolve only at the adapter boundary and are never persisted/logged;
+- inherited matching servers can be disabled without mutating vendor-global config;
+- unsupported custom stdio cwd fails honestly;
+- start, resume, orchestrator, and Settings provider selection still work;
+- a real isolated Claude MCP session succeeds and a disabled inherited server stays disabled.
+
+Run full typecheck/test in addition to the prior focused suites. Add live high-port evidence and a
+Settings screenshot before Ready/merge.
+
+### Required serial order
+
+1. Fetch/prune and verify GitHub state again.
+2. Finish, review, fully test, visually prove, Ready, and merge #980. Confirm #979 closes.
+3. Merge the new `main` into #983; finish proof, Ready, and merge. Confirm #981 closes.
+4. Merge the new `main` into #986; finish security/live proof, Ready, and merge. Confirm #982 closes.
+5. Update `docs/dashboard.html` and `docs/feature-inventory.html` in the same PR or an immediate
+   docs-only PR, including exact current main SHA/date and truthful provider states.
+6. Re-audit open `target:main-beta` issues. Current blockers are #950, #952, #954, #955, #956,
+   #964, and #966. Do not take over Blueemi-owned #964 without reassignment.
+7. Merge final `main` into #937 without rebasing. Rerun every command below from the exact branch
+   head, then build and physically test Windows. Blueemi must build/test/sign/notarize/staple macOS
+   from the same final SHA.
+8. Stop with all repositories private and the release still Draft. Ask Leon for go/no-go only when
+   every blocker is fixed, proved, or removed from the public build.
+
+### Required gates
+
+Run focused tests per PR, followed by:
+
+```text
+corepack pnpm@11.8.0 install --frozen-lockfile
+corepack pnpm@11.8.0 lint
+corepack pnpm@11.8.0 typecheck
+corepack pnpm@11.8.0 test
+corepack pnpm@11.8.0 build
+node --test tools/scripts/release-licenses.test.js
+node --test tools/scripts/release-tools.test.js
+corepack pnpm@11.8.0 licenses:verify
+```
+
+For final Windows release proof on #937 also run preload build, NSIS x64 packaging, packaged native
+binding verification, checksum generation, asset staging, and exact-manifest verification using
+the commands in the 2026-08-18 Windows evidence below. Record exact test totals, artifact names,
+byte sizes, SHA-256 values, install/uninstall results, relaunch persistence, terminal, attachments,
+approvals, checkpoints, Design Mode, provider login/response, PTY, and keyring evidence. Signing or
+any code change invalidates older hashes.
+
+### Launch blockers that require owner/platform decisions
+
+- #950: written Anthropic approval, an approved API-key/cloud path, or omit subscription-backed
+  Claude from the public beta.
+- #952: complete official Apache-2.0 root license, reviewed packaged dependency notices, monitored
+  security mailbox, and unpacked Windows/macOS verification.
+- #954: one release writer, exact manifest, and explicit obsolete-draft decision.
+- #955: persist direct-API resume identity or keep Connections/direct API hidden.
+- #956: same-final-SHA macOS arm64 build, Developer ID signing, notarization, stapling, Gatekeeper,
+  native PTY/Keychain, Finder launch, product smoke, and post-signing hashes.
+- #964: surface PR-refresh errors without discarding stale data; currently Blueemi-owned.
+- #966: release workflow acceptance only after the final exact-SHA platform proof.
+
+No cloud agent may convert an owner decision or missing macOS hardware proof into a claimed pass.
 
 ## 2026-08-18 cloud implementation handoff — current authority
 
