@@ -9,8 +9,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import type { CSSProperties } from 'react'
-import { flushSync } from 'react-dom'
+import type { CSSProperties, TransitionEvent as ReactTransitionEvent } from 'react'
 import { LoaderCircle } from 'lucide-react'
 import { ProviderIdSchema } from '@harness/contracts'
 import type {
@@ -45,6 +44,7 @@ import {
   type KeybindingId,
   type Shortcut,
 } from './shortcuts.js'
+import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-placement.js'
 import { warmHighlighter } from './ui/highlighter.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
 import {
@@ -72,7 +72,7 @@ import { RollbackDialog, type Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchHost.js'
 import { Settings, type SettingsSection } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
-import { StageHeader } from './ui/StageHeader.js'
+import { PanelToggles, StageHeader } from './ui/StageHeader.js'
 import { NoticePresence } from './ui/NoticePresence.js'
 import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
@@ -142,17 +142,6 @@ import {
 
 const SERVER_BASE_URL = serverBaseUrl(import.meta.env.VITE_HARNESS_SERVER_URL)
 const SETUP_KEY = 'harness.provider'
-type TerminalOpenUpdate = boolean | ((open: boolean) => boolean)
-type ViewTransitionLike = {
-  finished: Promise<unknown>
-  skipTransition?: () => void
-}
-type DocumentWithViewTransition = Document & {
-  startViewTransition: (callback: () => void) => ViewTransitionLike
-}
-function supportsViewTransitions(value: Document): value is DocumentWithViewTransition {
-  return 'startViewTransition' in value && typeof value.startViewTransition === 'function'
-}
 const ONBOARDING_KEY = 'harness.onboarding.v1'
 const PROVIDER_IDS = [
   'codex',
@@ -192,23 +181,34 @@ const APPROVAL_KEY = 'harness.approval'
 const MACOS_FONT_SMOOTHING_KEY = 'harness.macosFontSmoothing'
 const TERMINAL_OPEN_KEY = 'harness.terminal.open'
 const TERMINAL_HEIGHT_KEY = 'harness.terminal.height'
+const BOTTOM_TERMINAL_MOTION_MS = 260
 const RAIL_WIDTH_KEY = 'harness.rail.width'
 const WORKSPACE_PANEL_WIDTH_KEY = 'harness.workspacePanel.width'
 const NOTICE_AUTO_DISMISS_MS = 5_000
 const DEFAULT_SIDEBAR_SETTINGS: SidebarSettings = { mode: 'classic', autoSettleDays: 3 }
+type BottomTerminalPhase = 'closed' | 'opening' | 'open' | 'closing'
+const loadTerminalPane = () => import('./ui/TerminalPane.js')
 const TerminalPane = lazy(() =>
-  import('./ui/TerminalPane.js').then((module) => ({ default: module.TerminalPane })),
+  loadTerminalPane().then((module) => ({ default: module.TerminalPane })),
 )
 const PullRequestsView = lazy(() =>
   import('./ui/pull-requests/PullRequestsView.js').then((module) => ({
     default: module.PullRequestsView,
   })),
 )
+const loadWorkspacePanel = () => import('./ui/workspace/WorkspacePanel.js')
 const WorkspacePanel = lazy(() =>
-  import('./ui/workspace/WorkspacePanel.js').then((module) => ({
+  loadWorkspacePanel().then((module) => ({
     default: module.WorkspacePanel,
   })),
 )
+
+async function preloadDockSurfaces(): Promise<void> {
+  await Promise.allSettled([
+    loadTerminalPane().then((module) => module.preloadTerminalRuntime()),
+    loadWorkspacePanel(),
+  ])
+}
 
 const LegacyProjectsSchema = z.array(z.object({ path: z.string(), name: z.string().optional() }))
 
@@ -622,11 +622,25 @@ export function App() {
   const [macOSFontSmoothing, setMacOSFontSmoothing] = useState(
     () => readSetting(MACOS_FONT_SMOOTHING_KEY) !== 'false',
   )
-  const [terminalOpen, setTerminalOpen] = useState(() => readSetting(TERMINAL_OPEN_KEY) === 'true')
+  const [bottomTerminalPhase, setBottomTerminalPhase] = useState<BottomTerminalPhase>(() =>
+    readSetting(TERMINAL_OPEN_KEY) === 'true' ? 'open' : 'closed',
+  )
+  const terminalOpen = bottomTerminalPhase === 'opening' || bottomTerminalPhase === 'open'
+  const bottomTerminalMounted = bottomTerminalPhase !== 'closed'
+  const [bottomTerminalPrepared, setBottomTerminalPrepared] = useState(false)
+  const stageBody = useRef<HTMLDivElement>(null)
+  const bottomTerminalComposerOrigin = useRef<{ left: number; top: number } | undefined>(undefined)
+  const bottomTerminalComposerAnimation = useRef<Animation | null>(null)
+  const terminalPlacement = useSyncExternalStore(
+    subscribeTerminalPlacement,
+    readTerminalPlacement,
+    readTerminalPlacement,
+  )
   const [terminalHeight, setTerminalHeight] = useState(readTerminalHeight)
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false)
   const [workspacePanelExpanded, setWorkspacePanelExpanded] = useState(false)
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(readWorkspacePanelWidth)
+  const [workspaceTerminalToggleRequest, setWorkspaceTerminalToggleRequest] = useState(0)
   const [providerLoginTerminal, setProviderLoginTerminal] = useState<ProviderLoginTerminalSession>()
   const nextProviderLoginTerminalId = useRef(1)
   const providerLoginState = useSyncExternalStore(subscribeInstalls, () =>
@@ -767,6 +781,22 @@ export function App() {
   useEffect(warmHighlighter, [])
 
   useEffect(() => {
+    let active = true
+    const prepare = () => {
+      void preloadDockSurfaces().then(() => {
+        if (active) setBottomTerminalPrepared(true)
+      })
+    }
+    const idle = globalThis.requestIdleCallback?.(prepare, { timeout: 1_000 })
+    const timeout = idle === undefined ? globalThis.setTimeout(prepare, 200) : undefined
+    return () => {
+      active = false
+      if (idle !== undefined) globalThis.cancelIdleCallback(idle)
+      if (timeout !== undefined) globalThis.clearTimeout(timeout)
+    }
+  }, [])
+
+  useEffect(() => {
     const checkConnection = () => void transport.ensureHealthy()
     const checkVisibleConnection = () => {
       if (document.visibilityState === 'visible') checkConnection()
@@ -835,6 +865,61 @@ export function App() {
   useEffect(() => {
     writeSetting(TERMINAL_OPEN_KEY, String(terminalOpen))
   }, [terminalOpen])
+
+  useEffect(() => {
+    const reduceMotion =
+      globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    if (bottomTerminalPhase === 'opening') {
+      setBottomTerminalPhase('open')
+      return
+    }
+    if (bottomTerminalPhase === 'closing' && reduceMotion) {
+      setBottomTerminalPhase('closed')
+    }
+  }, [bottomTerminalPhase])
+
+  useEffect(() => {
+    if (bottomTerminalPhase !== 'closing') return
+    const timeout = globalThis.setTimeout(() => {
+      setBottomTerminalPhase((phase) => (phase === 'closing' ? 'closed' : phase))
+    }, BOTTOM_TERMINAL_MOTION_MS + 80)
+    return () => globalThis.clearTimeout(timeout)
+  }, [bottomTerminalPhase])
+
+  useLayoutEffect(() => {
+    const origin = bottomTerminalComposerOrigin.current
+    bottomTerminalComposerOrigin.current = undefined
+    const composer = stageBody.current?.querySelector<HTMLElement>('.composer__box')
+    if (!origin || !composer) return
+
+    const next = composer.getBoundingClientRect()
+    const x = origin.left - next.left
+    const y = origin.top - next.top
+    const reduceMotion =
+      globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    if (reduceMotion || !composer.animate || (Math.abs(x) < 0.5 && Math.abs(y) < 0.5)) return
+
+    const animation = composer.animate(
+      [{ transform: `translate3d(${x}px, ${y}px, 0)` }, { transform: 'translate3d(0, 0, 0)' }],
+      { duration: BOTTOM_TERMINAL_MOTION_MS, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' },
+    )
+    animation.id = 'harness-terminal-composer'
+    bottomTerminalComposerAnimation.current = animation
+    void animation.finished
+      .catch(() => undefined)
+      .then(() => {
+        if (bottomTerminalComposerAnimation.current === animation) {
+          bottomTerminalComposerAnimation.current = null
+        }
+      })
+  }, [terminalOpen])
+
+  useEffect(
+    () => () => {
+      bottomTerminalComposerAnimation.current?.cancel()
+    },
+    [],
+  )
 
   useEffect(() => {
     writeSetting(TERMINAL_HEIGHT_KEY, String(terminalHeight))
@@ -3557,36 +3642,44 @@ export function App() {
     setRollbackInspection(undefined)
     setRollbackOpen(true)
   }, [])
-  const terminalViewTransition = useRef<ViewTransitionLike | undefined>(undefined)
-  const changeTerminalOpen = useCallback(
-    (update: TerminalOpenUpdate) => {
-      const reduceMotion =
-        globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-
-      if (!activeId || reduceMotion || !supportsViewTransitions(document)) {
-        setTerminalOpen(update)
-        return
+  const prepareBottomTerminalComposerMotion = useCallback(() => {
+    const composer = stageBody.current?.querySelector<HTMLElement>('.composer__box')
+    if (!composer) return
+    const current = composer.getBoundingClientRect()
+    bottomTerminalComposerOrigin.current = { left: current.left, top: current.top }
+    for (const animation of composer.getAnimations?.() ?? []) {
+      if (
+        animation.id === 'harness-composer-dock' ||
+        animation.id === 'harness-terminal-composer'
+      ) {
+        animation.cancel()
       }
-
-      terminalViewTransition.current?.skipTransition?.()
-      const transition = document.startViewTransition(() => {
-        flushSync(() => setTerminalOpen(update))
-      })
-      terminalViewTransition.current = transition
-      const clearFinishedTransition = () => {
-        if (terminalViewTransition.current === transition) {
-          terminalViewTransition.current = undefined
-        }
-      }
-      void transition.finished.then(clearFinishedTransition, clearFinishedTransition)
-    },
-    [activeId],
-  )
-  const toggleTerminal = useCallback(
-    () => changeTerminalOpen((open) => !open),
-    [changeTerminalOpen],
-  )
-  const closeTerminal = useCallback(() => changeTerminalOpen(false), [changeTerminalOpen])
+    }
+    bottomTerminalComposerAnimation.current = null
+  }, [])
+  const toggleTerminal = useCallback(() => {
+    prepareBottomTerminalComposerMotion()
+    setBottomTerminalPhase((phase) =>
+      phase === 'closed' || phase === 'closing' ? 'opening' : 'closing',
+    )
+  }, [prepareBottomTerminalComposerMotion])
+  const toggleDefaultTerminal = useCallback(() => {
+    if (terminalPlacement === 'workspace') {
+      if (!activePath) return
+      setWorkspaceTerminalToggleRequest((request) => request + 1)
+      return
+    }
+    if (!activePath) return
+    toggleTerminal()
+  }, [activePath, terminalPlacement, toggleTerminal])
+  const closeTerminal = useCallback(() => {
+    prepareBottomTerminalComposerMotion()
+    setBottomTerminalPhase((phase) => (phase === 'opening' || phase === 'open' ? 'closing' : phase))
+  }, [prepareBottomTerminalComposerMotion])
+  const finishBottomTerminalMotion = useCallback((event: ReactTransitionEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget || event.propertyName !== 'transform') return
+    setBottomTerminalPhase((phase) => (phase === 'closing' ? 'closed' : phase))
+  }, [])
   const openWorkspacePanel = useCallback(() => {
     setWorkspacePanelOpen(true)
   }, [])
@@ -3692,9 +3785,7 @@ export function App() {
       },
       newProject: () => void addProject(),
       openPullRequests,
-      toggleTerminal: () => {
-        if (activeId) toggleTerminal()
-      },
+      toggleTerminal: toggleDefaultTerminal,
       toggleWorkspace: () => {
         if (activePath) toggleWorkspacePanel()
       },
@@ -3726,7 +3817,7 @@ export function App() {
       toggleFastMode,
       toggleRail,
       toggleSidebarSessionPin,
-      toggleTerminal,
+      toggleDefaultTerminal,
       toggleWorkspacePanel,
     ],
   )
@@ -3893,16 +3984,26 @@ export function App() {
         shortcut: keybind('openPullRequests'),
         run: openPullRequests,
       },
-      ...(activeId
+      ...(activeId || activePath
         ? [
             {
               id: 'toggle-terminal',
-              title: terminalOpen ? 'Hide terminal' : 'Show terminal',
+              title:
+                terminalPlacement === 'workspace'
+                  ? 'Toggle right sidebar terminal'
+                  : terminalOpen
+                    ? 'Hide terminal'
+                    : 'Show terminal',
+              detail: terminalPlacement === 'workspace' ? 'Right sidebar' : 'Bottom panel',
               group: 'Actions' as const,
               keywords: 'console shell',
               shortcut: keybind('toggleTerminal'),
-              run: toggleTerminal,
+              run: toggleDefaultTerminal,
             },
+          ]
+        : []),
+      ...(activeId
+        ? [
             {
               id: 'toggle-chat-pin',
               title: active?.session.pinned ? 'Unpin current chat' : 'Pin current chat',
@@ -3995,16 +4096,31 @@ export function App() {
     beginSession,
     selectSession,
     terminalOpen,
+    terminalPlacement,
     thread.running,
     toggleSidebarSessionPin,
-    toggleTerminal,
+    toggleDefaultTerminal,
     toggleWorkspacePanel,
     workspacePanelOpen,
   ])
 
   return (
-    <div className={`shell ${collapsed ? 'is-narrow' : ''}`} style={shellStyle(railWidth)}>
+    <div
+      className={`shell ${collapsed ? 'is-narrow' : ''}${isDesktop && macOS ? ' is-macos' : ''}`}
+      style={shellStyle(railWidth)}
+    >
       <TitleBar collapsed={collapsed} keybindings={keybindings} onToggleRail={toggleRail} />
+      {surface === 'chat' ? (
+        <PanelToggles
+          projectPath={activePath}
+          terminalOpen={terminalOpen}
+          workspacePanelOpen={workspacePanelOpen}
+          terminalShortcutActive={terminalPlacement === 'bottom'}
+          keybindings={keybindings}
+          onToggleWorkspace={workspacePanelOpen ? closeWorkspacePanel : openWorkspacePanel}
+          onToggleTerminal={toggleTerminal}
+        />
+      ) : null}
       {isDesktop ? <ZoomHud /> : null}
 
       <div className="shell__body">
@@ -4057,22 +4173,20 @@ export function App() {
                   sessionId={active?.session.id}
                   title={active?.session.title}
                   pinned={active?.session.pinned ?? false}
-                  projectPath={active?.project.path}
+                  projectPath={activePath}
                   checkpointCount={thread.running ? 0 : checkpoints.length}
                   worktreeBranch={active?.session.worktreeBranch}
-                  terminalOpen={terminalOpen}
-                  workspacePanelOpen={workspacePanelOpen}
                   keybindings={keybindings}
+                  menuActions={keybindingActions}
                   onOpenRollback={openRollback}
-                  onToggleWorkspace={workspacePanelOpen ? closeWorkspacePanel : openWorkspacePanel}
-                  onToggleTerminal={toggleTerminal}
                   onRenameSession={renameSidebarSession}
                   onToggleSessionPin={toggleSidebarSessionPin}
                   onArchiveSession={deleteSidebarSession}
                 />
 
                 <div
-                  className={`stage__body${activeId ? '' : ' is-new-session'}${active && terminalOpen ? ' has-terminal' : ''}`}
+                  ref={stageBody}
+                  className={`stage__body${activeId ? '' : ' is-new-session'}${activePath && terminalOpen ? ' has-terminal' : ''}`}
                 >
                   {activeId ? (
                     <Thread
@@ -4112,20 +4226,6 @@ export function App() {
                       onRetry={retryProjects}
                     />
                   )}
-
-                  {active && terminalOpen ? (
-                    <Suspense fallback={null}>
-                      <TerminalPane
-                        key={activeId}
-                        transport={transport}
-                        threadId={active.session.id}
-                        height={terminalHeight}
-                        theme={theme}
-                        onHeightChange={setTerminalHeight}
-                        onClose={closeTerminal}
-                      />
-                    </Suspense>
-                  ) : null}
 
                   <Composer
                     transport={transport}
@@ -4178,6 +4278,47 @@ export function App() {
                     onMoveQueuedTurn={moveQueuedTurn}
                     onSteerQueuedTurn={steerQueuedTurn}
                   />
+
+                  {activePath && (bottomTerminalMounted || bottomTerminalPrepared) ? (
+                    <div
+                      className={`bottom-terminal${terminalOpen ? ' is-open' : ''}${bottomTerminalPhase === 'closing' ? ' is-closing' : ''}${bottomTerminalPhase === 'closed' ? ' is-parked' : ''}`}
+                      style={{ height: terminalHeight }}
+                      data-testid="bottom-terminal"
+                      aria-hidden={bottomTerminalPhase === 'closed' ? true : undefined}
+                      inert={
+                        bottomTerminalPhase === 'closing' || bottomTerminalPhase === 'closed'
+                          ? true
+                          : undefined
+                      }
+                      onTransitionEnd={finishBottomTerminalMotion}
+                    >
+                      <Suspense fallback={null}>
+                        {active ? (
+                          <TerminalPane
+                            key={`thread:${active.session.id}`}
+                            transport={transport}
+                            threadId={active.session.id}
+                            height={terminalHeight}
+                            theme={theme}
+                            active={terminalOpen}
+                            onHeightChange={setTerminalHeight}
+                            onClose={closeTerminal}
+                          />
+                        ) : (
+                          <TerminalPane
+                            key={`project:${activePath}`}
+                            transport={transport}
+                            projectPath={activePath}
+                            height={terminalHeight}
+                            theme={theme}
+                            active={terminalOpen}
+                            onHeightChange={setTerminalHeight}
+                            onClose={closeTerminal}
+                          />
+                        )}
+                      </Suspense>
+                    </div>
+                  ) : null}
                 </div>
               </>
             )}
@@ -4204,6 +4345,7 @@ export function App() {
               onClose={closeWorkspacePanel}
               onExpandedChange={setWorkspacePanelExpanded}
               onWidthChange={setWorkspacePanelWidth}
+              terminalToggleRequest={workspaceTerminalToggleRequest}
               providerLogin={
                 providerLoginTerminal?.visible
                   ? {

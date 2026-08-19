@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
   type FormEvent,
   type PointerEvent,
+  type TransitionEvent,
 } from 'react'
 import {
   FileDiff,
@@ -110,6 +111,7 @@ const TOOLS: Array<{
 const MIN_PANEL_WIDTH = 360
 const MIN_CHAT_WIDTH = 360
 const DESIGN_PREVIEW_TAB_ID = 'design-preview'
+const WORKSPACE_PANEL_CLOSE_FALLBACK_MS = 340
 
 export function WorkspacePanel(props: {
   open: boolean
@@ -130,6 +132,7 @@ export function WorkspacePanel(props: {
   onClosed?: () => void
   onExpandedChange: (expanded: boolean) => void
   onWidthChange: (width: number) => void
+  terminalToggleRequest?: number | undefined
   providerLogin?: WorkspaceProviderLoginRequest | undefined
   onProviderLoginClose?: ((id: number) => void) | undefined
 }) {
@@ -139,14 +142,22 @@ export function WorkspacePanel(props: {
   const [addOpen, setAddOpen] = useState(false)
   const addWrap = useRef<HTMLDivElement>(null)
   const resizeCleanup = useRef<() => void>(() => {})
+  const openRef = useRef(props.open)
   const tabsRef = useRef(tabs)
+  const activeIdRef = useRef(activeId)
   const onClose = useRef(props.onClose)
+  const onClosed = useRef(props.onClosed)
   const onProviderLoginClose = useRef(props.onProviderLoginClose)
+  const closeCompletionPending = useRef(false)
   const clearAfterClose = useRef(false)
   const providerLoginTabId = useRef<string | undefined>(undefined)
+  const handledTerminalToggleRequest = useRef(0)
   const nextTabId = useRef(1)
+  openRef.current = props.open
   tabsRef.current = tabs
+  activeIdRef.current = activeId
   onClose.current = props.onClose
+  onClosed.current = props.onClosed
   onProviderLoginClose.current = props.onProviderLoginClose
 
   const openTool = useCallback(
@@ -165,6 +176,26 @@ export function WorkspacePanel(props: {
     },
     [props.onOpen],
   )
+
+  useEffect(() => {
+    const request = props.terminalToggleRequest ?? 0
+    if (request === 0 || request === handledTerminalToggleRequest.current) return
+    handledTerminalToggleRequest.current = request
+
+    const terminal = [...tabsRef.current].reverse().find((tab) => tab.kind === 'terminal')
+    if (props.open && terminal && terminal.id === activeIdRef.current) {
+      onClose.current()
+      return
+    }
+    if (!terminal) {
+      openTool('terminal')
+      return
+    }
+
+    clearAfterClose.current = false
+    props.onOpen()
+    setActiveId(terminal.id)
+  }, [openTool, props.onOpen, props.open, props.terminalToggleRequest])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -274,11 +305,38 @@ export function WorkspacePanel(props: {
     [],
   )
 
+  const completeClose = useCallback(() => {
+    if (openRef.current || !closeCompletionPending.current) return
+    closeCompletionPending.current = false
+    onClosed.current?.()
+    if (!clearAfterClose.current) return
+    clearAfterClose.current = false
+    tabsRef.current = []
+    setTabs([])
+    setActiveId(undefined)
+  }, [])
+
   useEffect(() => {
-    if (!props.open && globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-      props.onClosed?.()
+    if (props.open) {
+      closeCompletionPending.current = false
+      return
     }
-  }, [props.open, props.onClosed])
+    closeCompletionPending.current = true
+    if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      completeClose()
+      return
+    }
+    const timeout = globalThis.setTimeout(completeClose, WORKSPACE_PANEL_CLOSE_FALLBACK_MS)
+    return () => globalThis.clearTimeout(timeout)
+  }, [completeClose, props.open])
+
+  const finishCloseTransition = useCallback(
+    (event: TransitionEvent<HTMLElement>) => {
+      if (event.target !== event.currentTarget || event.propertyName !== 'transform') return
+      completeClose()
+    },
+    [completeClose],
+  )
 
   const closeTab = useCallback((id: string) => {
     const current = tabsRef.current
@@ -391,20 +449,8 @@ export function WorkspacePanel(props: {
       aria-label="Workspace tools"
       aria-hidden={!props.open}
       inert={props.open ? undefined : true}
-      onTransitionEnd={(event) => {
-        if (
-          event.target !== event.currentTarget ||
-          event.propertyName !== 'transform' ||
-          props.open
-        )
-          return
-        props.onClosed?.()
-        if (!clearAfterClose.current) return
-        clearAfterClose.current = false
-        tabsRef.current = []
-        setTabs([])
-        setActiveId(undefined)
-      }}
+      onTransitionEnd={finishCloseTransition}
+      onTransitionCancel={finishCloseTransition}
     >
       <div
         className="workspace-panel__resize"
@@ -667,7 +713,7 @@ function WorkspaceSelector({ onOpen }: { onOpen: (kind: WorkspaceTool) => void }
           const Icon = tool.Icon
           return (
             <button type="button" key={tool.kind} onClick={() => onOpen(tool.kind)}>
-              <Icon size={18} aria-hidden />
+              <Icon size={16} aria-hidden />
               <span>{tool.title}</span>
             </button>
           )

@@ -16,6 +16,7 @@ import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
 import type { ModelChoice } from './model-catalog.js'
 import { KEYBINDING_DEFINITIONS, type Shortcut } from './shortcuts.js'
+import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
 import { IndeterminateRequestError, type ConnectionState } from './transport.js'
 import { resetInstalls } from './provider-install.js'
 
@@ -243,7 +244,7 @@ vi.mock('./ui/TerminalPane.js', async (importOriginal) => {
     ...original,
     TerminalPane: memo((props: ComponentProps<typeof original.TerminalPane>) => {
       utilityRenders.terminalPane()
-      return <div data-testid="terminal-pane">{props.threadId}</div>
+      return <div data-testid="terminal-pane">{props.threadId ?? props.projectPath}</div>
     }),
   }
 })
@@ -929,16 +930,26 @@ describe('web client', () => {
 
     const launcher = await screen.findByRole('button', { name: 'Show workspace tools' })
     expect(launcher.closest('.titlebar')).toBeNull()
+    expect(launcher.closest('.stage')).toBeNull()
     fireEvent.click(launcher)
     expect(screen.queryByRole('button', { name: 'Show workspace tools' })).toBeNull()
     const close = await screen.findByRole('button', { name: 'Hide workspace tools' })
     expect(close).toBe(launcher)
-    expect(close.closest('.stagehead__tools')).toBeTruthy()
+    expect(close.closest('.panel-toggles')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
+    const terminalTab = await screen.findByRole('tab', { name: 'Terminal' })
+    fireEvent.click(screen.getByRole('button', { name: 'Expand workspace tools' }))
+    expect(document.querySelector('.workspace-layout')?.classList).toContain('is-panel-expanded')
+    expect(close.closest('.stage')).toBeNull()
     fireEvent.click(close)
     expect(screen.getByRole('button', { name: 'Show workspace tools' })).toBe(launcher)
     expect(document.querySelector('.workspace-layout')?.classList.contains('is-panel-open')).toBe(
       false,
     )
+    expect(document.querySelectorAll('.workspace-panel [role="tab"]')).toHaveLength(1)
+
+    fireEvent.click(launcher)
+    expect(await screen.findByRole('tab', { name: 'Terminal' })).toBe(terminalTab)
   })
 
   it('routes /side with an inline prompt into an ephemeral Side chat', async () => {
@@ -3673,6 +3684,7 @@ describe('new chats', () => {
   })
 
   it('persists a selected appearance across app restarts', async () => {
+    localStorage.setItem('harness.theme', 'dark')
     const first = render(<App />)
 
     expect(document.documentElement.dataset.theme).toBe('dark')
@@ -4680,7 +4692,7 @@ describe('inbox lifecycle', () => {
 })
 
 describe('global shortcuts', () => {
-  it('runs sidebar and palette actions from the native menu', async () => {
+  it('runs sidebar and terminal actions from the native menu', async () => {
     render(<App />)
     await screen.findByRole('button', { name: /^New session,/ })
 
@@ -4694,8 +4706,21 @@ describe('global shortcuts', () => {
     act(() => nativeMenu.listener?.('toggleSidebar'))
     expect(document.querySelector('.shell')?.classList).toContain('is-narrow')
 
-    act(() => nativeMenu.listener?.('commandPalette'))
-    expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeTruthy()
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    expect(await screen.findByTestId('terminal-pane')).toBeTruthy()
+  })
+
+  it('runs sidebar and terminal actions from the visible top-bar menu', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Options for New chat' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Toggle sidebar' }))
+    expect(document.querySelector('.shell')?.classList).toContain('is-narrow')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Options for New chat' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Toggle terminal' }))
+    expect(await screen.findByTestId('terminal-pane')).toBeTruthy()
   })
 
   it('opens a searchable palette for actions, projects, and chats', async () => {
@@ -4854,7 +4879,7 @@ describe('global shortcuts', () => {
     fireEvent.change(composer, { target: { value: 'Keep this draft intact' } })
 
     fireEvent.keyDown(composer, { key: 'j', metaKey: true })
-    expect(screen.getByRole('button', { name: 'Close terminal' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Hide terminal' })).toBeTruthy()
     expect((composer as HTMLTextAreaElement).value).toBe('Keep this draft intact')
 
     const terminalInput = document.createElement('textarea')
@@ -4863,6 +4888,62 @@ describe('global shortcuts', () => {
     fireEvent.keyDown(terminalInput, { key: 'j', metaKey: true })
     expect(screen.getByRole('button', { name: 'Open terminal' })).toBeTruthy()
     expect((composer as HTMLTextAreaElement).value).toBe('Keep this draft intact')
+  })
+
+  it('routes the terminal shortcut to the selected right sidebar terminal', async () => {
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.keyDown(window, { key: ',', metaKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
+    fireEvent.click(screen.getByRole('combobox', { name: 'Default terminal location' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Right sidebar' }))
+    expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('workspace')
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Settings' }), { key: 'Escape' })
+
+    const bottomTerminal = screen.getByRole('button', { name: 'Open terminal' })
+    expect(bottomTerminal.getAttribute('aria-keyshortcuts')).toBeNull()
+    fireEvent.keyDown(composer, { key: 'j', metaKey: true })
+
+    const sideTerminal = await screen.findByRole('tab', { name: 'Terminal' })
+    expect(sideTerminal).toBeTruthy()
+    await waitFor(() => {
+      const workspaceTerminal = document.querySelector('.workspace-terminal')
+      expect(within(workspaceTerminal as HTMLElement).getByTestId('terminal-pane')).toBeTruthy()
+    })
+    expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
+    expect(screen.getByRole('button', { name: 'Open terminal' })).toBe(bottomTerminal)
+
+    fireEvent.keyDown(composer, { key: 'j', metaKey: true })
+    await waitFor(() =>
+      expect(document.querySelector('.workspace-panel')?.classList).not.toContain('is-open'),
+    )
+    expect(document.querySelectorAll('.workspace-panel [role="tab"]')).toHaveLength(1)
+
+    fireEvent.keyDown(composer, { key: 'j', metaKey: true })
+    await waitFor(() =>
+      expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open'),
+    )
+    expect(screen.getAllByRole('tab', { name: 'Terminal' })).toHaveLength(1)
+  })
+
+  it('opens the bottom terminal before a chat starts', async () => {
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^New session,/ })
+    expect(document.querySelector('.stage__body')?.classList).toContain('is-new-session')
+    const composer = screen.getByPlaceholderText('Do anything')
+    expect(screen.getByRole('button', { name: 'Open terminal' })).toBeTruthy()
+
+    fireEvent.keyDown(composer, { key: 'j', metaKey: true })
+
+    const terminal = await screen.findByTestId('terminal-pane')
+    expect(terminal.textContent).toBe('/work/project')
+    expect(terminal.closest('.bottom-terminal')).toBeTruthy()
+    expect(document.querySelector('.stage__body')?.classList).toContain('has-terminal')
+    expect(document.querySelector('.workspace-panel')?.classList).not.toContain('is-open')
   })
 
   it('opens global app surfaces from the composer', async () => {
@@ -5593,96 +5674,12 @@ describe('live sessions', () => {
     expect(utilityRenders.terminalPane).not.toHaveBeenCalled()
   })
 
-  it('uses the document view-transition API when opening and closing the terminal', async () => {
-    const contexts: Document[] = []
-    const startViewTransition = vi.fn(function (this: Document, callback: () => void) {
-      contexts.push(this)
-      callback()
-      return { finished: Promise.resolve(), skipTransition: vi.fn() }
-    })
-    Object.defineProperty(document, 'startViewTransition', {
-      configurable: true,
-      value: startViewTransition,
-    })
-
-    render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
-    await screen.findByTestId('thread')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Open terminal' }))
-    await screen.findByTestId('terminal-pane')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Close terminal' }))
-    await waitFor(() => {
-      expect(screen.queryByTestId('terminal-pane')).toBeNull()
-    })
-
-    expect(startViewTransition).toHaveBeenCalledTimes(2)
-    expect(contexts).toEqual([document, document])
-  })
-
-  it('skips the previous terminal transition when a second toggle starts before it finishes', async () => {
-    let rejectFirstFinished: ((reason: unknown) => void) | undefined
-    const first = {
-      finished: new Promise<void>((_resolve, reject) => {
-        rejectFirstFinished = reject
-      }),
-      skipTransition: vi.fn(() => {
-        rejectFirstFinished?.(new DOMException('Transition was aborted', 'InvalidStateError'))
-      }),
-    }
-    const second = {
-      finished: Promise.resolve(),
-      skipTransition: vi.fn(),
-    }
-    const transitions = [first, second]
-    const startViewTransition = vi.fn(function (this: Document, callback: () => void) {
-      expect(this).toBe(document)
-      callback()
-      return transitions.shift()!
-    })
-    Object.defineProperty(document, 'startViewTransition', {
-      configurable: true,
-      value: startViewTransition,
-    })
-
-    render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
-    await screen.findByTestId('thread')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Open terminal' }))
-    await screen.findByTestId('terminal-pane')
-    fireEvent.click(screen.getByRole('button', { name: 'Close terminal' }))
-    await waitFor(() => {
-      expect(screen.queryByTestId('terminal-pane')).toBeNull()
-    })
-
-    expect(first.skipTransition).toHaveBeenCalledTimes(1)
-    await first.finished.catch(() => undefined)
-  })
-
-  it('bypasses the view-transition API for terminal toggles under reduced motion', async () => {
-    const originalMatchMedia = window.matchMedia.bind(window)
+  it('opens and closes the terminal without snapshot transition flashes', async () => {
     const startViewTransition = vi.fn()
     Object.defineProperty(document, 'startViewTransition', {
       configurable: true,
       value: startViewTransition,
     })
-    vi.spyOn(window, 'matchMedia').mockImplementation((query) => {
-      if (query === '(prefers-reduced-motion: reduce)') {
-        return {
-          matches: true,
-          media: query,
-          onchange: null,
-          addEventListener: vi.fn(),
-          removeEventListener: vi.fn(),
-          addListener: vi.fn(),
-          removeListener: vi.fn(),
-          dispatchEvent: vi.fn(() => false),
-        } satisfies MediaQueryList
-      }
-      return originalMatchMedia(query)
-    })
 
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
@@ -5690,8 +5687,63 @@ describe('live sessions', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Open terminal' }))
     await screen.findByTestId('terminal-pane')
+    const bottomTerminal = screen.getByTestId('bottom-terminal')
+    const composer = document.querySelector('.stage__body > .composer')
+    expect(composer).not.toBeNull()
+    expect(
+      composer!.compareDocumentPosition(bottomTerminal) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide terminal' }))
+    act(() => dispatchTransitionEnd(bottomTerminal, 'transform'))
+    await waitFor(() => {
+      const terminal = screen.queryByTestId('bottom-terminal')
+      expect(terminal?.classList.contains('is-open') ?? false).toBe(false)
+    })
 
     expect(startViewTransition).not.toHaveBeenCalled()
+  })
+
+  it('moves the prompt from its live position when the bottom terminal opens', async () => {
+    const originalRect = HTMLElement.prototype.getBoundingClientRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (!this.classList.contains('composer__box')) return originalRect.call(this)
+      const docked = this.closest('.stage__body')?.classList.contains('has-terminal') ?? false
+      return new DOMRect(100, docked ? 200 : 400, 620, 120)
+    })
+    const animation = {
+      id: '',
+      cancel: vi.fn(),
+      finished: Promise.resolve(),
+    } as unknown as Animation
+    const animate = vi.fn(() => animation)
+    const originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
+    Object.defineProperty(Element.prototype, 'animate', {
+      configurable: true,
+      writable: true,
+      value: animate,
+    })
+
+    try {
+      render(<App />)
+      await screen.findByRole('button', { name: /^New session,/ })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Open terminal' }))
+      await screen.findByTestId('bottom-terminal')
+
+      expect(animate).toHaveBeenCalledWith(
+        [{ transform: 'translate3d(0px, 200px, 0)' }, { transform: 'translate3d(0, 0, 0)' }],
+        { duration: 260, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' },
+      )
+    } finally {
+      if (originalAnimate) {
+        Object.defineProperty(Element.prototype, 'animate', originalAnimate)
+      } else {
+        Reflect.deleteProperty(Element.prototype, 'animate')
+      }
+    }
   })
 
   it('opens chat search without rerendering the app shell', async () => {

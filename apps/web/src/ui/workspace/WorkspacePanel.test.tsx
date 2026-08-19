@@ -188,10 +188,48 @@ describe('WorkspacePanel', () => {
         onWidthChange={vi.fn()}
       />,
     )
-    fireEvent.transitionEnd(document.querySelector<HTMLElement>('.workspace-panel')!, {
+    fireEvent.transitionCancel(document.querySelector<HTMLElement>('.workspace-panel')!, {
       propertyName: 'transform',
     })
     expect(screen.queryByRole('tab', { name: 'Terminal' })).toBeNull()
+  })
+
+  it('toggles one reusable terminal from the app shortcut request', async () => {
+    const onOpen = vi.fn()
+    const onClose = vi.fn()
+    const panel = (open: boolean, terminalToggleRequest: number) => (
+      <WorkspacePanel
+        open={open}
+        expanded={false}
+        width={400}
+        transport={idleTransport}
+        projectPath="/workspace/project"
+        theme="dark"
+        sideChatParentStatus="idle"
+        sideChatStartOptions={{ approval: 'ask' }}
+        nativeSurfacesVisible
+        onOpen={onOpen}
+        onClose={onClose}
+        onExpandedChange={vi.fn()}
+        onWidthChange={vi.fn()}
+        terminalToggleRequest={terminalToggleRequest}
+      />
+    )
+    const view = render(panel(true, 0))
+
+    view.rerender(panel(true, 1))
+    await waitFor(() => expect(onOpen).toHaveBeenCalledOnce())
+    expect(screen.getAllByRole('tab', { name: 'Terminal' })).toHaveLength(1)
+
+    view.rerender(panel(true, 2))
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    expect(screen.getAllByRole('tab', { name: 'Terminal' })).toHaveLength(1)
+
+    view.rerender(panel(false, 2))
+    view.rerender(panel(false, 3))
+    await waitFor(() => expect(onOpen).toHaveBeenCalledTimes(2))
+    view.rerender(panel(true, 3))
+    expect(screen.getAllByRole('tab', { name: 'Terminal' })).toHaveLength(1)
   })
 
   it('keeps panel controls inside the workspace chrome', () => {
@@ -214,7 +252,9 @@ describe('WorkspacePanel', () => {
     )
 
     for (const title of ['Review', 'Terminal', 'Browser', 'Files', 'Temporary chat']) {
-      expect(screen.getByRole('button', { name: title }).querySelector('svg')).toBeTruthy()
+      expect(
+        screen.getByRole('button', { name: title }).querySelector('svg')?.getAttribute('width'),
+      ).toBe('16')
     }
     fireEvent.click(screen.getByRole('button', { name: 'Expand workspace tools' }))
     expect(onExpandedChange).toHaveBeenCalledWith(true)

@@ -1,20 +1,108 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import {
   Archive,
+  Command,
   Ellipsis,
   FolderOpen,
   GitBranch,
+  GitPullRequest,
   History,
+  Keyboard,
+  PanelBottomClose,
+  PanelBottomOpen,
+  PanelLeft,
   PanelRightClose,
   PanelRightOpen,
   Pencil,
   Pin,
   PinOff,
+  Search,
+  Settings,
+  SquarePen,
   SquareTerminal,
 } from 'lucide-react'
 import { isDesktop, revealPath } from '../bridge.js'
-import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
+import {
+  DEFAULT_KEYBINDINGS,
+  shortcutAria,
+  type KeybindingId,
+  type Keybindings,
+} from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
+
+type StageHeaderMenuActions = Pick<
+  Record<KeybindingId, () => void>,
+  | 'commandPalette'
+  | 'keybindings'
+  | 'newChat'
+  | 'openPullRequests'
+  | 'searchSessions'
+  | 'settings'
+  | 'toggleSidebar'
+  | 'toggleTerminal'
+  | 'toggleWorkspace'
+>
+
+export const PanelToggles = memo(function PanelToggles(props: {
+  projectPath: string | undefined
+  terminalOpen: boolean
+  workspacePanelOpen: boolean
+  terminalShortcutActive?: boolean | undefined
+  keybindings?: Keybindings | undefined
+  onToggleWorkspace: () => void
+  onToggleTerminal: () => void
+}) {
+  const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
+
+  return (
+    <div
+      className={`panel-toggles${props.workspacePanelOpen ? ' is-workspace-open' : ''}`}
+      aria-label="Panel controls"
+    >
+      {props.projectPath ? (
+        <button
+          type="button"
+          className={`stagehead__action${props.terminalOpen ? ' is-open' : ''}`}
+          aria-label={props.terminalOpen ? 'Hide terminal' : 'Open terminal'}
+          aria-pressed={props.terminalOpen}
+          aria-keyshortcuts={
+            props.terminalShortcutActive === false
+              ? undefined
+              : shortcutAria(keybindings.toggleTerminal)
+          }
+          title={props.terminalOpen ? 'Hide terminal' : 'Open terminal'}
+          onClick={props.onToggleTerminal}
+        >
+          {props.terminalOpen ? (
+            <PanelBottomClose size={16} aria-hidden />
+          ) : (
+            <PanelBottomOpen size={16} aria-hidden />
+          )}
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className={`stagehead__action panel-toggles__workspace${props.workspacePanelOpen ? ' is-open' : ''}`}
+        aria-label={props.workspacePanelOpen ? 'Hide workspace tools' : 'Show workspace tools'}
+        aria-pressed={props.workspacePanelOpen}
+        aria-keyshortcuts={shortcutAria(keybindings.toggleWorkspace)}
+        title={props.workspacePanelOpen ? 'Hide workspace tools' : 'Show workspace tools'}
+        onClick={props.onToggleWorkspace}
+      >
+        {props.workspacePanelOpen ? (
+          <PanelRightClose size={16} aria-hidden />
+        ) : (
+          <PanelRightOpen size={16} aria-hidden />
+        )}
+      </button>
+    </div>
+  )
+})
+
+function closeThenRun(close: () => void, action: () => void) {
+  close()
+  action()
+}
 
 /** Chat identity and direct workspace actions above the thread. */
 function StageHeaderComponent(props: {
@@ -24,12 +112,9 @@ function StageHeaderComponent(props: {
   projectPath: string | undefined
   checkpointCount: number
   worktreeBranch: string | undefined
-  terminalOpen: boolean
-  workspacePanelOpen: boolean
   keybindings?: Keybindings | undefined
+  menuActions: StageHeaderMenuActions
   onOpenRollback: () => void
-  onToggleWorkspace: () => void
-  onToggleTerminal: () => void
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin: (id: string) => void
   onArchiveSession: (id: string) => void
@@ -55,6 +140,7 @@ function StageHeaderComponent(props: {
 
   return (
     <header className="stagehead">
+      <span className="stagehead__drag-region" aria-hidden />
       <div className="stagehead__identity">
         {renaming ? (
           <input
@@ -75,110 +161,152 @@ function StageHeaderComponent(props: {
           </span>
         )}
 
-        {props.sessionId ? (
-          <Menu
-            drop="down"
-            align="left"
-            label={`Options for ${props.title ?? 'chat'}`}
-            triggerClassName="stagehead__menu-trigger"
-            panelClassName="menu--sidebar"
-            trigger={() => <Ellipsis size={16} aria-hidden />}
-          >
-            {(close) => (
-              <>
-                <MenuItem
-                  title={props.pinned ? 'Unpin chat' : 'Pin chat'}
-                  shortcutAria={shortcutAria(keybindings.toggleSessionPin)}
-                  icon={
-                    props.pinned ? <PinOff size={14} aria-hidden /> : <Pin size={14} aria-hidden />
-                  }
-                  onClick={() => {
-                    props.onToggleSessionPin(props.sessionId!)
-                    close()
-                  }}
-                />
-                <MenuItem
-                  title="Rename chat"
-                  icon={<Pencil size={14} aria-hidden />}
-                  onClick={() => {
-                    setRenaming(true)
-                    close()
-                  }}
-                />
-                <MenuItem
-                  title="Archive chat"
-                  shortcutAria={shortcutAria(keybindings.archiveSession)}
-                  icon={<Archive size={14} aria-hidden />}
-                  onClick={() => {
-                    props.onArchiveSession(props.sessionId!)
-                    close()
-                  }}
-                />
-                {isDesktop && props.projectPath ? (
-                  <MenuItem
-                    title="Open in Explorer"
-                    icon={<FolderOpen size={14} aria-hidden />}
-                    onClick={() => {
-                      void revealPath(props.projectPath!)
-                      close()
-                    }}
-                  />
-                ) : null}
-                {props.checkpointCount > 0 ? (
-                  <MenuItem
-                    title={`Checkpoint history (${props.checkpointCount})`}
-                    shortcutAria={shortcutAria(keybindings.rollback)}
-                    icon={<History size={14} aria-hidden />}
-                    onClick={() => {
-                      props.onOpenRollback()
-                      close()
-                    }}
-                  />
-                ) : null}
-                {props.worktreeBranch ? (
-                  <MenuItem
-                    title="Isolated checkout"
-                    detail={props.worktreeBranch}
-                    icon={<GitBranch size={14} aria-hidden />}
-                    disabled
-                    onClick={() => {}}
-                  />
-                ) : null}
-              </>
-            )}
-          </Menu>
-        ) : null}
-      </div>
-
-      <div className="stagehead__tools">
-        <button
-          type="button"
-          className="stagehead__action stagehead__action--workspace"
-          aria-label={props.workspacePanelOpen ? 'Hide workspace tools' : 'Show workspace tools'}
-          aria-pressed={props.workspacePanelOpen}
-          aria-keyshortcuts={shortcutAria(keybindings.toggleWorkspace)}
-          title="Workspace tools"
-          onClick={props.onToggleWorkspace}
+        <Menu
+          drop="down"
+          align="left"
+          label={`Options for ${props.title ?? 'New chat'}`}
+          triggerClassName="stagehead__menu-trigger"
+          panelClassName="menu--sidebar stagehead__options-menu"
+          trigger={() => <Ellipsis size={16} aria-hidden />}
         >
-          {props.workspacePanelOpen ? (
-            <PanelRightClose size={16} aria-hidden />
-          ) : (
-            <PanelRightOpen size={16} aria-hidden />
+          {(close) => (
+            <>
+              <MenuItem
+                title="Toggle sidebar"
+                shortcutAria={shortcutAria(keybindings.toggleSidebar)}
+                icon={<PanelLeft size={14} aria-hidden />}
+                onClick={() => closeThenRun(close, props.menuActions.toggleSidebar)}
+              />
+              <MenuItem
+                title="Toggle terminal"
+                detail={props.projectPath ? undefined : 'Select a project first'}
+                shortcutAria={shortcutAria(keybindings.toggleTerminal)}
+                icon={<SquareTerminal size={14} aria-hidden />}
+                disabled={!props.projectPath}
+                onClick={() => closeThenRun(close, props.menuActions.toggleTerminal)}
+              />
+              <MenuItem
+                title="Toggle workspace tools"
+                detail={props.projectPath ? undefined : 'Select a project first'}
+                shortcutAria={shortcutAria(keybindings.toggleWorkspace)}
+                icon={<PanelRightOpen size={14} aria-hidden />}
+                disabled={!props.projectPath}
+                onClick={() => closeThenRun(close, props.menuActions.toggleWorkspace)}
+              />
+
+              <div className="menu__rule" role="separator" />
+
+              <MenuItem
+                title="New chat"
+                shortcutAria={shortcutAria(keybindings.newChat)}
+                icon={<SquarePen size={14} aria-hidden />}
+                onClick={() => closeThenRun(close, props.menuActions.newChat)}
+              />
+              <MenuItem
+                title="Search chats"
+                shortcutAria={shortcutAria(keybindings.searchSessions)}
+                icon={<Search size={14} aria-hidden />}
+                onClick={() => closeThenRun(close, props.menuActions.searchSessions)}
+              />
+              <MenuItem
+                title="Command palette"
+                shortcutAria={shortcutAria(keybindings.commandPalette)}
+                icon={<Command size={14} aria-hidden />}
+                onClick={() => closeThenRun(close, props.menuActions.commandPalette)}
+              />
+              <MenuItem
+                title="Pull requests"
+                shortcutAria={shortcutAria(keybindings.openPullRequests)}
+                icon={<GitPullRequest size={14} aria-hidden />}
+                onClick={() => closeThenRun(close, props.menuActions.openPullRequests)}
+              />
+
+              <div className="menu__rule" role="separator" />
+
+              <MenuItem
+                title="Settings"
+                shortcutAria={shortcutAria(keybindings.settings)}
+                icon={<Settings size={14} aria-hidden />}
+                onClick={() => closeThenRun(close, props.menuActions.settings)}
+              />
+              <MenuItem
+                title="Keyboard shortcuts"
+                shortcutAria={shortcutAria(keybindings.keybindings)}
+                icon={<Keyboard size={14} aria-hidden />}
+                onClick={() => closeThenRun(close, props.menuActions.keybindings)}
+              />
+
+              {props.sessionId ? (
+                <>
+                  <div className="menu__rule" role="separator" />
+
+                  <MenuItem
+                    title={props.pinned ? 'Unpin chat' : 'Pin chat'}
+                    shortcutAria={shortcutAria(keybindings.toggleSessionPin)}
+                    icon={
+                      props.pinned ? (
+                        <PinOff size={14} aria-hidden />
+                      ) : (
+                        <Pin size={14} aria-hidden />
+                      )
+                    }
+                    onClick={() => {
+                      props.onToggleSessionPin(props.sessionId!)
+                      close()
+                    }}
+                  />
+                  <MenuItem
+                    title="Rename chat"
+                    icon={<Pencil size={14} aria-hidden />}
+                    onClick={() => {
+                      setRenaming(true)
+                      close()
+                    }}
+                  />
+                  <MenuItem
+                    title="Archive chat"
+                    shortcutAria={shortcutAria(keybindings.archiveSession)}
+                    icon={<Archive size={14} aria-hidden />}
+                    onClick={() => {
+                      props.onArchiveSession(props.sessionId!)
+                      close()
+                    }}
+                  />
+                  {isDesktop && props.projectPath ? (
+                    <MenuItem
+                      title="Open in Explorer"
+                      icon={<FolderOpen size={14} aria-hidden />}
+                      onClick={() => {
+                        void revealPath(props.projectPath!)
+                        close()
+                      }}
+                    />
+                  ) : null}
+                  {props.checkpointCount > 0 ? (
+                    <MenuItem
+                      title={`Checkpoint history (${props.checkpointCount})`}
+                      shortcutAria={shortcutAria(keybindings.rollback)}
+                      icon={<History size={14} aria-hidden />}
+                      onClick={() => {
+                        props.onOpenRollback()
+                        close()
+                      }}
+                    />
+                  ) : null}
+                  {props.worktreeBranch ? (
+                    <MenuItem
+                      title="Isolated checkout"
+                      detail={props.worktreeBranch}
+                      icon={<GitBranch size={14} aria-hidden />}
+                      disabled
+                      onClick={() => {}}
+                    />
+                  ) : null}
+                </>
+              ) : null}
+            </>
           )}
-        </button>
-        {props.sessionId ? (
-          <button
-            type="button"
-            className={`stagehead__action${props.terminalOpen ? ' is-open' : ''}`}
-            aria-label={props.terminalOpen ? 'Close terminal' : 'Open terminal'}
-            aria-pressed={props.terminalOpen}
-            aria-keyshortcuts={shortcutAria(keybindings.toggleTerminal)}
-            title="Terminal"
-            onClick={props.onToggleTerminal}
-          >
-            <SquareTerminal size={16} aria-hidden />
-          </button>
-        ) : null}
+        </Menu>
       </div>
     </header>
   )

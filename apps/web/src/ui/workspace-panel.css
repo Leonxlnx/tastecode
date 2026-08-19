@@ -11,7 +11,7 @@
   min-height: 0;
   overflow: visible;
   background: var(--bg);
-  transition: grid-template-columns var(--dur-rail) var(--ease-rail);
+  transition: grid-template-columns var(--dur-slow) var(--ease-rail);
 }
 
 .workspace-layout.is-panel-open {
@@ -24,9 +24,7 @@
 
 .workspace-layout > .stage {
   min-width: 0;
-  transition:
-    opacity var(--dur-rail) var(--ease-out),
-    border-radius var(--dur-rail) var(--ease-out);
+  transition: opacity var(--dur-slow) var(--ease-out);
 }
 
 .workspace-layout.is-panel-expanded > .stage {
@@ -48,18 +46,18 @@
   border-left: 1px solid var(--line);
   opacity: 0;
   pointer-events: none;
-  transform: translateX(24px);
+  transform: translate3d(24px, 0, 0);
   transition:
-    opacity var(--dur-rail) var(--ease-out),
-    transform var(--dur-rail) var(--ease-rail),
-    visibility 0s linear var(--dur-rail);
+    opacity var(--dur-slow) var(--ease-out),
+    transform var(--dur-slow) var(--ease-rail),
+    visibility 0s linear var(--dur-slow);
 }
 
 .workspace-panel.is-open {
   visibility: visible;
   opacity: 1;
   pointer-events: auto;
-  transform: translateX(0);
+  transform: translate3d(0, 0, 0);
   transition-delay: 0s;
 }
 
@@ -101,8 +99,9 @@
   flex: none;
   align-items: center;
   gap: 4px;
+  padding-left: 74px;
   margin-left: auto;
-  margin-right: 34px;
+  margin-right: 0;
 }
 
 .workspace-panel__controls button {
@@ -274,6 +273,7 @@
 .workspace-panel__body {
   min-width: 0;
   min-height: 0;
+  contain: layout paint;
   overflow: hidden;
 }
 
@@ -405,10 +405,6 @@
 .terminal-pane--workspace .terminal-pane__viewport {
   padding: 12px 14px;
   background: var(--terminal-workspace-bg);
-}
-
-.terminal-pane--workspace .terminal-pane__viewport:focus-within {
-  box-shadow: none;
 }
 
 /* ---------- review ---------- */
@@ -1372,53 +1368,78 @@
 
 .workspace-selector__list {
   display: grid;
-  width: min(100%, 460px);
+  width: min(100%, 420px);
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
 }
 
 .workspace-selector__list > button {
   display: grid;
-  min-height: 76px;
-  align-content: center;
-  justify-items: center;
-  gap: 7px;
-  padding: 12px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  min-height: 52px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 13px;
   background: var(--bg-rail);
   border: 1px solid var(--line);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  line-height: 1.25;
   text-align: left;
   transition:
     background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out),
     transform var(--dur-press) var(--ease-out);
 }
 
+.workspace-selector__list > button:last-child:nth-child(odd) {
+  width: calc((100% - 6px) / 2);
+  grid-column: 1 / -1;
+  justify-self: center;
+}
+
 .workspace-selector__list > button:hover,
 .workspace-selector__list > button:focus-visible {
-  background: var(--control-hover);
+  background: var(--surface);
+  border-color: var(--line-strong);
   color: var(--text);
+}
+
+.workspace-selector__list > button:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
+.workspace-selector__list > button:hover {
   outline: 0;
 }
 
 .workspace-selector__list > button:active {
-  background: var(--surface-3);
-  transform: translateY(1px);
+  background: var(--surface-2);
+  transform: scale(0.985);
 }
 
 .workspace-selector__list > button > svg {
   color: var(--text-3);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.workspace-selector__list > button:hover > svg,
+.workspace-selector__list > button:focus-visible > svg {
+  color: var(--text-2);
 }
 
 .workspace-selector__list > button > span {
-  color: var(--text);
-  font-size: var(--t-md);
-  font-weight: 530;
-  line-height: 1.25;
-  text-align: center;
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 900px) {

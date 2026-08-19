@@ -1,9 +1,7 @@
 import { readFileSync } from 'node:fs'
-
 import { describe, expect, it } from 'vitest'
 
 const appCss = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
-const tokensCss = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8')
 
 function rule(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -13,39 +11,50 @@ function rule(selector: string): string {
   )
 }
 
-describe('terminal motion', () => {
-  it('defines the shared view-transition token and names', () => {
-    expect(tokensCss).toContain('--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);')
-    expect(appCss).toContain('.stage__body > .thread-shell')
-    expect(appCss).toContain('view-transition-name: terminal-thread;')
-    expect(appCss).toContain('view-transition-name: terminal-pane;')
-    expect(appCss).toContain('view-transition-name: terminal-composer;')
-    expect(appCss).toContain('animation-duration: var(--dur-slow);')
-    expect(appCss).toContain('animation-timing-function: var(--ease-in-out);')
+describe('bottom terminal visual stability', () => {
+  it('does not snapshot the terminal, thread, or composer', () => {
+    expect(appCss).not.toContain('view-transition-name: terminal-')
+    expect(appCss).not.toContain('terminal-view-in')
+    expect(appCss).not.toContain('terminal-view-out')
   })
 
-  it('slides the terminal snapshot by its own full height and removes old entry keyframes', () => {
-    expect(appCss).toContain('animation: terminal-view-in var(--dur-slow) var(--ease-out) both;')
-    expect(appCss).toContain('animation: terminal-view-out var(--dur-slow) var(--ease-out) both;')
-    expect(appCss).toMatch(/@keyframes terminal-view-in \{[\s\S]*?translateY\(100%\);/s)
-    expect(appCss).toMatch(/@keyframes terminal-view-out \{[\s\S]*?translateY\(100%\);/s)
-    expect(appCss).not.toContain('terminal-in')
+  it('keeps xterm from exposing its black viewport strip', () => {
+    const viewport = rule('.terminal-pane__viewport .xterm .xterm-viewport')
+
+    expect(viewport).toContain('overflow-x: hidden;')
+    expect(viewport).toContain('background-color: transparent;')
   })
 
-  it('disables the snapshot names under reduced motion and avoids layout-property animation', () => {
+  it('slides the live terminal with a short transform-only transition', () => {
+    const terminal = rule('.bottom-terminal')
+    const open = rule('.bottom-terminal.is-open')
+    const closing = rule('.bottom-terminal.is-closing')
+    const parked = rule('.bottom-terminal.is-parked')
+
+    expect(terminal).toContain('contain: layout paint;')
+    expect(terminal).toContain('transform: translate3d(0, 100%, 0);')
+    expect(terminal).toContain('transition: transform var(--dur-slow) var(--ease-rail);')
+    expect(open).toContain('transform: translate3d(0, 0, 0);')
+    expect(closing).toContain('position: absolute;')
+    expect(closing).toContain('bottom: 0;')
+    expect(parked).toContain('visibility: hidden;')
+    expect(parked).toContain('pointer-events: none;')
+    expect(terminal).not.toMatch(/transition:[^;]*(height|grid-template-rows)/)
     expect(appCss).toMatch(
-      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.stage__body > \.thread-shell,[\s\S]*?\.stage__body > \.terminal-pane,[\s\S]*?\.stage__body > \.composer \{[\s\S]*?view-transition-name: none;/s,
+      /@starting-style \{[\s\S]*?\.bottom-terminal\.is-open \{[\s\S]*?transform: translate3d\(0, 100%, 0\);/,
     )
+  })
 
+  it('avoids the stray focus rail and layout-property animation', () => {
+    expect(appCss).not.toContain('.terminal-pane__viewport:focus-within')
     expect(rule('.stage__body')).not.toContain('transition:')
     expect(rule('.stage__body.has-terminal')).not.toContain('transition:')
     expect(rule('.terminal-pane')).not.toContain('transition:')
-    expect(
-      rule(
-        '::view-transition-group(terminal-thread),\n::view-transition-group(terminal-pane),\n::view-transition-group(terminal-composer)',
-      ),
-    ).not.toContain('transition:')
-    expect(rule('::view-transition-new(terminal-pane)')).not.toContain('transition:')
-    expect(rule('::view-transition-old(terminal-pane)')).not.toContain('transition:')
+  })
+
+  it('removes positional motion when reduced motion is requested', () => {
+    expect(appCss).toMatch(
+      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.bottom-terminal \{[\s\S]*?transform: none;[\s\S]*?transition: none;/,
+    )
   })
 })

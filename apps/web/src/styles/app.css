@@ -4242,6 +4242,7 @@
 }
 
 .stage__body {
+  position: relative;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
@@ -4268,48 +4269,46 @@
   grid-template-rows: minmax(0, 1fr) auto auto;
 }
 
-.stage__body > .thread-shell {
-  view-transition-name: terminal-thread;
+.bottom-terminal {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  contain: layout paint;
+  overflow: hidden;
+  background: var(--bg);
+  transform: translate3d(0, 100%, 0);
+  transition: transform var(--dur-slow) var(--ease-rail);
+  will-change: transform;
 }
 
-.stage__body > .terminal-pane {
-  view-transition-name: terminal-pane;
+.bottom-terminal.is-open {
+  transform: translate3d(0, 0, 0);
 }
 
-.stage__body > .composer {
-  view-transition-name: terminal-composer;
-}
-
-::view-transition-group(terminal-thread),
-::view-transition-group(terminal-pane),
-::view-transition-group(terminal-composer) {
-  animation-duration: var(--dur-slow);
-  animation-timing-function: var(--ease-in-out);
-}
-
-::view-transition-new(terminal-pane) {
-  animation: terminal-view-in var(--dur-slow) var(--ease-out) both;
-}
-
-::view-transition-old(terminal-pane) {
-  animation: terminal-view-out var(--dur-slow) var(--ease-out) both;
-}
-
-@keyframes terminal-view-in {
-  from {
-    opacity: 0;
-    transform: translateY(100%);
+@starting-style {
+  .bottom-terminal.is-open {
+    transform: translate3d(0, 100%, 0);
   }
 }
 
-@keyframes terminal-view-out {
-  to {
-    opacity: 0;
-    transform: translateY(100%);
-  }
+.bottom-terminal.is-closing {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+.bottom-terminal.is-parked {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .stagehead {
+  position: relative;
   display: flex;
   min-width: 0;
   height: 42px;
@@ -4322,7 +4321,13 @@
   -webkit-app-region: no-drag;
 }
 
+.stagehead__drag-region {
+  display: none;
+}
+
 .stagehead__identity {
+  position: relative;
+  z-index: 1;
   display: flex;
   min-width: 0;
   align-items: center;
@@ -4372,19 +4377,25 @@
   color: var(--text);
 }
 
-.stagehead__tools {
+.menu.stagehead__options-menu {
+  min-width: min(240px, calc(100vw - 16px));
+  max-height: min(520px, calc(100vh - 58px));
+}
+
+.panel-toggles {
+  position: fixed;
+  z-index: 31;
+  top: calc(var(--titlebar-h) + 7px);
+  right: 8px;
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
-  flex: none;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
 }
 
-.stagehead__action--workspace {
-  position: fixed;
-  z-index: 9;
-  top: calc(var(--titlebar-h) + 7px);
-  right: 8px;
+.panel-toggles.is-workspace-open {
+  right: 44px;
 }
 
 .zoom-hud {
@@ -4555,7 +4566,9 @@
   height: 100%;
 }
 
-.terminal-pane__viewport .xterm-viewport {
+.terminal-pane__viewport .xterm .xterm-viewport {
+  overflow-x: hidden;
+  background-color: transparent;
   scrollbar-color: var(--surface-3) transparent;
 }
 
@@ -9466,10 +9479,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .stage__body > .thread-shell,
-  .stage__body > .terminal-pane,
-  .stage__body > .composer {
-    view-transition-name: none;
+  .bottom-terminal {
+    transform: none;
+    transition: none;
   }
 
   .notice {
@@ -9921,14 +9933,6 @@
 .appearance-choice__swatch[data-backdrop-preview='plum'] {
   --swatch-a: #161217;
   --swatch-b: #4d3a52;
-}
-
-/* ---------------------------------------------------------------------------
-   Terminal focus and framing. A focused terminal should say so quietly.
-   --------------------------------------------------------------------------- */
-
-.terminal-pane__viewport:focus-within {
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--attention) 55%, transparent);
 }
 
 .install-terminal {
