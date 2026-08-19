@@ -1,37 +1,21 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render as renderView, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ReactElement, ReactNode } from 'react'
-import {
-  defaultMarkdownServices,
-  Markdown,
-  MarkdownServicesProvider,
-  type MarkdownServices,
-} from './Markdown.js'
+import { revealProjectFile } from '../bridge.js'
+import { preserveProjectFileLinks } from '../project-file-link.js'
+import { Markdown } from './Markdown.js'
 
-const revealProjectFile = vi.fn(async (_path: string, _projectPath: string) => undefined)
-const preserveProjectFileLinks = vi.fn(defaultMarkdownServices.preserveProjectFileLinks)
-const markdownServices: MarkdownServices = {
-  ...defaultMarkdownServices,
+vi.mock('../bridge.js', () => ({
   canRevealProjectFile: true,
-  revealProjectFile,
-  preserveProjectFileLinks,
-}
+  revealProjectFile: vi.fn(() => Promise.resolve()),
+}))
 
-function Services({ children }: { children: ReactNode }) {
-  return <MarkdownServicesProvider services={markdownServices}>{children}</MarkdownServicesProvider>
-}
-
-function render(view: ReactElement) {
-  return renderView(view, { wrapper: Services })
-}
-
-afterEach(() => {
-  cleanup()
-  revealProjectFile.mockReset()
-  revealProjectFile.mockResolvedValue(undefined)
-  preserveProjectFileLinks.mockClear()
+vi.mock('../project-file-link.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../project-file-link.js')>()
+  return { ...actual, preserveProjectFileLinks: vi.fn(actual.preserveProjectFileLinks) }
 })
+
+afterEach(cleanup)
 
 describe('Markdown inline references', () => {
   it('renders file references with file-type icons instead of code pills', () => {
@@ -134,7 +118,7 @@ describe('Markdown inline references', () => {
   })
 
   it('shows a retryable error when the native reveal request fails', async () => {
-    revealProjectFile.mockRejectedValueOnce(new Error('reveal failed'))
+    vi.mocked(revealProjectFile).mockRejectedValueOnce(new Error('reveal failed'))
     render(
       <Markdown
         text={'Saved [artifact.bin](file:///E:/randomtesting/A_personalharness/site/artifact.bin).'}
@@ -176,13 +160,14 @@ describe('Markdown inline references', () => {
 
 describe('Markdown streaming motion', () => {
   it('defers full project-file parsing until the streamed message completes', () => {
-    preserveProjectFileLinks.mockClear()
+    const preserve = vi.mocked(preserveProjectFileLinks)
+    preserve.mockClear()
     const text = 'Updated [index.html](file:///E:/project/index.html).'
     const { rerender } = render(<Markdown text={text} streaming projectPath="E:\project" />)
 
-    expect(preserveProjectFileLinks).not.toHaveBeenCalled()
+    expect(preserve).not.toHaveBeenCalled()
     rerender(<Markdown text={text} projectPath="E:\project" />)
-    expect(preserveProjectFileLinks).toHaveBeenCalledOnce()
+    expect(preserve).toHaveBeenCalledOnce()
   })
 
   it('keeps a local destination readable and inert while streaming', () => {
@@ -233,13 +218,11 @@ describe('Markdown streaming motion', () => {
   it('keeps sealed leaves on one long streamed code line', () => {
     const source = `\`\`\`ts\n${'x'.repeat(300)}`
     const { container } = render(<Markdown text={source} streaming />)
-    const leaves = [
-      ...container.querySelectorAll<HTMLElement>('pre code > [data-live-markdown-leaf]'),
-    ]
+    const leaves = [...container.querySelectorAll('pre code > [data-live-markdown-leaf]')]
 
     expect(leaves).toHaveLength(2)
-    expect(leaves.every((leaf) => leaf.style.display === 'inline')).toBe(true)
-    expect(leaves.every((leaf) => leaf.style.minHeight === '0')).toBe(true)
+    expect(leaves.every((leaf) => (leaf as HTMLElement).style.display === 'inline')).toBe(true)
+    expect(leaves.every((leaf) => (leaf as HTMLElement).style.minHeight === '0')).toBe(true)
     expect(container.querySelector('pre')?.textContent).toBe('x'.repeat(300))
   })
 })

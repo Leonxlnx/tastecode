@@ -1,15 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import {
-  array,
-  type BoundaryValue,
-  fontWeights,
-  list,
-  member,
-  record,
-  string,
-  strings,
-} from './parse.js'
+import { array, fontWeights, list, member, record, string, strings } from './parse.js'
 
 export interface BrandSystem {
   version: 1
@@ -68,7 +59,7 @@ export interface BrandSystem {
   }
 }
 
-export function parseBrandSystem(value: BoundaryValue): BrandSystem {
+export function parseBrandSystem(value: unknown): BrandSystem {
   const brand = record(value, 'brand system')
   if (brand.version !== 1) throw new Error('brand system version must be 1')
 
@@ -190,9 +181,7 @@ export function parseBrandSystem(value: BoundaryValue): BrandSystem {
   }
 }
 
-function parseSignatureDevice(
-  value: BoundaryValue,
-): BrandSystem['creativeDirection']['signatureDevice'] {
+function parseSignatureDevice(value: unknown): BrandSystem['creativeDirection']['signatureDevice'] {
   const device = record(value, 'creativeDirection.signatureDevice')
   return {
     description: string(device.description, 'creativeDirection.signatureDevice.description'),
@@ -209,7 +198,7 @@ export function readBrandSystem(workspacePath: string): BrandSystem {
   return parseBrandSystem(JSON.parse(readFileSync(brandPath(workspacePath), 'utf8')))
 }
 
-export function writeBrandSystem(workspacePath: string, value: BoundaryValue): BrandSystem {
+export function writeBrandSystem(workspacePath: string, value: unknown): BrandSystem {
   const brand = parseBrandSystem(value)
   const outputPath = brandPath(workspacePath)
   mkdirSync(path.dirname(outputPath), { recursive: true })

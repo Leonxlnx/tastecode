@@ -138,9 +138,7 @@
   min-height: 0;
   background: var(--bg-rail);
   transform: translateX(0);
-  transition:
-    transform var(--dur-slow) var(--ease-rail),
-    box-shadow var(--dur-slow) var(--ease-rail);
+  transition: transform var(--dur-slow) var(--ease-rail);
   /* No border of its own: the stage's left hairline draws the column divider,
      so the line and the rounded corner belong to one element. */
 }
@@ -152,6 +150,9 @@
   border-left: 0;
   border-radius: 0 var(--r-panel) var(--r-panel) 0;
   transform: translateX(-100%);
+  /* Promote the hidden flyout before the pointer arrives. Waiting until the
+     first reveal frame made Chromium build the full-height layer on demand. */
+  will-change: transform;
 }
 
 .rail-slot.is-collapsed.is-revealed .rail {
@@ -164,9 +165,7 @@
    length of the retract, since by then the revealed class is already gone. */
 .rail-slot.is-collapsed.is-revealed .rail,
 .rail-slot.is-collapsed.is-reveal-out .rail {
-  transition:
-    transform var(--dur-reveal) var(--ease-rail),
-    box-shadow var(--dur-reveal) var(--ease-rail);
+  transition: transform var(--dur-reveal) var(--ease-rail);
 }
 
 /* While revealed, the drag edge rides the flyout's right side instead of the
@@ -692,7 +691,21 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--r-dialog);
   box-shadow: var(--shadow-modal);
-  animation: step-in 220ms var(--ease-out);
+  animation: sheet-in 220ms var(--ease-out) both;
+}
+
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px) scale(0.97);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet__scrim,
+  .sheet__panel {
+    animation: fade-in var(--dur-fast) var(--ease-out) both !important;
+  }
 }
 
 .sheet__head {
@@ -1147,6 +1160,13 @@
   from {
     opacity: 0;
     transform: translateY(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .profile-page,
+  .settings__panel {
+    animation: fade-in var(--dur-fast) var(--ease-out) both !important;
   }
 }
 
@@ -2766,7 +2786,6 @@
   background: rgba(0, 0, 0, 0.55);
   border: 0;
   cursor: default;
-  animation: fade-in var(--dur-fast) var(--ease-out);
 }
 
 .command-palette__panel {
@@ -2777,7 +2796,6 @@
   border: 1px solid var(--chrome-border);
   border-radius: var(--r-dialog);
   box-shadow: var(--chrome-shadow), var(--shadow-modal);
-  animation: step-in 220ms var(--ease-out);
 }
 
 .command-palette__search {
@@ -2834,10 +2852,6 @@
   cursor: pointer;
   font: inherit;
   text-align: left;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out);
 }
 
 .command-palette__item:hover,
@@ -2883,13 +2897,6 @@
 .session-search__panel {
   width: min(520px, 100%);
   border-radius: var(--r-xl);
-}
-
-/* Search is a direct action, so its entry should settle faster than the
-   general modal cadence used by settings and the command palette. */
-.session-search .command-palette__scrim,
-.session-search__panel {
-  animation-duration: 100ms;
 }
 
 .session-search__filters {
@@ -2958,11 +2965,7 @@
   cursor: pointer;
   font: inherit;
   text-align: left;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+  transition: transform var(--dur-press) var(--ease-out);
 }
 
 .session-search__result:hover,
@@ -4265,6 +4268,47 @@
   grid-template-rows: minmax(0, 1fr) auto auto;
 }
 
+.stage__body > .thread-shell {
+  view-transition-name: terminal-thread;
+}
+
+.stage__body > .terminal-pane {
+  view-transition-name: terminal-pane;
+}
+
+.stage__body > .composer {
+  view-transition-name: terminal-composer;
+}
+
+::view-transition-group(terminal-thread),
+::view-transition-group(terminal-pane),
+::view-transition-group(terminal-composer) {
+  animation-duration: var(--dur-slow);
+  animation-timing-function: var(--ease-in-out);
+}
+
+::view-transition-new(terminal-pane) {
+  animation: terminal-view-in var(--dur-slow) var(--ease-out) both;
+}
+
+::view-transition-old(terminal-pane) {
+  animation: terminal-view-out var(--dur-slow) var(--ease-out) both;
+}
+
+@keyframes terminal-view-in {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+}
+
+@keyframes terminal-view-out {
+  to {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+}
+
 .stagehead {
   display: flex;
   min-width: 0;
@@ -4433,16 +4477,6 @@
   overflow: hidden;
   background: var(--bg);
   border-top: 1px solid var(--line);
-  /* It was the only surface in the app that opened with no transition: the
-     composer jumped up its full height in a single frame. */
-  animation: terminal-in 200ms var(--ease-out) both;
-}
-
-@keyframes terminal-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
 }
 
 .terminal-pane__resize {
@@ -6344,7 +6378,6 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--r-md);
   box-shadow: var(--shadow-flyout);
-  animation: menu-in var(--dur-fast) var(--ease-out);
 }
 
 .find input {
@@ -7038,7 +7071,6 @@
   outline: none;
   max-height: 242px;
   overflow-y: hidden;
-  transition: height var(--dur-fast) var(--ease-out);
 }
 
 .composer textarea::placeholder {
@@ -8537,44 +8569,28 @@
 .model-selector__fast-icon {
   display: grid;
   place-items: center;
-  transition: transform var(--dur-press) var(--ease-out);
-}
-
-.model-selector__fast[aria-pressed='true'] .model-selector__fast-icon {
-  animation: fast-bolt-on 320ms cubic-bezier(0.2, 1.6, 0.4, 1);
-}
-
-.model-selector__fast[aria-pressed='false'] .model-selector__fast-icon {
-  animation: fast-bolt-off 260ms var(--ease-out);
-}
-
-@keyframes fast-bolt-on {
-  0% {
-    transform: scale(0.7);
-    filter: brightness(1);
-  }
-  48% {
-    transform: scale(1.25);
-    filter: brightness(1.8) drop-shadow(0 0 5px currentColor);
-  }
-  100% {
-    transform: scale(1);
-    filter: brightness(1);
-  }
-}
-
-@keyframes fast-bolt-off {
-  45% {
-    transform: scale(0.78);
-    opacity: 0.55;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .composer__design:hover > span,
-  .composer__design:focus-visible > span,
-  .model-selector__fast .model-selector__fast-icon {
+  .composer__design:focus-visible > span {
     animation: none;
+  }
+
+  .model-selector__fast {
+    transition:
+      color var(--dur-press) var(--ease-out),
+      background-color var(--dur-press) var(--ease-out),
+      border-color var(--dur-press) var(--ease-out),
+      box-shadow var(--dur-press) var(--ease-out) !important;
+  }
+
+  .model-selector__fast-icon svg {
+    transition: fill var(--dur-press) var(--ease-out) !important;
+  }
+
+  .model-selector__fast:active {
+    transform: none !important;
   }
 }
 
@@ -8679,7 +8695,6 @@
   background: var(--effort-fill);
   border-radius: var(--r-pill);
   box-shadow: var(--effort-fill-shadow);
-  transition: width 170ms var(--ease-out);
 }
 
 .model-selector__slider-stops {
@@ -8926,26 +8941,6 @@
 .model-selector__model > svg {
   flex: none;
   color: var(--text-2);
-}
-
-/* Animate the check mark appearing: scale up with a spring-like bounce. */
-.model-selector__model.is-selected > svg {
-  animation: model-check-pop 360ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
-}
-
-@keyframes model-check-pop {
-  0% {
-    opacity: 0;
-    transform: scale(0) rotate(-15deg);
-  }
-  60% {
-    opacity: 1;
-    transform: scale(1.2) rotate(3deg);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1) rotate(0deg);
-  }
 }
 
 .model-selector__empty {
@@ -9231,7 +9226,7 @@
     background 150ms var(--ease-out),
     box-shadow 150ms var(--ease-out),
     color 150ms var(--ease-out),
-    transform 150ms var(--ease-out);
+    transform var(--dur-press) var(--ease-out);
 }
 
 .orb:not(.orb--stop) {
@@ -9239,15 +9234,6 @@
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.16),
     0 1px 2px 0 color-mix(in srgb, var(--composer-orb) 24%, transparent);
-}
-
-.orb:hover:not(:disabled):not(.orb--stop) {
-  background: var(--composer-orb);
-  transform: scale(1.05);
-}
-
-.orb:active:not(:disabled):not(.orb--stop) {
-  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.08);
 }
 
 .orb:disabled {
@@ -9286,15 +9272,27 @@
   color: var(--composer-on-orb);
 }
 
-/* Stop was the one control in the composer that ignored the pointer: every
-   hover rule above excludes it. A brake with no hover state reads as dead. */
-.orb--stop:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--composer-stop) 82%, var(--text));
-  transform: scale(1.05);
+@media (hover: hover) and (pointer: fine) {
+  .orb:hover:not(:disabled):not(.orb--stop) {
+    background: var(--composer-orb);
+    transform: scale(1.05);
+  }
+
+  /* Stop was the one control in the composer that ignored the pointer: every
+     hover rule above excludes it. A brake with no hover state reads as dead. */
+  .orb--stop:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--composer-stop) 82%, var(--text));
+    transform: scale(1.05);
+  }
 }
 
-.orb--stop:active {
-  transform: scale(0.92);
+.orb:active:not(:disabled):not(.orb--stop) {
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.08);
+  transform: scale(0.97);
+}
+
+.orb--stop:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 /* Sent, not yet acknowledged. Some providers take a moment to unwind, and
@@ -9319,9 +9317,23 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .orb,
-  .orb__icon {
-    transition-duration: 0.01ms;
+  .orb {
+    transition:
+      background-color var(--dur-press) var(--ease-out),
+      box-shadow var(--dur-press) var(--ease-out),
+      color var(--dur-press) var(--ease-out) !important;
+  }
+
+  .orb:hover:not(:disabled):not(.orb--stop),
+  .orb--stop:hover:not(:disabled),
+  .orb:active:not(:disabled):not(.orb--stop),
+  .orb--stop:active:not(:disabled) {
+    transform: none !important;
+  }
+
+  .spinner,
+  .orb--stop.is-stopping .orb__icon--stop {
+    animation: none !important;
   }
 }
 
@@ -9432,6 +9444,51 @@
   border-radius: var(--r-card);
   padding: 9px 10px;
   font-size: var(--t-sm);
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+@starting-style {
+  .notice[data-state='open'] {
+    opacity: 0;
+    transform: translateY(4px) scale(0.97);
+  }
+}
+
+.notice[data-state='closing'] {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px) scale(0.97);
+  transition-duration: var(--dur-press);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage__body > .thread-shell,
+  .stage__body > .terminal-pane,
+  .stage__body > .composer {
+    view-transition-name: none;
+  }
+
+  .notice {
+    transform: none !important;
+    transition: opacity var(--dur-fast) var(--ease-out) !important;
+  }
+
+  @starting-style {
+    .notice[data-state='open'] {
+      opacity: 0;
+      transform: none;
+    }
+  }
+
+  .notice[data-state='closing'] {
+    opacity: 0;
+    transform: none !important;
+    transition-duration: var(--dur-press) !important;
+  }
 }
 
 /* Sits above the error toast so the two never overlap when both are up. */
@@ -9771,6 +9828,15 @@
   );
   backdrop-filter: blur(26px) saturate(1.4);
   -webkit-backdrop-filter: blur(26px) saturate(1.4);
+}
+
+/* The collapsed rail is a flyout over live app content, not a window-edge
+   material. Keeping its full-height backdrop blur while translating it made
+   every reveal repaint the thread and left the pane too clear to read. */
+:root[data-glass='on'] .rail-slot.is-collapsed .rail {
+  background: var(--bg-rail);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 /* Light chrome is deliberately opaque. Its exact colour must not depend on

@@ -1,18 +1,11 @@
 import '@fontsource-variable/jetbrains-mono'
 import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
-import {
-  Terminal,
-  type IDisposable,
-  type ITerminalAddon,
-  type ITerminalInitOnlyOptions,
-  type ITerminalOptions,
-  type ITheme,
-} from '@xterm/xterm'
+import { Terminal, type ITheme } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { Copy, RotateCcw, X } from 'lucide-react'
 import { memo, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
-import { isMacOS, writeClipboardText, type NativeHapticPattern } from '../bridge.js'
+import { isMacOS, writeClipboardText } from '../bridge.js'
 import {
   appHapticsEnabled,
   performAppHaptic,
@@ -20,7 +13,6 @@ import {
   ResizeHaptics,
 } from '../haptics.js'
 import type { Transport, ConnectionState } from '../transport.js'
-import { propertiesWhen } from '../properties-when.js'
 import { errorMessage } from '../boundary.js'
 
 const MIN_HEIGHT = 160
@@ -33,70 +25,7 @@ type TerminalStatus =
   | { state: 'exited'; exitCode: number | null }
   | { state: 'error'; message: string }
 
-export type TerminalConstructorOptions = ITerminalOptions & ITerminalInitOnlyOptions
-
-export type TerminalSurface = {
-  cols: number
-  rows: number
-  options: ITerminalOptions
-  unicode: { activeVersion: string }
-  loadAddon: (addon: ITerminalAddon) => void
-  open: (parent: HTMLElement) => void
-  focus: () => void
-  dispose: () => void
-  clear: () => void
-  clearTextureAtlas: () => void
-  write: (data: string) => void
-  hasSelection: () => boolean
-  getSelection: () => string
-  onData: (callback: (data: string) => void) => IDisposable
-  onSelectionChange: (callback: () => void) => IDisposable
-  attachCustomKeyEventHandler: (handler: (event: KeyboardEvent) => boolean) => void
-}
-
-export type TerminalFitAddon = ITerminalAddon & { fit: () => void }
-export type TerminalWebglAddon = ITerminalAddon & {
-  onContextLoss: (callback: () => void) => void
-}
-export type TerminalResizeHaptics = Pick<ResizeHaptics, 'sample'>
-
-export type TerminalPaneRuntime = {
-  createTerminal: (options: TerminalConstructorOptions) => TerminalSurface
-  createFitAddon: () => TerminalFitAddon
-  createUnicodeAddon: () => ITerminalAddon
-  loadWebglAddon: () => Promise<TerminalWebglAddon>
-  loadWebLinksAddon: (open: (uri: string) => void) => Promise<ITerminalAddon>
-  isMacOS: () => boolean
-  writeClipboardText: (text: string) => Promise<void>
-  hapticsEnabled: () => boolean
-  prepareHaptics: () => void
-  createResizeHaptics: (
-    options: ConstructorParameters<typeof ResizeHaptics>[0],
-  ) => TerminalResizeHaptics
-  performHaptic: (pattern: NativeHapticPattern) => void
-}
-
-export const defaultTerminalPaneRuntime: TerminalPaneRuntime = {
-  createTerminal: (options) => new Terminal(options),
-  createFitAddon: () => new FitAddon(),
-  createUnicodeAddon: () => new Unicode11Addon(),
-  loadWebglAddon: async () => {
-    const { WebglAddon } = await import('@xterm/addon-webgl')
-    return new WebglAddon()
-  },
-  loadWebLinksAddon: async (open) => {
-    const { WebLinksAddon } = await import('@xterm/addon-web-links')
-    return new WebLinksAddon((_event, uri) => open(uri))
-  },
-  isMacOS,
-  writeClipboardText,
-  hapticsEnabled: appHapticsEnabled,
-  prepareHaptics: prepareAppHaptics,
-  createResizeHaptics: (options) => new ResizeHaptics(options),
-  performHaptic: performAppHaptic,
-}
-
-export type TerminalPaneProps = {
+type TerminalPaneProps = {
   transport: Transport
   height?: number
   theme: 'light' | 'dark'
@@ -104,13 +33,12 @@ export type TerminalPaneProps = {
   active?: boolean
   onHeightChange?: (height: number) => void
   onClose?: () => void
-  runtime?: TerminalPaneRuntime | undefined
 } & ({ threadId: string; projectPath?: never } | { threadId?: never; projectPath: string })
 
 export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps) {
-  const runtime = props.runtime ?? defaultTerminalPaneRuntime
+  const pane = useRef<HTMLElement>(null)
   const host = useRef<HTMLDivElement>(null)
-  const terminal = useRef<TerminalSurface>(null)
+  const terminal = useRef<Terminal>(null)
   const reconnect = useRef<() => void>(() => {})
   const refit = useRef<() => void>(() => {})
   const resizeCleanup = useRef<() => void>(() => {})
@@ -135,9 +63,9 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
     targetOwners.add(owner)
     owners.set(target.ownerKey, targetOwners)
 
-    const macOS = runtime.isMacOS()
+    const macOS = isMacOS()
     const windows = navigator.platform.startsWith('Win')
-    const instance = runtime.createTerminal({
+    const instance = new Terminal({
       allowProposedApi: true,
       cursorBlink: true,
       cursorStyle: 'block',
@@ -156,11 +84,11 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
       screenReaderMode: true,
       scrollback: 10_000,
       theme: terminalTheme(workspace ? 'workspace' : 'app'),
-      ...propertiesWhen(windows, () => ({ windowsPty: { backend: 'conpty' as const } })),
+      ...(windows ? { windowsPty: { backend: 'conpty' as const } } : {}),
     })
-    const fit = runtime.createFitAddon()
+    const fit = new FitAddon()
     instance.loadAddon(fit)
-    const unicode = runtime.createUnicodeAddon()
+    const unicode = new Unicode11Addon()
     instance.loadAddon(unicode)
     instance.unicode.activeVersion = '11'
     instance.open(container)
@@ -170,9 +98,9 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
     // Start the renderer import independently so optional GPU initialization
     // can never delay the shell. Context loss degrades to xterm's DOM renderer
     // instead of taking the terminal down.
-    void runtime
-      .loadWebglAddon()
-      .then((webgl) => {
+    void import('@xterm/addon-webgl')
+      .then(({ WebglAddon }) => {
+        const webgl = new WebglAddon()
         if (disposed) {
           webgl.dispose()
           return
@@ -191,9 +119,11 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
     // The image addon instantiates WebAssembly internally, which the desktop
     // CSP intentionally forbids. Keep link detection without weakening that
     // boundary or leaving an unhandled rejection whenever a terminal opens.
-    void runtime
-      .loadWebLinksAddon((uri) => window.open(uri, '_blank', 'noopener,noreferrer'))
-      .then((links) => {
+    void import('@xterm/addon-web-links')
+      .then(({ WebLinksAddon }) => {
+        const links = new WebLinksAddon((_event, uri) => {
+          window.open(uri, '_blank', 'noopener,noreferrer')
+        })
         if (disposed) {
           links.dispose()
           return
@@ -207,19 +137,26 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
     let terminalId: string | undefined
     let opening = false
     let resizeFrame: number | undefined
+    let lastResize: { columns: number; rows: number } | undefined
     const earlyOutput = new Map<string, string[]>()
 
     const sendSize = () => {
       if (!activeRef.current || container.clientWidth < 1 || container.clientHeight < 1) return
       fit.fit()
       if (!terminalId || props.transport.state !== 'open') return
+      const nextResize = { columns: instance.cols, rows: instance.rows }
+      if (lastResize?.columns === nextResize.columns && lastResize.rows === nextResize.rows) {
+        return
+      }
+      lastResize = nextResize
       void props.transport
         .request('terminal.resize', {
           terminalId,
-          columns: instance.cols,
-          rows: instance.rows,
+          ...nextResize,
         })
-        .catch(() => undefined)
+        .catch(() => {
+          if (lastResize === nextResize) lastResize = undefined
+        })
     }
 
     const scheduleFit = () => {
@@ -249,11 +186,11 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
       opening = true
       setStatus({ state: 'connecting' })
       if (activeRef.current && container.clientWidth > 0 && container.clientHeight > 0) fit.fit()
+      const openedSize = { columns: instance.cols, rows: instance.rows }
       void props.transport
         .request('terminal.open', {
           ...target.request,
-          columns: instance.cols,
-          rows: instance.rows,
+          ...openedSize,
         })
         .then(({ terminalId: openedId }) => {
           opening = false
@@ -266,10 +203,12 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
             return
           }
           terminalId = openedId
+          lastResize = openedSize
           for (const data of earlyOutput.get(openedId) ?? []) instance.write(data)
           earlyOutput.clear()
           setStatus({ state: 'open' })
           instance.focus()
+          scheduleFit()
         })
         .catch((error) => {
           opening = false
@@ -283,6 +222,7 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
     }
     reconnect.current = () => {
       terminalId = undefined
+      lastResize = undefined
       instance.clear()
       open()
     }
@@ -311,6 +251,7 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
     const offExit = props.transport.on('terminal.exit', (event) => {
       if (event.terminalId !== terminalId) return
       terminalId = undefined
+      lastResize = undefined
       earlyOutput.clear()
       if (workspace) {
         onClose.current?.()
@@ -325,7 +266,7 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
     const selection = instance.onSelectionChange(() => setHasSelection(instance.hasSelection()))
     instance.attachCustomKeyEventHandler((event) => {
       if (!terminalCopyShortcut(event, instance.hasSelection(), macOS)) return true
-      copyTerminalSelection(instance, runtime.writeClipboardText)
+      copyTerminalSelection(instance)
       return false
     })
 
@@ -354,7 +295,7 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
       terminal.current = null
       instance.dispose()
     }
-  }, [props.transport, runtime, target, workspace])
+  }, [props.transport, target, workspace])
 
   useLayoutEffect(() => {
     if (active) refit.current()
@@ -368,13 +309,15 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
 
   const beginResize = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault()
-    runtime.prepareHaptics()
+    const paneElement = pane.current
+    if (!paneElement) return
+    prepareAppHaptics()
     resizeCleanup.current()
     const startY = event.clientY
     const startHeight = heightRef.current
     const maximum = Math.max(MIN_HEIGHT, Math.floor(window.innerHeight * 0.72))
-    const haptics = runtime.hapticsEnabled()
-      ? runtime.createResizeHaptics({
+    const haptics = appHapticsEnabled()
+      ? new ResizeHaptics({
           startValue: startHeight,
           startTime: event.timeStamp,
           minValue: MIN_HEIGHT,
@@ -382,19 +325,33 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
         })
       : undefined
     let currentHeight = startHeight
+    let resizeFrame: number | undefined
+    let pendingResize: { rawHeight: number; height: number; time: number } | undefined
     let active = true
+    const applyPendingResize = () => {
+      resizeFrame = undefined
+      const pending = pendingResize
+      pendingResize = undefined
+      if (!pending) return
+      const tracking = pending.height !== currentHeight
+      if (tracking) {
+        currentHeight = pending.height
+        heightRef.current = pending.height
+        paneElement.style.height = `${pending.height}px`
+      }
+      const feedback = haptics?.sample({
+        rawValue: pending.rawHeight,
+        value: pending.height,
+        tracking,
+        time: pending.time,
+      })
+      if (feedback) performAppHaptic(feedback)
+    }
     const move = (next: globalThis.PointerEvent) => {
       const rawHeight = startHeight + startY - next.clientY
       const nextHeight = Math.min(maximum, Math.max(MIN_HEIGHT, rawHeight))
-      const feedback = haptics?.sample({
-        rawValue: rawHeight,
-        value: nextHeight,
-        tracking: nextHeight !== currentHeight,
-        time: next.timeStamp,
-      })
-      currentHeight = nextHeight
-      setHeight(nextHeight)
-      if (feedback) runtime.performHaptic(feedback)
+      pendingResize = { rawHeight, height: nextHeight, time: next.timeStamp }
+      if (resizeFrame === undefined) resizeFrame = requestAnimationFrame(applyPendingResize)
     }
     const cleanup = (commit: boolean) => {
       if (!active) return
@@ -404,7 +361,15 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
       window.removeEventListener('pointercancel', finish)
       window.removeEventListener('blur', finish)
       resizeCleanup.current = () => {}
-      if (commit) props.onHeightChange?.(heightRef.current)
+      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
+      resizeFrame = undefined
+      if (commit) {
+        applyPendingResize()
+        setHeight(currentHeight)
+        props.onHeightChange?.(currentHeight)
+      } else {
+        pendingResize = undefined
+      }
     }
     const finish = () => cleanup(true)
     resizeCleanup.current = () => cleanup(false)
@@ -416,6 +381,7 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
 
   return (
     <section
+      ref={pane}
       className={`terminal-pane${workspace ? ' terminal-pane--workspace' : ''}`}
       style={workspace ? undefined : { height }}
       aria-label="Session terminal"
@@ -426,7 +392,7 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
           role="separator"
           aria-label="Resize terminal"
           aria-orientation="horizontal"
-          onPointerEnter={runtime.prepareHaptics}
+          onPointerEnter={prepareAppHaptics}
           onPointerDown={beginResize}
         />
       ) : null}
@@ -454,10 +420,7 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
               className="icon-btn"
               title="Copy selection"
               disabled={!hasSelection}
-              onClick={() =>
-                terminal.current &&
-                copyTerminalSelection(terminal.current, runtime.writeClipboardText)
-              }
+              onClick={() => terminal.current && copyTerminalSelection(terminal.current)}
             >
               <Copy size={13} aria-hidden />
             </button>
@@ -508,13 +471,10 @@ export function terminalCopyShortcut(
   return event.ctrlKey && event.shiftKey && !event.metaKey
 }
 
-export function copyTerminalSelection(
-  instance: Pick<TerminalSurface, 'getSelection'>,
-  writeText: (text: string) => Promise<void> = writeClipboardText,
-): void {
+export function copyTerminalSelection(instance: Pick<Terminal, 'getSelection'>): void {
   const text = instance.getSelection()
   if (!text) return
-  void writeText(text).catch((error) => {
+  void writeClipboardText(text).catch((error) => {
     console.warn('[terminal] clipboard write failed', error)
   })
 }

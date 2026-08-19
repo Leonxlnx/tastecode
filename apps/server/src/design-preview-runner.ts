@@ -25,7 +25,6 @@ const startingPreviewPorts = new Set<number>()
 const PackageManifestSchema = z.object({
   scripts: z.record(z.string(), z.string()).optional(),
 })
-const ErrorCodeSchema = z.object({ code: z.string().optional() })
 
 export type RunningPreview = {
   url: string
@@ -273,8 +272,7 @@ function processGroupAlive(pid: number): boolean {
     process.kill(-pid, 0)
     return true
   } catch (error) {
-    const parsed = ErrorCodeSchema.safeParse(error)
-    const code = parsed.success ? parsed.data.code : undefined
+    const code = errorCode(error)
     if (code === 'ESRCH') return false
     if (code === 'EPERM') return true
     throw error
@@ -299,9 +297,13 @@ function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(-pid, signal)
   } catch (error) {
-    const parsed = ErrorCodeSchema.safeParse(error)
-    if (!parsed.success || parsed.data.code !== 'ESRCH') throw error
+    if (errorCode(error) !== 'ESRCH') throw error
   }
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return undefined
+  return typeof error.code === 'string' ? error.code : undefined
 }
 
 async function waitForPortRelease(url: string, timeoutMs: number): Promise<boolean> {

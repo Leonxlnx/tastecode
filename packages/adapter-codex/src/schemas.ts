@@ -1,5 +1,6 @@
 import { JsonRpcValueSchema } from '@harness/proc'
 import { z } from 'zod'
+import { CodexThreadItemSchema } from './map-item.js'
 
 const nullableString = z.string().nullable()
 const nullableNumber = z.number().nullable()
@@ -298,13 +299,13 @@ export const TurnCompletedNotificationSchema = z.object({
   }),
 })
 export const ItemStartedNotificationSchema = z.object({
-  item: JsonRpcValueSchema,
+  item: CodexThreadItemSchema,
   threadId: z.string(),
   turnId: z.string(),
   startedAtMs: z.number(),
 })
 export const ItemCompletedNotificationSchema = z.object({
-  item: JsonRpcValueSchema,
+  item: CodexThreadItemSchema,
   threadId: z.string(),
   turnId: z.string(),
   completedAtMs: z.number(),

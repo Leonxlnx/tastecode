@@ -32,7 +32,6 @@ import {
   type ClaudeQueryRuntime,
   type ClaudeSpawn,
 } from './sdk-runtime.js'
-import { propertiesWhen } from './properties-when.js'
 
 /**
  * Claude Code is hosted through Anthropic's Agent SDK. The SDK keeps one
@@ -47,28 +46,6 @@ const EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit'])
 const ToolLocationSchema = z.object({ cwd: z.string().optional() })
 const ToolInputSchema = z.record(z.string(), JsonRpcValueSchema)
 const ClaudeEffortSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
-const StreamEventSchema = z.object({
-  type: z.string(),
-  index: z.number().optional(),
-  message: z.object({ id: z.string().optional() }).optional(),
-  content_block: z
-    .object({
-      type: z.string().optional(),
-      id: z.string().optional(),
-      name: z.string().optional(),
-      input: ToolInputSchema.optional().catch({}),
-      text: z.string().optional(),
-      thinking: z.string().optional(),
-    })
-    .optional(),
-  delta: z
-    .object({
-      type: z.string().optional(),
-      text: z.string().optional(),
-      thinking: z.string().optional(),
-    })
-    .optional(),
-})
 const TodoInputSchema = z.object({
   todos: z.array(
     z.object({
@@ -168,7 +145,7 @@ function claudeModel(
     isDefault,
     reasoningEfforts,
     serviceTiers: [],
-    ...propertiesWhen(reasoningEfforts.length > 0, () => ({ defaultReasoningEffort })),
+    ...(reasoningEfforts.length > 0 ? { defaultReasoningEffort } : {}),
   }
 }
 
@@ -258,7 +235,7 @@ export function claudeUserMessage(
     },
     parent_tool_use_id: null,
     uuid: crypto.randomUUID(),
-    ...propertiesWhen(sessionId, (includedValue) => ({ session_id: includedValue })),
+    ...(sessionId ? { session_id: sessionId } : {}),
   }
 }
 
@@ -450,9 +427,11 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       pending.finish({
         behavior: 'allow',
         updatedInput: pending.input,
-        ...propertiesWhen(decision === 'approve-session' && pending.suggestions.length > 0, () => ({
-          updatedPermissions: pending.suggestions,
-        })),
+        ...(decision === 'approve-session' && pending.suggestions.length > 0
+          ? {
+              updatedPermissions: pending.suggestions,
+            }
+          : {}),
         ...common,
       })
       return
@@ -461,7 +440,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       behavior: 'deny',
       message:
         decision === 'abort' ? 'User cancelled tool execution.' : 'User declined tool execution.',
-      ...propertiesWhen(decision === 'abort', () => ({ interrupt: true })),
+      ...(decision === 'abort' ? { interrupt: true } : {}),
       ...common,
     })
     if (decision === 'abort') void this.interrupt()
@@ -556,14 +535,16 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       prompt: promptQueue,
       options: this.#queryOptions({
         cwd: this.#workspacePath,
-        ...propertiesWhen(this.#options.model, (includedValue) => ({ model: includedValue })),
-        ...propertiesWhen(effort, (includedValue) => ({ effort: includedValue })),
+        ...(this.#options.model ? { model: this.#options.model } : {}),
+        ...(effort ? { effort: effort } : {}),
         systemPrompt: {
           type: 'preset',
           preset: 'claude_code',
-          ...propertiesWhen(this.#options.instructions, (includedValue) => ({
-            append: includedValue,
-          })),
+          ...(this.#options.instructions
+            ? {
+                append: this.#options.instructions,
+              }
+            : {}),
         },
         settingSources: ['user', 'project', 'local'],
         persistSession: !this.#options.ephemeral,
@@ -638,9 +619,14 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         this.emit('log', 'ignored Claude assistant replay outside an active turn')
         return
       }
-      this.#reportedModel = message.message.model
       if (message.error) this.emit('log', `Claude assistant error: ${message.error}`)
-      const event = ClaudeEventSchema.parse(message)
+      const parsed = ClaudeEventSchema.safeParse(message)
+      if (!parsed.success) {
+        this.emit('log', `ignored malformed Claude assistant event: ${parsed.error.message}`)
+        return
+      }
+      const event = parsed.data
+      this.#reportedModel = event.message?.model
       const streamed = event.message?.id && this.#streamedMessageIds.has(event.message.id)
       const filtered: ClaudeEvent =
         streamed && event.message?.content
@@ -660,8 +646,13 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
 
     if (message.type === 'user') {
-      if (this.#activeTurnId)
-        this.#emitDomainEvents(toDomainEvents(ClaudeEventSchema.parse(message), this.#activeTurnId))
+      if (!this.#activeTurnId) return
+      const parsed = ClaudeEventSchema.safeParse(message)
+      if (!parsed.success) {
+        this.emit('log', `ignored malformed Claude user event: ${parsed.error.message}`)
+        return
+      }
+      this.#emitDomainEvents(toDomainEvents(parsed.data, this.#activeTurnId))
       return
     }
 
@@ -674,7 +665,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           type: 'usage.updated',
           usage: {
             ...usage,
-            ...propertiesWhen(this.#reportedModel, (includedValue) => ({ model: includedValue })),
+            ...(this.#reportedModel ? { model: this.#reportedModel } : {}),
           },
         })
       }
@@ -733,45 +724,38 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   #onStreamEvent(message: Extract<SDKMessage, { type: 'stream_event' }>): void {
     const turnId = this.#activeTurnId
     if (!turnId || message.parent_tool_use_id) return
-    const parsed = StreamEventSchema.safeParse(message.event)
-    if (!parsed.success) {
-      this.emit('log', `ignored unrecognized Claude stream event: ${parsed.error.message}`)
-      return
-    }
-    const event = parsed.data
+    const event = message.event
     const type = event.type
     if (type === 'message_start') {
-      this.#streamMessageId = event.message?.id ?? message.uuid
+      this.#streamMessageId = event.message.id
       return
     }
 
-    const index = event.index ?? -1
     if (type === 'content_block_start') {
+      const index = event.index
       const raw = event.content_block
-      if (!raw) return
-      const blockType = raw?.type
-      if (blockType === 'tool_use') {
-        const name = raw.name ?? 'tool'
-        const input = raw.input ?? {}
-        const id = `${raw.id ?? `${message.uuid}-${index}`}-call`
+      if (raw.type === 'tool_use') {
+        const parsedInput = ToolInputSchema.safeParse(raw.input)
+        const input = parsedInput.success ? parsedInput.data : {}
+        const id = `${raw.id}-call`
         const item: Item = {
           id,
           turnId,
           status: 'started',
-          ...toolItemFields(name, input),
+          ...toolItemFields(raw.name, input),
           createdAt: Date.now(),
         }
         this.#streamItems.set(id, item)
         this.emit('event', { type: 'item.started', item })
         return
       }
-      if (blockType !== 'text' && blockType !== 'thinking') return
+      if (raw.type !== 'text' && raw.type !== 'thinking') return
       const messageId = this.#streamMessageId ?? message.uuid
-      const text = blockType === 'text' ? (raw.text ?? '') : (raw.thinking ?? '')
+      const text = raw.type === 'text' ? raw.text : raw.thinking
       const block: StreamBlock = {
-        id: `${messageId}-${blockType}-${index}`,
+        id: `${messageId}-${raw.type}-${index}`,
         turnId,
-        type: blockType === 'text' ? 'message' : 'reasoning',
+        type: raw.type === 'text' ? 'message' : 'reasoning',
         text,
         createdAt: Date.now(),
       }
@@ -782,7 +766,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         turnId,
         type: block.type,
         status: 'started',
-        ...propertiesWhen(block.type === 'message', () => ({ role: 'assistant' as const })),
+        ...(block.type === 'message' ? { role: 'assistant' as const } : {}),
         text: '',
         createdAt: block.createdAt,
       }
@@ -794,12 +778,13 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
 
     if (type === 'content_block_delta') {
+      const index = event.index
       const delta = event.delta
       const text =
         delta?.type === 'text_delta'
-          ? (delta.text ?? '')
+          ? delta.text
           : delta?.type === 'thinking_delta'
-            ? (delta.thinking ?? '')
+            ? delta.thinking
             : ''
       const block = this.#streamBlocks.get(index)
       if (!block || !text) return
@@ -809,6 +794,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
 
     if (type === 'content_block_stop') {
+      const index = event.index
       const block = this.#streamBlocks.get(index)
       if (!block) return
       this.#streamBlocks.delete(index)
@@ -820,7 +806,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           turnId: block.turnId,
           type: block.type,
           status: 'completed',
-          ...propertiesWhen(block.type === 'message', () => ({ role: 'assistant' as const })),
+          ...(block.type === 'message' ? { role: 'assistant' as const } : {}),
           text: block.text,
           createdAt: block.createdAt,
         },
@@ -965,7 +951,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   }
 
   #settlePending(message: string): void {
-    for (const pending of [...this.#pendingApprovals.values()]) {
+    for (const pending of this.#pendingApprovals.values()) {
       pending.finish({
         behavior: 'deny',
         message,
@@ -973,7 +959,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         decisionClassification: 'user_reject',
       })
     }
-    for (const pending of [...this.#pendingUserInputs.values()]) {
+    for (const pending of this.#pendingUserInputs.values()) {
       pending.finish({
         behavior: 'deny',
         message,
@@ -1051,14 +1037,18 @@ function approvalRequest(
   return {
     id,
     kind,
-    ...propertiesWhen(options.title || options.description || options.decisionReason, () => ({
-      reason: options.title ?? options.description ?? options.decisionReason,
-    })),
-    ...propertiesWhen(kind === 'command', () => ({
-      command: String(input['command'] ?? toolName),
-    })),
-    ...propertiesWhen(cwd, (cwd) => ({ cwd })),
-    ...propertiesWhen(pathValue, (includedValue) => ({ path: String(includedValue) })),
+    ...(options.title || options.description || options.decisionReason
+      ? {
+          reason: options.title ?? options.description ?? options.decisionReason,
+        }
+      : {}),
+    ...(kind === 'command'
+      ? {
+          command: String(input['command'] ?? toolName),
+        }
+      : {}),
+    ...(cwd ? { cwd } : {}),
+    ...(pathValue ? { path: String(pathValue) } : {}),
     createdAt: Date.now(),
   }
 }
@@ -1182,7 +1172,7 @@ function mapSdkModel(model: ModelInfo, id = model.value): DiscoveredClaudeModel 
       description: model.description,
       isDefault: false,
       reasoningEfforts,
-      ...propertiesWhen(reasoningEfforts.length > 0, () => ({ defaultReasoningEffort: 'high' })),
+      ...(reasoningEfforts.length > 0 ? { defaultReasoningEffort: 'high' } : {}),
       serviceTiers: [],
     },
   }

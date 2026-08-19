@@ -27,7 +27,6 @@ import { errorMessage as messageOf } from '../../boundary.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { PullRequestDetailPane } from './PullRequestDetailPane.js'
 import './pull-requests.css'
-import { propertiesWhen } from '../../properties-when.js'
 
 type PullRequestFilter = 'all' | 'reviewing' | 'authored'
 type PullRequestStatusFilter = 'all' | 'open' | 'draft' | 'merged' | 'closed'
@@ -83,7 +82,8 @@ export function PullRequestsView(props: {
   const load = useCallback(
     async (refresh = false): Promise<PullRequestListResult | undefined> => {
       const id = ++request.current
-      refresh ? setRefreshing(true) : setLoading(true)
+      if (refresh) setRefreshing(true)
+      else setLoading(true)
       setError(undefined)
       try {
         const next = await props.transport.request('pullRequests.list', { refresh })
@@ -538,16 +538,22 @@ function listItemFromDetail(detail: PullRequestDetail): PullRequestListItem {
     commentsCount: detail.commentsCount,
     headRefName: detail.headRefName,
     baseRefName: detail.baseRefName,
-    ...propertiesWhen(detail.reviewDecision, (includedValue) => ({
-      reviewDecision: includedValue,
-    })),
-    ...propertiesWhen(detail.mergeStateStatus, (includedValue) => ({
-      mergeStateStatus: includedValue,
-    })),
+    ...(detail.reviewDecision
+      ? {
+          reviewDecision: detail.reviewDecision,
+        }
+      : {}),
+    ...(detail.mergeStateStatus
+      ? {
+          mergeStateStatus: detail.mergeStateStatus,
+        }
+      : {}),
     relationship: detail.relationship,
-    ...propertiesWhen(detail.localProjectPath, (includedValue) => ({
-      localProjectPath: includedValue,
-    })),
+    ...(detail.localProjectPath
+      ? {
+          localProjectPath: detail.localProjectPath,
+        }
+      : {}),
   }
 }
 

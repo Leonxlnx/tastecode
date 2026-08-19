@@ -1,21 +1,21 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { killTree } from './kill.js'
-import { propertiesWhen } from './properties-when.js'
-import { JsonRpcValueSchema, type JsonRpcValue } from './jsonrpc.js'
+import { parseJsonValue, type JsonRpcValue } from './jsonrpc.js'
 
 export { killTree } from './kill.js'
 
 export {
   JsonRpcError,
+  parseJsonValue,
   JsonRpcValueSchema,
   StdioJsonRpc,
   type JsonRpcId,
-  type JsonRpcInput,
   type JsonRpcRequestOptions,
   type JsonRpcResultParser,
   type JsonRpcValue,
   type ParsedJsonRpcRequestOptions,
   type ServerRequestHandler,
+  type StdioJsonRpcProcess,
 } from './jsonrpc.js'
 
 /**
@@ -35,7 +35,7 @@ export function spawnCli(
   options: { cwd?: string; env?: NodeJS.ProcessEnv; replaceEnv?: boolean } = {},
 ): ChildProcessWithoutNullStreams {
   const spawnOptions = {
-    ...propertiesWhen(!(options.cwd === undefined), () => ({ cwd: options.cwd })),
+    ...(!(options.cwd === undefined) ? { cwd: options.cwd } : {}),
     env: options.replaceEnv ? options.env : { ...process.env, ...options.env },
     stdio: ['pipe', 'pipe', 'pipe'] satisfies Array<'pipe'>,
     windowsHide: true,
@@ -116,7 +116,8 @@ export function runCli(
       if (settled) return
       settled = true
       clearTimeout(timer)
-      result instanceof Error ? reject(result) : resolve(result)
+      if (result instanceof Error) reject(result)
+      else resolve(result)
     }
     const timer = setTimeout(() => {
       killTree(child)
@@ -153,7 +154,7 @@ export function readNdjson(
       buffer = buffer.slice(newline + 1)
       if (line === '') continue
       try {
-        onValue(JsonRpcValueSchema.parse(JSON.parse(line)))
+        onValue(parseJsonValue(line))
       } catch {
         onUnparsable?.(line)
       }
@@ -165,7 +166,7 @@ export function readNdjson(
     const line = buffer.trim()
     if (line === '') return
     try {
-      onValue(JsonRpcValueSchema.parse(JSON.parse(line)))
+      onValue(parseJsonValue(line))
     } catch {
       onUnparsable?.(line)
     }

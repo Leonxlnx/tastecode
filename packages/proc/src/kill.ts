@@ -1,5 +1,7 @@
 import { spawnSync, type ChildProcess } from 'node:child_process'
 
+export type KillableProcess = Pick<ChildProcess, 'exitCode' | 'signalCode' | 'pid' | 'kill'>
+
 /**
  * Kill a spawned CLI and everything it started.
  *
@@ -8,7 +10,7 @@ import { spawnSync, type ChildProcess } from 'node:child_process'
  * "stop" used to leave work happening invisibly in the background. taskkill
  * /T takes the whole tree down.
  */
-export function killTree(child: ChildProcess): void {
+export function killTree(child: KillableProcess): void {
   // Loose != so test doubles without the fields count as still running.
   if (child.exitCode != null || child.signalCode != null) return
   if (process.platform === 'win32' && child.pid) {

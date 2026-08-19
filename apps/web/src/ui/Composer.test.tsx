@@ -1,19 +1,23 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { PickedAttachment } from '../bridge.js'
-import type { ModelChoice } from '../model-catalog.js'
 import { emptyThread, reduce } from '../thread-store.js'
-import { requiredInstance } from '../test-dom.js'
-import { TestTransport, type TestRequestResolver } from '../test-transport.js'
-import { Composer, type ComposerBridge } from './Composer.js'
+import type { Transport } from '../transport.js'
+import { Composer } from './Composer.js'
 
-const bridge = {
-  pickFiles: vi.fn<ComposerBridge['pickFiles']>(),
-  previewViewedImage: vi.fn<ComposerBridge['previewViewedImage']>(),
-  revealPath: vi.fn<ComposerBridge['revealPath']>(),
-  savePastedFile: vi.fn<ComposerBridge['savePastedFile']>(),
-} satisfies ComposerBridge
+const bridge = vi.hoisted(() => ({
+  pickFiles: vi.fn(),
+  previewViewedImage: vi.fn(),
+  revealPath: vi.fn(),
+  savePastedFile: vi.fn(),
+}))
+
+vi.mock('../bridge.js', () => ({
+  pickFiles: bridge.pickFiles,
+  previewViewedImage: bridge.previewViewedImage,
+  revealPath: bridge.revealPath,
+  savePastedFile: bridge.savePastedFile,
+}))
 
 beforeEach(() => {
   bridge.pickFiles.mockResolvedValue([])
@@ -42,14 +46,25 @@ describe('Composer docking motion', () => {
   it('animates the bounded composer box with transform-only docking motion', () => {
     let top = 700
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
-      () => new DOMRect(100, top, 620, 120),
+      () =>
+        ({
+          x: 100,
+          y: top,
+          top,
+          right: 720,
+          bottom: top + 120,
+          left: 100,
+          width: 620,
+          height: 120,
+          toJSON: () => ({}),
+        }) as DOMRect,
     )
 
     const animation = {
       id: '',
       cancel: vi.fn(),
       finished: new Promise<void>(() => undefined),
-    }
+    } as unknown as Animation
     const animate = vi.fn(function (this: Element) {
       return animation
     })
@@ -96,9 +111,9 @@ describe('Composer media attachments', () => {
     expect(bridge.savePastedFile).toHaveBeenCalledWith(image)
     fireEvent.change(composer, { target: { value: 'What is in this image?' } })
     await waitFor(() =>
-      expect(
-        requiredInstance(screen.getByRole('button', { name: 'Send' }), HTMLButtonElement).disabled,
-      ).toBe(false),
+      expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
     )
     fireEvent.keyDown(composer, { key: 'Enter' })
 
@@ -146,10 +161,7 @@ describe('Composer media attachments', () => {
 
   it('rejects an unsupported image before materializing it and preserves the draft', () => {
     renderComposer(vi.fn(), { attachmentsSupported: false })
-    const composer = requiredInstance(
-      screen.getByPlaceholderText('Do anything'),
-      HTMLTextAreaElement,
-    )
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
     const image = new File(['image bytes'], 'Screenshot.png', { type: 'image/png' })
     fireEvent.change(composer, { target: { value: 'Keep this draft' } })
 
@@ -199,7 +211,7 @@ describe('Composer media attachments', () => {
         expect(screen.getByRole('img', { name })).toBeTruthy()
         expect(screen.getByText('100%')).toBeTruthy()
       } else {
-        const player = requiredInstance(screen.getByLabelText(name), HTMLVideoElement)
+        const player = screen.getByLabelText(name) as HTMLVideoElement
         expect(player.tagName).toBe('VIDEO')
         expect(player.hasAttribute('controls')).toBe(false)
         expect(screen.getByRole('button', { name: 'Play video' })).toBeTruthy()
@@ -239,7 +251,7 @@ describe('Composer media attachments', () => {
     fireEvent.click(open)
 
     expect(screen.getByRole('dialog', { name: 'Preview walkthrough.mp4' })).toBeTruthy()
-    const player = requiredInstance(screen.getByLabelText('walkthrough.mp4'), HTMLVideoElement)
+    const player = screen.getByLabelText('walkthrough.mp4') as HTMLVideoElement
     expect(player.tagName).toBe('VIDEO')
     expect(player.hasAttribute('controls')).toBe(false)
     expect(bridge.savePastedFile).toHaveBeenCalledWith(video)
@@ -261,9 +273,9 @@ describe('Composer media attachments', () => {
     expect(bridge.savePastedFile).toHaveBeenCalledWith(file)
     fireEvent.change(composer, { target: { value: 'Inspect this attachment' } })
     await waitFor(() =>
-      expect(
-        requiredInstance(screen.getByRole('button', { name: 'Send' }), HTMLButtonElement).disabled,
-      ).toBe(false),
+      expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
     )
     fireEvent.keyDown(composer, { key: 'Enter' })
 
@@ -273,17 +285,14 @@ describe('Composer media attachments', () => {
 
 describe('Composer attachment source switching', () => {
   it('keeps existing attachments removable but blocks sending them through an unsupported source', async () => {
-    bridge.pickFiles.mockResolvedValue([{ path: '/work/reference.txt', name: 'reference.txt' }])
+    bridge.pickFiles.mockResolvedValue(['/work/reference.txt'])
     const onSend = vi.fn()
     const view = renderComposer(onSend)
     fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
     expect(await screen.findByText('reference.txt')).toBeTruthy()
 
     view.rerenderComposer({ attachmentsSupported: false })
-    const composer = requiredInstance(
-      screen.getByPlaceholderText('Do anything'),
-      HTMLTextAreaElement,
-    )
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
     fireEvent.change(composer, { target: { value: 'Keep this with the attachment' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
 
@@ -291,9 +300,7 @@ describe('Composer attachment source switching', () => {
     expect(composer.value).toBe('Keep this with the attachment')
     expect(screen.getByText('reference.txt')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Remove reference.txt' })).toBeTruthy()
-    expect(
-      requiredInstance(screen.getByRole('button', { name: 'Send' }), HTMLButtonElement).disabled,
-    ).toBe(true)
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
     expect(screen.getByRole('alert').textContent).toBe(
       'Remove attachments or switch to a source that supports them.',
     )
@@ -315,58 +322,6 @@ describe('Composer send handoff', () => {
     expect(stop.querySelector('.lucide-loader-circle')).toBeNull()
     expect(stop.closest('.composer__send-beam')?.hasAttribute('data-active')).toBe(false)
   })
-
-  it('keeps model selection available for the next prompt while a turn runs', () => {
-    const models = [
-      {
-        key: 'codex:gpt-5.6-sol',
-        provider: 'codex',
-        sourceName: 'Codex',
-        mark: 'openai',
-        model: {
-          id: 'gpt-5.6-sol',
-          displayName: 'GPT-5.6 Sol',
-          isDefault: true,
-          reasoningEfforts: ['medium'],
-          defaultReasoningEffort: 'medium',
-          serviceTiers: [],
-        },
-      },
-      {
-        key: 'codex:gpt-5.6-luna',
-        provider: 'codex',
-        sourceName: 'Codex',
-        mark: 'openai',
-        model: {
-          id: 'gpt-5.6-luna',
-          displayName: 'GPT-5.6 Luna',
-          isDefault: false,
-          reasoningEfforts: ['medium'],
-          defaultReasoningEffort: 'medium',
-          serviceTiers: [],
-        },
-      },
-    ] satisfies ModelChoice[]
-    const onModelChange = vi.fn()
-
-    renderComposer(vi.fn(), {
-      models,
-      modelId: models[0]!.key,
-      effort: 'medium',
-      running: true,
-      onModelChange,
-    })
-
-    const trigger = requiredInstance(
-      screen.getByRole('button', { name: 'Model and reasoning' }),
-      HTMLButtonElement,
-    )
-    expect(trigger.disabled).toBe(false)
-    fireEvent.click(trigger)
-    fireEvent.click(screen.getByRole('button', { name: 'Use GPT-5.6 Luna through Codex' }))
-
-    expect(onModelChange).toHaveBeenCalledWith('codex:gpt-5.6-luna')
-  })
 })
 
 describe('Composer queue', () => {
@@ -380,7 +335,7 @@ describe('Composer queue', () => {
           mediaType: 'image',
           previewUrl: 'tastecode-attachment://preview/reference',
           thumbnailUrl: 'tastecode-attachment://preview/reference?thumbnail=1',
-        } satisfies PickedAttachment,
+        },
       ],
       [
         '/work/walkthrough.mp4',
@@ -390,7 +345,7 @@ describe('Composer queue', () => {
           mediaType: 'video',
           previewUrl: 'tastecode-attachment://preview/walkthrough',
           thumbnailUrl: 'tastecode-attachment://preview/walkthrough?thumbnail=1',
-        } satisfies PickedAttachment,
+        },
       ],
     ])
     bridge.previewViewedImage.mockImplementation(async (reference: string) =>
@@ -549,9 +504,9 @@ describe('Composer queue', () => {
     expect(onMoveQueuedTurn).toHaveBeenCalledTimes(3)
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit Polish the queue' }))
-    expect(
-      requiredInstance(screen.getByPlaceholderText('Do anything'), HTMLTextAreaElement).value,
-    ).toBe('Polish the queue')
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+      'Polish the queue',
+    )
     expect(onDeleteQueuedTurn).toHaveBeenCalledWith('queued-1')
     expect(onDeleteQueuedTurn).toHaveBeenCalledWith('Polish the queue')
   })
@@ -571,10 +526,7 @@ describe('Composer prompts', () => {
     const onSend = vi.fn()
     renderComposer(onSend, { transport: populatedResourceTransport() })
 
-    const composer = requiredInstance(
-      screen.getByPlaceholderText('Do anything'),
-      HTMLTextAreaElement,
-    )
+    const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: '/side' } })
     expect(screen.queryByRole('listbox')).toBeNull()
     fireEvent.keyDown(composer, { key: 'Enter' })
@@ -585,17 +537,14 @@ describe('Composer prompts', () => {
   it('opens the resource picker from slash and invokes the selected skill canonically', async () => {
     const onSend = vi.fn()
     renderComposer(onSend, { transport: populatedResourceTransport() })
-    const composer = requiredInstance(
-      screen.getByPlaceholderText('Do anything'),
-      HTMLTextAreaElement,
-    )
+    const composer = screen.getByPlaceholderText('Do anything')
 
     fireEvent.change(composer, { target: { value: '/air', selectionStart: 4 } })
     await screen.findByRole('option', { name: /Airtable CLI/ })
     fireEvent.keyDown(composer, { key: 'Enter' })
 
     expect(screen.getByText('Airtable CLI').closest('.chip--resource')).toBeTruthy()
-    expect(composer.value).toBe('')
+    expect((composer as HTMLTextAreaElement).value).toBe('')
     fireEvent.keyDown(composer, { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith('$airtable-cli', [])
   })
@@ -604,10 +553,7 @@ describe('Composer prompts', () => {
     const onSend = vi.fn()
     const transport = populatedResourceTransport()
     renderComposer(onSend, { transport })
-    const composer = requiredInstance(
-      screen.getByPlaceholderText('Do anything'),
-      HTMLTextAreaElement,
-    )
+    const composer = screen.getByPlaceholderText('Do anything')
 
     fireEvent.change(composer, { target: { value: '$', selectionStart: 1 } })
 
@@ -623,7 +569,7 @@ describe('Composer prompts', () => {
 
     expect(screen.queryByRole('listbox', { name: 'Skills and MCP servers' })).toBeNull()
     expect(screen.getByText('Official Docs').closest('.chip--resource')).toBeTruthy()
-    expect(composer.value).toBe('')
+    expect((composer as HTMLTextAreaElement).value).toBe('')
     fireEvent.keyDown(composer, { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith('@officialDocs', [])
   })
@@ -656,7 +602,6 @@ describe('Composer prompts', () => {
               id: '/skills/global/SKILL.md',
               name: 'global-skill',
               displayName: 'Global skill',
-              description: 'A provider-managed skill',
               source: { type: 'provider' },
               scope: 'system',
               enabled: true,
@@ -668,27 +613,8 @@ describe('Composer prompts', () => {
       }
       if (method === 'mcp.list') {
         return {
-          capabilities: {
-            inventory: true,
-            add: false,
-            update: false,
-            remove: false,
-            reload: false,
-            startOAuth: false,
-            cancelOAuth: false,
-          },
-          servers: [
-            {
-              id: 'global-docs',
-              scope: 'global',
-              enabled: true,
-              auth: { status: 'not_required' },
-              startup: { state: 'ready' },
-              tools: [],
-              resources: [],
-              resourceTemplates: [],
-            },
-          ],
+          capabilities: { inventory: true },
+          servers: [{ id: 'global-docs', scope: 'global', enabled: true }],
         }
       }
       throw new Error(`Unexpected request: ${method}`)
@@ -698,7 +624,7 @@ describe('Composer prompts', () => {
 
     fireEvent.change(composer, { target: { value: '$', selectionStart: 1 } })
 
-    await waitFor(() => expect(transport.requests).toHaveLength(2))
+    await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
     expect(screen.getByText('No more skills or MCP servers are available.')).toBeTruthy()
     expect(screen.queryByText('Global skill')).toBeNull()
   })
@@ -806,10 +732,7 @@ describe('Composer project requirement', () => {
       projectName: undefined,
       onProjectRequired,
     })
-    const composer = requiredInstance(
-      screen.getByPlaceholderText('Do anything'),
-      HTMLTextAreaElement,
-    )
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
 
     fireEvent.change(composer, { target: { value: 'Keep this prompt' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
@@ -823,10 +746,7 @@ describe('Composer project requirement', () => {
 describe('Composer height', () => {
   it('starts at two lines and scrolls only after ten lines', async () => {
     renderComposer(vi.fn())
-    const composer = requiredInstance(
-      screen.getByPlaceholderText('Do anything'),
-      HTMLTextAreaElement,
-    )
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
     let contentHeight = 120
     Object.defineProperty(composer, 'offsetHeight', { configurable: true, value: 68 })
     Object.defineProperty(composer, 'scrollHeight', {
@@ -925,10 +845,7 @@ describe('Composer draft replacement', () => {
       draftRequest: { text: 'Rewrite this request', request: 1 },
     })
 
-    const composer = requiredInstance(
-      screen.getByPlaceholderText('Do anything'),
-      HTMLTextAreaElement,
-    )
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
     await waitFor(() => expect(composer.value).toBe('Rewrite this request'))
     expect(document.activeElement).toBe(composer)
   })
@@ -985,7 +902,6 @@ function renderComposer(
       onDeleteQueuedTurn={vi.fn()}
       onMoveQueuedTurn={vi.fn()}
       onSteerQueuedTurn={vi.fn()}
-      composerBridge={bridge}
       {...currentOverrides}
     />
   )
@@ -999,7 +915,7 @@ function renderComposer(
 }
 
 function createResourceTransport(
-  request: TestRequestResolver = async (method) => {
+  request: (method: string, params: unknown) => Promise<unknown> = async (method) => {
     if (method === 'skills.list') {
       return {
         capabilities: { inventory: true, configure: true, install: true },
@@ -1023,11 +939,16 @@ function createResourceTransport(
     }
     throw new Error(`Unexpected request: ${method}`)
   },
-): TestTransport {
-  return new TestTransport(request)
+): Transport {
+  return {
+    state: 'open',
+    request: vi.fn(request),
+    on: vi.fn(() => () => undefined),
+    onState: vi.fn(() => () => undefined),
+  } as unknown as Transport
 }
 
-function populatedResourceTransport(): TestTransport {
+function populatedResourceTransport(): Transport {
   return createResourceTransport(async (method) => {
     if (method === 'skills.list') {
       return {

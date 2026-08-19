@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
   type ComponentPropsWithoutRef,
-  type ReactNode,
 } from 'react'
 import {
   Check,
@@ -22,8 +21,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import { Streamdown, type CodeHighlighterPlugin, type Components, type IconMap } from 'streamdown'
-import { z } from 'zod'
+import { Streamdown, type Components, type IconMap } from 'streamdown'
 import { canRevealProjectFile, revealProjectFile } from '../bridge.js'
 import { preserveProjectFileLinks, projectFileReference } from '../project-file-link.js'
 import { FileTypeIcon, isFileReference } from './FileTypeIcon.js'
@@ -50,13 +48,14 @@ const STREAMDOWN_ICONS = {
 type InlineCodeProps = ComponentPropsWithoutRef<'code'> & { node?: unknown }
 
 function InlineCode({ children, node: _node, ...props }: InlineCodeProps) {
-  const content = z.string().safeParse(children)
-  if (!content.success || !isFileReference(content.data)) return <code {...props}>{children}</code>
+  const reference = typeof children === 'string' && isFileReference(children)
+
+  if (!reference) return <code {...props}>{children}</code>
 
   return (
     <span className="md-file-ref">
-      <FileTypeIcon path={content.data} />
-      {content.data}
+      <FileTypeIcon path={children} />
+      {children}
     </span>
   )
 }
@@ -65,44 +64,14 @@ type MarkdownLinkProps = ComponentPropsWithoutRef<'a'> & { node?: unknown }
 
 const ProjectPathContext = createContext<string | undefined>(undefined)
 
-export type MarkdownServices = {
-  canRevealProjectFile: boolean
-  revealProjectFile: typeof revealProjectFile
-  preserveProjectFileLinks: typeof preserveProjectFileLinks
-  codePlugin: CodeHighlighterPlugin
-  onCompletedRender?: (() => void) | undefined
-}
-
-export const defaultMarkdownServices: MarkdownServices = {
-  canRevealProjectFile,
-  revealProjectFile,
-  preserveProjectFileLinks,
-  codePlugin: shikiPlugin,
-}
-
-const MarkdownServicesContext = createContext(defaultMarkdownServices)
-
-export function MarkdownServicesProvider({
-  services,
-  children,
-}: {
-  services: MarkdownServices
-  children: ReactNode
-}) {
-  return (
-    <MarkdownServicesContext.Provider value={services}>{children}</MarkdownServicesContext.Provider>
-  )
-}
-
 function MarkdownLink({ children, href, node: _node, ...props }: MarkdownLinkProps) {
   const projectPath = useContext(ProjectPathContext)
-  const services = useContext(MarkdownServicesContext)
   const [revealFailed, setRevealFailed] = useState(false)
   const filePath = href ? localFileReferencePath(href) : undefined
   if (filePath) {
     if (projectPath) {
       const reference = projectFileReference(filePath, projectPath)
-      if (reference?.kind === 'safe' && services.canRevealProjectFile) {
+      if (reference?.kind === 'safe' && canRevealProjectFile) {
         return (
           <button
             className="md-file-link md-file-link--action"
@@ -114,9 +83,7 @@ function MarkdownLink({ children, href, node: _node, ...props }: MarkdownLinkPro
             }
             onClick={() => {
               setRevealFailed(false)
-              void services
-                .revealProjectFile(reference.path, projectPath)
-                .catch(() => setRevealFailed(true))
+              void revealProjectFile(reference.path, projectPath).catch(() => setRevealFailed(true))
             }}
           >
             <FileTypeIcon path={reference.path} />
@@ -188,6 +155,7 @@ const STREAMDOWN_COMPONENTS = {
 
 // Streamdown uses these identities to preserve its context values. Recreating
 // them per token invalidates completed Markdown blocks above the live tail.
+const STREAMDOWN_PLUGINS = { code: shikiPlugin }
 const STREAMDOWN_CONTROLS = { code: true, table: true, mermaid: false }
 
 /**
@@ -216,11 +184,9 @@ const STREAM_ANIMATION = {
 const CompletedMarkdown = memo(function CompletedMarkdown({
   text,
   projectPath,
-  services,
 }: {
   text: string
   projectPath?: string | undefined
-  services: MarkdownServices
 }) {
   // Shiki loads grammars in the background. This is the one re-render that
   // swaps plain code for coloured code once they arrive — the layout box is
@@ -228,31 +194,24 @@ const CompletedMarkdown = memo(function CompletedMarkdown({
   const [, bump] = useState(0)
   useEffect(() => onHighlighterChange(() => bump((n) => n + 1)), [])
   // File destinations only become interactive after the message completes.
-  const renderedText = useMemo(
-    () => services.preserveProjectFileLinks(text),
-    [services.preserveProjectFileLinks, text],
-  )
-  const plugins = useMemo(() => ({ code: services.codePlugin }), [services.codePlugin])
-  services.onCompletedRender?.()
+  const renderedText = useMemo(() => preserveProjectFileLinks(text), [text])
 
   return (
-    <MarkdownServicesContext.Provider value={services}>
-      <ProjectPathContext.Provider value={projectPath}>
-        <Streamdown
-          className="md"
-          mode="streaming"
-          isAnimating={false}
-          animated={STREAM_ANIMATION}
-          parseIncompleteMarkdown
-          plugins={plugins}
-          controls={STREAMDOWN_CONTROLS}
-          icons={STREAMDOWN_ICONS}
-          components={STREAMDOWN_COMPONENTS}
-        >
-          {renderedText}
-        </Streamdown>
-      </ProjectPathContext.Provider>
-    </MarkdownServicesContext.Provider>
+    <ProjectPathContext.Provider value={projectPath}>
+      <Streamdown
+        className="md"
+        mode="streaming"
+        isAnimating={false}
+        animated={STREAM_ANIMATION}
+        parseIncompleteMarkdown
+        plugins={STREAMDOWN_PLUGINS}
+        controls={STREAMDOWN_CONTROLS}
+        icons={STREAMDOWN_ICONS}
+        components={STREAMDOWN_COMPONENTS}
+      >
+        {renderedText}
+      </Streamdown>
+    </ProjectPathContext.Provider>
   )
 })
 
@@ -339,7 +298,7 @@ function applyLiveMarkdown(
         leaf.append(addition)
       }
     } else if (leaf) {
-      leaf.replaceChildren(leaf.textContent ?? '')
+      leaf.replaceChildren(leaf.textContent)
       dom.leaves.delete(operation.id)
     }
   }
@@ -387,28 +346,22 @@ const StreamingMarkdown = memo(function StreamingMarkdown({
   return <div aria-busy="true" className="md" data-streaming-markdown ref={root} />
 })
 
-export type MarkdownProps = {
-  text: string
-  streaming?: boolean
-  projectPath?: string | undefined
-  liveUpdate?: LiveMarkdownChange | undefined
-  updateVersion?: number | undefined
-  services?: MarkdownServices | undefined
-}
-
 export const Markdown = memo(function Markdown({
   text,
   streaming = false,
   projectPath,
   liveUpdate,
   updateVersion,
-  services,
-}: MarkdownProps) {
-  const inheritedServices = useContext(MarkdownServicesContext)
-  const activeServices = services ?? inheritedServices
+}: {
+  text: string
+  streaming?: boolean
+  projectPath?: string | undefined
+  liveUpdate?: LiveMarkdownChange | undefined
+  updateVersion?: number | undefined
+}) {
   return streaming ? (
     <StreamingMarkdown text={text} liveUpdate={liveUpdate} updateVersion={updateVersion} />
   ) : (
-    <CompletedMarkdown text={text} projectPath={projectPath} services={activeServices} />
+    <CompletedMarkdown text={text} projectPath={projectPath} />
   )
 })

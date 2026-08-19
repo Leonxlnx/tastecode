@@ -1,15 +1,27 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { requiredElement } from '../test-dom.js'
-import { Sidebar, type SidebarHaptics } from './Sidebar.js'
+import { Profiler } from 'react'
+import { Sidebar } from './Sidebar.js'
 
-const performHaptic = vi.fn<SidebarHaptics['perform']>()
-const prepareHaptics = vi.fn<SidebarHaptics['prepare']>()
-const haptics = {
-  perform: performHaptic,
-  prepare: prepareHaptics,
-} satisfies SidebarHaptics
+const hapticMocks = vi.hoisted(() => ({
+  perform: vi.fn(),
+  prepare: vi.fn(),
+}))
+const performHaptic = hapticMocks.perform
+const prepareHaptics = hapticMocks.prepare
+
+vi.mock('../bridge.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../bridge.js')>()),
+  isMacOS: () => true,
+}))
+
+vi.mock('../haptics.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../haptics.js')>()),
+  appHapticsSupported: () => true,
+  performAppHaptic: hapticMocks.perform,
+  prepareAppHaptics: hapticMocks.prepare,
+}))
 
 class TestMediaQueryList extends EventTarget implements MediaQueryList {
   onchange: ((this: MediaQueryList, ev: MediaQueryListEvent) => void) | null = null
@@ -64,7 +76,6 @@ describe('Sidebar chat actions', () => {
         onReorderSession={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenSettings={vi.fn()}
-        haptics={haptics}
       />,
     )
 
@@ -204,7 +215,7 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByText('15% left')).toBeTruthy()
     const limitBar = screen.getByRole('progressbar', { name: 'Codex 7 days left' })
     expect(limitBar.getAttribute('aria-valuenow')).toBe('15')
-    expect(requiredElement(limitBar, ':scope > *', HTMLElement).style.width).toBe('15%')
+    expect(limitBar.querySelector<HTMLElement>(':scope > *')!.style.width).toBe('15%')
     expect(document.activeElement?.textContent).toContain('Plan limits')
 
     expect(screen.queryAllByRole('menuitem')).toHaveLength(0)
@@ -573,7 +584,6 @@ describe('Sidebar chat actions', () => {
         onReorderSession={onReorderSession}
         onOpenSearch={vi.fn()}
         onOpenSettings={vi.fn()}
-        haptics={haptics}
       />,
     )
 
@@ -762,6 +772,43 @@ describe('Sidebar chat actions', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('reveals at the edge without re-rendering the sidebar tree', () => {
+    const phases: string[] = []
+    const { container } = render(
+      <Profiler id="sidebar" onRender={(_, phase) => phases.push(phase)}>
+        <Sidebar
+          projects={[]}
+          activeProjectPath={undefined}
+          activeSessionId={undefined}
+          account={undefined}
+          providerName="Codex"
+          collapsed
+          width={248}
+          onWidthChange={vi.fn()}
+          onClose={vi.fn()}
+          onAddProject={vi.fn()}
+          onNewSession={vi.fn()}
+          onSelectSession={vi.fn()}
+          onRenameProject={vi.fn()}
+          onRemoveProject={vi.fn()}
+          onTogglePin={vi.fn()}
+          onRenameSession={vi.fn()}
+          onDeleteSession={vi.fn()}
+          onArchiveProject={vi.fn()}
+          onReorderSession={vi.fn()}
+          onOpenSearch={vi.fn()}
+          onOpenSettings={vi.fn()}
+        />
+      </Profiler>,
+    )
+    phases.length = 0
+
+    fireEvent.mouseEnter(container.querySelector('.rail__edge')!)
+
+    expect(container.querySelector('.rail-slot')?.classList).toContain('is-revealed')
+    expect(phases).toEqual([])
   })
 
   it('keeps a revealed rail in place while the pointer travels to the toggle', () => {

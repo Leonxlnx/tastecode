@@ -4,6 +4,8 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
+  type RefObject,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -79,16 +81,6 @@ export type Project = {
   pinned?: boolean
 }
 
-export type SidebarHaptics = {
-  perform: typeof performAppHaptic
-  prepare: typeof prepareAppHaptics
-}
-
-const defaultSidebarHaptics: SidebarHaptics = {
-  perform: performAppHaptic,
-  prepare: prepareAppHaptics,
-}
-
 type DropPosition = 'before' | 'after'
 
 const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
@@ -158,61 +150,108 @@ function SidebarComponent(props: {
   pullRequestsActive?: boolean | undefined
   onOpenPullRequests?: (() => void) | undefined
   onOpenSettings: (section?: 'profile') => void
-  haptics?: SidebarHaptics | undefined
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
-  const hapticServices = props.haptics ?? defaultSidebarHaptics
   const profileDisplayName = props.profileIdentity?.displayName.trim()
-  const [edgeRevealed, setEdgeRevealed] = useState(false)
   const slotRef = useRef<HTMLDivElement>(null)
+  const railRef = useRef<HTMLElement>(null)
+  const resizeHandleRef = useRef<HTMLButtonElement>(null)
+  /** Kept out of React state on purpose. Revealing used to reconcile every
+   *  project and chat row before the transform could even start. */
+  const edgeRevealed = useRef(false)
   /** Set by the resize handle when its release is what collapsed the rail. */
   const foldedByDrag = useRef(false)
   /** True while the edge is being dragged: widening a revealed rail carries the
    *  pointer well clear of it, which must not read as leaving. */
   const resizing = useRef(false)
-  /** Previous reveal state, so the hide direction can be told from the show. */
-  const wasRevealed = useRef(false)
   /** Running while a just-folded rail refuses to reveal again. */
-  const [cooling, setCooling] = useState(false)
   const coolDown = useRef<number | undefined>(undefined)
   /** Where the pointer was last seen during that wait. */
   const pointerX = useRef(Number.POSITIVE_INFINITY)
+  /** Hiding the reveal only after a grace period lets the pointer travel up to
+   *  the title bar toggle without the flyout flickering away underneath it. */
+  const revealHide = useRef<number | undefined>(undefined)
+  /** Keeps the quick retract transition selected until it finishes. */
+  const revealOut = useRef<number | undefined>(undefined)
 
-  const endCooldown = () => {
+  const cancelRevealHide = useCallback(() => {
+    if (revealHide.current === undefined) return
+    clearTimeout(revealHide.current)
+    revealHide.current = undefined
+  }, [])
+
+  const cancelRevealOut = useCallback(() => {
+    if (revealOut.current === undefined) return
+    clearTimeout(revealOut.current)
+    revealOut.current = undefined
+  }, [])
+
+  /** Updates only the two DOM contracts that control the compositor layer.
+   *  The sidebar contents do not depend on temporary hover state, so they do
+   *  not need a React render when the pointer touches the window edge. */
+  const setEdgeReveal = useCallback(
+    (revealed: boolean, animateExit = true) => {
+      const slot = slotRef.current
+      if (!slot) return
+      const collapsed = slot.classList.contains('is-collapsed')
+      if (revealed && !collapsed) return
+
+      cancelRevealHide()
+      cancelRevealOut()
+      edgeRevealed.current = revealed
+      slot.classList.toggle('is-revealed', revealed)
+      railRef.current?.toggleAttribute('inert', collapsed && !revealed)
+      if (resizeHandleRef.current) {
+        resizeHandleRef.current.hidden = collapsed && !revealed
+      }
+
+      if (revealed || !animateExit || !collapsed) {
+        slot.classList.remove('is-reveal-out')
+        return
+      }
+
+      slot.classList.add('is-reveal-out')
+      revealOut.current = window.setTimeout(() => {
+        revealOut.current = undefined
+        slot.classList.remove('is-reveal-out')
+      }, REVEAL_OUT_MS)
+    },
+    [cancelRevealHide, cancelRevealOut],
+  )
+
+  const endCooldown = useCallback(() => {
     if (coolDown.current !== undefined) clearTimeout(coolDown.current)
     coolDown.current = undefined
-    setCooling(false)
-  }
+  }, [])
 
-  const startCooldown = (releaseX: number) => {
-    pointerX.current = releaseX
-    if (coolDown.current !== undefined) clearTimeout(coolDown.current)
-    setCooling(true)
-    coolDown.current = window.setTimeout(() => {
-      coolDown.current = undefined
-      setCooling(false)
-      // The wait is over: a pointer still parked at the edge gets its reveal.
-      if (pointerX.current <= REVEAL_EDGE_WIDTH) setEdgeRevealed(true)
-    }, REVEAL_COOLDOWN_MS)
-  }
+  const startCooldown = useCallback(
+    (releaseX: number) => {
+      pointerX.current = releaseX
+      if (coolDown.current !== undefined) clearTimeout(coolDown.current)
+      coolDown.current = window.setTimeout(() => {
+        coolDown.current = undefined
+        // The wait is over: a pointer still parked at the edge gets its reveal.
+        if (pointerX.current <= REVEAL_EDGE_WIDTH) setEdgeReveal(true)
+      }, REVEAL_COOLDOWN_MS)
+    },
+    [setEdgeReveal],
+  )
 
-  useEffect(() => endCooldown, [])
-
-  useEffect(() => {
-    if (!cooling) return
-    const onMove = (event: MouseEvent) => {
-      pointerX.current = event.clientX
-    }
-    window.addEventListener('mousemove', onMove)
-    return () => window.removeEventListener('mousemove', onMove)
-  }, [cooling])
+  useEffect(
+    () => () => {
+      cancelRevealHide()
+      cancelRevealOut()
+      endCooldown()
+    },
+    [cancelRevealHide, cancelRevealOut, endCooldown],
+  )
 
   /* Collapsing hands the rail to the absolute flyout, whose translate would
      animate in from no transform at all — the rail appearing at full width
      before sliding away. After a drag fold it is already gone, so that reads
      as it flashing open and shut. This runs on React's commit, before the
      browser paints, which is the only point where suppressing it is reliable;
-     the handle cannot do it, since collapsing unmounts the handle. */
+     the handle cannot do it because the collapsed class does not exist yet. */
   useLayoutEffect(() => {
     const slot = slotRef.current
     const shell = slot?.closest<HTMLElement>('.shell')
@@ -245,41 +284,19 @@ function SidebarComponent(props: {
     })
     return () => cancelAnimationFrame(frame)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- width is read, not a trigger
-  }, [props.collapsed])
-  /* A reveal that retracts is its own motion, quicker than a deliberate
-     collapse. Removing the revealed class alone cannot express that: the
-     resulting state is plain "collapsed", identical to a real collapse. A
-     marker set on the same commit distinguishes them, and it has to be a
-     layout effect — after paint would be too late, the slow transition would
-     already be running. */
-  useLayoutEffect(() => {
-    const slot = slotRef.current
-    const retracting = wasRevealed.current && !edgeRevealed && props.collapsed
-    wasRevealed.current = edgeRevealed
-    if (!retracting || !slot) return
-    slot.classList.add('is-reveal-out')
-    const done = window.setTimeout(() => slot.classList.remove('is-reveal-out'), REVEAL_OUT_MS)
-    return () => clearTimeout(done)
-  }, [edgeRevealed, props.collapsed])
+  }, [endCooldown, props.collapsed])
 
-  /* Hiding the reveal only after a grace period lets the pointer travel up to
-     the title bar toggle without the flyout flickering away underneath it. */
-  const revealHide = useRef<number | undefined>(undefined)
-  const cancelRevealHide = () => {
-    if (revealHide.current !== undefined) {
-      clearTimeout(revealHide.current)
-      revealHide.current = undefined
-    }
-  }
-  const scheduleRevealHide = () => {
+  const scheduleRevealHide = useCallback(() => {
     // Never restarted. This is called from every mouse move outside the rail,
     // and re-arming each time meant the grace only elapsed once the pointer
     // came to a complete stop — so a rail left behind while the mouse kept
     // moving stayed open for as long as the movement lasted.
-    if (revealHide.current !== undefined) return
-    revealHide.current = window.setTimeout(() => setEdgeRevealed(false), REVEAL_GRACE_MS)
-  }
-  useEffect(() => cancelRevealHide, [])
+    if (!edgeRevealed.current || revealHide.current !== undefined) return
+    revealHide.current = window.setTimeout(() => {
+      revealHide.current = undefined
+      setEdgeReveal(false)
+    }, REVEAL_GRACE_MS)
+  }, [setEdgeReveal])
 
   /* What keeps a revealed rail in place. The slot's own mouse events cannot
      see the title bar above it, and that is exactly where someone aims to pin
@@ -287,10 +304,15 @@ function SidebarComponent(props: {
      its edge. Retracting while the user is still travelling toward the toggle
      is what made the reveal feel like it snapped back on its own. */
   useEffect(() => {
-    if (!edgeRevealed || !props.collapsed) return
+    if (!props.collapsed) return
     const onMove = (event: MouseEvent) => {
-      if (resizing.current || event.clientX <= props.width + REVEAL_KEEP_BUFFER) cancelRevealHide()
-      else scheduleRevealHide()
+      if (coolDown.current !== undefined) pointerX.current = event.clientX
+      if (!edgeRevealed.current) return
+      if (resizing.current || event.clientX <= props.width + REVEAL_KEEP_BUFFER) {
+        cancelRevealHide()
+      } else {
+        scheduleRevealHide()
+      }
     }
     // Pointer position decides, and only this listener decides: the slot's own
     // mouseleave used to schedule the hide unconditionally, so travelling up
@@ -299,13 +321,13 @@ function SidebarComponent(props: {
     // toggle the user was about to press.
     window.addEventListener('mousemove', onMove)
     // Leaving the window entirely produces no more moves, so it is its own signal.
-    document.addEventListener('mouseleave', scheduleRevealHide)
+    const onLeave = () => scheduleRevealHide()
+    document.addEventListener('mouseleave', onLeave)
     return () => {
       window.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseleave', scheduleRevealHide)
+      document.removeEventListener('mouseleave', onLeave)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- the two schedulers are stable module-shape helpers
-  }, [edgeRevealed, props.collapsed, props.width])
+  }, [cancelRevealHide, props.collapsed, props.width, scheduleRevealHide])
   const [scope, setScope] = useState('')
   const [bodyScrolled, setBodyScrolled] = useState(false)
   const inbox = props.mode === 'inbox' && props.inbox !== undefined
@@ -337,13 +359,12 @@ function SidebarComponent(props: {
     // re-opened on the toggle click.
     const slot = slotRef.current
     const shell = slot?.closest<HTMLElement>('.shell')
-    if (edgeRevealed && shell) {
+    if (edgeRevealed.current && shell) {
       shell.dataset['resizing'] = ''
       requestAnimationFrame(() => requestAnimationFrame(() => delete shell.dataset['resizing']))
     }
-    setEdgeRevealed(false)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reveal state is read, not a trigger
-  }, [props.collapsed])
+    setEdgeReveal(false, false)
+  }, [props.collapsed, setEdgeReveal])
 
   useEffect(() => {
     if (scope && !props.projects.some((project) => project.path === scope)) setScope('')
@@ -388,9 +409,7 @@ function SidebarComponent(props: {
   return (
     <div
       ref={slotRef}
-      className={`rail-slot ${props.collapsed ? 'is-collapsed' : ''} ${
-        edgeRevealed ? 'is-revealed' : ''
-      }`}
+      className={`rail-slot ${props.collapsed ? 'is-collapsed' : ''}`}
       onMouseEnter={cancelRevealHide}
     >
       {props.collapsed ? (
@@ -401,8 +420,7 @@ function SidebarComponent(props: {
             // A rail just folded by dragging stays folded, even though the
             // pointer is still resting on this strip.
             if (coolDown.current !== undefined) return
-            cancelRevealHide()
-            setEdgeRevealed(true)
+            setEdgeReveal(true)
           }}
         />
       ) : null}
@@ -417,7 +435,7 @@ function SidebarComponent(props: {
         />
       ) : null}
 
-      <nav className="rail" inert={props.collapsed && !edgeRevealed ? true : undefined}>
+      <nav ref={railRef} className="rail" inert={props.collapsed ? true : undefined}>
         {inbox ? (
           <InboxSidebar
             projects={props.projects}
@@ -561,7 +579,7 @@ function SidebarComponent(props: {
                     }
                     onProjectDragStart={(event) => {
                       if (event.target !== event.currentTarget || !props.onReorderProject) return
-                      hapticServices.prepare()
+                      prepareAppHaptics()
                       event.dataTransfer.effectAllowed = 'move'
                       event.dataTransfer.setData('text/plain', project.path)
                       setDraggedProjectPath(project.path)
@@ -583,7 +601,7 @@ function SidebarComponent(props: {
                       )
                         return
                       setProjectDropTarget({ path: project.path, position })
-                      hapticServices.perform('alignment')
+                      performAppHaptic('alignment')
                     }}
                     onProjectDrop={(event) => {
                       event.preventDefault()
@@ -599,7 +617,6 @@ function SidebarComponent(props: {
                     onProjectDragEnd={endProjectDrag}
                     onNewSession={(path) => newSession(path)}
                     onSelectSession={selectSession}
-                    haptics={hapticServices}
                   />
                 ))
               )}
@@ -663,30 +680,32 @@ function SidebarComponent(props: {
           </Menu>
         </div>
       </nav>
-      {!props.collapsed || edgeRevealed ? (
-        <RailResizeHandle
-          width={props.width}
-          /* A revealed rail is already collapsed, so there is nothing to fold:
-             the drag only resizes it, and the new width is what the next
-             reveal and the next expand come back at. */
-          foldable={!props.collapsed}
-          onWidthChange={props.onWidthChange}
-          onResizingChange={(active) => {
-            resizing.current = active
-            if (active) cancelRevealHide()
-          }}
-          onCollapse={(releaseX) => {
-            foldedByDrag.current = true
-            startCooldown(releaseX)
-            props.onClose()
-          }}
-        />
-      ) : null}
+      <RailResizeHandle
+        buttonRef={resizeHandleRef}
+        hidden={props.collapsed}
+        width={props.width}
+        /* A revealed rail is already collapsed, so there is nothing to fold:
+           the drag only resizes it, and the new width is what the next
+           reveal and the next expand come back at. */
+        foldable={!props.collapsed}
+        onWidthChange={props.onWidthChange}
+        onResizingChange={(active) => {
+          resizing.current = active
+          if (active) cancelRevealHide()
+        }}
+        onCollapse={(releaseX) => {
+          foldedByDrag.current = true
+          startCooldown(releaseX)
+          props.onClose()
+        }}
+      />
     </div>
   )
 }
 
 function RailResizeHandle(props: {
+  buttonRef: RefObject<HTMLButtonElement | null>
+  hidden: boolean
   width: number
   /** False on a revealed rail: it is already collapsed, so the drag only sizes it. */
   foldable: boolean
@@ -785,7 +804,9 @@ function RailResizeHandle(props: {
 
   return (
     <button
+      ref={props.buttonRef}
       type="button"
+      hidden={props.hidden}
       className="rail__resize"
       role="separator"
       aria-label="Resize sidebar"
@@ -913,7 +934,6 @@ function ProjectRow(props: {
     targetId: string,
     position: DropPosition,
   ) => void
-  haptics: SidebarHaptics
 }) {
   const count = props.project.sessions.length
   const [open, setOpen] = useState(props.active)
@@ -960,7 +980,7 @@ function ProjectRow(props: {
     const next = { id: targetId, position }
     dropTargetRef.current = next
     setDropTarget(next)
-    props.haptics.perform('alignment')
+    performAppHaptic('alignment')
   }
 
   return (
@@ -1125,7 +1145,7 @@ function ProjectRow(props: {
               dragging={session.id === draggedSessionId}
               dropPosition={dropTarget?.id === session.id ? dropTarget.position : undefined}
               onDragStart={(event) => {
-                props.haptics.prepare()
+                prepareAppHaptics()
                 event.dataTransfer.effectAllowed = 'move'
                 event.dataTransfer.setData('text/plain', session.id)
                 setDraggedSessionId(session.id)

@@ -1,37 +1,50 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { requiredElement } from '../../test-dom.js'
+import { beginLogin, resetInstalls } from '../../provider-install.js'
 import { TestTransport } from '../../test-transport.js'
-import {
-  WorkspacePanel,
-  type WorkspacePanelHaptics,
-  type WorkspacePanelProviderTerminal,
-  type WorkspacePanelTerminal,
-} from './WorkspacePanel.js'
+import { WorkspacePanel } from './WorkspacePanel.js'
 
-const performHaptic = vi.fn<WorkspacePanelHaptics['perform']>()
-const prepareHaptics = vi.fn<WorkspacePanelHaptics['prepare']>()
-const haptics = {
-  enabled: () => true,
-  perform: performHaptic,
-  prepare: prepareHaptics,
-} satisfies WorkspacePanelHaptics
+const hapticMocks = vi.hoisted(() => ({
+  perform: vi.fn(),
+  prepare: vi.fn(),
+}))
+const performHaptic = hapticMocks.perform
+const prepareHaptics = hapticMocks.prepare
 
-const TestTerminal = (({ onClose }) => (
-  <button type="button" onClick={onClose}>
-    Exit terminal
-  </button>
-)) satisfies WorkspacePanelTerminal
+vi.mock('../../haptics.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../haptics.js')>()),
+  appHapticsEnabled: () => true,
+  performAppHaptic: hapticMocks.perform,
+  prepareAppHaptics: hapticMocks.prepare,
+}))
 
-const TestProviderTerminal = (({ installKey, ariaLabel, profile }) => (
-  <div
-    data-testid="provider-login-terminal"
-    data-install-key={installKey}
-    data-profile={profile}
-    aria-label={ariaLabel}
-  />
-)) satisfies WorkspacePanelProviderTerminal
+vi.mock('./WorkspaceTerminal.js', () => ({
+  WorkspaceTerminal: ({ onClose }: { onClose: () => void }) => (
+    <button type="button" onClick={onClose}>
+      Exit terminal
+    </button>
+  ),
+}))
+
+vi.mock('../InstallTerminal.js', () => ({
+  InstallTerminal: ({
+    installKey,
+    ariaLabel,
+    profile,
+  }: {
+    installKey: string
+    ariaLabel?: string | undefined
+    profile?: 'app' | 'workspace' | undefined
+  }) => (
+    <div
+      data-testid="provider-login-terminal"
+      data-install-key={installKey}
+      data-profile={profile}
+      aria-label={ariaLabel}
+    />
+  ),
+}))
 
 const idleTransport = new TestTransport()
 
@@ -49,6 +62,7 @@ class TestMediaQueryList extends EventTarget implements MediaQueryList {
 
 afterEach(() => {
   cleanup()
+  resetInstalls()
   performHaptic.mockClear()
   prepareHaptics.mockClear()
 })
@@ -100,7 +114,6 @@ describe('WorkspacePanel', () => {
         onClose={vi.fn()}
         onExpandedChange={vi.fn()}
         onWidthChange={onWidthChange}
-        haptics={haptics}
       />,
     )
 
@@ -114,15 +127,20 @@ describe('WorkspacePanel', () => {
 
     fireEvent.pointerEnter(handle)
     fireEvent.pointerDown(handle, { clientX: 500, pointerId: 7 })
+    expect(container.style.transition).toBe('none')
     fireEvent.pointerMove(window, { clientX: 420, pointerId: 7 })
 
-    expect(onWidthChange).toHaveBeenCalledWith(480)
+    expect(onWidthChange).not.toHaveBeenCalled()
     fireEvent.pointerMove(window, { clientX: 0, pointerId: 7 })
-    expect(onWidthChange).toHaveBeenLastCalledWith(540)
+    expect(onWidthChange).not.toHaveBeenCalled()
     expect(prepareHaptics).toHaveBeenCalled()
-    expect(performHaptic).toHaveBeenCalledWith('alignment')
 
     fireEvent.blur(window)
+    expect(onWidthChange).toHaveBeenCalledOnce()
+    expect(onWidthChange).toHaveBeenCalledWith(540)
+    expect(container.style.getPropertyValue('--workspace-panel-w')).toBe('540px')
+    expect(container.style.transition).toBe('')
+    expect(performHaptic).toHaveBeenCalledWith('alignment')
     const widthCalls = onWidthChange.mock.calls.length
     fireEvent.pointerMove(window, { clientX: 380, pointerId: 7 })
     expect(onWidthChange).toHaveBeenCalledTimes(widthCalls)
@@ -145,7 +163,6 @@ describe('WorkspacePanel', () => {
         onClose={onClose}
         onExpandedChange={vi.fn()}
         onWidthChange={vi.fn()}
-        terminalComponent={TestTerminal}
       />,
     )
 
@@ -169,10 +186,9 @@ describe('WorkspacePanel', () => {
         onClose={onClose}
         onExpandedChange={vi.fn()}
         onWidthChange={vi.fn()}
-        terminalComponent={TestTerminal}
       />,
     )
-    fireEvent.transitionEnd(requiredElement(document, '.workspace-panel', HTMLElement), {
+    fireEvent.transitionEnd(document.querySelector<HTMLElement>('.workspace-panel')!, {
       propertyName: 'transform',
     })
     expect(screen.queryByRole('tab', { name: 'Terminal' })).toBeNull()
@@ -194,7 +210,6 @@ describe('WorkspacePanel', () => {
         onClose={vi.fn()}
         onExpandedChange={onExpandedChange}
         onWidthChange={vi.fn()}
-        terminalComponent={TestTerminal}
       />,
     )
 
@@ -207,6 +222,16 @@ describe('WorkspacePanel', () => {
   })
 
   it('opens a provider login in its own workspace terminal tab', async () => {
+    let resolveInput!: () => void
+    const pendingInput = new Promise<Record<string, never>>((resolve) => {
+      resolveInput = () => resolve({})
+    })
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.launch') return { terminalId: 'claude-login-terminal' }
+      if (method === 'terminal.input') return pendingInput
+      throw new Error(`unexpected ${method}`)
+    })
+    await beginLogin(transport, { provider: 'claude-code' }, () => {})
     const onOpen = vi.fn()
     const onProviderLoginClose = vi.fn()
     render(
@@ -214,7 +239,7 @@ describe('WorkspacePanel', () => {
         open
         expanded
         width={400}
-        transport={idleTransport}
+        transport={transport}
         theme="dark"
         sideChatParentStatus="idle"
         sideChatStartOptions={{ approval: 'ask' }}
@@ -228,17 +253,34 @@ describe('WorkspacePanel', () => {
           title: 'Claude Code login',
           installKey: 'login:claude-code',
         }}
-        providerTerminalComponent={TestProviderTerminal}
         onProviderLoginClose={onProviderLoginClose}
       />,
     )
 
     expect(await screen.findByRole('tab', { name: 'Claude Code login' })).toBeTruthy()
-    const terminal = screen.getByTestId('provider-login-terminal')
+    const terminal = await screen.findByTestId('provider-login-terminal')
     expect(terminal.getAttribute('data-install-key')).toBe('login:claude-code')
     expect(terminal.getAttribute('data-profile')).toBe('workspace')
     expect(terminal.getAttribute('aria-label')).toBe('Claude Code login terminal')
     expect(onOpen).toHaveBeenCalledOnce()
+
+    const codeElement = screen.getByLabelText('Claude login code')
+    expect(codeElement).toBeInstanceOf(HTMLInputElement)
+    if (!(codeElement instanceof HTMLInputElement)) throw new Error('expected Claude login input')
+    const code = codeElement
+    expect(code.placeholder).toBe('Paste code here if prompted')
+    expect(code.autocomplete).toBe('one-time-code')
+    fireEvent.change(code, { target: { value: 'test-login-code' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Submit code' }))
+    await waitFor(() =>
+      expect(transport.requests).toContainEqual({
+        method: 'terminal.input',
+        params: { terminalId: 'claude-login-terminal', data: 'test-login-code\r' },
+      }),
+    )
+    fireEvent.change(code, { target: { value: 'newer-login-code' } })
+    await act(async () => resolveInput())
+    expect(code.value).toBe('newer-login-code')
 
     fireEvent.click(screen.getByRole('button', { name: 'Close Claude Code login' }))
     expect(onProviderLoginClose).toHaveBeenCalledWith(7)
@@ -262,7 +304,6 @@ describe('WorkspacePanel', () => {
         onClose={onClose}
         onExpandedChange={vi.fn()}
         onWidthChange={vi.fn()}
-        terminalComponent={TestTerminal}
       />,
     )
 
@@ -290,7 +331,6 @@ describe('WorkspacePanel', () => {
           onClose={vi.fn()}
           onExpandedChange={vi.fn()}
           onWidthChange={vi.fn()}
-          terminalComponent={TestTerminal}
         />,
       )
 

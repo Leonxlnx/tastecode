@@ -1,5 +1,4 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { propertiesWhen } from './properties-when.js'
 
 /**
  * The packaged app owns its core server. In development tools/scripts/dev.js
@@ -53,7 +52,7 @@ export class ServerSupervisor {
     this.#startedAt = Date.now()
     const child = spawnFn(this.#options.command, this.#options.args, {
       env: this.#options.env,
-      ...propertiesWhen(this.#options.cwd, (includedValue) => ({ cwd: includedValue })),
+      ...(this.#options.cwd ? { cwd: this.#options.cwd } : {}),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })

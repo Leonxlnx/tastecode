@@ -1,6 +1,5 @@
 import path from 'node:path'
 import type { Skill, SkillCapabilities, SkillDiscoveryError } from '@harness/contracts'
-import { propertiesWhen } from './properties-when.js'
 import type { ParsedSkillsListResponse } from './schemas.js'
 
 export const CODEX_SKILL_CAPABILITIES: SkillCapabilities = {
@@ -41,9 +40,11 @@ export function mapSkillList(
       return {
         id: skillPath,
         name: skill.name,
-        ...propertiesWhen(skill.interface?.displayName, (includedValue) => ({
-          displayName: includedValue,
-        })),
+        ...(skill.interface?.displayName
+          ? {
+              displayName: skill.interface?.displayName,
+            }
+          : {}),
         description: skill.description,
         source: { type: 'folder' as const, path: path.dirname(skillPath) },
         scope: skill.scope === 'repo' ? 'project' : skill.scope,

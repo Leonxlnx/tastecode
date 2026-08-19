@@ -1,7 +1,7 @@
 import type { DesignBrief } from './brief.js'
 import { parseBrandSystem, type BrandSystem } from './brand.js'
 import { generatePalette, paletteColorRecords } from './palette.js'
-import { type BoundaryValue, record } from './parse.js'
+import { record } from './parse.js'
 
 const BRAND_PROTOCOL = `Return the final brand system as JSON only, without Markdown fences:
 
@@ -39,7 +39,7 @@ ${JSON.stringify(brief, null, 2)}
 
 export function parseBrandPhaseOutput(text: string): BrandSystem {
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
-  const parsed: BoundaryValue = JSON.parse(fenced?.[1] ?? text)
+  const parsed: unknown = JSON.parse(fenced?.[1] ?? text)
   let value
   try {
     value = record(parsed, 'brand output')

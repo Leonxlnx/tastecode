@@ -79,7 +79,8 @@ export function runCustomHarness(
       if (settled) return
       settled = true
       clearTimeout(timer)
-      result instanceof Error ? reject(result) : resolve(result)
+      if (result instanceof Error) reject(result)
+      else resolve(result)
     }
     const timer = setTimeout(() => {
       killTree(child)

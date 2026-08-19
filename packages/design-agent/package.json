@@ -20,8 +20,5 @@
     "@types/node": "^26.1.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
-  },
-  "dependencies": {
-    "zod": "4.4.3"
   }
 }

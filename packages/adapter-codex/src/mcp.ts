@@ -8,7 +8,6 @@ import type {
   McpTool,
 } from '@harness/contracts'
 import type { JsonValue } from './generated/serde_json/JsonValue.js'
-import { propertiesWhen } from './properties-when.js'
 import {
   JsonObjectSchema,
   type McpServerStatusUpdatedNotification,
@@ -56,9 +55,9 @@ export function prepareMcpConfig(
       result[server.id] = {
         command: server.transport.command,
         enabled: true,
-        ...propertiesWhen(server.transport.args, (includedValue) => ({ args: includedValue })),
-        ...propertiesWhen(server.transport.cwd, (includedValue) => ({ cwd: includedValue })),
-        ...propertiesWhen(Object.keys(env).length, () => ({ env })),
+        ...(server.transport.args ? { args: server.transport.args } : {}),
+        ...(server.transport.cwd ? { cwd: server.transport.cwd } : {}),
+        ...(Object.keys(env).length ? { env } : {}),
       }
       continue
     }
@@ -81,10 +80,12 @@ export function prepareMcpConfig(
     result[server.id] = {
       url: server.transport.url,
       enabled: true,
-      ...propertiesWhen(Object.keys(httpHeaders).length, () => ({ http_headers: httpHeaders })),
-      ...propertiesWhen(Object.keys(envHttpHeaders).length, () => ({
-        env_http_headers: envHttpHeaders,
-      })),
+      ...(Object.keys(httpHeaders).length ? { http_headers: httpHeaders } : {}),
+      ...(Object.keys(envHttpHeaders).length
+        ? {
+            env_http_headers: envHttpHeaders,
+          }
+        : {}),
     }
   }
 
@@ -162,11 +163,13 @@ export function mapMcpServerStatus(
 
   return {
     id: status.name,
-    ...propertiesWhen(displayName, (displayName) => ({ displayName })),
-    ...propertiesWhen(status.serverInfo?.description, (includedValue) => ({
-      description: includedValue,
-    })),
-    ...propertiesWhen(status.serverInfo?.version, (includedValue) => ({ version: includedValue })),
+    ...(displayName ? { displayName } : {}),
+    ...(status.serverInfo?.description
+      ? {
+          description: status.serverInfo?.description,
+        }
+      : {}),
+    ...(status.serverInfo?.version ? { version: status.serverInfo?.version } : {}),
     scope: 'global',
     enabled: true,
     auth: auth(status.authStatus),
@@ -178,12 +181,14 @@ export function mapMcpServerStatus(
       return [
         {
           name: tool.name,
-          ...propertiesWhen(tool.title, (includedValue) => ({ title: includedValue })),
-          ...propertiesWhen(tool.description !== undefined, () => ({
-            description: tool.description,
-          })),
+          ...(tool.title ? { title: tool.title } : {}),
+          ...(tool.description !== undefined
+            ? {
+                description: tool.description,
+              }
+            : {}),
           inputSchema,
-          ...propertiesWhen(outputSchema, (outputSchema) => ({ outputSchema })),
+          ...(outputSchema ? { outputSchema } : {}),
         },
       ]
     }),
@@ -192,24 +197,30 @@ export function mapMcpServerStatus(
       return {
         uri: resource.uri,
         name: resource.name,
-        ...propertiesWhen(resource.title, (includedValue) => ({ title: includedValue })),
-        ...propertiesWhen(resource.description !== undefined, () => ({
-          description: resource.description,
-        })),
-        ...propertiesWhen(resource.mimeType, (includedValue) => ({ mimeType: includedValue })),
-        ...propertiesWhen(size !== undefined && Number.isSafeInteger(size) && size >= 0, () => ({
-          size,
-        })),
+        ...(resource.title ? { title: resource.title } : {}),
+        ...(resource.description !== undefined
+          ? {
+              description: resource.description,
+            }
+          : {}),
+        ...(resource.mimeType ? { mimeType: resource.mimeType } : {}),
+        ...(size !== undefined && Number.isSafeInteger(size) && size >= 0
+          ? {
+              size,
+            }
+          : {}),
       }
     }),
     resourceTemplates: status.resourceTemplates.map((template) => ({
       uriTemplate: template.uriTemplate,
       name: template.name,
-      ...propertiesWhen(template.title, (includedValue) => ({ title: includedValue })),
-      ...propertiesWhen(template.description !== undefined, () => ({
-        description: template.description,
-      })),
-      ...propertiesWhen(template.mimeType, (includedValue) => ({ mimeType: includedValue })),
+      ...(template.title ? { title: template.title } : {}),
+      ...(template.description !== undefined
+        ? {
+            description: template.description,
+          }
+        : {}),
+      ...(template.mimeType ? { mimeType: template.mimeType } : {}),
     })),
   }
 }

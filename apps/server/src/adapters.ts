@@ -38,23 +38,6 @@ import {
   resolveCustomHarnessLaunch,
   runCustomHarness,
 } from './custom-harness-launch.js'
-import { propertiesWhen } from './properties-when.js'
-
-export type ProviderAdapterFactories = {
-  grok: (...args: ConstructorParameters<typeof GrokAdapter>) => GrokAdapter
-  acp: (...args: ConstructorParameters<typeof AcpAdapter>) => AcpAdapter
-  antigravity: (...args: ConstructorParameters<typeof AntigravityAdapter>) => AntigravityAdapter
-  claude: (...args: ConstructorParameters<typeof ClaudeCodeAdapter>) => ClaudeCodeAdapter
-  openCode: (...args: ConstructorParameters<typeof OpenCodeAdapter>) => OpenCodeAdapter
-}
-
-const REAL_PROVIDER_ADAPTER_FACTORIES: ProviderAdapterFactories = {
-  grok: (...args) => new GrokAdapter(...args),
-  acp: (...args) => new AcpAdapter(...args),
-  antigravity: (...args) => new AntigravityAdapter(...args),
-  claude: (...args) => new ClaudeCodeAdapter(...args),
-  openCode: (...args) => new OpenCodeAdapter(...args),
-}
 
 /**
  * One shape every engine is driven through.
@@ -122,9 +105,11 @@ export function apiRuntime(
         transport,
         secrets: [apiKey],
         ...workspaceTools,
-        ...propertiesWhen(options.instructions, (includedValue) => ({
-          instructions: includedValue,
-        })),
+        ...(options.instructions
+          ? {
+              instructions: options.instructions,
+            }
+          : {}),
       })
       session.on('log', onLog)
       const thread = session.startThread(workspacePath, connection.id)
@@ -134,9 +119,11 @@ export function apiRuntime(
       const options = {
         apiKey,
         baseUrl: connection.baseUrl,
-        ...propertiesWhen(connection.defaultModel, (includedValue) => ({
-          defaultModel: includedValue,
-        })),
+        ...(connection.defaultModel
+          ? {
+              defaultModel: connection.defaultModel,
+            }
+          : {}),
       }
       if (connection.transport === 'openai-responses') return listOpenAiModels(options)
       if (connection.transport === 'anthropic-messages') return listAnthropicModels(options)
@@ -215,24 +202,22 @@ export function providerRuntime(
   provider: ProviderId,
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined = () => undefined,
-  adapterFactories: Partial<ProviderAdapterFactories> = {},
 ): ProviderRuntime {
-  const factories = { ...REAL_PROVIDER_ADAPTER_FACTORIES, ...adapterFactories }
   switch (provider) {
     case 'codex':
       return codexRuntime(onLog, resolveHarness)
     case 'claude-code':
-      return claudeRuntime(onLog, resolveHarness, factories)
+      return claudeRuntime(onLog, resolveHarness)
     case 'acp':
       return acpRuntime(onLog, resolveHarness)
     case 'cursor':
       return cursorRuntime(onLog, resolveHarness)
     case 'opencode':
-      return openCodeRuntime(onLog, resolveHarness, factories)
+      return openCodeRuntime(onLog, resolveHarness)
     case 'antigravity':
-      return antigravityRuntime(onLog, resolveHarness, factories)
+      return antigravityRuntime(onLog, resolveHarness)
     case 'grok':
-      return grokRuntime(onLog, resolveHarness, factories)
+      return grokRuntime(onLog, resolveHarness)
     case 'pi':
       return piRuntime(onLog, resolveHarness)
     default:
@@ -330,7 +315,7 @@ export async function verifyCustomHarness(
           ? `${harness.displayName} launches, with a compatibility warning`
           : `${harness.displayName} is compatible`,
       checkedAt,
-      ...propertiesWhen(resolvedCommand, (resolvedCommand) => ({ resolvedCommand })),
+      ...(resolvedCommand ? { resolvedCommand } : {}),
       checks,
     }
   } catch (cause) {
@@ -344,7 +329,7 @@ export async function verifyCustomHarness(
       status: 'error',
       summary: `${harness.displayName} did not pass its protocol check`,
       checkedAt,
-      ...propertiesWhen(resolvedCommand, (resolvedCommand) => ({ resolvedCommand })),
+      ...(resolvedCommand ? { resolvedCommand } : {}),
       checks,
     }
   }
@@ -514,10 +499,9 @@ async function customHarnessOperation<T>(
 function grokRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined,
-  factories: ProviderAdapterFactories,
 ): ProviderRuntime {
   const acpAdapterFor = (harness: CustomHarness | undefined, options: StartOptions) =>
-    factories.acp('grok', {
+    new AcpAdapter('grok', {
       name: harness?.displayName ?? 'Grok',
       command: grokCommand(),
       args: [
@@ -528,9 +512,7 @@ function grokRuntime(
       ],
       provider: 'grok',
       mcpServers: prepareAcpMcpServers(options.mcpServers ?? [], options.mcpCredentials ?? {}),
-      ...propertiesWhen(harness, (includedValue) => ({
-        spawn: customHarnessSpawn(includedValue),
-      })),
+      ...(harness ? { spawn: customHarnessSpawn(harness) } : {}),
     })
 
   const printSessionFor = (adapter: GrokAdapter): AgentSession => ({
@@ -568,7 +550,7 @@ function grokRuntime(
           throw error
         }
       }
-      const adapter = factories.grok(harness ? { spawn: customHarnessSpawn(harness) } : {})
+      const adapter = new GrokAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
       adapter.on('log', onLog)
       const thread = await adapter.startThread(workspacePath, {
         model: options.model,
@@ -606,7 +588,7 @@ function grokRuntime(
           'This Grok chat cannot resume because TasteCode restarted before Grok returned a native session id. Start a new Grok chat; the local history of this chat is still available.',
         )
       }
-      const adapter = factories.grok(harness ? { spawn: customHarnessSpawn(harness) } : {})
+      const adapter = new GrokAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
       adapter.on('log', onLog)
       const thread = await adapter.resumeThread(
         threadId,
@@ -623,7 +605,7 @@ function grokRuntime(
     },
     async listModels(agent) {
       const harness = harnessFor('grok', agent, resolveHarness)
-      return factories.grok(harness ? { spawn: customHarnessSpawn(harness) } : {}).listModels()
+      return new GrokAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {}).listModels()
     },
   }
 }
@@ -631,12 +613,11 @@ function grokRuntime(
 function antigravityRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined,
-  factories: ProviderAdapterFactories,
 ): ProviderRuntime {
   return {
     async start(workspacePath, options) {
       const harness = harnessFor('antigravity', options.agent, resolveHarness)
-      const adapter = factories.antigravity(harness ? { spawn: customHarnessSpawn(harness) } : {})
+      const adapter = new AntigravityAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
       adapter.on('log', onLog)
       const thread = await adapter.startThread(workspacePath, {
         model: options.model,
@@ -661,9 +642,9 @@ function antigravityRuntime(
     },
     async listModels(agent) {
       const harness = harnessFor('antigravity', agent, resolveHarness)
-      return factories
-        .antigravity(harness ? { spawn: customHarnessSpawn(harness) } : {})
-        .listModels()
+      return new AntigravityAdapter(
+        harness ? { spawn: customHarnessSpawn(harness) } : {},
+      ).listModels()
     },
   }
 }
@@ -680,13 +661,15 @@ function cursorRuntime(
       )
       adapter.on('log', onLog)
       const thread = await adapter.startThread(workspacePath, {
-        ...propertiesWhen(options.model, (includedValue) => ({ model: includedValue })),
-        ...propertiesWhen(options.effort, (includedValue) => ({ effort: includedValue })),
-        ...propertiesWhen(options.serviceTier, (includedValue) => ({ serviceTier: includedValue })),
-        ...propertiesWhen(options.approval, (includedValue) => ({ approval: includedValue })),
-        ...propertiesWhen(options.instructions, (includedValue) => ({
-          instructions: includedValue,
-        })),
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.effort ? { effort: options.effort } : {}),
+        ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
+        ...(options.approval ? { approval: options.approval } : {}),
+        ...(options.instructions
+          ? {
+              instructions: options.instructions,
+            }
+          : {}),
       })
       return { thread, session: adapter }
     },
@@ -697,13 +680,15 @@ function cursorRuntime(
       )
       adapter.on('log', onLog)
       const thread = await adapter.resumeThread(threadId, workspacePath, {
-        ...propertiesWhen(options.model, (includedValue) => ({ model: includedValue })),
-        ...propertiesWhen(options.effort, (includedValue) => ({ effort: includedValue })),
-        ...propertiesWhen(options.serviceTier, (includedValue) => ({ serviceTier: includedValue })),
-        ...propertiesWhen(options.approval, (includedValue) => ({ approval: includedValue })),
-        ...propertiesWhen(options.instructions, (includedValue) => ({
-          instructions: includedValue,
-        })),
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.effort ? { effort: options.effort } : {}),
+        ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
+        ...(options.approval ? { approval: options.approval } : {}),
+        ...(options.instructions
+          ? {
+              instructions: options.instructions,
+            }
+          : {}),
       })
       return { thread, session: adapter }
     },
@@ -719,19 +704,22 @@ function cursorRuntime(
 function openCodeRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined,
-  factories: ProviderAdapterFactories,
 ): ProviderRuntime {
   return {
     async start(workspacePath, options) {
       const harness = harnessFor('opencode', options.agent, resolveHarness)
-      const adapter = factories.openCode({
-        ...propertiesWhen(options.mcpServers, (includedValue) => ({ mcpServers: includedValue })),
-        ...propertiesWhen(options.mcpCredentials, (includedValue) => ({
-          mcpCredentials: includedValue,
-        })),
-        ...propertiesWhen(harness, (includedValue) => ({
-          spawn: customHarnessSpawn(includedValue),
-        })),
+      const adapter = new OpenCodeAdapter({
+        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+        ...(options.mcpCredentials
+          ? {
+              mcpCredentials: options.mcpCredentials,
+            }
+          : {}),
+        ...(harness
+          ? {
+              spawn: customHarnessSpawn(harness),
+            }
+          : {}),
       })
       adapter.on('log', onLog)
       try {
@@ -741,12 +729,14 @@ function openCodeRuntime(
           await adapter.start()
         }
         const start = adapter.startThread(workspacePath, {
-          ...propertiesWhen(options.model, (includedValue) => ({ model: includedValue })),
-          ...propertiesWhen(options.effort, (includedValue) => ({ effort: includedValue })),
-          ...propertiesWhen(options.approval, (includedValue) => ({ approval: includedValue })),
-          ...propertiesWhen(options.instructions, (includedValue) => ({
-            instructions: includedValue,
-          })),
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.effort ? { effort: options.effort } : {}),
+          ...(options.approval ? { approval: options.approval } : {}),
+          ...(options.instructions
+            ? {
+                instructions: options.instructions,
+              }
+            : {}),
         })
         const thread = harness
           ? await customHarnessOperation(harness, 'create a session', start)
@@ -759,14 +749,18 @@ function openCodeRuntime(
     },
     async resume(threadId, workspacePath, options) {
       const harness = harnessFor('opencode', options.agent, resolveHarness)
-      const adapter = factories.openCode({
-        ...propertiesWhen(options.mcpServers, (includedValue) => ({ mcpServers: includedValue })),
-        ...propertiesWhen(options.mcpCredentials, (includedValue) => ({
-          mcpCredentials: includedValue,
-        })),
-        ...propertiesWhen(harness, (includedValue) => ({
-          spawn: customHarnessSpawn(includedValue),
-        })),
+      const adapter = new OpenCodeAdapter({
+        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+        ...(options.mcpCredentials
+          ? {
+              mcpCredentials: options.mcpCredentials,
+            }
+          : {}),
+        ...(harness
+          ? {
+              spawn: customHarnessSpawn(harness),
+            }
+          : {}),
       })
       adapter.on('log', onLog)
       try {
@@ -776,12 +770,14 @@ function openCodeRuntime(
           await adapter.start()
         }
         const resume = adapter.resumeThread(threadId, workspacePath, {
-          ...propertiesWhen(options.model, (includedValue) => ({ model: includedValue })),
-          ...propertiesWhen(options.effort, (includedValue) => ({ effort: includedValue })),
-          ...propertiesWhen(options.approval, (includedValue) => ({ approval: includedValue })),
-          ...propertiesWhen(options.instructions, (includedValue) => ({
-            instructions: includedValue,
-          })),
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.effort ? { effort: options.effort } : {}),
+          ...(options.approval ? { approval: options.approval } : {}),
+          ...(options.instructions
+            ? {
+                instructions: options.instructions,
+              }
+            : {}),
         })
         const thread = harness
           ? await customHarnessOperation(harness, 'resume its session', resume)
@@ -793,7 +789,7 @@ function openCodeRuntime(
       }
     },
     async listModels(agent) {
-      return listOpenCodeModels(harnessFor('opencode', agent, resolveHarness), factories.openCode)
+      return listOpenCodeModels(harnessFor('opencode', agent, resolveHarness))
     },
   }
 }
@@ -805,25 +801,14 @@ function openCodeRuntime(
  * held ~170 of these processes alive at the same time — the server, not the
  * client, is where that has to be impossible.
  */
-const openCodeModelListings = new WeakMap<
-  ProviderAdapterFactories['openCode'],
-  Map<string, Promise<Model[]>>
->()
+const openCodeModelListings = new Map<string, Promise<Model[]>>()
 
-function listOpenCodeModels(
-  harness: CustomHarness | undefined,
-  createAdapter: ProviderAdapterFactories['openCode'],
-): Promise<Model[]> {
-  let listings = openCodeModelListings.get(createAdapter)
-  if (!listings) {
-    listings = new Map()
-    openCodeModelListings.set(createAdapter, listings)
-  }
+function listOpenCodeModels(harness?: CustomHarness): Promise<Model[]> {
   const key = harness?.id ?? 'default'
-  const existing = listings.get(key)
+  const existing = openCodeModelListings.get(key)
   if (existing) return existing
   const listing = (async () => {
-    const adapter = createAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
+    const adapter = new OpenCodeAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
     try {
       const listing = adapter.listModels()
       return harness ? await customHarnessOperation(harness, 'list models', listing) : await listing
@@ -831,9 +816,9 @@ function listOpenCodeModels(
       adapter.dispose()
     }
   })().finally(() => {
-    listings.delete(key)
+    openCodeModelListings.delete(key)
   })
-  listings.set(key, listing)
+  openCodeModelListings.set(key, listing)
   return listing
 }
 
@@ -845,13 +830,17 @@ function codexRuntime(
     async start(workspacePath, options) {
       const harness = harnessFor('codex', options.agent, resolveHarness)
       const adapter = new CodexAdapter({
-        ...propertiesWhen(options.mcpServers, (includedValue) => ({ mcpServers: includedValue })),
-        ...propertiesWhen(options.mcpCredentials, (includedValue) => ({
-          mcpCredentials: includedValue,
-        })),
-        ...propertiesWhen(harness, (includedValue) => ({
-          spawn: customHarnessSpawn(includedValue),
-        })),
+        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+        ...(options.mcpCredentials
+          ? {
+              mcpCredentials: options.mcpCredentials,
+            }
+          : {}),
+        ...(harness
+          ? {
+              spawn: customHarnessSpawn(harness),
+            }
+          : {}),
       })
       adapter.on('log', onLog)
       try {
@@ -871,13 +860,17 @@ function codexRuntime(
     async resume(threadId, workspacePath, options) {
       const harness = harnessFor('codex', options.agent, resolveHarness)
       const adapter = new CodexAdapter({
-        ...propertiesWhen(options.mcpServers, (includedValue) => ({ mcpServers: includedValue })),
-        ...propertiesWhen(options.mcpCredentials, (includedValue) => ({
-          mcpCredentials: includedValue,
-        })),
-        ...propertiesWhen(harness, (includedValue) => ({
-          spawn: customHarnessSpawn(includedValue),
-        })),
+        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+        ...(options.mcpCredentials
+          ? {
+              mcpCredentials: options.mcpCredentials,
+            }
+          : {}),
+        ...(harness
+          ? {
+              spawn: customHarnessSpawn(harness),
+            }
+          : {}),
       })
       adapter.on('log', onLog)
       try {
@@ -887,10 +880,12 @@ function codexRuntime(
           await adapter.start()
         }
         const thread = await adapter.resumeThread(threadId, workspacePath, {
-          ...propertiesWhen(options.instructions, (includedValue) => ({
-            instructions: includedValue,
-          })),
-          ...propertiesWhen(options.approval, (includedValue) => ({ approval: includedValue })),
+          ...(options.instructions
+            ? {
+                instructions: options.instructions,
+              }
+            : {}),
+          ...(options.approval ? { approval: options.approval } : {}),
         })
         return { thread, session: adapter }
       } catch (error) {
@@ -1001,14 +996,13 @@ function acpRuntime(
 function claudeRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined,
-  factories: ProviderAdapterFactories,
 ): ProviderRuntime {
   const adapterFor = (agent: string | undefined, workspacePath?: string) => {
     const harness = harnessFor('claude-code', agent, resolveHarness)
     const launch = harness
       ? resolveCustomHarnessLaunch(harness, workspacePath ?? process.cwd())
       : undefined
-    const adapter = factories.claude(
+    const adapter = new ClaudeCodeAdapter(
       harness
         ? {
             spawn: customHarnessSpawn(harness, workspacePath),
@@ -1078,7 +1072,7 @@ function piRuntime(
       args: [],
       displayName: harness.displayName,
       spawn: customHarnessSpawn(harness, workspacePath),
-      ...propertiesWhen(workspacePath, (workspacePath) => ({ workspacePath })),
+      ...(workspacePath ? { workspacePath } : {}),
     })
     adapter.on('log', onLog)
     return adapter

@@ -11,13 +11,7 @@ import type {
   Thread,
 } from '@harness/contracts'
 import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk'
-import {
-  JsonRpcValueSchema,
-  killTree,
-  spawnCli,
-  type JsonRpcInput,
-  type JsonRpcValue,
-} from '@harness/proc'
+import { JsonRpcValueSchema, killTree, spawnCli, type JsonRpcValue } from '@harness/proc'
 import { z } from 'zod'
 import {
   OpenCodeEventMapper,
@@ -25,7 +19,6 @@ import {
   type OpenCodeV2Event,
   type OpenCodeWireEvent,
 } from './events.js'
-import { propertiesWhen } from './properties-when.js'
 
 export const OPENCODE_CAPABILITIES: Capabilities = {
   steer: false,
@@ -77,7 +70,7 @@ const ReasoningModelSchema = z.object({
 /** OpenCode owns variant names and can add custom ones in project config.
  *  Accept both catalog shapes it uses for variants so the result remains
  *  model-specific instead of guessing from the underlying provider name. */
-export function openCodeReasoningEfforts(model: JsonRpcInput): string[] {
+export function openCodeReasoningEfforts(model: unknown): string[] {
   const parsed = ReasoningModelSchema.safeParse(model)
   if (!parsed.success) return []
   const value = parsed.data.variants ?? parsed.data.options?.variants
@@ -103,7 +96,7 @@ export function openCodeMcpConfig(servers: McpServerConfig[], credentials: Recor
   const resolve = (
     value: { source: 'literal'; value: string } | { source: 'credential'; credentialRef: string },
   ) => (value.source === 'literal' ? value.value : (credentials[value.credentialRef] ?? ''))
-  const mcp = z.record(z.string(), JsonRpcValueSchema).parse({})
+  const mcp: Record<string, JsonRpcValue> = {}
   for (const server of servers) {
     if (!server.enabled) {
       mcp[server.id] = { type: 'local', command: ['true'], enabled: false }
@@ -113,22 +106,32 @@ export function openCodeMcpConfig(servers: McpServerConfig[], credentials: Recor
       mcp[server.id] = {
         type: 'local',
         command: [server.transport.command, ...(server.transport.args ?? [])],
-        ...propertiesWhen(server.transport.environment, (includedValue) => ({
-          environment: Object.fromEntries(
-            Object.entries(includedValue).map(([key, value]) => [key, resolve(value)]),
-          ),
-        })),
+        ...(server.transport.environment
+          ? {
+              environment: Object.fromEntries(
+                Object.entries(server.transport.environment).map(([key, value]) => [
+                  key,
+                  resolve(value),
+                ]),
+              ),
+            }
+          : {}),
         enabled: true,
       }
     } else {
       mcp[server.id] = {
         type: 'remote',
         url: server.transport.url,
-        ...propertiesWhen(server.transport.headers, (includedValue) => ({
-          headers: Object.fromEntries(
-            Object.entries(includedValue).map(([key, value]) => [key, resolve(value)]),
-          ),
-        })),
+        ...(server.transport.headers
+          ? {
+              headers: Object.fromEntries(
+                Object.entries(server.transport.headers).map(([key, value]) => [
+                  key,
+                  resolve(value),
+                ]),
+              ),
+            }
+          : {}),
         enabled: true,
       }
     }
@@ -264,7 +267,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
           body: JSON.stringify({
             title: 'TasteCode',
             location: { directory: workspacePath },
-            ...propertiesWhen(model, (model) => ({ model })),
+            ...(model ? { model } : {}),
           }),
         },
         SessionEnvelopeSchema,
@@ -373,14 +376,12 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       this.#effort && this.#effort !== OPENCODE_DEFAULT_VARIANT ? this.#effort : undefined
     void this.#client!.session.promptAsync({
       path: { id: this.#sessionId },
-      // SAFETY: The captured OpenCode v1 endpoint accepts this text-only prompt body;
-      // the generated SDK models the same runtime endpoint with an impossible `never` body.
       body: {
         parts: [{ type: 'text', text }],
-        ...propertiesWhen(model, (model) => ({ model })),
-        ...propertiesWhen(variant, (variant) => ({ variant })),
-        ...propertiesWhen(this.#instructions, (includedValue) => ({ system: includedValue })),
-      } as never,
+        ...(model ? { model } : {}),
+        ...(variant ? { variant } : {}),
+        ...(this.#instructions ? { system: this.#instructions } : {}),
+      },
       throwOnError: true,
     }).catch(() => this.#failTurn(turnId))
     return turnId
@@ -478,9 +479,11 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
             displayName: `${provider.name} · ${model.name}`,
             isDefault: result.default[provider.id] === model.id,
             reasoningEfforts,
-            ...propertiesWhen(reasoningEfforts.length > 0, () => ({
-              defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT,
-            })),
+            ...(reasoningEfforts.length > 0
+              ? {
+                  defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT,
+                }
+              : {}),
             serviceTiers: [],
           }
         }),
@@ -511,10 +514,12 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   #newClient(directory?: string): OpencodeClient {
     return createOpencodeClient({
       baseUrl: this.#baseUrl!,
-      ...propertiesWhen(directory, (directory) => ({ directory })),
-      ...propertiesWhen(this.#authorization, (includedValue) => ({
-        headers: { authorization: includedValue },
-      })),
+      ...(directory ? { directory } : {}),
+      ...(this.#authorization
+        ? {
+            headers: { authorization: this.#authorization },
+          }
+        : {}),
     })
   }
 
@@ -553,14 +558,14 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     }
   }
 
-  async #v2Request(path: string, init: RequestInit = {}): Promise<JsonRpcValue | undefined> {
+  async #v2Request(path: string, init: RequestInit = {}): Promise<unknown> {
     const headers = new Headers(init.headers)
     if (this.#authorization) headers.set('authorization', this.#authorization)
     if (init.body !== undefined) headers.set('content-type', 'application/json')
     const response = await fetch(new URL(path, this.#baseUrl), { ...init, headers })
     if (!response.ok) throw new Error(`OpenCode v2 request failed (${response.status})`)
     if (response.status === 204) return undefined
-    return JsonRpcValueSchema.parse(await response.json())
+    return response.json()
   }
 
   #v2RequestParsed<Result>(
@@ -650,9 +655,11 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
           displayName: `${providerNames.get(model.providerID)} · ${model.name}`,
           isDefault: defaultModel?.providerID === model.providerID && defaultModel.id === model.id,
           reasoningEfforts,
-          ...propertiesWhen(reasoningEfforts.length > 0, () => ({
-            defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT,
-          })),
+          ...(reasoningEfforts.length > 0
+            ? {
+                defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT,
+              }
+            : {}),
           serviceTiers: [],
         }
       })
@@ -840,7 +847,7 @@ function openCodeV2Model(
   return {
     id: model.modelID,
     providerID: model.providerID,
-    ...propertiesWhen(variant, (includedVariant) => ({ variant: includedVariant })),
+    ...(variant ? { variant: variant } : {}),
   }
 }
 
@@ -862,9 +869,11 @@ async function launchOpenCodeServer(
       env: {
         OPENCODE_SERVER_USERNAME: username,
         OPENCODE_SERVER_PASSWORD: password,
-        ...propertiesWhen(Object.keys(config).length > 0, () => ({
-          OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
-        })),
+        ...(Object.keys(config).length > 0
+          ? {
+              OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
+            }
+          : {}),
       },
     })
     let output = ''

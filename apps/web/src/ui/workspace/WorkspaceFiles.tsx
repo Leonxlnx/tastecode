@@ -14,7 +14,6 @@ import {
 import type { Transport } from '../../transport.js'
 import { FileTypeIcon } from '../FileTypeIcon.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
-import { propertiesWhen } from '../../properties-when.js'
 
 type Entry = ResultOf<'workspace.listDirectory'>['entries'][number]
 type FileContents = ResultOf<'workspace.readFile'>
@@ -39,7 +38,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
   const context = useCallback(
     () => ({
       projectPath: props.projectPath!,
-      ...propertiesWhen(props.threadId, (includedValue) => ({ threadId: includedValue })),
+      ...(props.threadId ? { threadId: props.threadId } : {}),
     }),
     [props.projectPath, props.threadId],
   )
@@ -52,7 +51,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
       try {
         const result = await props.transport.request('workspace.listDirectory', {
           ...context(),
-          ...propertiesWhen(directory, (directory) => ({ directory })),
+          ...(directory ? { directory } : {}),
         })
         if (directoryGeneration.current === mine) {
           setDirectories((current) => new Map(current).set(directory, result.entries))
@@ -62,12 +61,13 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
           setError(cause instanceof Error ? cause.message : String(cause))
         }
       } finally {
-        if (directoryGeneration.current !== mine) return
-        setLoadingDirectories((current) => {
-          const next = new Set(current)
-          next.delete(directory)
-          return next
-        })
+        if (directoryGeneration.current === mine) {
+          setLoadingDirectories((current) => {
+            const next = new Set(current)
+            next.delete(directory)
+            return next
+          })
+        }
       }
     },
     [context, props.projectPath, props.transport],
@@ -94,7 +94,8 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
     const opening = !expanded.has(entry.path)
     setExpanded((current) => {
       const next = new Set(current)
-      opening ? next.add(entry.path) : next.delete(entry.path)
+      if (opening) next.add(entry.path)
+      else next.delete(entry.path)
       return next
     })
     if (opening && !directories.has(entry.path)) void loadDirectory(entry.path)

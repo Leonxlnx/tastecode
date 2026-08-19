@@ -72,6 +72,7 @@ function safeFileName(name: string): string {
   const leaf = name.replaceAll('\\', '/').split('/').pop() ?? ''
   const cleaned = leaf
     .normalize('NFC')
+    // oxlint-disable-next-line no-control-regex -- File names must reject control bytes.
     .replace(/[\u0000-\u001f\u007f<>:"/\\|?*]/g, '-')
     .replace(/^\.+/, '')
     .trim()

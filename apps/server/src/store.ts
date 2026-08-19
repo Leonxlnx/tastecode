@@ -1,13 +1,14 @@
 import { createCipheriv, randomBytes, randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
-import { DatabaseSync, type SQLOutputValue, type StatementSync } from 'node:sqlite'
+import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite'
 import {
   BackgroundModelPreferenceSchema,
   DiffDecisionSchema,
   DomainEventSchema,
-  JsonValueSchema,
   ProviderIdSchema,
+  SidebarSettingsSchema,
+  ThreadLifecycleSchema,
 } from '@harness/contracts'
 import type {
   BackgroundModelPreference,
@@ -22,7 +23,6 @@ import type {
 } from '@harness/contracts'
 import { z } from 'zod'
 import type { TurnOptions } from './adapters.js'
-import { propertiesWhen } from './properties-when.js'
 
 const BACKGROUND_MODEL_SETTING = 'background-model'
 
@@ -138,8 +138,6 @@ type SearchSnapshot = {
 export type UsageSummary = { session: UsageTotal; today: UsageTotal }
 
 type UsageSample = { total: UsageTotal; cumulative: boolean }
-
-type SqliteRow = Record<string, SQLOutputValue>
 
 type InterruptedThreadState = {
   openTurns: Set<string>
@@ -345,132 +343,121 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'provider_session_id', definition: 'TEXT' },
 ]
 
-const SqliteIntegerSchema = z.union([z.number(), z.bigint()]).transform(Number)
-const SqliteColumnRowSchema = z.object({ name: z.string() })
-const SqliteIdentifierRowSchema = z.object({ id: z.string() })
-const SqliteStringValueRowSchema = z.object({ value: z.string() })
-const SqliteProjectRowSchema = z.object({
-  path: z.string(),
-  name: z.string(),
-  pinned: SqliteIntegerSchema,
-  created_at: SqliteIntegerSchema,
-})
-const SqliteWorktreeRowSchema = z.object({
-  id: z.string(),
-  project_path: z.string(),
-  worktree_path: z.string(),
-  worktree_branch: z.string(),
-})
-const SqliteThreadRowSchema = z.object({
-  id: z.string(),
-  project_path: z.string(),
-  provider: ProviderIdSchema,
-  agent: z.string().nullable(),
-  provider_session_id: z.string().nullable(),
-  title: z.string(),
-  pinned: SqliteIntegerSchema,
-  created_at: SqliteIntegerSchema,
-  closed_at: SqliteIntegerSchema.nullable(),
-  worktree_path: z.string().nullable(),
-  worktree_branch: z.string().nullable(),
-  lifecycle_state: z.enum(['active', 'settled', 'snoozed']),
-  lifecycle_at: SqliteIntegerSchema.nullable(),
-  lifecycle_reason: z.enum(['manual', 'inactivity', 'change_request']).nullable(),
-  wake_at: SqliteIntegerSchema.nullable(),
-  keep_active: SqliteIntegerSchema,
-  woke_at: SqliteIntegerSchema.nullable(),
-  unread: SqliteIntegerSchema,
-  last_active_at: SqliteIntegerSchema,
-  ephemeral: SqliteIntegerSchema,
-  parent_thread_id: z.string().nullable(),
-})
-const SqliteSidebarSettingsRowSchema = z.object({
-  mode: z.enum(['classic', 'inbox']),
-  auto_settle_days: SqliteIntegerSchema.nullable(),
-})
+type SqliteInteger = number | bigint
+type ColumnRow = { name: string }
+type IdentifierRow = { id: string }
+type StringValueRow = { value: string }
+type ProjectRow = { path: string; name: string; pinned: SqliteInteger; created_at: SqliteInteger }
+type WorktreeRow = {
+  id: string
+  project_path: string
+  worktree_path: string
+  worktree_branch: string
+}
+type ThreadRow = {
+  id: string
+  project_path: string
+  provider: string
+  agent: string | null
+  provider_session_id: string | null
+  title: string
+  pinned: SqliteInteger
+  created_at: SqliteInteger
+  closed_at: SqliteInteger | null
+  worktree_path: string | null
+  worktree_branch: string | null
+  lifecycle_state: string
+  lifecycle_at: SqliteInteger | null
+  lifecycle_reason: string | null
+  wake_at: SqliteInteger | null
+  keep_active: SqliteInteger
+  woke_at: SqliteInteger | null
+  unread: SqliteInteger
+  last_active_at: SqliteInteger
+  ephemeral: SqliteInteger
+  parent_thread_id: string | null
+}
+type SidebarSettingsRow = { mode: string; auto_settle_days: SqliteInteger | null }
 const StoredTurnOptionsSchema = z.object({
   model: z.string().optional(),
   serviceTier: z.string().optional(),
   effort: z.string().optional(),
 })
-const SqliteQueuedTurnPayloadSchema = z.object({
+const StoredQueuedTurnPayloadSchema = z.object({
   text: z.string(),
   attachments: z.array(z.string()),
   options: StoredTurnOptionsSchema,
 })
-const SqliteQueuedTurnRowSchema = z.object({
-  thread_id: z.string(),
-  queue_id: z.string(),
-  client_submission_id: z.string().nullable(),
-  intent: z.enum(['normal', 'steer']),
-  payload: z.string(),
-  created_at: SqliteIntegerSchema,
-})
-const SqlitePositionRowSchema = z.object({ position: SqliteIntegerSchema })
-const SqliteAdjacentQueuedTurnRowSchema = z.object({
-  queue_id: z.string(),
-  position: SqliteIntegerSchema,
-})
-const SqliteQueuedTurnClaimRowSchema = z.object({
-  thread_id: z.string(),
-  queue_id: z.string(),
-  intent: z.enum(['normal', 'steer']),
-})
-const SqliteDiffDecisionRowSchema = z.object({ decision: DiffDecisionSchema })
-const SqliteInterruptedThreadRowSchema = z.object({
-  thread_id: z.string(),
-  payload: z.string(),
-  resumable: SqliteIntegerSchema,
-})
-const SqliteHistoryRowSchema = z.object({ seq: SqliteIntegerSchema, payload: z.string() })
-const SqlitePayloadRowSchema = z.object({ payload: z.string() })
-const SqliteSearchSnapshotRowSchema = z.object({
-  fts_query: z.string(),
-  project_path: z.string().nullable(),
-  provider: ProviderIdSchema.nullable(),
-})
-const SqliteSearchResultRowSchema = z.object({
-  project_path: z.string(),
-  project_name: z.string(),
-  thread_id: z.string(),
-  thread_title: z.string(),
-  provider: ProviderIdSchema,
-  event_seq: SqliteIntegerSchema,
-  turn_id: z.string(),
-  created_at: SqliteIntegerSchema,
-  position: SqliteIntegerSchema,
-  snippet: z.string(),
-})
-const SqliteEventRowSchema = z.object({
-  seq: SqliteIntegerSchema,
-  thread_id: z.string(),
-  at: SqliteIntegerSchema,
-  payload: z.string(),
-})
-const SqliteUsageEventRowSchema = z.object({
-  thread_id: z.string(),
-  at: SqliteIntegerSchema,
-  payload: z.string(),
-  provider: ProviderIdSchema,
-})
-const SqliteThreadPayloadRowSchema = z.object({
-  thread_id: z.string(),
-  payload: z.string(),
-})
-const SqliteCheckpointRowSchema = z.object({
-  id: SqliteIntegerSchema,
-  thread_id: z.string(),
-  seq: SqliteIntegerSchema,
-  commit_sha: z.string(),
-  label: z.string(),
-  created_at: SqliteIntegerSchema,
-})
-const SqliteRestoreUndoRowSchema = z.object({
-  checkpoint_seq: SqliteIntegerSchema,
-  events_json: z.string(),
-  checkpoints_json: z.string(),
-})
-const SqliteMaxSequenceRowSchema = z.object({ seq: SqliteIntegerSchema.nullable() })
+type QueuedTurnRow = {
+  thread_id: string
+  queue_id: string
+  client_submission_id: string | null
+  intent: string
+  payload: string
+  created_at: SqliteInteger
+}
+type PositionRow = { position: SqliteInteger }
+type AdjacentQueuedTurnRow = { queue_id: string; position: SqliteInteger }
+type QueuedTurnClaimRow = { thread_id: string; queue_id: string; intent: string }
+type DiffDecisionRow = { decision: string }
+type InterruptedThreadRow = { thread_id: string; payload: string; resumable: SqliteInteger }
+type HistoryRow = { seq: SqliteInteger; payload: string }
+type PayloadRow = { payload: string }
+type SearchSnapshotRow = { fts_query: string; project_path: string | null; provider: string | null }
+type SearchResultRow = {
+  project_path: string
+  project_name: string
+  thread_id: string
+  thread_title: string
+  provider: string
+  event_seq: SqliteInteger
+  turn_id: string
+  created_at: SqliteInteger
+  position: SqliteInteger
+  snippet: string
+}
+type EventRow = { seq: SqliteInteger; thread_id: string; at: SqliteInteger; payload: string }
+type UsageEventRow = {
+  thread_id: string
+  at: SqliteInteger
+  payload: string
+  provider: string
+}
+type ThreadPayloadRow = { thread_id: string; payload: string }
+type CheckpointRow = {
+  id: SqliteInteger
+  thread_id: string
+  seq: SqliteInteger
+  commit_sha: string
+  label: string
+  created_at: SqliteInteger
+}
+type RestoreUndoRow = {
+  checkpoint_seq: SqliteInteger
+  events_json: string
+  checkpoints_json: string
+}
+type SnapshotCommitRow = { snapshot_commit: string }
+type MaxSequenceRow = { seq: SqliteInteger | null }
+
+const StoredEventRowsSchema = z.array(
+  z.object({
+    seq: z.number().safe().int(),
+    thread_id: z.string(),
+    at: z.number().safe().int(),
+    payload: z.string(),
+  }),
+)
+const StoredCheckpointRowsSchema = z.array(
+  z.object({
+    id: z.number().safe().int(),
+    thread_id: z.string(),
+    seq: z.number().safe().int(),
+    commit_sha: z.string(),
+    label: z.string(),
+    created_at: z.number().safe().int(),
+  }),
+)
 const SearchCursorSchema = z.object({
   snapshotId: z.string().min(1),
   position: z.number().safe().int().min(1),
@@ -520,10 +507,9 @@ export class Store {
   /** Bring a database written by an older build up to the current shape. */
   #migrate(): void {
     for (const { table, column, definition } of ADDED_COLUMNS) {
-      const columns = this.#db
-        .prepare(`PRAGMA table_info(${table})`)
-        .all()
-        .map((row) => SqliteColumnRowSchema.parse(row).name)
+      const columns = sqliteRows<ColumnRow>(this.#db.prepare(`PRAGMA table_info(${table})`)).map(
+        (row) => row.name,
+      )
       if (columns.includes(column)) continue
       this.#db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
     }
@@ -532,10 +518,9 @@ export class Store {
 
   /** Side chats intentionally do not survive an app restart or a crashed renderer. */
   #purgeEphemeralThreads(): void {
-    const ids = this.#db
-      .prepare(`SELECT id FROM threads WHERE ephemeral = 1`)
-      .all()
-      .map((row) => SqliteIdentifierRowSchema.parse(row).id)
+    const ids = sqliteRows<IdentifierRow>(
+      this.#db.prepare(`SELECT id FROM threads WHERE ephemeral = 1`),
+    ).map((row) => row.id)
     for (const id of ids) this.deleteThread(id)
   }
 
@@ -547,10 +532,9 @@ export class Store {
     this.#db
       .prepare(`INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)`)
       .run(SEARCH_RESULT_KEY_SETTING, randomBytes(32).toString('base64url'))
-    const row = SqliteStringValueRowSchema.parse(
-      this.#db
-        .prepare(`SELECT value FROM app_settings WHERE key = ?`)
-        .get(SEARCH_RESULT_KEY_SETTING),
+    const row = requiredSqliteRow<StringValueRow>(
+      this.#db.prepare(`SELECT value FROM app_settings WHERE key = ?`),
+      SEARCH_RESULT_KEY_SETTING,
     )
     const key = Buffer.from(row.value, 'base64url')
     if (key.length !== 32) throw new Error('Search result identity key is invalid.')
@@ -584,12 +568,17 @@ export class Store {
   }
 
   project(projectPath: string): StoredProject | undefined {
-    const row = this.#db.prepare(`SELECT * FROM projects WHERE path = ?`).get(projectPath)
+    const row = sqliteRow<ProjectRow>(
+      this.#db.prepare(`SELECT * FROM projects WHERE path = ?`),
+      projectPath,
+    )
     return row ? toProject(row) : undefined
   }
 
   projects(): StoredProject[] {
-    return this.#db.prepare(`SELECT * FROM projects ORDER BY created_at`).all().map(toProject)
+    return sqliteRows<ProjectRow>(
+      this.#db.prepare(`SELECT * FROM projects ORDER BY created_at`),
+    ).map(toProject)
   }
 
   renameProject(projectPath: string, name: string): void {
@@ -655,21 +644,19 @@ export class Store {
    * and the record here is the only thing that knows they exist.
    */
   worktrees(): Array<{ threadId: string; path: string; branch: string; repoPath: string }> {
-    return this.#db
-      .prepare(
+    return sqliteRows<WorktreeRow>(
+      this.#db.prepare(
         `SELECT id, project_path, worktree_path, worktree_branch FROM threads
                 WHERE worktree_path IS NOT NULL AND ephemeral = 0`,
-      )
-      .all()
-      .map((row) => {
-        const r = SqliteWorktreeRowSchema.parse(row)
-        return {
-          threadId: r.id,
-          path: r.worktree_path,
-          branch: r.worktree_branch,
-          repoPath: r.project_path,
-        }
-      })
+      ),
+    ).map((row) => {
+      return {
+        threadId: row.id,
+        path: row.worktree_path,
+        branch: row.worktree_branch,
+        repoPath: row.project_path,
+      }
+    })
   }
 
   forgetWorktree(threadId: string): void {
@@ -679,19 +666,22 @@ export class Store {
   }
 
   thread(id: string): StoredThread | undefined {
-    const row = this.#db.prepare(`SELECT * FROM threads WHERE id = ?`).get(id)
+    const row = sqliteRow<ThreadRow>(this.#db.prepare(`SELECT * FROM threads WHERE id = ?`), id)
     return row ? toThread(row) : undefined
   }
 
   /** Newest first — the rail shows recent work at the top. */
   threads(projectPath?: string): StoredThread[] {
     const rows = projectPath
-      ? this.#db
-          .prepare(
+      ? sqliteRows<ThreadRow>(
+          this.#db.prepare(
             `SELECT * FROM threads WHERE project_path = ? AND ephemeral = 0 ORDER BY created_at DESC`,
-          )
-          .all(projectPath)
-      : this.#db.prepare(`SELECT * FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`).all()
+          ),
+          projectPath,
+        )
+      : sqliteRows<ThreadRow>(
+          this.#db.prepare(`SELECT * FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`),
+        )
     return rows.map(toThread)
   }
 
@@ -753,7 +743,7 @@ export class Store {
     return {
       state: 'active',
       keepActive,
-      ...propertiesWhen(!(wokeAt === undefined), () => ({ wokeAt })),
+      ...(!(wokeAt === undefined) ? { wokeAt } : {}),
     }
   }
 
@@ -764,10 +754,7 @@ export class Store {
     return {
       state: 'active',
       keepActive,
-      ...propertiesWhen(
-        wokeAt === undefined ? undefined : { wokeAt },
-        (includedWokeAt) => includedWokeAt,
-      ),
+      ...(wokeAt === undefined ? {} : { wokeAt }),
     }
   }
 
@@ -784,30 +771,33 @@ export class Store {
   }
 
   dueSnoozedThreads(now = Date.now()): StoredThread[] {
-    return this.#db
-      .prepare(
+    return sqliteRows<ThreadRow>(
+      this.#db.prepare(
         `SELECT * FROM threads WHERE closed_at IS NULL AND lifecycle_state = 'snoozed'
          AND ephemeral = 0 AND wake_at <= ? ORDER BY wake_at`,
-      )
-      .all(now)
-      .map(toThread)
+      ),
+      now,
+    ).map(toThread)
   }
 
   inactiveThreads(cutoff: number): StoredThread[] {
-    return this.#db
-      .prepare(
+    return sqliteRows<ThreadRow>(
+      this.#db.prepare(
         `SELECT * FROM threads WHERE closed_at IS NULL AND lifecycle_state = 'active'
          AND ephemeral = 0 AND keep_active = 0 AND last_active_at <= ? ORDER BY last_active_at`,
-      )
-      .all(cutoff)
-      .map(toThread)
+      ),
+      cutoff,
+    ).map(toThread)
   }
 
   sidebarSettings(): SidebarSettings {
-    const row = SqliteSidebarSettingsRowSchema.parse(
-      this.#db.prepare(`SELECT mode, auto_settle_days FROM sidebar_settings WHERE id = 1`).get(),
+    const row = requiredSqliteRow<SidebarSettingsRow>(
+      this.#db.prepare(`SELECT mode, auto_settle_days FROM sidebar_settings WHERE id = 1`),
     )
-    return { mode: row.mode, autoSettleDays: row.auto_settle_days }
+    return SidebarSettingsSchema.parse({
+      mode: row.mode,
+      autoSettleDays: row.auto_settle_days === null ? null : Number(row.auto_settle_days),
+    })
   }
 
   updateSidebarSettings(settings: Partial<SidebarSettings>): SidebarSettings {
@@ -820,11 +810,11 @@ export class Store {
   }
 
   backgroundModelPreference(): BackgroundModelPreference {
-    const rawRow = this.#db
-      .prepare(`SELECT value FROM app_settings WHERE key = ?`)
-      .get(BACKGROUND_MODEL_SETTING)
-    if (!rawRow) return { mode: 'automatic' }
-    const row = SqliteStringValueRowSchema.parse(rawRow)
+    const row = sqliteRow<StringValueRow>(
+      this.#db.prepare(`SELECT value FROM app_settings WHERE key = ?`),
+      BACKGROUND_MODEL_SETTING,
+    )
+    if (!row) return { mode: 'automatic' }
     try {
       return BackgroundModelPreferenceSchema.parse(JSON.parse(row.value))
     } catch {
@@ -835,14 +825,13 @@ export class Store {
   updateBackgroundModelPreference(
     preference: BackgroundModelPreference,
   ): BackgroundModelPreference {
-    const parsed = BackgroundModelPreferenceSchema.parse(preference)
     this.#db
       .prepare(
         `INSERT INTO app_settings (key, value) VALUES (?, ?)
          ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
       )
-      .run(BACKGROUND_MODEL_SETTING, JSON.stringify(parsed))
-    return parsed
+      .run(BACKGROUND_MODEL_SETTING, JSON.stringify(preference))
+    return preference
   }
 
   #updateThread(sql: string, ...params: Array<string | number>): void {
@@ -884,7 +873,7 @@ export class Store {
     }
   }
 
-  setDesignRun<T>(threadId: string, payload: T): void {
+  setDesignRun(threadId: string, payload: unknown): void {
     this.#db
       .prepare(
         `INSERT INTO design_runs (thread_id, payload) VALUES (?, ?)
@@ -894,12 +883,12 @@ export class Store {
   }
 
   designRun(threadId: string): JsonValue | undefined {
-    const rawRow = this.#db
-      .prepare(`SELECT payload FROM design_runs WHERE thread_id = ?`)
-      .get(threadId)
-    if (!rawRow) return undefined
-    const row = SqlitePayloadRowSchema.parse(rawRow)
-    return JsonValueSchema.parse(JSON.parse(row.payload))
+    const row = sqliteRow<PayloadRow>(
+      this.#db.prepare(`SELECT payload FROM design_runs WHERE thread_id = ?`),
+      threadId,
+    )
+    if (!row) return undefined
+    return parseJsonValue(row.payload)
   }
 
   deleteDesignRun(threadId: string): void {
@@ -909,16 +898,16 @@ export class Store {
   // ---- queued turns -----------------------------------------------------
 
   queuedTurns(threadId: string): StoredQueuedTurn[] {
-    return this.#db
-      .prepare(
+    return sqliteRows<QueuedTurnRow>(
+      this.#db.prepare(
         `SELECT queued_turns.* FROM queued_turns
          INNER JOIN threads ON threads.id = queued_turns.thread_id
          WHERE queued_turns.thread_id = ? AND queued_turns.state = 'queued'
            AND threads.closed_at IS NULL
          ORDER BY queued_turns.position`,
-      )
-      .all(threadId)
-      .map(toQueuedTurn)
+      ),
+      threadId,
+    ).map(toQueuedTurn)
   }
 
   hasQueuedSubmission(threadId: string, clientSubmissionId: string): boolean {
@@ -944,13 +933,12 @@ export class Store {
         .get(turn.threadId)
       if (!open) throw new Error('thread not found')
       const position = Number(
-        SqlitePositionRowSchema.parse(
-          this.#db
-            .prepare(
-              `SELECT COALESCE(MAX(position), -1) + 1 AS position
-               FROM queued_turns WHERE thread_id = ?`,
-            )
-            .get(turn.threadId),
+        requiredSqliteRow<PositionRow>(
+          this.#db.prepare(
+            `SELECT COALESCE(MAX(position), -1) + 1 AS position
+             FROM queued_turns WHERE thread_id = ?`,
+          ),
+          turn.threadId,
         ).position,
       )
       this.#appendQueuedTurnEvent(turn.threadId, turn.id, 'enqueue', {
@@ -985,25 +973,27 @@ export class Store {
 
   moveQueuedTurn(threadId: string, queueId: string, direction: 'up' | 'down'): boolean {
     return this.#transaction(() => {
-      const rawCurrent = this.#db
-        .prepare(
+      const current = sqliteRow<PositionRow>(
+        this.#db.prepare(
           `SELECT position FROM queued_turns
            WHERE thread_id = ? AND queue_id = ? AND state = 'queued'`,
-        )
-        .get(threadId, queueId)
-      if (!rawCurrent) return false
-      const current = SqlitePositionRowSchema.parse(rawCurrent)
+        ),
+        threadId,
+        queueId,
+      )
+      if (!current) return false
       const comparison = direction === 'up' ? '<' : '>'
       const order = direction === 'up' ? 'DESC' : 'ASC'
-      const rawAdjacent = this.#db
-        .prepare(
+      const adjacent = sqliteRow<AdjacentQueuedTurnRow>(
+        this.#db.prepare(
           `SELECT queue_id, position FROM queued_turns
            WHERE thread_id = ? AND state = 'queued' AND position ${comparison} ?
            ORDER BY position ${order} LIMIT 1`,
-        )
-        .get(threadId, current.position)
-      if (!rawAdjacent) return false
-      const adjacent = SqliteAdjacentQueuedTurnRowSchema.parse(rawAdjacent)
+        ),
+        threadId,
+        current.position,
+      )
+      if (!adjacent) return false
       this.#appendQueuedTurnEvent(threadId, queueId, 'move', { direction })
       this.#db
         .prepare(
@@ -1029,12 +1019,14 @@ export class Store {
     intent: 'normal' | 'steer',
   ): StoredQueuedTurn | undefined {
     return this.#transaction(() => {
-      const row = this.#db
-        .prepare(
+      const row = sqliteRow<QueuedTurnRow>(
+        this.#db.prepare(
           `SELECT * FROM queued_turns
            WHERE thread_id = ? AND queue_id = ? AND state = 'queued'`,
-        )
-        .get(threadId, queueId)
+        ),
+        threadId,
+        queueId,
+      )
       if (!row) return undefined
       this.#appendQueuedTurnEvent(threadId, queueId, 'claim', { intent })
       this.#db
@@ -1093,10 +1085,9 @@ export class Store {
 
   clearAllQueuedTurns(): string[] {
     return this.#transaction(() => {
-      const threadIds = this.#db
-        .prepare(`SELECT DISTINCT thread_id FROM queued_turns ORDER BY thread_id`)
-        .all()
-        .map((row) => SqliteThreadPayloadRowSchema.pick({ thread_id: true }).parse(row).thread_id)
+      const threadIds = sqliteRows<{ thread_id: string }>(
+        this.#db.prepare(`SELECT DISTINCT thread_id FROM queued_turns ORDER BY thread_id`),
+      ).map((row) => row.thread_id)
       for (const threadId of threadIds) this.#clearQueuedTurns(threadId)
       return threadIds
     })
@@ -1129,11 +1120,11 @@ export class Store {
     this.#db.prepare(`DELETE FROM queued_turns WHERE thread_id = ?`).run(threadId)
   }
 
-  #appendQueuedTurnEvent<T>(
+  #appendQueuedTurnEvent(
     threadId: string,
     queueId: string | null,
     mutation: string,
-    payload: T,
+    payload: unknown,
   ): void {
     this.#db
       .prepare(
@@ -1144,15 +1135,11 @@ export class Store {
   }
 
   #recoverQueuedTurnClaims(): void {
-    const claims = z
-      .array(SqliteQueuedTurnClaimRowSchema)
-      .parse(
-        this.#db
-          .prepare(
-            `SELECT thread_id, queue_id, intent FROM queued_turns WHERE state = 'dispatching'`,
-          )
-          .all(),
-      )
+    const claims = sqliteRows<QueuedTurnClaimRow>(
+      this.#db.prepare(
+        `SELECT thread_id, queue_id, intent FROM queued_turns WHERE state = 'dispatching'`,
+      ),
+    ).map((claim) => ({ ...claim, intent: queuedTurnIntent(claim.intent) }))
     if (claims.length === 0) return
     this.#transaction(() => {
       for (const claim of claims) {
@@ -1180,21 +1167,22 @@ export class Store {
     }
   }
 
-  setDiffDecision(threadId: string, targetId: string, decision: string): void {
-    const parsed = DiffDecisionSchema.parse(decision)
+  setDiffDecision(threadId: string, targetId: string, decision: DiffDecision): void {
     this.#db
       .prepare(
         `INSERT INTO diff_decisions (thread_id, target_id, decision) VALUES (?, ?, ?)
          ON CONFLICT (thread_id, target_id) DO UPDATE SET decision = excluded.decision`,
       )
-      .run(threadId, targetId, parsed)
+      .run(threadId, targetId, decision)
   }
 
   diffDecision(threadId: string, targetId: string): DiffDecision | undefined {
-    const rawRow = this.#db
-      .prepare(`SELECT decision FROM diff_decisions WHERE thread_id = ? AND target_id = ?`)
-      .get(threadId, targetId)
-    return rawRow ? SqliteDiffDecisionRowSchema.parse(rawRow).decision : undefined
+    const row = sqliteRow<DiffDecisionRow>(
+      this.#db.prepare(`SELECT decision FROM diff_decisions WHERE thread_id = ? AND target_id = ?`),
+      threadId,
+      targetId,
+    )
+    return row ? DiffDecisionSchema.parse(row.decision) : undefined
   }
 
   // ---- events ------------------------------------------------------------
@@ -1213,10 +1201,9 @@ export class Store {
     try {
       // SQLite returns only unfinished lifecycle starts. Months of completed
       // turns and streamed deltas never cross into JavaScript at startup.
-      const rows = z.array(SqliteInterruptedThreadRowSchema).parse(
-        this.#db
-          .prepare(
-            `WITH typed_events AS (
+      const rows = sqliteRows<InterruptedThreadRow>(
+        this.#db.prepare(
+          `WITH typed_events AS (
              SELECT events.seq, events.thread_id, events.payload,
                     json_extract(events.payload, '$.type') AS event_type
              FROM events
@@ -1277,8 +1264,7 @@ export class Store {
              AND (started.event_type <> 'turn.started' OR last_errors.seq IS NULL
                   OR last_errors.seq < started.seq)
            ORDER BY started.seq`,
-          )
-          .all(),
+        ),
       )
 
       const states = new Map<string, InterruptedThreadState>()
@@ -1397,28 +1383,31 @@ export class Store {
    * the thread fresh asks for all of it. Same call either way.
    */
   history(threadId: string, afterSeq = 0): Array<{ seq: number; event: DomainEvent }> {
-    return this.#db
-      .prepare(`SELECT seq, payload FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq`)
-      .all(threadId, afterSeq)
-      .map((row) => {
-        const { seq, payload } = SqliteHistoryRowSchema.parse(row)
-        return { seq, event: DomainEventSchema.parse(JSON.parse(payload)) }
-      })
+    return sqliteRows<HistoryRow>(
+      this.#db.prepare(
+        `SELECT seq, payload FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq`,
+      ),
+      threadId,
+      afterSeq,
+    ).map((row) => {
+      return { seq: Number(row.seq), event: DomainEventSchema.parse(JSON.parse(row.payload)) }
+    })
   }
 
   /** The final provider-owned patch shown for one turn. */
   turnDiff(threadId: string, turnId: string): string | undefined {
-    const rawRow = this.#db
-      .prepare(
+    const row = sqliteRow<PayloadRow>(
+      this.#db.prepare(
         `SELECT payload FROM events
          WHERE thread_id = ?
            AND json_extract(payload, '$.type') = 'diff.updated'
            AND json_extract(payload, '$.turnId') = ?
          ORDER BY seq DESC LIMIT 1`,
-      )
-      .get(threadId, turnId)
-    if (!rawRow) return undefined
-    const row = SqlitePayloadRowSchema.parse(rawRow)
+      ),
+      threadId,
+      turnId,
+    )
+    if (!row) return undefined
     const event = DomainEventSchema.parse(JSON.parse(row.payload))
     return event.type === 'diff.updated' ? event.diff : undefined
   }
@@ -1447,15 +1436,16 @@ export class Store {
     this.#pruneSearchSnapshots(now, !cursor)
     const snapshotId = cursor?.snapshotId ?? randomUUID()
     if (cursor) {
-      const rawSnapshot = this.#db
-        .prepare(
+      const snapshot = sqliteRow<SearchSnapshotRow>(
+        this.#db.prepare(
           `SELECT fts_query, project_path, provider
            FROM session_search_snapshots
            WHERE id = ? AND expires_at > ?`,
-        )
-        .get(snapshotId, now)
-      if (!rawSnapshot) throw new Error('Search results expired. Search again.')
-      const snapshot = SqliteSearchSnapshotRowSchema.parse(rawSnapshot)
+        ),
+        snapshotId,
+        now,
+      )
+      if (!snapshot) throw new Error('Search results expired. Search again.')
       const expected: SearchSnapshot = {
         ftsQuery,
         projectPath: options.projectPath ?? null,
@@ -1464,7 +1454,8 @@ export class Store {
       if (
         snapshot.fts_query !== expected.ftsQuery ||
         snapshot.project_path !== expected.projectPath ||
-        snapshot.provider !== expected.provider
+        (snapshot.provider === null ? null : ProviderIdSchema.parse(snapshot.provider)) !==
+          expected.provider
       ) {
         throw new Error('Search cursor does not match this query.')
       }
@@ -1510,10 +1501,9 @@ export class Store {
     }
 
     const position = cursor?.position ?? 0
-    const rows = z.array(SqliteSearchResultRowSchema).parse(
-      this.#db
-        .prepare(
-          `SELECT projects.path AS project_path, projects.name AS project_name,
+    const rows = sqliteRows<SearchResultRow>(
+      this.#db.prepare(
+        `SELECT projects.path AS project_path, projects.name AS project_name,
                  threads.id AS thread_id, threads.title AS thread_title,
                  threads.provider, session_search.event_seq, session_search.turn_id,
                  session_search.created_at,
@@ -1526,8 +1516,10 @@ export class Store {
          WHERE snapshot.snapshot_id = ? AND snapshot.position > ?
          ORDER BY snapshot.position
          LIMIT ?`,
-        )
-        .all(snapshotId, position, limit + 1),
+      ),
+      snapshotId,
+      position,
+      limit + 1,
     )
 
     const page = rows.slice(0, limit)
@@ -1544,7 +1536,7 @@ export class Store {
         threadId: row.thread_id,
         threadTitle: row.thread_title,
         turnId: row.turn_id,
-        provider: row.provider,
+        provider: ProviderIdSchema.parse(row.provider),
         createdAt: Number(row.created_at),
         snippet: parseSnippet(row.snippet),
       })),
@@ -1559,14 +1551,13 @@ export class Store {
   }
 
   #pruneSearchSnapshots(now: number, reserveSlot: boolean): void {
-    const expired = this.#db
-      .prepare(`SELECT id FROM session_search_snapshots WHERE expires_at <= ?`)
-      .all(now)
-      .map((row) => SqliteIdentifierRowSchema.parse(row).id)
-    const active = this.#db
-      .prepare(`SELECT id FROM session_search_snapshots ORDER BY expires_at DESC`)
-      .all()
-      .map((row) => SqliteIdentifierRowSchema.parse(row).id)
+    const expired = sqliteRows<IdentifierRow>(
+      this.#db.prepare(`SELECT id FROM session_search_snapshots WHERE expires_at <= ?`),
+      now,
+    ).map((row) => row.id)
+    const active = sqliteRows<IdentifierRow>(
+      this.#db.prepare(`SELECT id FROM session_search_snapshots ORDER BY expires_at DESC`),
+    ).map((row) => row.id)
     const retainedCount = MAX_SEARCH_SNAPSHOTS - (reserveSlot ? 1 : 0)
     const overflow = active.slice(retainedCount)
     for (const snapshotId of new Set([...expired, ...overflow])) {
@@ -1588,17 +1579,17 @@ export class Store {
       this.#db.exec(`DELETE FROM session_search`)
       let cursor = 0
       for (;;) {
-        const rows = z.array(SqliteEventRowSchema).parse(batch.all(cursor))
+        const rows = sqliteRows<EventRow>(batch, cursor)
         if (rows.length === 0) break
         for (const row of rows) {
           this.#indexEvent(
-            row.seq,
+            Number(row.seq),
             row.thread_id,
-            row.at,
+            Number(row.at),
             DomainEventSchema.parse(JSON.parse(row.payload)),
           )
         }
-        cursor = rows.at(-1)?.seq ?? cursor
+        cursor = Number(rows.at(-1)?.seq ?? cursor)
       }
       this.#db
         .prepare(`INSERT OR REPLACE INTO schema_migrations (name) VALUES (?)`)
@@ -1618,15 +1609,13 @@ export class Store {
 
   /** Persistent totals derived from the event log that already owns usage. */
   usageEvents(): StoredUsageEvent[] {
-    const rows = z.array(SqliteUsageEventRowSchema).parse(
-      this.#db
-        .prepare(
-          `SELECT e.thread_id, e.at, e.payload, t.provider
+    const rows = sqliteRows<UsageEventRow>(
+      this.#db.prepare(
+        `SELECT e.thread_id, e.at, e.payload, t.provider
          FROM events e JOIN threads t ON t.id = e.thread_id
          WHERE e.payload LIKE '%"usage.updated"%'
          ORDER BY e.thread_id, e.seq`,
-        )
-        .all(),
+      ),
     )
 
     const events: StoredUsageEvent[] = []
@@ -1635,8 +1624,8 @@ export class Store {
       if (event.type !== 'usage.updated') continue
       events.push({
         threadId: row.thread_id,
-        provider: row.provider,
-        at: row.at,
+        provider: ProviderIdSchema.parse(row.provider),
+        at: Number(row.at),
         usage: event.usage,
       })
     }
@@ -1664,13 +1653,12 @@ export class Store {
 
     let session = emptyUsage()
     {
-      const rows = z.array(SqlitePayloadRowSchema).parse(
-        this.#db
-          .prepare(
-            `SELECT payload FROM events
+      const rows = sqliteRows<PayloadRow>(
+        this.#db.prepare(
+          `SELECT payload FROM events
            WHERE thread_id = ? AND payload LIKE '%"usage.updated"%' ORDER BY seq`,
-          )
-          .all(threadId),
+        ),
+        threadId,
       )
       let previous: UsageTotal | undefined
       for (const row of rows) {
@@ -1689,31 +1677,29 @@ export class Store {
       // running-total provider's first in-window increment is a diff, not the
       // whole session so far.
       const previous = new Map<string, UsageTotal>()
-      const seeds = z.array(SqliteThreadPayloadRowSchema).parse(
-        this.#db
-          .prepare(
-            `SELECT e.thread_id, e.payload
+      const seeds = sqliteRows<ThreadPayloadRow>(
+        this.#db.prepare(
+          `SELECT e.thread_id, e.payload
            FROM events e
            JOIN (SELECT thread_id, MAX(seq) AS seq FROM events
                  WHERE payload LIKE '%"usage.updated"%' AND at < ? GROUP BY thread_id) last
              ON e.thread_id = last.thread_id AND e.seq = last.seq`,
-          )
-          .all(since),
+        ),
+        since,
       )
       for (const seed of seeds) {
         const usage = parseUsage(seed.payload)
         if (usage?.cumulative) previous.set(seed.thread_id, usage.total)
       }
 
-      const rows = z.array(SqliteThreadPayloadRowSchema).parse(
-        this.#db
-          .prepare(
-            `SELECT e.thread_id, e.payload, t.provider
+      const rows = sqliteRows<ThreadPayloadRow>(
+        this.#db.prepare(
+          `SELECT e.thread_id, e.payload, t.provider
            FROM events e JOIN threads t ON t.id = e.thread_id
            WHERE e.at >= ? AND e.payload LIKE '%"usage.updated"%'
            ORDER BY e.thread_id, e.seq`,
-          )
-          .all(since),
+        ),
+        since,
       )
       for (const row of rows) {
         const sample = parseUsage(row.payload)
@@ -1749,26 +1735,27 @@ export class Store {
   }
 
   checkpoints(threadId: string): StoredCheckpoint[] {
-    return this.#db
-      .prepare(`SELECT * FROM checkpoints WHERE thread_id = ? ORDER BY seq`)
-      .all(threadId)
-      .map((row) => {
-        const r = SqliteCheckpointRowSchema.parse(row)
-        return {
-          id: Number(r.id),
-          threadId: r.thread_id,
-          seq: Number(r.seq),
-          commit: r.commit_sha,
-          label: r.label,
-          createdAt: Number(r.created_at),
-        }
-      })
+    return sqliteRows<CheckpointRow>(
+      this.#db.prepare(`SELECT * FROM checkpoints WHERE thread_id = ? ORDER BY seq`),
+      threadId,
+    ).map((row) => {
+      return {
+        id: Number(row.id),
+        threadId: row.thread_id,
+        seq: Number(row.seq),
+        commit: row.commit_sha,
+        label: row.label,
+        createdAt: Number(row.created_at),
+      }
+    })
   }
 
   checkpoint(id: number): StoredCheckpoint | undefined {
-    const rawRow = this.#db.prepare(`SELECT * FROM checkpoints WHERE id = ?`).get(id)
-    if (!rawRow) return undefined
-    const row = SqliteCheckpointRowSchema.parse(rawRow)
+    const row = sqliteRow<CheckpointRow>(
+      this.#db.prepare(`SELECT * FROM checkpoints WHERE id = ?`),
+      id,
+    )
+    if (!row) return undefined
     return {
       id: Number(row.id),
       threadId: row.thread_id,
@@ -1800,12 +1787,16 @@ export class Store {
   /** Save and remove the conversation tail so a restore remains reversible. */
   saveRestoreUndo(threadId: string, seq: number, commit: string): string {
     const token = randomUUID()
-    const events = this.#db
-      .prepare(`SELECT * FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq`)
-      .all(threadId, seq)
-    const checkpoints = this.#db
-      .prepare(`SELECT * FROM checkpoints WHERE thread_id = ? AND seq > ? ORDER BY seq`)
-      .all(threadId, seq)
+    const events = sqliteRows<EventRow>(
+      this.#db.prepare(`SELECT * FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq`),
+      threadId,
+      seq,
+    )
+    const checkpoints = sqliteRows<CheckpointRow>(
+      this.#db.prepare(`SELECT * FROM checkpoints WHERE thread_id = ? AND seq > ? ORDER BY seq`),
+      threadId,
+      seq,
+    )
 
     this.#db.exec('BEGIN IMMEDIATE')
     try {
@@ -1827,27 +1818,31 @@ export class Store {
   }
 
   restoreUndo(threadId: string, token: string): { commit: string } | undefined {
-    const rawRow = this.#db
-      .prepare(`SELECT snapshot_commit FROM restore_undos WHERE thread_id = ? AND token = ?`)
-      .get(threadId, token)
-    if (!rawRow) return undefined
-    const row = z.object({ snapshot_commit: z.string() }).parse(rawRow)
+    const row = sqliteRow<SnapshotCommitRow>(
+      this.#db.prepare(
+        `SELECT snapshot_commit FROM restore_undos WHERE thread_id = ? AND token = ?`,
+      ),
+      threadId,
+      token,
+    )
+    if (!row) return undefined
     return { commit: row.snapshot_commit }
   }
 
   /** Put back the exact event/checkpoint rows removed by the latest restore. */
   applyRestoreUndo(threadId: string, token: string): void {
-    const rawRow = this.#db
-      .prepare(`SELECT * FROM restore_undos WHERE thread_id = ? AND token = ?`)
-      .get(threadId, token)
-    if (!rawRow) throw new Error('restore can no longer be undone')
-    const row = SqliteRestoreUndoRowSchema.parse(rawRow)
+    const row = sqliteRow<RestoreUndoRow>(
+      this.#db.prepare(`SELECT * FROM restore_undos WHERE thread_id = ? AND token = ?`),
+      threadId,
+      token,
+    )
+    if (!row) throw new Error('restore can no longer be undone')
     if (this.lastSeq(threadId) > Number(row.checkpoint_seq)) {
       throw new Error('restore can only be undone before the session continues')
     }
 
-    const events = z.array(SqliteEventRowSchema).parse(JSON.parse(row.events_json))
-    const checkpoints = z.array(SqliteCheckpointRowSchema).parse(JSON.parse(row.checkpoints_json))
+    const events = StoredEventRowsSchema.parse(JSON.parse(row.events_json))
+    const checkpoints = StoredCheckpointRowsSchema.parse(JSON.parse(row.checkpoints_json))
 
     this.#db.exec('BEGIN IMMEDIATE')
     try {
@@ -1886,10 +1881,11 @@ export class Store {
   }
 
   lastSeq(threadId: string): number {
-    const rawRow = this.#db
-      .prepare(`SELECT MAX(seq) AS seq FROM events WHERE thread_id = ?`)
-      .get(threadId)
-    const seq = rawRow ? SqliteMaxSequenceRowSchema.parse(rawRow).seq : null
+    const row = sqliteRow<MaxSequenceRow>(
+      this.#db.prepare(`SELECT MAX(seq) AS seq FROM events WHERE thread_id = ?`),
+      threadId,
+    )
+    const seq = row?.seq ?? null
     return seq ? Number(seq) : 0
   }
 }
@@ -2009,7 +2005,7 @@ function addUsage(left: UsageTotal, right: UsageTotal): UsageTotal {
     outputTokens: left.outputTokens + right.outputTokens,
     reasoningTokens: left.reasoningTokens + right.reasoningTokens,
     totalTokens: left.totalTokens + right.totalTokens,
-    ...propertiesWhen(hasCost, () => ({ costUsd: (left.costUsd ?? 0) + (right.costUsd ?? 0) })),
+    ...(hasCost ? { costUsd: (left.costUsd ?? 0) + (right.costUsd ?? 0) } : {}),
   }
 }
 
@@ -2023,104 +2019,103 @@ function usageIncrement(current: UsageTotal, previous = emptyUsage()): UsageTota
     outputTokens: delta(current.outputTokens, previous.outputTokens),
     reasoningTokens: delta(current.reasoningTokens, previous.reasoningTokens),
     totalTokens: delta(current.totalTokens, previous.totalTokens),
-    ...propertiesWhen(!(costUsd === undefined), () => ({ costUsd })),
+    ...(!(costUsd === undefined) ? { costUsd } : {}),
   }
 }
 
-function toProject(row: SqliteRow): StoredProject {
-  const r = SqliteProjectRowSchema.parse(row)
+function toProject(row: ProjectRow): StoredProject {
   return {
-    path: r.path,
-    name: r.name,
-    pinned: r.pinned === 1,
-    createdAt: Number(r.created_at),
+    path: row.path,
+    name: row.name,
+    pinned: row.pinned === 1,
+    createdAt: Number(row.created_at),
   }
 }
 
-function toQueuedTurn(row: SqliteRow): StoredQueuedTurn {
-  const r = SqliteQueuedTurnRowSchema.parse(row)
-  const payload = SqliteQueuedTurnPayloadSchema.parse(JSON.parse(r.payload))
+function toQueuedTurn(row: QueuedTurnRow): StoredQueuedTurn {
+  const payload = StoredQueuedTurnPayloadSchema.parse(JSON.parse(row.payload))
   return {
-    id: r.queue_id,
-    threadId: r.thread_id,
-    ...propertiesWhen(
-      r.client_submission_id === null ? undefined : { clientSubmissionId: r.client_submission_id },
-      (includedSubmission) => includedSubmission,
-    ),
+    id: row.queue_id,
+    threadId: row.thread_id,
+    ...(row.client_submission_id === null ? {} : { clientSubmissionId: row.client_submission_id }),
     text: payload.text,
     attachments: payload.attachments,
     options: payload.options,
-    createdAt: Number(r.created_at),
-    intent: r.intent,
+    createdAt: Number(row.created_at),
+    intent: queuedTurnIntent(row.intent),
   }
 }
 
-function toThread(row: SqliteRow): StoredThread {
-  const r = SqliteThreadRowSchema.parse(row)
+function toThread(row: ThreadRow): StoredThread {
   // Null timestamps (rows migrated before these columns existed) must not
   // become NaN — a snoozed thread with NaN wakeAt can never be woken.
-  const lifecycle: ThreadLifecycle =
-    r.lifecycle_state === 'settled'
+  const lifecycle = ThreadLifecycleSchema.parse(
+    row.lifecycle_state === 'settled'
       ? {
           state: 'settled',
-          settledAt: Number(r.lifecycle_at ?? r.created_at),
-          reason: r.lifecycle_reason ?? 'manual',
+          settledAt: Number(row.lifecycle_at ?? row.created_at),
+          reason: row.lifecycle_reason ?? 'manual',
         }
-      : r.lifecycle_state === 'snoozed'
+      : row.lifecycle_state === 'snoozed'
         ? {
             state: 'snoozed',
-            snoozedAt: Number(r.lifecycle_at ?? r.created_at),
-            wakeAt: Number(r.wake_at ?? r.created_at),
+            snoozedAt: Number(row.lifecycle_at ?? row.created_at),
+            wakeAt: Number(row.wake_at ?? row.created_at),
           }
-        : {
-            state: 'active',
-            keepActive: r.keep_active === 1,
-            ...propertiesWhen(
-              r.woke_at === null ? undefined : { wokeAt: Number(r.woke_at) },
-              (includedWokeAt) => includedWokeAt,
-            ),
-          }
+        : row.lifecycle_state === 'active'
+          ? {
+              state: 'active',
+              keepActive: row.keep_active === 1,
+              ...(row.woke_at === null ? {} : { wokeAt: Number(row.woke_at) }),
+            }
+          : { state: row.lifecycle_state },
+  )
   return {
-    id: r.id,
-    projectPath: r.project_path,
-    provider: r.provider,
-    ...propertiesWhen(
-      r.agent === null ? undefined : { agent: r.agent },
-      (includedAgent) => includedAgent,
-    ),
-    ...propertiesWhen(
-      r.provider_session_id === null ? undefined : { providerSessionId: r.provider_session_id },
-      (includedProviderSessionId) => includedProviderSessionId,
-    ),
-    title: r.title,
-    pinned: r.pinned === 1,
-    createdAt: Number(r.created_at),
-    ...propertiesWhen(
-      r.closed_at === null ? undefined : { closedAt: Number(r.closed_at) },
-      (includedClosedAt) => includedClosedAt,
-    ),
-    ...propertiesWhen(
-      r.worktree_path === null ? undefined : { worktreePath: r.worktree_path },
-      (includedWorktreePath) => includedWorktreePath,
-    ),
-    ...propertiesWhen(
-      r.worktree_branch === null ? undefined : { worktreeBranch: r.worktree_branch },
-      (includedWorktreeBranch) => includedWorktreeBranch,
-    ),
+    id: row.id,
+    projectPath: row.project_path,
+    provider: ProviderIdSchema.parse(row.provider),
+    ...(row.agent === null ? {} : { agent: row.agent }),
+    ...(row.provider_session_id === null ? {} : { providerSessionId: row.provider_session_id }),
+    title: row.title,
+    pinned: row.pinned === 1,
+    createdAt: Number(row.created_at),
+    ...(row.closed_at === null ? {} : { closedAt: Number(row.closed_at) }),
+    ...(row.worktree_path === null ? {} : { worktreePath: row.worktree_path }),
+    ...(row.worktree_branch === null ? {} : { worktreeBranch: row.worktree_branch }),
     lifecycle,
-    unread: r.unread === 1,
-    lastActiveAt: Number(r.last_active_at),
-    ephemeral: r.ephemeral === 1,
-    ...propertiesWhen(
-      r.parent_thread_id === null ? undefined : { parentThreadId: r.parent_thread_id },
-      (includedParentThreadId) => includedParentThreadId,
-    ),
+    unread: row.unread === 1,
+    lastActiveAt: Number(row.last_active_at),
+    ephemeral: row.ephemeral === 1,
+    ...(row.parent_thread_id === null ? {} : { parentThreadId: row.parent_thread_id }),
   }
 }
 
-function serializeJson<T>(value: T): string {
+function sqliteRows<Row>(statement: StatementSync, ...params: SQLInputValue[]): Row[] {
+  return statement.all(...params) as Row[]
+}
+
+function sqliteRow<Row>(statement: StatementSync, ...params: SQLInputValue[]): Row | undefined {
+  return statement.get(...params) as Row | undefined
+}
+
+function requiredSqliteRow<Row>(statement: StatementSync, ...params: SQLInputValue[]): Row {
+  const row = sqliteRow<Row>(statement, ...params)
+  if (!row) throw new Error('SQLite query returned no row')
+  return row
+}
+
+function queuedTurnIntent(value: string): StoredQueuedTurn['intent'] {
+  if (value === 'normal' || value === 'steer') return value
+  throw new Error(`invalid queued turn intent: ${value}`)
+}
+
+function serializeJson(value: unknown): string {
   const serialized = JSON.stringify(value)
   if (serialized === undefined) throw new Error('value cannot be stored as JSON')
-  JsonValueSchema.parse(JSON.parse(serialized))
   return serialized
+}
+
+function parseJsonValue(serialized: string): JsonValue {
+  // SAFETY: JSON.parse can return only JSON primitives, arrays, and objects.
+  return JSON.parse(serialized) as JsonValue
 }

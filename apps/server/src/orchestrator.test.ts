@@ -1,5 +1,4 @@
 import { execFileSync } from 'node:child_process'
-import { EventEmitter } from 'node:events'
 import {
   existsSync,
   mkdirSync,
@@ -28,45 +27,41 @@ import {
   type StartOptions,
   type TurnOptions,
 } from './adapters.js'
-import { DESIGN_BRIEF_ATTACHMENT, writeDesignBrief, type PreviewPlan } from '@harness/design-agent'
+import { DESIGN_BRIEF_ATTACHMENT, writeDesignBrief } from '@harness/design-agent'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
 import * as checkpoint from './checkpoint.js'
 import { beginOptimisticTurn, emptyThread, reduceEventLog } from '../../web/src/thread-store.js'
 import { presentTurns } from '../../web/src/ui/turns.js'
-import { propertiesWhen } from './properties-when.js'
-import type { RunningPreview } from './design-preview-runner.js'
 
 /** Counts stops, so tests can prove the dev server does not outlive its flow. */
-type PreviewStopState = { count: number; barriers: Promise<void>[] }
-type PreviewStartState = { count: number; barriers: Promise<void>[]; failures: Error[] }
-type QueueNotificationFailure = { current?: Error | undefined }
-
-const previewStops: PreviewStopState = { count: 0, barriers: [] }
-const previewStarts: PreviewStartState = {
+const previewStops = vi.hoisted(() => ({ count: 0, barriers: [] as Promise<void>[] }))
+const previewStarts = vi.hoisted(() => ({
   count: 0,
-  barriers: [],
-  failures: [],
-}
+  barriers: [] as Promise<void>[],
+  failures: [] as unknown[],
+}))
 
-const fakeStartDesignPreview = vi.fn(
-  async (_workspace: string, plan: PreviewPlan): Promise<RunningPreview> => {
-    previewStarts.count += 1
-    await previewStarts.barriers.shift()
-    const failure = previewStarts.failures.shift()
-    if (failure) throw failure
-    return {
-      url: plan.url,
-      viewports: plan.viewports,
-      output: () => 'ready',
-      stop: async () => {
-        previewStops.count += 1
-        await previewStops.barriers.shift()
-      },
-    }
-  },
-)
+vi.mock('./design-preview-runner.js', () => ({
+  startDesignPreview: vi.fn(
+    async (_workspace: string, plan: { url: string; viewports: unknown[] }) => {
+      previewStarts.count += 1
+      await previewStarts.barriers.shift()
+      const failure = previewStarts.failures.shift()
+      if (failure) throw failure
+      return {
+        url: plan.url,
+        viewports: plan.viewports,
+        output: () => 'ready',
+        stop: async () => {
+          previewStops.count += 1
+          await previewStops.barriers.shift()
+        },
+      }
+    },
+  ),
+}))
 
 /**
  * What must stay true when several sessions run at once.
@@ -112,7 +107,7 @@ class FakeSession implements AgentSession {
   /** Resolves the pending sendTurn, letting a test hold one open. */
   release: (() => void) | undefined
 
-  #events = new EventEmitter()
+  #listeners: Array<(event: DomainEvent) => void> = []
 
   constructor(readonly id: string) {}
 
@@ -159,8 +154,10 @@ class FakeSession implements AgentSession {
   }
 
   on(_event: 'event' | 'log', listener: (value: never) => void): void {
-    this.#events.on(_event, listener)
-    this.emit = (event) => this.#events.emit('event', event)
+    this.#listeners.push(listener as (event: DomainEvent) => void)
+    this.emit = (event) => {
+      for (const l of this.#listeners) l(event)
+    }
   }
 
   onUsageChanged(listener: () => void): void {
@@ -172,6 +169,8 @@ class FakeSession implements AgentSession {
   }
 }
 
+type QueueNotificationError = { current?: Error }
+
 function harness(worktreeRoot?: string, store = new Store(':memory:')) {
   const sessions: FakeSession[] = []
   const received: Array<{ threadId: string; event: DomainEvent }> = []
@@ -180,7 +179,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
   const logs: string[] = []
   const queueChanges: Array<{ threadId: string; itemIds: string[] }> = []
   const usageChanges: ProviderId[] = []
-  const queueNotificationError: QueueNotificationFailure = {}
+  const queueNotificationError: QueueNotificationError = {}
 
   /** Where each session was actually told to run. */
   const startedIn: string[] = []
@@ -206,7 +205,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
         thread: {
           id: `thread-${sessions.length}`,
           provider,
-          ...propertiesWhen(provider === 'api', () => ({ connectionId: 'test-connection' })),
+          ...(provider === 'api' ? { connectionId: 'test-connection' } : {}),
           workspacePath,
           createdAt: Date.now(),
         },
@@ -216,24 +215,26 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     async listModels() {
       return []
     },
-    ...propertiesWhen(provider === 'codex' || provider === 'grok', () => ({
-      async resume(threadId: string, workspacePath: string, options: StartOptions) {
-        resumedIds.push(threadId)
-        resumedIn.push(workspacePath)
-        resumedOptions.push(options)
-        const session = new FakeSession(`s${sessions.length + 1}`)
-        sessions.push(session)
-        return {
-          thread: {
-            id: threadId,
-            provider,
-            workspacePath,
-            createdAt: Date.now(),
+    ...(provider === 'codex' || provider === 'grok'
+      ? {
+          async resume(threadId: string, workspacePath: string, options: StartOptions) {
+            resumedIds.push(threadId)
+            resumedIn.push(workspacePath)
+            resumedOptions.push(options)
+            const session = new FakeSession(`s${sessions.length + 1}`)
+            sessions.push(session)
+            return {
+              thread: {
+                id: threadId,
+                provider,
+                workspacePath,
+                createdAt: Date.now(),
+              },
+              session,
+            }
           },
-          session,
         }
-      },
-    })),
+      : {}),
   })
 
   const orchestrator = new Orchestrator(store, {
@@ -252,9 +253,8 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     ),
     readCredential: (reference) => `secret:${reference}`,
     capturePreview,
-    startDesignPreview: fakeStartDesignPreview,
     runtimeFor,
-    ...propertiesWhen(worktreeRoot, (worktreeRoot) => ({ worktreeRoot })),
+    ...(worktreeRoot ? { worktreeRoot } : {}),
   })
 
   return {
@@ -1123,7 +1123,7 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  async function previewRecoveryHarness(error?: Error) {
+  async function previewRecoveryHarness(error: unknown) {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-preview-recovery-'))
     const taste = path.join(workspace, '.taste')
     mkdirSync(taste)

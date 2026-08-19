@@ -10,7 +10,6 @@ import {
 import type { Transport } from '../transport.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import { AppSelect } from './AppSelect.js'
-import { propertiesWhen } from '../properties-when.js'
 
 const SEARCH_DEBOUNCE_MS = 80
 const MAX_TITLE_RESULTS = 6
@@ -192,8 +191,8 @@ function SessionSearchComponent(props: {
         .request('search.sessions', {
           query: term,
           limit: 20,
-          ...propertiesWhen(projectPath, (projectPath) => ({ projectPath })),
-          ...propertiesWhen(provider || undefined, (provider) => ({ provider })),
+          ...(projectPath ? { projectPath } : {}),
+          ...(provider || undefined ? { provider: provider || undefined } : {}),
         })
         .then((page) => {
           if (revision.current !== current) return
@@ -238,8 +237,8 @@ function SessionSearchComponent(props: {
         query: term,
         cursor: nextCursor,
         limit: 20,
-        ...propertiesWhen(projectPath, (projectPath) => ({ projectPath })),
-        ...propertiesWhen(provider || undefined, (provider) => ({ provider })),
+        ...(projectPath ? { projectPath } : {}),
+        ...(provider || undefined ? { provider: provider || undefined } : {}),
       })
       if (revision.current !== current) return
       setResults((existing) => [...existing, ...page.results])
@@ -575,7 +574,7 @@ function formatResultDate(timestamp: number): string {
   return date.toLocaleDateString([], {
     month: 'short',
     day: 'numeric',
-    ...propertiesWhen(!(date.getFullYear() === today.getFullYear()), () => ({ year: 'numeric' })),
+    ...(!(date.getFullYear() === today.getFullYear()) ? { year: 'numeric' } : {}),
   })
 }
 

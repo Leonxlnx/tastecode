@@ -1,92 +1,100 @@
 // @vitest-environment happy-dom
-import { StrictMode } from 'react'
+import { Profiler, StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { MethodName } from '@harness/contracts'
-import { Terminal, type ITerminalAddon, type ITerminalOptions } from '@xterm/xterm'
-import { TestTransport } from '../test-transport.js'
-import {
-  TerminalPane,
-  terminalCopyShortcut,
-  type TerminalConstructorOptions,
-  type TerminalFitAddon,
-  type TerminalPaneRuntime,
-  type TerminalSurface,
-  type TerminalWebglAddon,
-} from './TerminalPane.js'
+import type { ConnectionState, Transport } from '../transport.js'
+import { TerminalPane, terminalCopyShortcut } from './TerminalPane.js'
 
-const performHaptic = vi.fn()
-const prepareHaptics = vi.fn()
-const terminalInstances: TestTerminal[] = []
+const xterm = vi.hoisted(() => ({
+  fitRows: 24,
+  instances: [] as Array<{
+    rows: number
+    data: ((data: string) => void) | undefined
+    selectionChanged: (() => void) | undefined
+    selected: boolean
+    write: ReturnType<typeof vi.fn>
+    clear: ReturnType<typeof vi.fn>
+    clearTextureAtlas: ReturnType<typeof vi.fn>
+    options: Record<string, unknown>
+    unicode: { activeVersion: string }
+  }>,
+}))
 
-class TestAddon implements ITerminalAddon {
-  activate(_terminal: Terminal): void {}
-  dispose(): void {}
-}
+const haptics = vi.hoisted(() => ({
+  performAppHaptic: vi.fn(),
+  prepareAppHaptics: vi.fn(),
+}))
 
-class TestFitAddon extends TestAddon implements TerminalFitAddon {
-  fit(): void {}
-}
+vi.mock('../haptics.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../haptics.js')>()),
+  appHapticsEnabled: () => true,
+  performAppHaptic: haptics.performAppHaptic,
+  prepareAppHaptics: haptics.prepareAppHaptics,
+}))
 
-class TestWebglAddon extends TestAddon implements TerminalWebglAddon {
-  onContextLoss(_callback: () => void): void {}
-}
+vi.mock('@xterm/addon-fit', () => ({
+  FitAddon: class {
+    fit() {
+      const instance = xterm.instances.at(-1)
+      if (instance) instance.rows = xterm.fitRows
+    }
+  },
+}))
 
-class TestTerminal implements TerminalSurface {
-  cols = 80
-  rows = 24
-  options: ITerminalOptions
-  unicode = { activeVersion: '6' }
-  data: ((data: string) => void) | undefined
-  selectionChanged: (() => void) | undefined
-  selected = false
-  write = vi.fn()
-  clear = vi.fn()
-  clearTextureAtlas = vi.fn()
+vi.mock('@xterm/addon-unicode11', () => ({
+  Unicode11Addon: class {},
+}))
 
-  constructor(options: TerminalConstructorOptions) {
-    this.options = options
-    terminalInstances.push(this)
-  }
+vi.mock('@xterm/addon-webgl', () => ({
+  WebglAddon: class {
+    onContextLoss() {}
+    dispose() {}
+  },
+}))
 
-  loadAddon(_addon: ITerminalAddon): void {}
-  open(_parent: HTMLElement): void {}
-  focus(): void {}
-  dispose(): void {}
-  attachCustomKeyEventHandler(_handler: (event: KeyboardEvent) => boolean): void {}
-  hasSelection(): boolean {
-    return this.selected
-  }
-  getSelection(): string {
-    return this.selected ? 'copied output' : ''
-  }
-  onData(callback: (data: string) => void) {
-    this.data = callback
-    return { dispose() {} }
-  }
-  onSelectionChange(callback: () => void) {
-    this.selectionChanged = callback
-    return { dispose() {} }
-  }
-}
+vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }))
 
-const runtime: TerminalPaneRuntime = {
-  createTerminal: (options) => new TestTerminal(options),
-  createFitAddon: () => new TestFitAddon(),
-  createUnicodeAddon: () => new TestAddon(),
-  loadWebglAddon: async () => new TestWebglAddon(),
-  loadWebLinksAddon: async () => new TestAddon(),
-  isMacOS: () => true,
-  writeClipboardText: (text) => navigator.clipboard.writeText(text),
-  hapticsEnabled: () => true,
-  prepareHaptics,
-  createResizeHaptics: () => ({ sample: () => 'alignment' }),
-  performHaptic,
-}
+vi.mock('@xterm/xterm', () => ({
+  Terminal: class {
+    cols = 80
+    rows = 24
+    options: Record<string, unknown>
+    data: ((data: string) => void) | undefined
+    selectionChanged: (() => void) | undefined
+    selected = false
+    write = vi.fn()
+    clear = vi.fn()
+    clearTextureAtlas = vi.fn()
+    unicode = { activeVersion: '6' }
+    loadAddon() {}
+    open() {}
+    focus() {}
+    dispose() {}
+    attachCustomKeyEventHandler() {}
+    hasSelection() {
+      return this.selected
+    }
+    getSelection() {
+      return this.selected ? 'copied output' : ''
+    }
+    onData(callback: (data: string) => void) {
+      this.data = callback
+      return { dispose() {} }
+    }
+    onSelectionChange(callback: () => void) {
+      this.selectionChanged = callback
+      return { dispose() {} }
+    }
+    constructor(options: Record<string, unknown> = {}) {
+      this.options = options
+      xterm.instances.push(this)
+    }
+  },
+}))
 
 beforeEach(() => {
-  performHaptic.mockClear()
-  prepareHaptics.mockClear()
+  haptics.performAppHaptic.mockClear()
+  haptics.prepareAppHaptics.mockClear()
   document.documentElement.style.setProperty(
     '--font-terminal',
     "'JetBrainsMono Nerd Font Mono', monospace",
@@ -98,7 +106,8 @@ beforeEach(() => {
       disconnect() {}
     },
   )
-  terminalInstances.length = 0
+  xterm.instances.length = 0
+  xterm.fitRows = 24
 })
 
 afterEach(() => {
@@ -126,7 +135,6 @@ describe('TerminalPane', () => {
           theme="dark"
           onHeightChange={vi.fn()}
           onClose={onClose}
-          runtime={runtime}
         />
       </StrictMode>,
     )
@@ -141,12 +149,10 @@ describe('TerminalPane', () => {
     const initialOpenCount = harness.request.mock.calls.filter(
       ([method]) => method === 'terminal.open',
     ).length
-    const instance = terminalInstances.at(-1)
+    const instance = xterm.instances.at(-1)
     expect(instance).toBeTruthy()
 
-    act(() =>
-      harness.transport.emit('terminal.output', { terminalId: 'terminal-1', data: 'ready\r\n' }),
-    )
+    act(() => harness.emit('terminal.output', { terminalId: 'terminal-1', data: 'ready\r\n' }))
     expect(instance?.write).toHaveBeenCalledWith('ready\r\n')
 
     act(() => instance?.data?.('pwd\r'))
@@ -160,16 +166,16 @@ describe('TerminalPane', () => {
     fireEvent.click(screen.getByTitle('Copy selection'))
     expect(copy).toHaveBeenCalledWith('copied output')
 
-    act(() => harness.transport.emitState('reconnecting'))
+    act(() => harness.setState('reconnecting'))
     expect(screen.getByText('Reconnecting…')).toBeTruthy()
-    act(() => harness.transport.emitState('open'))
+    act(() => harness.setState('open'))
     await waitFor(() =>
       expect(
         harness.request.mock.calls.filter(([method]) => method === 'terminal.open'),
       ).toHaveLength(initialOpenCount + 1),
     )
 
-    act(() => harness.transport.emit('terminal.exit', { terminalId: 'terminal-1', exitCode: 0 }))
+    act(() => harness.emit('terminal.exit', { terminalId: 'terminal-1', exitCode: 0 }))
     expect(screen.getByText('Exited (0)')).toBeTruthy()
     fireEvent.click(screen.getByTitle('Restart terminal'))
     await waitFor(() =>
@@ -200,7 +206,6 @@ describe('TerminalPane', () => {
         theme="dark"
         onHeightChange={onHeightChange}
         onClose={vi.fn()}
-        runtime={runtime}
       />,
     )
     await waitFor(() =>
@@ -215,13 +220,132 @@ describe('TerminalPane', () => {
     fireEvent.pointerEnter(handle)
     fireEvent.pointerDown(handle, { clientY: 260, pointerId: 9 })
     fireEvent.pointerMove(window, { clientY: 220, pointerId: 9 })
-    expect(prepareHaptics).toHaveBeenCalled()
-    expect(performHaptic).toHaveBeenCalledWith('alignment')
+    expect(haptics.prepareAppHaptics).toHaveBeenCalled()
     fireEvent.blur(window)
 
+    expect(haptics.performAppHaptic).toHaveBeenCalledWith('alignment')
     expect(onHeightChange).toHaveBeenCalledWith(300)
     fireEvent.pointerMove(window, { clientY: 180, pointerId: 9 })
     expect(onHeightChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('coalesces a burst of pointer resize work outside React', async () => {
+    const harness = fakeTransport()
+    const onHeightChange = vi.fn()
+    let updateCommits = 0
+    render(
+      <Profiler
+        id="terminal-resize"
+        onRender={(_id, phase) => {
+          if (phase === 'update') updateCommits += 1
+        }}
+      >
+        <TerminalPane
+          transport={harness.transport}
+          threadId="thread-resize-baseline"
+          height={260}
+          theme="dark"
+          onHeightChange={onHeightChange}
+          onClose={vi.fn()}
+        />
+      </Profiler>,
+    )
+    await waitFor(() =>
+      expect(harness.request).toHaveBeenCalledWith('terminal.open', {
+        threadId: 'thread-resize-baseline',
+        columns: 80,
+        rows: 24,
+      }),
+    )
+    await waitFor(() => expect(screen.getByText('Connected')).toBeTruthy())
+    updateCommits = 0
+
+    const handle = screen.getByRole('separator', { name: 'Resize terminal' })
+    fireEvent.pointerDown(handle, { clientY: 400, pointerId: 10 })
+    for (let index = 0; index < 120; index += 1) {
+      fireEvent.pointerMove(window, { clientY: 399 - index, pointerId: 10 })
+    }
+
+    expect(updateCommits).toBe(0)
+    fireEvent.pointerUp(window, { clientY: 280, pointerId: 10 })
+    expect(updateCommits).toBe(1)
+    expect(onHeightChange).toHaveBeenCalledWith(380)
+    expect(screen.getByLabelText('Session terminal').style.height).toBe('380px')
+    expect(haptics.performAppHaptic).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not repeat a PTY resize request for unchanged rows and columns', async () => {
+    let resizeObserverCallback: ResizeObserverCallback | undefined
+    const callbackObserver: ResizeObserver = {
+      disconnect() {},
+      observe() {},
+      unobserve() {},
+    }
+    let frameId = 0
+    const frames = new Map<number, FrameRequestCallback>()
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeObserverCallback = callback
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+        takeRecords() {
+          return []
+        }
+      },
+    )
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frameId += 1
+      frames.set(frameId, callback)
+      return frameId
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+    const flushFrames = () => {
+      const pending = [...frames.values()]
+      frames.clear()
+      for (const callback of pending) callback(performance.now())
+    }
+    const harness = fakeTransport()
+    render(
+      <TerminalPane
+        transport={harness.transport}
+        threadId="thread-resize-requests"
+        height={260}
+        theme="dark"
+        onHeightChange={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    await waitFor(() =>
+      expect(harness.request).toHaveBeenCalledWith('terminal.open', {
+        threadId: 'thread-resize-requests',
+        columns: 80,
+        rows: 24,
+      }),
+    )
+    await waitFor(() => expect(screen.getByText('Connected')).toBeTruthy())
+    const viewport = document.querySelector<HTMLElement>('.terminal-pane__viewport')
+    if (!viewport) throw new Error('Terminal viewport not found')
+    Object.defineProperties(viewport, {
+      clientWidth: { configurable: true, value: 800 },
+      clientHeight: { configurable: true, value: 300 },
+    })
+    frames.clear()
+    harness.request.mockClear()
+    xterm.fitRows = 25
+    if (!resizeObserverCallback) throw new Error('Resize observer not ready')
+
+    for (let index = 0; index < 10; index += 1) {
+      resizeObserverCallback([], callbackObserver)
+      flushFrames()
+    }
+
+    expect(
+      harness.request.mock.calls.filter(([method]) => method === 'terminal.resize'),
+    ).toHaveLength(1)
   })
 
   it('keeps workspace terminal status and focus framing out of the visible surface', async () => {
@@ -232,7 +356,6 @@ describe('TerminalPane', () => {
         threadId="thread-workspace"
         theme="dark"
         mode="workspace"
-        runtime={runtime}
       />,
     )
 
@@ -248,7 +371,7 @@ describe('TerminalPane', () => {
     expect(container.querySelector('.terminal-pane__status')).toBeNull()
     expect(screen.getByText('Connected').classList.contains('visually-hidden')).toBe(true)
     expect(container.querySelector('.terminal-pane__viewport')).toBeTruthy()
-    expect(terminalInstances.at(-1)?.options).toMatchObject({
+    expect(xterm.instances.at(-1)?.options).toMatchObject({
       cursorStyle: 'block',
       drawBoldTextInBrightColors: false,
       fontFamily: expect.stringContaining('JetBrainsMono Nerd Font Mono'),
@@ -266,7 +389,7 @@ describe('TerminalPane', () => {
         blue: '#82a2be',
       },
     })
-    expect(terminalInstances.at(-1)?.unicode.activeVersion).toBe('11')
+    expect(xterm.instances.at(-1)?.unicode.activeVersion).toBe('11')
   })
 
   it('closes a workspace terminal tab when its shell exits', async () => {
@@ -279,7 +402,6 @@ describe('TerminalPane', () => {
         theme="dark"
         mode="workspace"
         onClose={onClose}
-        runtime={runtime}
       />,
     )
 
@@ -291,7 +413,7 @@ describe('TerminalPane', () => {
       }),
     )
 
-    act(() => harness.transport.emit('terminal.exit', { terminalId: 'terminal-1', exitCode: 0 }))
+    act(() => harness.emit('terminal.exit', { terminalId: 'terminal-1', exitCode: 0 }))
     expect(onClose).toHaveBeenCalledOnce()
   })
 
@@ -303,7 +425,6 @@ describe('TerminalPane', () => {
         projectPath="/workspace/current-project"
         theme="dark"
         mode="workspace"
-        runtime={runtime}
       />,
     )
 
@@ -335,8 +456,38 @@ describe('TerminalPane', () => {
 })
 
 function fakeTransport() {
-  const request = vi.fn((method: MethodName) =>
+  let state: ConnectionState = 'open'
+  const stateListeners = new Set<(value: ConnectionState) => void>()
+  const channelListeners = new Map<string, Set<(value: unknown) => void>>()
+  const request = vi.fn((method: string) =>
     Promise.resolve(method === 'terminal.open' ? { terminalId: 'terminal-1' } : {}),
   )
-  return { transport: new TestTransport(request), request }
+  const transport = {
+    get state() {
+      return state
+    },
+    onState(listener: (value: ConnectionState) => void) {
+      stateListeners.add(listener)
+      return () => stateListeners.delete(listener)
+    },
+    on(channel: string, listener: (value: unknown) => void) {
+      const listeners = channelListeners.get(channel) ?? new Set()
+      listeners.add(listener)
+      channelListeners.set(channel, listeners)
+      return () => listeners.delete(listener)
+    },
+    request,
+  } as unknown as Transport
+
+  return {
+    transport,
+    request,
+    emit(channel: string, value: unknown) {
+      for (const listener of channelListeners.get(channel) ?? []) listener(value)
+    },
+    setState(value: ConnectionState) {
+      state = value
+      for (const listener of stateListeners) listener(value)
+    },
+  }
 }

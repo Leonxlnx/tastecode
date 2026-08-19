@@ -4,7 +4,7 @@ import { once } from 'node:events'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ApiAgentSession, type ApiStreamEvent } from './runtime.js'
 import { createOpenAiResponsesTransport, listOpenAiModels } from './openai.js'
-import { JsonObjectSchema, type JsonObject, type JsonValue } from './json.js'
+import { jsonObject, parseJsonValue, type JsonObject, type JsonValue } from './json.js'
 import { testServerBaseUrl, writeJsonResponse } from './test-server.js'
 
 const TEXT = readFileSync(new URL('./fixtures/openai-text.sse', import.meta.url), 'utf8')
@@ -135,7 +135,7 @@ async function serve(
   let stream = 0
   const server = createServer(async (request, response) => {
     if (request.url === '/v1/models') return writeJsonResponse(response, models)
-    requests.push(JsonObjectSchema.parse(JSON.parse(await body(request))))
+    requests.push(jsonObject(parseJsonValue(await body(request))))
     response.writeHead(200, { 'content-type': 'text/event-stream' })
     response.end(streams[stream++])
   })

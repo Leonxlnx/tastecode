@@ -1625,7 +1625,6 @@
   line-height: 1.55;
   outline: 0;
   appearance: none;
-  transition: height var(--dur-fast) var(--ease-out);
 }
 
 .pr-composer textarea::placeholder {
@@ -1693,17 +1692,19 @@
     background 150ms var(--ease-out),
     box-shadow 150ms var(--ease-out),
     color 150ms var(--ease-out),
-    transform 150ms var(--ease-out);
+    transform var(--dur-press) var(--ease-out);
 }
 
-.pr-send-button:hover:not(:disabled) {
-  background: var(--composer-orb);
-  transform: scale(1.05);
+@media (hover: hover) and (pointer: fine) {
+  .pr-send-button:hover:not(:disabled) {
+    background: var(--composer-orb);
+    transform: scale(1.05);
+  }
 }
 
 .pr-send-button:active:not(:disabled) {
   box-shadow: inset 0 1px 0 rgb(0 0 0 / 8%);
-  transform: scale(0.94);
+  transform: scale(0.97);
 }
 
 .pr-send-button.is-approve {
@@ -2590,5 +2591,17 @@
   .pr-detail-skeleton-copy span,
   .is-spinning {
     animation: none;
+  }
+
+  .pr-send-button {
+    transition:
+      background-color var(--dur-press) var(--ease-out),
+      box-shadow var(--dur-press) var(--ease-out),
+      color var(--dur-press) var(--ease-out) !important;
+  }
+
+  .pr-send-button:hover:not(:disabled),
+  .pr-send-button:active:not(:disabled) {
+    transform: none !important;
   }
 }

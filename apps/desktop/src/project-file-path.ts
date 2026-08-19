@@ -1,7 +1,6 @@
 import path from 'node:path'
 import os from 'node:os'
 import { z } from 'zod'
-import type { BoundaryValue } from './boundary.js'
 
 const SafePathSchema = z
   .string()
@@ -9,7 +8,7 @@ const SafePathSchema = z
   .max(32_768)
   .refine((value) => !value.includes('\0'))
 
-export function projectFilePath(value: BoundaryValue, projectRootValue: BoundaryValue): string {
+export function projectFilePath(value: unknown, projectRootValue: unknown): string {
   const file = safePath(value)
   const projectRoot = expandHomePath(safePath(projectRootValue))
   const flavor = windowsPath(projectRoot) ? path.win32 : path.posix
@@ -38,7 +37,7 @@ function expandHomePath(value: string): string {
   return value
 }
 
-function safePath(value: BoundaryValue): string {
+function safePath(value: unknown): string {
   const parsed = SafePathSchema.safeParse(value)
   if (!parsed.success) throw new Error('Invalid project file path')
   return parsed.data

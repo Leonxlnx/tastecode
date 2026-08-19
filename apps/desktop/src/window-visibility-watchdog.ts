@@ -20,7 +20,7 @@ type WatchedWindow = {
   isFocused(): boolean
   hide(): void
   show(): void
-  webContents: { executeJavaScript(code: string): Promise<BoundaryValue> }
+  webContents: { executeJavaScript(code: string): Promise<unknown> }
 }
 
 export const WATCHDOG_INTERVAL_MS = 15_000
@@ -83,4 +83,3 @@ export function startVisibilityWatchdog(
   }
 }
 import { z } from 'zod'
-import type { BoundaryValue } from './boundary.js'

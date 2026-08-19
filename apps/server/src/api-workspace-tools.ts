@@ -22,7 +22,6 @@ import {
   writableWorkspacePath,
 } from './api-workspace-paths.js'
 import { safeCommandEnvironment } from './safe-command-environment.js'
-import { propertiesWhen } from './properties-when.js'
 
 const MAX_READ_BYTES = 200_000
 const MAX_WRITE_BYTES = 1_000_000
@@ -232,7 +231,8 @@ function runCommand(
       settled = true
       clearTimeout(timer)
       signal.removeEventListener('abort', abort)
-      result instanceof Error ? reject(result) : resolve(result)
+      if (result instanceof Error) reject(result)
+      else resolve(result)
     }
     const append = (chunk: string) => {
       output = `${output}${chunk}`.slice(-MAX_OUTPUT_BYTES)
@@ -265,7 +265,7 @@ function runCommand(
     child.on('close', (code) =>
       finish({
         content: JSON.stringify({ code, output }),
-        ...propertiesWhen(!(code === 0), () => ({ isError: true })),
+        ...(!(code === 0) ? { isError: true } : {}),
       }),
     )
     signal.addEventListener('abort', abort, { once: true })

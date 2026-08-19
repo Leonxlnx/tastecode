@@ -3,7 +3,6 @@ import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ResultOf } from '@harness/contracts'
 import { z } from 'zod'
-import { propertiesWhen } from './properties-when.js'
 
 /**
  * Compare the running checkout against the GitHub default branch.
@@ -103,13 +102,13 @@ export async function checkForUpdates(
 
   if ('error' in latest) {
     return {
-      ...propertiesWhen(localCommit, (localCommit) => ({ localCommit })),
+      ...(localCommit ? { localCommit } : {}),
       error: latest.error,
     }
   }
   return {
-    ...propertiesWhen(localCommit, (localCommit) => ({ localCommit })),
+    ...(localCommit ? { localCommit } : {}),
     remote: latest,
-    ...propertiesWhen(localCommit, (includedValue) => ({ upToDate: includedValue === latest.sha })),
+    ...(localCommit ? { upToDate: localCommit === latest.sha } : {}),
   }
 }

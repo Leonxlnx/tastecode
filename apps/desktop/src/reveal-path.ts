@@ -1,11 +1,10 @@
 import path from 'node:path'
 import os from 'node:os'
 import { z } from 'zod'
-import type { BoundaryValue } from './boundary.js'
 
 const RevealPathSchema = z.string().refine((value) => !value.includes('\0'))
 
-export function revealablePath(value: BoundaryValue): string {
+export function revealablePath(value: unknown): string {
   const parsed = RevealPathSchema.safeParse(value)
   if (!parsed.success) {
     throw new Error('Reveal path must be absolute')

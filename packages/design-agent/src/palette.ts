@@ -1,6 +1,4 @@
-import { z } from 'zod'
-import { type BoundaryValue, optionalRecord } from './parse.js'
-import { propertiesWhen } from './properties-when.js'
+import { optionalRecord } from './parse.js'
 export const PALETTE_ROLES = [
   'canvas',
   'surface',
@@ -87,9 +85,6 @@ export type PaletteBuildResult =
 
 const THEME_NAMES = ['light', 'dark'] as const
 const HEX = /^#(?:[\da-f]{3}|[\da-f]{6})$/iu
-const ThemeNameSchema = z.enum(THEME_NAMES)
-const PaletteRoleSchema = z.enum(PALETTE_ROLES)
-const HexSchema = z.string().regex(HEX)
 
 const CONTRAST_PAIRS: Array<{
   foreground: PaletteRole
@@ -180,7 +175,7 @@ interface PaletteScore {
   shortfall: number
 }
 
-export function generatePalette(input: BoundaryValue): PaletteBuildResult {
+export function generatePalette(input: unknown): PaletteBuildResult {
   const parsed = parseRequest(input)
   if ('issues' in parsed) return { status: 'blocked', issues: parsed.issues }
 
@@ -249,7 +244,7 @@ export function paletteColorRecords(system: ColorSystem): Array<{
   })
 }
 
-function parseRequest(input: BoundaryValue): { value: ParsedRequest } | { issues: PaletteIssue[] } {
+function parseRequest(input: unknown): { value: ParsedRequest } | { issues: PaletteIssue[] } {
   const request = optionalRecord(input)
   const requestThemes = optionalRecord(request?.themes)
   if (!request || !requestThemes) {
@@ -262,7 +257,7 @@ function parseRequest(input: BoundaryValue): { value: ParsedRequest } | { issues
   const locked: ParsedRequest['locked'] = {}
 
   for (const name of Object.keys(requestThemes)) {
-    if (!ThemeNameSchema.safeParse(name).success) {
+    if (!isThemeName(name)) {
       issues.push({ code: 'invalid-request', message: `${name} is not a palette theme` })
     }
   }
@@ -300,7 +295,7 @@ function parseRequest(input: BoundaryValue): { value: ParsedRequest } | { issues
     }
     themes[name] = {
       accentSeed,
-      ...propertiesWhen(neutralSeed, (neutralSeed) => ({ neutralSeed })),
+      ...(neutralSeed ? { neutralSeed } : {}),
       surfaceContrast: direction.surfaceContrast,
     }
   }
@@ -318,7 +313,7 @@ function parseRequest(input: BoundaryValue): { value: ParsedRequest } | { issues
       issues.push({ code: 'invalid-request', message: 'palette locked roles must be an object' })
     } else {
       for (const name of Object.keys(requestLocked)) {
-        if (!ThemeNameSchema.safeParse(name).success) {
+        if (!isThemeName(name)) {
           issues.push({ code: 'invalid-request', message: `${name} is not a palette theme` })
         }
       }
@@ -344,8 +339,7 @@ function parseRequest(input: BoundaryValue): { value: ParsedRequest } | { issues
         }
         const themeLocks: Partial<Record<PaletteRole, string>> = {}
         for (const [role, value] of Object.entries(roleValues)) {
-          const parsedRole = PaletteRoleSchema.safeParse(role)
-          if (!parsedRole.success) {
+          if (!isPaletteRole(role)) {
             issues.push({
               code: 'unknown-role',
               message: `${role} is not a palette role`,
@@ -353,18 +347,17 @@ function parseRequest(input: BoundaryValue): { value: ParsedRequest } | { issues
             })
             continue
           }
-          const paletteRole = parsedRole.data
           const color = normalizeHex(value)
           if (!color) {
             issues.push({
               code: 'invalid-color',
               message: `${name}.${role} must be an opaque sRGB hex color`,
               theme: name,
-              roles: [paletteRole],
+              roles: [role],
             })
             continue
           }
-          themeLocks[paletteRole] = color
+          themeLocks[role] = color
         }
         locked[name] = themeLocks
       }
@@ -615,15 +608,22 @@ function rgb(value: string): number[] {
   return [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16))
 }
 
-function normalizeHex(value: BoundaryValue): string | undefined {
-  const result = HexSchema.safeParse(value)
-  if (!result.success) return undefined
-  const hex = result.data
+function normalizeHex(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !HEX.test(value)) return undefined
+  const hex = value
   const full =
     hex.length === 4
-      ? `#${[...hex.slice(1)].map((character) => character.repeat(2)).join('')}`
+      ? `#${Array.from(hex.slice(1), (character) => character.repeat(2)).join('')}`
       : hex
   return full.toUpperCase()
+}
+
+function isThemeName(value: string): value is PaletteThemeName {
+  return THEME_NAMES.some((name) => name === value)
+}
+
+function isPaletteRole(value: string): value is PaletteRole {
+  return PALETTE_ROLES.some((role) => role === value)
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

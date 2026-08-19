@@ -9,8 +9,6 @@ import {
   useState,
   useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
-  type ComponentProps,
-  type ComponentType,
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -22,8 +20,6 @@ import type {
   BackgroundModelTarget,
   DataOf,
   ModelConnection,
-  ModelConnectionPreset,
-  ModelTransport,
   ProviderId,
   ProviderStatus,
   ResultOf,
@@ -35,26 +31,17 @@ import {
   CircleAlert,
   CircleUserRound,
   Blocks,
-  ChevronDown,
   Database,
   Info,
   Boxes,
   Keyboard,
-  KeyRound,
   Network,
   Palette,
   PanelLeft,
   RotateCcw,
   UserRound,
 } from 'lucide-react'
-import {
-  agentMark,
-  connectionMark,
-  isCustomModelChoice,
-  providerMark,
-  type ModelChoice,
-  type ProviderMark,
-} from '../model-catalog.js'
+import { isCustomModelChoice, type ModelChoice } from '../model-catalog.js'
 import {
   appUpdateState,
   checkForAppUpdates,
@@ -100,16 +87,13 @@ import {
 } from '../haptics.js'
 import { AppSelect } from './AppSelect.js'
 import { McpSettings } from './McpSettings.js'
-import { Menu, MenuItem } from './Menu.js'
 import { groupModelsBySource } from './ModelSelector.js'
 import { SkillsSettings } from './SkillsSettings.js'
-import { ProviderIcon } from './ProviderIcon.js'
 import { ProviderRow, type ProviderAction } from './ProviderRow.js'
 import { ProfileSettings } from './ProfileSettings.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
-import { propertiesWhen } from '../properties-when.js'
 import {
   DEFAULT_KEYBINDINGS,
   type KeybindingId,
@@ -121,7 +105,6 @@ import { KeybindSettings } from './KeybindSettings.js'
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
 )
-type InstallTerminalView = ComponentType<ComponentProps<typeof InstallTerminal>>
 
 export type SettingsSection =
   | 'profile'
@@ -236,7 +219,6 @@ function SettingsComponent(props: {
   onReset: () => void
   onClose: () => void
   onProviderLoginTerminalOpen?: ((target: ProviderLoginTerminalTarget) => void) | undefined
-  installTerminalComponent?: InstallTerminalView | undefined
 }) {
   const [section, setSection] = useState<SettingsSection>(props.initialSection ?? 'providers')
 
@@ -488,48 +470,6 @@ function SettingsNavItem(props: {
   )
 }
 
-const CONNECTION_PRESETS = {
-  openai: {
-    label: 'OpenAI API',
-    transport: 'openai-responses',
-    baseUrl: 'https://api.openai.com/v1',
-    placeholder: 'gpt-5.6',
-  },
-  anthropic: {
-    label: 'Anthropic API',
-    transport: 'anthropic-messages',
-    baseUrl: 'https://api.anthropic.com/v1',
-    placeholder: 'claude-sonnet-4-6',
-  },
-  openrouter: {
-    label: 'OpenRouter',
-    transport: 'openai-compatible',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    placeholder: 'anthropic/claude-sonnet-4.6',
-  },
-  kimi: {
-    label: 'Kimi API',
-    transport: 'openai-compatible',
-    baseUrl: 'https://api.moonshot.ai/v1',
-    placeholder: 'kimi-k2.5',
-  },
-  zai: {
-    label: 'Z.ai API',
-    transport: 'openai-compatible',
-    baseUrl: 'https://api.z.ai/api/paas/v4',
-    placeholder: 'glm-5',
-  },
-  custom: {
-    label: 'Custom endpoint',
-    transport: 'openai-compatible',
-    baseUrl: 'http://127.0.0.1:11434/v1',
-    placeholder: 'model-id',
-  },
-} satisfies Record<
-  ModelConnectionPreset,
-  { label: string; transport: ModelTransport; baseUrl: string; placeholder: string }
->
-
 type ProviderMap<T> = Partial<Record<ProviderId, T>>
 
 export function ProviderSettings(props: {
@@ -542,7 +482,6 @@ export function ProviderSettings(props: {
   onAccountChange: (provider: ProviderId, account: Account) => void
   authRefreshRevision?: number | undefined
   onProviderLoginTerminalOpen?: ((target: ProviderLoginTerminalTarget) => void) | undefined
-  installTerminalComponent?: InstallTerminalView | undefined
 }) {
   type AuthReadState =
     | { phase: 'loading' }
@@ -742,7 +681,6 @@ export function ProviderSettings(props: {
           target={{ provider: status.id }}
           transport={props.transport}
           onInstalled={props.onConnectionsChanged}
-          InstallTerminalComponent={props.installTerminalComponent ?? InstallTerminal}
         />
       )
     }
@@ -779,7 +717,6 @@ export function ProviderSettings(props: {
           onOpenExpandedTerminal={
             status.id === 'claude-code' ? props.onProviderLoginTerminalOpen : undefined
           }
-          InstallTerminalComponent={props.installTerminalComponent ?? InstallTerminal}
         />
       )
     }
@@ -991,16 +928,22 @@ function BackgroundModelSettings(props: { transport: Transport }) {
                 mode: 'manual',
                 target: {
                   provider: choice.source.provider,
-                  ...propertiesWhen(choice.source.connectionId, (includedValue) => ({
-                    connectionId: includedValue,
-                  })),
-                  ...propertiesWhen(choice.source.agent, (includedValue) => ({
-                    agent: includedValue,
-                  })),
+                  ...(choice.source.connectionId
+                    ? {
+                        connectionId: choice.source.connectionId,
+                      }
+                    : {}),
+                  ...(choice.source.agent
+                    ? {
+                        agent: choice.source.agent,
+                      }
+                    : {}),
                   model: choice.model.id,
-                  ...propertiesWhen(choice.model.reasoningEfforts[0], (includedValue) => ({
-                    effort: includedValue,
-                  })),
+                  ...(choice.model.reasoningEfforts[0]
+                    ? {
+                        effort: choice.model.reasoningEfforts[0],
+                      }
+                    : {}),
                 },
               })
             }}
@@ -1674,7 +1617,6 @@ function InstallableRow(props: {
   target: InstallTarget
   transport: Transport
   onInstalled: () => void
-  InstallTerminalComponent: InstallTerminalView
 }) {
   const key = installKey(props.target)
   const detailsId = useId()
@@ -1774,13 +1716,7 @@ function InstallableRow(props: {
       />
       {install ? (
         <div id={detailsId} className="provider-terminal" hidden={!showTerminal}>
-          {showTerminal ? (
-            <ProviderTerminal
-              transport={props.transport}
-              installKey={key}
-              InstallTerminalComponent={props.InstallTerminalComponent}
-            />
-          ) : null}
+          {showTerminal ? <ProviderTerminal transport={props.transport} installKey={key} /> : null}
         </div>
       ) : null}
     </>
@@ -1800,7 +1736,6 @@ function CliSignInRow(props: {
   transport: Transport
   onSignedIn: () => void
   onOpenExpandedTerminal?: ((target: ProviderLoginTerminalTarget) => void) | undefined
-  InstallTerminalComponent: InstallTerminalView
 }) {
   const key = loginKey(props.target)
   const detailsId = useId()
@@ -1934,27 +1869,17 @@ function CliSignInRow(props: {
       ) : null}
       {login ? (
         <div id={detailsId} className="provider-terminal" hidden={!showTerminal}>
-          {showTerminal ? (
-            <ProviderTerminal
-              transport={props.transport}
-              installKey={key}
-              InstallTerminalComponent={props.InstallTerminalComponent}
-            />
-          ) : null}
+          {showTerminal ? <ProviderTerminal transport={props.transport} installKey={key} /> : null}
         </div>
       ) : null}
     </>
   )
 }
 
-function ProviderTerminal(props: {
-  transport: Transport
-  installKey: string
-  InstallTerminalComponent: InstallTerminalView
-}) {
+function ProviderTerminal(props: { transport: Transport; installKey: string }) {
   return (
     <Suspense fallback={<div className="install-terminal" aria-label="Install terminal" />}>
-      <props.InstallTerminalComponent transport={props.transport} installKey={props.installKey} />
+      <InstallTerminal transport={props.transport} installKey={props.installKey} />
     </Suspense>
   )
 }
@@ -2006,19 +1931,6 @@ function AccountEmail(props: { email: string }) {
     >
       <span className="settings__email-value">{props.email}</span>
     </button>
-  )
-}
-
-function PlannedRow(props: { title: string; mark?: ProviderMark }) {
-  return (
-    <SettingsRow title={props.title}>
-      <div className="provider-settings__actions">
-        <ProviderIcon mark={props.mark ?? 'custom'} size={17} />
-        <button className="settings__action" type="button" disabled>
-          Planned
-        </button>
-      </div>
-    </SettingsRow>
   )
 }
 

@@ -248,6 +248,7 @@ describe('ApiAgentSession', () => {
     const session = new ApiAgentSession({
       model: 'test-model',
       secrets: [secret],
+      // oxlint-disable-next-line require-yield -- The test stream fails only after cancellation.
       transport: async function* ({ signal }) {
         release?.()
         await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()))

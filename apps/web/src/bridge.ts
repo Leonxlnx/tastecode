@@ -1,6 +1,5 @@
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
 import { z } from 'zod'
-import type { BoundaryValue } from './boundary.js'
 
 /**
  * The native bridge, when one exists.
@@ -209,9 +208,8 @@ export function openLocalDiagnostics(): Promise<boolean> {
   return bridge?.openDiagnostics?.() ?? Promise.resolve(false)
 }
 
-export function reportRendererError(cause: BoundaryValue): void {
-  const error = z.instanceof(Error).safeParse(cause)
-  const message = error.success ? error.data.stack || error.data.message : String(cause)
+export function reportRendererError(cause: unknown): void {
+  const message = cause instanceof Error ? cause.stack || cause.message : String(cause)
   bridge?.reportRendererError?.(message.slice(0, 4_000))
 }
 

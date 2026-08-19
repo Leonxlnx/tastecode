@@ -2,7 +2,6 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Rectangle } from 'electron'
 import { z } from 'zod'
-import type { BoundaryValue } from './boundary.js'
 
 const MainWindowStateSchema = z.object({
   version: z.literal(1),
@@ -50,7 +49,7 @@ type MainWindowStateTarget = {
 
 const SAVE_DELAY_MS = 200
 
-export function parseMainWindowState(value: BoundaryValue): MainWindowState | undefined {
+export function parseMainWindowState(value: unknown): MainWindowState | undefined {
   const result = MainWindowStateSchema.safeParse(value)
   return result.success ? result.data : undefined
 }
@@ -101,7 +100,7 @@ export function persistMainWindowState(
   window: MainWindowStateTarget,
   initialState: RestoredMainWindowState,
   save: (state: MainWindowState) => void,
-  onError: (error: BoundaryValue) => void = () => undefined,
+  onError: (error: unknown) => void = () => undefined,
 ): MainWindowStatePersistence {
   let state: MainWindowState = {
     version: 1,

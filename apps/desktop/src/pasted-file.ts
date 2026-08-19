@@ -1,6 +1,5 @@
 import path from 'node:path'
 import { z } from 'zod'
-import type { BoundaryValue } from './boundary.js'
 
 export const MAX_PASTED_FILE_BYTES = 25 * 1024 * 1024
 
@@ -13,7 +12,7 @@ const PastedFilePayloadSchema = z.object({
 
 export type PastedFile = { bytes: Buffer; name: string }
 
-export function pastedFile(payload: BoundaryValue): PastedFile {
+export function pastedFile(payload: unknown): PastedFile {
   const parsed = PastedFilePayloadSchema.safeParse(payload)
   if (!parsed.success) {
     throw new Error('Invalid pasted file metadata')
@@ -71,6 +70,7 @@ function safeFileName(name: string): string {
   const leaf = path.basename(name.replaceAll('\\', '/'))
   const cleaned = leaf
     .normalize('NFC')
+    // oxlint-disable-next-line no-control-regex -- File names must reject control bytes.
     .replace(/[\u0000-\u001f\u007f<>:"/\\|?*]/g, '-')
     .replace(/^\.+/, '')
     .trim()

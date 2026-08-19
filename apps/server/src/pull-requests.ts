@@ -19,7 +19,6 @@ import type {
 } from '@harness/contracts'
 import { isInstalled, killTree, spawnCli } from '@harness/proc'
 import { z } from 'zod'
-import { propertiesWhen } from './properties-when.js'
 
 const runFile = promisify(execFile)
 const LIST_TTL_MS = 30_000
@@ -531,14 +530,8 @@ export class PullRequestService {
 
       case 'edit': {
         const input = {
-          ...propertiesWhen(
-            action.title === undefined ? undefined : { title: action.title },
-            (includedTitle) => includedTitle,
-          ),
-          ...propertiesWhen(
-            action.body === undefined ? undefined : { body: action.body },
-            (includedBody) => includedBody,
-          ),
+          ...(action.title === undefined ? {} : { title: action.title }),
+          ...(action.body === undefined ? {} : { body: action.body }),
         }
         if (Object.keys(input).length === 0) {
           throw new Error('Choose a title or description to update')
@@ -742,7 +735,7 @@ export class PullRequestService {
         ...(existing ?? item),
         ...item,
         relationship,
-        ...propertiesWhen(localProjectPath, (localProjectPath) => ({ localProjectPath })),
+        ...(localProjectPath ? { localProjectPath } : {}),
       })
     }
     const items = [...combined.values()].sort(
@@ -800,36 +793,44 @@ export class PullRequestService {
         deletions: raw.deletions,
         comments: { totalCount: comments.length },
         repository: { nameWithOwner: repository },
-        ...propertiesWhen(!(raw.author === undefined), () => ({ author: raw.author })),
-        ...propertiesWhen(!(raw.headRefName === undefined), () => ({
-          headRefName: raw.headRefName,
-        })),
-        ...propertiesWhen(!(raw.baseRefName === undefined), () => ({
-          baseRefName: raw.baseRefName,
-        })),
-        ...propertiesWhen(!(raw.reviewDecision === undefined), () => ({
-          reviewDecision: raw.reviewDecision,
-        })),
-        ...propertiesWhen(!(raw.mergeStateStatus === undefined), () => ({
-          mergeStateStatus: raw.mergeStateStatus,
-        })),
+        ...(!(raw.author === undefined) ? { author: raw.author } : {}),
+        ...(!(raw.headRefName === undefined)
+          ? {
+              headRefName: raw.headRefName,
+            }
+          : {}),
+        ...(!(raw.baseRefName === undefined)
+          ? {
+              baseRefName: raw.baseRefName,
+            }
+          : {}),
+        ...(!(raw.reviewDecision === undefined)
+          ? {
+              reviewDecision: raw.reviewDecision,
+            }
+          : {}),
+        ...(!(raw.mergeStateStatus === undefined)
+          ? {
+              mergeStateStatus: raw.mergeStateStatus,
+            }
+          : {}),
       },
       relationship,
     )
 
     const detail: PullRequestDetail = {
       ...listItem,
-      ...propertiesWhen(localProjectPath, (localProjectPath) => ({ localProjectPath })),
+      ...(localProjectPath ? { localProjectPath } : {}),
       body: raw.body ?? '',
       createdAt: requiredString(raw.createdAt, 'createdAt'),
-      ...propertiesWhen(raw.closedAt, (includedValue) => ({ closedAt: includedValue })),
-      ...propertiesWhen(raw.mergedAt, (includedValue) => ({ mergedAt: includedValue })),
+      ...(raw.closedAt ? { closedAt: raw.closedAt } : {}),
+      ...(raw.mergedAt ? { mergedAt: raw.mergedAt } : {}),
       headRefOid: requiredString(raw.headRefOid, 'headRefOid'),
       baseRefOid: requiredString(raw.baseRefOid, 'baseRefOid'),
       changedFiles: raw.changedFiles ?? 0,
       mergeable: normalizeMergeable(raw.mergeable),
       maintainerCanModify: raw.maintainerCanModify === true,
-      ...(normalizeAutoMerge(raw.autoMergeRequest) ?? {}),
+      ...normalizeAutoMerge(raw.autoMergeRequest),
       reviewers,
       requestedReviewers,
       assignees: (raw.assignees ?? []).map(actor),
@@ -838,7 +839,7 @@ export class PullRequestService {
           ? [{ name: label.name, color: label.color! }]
           : [],
       ),
-      ...propertiesWhen(raw.milestone?.title, (includedValue) => ({ milestone: includedValue })),
+      ...(raw.milestone?.title ? { milestone: raw.milestone?.title } : {}),
       checks: (raw.statusCheckRollup ?? []).map(normalizeCheck),
       comments,
       reviews,
@@ -1156,18 +1157,12 @@ function applyActionToListItem(
     case 'edit':
       return {
         ...item,
-        ...propertiesWhen(
-          action.title === undefined ? undefined : { title: action.title },
-          (includedTitle) => includedTitle,
-        ),
+        ...(action.title === undefined ? {} : { title: action.title }),
       }
     case 'update_metadata':
       return {
         ...item,
-        ...propertiesWhen(
-          action.baseRefName === undefined ? undefined : { baseRefName: action.baseRefName },
-          (includedBase) => includedBase,
-        ),
+        ...(action.baseRefName === undefined ? {} : { baseRefName: action.baseRefName }),
       }
     case 'set_draft':
       return { ...item, state: 'OPEN', isDraft: action.draft }
@@ -1331,9 +1326,11 @@ function uniqueMetadataLabels(
       labels.set(key, {
         name,
         color,
-        ...propertiesWhen(description, (includedDescription) => ({
-          description: includedDescription,
-        })),
+        ...(description
+          ? {
+              description: description,
+            }
+          : {}),
       })
     }
   }
@@ -1379,7 +1376,8 @@ export function runGh(args: string[], options: GhRunOptions = {}): Promise<strin
       if (settled) return
       settled = true
       clearTimeout(timer)
-      result instanceof Error ? reject(result) : resolve(result)
+      if (result instanceof Error) reject(result)
+      else resolve(result)
     }
     const timer = setTimeout(() => {
       killTree(child)
@@ -1473,7 +1471,7 @@ function normalizeSearchItem(
       additions: 0,
       deletions: 0,
       comments: { totalCount: nonnegative(raw.commentsCount) },
-      ...propertiesWhen(!(raw.author === undefined), () => ({ author: raw.author })),
+      ...(!(raw.author === undefined) ? { author: raw.author } : {}),
       repository: {
         nameWithOwner: requiredString(raw.repository?.nameWithOwner, 'repository'),
       },
@@ -1503,10 +1501,12 @@ function normalizeListItem(
     commentsCount: nonnegative(raw.comments?.totalCount),
     headRefName: raw.headRefName ?? '',
     baseRefName: raw.baseRefName ?? '',
-    ...propertiesWhen(reviewDecision, (reviewDecision) => ({ reviewDecision })),
-    ...propertiesWhen(raw.mergeStateStatus, (includedValue) => ({
-      mergeStateStatus: includedValue,
-    })),
+    ...(reviewDecision ? { reviewDecision } : {}),
+    ...(raw.mergeStateStatus
+      ? {
+          mergeStateStatus: raw.mergeStateStatus,
+        }
+      : {}),
     relationship,
   }
 }
@@ -1518,11 +1518,11 @@ function normalizeComment(raw: ParsedRawComment, viewerLogin: string): PullReque
   const databaseId = raw.databaseId ?? (parsedDatabaseId || undefined)
   return {
     id: raw.id ?? `${author.login}:${raw.createdAt ?? ''}`,
-    ...propertiesWhen(databaseId, (databaseId) => ({ databaseId })),
+    ...(databaseId ? { databaseId } : {}),
     author,
     body: raw.body ?? '',
     createdAt: requiredString(raw.createdAt, 'comment.createdAt'),
-    ...propertiesWhen(raw.updatedAt, (includedValue) => ({ updatedAt: includedValue })),
+    ...(raw.updatedAt ? { updatedAt: raw.updatedAt } : {}),
     url,
     viewerDidAuthor: author.login.toLowerCase() === viewerLogin.toLowerCase(),
   }
@@ -1551,16 +1551,20 @@ function normalizeReviewThread(
   return {
     id: requiredString(raw.id, 'reviewThread.id'),
     path: requiredString(raw.path, 'reviewThread.path'),
-    ...propertiesWhen(raw.line, (includedValue) => ({ line: includedValue })),
-    ...propertiesWhen(raw.startLine, (includedValue) => ({ startLine: includedValue })),
-    ...propertiesWhen(raw.originalLine, (includedValue) => ({ originalLine: includedValue })),
-    ...propertiesWhen(raw.originalStartLine, (includedValue) => ({
-      originalStartLine: includedValue,
-    })),
-    ...propertiesWhen(diffSide, (includedDiffSide) => ({ diffSide: includedDiffSide })),
-    ...propertiesWhen(startDiffSide, (includedStartDiffSide) => ({
-      startDiffSide: includedStartDiffSide,
-    })),
+    ...(raw.line ? { line: raw.line } : {}),
+    ...(raw.startLine ? { startLine: raw.startLine } : {}),
+    ...(raw.originalLine ? { originalLine: raw.originalLine } : {}),
+    ...(raw.originalStartLine
+      ? {
+          originalStartLine: raw.originalStartLine,
+        }
+      : {}),
+    ...(diffSide ? { diffSide: diffSide } : {}),
+    ...(startDiffSide
+      ? {
+          startDiffSide: startDiffSide,
+        }
+      : {}),
     resolved: raw.isResolved === true,
     outdated: raw.isOutdated === true,
     comments: (raw.comments?.nodes ?? []).map((comment) => normalizeComment(comment, viewerLogin)),
@@ -1573,11 +1577,11 @@ function normalizeCheck(raw: ParsedRawCheck): PullRequestDetail['checks'][number
   const detailsUrl = checkRun ? raw.detailsUrl : raw.targetUrl
   return {
     name: name || 'Check',
-    ...propertiesWhen(raw.workflowName, (includedValue) => ({ workflowName: includedValue })),
+    ...(raw.workflowName ? { workflowName: raw.workflowName } : {}),
     state: checkState(raw),
-    ...propertiesWhen(detailsUrl && isUrl(detailsUrl), () => ({ detailsUrl })),
-    ...propertiesWhen(raw.startedAt, (includedValue) => ({ startedAt: includedValue })),
-    ...propertiesWhen(raw.completedAt, (includedValue) => ({ completedAt: includedValue })),
+    ...(detailsUrl && isUrl(detailsUrl) ? { detailsUrl } : {}),
+    ...(raw.startedAt ? { startedAt: raw.startedAt } : {}),
+    ...(raw.completedAt ? { completedAt: raw.completedAt } : {}),
   }
 }
 
@@ -1593,27 +1597,17 @@ function normalizeFile(raw: z.infer<typeof RawFileSchema>): PullRequestFile {
     status === 'unchanged'
       ? status
       : 'modified'
+  const blobUrl = raw.blob_url && isUrl(raw.blob_url) ? raw.blob_url : undefined
   return {
     sha: requiredString(raw.sha, 'file.sha'),
     path: requiredString(raw.filename, 'file.filename'),
-    ...propertiesWhen(
-      raw.previous_filename === undefined ? undefined : { previousPath: raw.previous_filename },
-      (includedPreviousPath) => includedPreviousPath,
-    ),
+    ...(raw.previous_filename === undefined ? {} : { previousPath: raw.previous_filename }),
     status: validStatus,
     additions: nonnegative(raw.additions),
     deletions: nonnegative(raw.deletions),
     changes: nonnegative(raw.changes),
-    ...propertiesWhen(
-      raw.patch === undefined ? undefined : { patch: raw.patch },
-      (includedPatch) => includedPatch,
-    ),
-    ...propertiesWhen(
-      raw.blob_url && isUrl(raw.blob_url) ? raw.blob_url : undefined,
-      (blobUrl) => ({
-        blobUrl,
-      }),
-    ),
+    ...(raw.patch === undefined ? {} : { patch: raw.patch }),
+    ...(blobUrl ? { blobUrl } : {}),
   }
 }
 
@@ -1654,8 +1648,8 @@ function normalizeAutoMerge(
   return {
     autoMerge: {
       mergeMethod,
-      ...propertiesWhen(raw.enabledAt, (includedValue) => ({ enabledAt: includedValue })),
-      ...propertiesWhen(raw.enabledBy, (includedValue) => ({ enabledBy: actor(includedValue) })),
+      ...(raw.enabledAt ? { enabledAt: raw.enabledAt } : {}),
+      ...(raw.enabledBy ? { enabledBy: actor(raw.enabledBy) } : {}),
     },
   }
 }

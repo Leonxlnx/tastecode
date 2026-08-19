@@ -10,7 +10,6 @@ import { McpTransportSchema } from '@harness/contracts'
 import { AlertTriangle, Plus, Trash2 } from 'lucide-react'
 import type { Transport } from '../transport.js'
 import { AppSelect } from './AppSelect.js'
-import { propertiesWhen } from '../properties-when.js'
 
 type Inventory = ResultOf<'mcp.list'>
 type Editor = { mode: 'add' | 'edit'; id: string; displayName: string; transport: string }
@@ -257,9 +256,11 @@ function ProviderMcpSettings(props: {
       server = {
         id: editor.id.trim(),
         enabled: true,
-        ...propertiesWhen(editor.displayName.trim(), () => ({
-          displayName: editor.displayName.trim(),
-        })),
+        ...(editor.displayName.trim()
+          ? {
+              displayName: editor.displayName.trim(),
+            }
+          : {}),
         transport: McpTransportSchema.parse(JSON.parse(editor.transport)),
       }
     } catch {

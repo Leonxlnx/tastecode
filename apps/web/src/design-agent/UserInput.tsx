@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, type WheelEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { UserInputRequest } from '@harness/contracts'
-import { IndeterminateRequestErrorSchema } from '../transport.js'
-import type { BoundaryValue } from '../boundary.js'
+import { IndeterminateRequestError } from '../transport.js'
 import './user-input.css'
 
 export function UserInput(props: {
@@ -89,8 +88,8 @@ export function UserInput(props: {
         }
         setSubmitting(true)
         setSubmissionError(undefined)
-        const retry = (error: BoundaryValue) => {
-          if (IndeterminateRequestErrorSchema.safeParse(error).success) {
+        const retry = (error: unknown) => {
+          if (error instanceof IndeterminateRequestError) {
             setSubmissionError('indeterminate')
             return
           }

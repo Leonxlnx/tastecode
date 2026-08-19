@@ -1,5 +1,4 @@
 import type { Model } from '@harness/contracts'
-import { propertiesWhen } from './properties-when.js'
 
 /**
  * Collapse agy's per-effort slugs into base models.
@@ -136,16 +135,20 @@ export function collapseAntigravityModels(slugs: string[]): CollapsedAntigravity
       displayName: antigravityDisplayName(group.stem),
       // A lone variant with a baked-in effort keeps the honest note; there is
       // no slider to carry the word instead.
-      ...propertiesWhen(soleEffort, (includedValue) => ({
-        description: `Fixed at ${includedValue} effort`,
-      })),
+      ...(soleEffort
+        ? {
+            description: `Fixed at ${soleEffort} effort`,
+          }
+        : {}),
       isDefault: group.variants.some((v) => v.id === defaultSlug),
       reasoningEfforts: hasEffortChoice
         ? [...new Set(efforts)].sort((a, b) => effortRank(a) - effortRank(b))
         : [],
-      ...propertiesWhen(hasEffortChoice && entry.defaultEffort, () => ({
-        defaultReasoningEffort: entry.defaultEffort,
-      })),
+      ...(hasEffortChoice && entry.defaultEffort
+        ? {
+            defaultReasoningEffort: entry.defaultEffort,
+          }
+        : {}),
       serviceTiers: [],
     })
   }

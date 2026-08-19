@@ -4,7 +4,6 @@ import { CODEX_CAPABILITIES } from '@harness/adapter-codex'
 import { GROK_CAPABILITIES } from '@harness/adapter-grok'
 import type { ProviderSetup, ProviderStatus } from '@harness/contracts'
 import { commandVersion, isInstalled } from '@harness/proc'
-import { propertiesWhen } from './properties-when.js'
 
 /**
  * What this machine can actually run.
@@ -169,7 +168,7 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
       installed: false,
       auth: 'unknown',
       setup: entry.setup,
-      ...propertiesWhen(entry.unbuilt, (includedValue) => ({ problem: includedValue })),
+      ...(entry.unbuilt ? { problem: entry.unbuilt } : {}),
     }
   }
 
@@ -193,10 +192,12 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
     installed: true,
     auth: 'unknown',
     setup: entry.setup,
-    ...propertiesWhen(version, (version) => ({ version })),
-    ...propertiesWhen(entry.capabilities, (includedValue) => ({ capabilities: includedValue })),
-    ...propertiesWhen(unsupported, () => ({
-      problem: `Adapter supports ${entry.supportedVersion}.x; installed version is ${version}`,
-    })),
+    ...(version ? { version } : {}),
+    ...(entry.capabilities ? { capabilities: entry.capabilities } : {}),
+    ...(unsupported
+      ? {
+          problem: `Adapter supports ${entry.supportedVersion}.x; installed version is ${version}`,
+        }
+      : {}),
   }
 }

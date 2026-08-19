@@ -1,19 +1,5 @@
-import {
-  createContext,
-  memo,
-  useCallback,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ComponentProps,
-  type ComponentType,
-  type Key,
-  type ReactNode,
-} from 'react'
-import { useVirtualizer as useReactVirtualizer } from '@tanstack/react-virtual'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import type {
   ApprovalDecision,
   ApprovalRequest,
@@ -53,7 +39,7 @@ import { isEditableTarget } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
 import { Approval, AutomaticApprovalReview } from './Approval.js'
 import { Diff } from './Diff.js'
-import { Markdown, type MarkdownProps, type MarkdownServices } from './Markdown.js'
+import { Markdown } from './Markdown.js'
 import { MediaViewer } from './MediaViewer.js'
 import { Plan } from './Plan.js'
 import { ThreadSearch } from './ThreadSearch.js'
@@ -78,79 +64,6 @@ import { threadItemAt, type LiveItemUpdate } from '../thread-store.js'
 
 const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()
 
-export type ThreadVirtualizerOptions = {
-  count: number
-  getScrollElement: () => HTMLDivElement | null
-  estimateSize: () => number
-  getItemKey: (index: number) => Key
-  overscan: number
-  initialRect: { width: number; height: number }
-}
-
-export type ThreadVirtualRow = {
-  index: number
-  key: Key
-  start: number
-  end: number
-}
-
-export type ThreadVirtualizer = {
-  getVirtualItems: () => ThreadVirtualRow[]
-  getTotalSize: () => number
-  getOffsetForIndex: (
-    index: number,
-    align?: 'auto' | 'start' | 'center' | 'end',
-  ) => readonly [number, string] | undefined
-  scrollToIndex: (index: number, options?: { align?: 'auto' | 'start' | 'center' | 'end' }) => void
-  measureElement: (element: Element | null) => void
-  measurementsCache: Array<{ start: number } | undefined>
-}
-
-export type ThreadThinkingOrbProps = ComponentProps<typeof ThinkingOrb>
-
-export type ThreadDependencies = {
-  useVirtualizer: (options: ThreadVirtualizerOptions) => ThreadVirtualizer
-  MarkdownComponent: ComponentType<MarkdownProps>
-  markdownServices?: MarkdownServices | undefined
-  ThinkingOrbComponent: ComponentType<ThreadThinkingOrbProps>
-  previewViewedImage: typeof previewViewedImage
-  revealPath: typeof revealPath
-  writeClipboardText: typeof writeClipboardText
-}
-
-function useDefaultThreadVirtualizer(options: ThreadVirtualizerOptions): ThreadVirtualizer {
-  return useReactVirtualizer(options)
-}
-
-function DefaultThinkingOrb(props: ThreadThinkingOrbProps) {
-  return <ThinkingOrb {...props} />
-}
-
-export const defaultThreadDependencies: ThreadDependencies = {
-  useVirtualizer: useDefaultThreadVirtualizer,
-  MarkdownComponent: Markdown,
-  ThinkingOrbComponent: DefaultThinkingOrb,
-  previewViewedImage,
-  revealPath,
-  writeClipboardText,
-}
-
-const ThreadDependenciesContext = createContext(defaultThreadDependencies)
-
-export function ThreadDependenciesProvider({
-  dependencies,
-  children,
-}: {
-  dependencies: ThreadDependencies
-  children: ReactNode
-}) {
-  return (
-    <ThreadDependenciesContext.Provider value={dependencies}>
-      {children}
-    </ThreadDependenciesContext.Provider>
-  )
-}
-
 /**
  * The thread.
  *
@@ -163,7 +76,7 @@ export function ThreadDependenciesProvider({
  * file edits in one work batch share one line you can open. The default view
  * should read as a summary of what happened, not a transcript of every byte.
  */
-export type ThreadProps = {
+export function Thread(props: {
   items: Item[]
   loading?: boolean
   liveItems?: ReadonlyMap<number, LiveItemUpdate> | undefined
@@ -192,12 +105,7 @@ export type ThreadProps = {
     ((threadId: string, turnId: string, expectedDiff: string) => Promise<void>) | undefined
   onDecide: (id: string, decision: ApprovalDecision) => void
   onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
-  dependencies?: ThreadDependencies | undefined
-}
-
-export function Thread(props: ThreadProps) {
-  const inheritedDependencies = useContext(ThreadDependenciesContext)
-  const dependencies = props.dependencies ?? inheritedDependencies
+}) {
   const scroller = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<ScrollMode>('follow-end')
   const [finding, setFinding] = useState(false)
@@ -243,7 +151,7 @@ export function Thread(props: ThreadProps) {
   const settledTurnId = useSettledTurnId(props.running, props.activeTurn?.id)
   const getItemKey = useVirtualItemKey(props.items, props.threadId)
 
-  const virtualizer = dependencies.useVirtualizer({
+  const virtualizer = useVirtualizer({
     count: props.items.length,
     getScrollElement: () => scroller.current,
     // Roughly one paragraph. Wrong estimates only cost a correction on measure.
@@ -430,209 +338,201 @@ export function Thread(props: ThreadProps) {
       ? virtualizer.getTotalSize()
       : (virtualizer.measurementsCache[railIndex]?.start ?? virtualizer.getTotalSize())
 
-  // The overlays live outside the scroller: an absolutely positioned child
-  // of a scroll container scrolls away with the content.
   return (
-    <ThreadDependenciesContext.Provider value={dependencies}>
-      <div className="thread-shell">
-        {finding ? (
-          <ThreadSearch
-            items={props.items}
-            liveItems={liveItems}
-            threadId={props.threadId}
-            onJump={jumpTo}
-            onClose={() => setFinding(false)}
-          />
-        ) : null}
-        {props.items.length === 0 && !props.running ? (
-          props.loading ? (
-            <div className="empty thread__empty" role="status">
-              Loading conversation…
+    // The overlays live OUTSIDE the scroller: an absolutely positioned child
+    // of a scroll container scrolls away with the content — Ctrl+F used to
+    // yank the transcript to the top just to show the find bar, and "Jump to
+    // latest" rendered below the viewport exactly when it was needed.
+    <div className="thread-shell">
+      {finding ? (
+        <ThreadSearch
+          items={props.items}
+          liveItems={liveItems}
+          threadId={props.threadId}
+          onJump={jumpTo}
+          onClose={() => setFinding(false)}
+        />
+      ) : null}
+      {props.items.length === 0 && !props.running ? (
+        props.loading ? (
+          <div className="empty thread__empty" role="status">
+            Loading conversation…
+          </div>
+        ) : (
+          <div className="empty thread__empty">
+            <div className="empty__prompt" role="heading" aria-level={1}>
+              Tell the agent what you want to build, then send it below.
             </div>
-          ) : (
-            <div className="empty thread__empty">
-              <div className="empty__prompt" role="heading" aria-level={1}>
-                Tell the agent what you want to build, then send it below.
-              </div>
-            </div>
-          )
-        ) : null}
-        <div className="thread" ref={scroller} onScroll={onScroll}>
-          <div className="thread__col">
-            <div className="thread__runway" style={{ height: virtualizer.getTotalSize() }}>
-              {rows.map((row) => {
-                const item = itemAt(row.index)
-                if (!item) return null
-                const liveItemUpdate = liveItems.get(row.index)
-                const presentation = presentations.get(item.turnId)
-                const live = props.running && props.activeTurn?.id === item.turnId
-                const activityGroup =
-                  presentation && presentation.design !== true
-                    ? presentation.activityGroups.find(
-                        ({ firstIndex, lastIndex }) =>
-                          row.index >= firstIndex && row.index <= lastIndex,
-                      )
-                    : undefined
-                const compactedActivity = activityGroup !== undefined && isStackedActivity(item)
-                const activityLead = compactedActivity && activityGroup.firstIndex === row.index
-                const itemAfterActivity = activityGroup
-                  ? itemAt(activityGroup.lastIndex + 1)
+          </div>
+        )
+      ) : null}
+      <div className="thread" ref={scroller} onScroll={onScroll}>
+        <div className="thread__col">
+          <div className="thread__runway" style={{ height: virtualizer.getTotalSize() }}>
+            {rows.map((row) => {
+              const item = itemAt(row.index)
+              if (!item) return null
+              const liveItemUpdate = liveItems.get(row.index)
+              const presentation = presentations.get(item.turnId)
+              const live = props.running && props.activeTurn?.id === item.turnId
+              const activityGroup =
+                presentation && presentation.design !== true
+                  ? presentation.activityGroups.find(
+                      ({ firstIndex, lastIndex }) =>
+                        row.index >= firstIndex && row.index <= lastIndex,
+                    )
                   : undefined
-                const liveActivityGroup =
-                  live &&
-                  activityGroup !== undefined &&
-                  (itemAfterActivity === undefined || itemAfterActivity.turnId !== item.turnId)
-                const responseLead =
-                  !live &&
-                  presentation?.complete === true &&
-                  presentation.finalAnswerIndex === row.index
-                const completedCommentary =
-                  presentation?.complete === true &&
-                  item.type === 'message' &&
-                  item.role === 'assistant' &&
-                  item.phase === 'commentary' &&
-                  presentation.finalAnswerIndex !== undefined &&
-                  itemAt(presentation.finalAnswerIndex)?.phase === 'final_answer'
-                const suppressed =
-                  isBlankReasoning(item) ||
-                  completedCommentary ||
-                  (compactedActivity && !activityLead) ||
-                  isRepeatedDesignRow(item, props.items, row.index) ||
-                  // A design turn tells its story through the phase labels and
-                  // TasteCode notes; the provider's raw commands, tool calls, and
-                  // thinking would drown that story in noise.
-                  (presentation?.design === true &&
-                    !compactedActivity &&
-                    ((isActivity(item) && !designPhaseLabel(toolText(item))) ||
-                      item.type === 'error'))
-                const nextVisibleItem = itemAt(
-                  activityLead && activityGroup ? activityGroup.lastIndex + 1 : row.index + 1,
-                )
-                const compactToNext =
-                  !suppressed &&
-                  nextVisibleItem?.turnId === item.turnId &&
-                  !(item.type === 'message' && item.role === 'user') &&
-                  !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
-                const settling = settledTurnId === item.turnId
-                const railAnchor =
-                  showWorkingRail && live && presentation?.firstResponseIndex === row.index
-                const activityItems = activityGroup
-                  ? Array.from(
-                      { length: activityGroup.lastIndex - activityGroup.firstIndex + 1 },
-                      (_, offset) => itemAt(activityGroup.firstIndex + offset),
-                    ).filter((entry): entry is Item => entry !== undefined)
-                  : undefined
-                return (
-                  <div
-                    key={row.key}
-                    className={`thread__row${suppressed ? ' is-suppressed' : ''}${compactToNext ? ' is-compact-to-next' : ''}${enteringItemIds.has(item.id) ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
-                    data-index={row.index}
-                    ref={virtualizer.measureElement}
-                    style={{ transform: `translateY(${row.start}px)` }}
-                  >
-                    <Row
-                      item={item}
-                      liveTextUpdate={liveItemUpdate?.textUpdate}
-                      liveUpdateVersion={liveItemUpdate?.version}
-                      projectPath={props.projectPath}
-                      hidden={suppressed}
-                      activity={activityLead ? activityItems : undefined}
-                      activityLive={liveActivityGroup}
-                      live={live}
-                      responseText={responseLead ? presentation.responseText : undefined}
-                      finalResponse={responseLead}
-                      settling={settling}
-                      onEditMessage={props.onEditMessage}
-                      checkpoint={checkpointFor(
-                        presentation?.prompt ?? item,
-                        props.checkpoints ?? [],
-                      )}
-                      onRevertCheckpoint={props.onRevertCheckpoint}
-                    />
-                  </div>
-                )
-              })}
-              {showWorkingRail && props.activeTurn ? (
-                // Deliberately not keyed by turn id: the optimistic turn's id is
-                // replaced by the server's a few seconds in, and a key would
-                // remount the rail at exactly the moment this render position
-                // exists to survive. Before any response row exists the rail
-                // sits at the end of the runway, over the space the spacer
-                // below holds.
-                <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
-                  <WorkingRail
-                    startedAt={activePresentation?.workStartedAt ?? props.activeTurn.startedAt}
-                    label={rawWorkLabel}
+              const compactedActivity = activityGroup !== undefined && isStackedActivity(item)
+              const activityLead = compactedActivity && activityGroup.firstIndex === row.index
+              const itemAfterActivity = activityGroup
+                ? itemAt(activityGroup.lastIndex + 1)
+                : undefined
+              const liveActivityGroup =
+                live &&
+                activityGroup !== undefined &&
+                (itemAfterActivity === undefined || itemAfterActivity.turnId !== item.turnId)
+              const responseLead =
+                !live &&
+                presentation?.complete === true &&
+                presentation.finalAnswerIndex === row.index
+              const suppressed =
+                isBlankReasoning(item) ||
+                (compactedActivity && !activityLead) ||
+                isRepeatedDesignRow(item, props.items, row.index) ||
+                // A design turn tells its story through the phase labels and
+                // TasteCode notes; the provider's raw commands, tool calls, and
+                // thinking would drown that story in noise.
+                (presentation?.design === true &&
+                  !compactedActivity &&
+                  ((isActivity(item) && !designPhaseLabel(toolText(item))) ||
+                    item.type === 'error'))
+              const nextVisibleItem = itemAt(
+                activityLead && activityGroup ? activityGroup.lastIndex + 1 : row.index + 1,
+              )
+              const compactToNext =
+                !suppressed &&
+                nextVisibleItem?.turnId === item.turnId &&
+                !(item.type === 'message' && item.role === 'user') &&
+                !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
+              const settling = settledTurnId === item.turnId
+              const railAnchor =
+                showWorkingRail && live && presentation?.firstResponseIndex === row.index
+              const activityItems = activityGroup
+                ? Array.from(
+                    { length: activityGroup.lastIndex - activityGroup.firstIndex + 1 },
+                    (_, offset) => itemAt(activityGroup.firstIndex + offset),
+                  ).filter((entry): entry is Item => entry !== undefined)
+                : undefined
+              return (
+                <div
+                  key={row.key}
+                  className={`thread__row${suppressed ? ' is-suppressed' : ''}${compactToNext ? ' is-compact-to-next' : ''}${enteringItemIds.has(item.id) ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
+                  data-index={row.index}
+                  ref={virtualizer.measureElement}
+                  style={{ transform: `translateY(${row.start}px)` }}
+                >
+                  <Row
+                    item={item}
+                    liveTextUpdate={liveItemUpdate?.textUpdate}
+                    liveUpdateVersion={liveItemUpdate?.version}
+                    projectPath={props.projectPath}
+                    hidden={suppressed}
+                    activity={activityLead ? activityItems : undefined}
+                    activityLive={liveActivityGroup}
+                    live={live}
+                    responseText={responseLead ? presentation.responseText : undefined}
+                    finalResponse={responseLead}
+                    settling={settling}
+                    onEditMessage={props.onEditMessage}
+                    checkpoint={checkpointFor(
+                      presentation?.prompt ?? item,
+                      props.checkpoints ?? [],
+                    )}
+                    onRevertCheckpoint={props.onRevertCheckpoint}
                   />
                 </div>
-              ) : null}
-            </div>
-
-            {showWorkingRail && props.activeTurn && railIndex === undefined ? (
-              <div className="thread__rail-spacer" aria-hidden />
-            ) : null}
-
-            {/* Above the plan and the diff: it is the only thing here that blocks
-            the agent, so it should be the first thing the eye lands on. */}
-            {props.userInputs.map((request) => (
-              <UserInput
-                key={request.id}
-                request={request}
-                onSubmit={(answers) => props.onAnswerUserInput(request.id, answers)}
-              />
-            ))}
-
-            {props.approvals.map((request) => (
-              <Approval
-                key={request.id}
-                request={request}
-                onDecide={(d) => props.onDecide(request.id, d)}
-              />
-            ))}
-
-            {props.reviews.map((review) => (
-              <AutomaticApprovalReview key={review.id} review={review} />
-            ))}
-
-            {props.running ? <Plan steps={props.plan} compact /> : null}
-            {!props.running ? (
-              <Diff
-                diff={props.diff}
-                threadId={props.threadId}
-                transport={props.transport}
-                onUndo={
-                  props.threadId && props.diffTurnId && props.diff && props.onUndoChanges
-                    ? () => props.onUndoChanges!(props.threadId!, props.diffTurnId!, props.diff!)
-                    : undefined
-                }
-              />
+              )
+            })}
+            {showWorkingRail && props.activeTurn ? (
+              // Deliberately not keyed by turn id: the optimistic turn's id is
+              // replaced by the server's a few seconds in, and a key would
+              // remount the rail at exactly the moment this render position
+              // exists to survive. Before any response row exists the rail
+              // sits at the end of the runway, over the space the spacer
+              // below holds.
+              <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
+                <WorkingRail
+                  startedAt={activePresentation?.workStartedAt ?? props.activeTurn.startedAt}
+                  label={rawWorkLabel}
+                />
+              </div>
             ) : null}
           </div>
-        </div>
 
-        {mode === 'free' ? (
-          <button
-            className="jump"
-            onClick={() => {
-              const el = scroller.current
-              if (!el) return
-              // Stay in free mode for the whole glide. Flipping to follow-end
-              // here unmounts the button, and the first mid-flight scroll event
-              // then flips it straight back — remounting it with its entrance
-              // animation — until the scroll lands. The onScroll handler hands
-              // over to follow-end once the glide actually reaches the bottom.
-              el.scrollTo({ top: el.scrollHeight - el.clientHeight, behavior: 'smooth' })
-              // Already at the bottom? Nothing animates and no scroll event
-              // comes, so there would be no handover — hide right away.
-              if (isAtBottom(el)) setMode('follow-end')
-            }}
-          >
-            <ArrowDownToLine size={13} aria-hidden />
-            Jump to latest
-          </button>
-        ) : null}
+          {showWorkingRail && props.activeTurn && railIndex === undefined ? (
+            <div className="thread__rail-spacer" aria-hidden />
+          ) : null}
+
+          {/* Above the plan and the diff: it is the only thing here that blocks
+            the agent, so it should be the first thing the eye lands on. */}
+          {props.userInputs.map((request) => (
+            <UserInput
+              key={request.id}
+              request={request}
+              onSubmit={(answers) => props.onAnswerUserInput(request.id, answers)}
+            />
+          ))}
+
+          {props.approvals.map((request) => (
+            <Approval
+              key={request.id}
+              request={request}
+              onDecide={(d) => props.onDecide(request.id, d)}
+            />
+          ))}
+
+          {props.reviews.map((review) => (
+            <AutomaticApprovalReview key={review.id} review={review} />
+          ))}
+
+          {props.running ? <Plan steps={props.plan} compact /> : null}
+          {!props.running ? (
+            <Diff
+              diff={props.diff}
+              threadId={props.threadId}
+              transport={props.transport}
+              onUndo={
+                props.threadId && props.diffTurnId && props.diff && props.onUndoChanges
+                  ? () => props.onUndoChanges!(props.threadId!, props.diffTurnId!, props.diff!)
+                  : undefined
+              }
+            />
+          ) : null}
+        </div>
       </div>
-    </ThreadDependenciesContext.Provider>
+
+      {mode === 'free' ? (
+        <button
+          className="jump"
+          onClick={() => {
+            const el = scroller.current
+            if (!el) return
+            // Stay in free mode for the whole glide. Flipping to follow-end
+            // here unmounts the button, and the first mid-flight scroll event
+            // then flips it straight back — remounting it with its entrance
+            // animation — until the scroll lands. The onScroll handler hands
+            // over to follow-end once the glide actually reaches the bottom.
+            el.scrollTo({ top: el.scrollHeight - el.clientHeight, behavior: 'smooth' })
+            // Already at the bottom? Nothing animates and no scroll event
+            // comes, so there would be no handover — hide right away.
+            if (isAtBottom(el)) setMode('follow-end')
+          }}
+        >
+          <ArrowDownToLine size={13} aria-hidden />
+          Jump to latest
+        </button>
+      ) : null}
+    </div>
   )
 }
 
@@ -791,8 +691,6 @@ const Row = memo(function Row({
   checkpoint: Checkpoint | undefined
   onRevertCheckpoint: ((checkpoint: Checkpoint) => void) | undefined
 }) {
-  const dependencies = useContext(ThreadDependenciesContext)
-  const MarkdownComponent = dependencies.MarkdownComponent
   if (hidden) return null
 
   // The working rail already announces the running design phase by name; a
@@ -858,13 +756,12 @@ const Row = memo(function Row({
     const text = responseText ?? item.text ?? ''
     return (
       <div className={`reply${live ? ' is-streaming' : ''}`}>
-        <MarkdownComponent
+        <Markdown
           text={text}
           projectPath={projectPath}
           streaming={live && item.status === 'started'}
           liveUpdate={liveTextUpdate}
           updateVersion={liveUpdateVersion}
-          services={dependencies.markdownServices}
         />
         {finalResponse && !live && item.status === 'completed' && text ? (
           <ResponseActions
@@ -883,13 +780,12 @@ const Row = memo(function Row({
     if (!text) return null
     return (
       <div className={`reasoning-summary${live ? ' is-live' : ''}`}>
-        <MarkdownComponent
+        <Markdown
           text={text}
           projectPath={projectPath}
           streaming={live && item.status === 'started'}
           liveUpdate={liveTextUpdate}
           updateVersion={liveUpdateVersion}
-          services={dependencies.markdownServices}
         />
       </div>
     )
@@ -1116,7 +1012,6 @@ function ViewedImagePreview({
   fallbackClassName?: string
   variant?: 'detail' | 'message'
 }) {
-  const dependencies = useContext(ThreadDependenciesContext)
   const [preview, setPreview] = useState<PickedAttachment>()
   const [previewSettled, setPreviewSettled] = useState(false)
   const [viewerOpen, setViewerOpen] = useState(false)
@@ -1130,8 +1025,7 @@ function ViewedImagePreview({
     setPreviewSettled(false)
     setThumbnailFailed(false)
     setImageFailed(false)
-    void dependencies
-      .previewViewedImage(reference)
+    void previewViewedImage(reference)
       .then((result) => {
         if (!cancelled) {
           setPreview(result)
@@ -1144,7 +1038,7 @@ function ViewedImagePreview({
     return () => {
       cancelled = true
     }
-  }, [active, dependencies.previewViewedImage, reference])
+  }, [active, reference])
 
   const inlineSource =
     preview?.thumbnailUrl && !thumbnailFailed ? preview.thumbnailUrl : preview?.previewUrl
@@ -1205,9 +1099,7 @@ function ViewedImagePreview({
           src={preview.previewUrl}
           name={preview.name}
           mediaType="image"
-          onReveal={
-            variant === 'message' ? () => void dependencies.revealPath(reference) : undefined
-          }
+          onReveal={variant === 'message' ? () => void revealPath(reference) : undefined}
           onClose={() => setViewerOpen(false)}
         />
       ) : null}
@@ -1363,7 +1255,6 @@ function ResponseActions({
 }
 
 function CopyAction({ text, label }: { text: string; label: string }) {
-  const dependencies = useContext(ThreadDependenciesContext)
   const [copied, setCopied] = useState(false)
   const [failed, setFailed] = useState(false)
   // Rows are virtualized, so this unmounts the moment it scrolls out of the
@@ -1373,7 +1264,7 @@ function CopyAction({ text, label }: { text: string; label: string }) {
 
   const copy = async () => {
     try {
-      await dependencies.writeClipboardText(text)
+      await writeClipboardText(text)
       setFailed(false)
       setCopied(true)
       window.clearTimeout(resetTimer.current)
@@ -1417,12 +1308,11 @@ const WorkingRail = memo(function WorkingRail({
   startedAt: number
   label: string
 }) {
-  const { ThinkingOrbComponent } = useContext(ThreadDependenciesContext)
   return (
     <div className="activity activity--working">
       <div className="activity__summary">
         <span className="activity__working-orb">
-          <ThinkingOrbComponent
+          <ThinkingOrb
             state={label === 'Searching' ? 'searching' : 'working'}
             size={20}
             aria-hidden

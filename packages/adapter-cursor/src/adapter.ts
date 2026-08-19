@@ -250,6 +250,7 @@ export class CursorAdapter extends EventEmitter<Events> {
   }
 }
 
+// oxlint-disable-next-line no-control-regex, no-useless-escape -- ANSI parsing requires ESC.
 const ANSI = /\u001b\[[0-9;?]*[ -\/]*[@-~]/g
 
 /**

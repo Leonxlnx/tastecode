@@ -1,11 +1,10 @@
 import { z } from 'zod'
-import type { BoundaryValue } from './boundary.js'
 
 export type ZoomAction = 'in' | 'out' | 'reset'
 const ZoomActionSchema = z.enum(['in', 'out', 'reset'])
 export const DEFAULT_ZOOM_FACTOR = 1.1
 
-export function isZoomAction(value: BoundaryValue): value is ZoomAction {
+export function isZoomAction(value: unknown): value is ZoomAction {
   return ZoomActionSchema.safeParse(value).success
 }
 

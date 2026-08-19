@@ -6,7 +6,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { ItemTypeSchema, type DomainEvent, type ItemType } from '@harness/contracts'
 import { Store } from './store.js'
-import { propertiesWhen } from './properties-when.js'
 
 let store: Store
 
@@ -35,11 +34,8 @@ const usage = (totalTokens: number, costUsd?: number, cumulative = false): Domai
     outputTokens: 0,
     reasoningTokens: 0,
     totalTokens,
-    ...propertiesWhen(cumulative, () => ({ cumulative: true })),
-    ...propertiesWhen(
-      costUsd === undefined ? undefined : { costUsd },
-      (includedCost) => includedCost,
-    ),
+    ...(cumulative ? { cumulative: true } : {}),
+    ...(costUsd === undefined ? {} : { costUsd }),
   },
 })
 
@@ -888,7 +884,7 @@ describe('cross-session search', () => {
       const page = store.searchSessions({
         query: 'longpagination',
         limit: 2,
-        ...propertiesWhen(cursor, (cursor) => ({ cursor })),
+        ...(cursor ? { cursor } : {}),
       })
       for (const result of page.results) {
         const text = result.snippet.map((part) => part.text).join('')

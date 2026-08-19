@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
   type ComponentProps,
-  type ComponentType,
 } from 'react'
 import { SessionSearch } from './SessionSearch.js'
 
@@ -19,13 +18,10 @@ export type SessionSearchHandle = {
 type SessionSearchHostProps = Omit<
   ComponentProps<typeof SessionSearch>,
   'initialProjectPath' | 'onClose'
-> & {
-  SearchComponent?: ComponentType<ComponentProps<typeof SessionSearch>>
-}
+>
 
 const SessionSearchHostComponent = forwardRef<SessionSearchHandle, SessionSearchHostProps>(
   function SessionSearchHost(props, ref) {
-    const { SearchComponent = SessionSearch, ...searchProps } = props
     const [request, setRequest] = useState<{ initialProjectPath: string | undefined }>()
     const opened = useRef(false)
     const restoreTarget = useRef<HTMLElement | undefined>(undefined)
@@ -67,12 +63,12 @@ const SessionSearchHostComponent = forwardRef<SessionSearchHandle, SessionSearch
 
     if (!request) return null
     return (
-      <SearchComponent
-        {...searchProps}
+      <SessionSearch
+        {...props}
         initialProjectPath={request.initialProjectPath}
         onSelect={(threadId, turnId) => {
           close()
-          searchProps.onSelect(threadId, turnId)
+          props.onSelect(threadId, turnId)
         }}
         onClose={close}
       />

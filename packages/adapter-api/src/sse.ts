@@ -1,4 +1,4 @@
-import { JsonObjectSchema, type JsonObject, type JsonValue } from './json.js'
+import { isJsonObject, parseJsonValue, type JsonObject, type JsonValue } from './json.js'
 
 export type ServerSentEvent = JsonObject
 
@@ -29,12 +29,11 @@ export async function* serverSentEvents(
           // those aborting the whole stream mid-turn is worse than skipping it.
           let value: JsonValue
           try {
-            value = JSON.parse(data)
+            value = parseJsonValue(data)
           } catch {
             continue
           }
-          const event = JsonObjectSchema.safeParse(value)
-          if (event.success) yield event.data
+          if (isJsonObject(value)) yield value
         }
       }
       if (done) break

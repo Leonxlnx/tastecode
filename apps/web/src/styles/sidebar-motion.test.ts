@@ -10,7 +10,7 @@ describe('sidebar motion CSS', () => {
       /\.rail \{[^}]*position: absolute;[^}]*width: var\(--rail-w\);[^}]*transform: translateX\(0\);[^}]*var\(--dur-slow\) var\(--ease-rail\)/s,
     )
     expect(appCss).toMatch(
-      /\.rail-slot\.is-collapsed \.rail \{[^}]*transform: translateX\(-100%\)/s,
+      /\.rail-slot\.is-collapsed \.rail \{[^}]*transform: translateX\(-100%\);[^}]*will-change: transform;/s,
     )
     expect(appCss).toMatch(
       /\.shell\[data-rail-fold-preview\] \.shell__body \{[^}]*grid-template-columns: 0 minmax\(0, 1fr\)/s,
@@ -18,5 +18,14 @@ describe('sidebar motion CSS', () => {
     expect(appCss).toMatch(
       /\.shell\[data-rail-fold-preview\] \.rail \{[^}]*transform: translateX\(-100%\)/s,
     )
+  })
+
+  it('keeps the edge reveal on compositor-only properties', () => {
+    const revealTransition = appCss.match(
+      /\.rail-slot\.is-collapsed\.is-revealed \.rail,\s*\.rail-slot\.is-collapsed\.is-reveal-out \.rail \{([^}]*)\}/s,
+    )?.[1]
+
+    expect(revealTransition).toContain('transform var(--dur-reveal) var(--ease-rail)')
+    expect(revealTransition).not.toContain('box-shadow')
   })
 })

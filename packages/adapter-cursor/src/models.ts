@@ -1,5 +1,4 @@
 import type { Model } from '@harness/contracts'
-import { propertiesWhen } from './properties-when.js'
 
 /**
  * Collapse cursor-agent's per-variant listing into base models.
@@ -147,11 +146,13 @@ export function collapseCursorModels(raw: RawCursorModel[]): CollapsedCursorMode
       reasoningEfforts: hasEffortChoice
         ? [...efforts].sort((a, b) => effortRank(a) - effortRank(b))
         : [],
-      ...propertiesWhen(hasEffortChoice && entry.defaultEffort, () => ({
-        defaultReasoningEffort: entry.defaultEffort,
-      })),
+      ...(hasEffortChoice && entry.defaultEffort
+        ? {
+            defaultReasoningEffort: entry.defaultEffort,
+          }
+        : {}),
       serviceTiers: hasFastTwin ? [STANDARD_TIER, FAST_TIER] : [],
-      ...propertiesWhen(hasFastTwin, () => ({ defaultServiceTier: STANDARD_TIER.id })),
+      ...(hasFastTwin ? { defaultServiceTier: STANDARD_TIER.id } : {}),
     })
   }
 

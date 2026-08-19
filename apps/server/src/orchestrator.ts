@@ -133,7 +133,6 @@ import {
   titlePrompt,
   type AvailableBackgroundModelSource,
 } from './background-model.js'
-import { propertiesWhen } from './properties-when.js'
 import { VoiceService, type VoiceTranscriber } from './voice.js'
 
 type UserSubmission = {
@@ -206,10 +205,6 @@ const StoredDesignFlowSchema = z.object({
   buildFileBaseline: z.array(z.string()).optional(),
   buildSummary: z.string().optional(),
 })
-const BoundaryValueSchema = z.unknown()
-const FileSystemErrorSchema = z.object({ code: z.string() })
-
-type BoundaryValue = z.input<typeof BoundaryValueSchema>
 type DesignBriefInput = z.infer<typeof DesignBriefInputSchema>
 type DesignFlow = {
   workspacePath: string
@@ -242,17 +237,14 @@ export function resolveWorkspacePath(workspacePath: string): string {
 
 const projectTerminalKey = (projectPath: string): string => `project:${projectPath}`
 
-function parseStoredDesignFlow(
-  value: BoundaryValue,
-  workspacePath: string,
-): DesignFlow | undefined {
+function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlow | undefined {
   const parsed = StoredDesignFlowSchema.safeParse(value)
   if (!parsed.success) return undefined
   const stored = parsed.data
   const options: TurnOptions = {
-    ...propertiesWhen(stored.options.model, (model) => ({ model })),
-    ...propertiesWhen(stored.options.serviceTier, (serviceTier) => ({ serviceTier })),
-    ...propertiesWhen(stored.options.effort, (effort) => ({ effort })),
+    ...(stored.options.model ? { model: stored.options.model } : {}),
+    ...(stored.options.serviceTier ? { serviceTier: stored.options.serviceTier } : {}),
+    ...(stored.options.effort ? { effort: stored.options.effort } : {}),
   }
 
   let previewPlan: PreviewPlan | undefined
@@ -285,25 +277,29 @@ function parseStoredDesignFlow(
     explicitAnswers: stored.explicitAnswers,
     correcting: stored.correcting,
     repairAttempt: stored.repairAttempt,
-    ...propertiesWhen(stored.pendingBrief, (pendingBrief) => ({ pendingBrief })),
-    ...propertiesWhen(stored.pendingPrompt, (pendingPrompt) => ({ pendingPrompt })),
-    ...propertiesWhen(stored.completion, (completion) => ({ completion })),
-    ...propertiesWhen(previewPlan, (previewPlan) => ({ previewPlan })),
-    ...propertiesWhen(previewPlan, (includedValue) => ({ previewUrl: includedValue.url })),
-    ...propertiesWhen(screenshots, (screenshots) => ({ screenshots })),
-    ...propertiesWhen(review, (review) => ({ review })),
-    ...propertiesWhen(stored.buildSummary, (buildSummary) => ({ buildSummary })),
-    ...propertiesWhen(stored.buildFileBaseline, (buildFileBaseline) => ({ buildFileBaseline })),
+    ...(stored.pendingBrief ? { pendingBrief: stored.pendingBrief } : {}),
+    ...(stored.pendingPrompt ? { pendingPrompt: stored.pendingPrompt } : {}),
+    ...(stored.completion ? { completion: stored.completion } : {}),
+    ...(previewPlan ? { previewPlan } : {}),
+    ...(previewPlan ? { previewUrl: previewPlan.url } : {}),
+    ...(screenshots ? { screenshots } : {}),
+    ...(review ? { review } : {}),
+    ...(stored.buildSummary ? { buildSummary: stored.buildSummary } : {}),
+    ...(stored.buildFileBaseline ? { buildFileBaseline: stored.buildFileBaseline } : {}),
   }
 }
 
-function errorMessage(error: BoundaryValue): string {
+function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function isRecoverablePreviewError(error: BoundaryValue): boolean {
-  const parsed = FileSystemErrorSchema.safeParse(error)
-  const code = parsed.success ? parsed.data.code : undefined
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return undefined
+  return typeof error.code === 'string' ? error.code : undefined
+}
+
+function isRecoverablePreviewError(error: unknown): boolean {
+  const code = errorCode(error)
   const message = errorMessage(error)
   return (
     code === 'ENOENT' ||
@@ -465,11 +461,6 @@ export class Orchestrator {
   #readCredential: (reference: string) => string
   #voice: VoiceService
   #terminals: TerminalManager
-  #createCodexAdapter: () => CodexAdapter
-  #claudeLimitSource: () => Promise<AdapterLimitSource>
-  #grokLimitSource: () => Promise<AdapterLimitSource>
-  #startPreview: typeof startDesignPreview
-
   /**
    * How a provider is turned into a running session. Injectable so the
    * concurrency behaviour can be tested without spawning real agents — the
@@ -511,10 +502,6 @@ export class Orchestrator {
       onTerminalOutput?: (terminalId: string, data: string) => void
       onTerminalExit?: (terminalId: string, exitCode: number | null) => void
       runtimeFor?: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
-      createCodexAdapter?: () => CodexAdapter
-      claudeLimitSource?: () => Promise<AdapterLimitSource>
-      grokLimitSource?: () => Promise<AdapterLimitSource>
-      startDesignPreview?: typeof startDesignPreview
       /** Where isolated checkouts live. Outside any repository, on purpose. */
       worktreeRoot?: string
     },
@@ -541,10 +528,6 @@ export class Orchestrator {
       this.#readCredential,
       handlers.voiceTranscriber,
     )
-    this.#createCodexAdapter = handlers.createCodexAdapter ?? (() => new CodexAdapter())
-    this.#claudeLimitSource = handlers.claudeLimitSource ?? claudeLimitSource
-    this.#grokLimitSource = handlers.grokLimitSource ?? grokLimitSource
-    this.#startPreview = handlers.startDesignPreview ?? startDesignPreview
     this.#terminals = new TerminalManager({
       onOutput: handlers.onTerminalOutput ?? (() => {}),
       onExit: handlers.onTerminalExit ?? (() => {}),
@@ -570,7 +553,7 @@ export class Orchestrator {
   async #controlAdapter(): Promise<CodexAdapter> {
     if (this.#control) return this.#control
     if (this.#controlStarting) return this.#controlStarting
-    const adapter = this.#createCodexAdapter()
+    const adapter = new CodexAdapter()
     adapter.on('log', (line) => this.#onLog(line))
     adapter.on('login', (result) => {
       if (result.success) this.#invalidateBackgroundSources()
@@ -595,7 +578,7 @@ export class Orchestrator {
         this.#control = adapter
         return adapter
       })
-      .catch((error: BoundaryValue) => {
+      .catch((error: unknown) => {
         adapter.dispose()
         throw error
       })
@@ -671,11 +654,11 @@ export class Orchestrator {
       id: source.id,
       displayName: source.displayName,
       provider: source.provider,
-      ...propertiesWhen(source.connectionId, (includedValue) => ({ connectionId: includedValue })),
-      ...propertiesWhen(source.agent, (includedValue) => ({ agent: includedValue })),
+      ...(source.connectionId ? { connectionId: source.connectionId } : {}),
+      ...(source.agent ? { agent: source.agent } : {}),
       models: source.models,
     }))
-    return { preference, sources, ...propertiesWhen(resolved, (resolved) => ({ resolved })) }
+    return { preference, sources, ...(resolved ? { resolved } : {}) }
   }
 
   async updateBackgroundModelPreference(
@@ -765,9 +748,13 @@ export class Orchestrator {
             displayName,
             provider,
             models,
-            ...propertiesWhen(provider === 'codex', () => ({
-              codexSubscription: Boolean(account.plan && account.plan.toLowerCase() !== 'api key'),
-            })),
+            ...(provider === 'codex'
+              ? {
+                  codexSubscription: Boolean(
+                    account.plan && account.plan.toLowerCase() !== 'api key',
+                  ),
+                }
+              : {}),
           } satisfies AvailableBackgroundModelSource
         } catch {
           return undefined
@@ -875,7 +862,7 @@ export class Orchestrator {
           return {
             ...common,
             transport: config.transport,
-            ...propertiesWhen(config.displayName, (displayName) => ({ displayName })),
+            ...(config.displayName ? { displayName: config.displayName } : {}),
           }
         }),
       }
@@ -914,9 +901,11 @@ export class Orchestrator {
           ? { startup: { state: 'stopped' as const } }
           : {
               transport: config.transport,
-              ...propertiesWhen(config.displayName, (includedValue) => ({
-                displayName: includedValue,
-              })),
+              ...(config.displayName
+                ? {
+                    displayName: config.displayName,
+                  }
+                : {}),
             }),
       })
     }
@@ -1079,7 +1068,7 @@ export class Orchestrator {
       [
         'codex',
         async () => {
-          const adapter = this.#createCodexAdapter()
+          const adapter = new CodexAdapter()
           adapter.on('log', (line) => this.#onLog(line))
           try {
             await adapter.start()
@@ -1089,8 +1078,8 @@ export class Orchestrator {
           }
         },
       ],
-      ['claude-code', this.#claudeLimitSource],
-      ['grok', this.#grokLimitSource],
+      ['claude-code', claudeLimitSource],
+      ['grok', grokLimitSource],
     ])
     const source = await (readers.get(provider)?.() ?? Promise.resolve({ status: 'unavailable' }))
     return source.status === 'ready'
@@ -1211,13 +1200,15 @@ export class Orchestrator {
       // still belongs to the folder the user chose.
       projectPath: workspacePath,
       provider,
-      ...propertiesWhen(options.agent, (includedValue) => ({ agent: includedValue })),
+      ...(options.agent ? { agent: options.agent } : {}),
       title: 'New session',
       createdAt: thread.createdAt,
-      ...propertiesWhen(worktree, (includedValue) => ({
-        worktreePath: includedValue.path,
-        worktreeBranch: includedValue.branch,
-      })),
+      ...(worktree
+        ? {
+            worktreePath: worktree.path,
+            worktreeBranch: worktree.branch,
+          }
+        : {}),
     })
     this.#attachThread(thread, session, workspacePath, worktree)
     if (options.approval) this.#threadApprovals.set(thread.id, options.approval)
@@ -1275,8 +1266,8 @@ export class Orchestrator {
     const runtimeOptions: StartOptions = {
       ...options,
       approval,
-      ...propertiesWhen(storedParent.agent, (includedValue) => ({ agent: includedValue })),
-      ...propertiesWhen(parent.connectionId, (includedValue) => ({ connectionId: includedValue })),
+      ...(storedParent.agent ? { agent: storedParent.agent } : {}),
+      ...(parent.connectionId ? { connectionId: parent.connectionId } : {}),
       instructions: composeInstructions(sideChatInstructions(this.#store.history(parentThreadId))),
       ...this.#mcpRuntimeOptions(provider, storedParent.projectPath),
     }
@@ -1293,7 +1284,7 @@ export class Orchestrator {
         id: thread.id,
         projectPath: storedParent.projectPath,
         provider,
-        ...propertiesWhen(storedParent.agent, (includedValue) => ({ agent: includedValue })),
+        ...(storedParent.agent ? { agent: storedParent.agent } : {}),
         title: 'Side chat',
         createdAt: thread.createdAt,
         ephemeral: true,
@@ -1448,7 +1439,7 @@ export class Orchestrator {
         attachments,
         createdAt: submittedAt,
         options,
-        ...propertiesWhen(clientSubmissionId, (clientSubmissionId) => ({ clientSubmissionId })),
+        ...(clientSubmissionId ? { clientSubmissionId } : {}),
       }
       this.#store.enqueueQueuedTurn({ ...queuedTurn, threadId })
       queue.push(queuedTurn)
@@ -1659,9 +1650,11 @@ export class Orchestrator {
         role: 'user',
         status: 'completed',
         text: submission.text,
-        ...propertiesWhen(visibleAttachments.length > 0, () => ({
-          attachments: visibleAttachments,
-        })),
+        ...(visibleAttachments.length > 0
+          ? {
+              attachments: visibleAttachments,
+            }
+          : {}),
         createdAt: submission.createdAt,
       },
     }
@@ -2064,7 +2057,7 @@ export class Orchestrator {
       const { threadId: _threadId, intent: _intent, clientSubmissionId, ...entry } = turn
       return {
         ...entry,
-        ...propertiesWhen(clientSubmissionId, (clientSubmissionId) => ({ clientSubmissionId })),
+        ...(clientSubmissionId ? { clientSubmissionId } : {}),
       }
     })
     this.#queuedTurns.set(threadId, restored)
@@ -2245,7 +2238,7 @@ export class Orchestrator {
           delete flow.pendingPrompt
           this.#saveDesignFlow(threadId)
           void this.#sendDesignTurn(threadId, prompt, [], this.#designTurnOptions(flow)).catch(
-            (sendError: BoundaryValue) => this.#failDesignFlow(threadId, sendError),
+            (sendError: unknown) => this.#failDesignFlow(threadId, sendError),
           )
         }
         return
@@ -2256,7 +2249,7 @@ export class Orchestrator {
         designBriefingContinuation(designInput.questions, answers),
         [],
         this.#designTurnOptions(flow),
-      ).catch((error: BoundaryValue) => this.#failDesignFlow(threadId, error))
+      ).catch((error: unknown) => this.#failDesignFlow(threadId, error))
       return
     }
 
@@ -2554,13 +2547,13 @@ export class Orchestrator {
     }
     const workspacePath = stored.worktreePath ?? resolveWorkspacePath(stored.projectPath)
     const result = await runtime.resume(threadId, workspacePath, {
-      ...propertiesWhen(stored.agent, (includedValue) => ({ agent: includedValue })),
-      ...propertiesWhen(stored.providerSessionId, (includedValue) => ({
-        providerSessionId: includedValue,
-      })),
-      ...propertiesWhen(this.#threadApprovals.has(threadId), () => ({
-        approval: this.#threadApprovals.get(threadId)!,
-      })),
+      ...(stored.agent ? { agent: stored.agent } : {}),
+      ...(stored.providerSessionId ? { providerSessionId: stored.providerSessionId } : {}),
+      ...(this.#threadApprovals.has(threadId)
+        ? {
+            approval: this.#threadApprovals.get(threadId)!,
+          }
+        : {}),
       instructions: REPLY_STYLE_INSTRUCTIONS,
       ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
     })
@@ -2624,7 +2617,7 @@ export class Orchestrator {
       prompt,
       this.#designAttachmentsFor(flow),
       this.#designTurnOptions(flow),
-    ).catch((error: BoundaryValue) => this.#failDesignFlow(threadId, error))
+    ).catch((error: unknown) => this.#failDesignFlow(threadId, error))
   }
 
   /**
@@ -2706,7 +2699,7 @@ export class Orchestrator {
               this.#onLog('provider returned a different turn id after Design already started')
             }
           },
-          (error: BoundaryValue) => {
+          (error: unknown) => {
             this.#onLog(`provider rejected after Design already started: ${errorMessage(error)}`)
           },
         )
@@ -2766,7 +2759,7 @@ export class Orchestrator {
   #beginTurnStart(threadId: string, submission?: UserSubmission): PendingTurnStart {
     const pending = {
       acceptedAt: Date.now(),
-      ...propertiesWhen(submission, (submission) => ({ submission })),
+      ...(submission ? { submission } : {}),
     }
     this.#pendingTurnStarts.set(threadId, pending)
     return pending
@@ -2925,7 +2918,7 @@ export class Orchestrator {
           prompt,
           this.#designAttachmentsFor(flow),
           this.#designTurnOptions(flow),
-        ).catch((error: BoundaryValue) => this.#failDesignFlow(threadId, error))
+        ).catch((error: unknown) => this.#failDesignFlow(threadId, error))
         return
       }
     }
@@ -3055,7 +3048,7 @@ export class Orchestrator {
     }
     this.#saveDesignFlow(threadId)
     void this.#sendDesignTurn(threadId, prompt, [], this.#designTurnOptions(flow)).catch(
-      (error: BoundaryValue) => this.#failDesignFlow(threadId, error),
+      (error: unknown) => this.#failDesignFlow(threadId, error),
     )
   }
 
@@ -3122,7 +3115,7 @@ export class Orchestrator {
     if (flow.phase === 'preview') {
       const plan = parsePreviewPhaseOutput(text)
       const task = this.#startDesignPreview(threadId, turnId, flow, plan).catch(
-        (error: BoundaryValue) => {
+        (error: unknown) => {
           if (this.#designFlows.get(threadId) !== flow) return
           if (
             isRecoverablePreviewError(error) &&
@@ -3137,7 +3130,7 @@ export class Orchestrator {
               prompt,
               this.#designAttachmentsFor(flow),
               this.#designTurnOptions(flow),
-            ).catch((sendError: BoundaryValue) => {
+            ).catch((sendError: unknown) => {
               if (this.#designFlows.get(threadId) === flow) {
                 this.#failDesignFlow(threadId, sendError)
               }
@@ -3191,7 +3184,7 @@ export class Orchestrator {
       const output = parseRepairPhaseOutput(text)
       flow.correcting = false
       if (output.status === 'failed') throw new Error(output.summary)
-      void this.#captureDesignReview(threadId, turnId, flow).catch((error: BoundaryValue) => {
+      void this.#captureDesignReview(threadId, turnId, flow).catch((error: unknown) => {
         if (this.#designFlows.get(threadId) === flow) this.#failDesignFlow(threadId, error)
       })
       return
@@ -3228,11 +3221,11 @@ export class Orchestrator {
       const cwd = existingWorkspacePath(workspace, plan.cwd, true)
       assertPublicWorkspaceFile(existingWorkspacePath(cwd, plan.entry, false))
     }
-    const preview = await this.#startPreview(flow.workspacePath, plan)
+    const preview = await startDesignPreview(flow.workspacePath, plan)
     if (this.#designFlows.get(threadId) !== flow) {
       await preview
         .stop()
-        .catch((error: BoundaryValue) =>
+        .catch((error: unknown) =>
           this.#onLog(`[design] stale preview stop failed: ${errorMessage(error)}`),
         )
       return
@@ -3259,11 +3252,11 @@ export class Orchestrator {
       return
     }
     if (!this.#designPreviews.has(threadId)) {
-      const preview = await this.#startPreview(flow.workspacePath, flow.previewPlan)
+      const preview = await startDesignPreview(flow.workspacePath, flow.previewPlan)
       if (this.#designFlows.get(threadId) !== flow) {
         await preview
           .stop()
-          .catch((error: BoundaryValue) =>
+          .catch((error: unknown) =>
             this.#onLog(`[design] stale preview stop failed: ${errorMessage(error)}`),
           )
         return
@@ -3316,7 +3309,7 @@ export class Orchestrator {
     this.#finishDesignFlow(threadId, turnId, flow.completion)
   }
 
-  #failDesignFlow(threadId: string, error: BoundaryValue): void {
+  #failDesignFlow(threadId: string, error: unknown): void {
     for (const [turnId, owner] of this.#designTurns) {
       if (owner === threadId) this.#completeDesignActivity(threadId, turnId, 'failed')
     }
@@ -3334,11 +3327,7 @@ export class Orchestrator {
     void this.#drainQueue(threadId)
   }
 
-  #queueDesignCorrection(
-    threadId: string,
-    flow: DesignFlow,
-    error: BoundaryValue,
-  ): string | undefined {
+  #queueDesignCorrection(threadId: string, flow: DesignFlow, error: unknown): string | undefined {
     if (flow.correcting) return undefined
     flow.correcting = true
     const detail = error instanceof Error ? error.message : String(error)
@@ -3368,7 +3357,7 @@ export class Orchestrator {
     this.#designPreviews.delete(threadId)
     const stop = preview
       .stop()
-      .catch((error: BoundaryValue) =>
+      .catch((error: unknown) =>
         this.#onLog(`[design] preview stop failed: ${errorMessage(error)}`),
       )
       .finally(() => {
@@ -3442,7 +3431,7 @@ export class Orchestrator {
     this.#threads.set(thread.id, {
       thread,
       session,
-      ...propertiesWhen(worktree, (worktree) => ({ worktree })),
+      ...(worktree ? { worktree } : {}),
     })
     session.onMcpOAuth?.((result) => this.#onMcpOAuth(thread.provider, projectPath, result))
     session.onUsageChanged?.(() => {

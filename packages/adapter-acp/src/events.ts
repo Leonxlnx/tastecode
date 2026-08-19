@@ -1,6 +1,5 @@
 import type { DomainEvent, Item, PlanStep } from '@harness/contracts'
 import type { SessionUpdate, ToolCallContent, ToolKind } from './protocol.js'
-import { propertiesWhen } from './properties-when.js'
 
 /**
  * Translate one `session/update` into domain events.
@@ -53,8 +52,8 @@ export class Streamer {
     const kind = fields.kind ?? known?.kind
     const title = fields.title ?? known?.title
     this.#tools.set(toolCallId, {
-      ...propertiesWhen(kind, (kind) => ({ kind })),
-      ...propertiesWhen(title, (title) => ({ title })),
+      ...(kind ? { kind } : {}),
+      ...(title ? { title } : {}),
     })
   }
 
@@ -112,7 +111,7 @@ export class Streamer {
       turnId: this.#turnId,
       type: kind,
       status: 'started',
-      ...propertiesWhen(kind === 'message', () => ({ role: 'assistant' as const })),
+      ...(kind === 'message' ? { role: 'assistant' as const } : {}),
       text,
       createdAt: Date.now(),
     }
@@ -148,9 +147,9 @@ export class Streamer {
     const chunk = outputOf(update.content)
     const output = chunk ? (known?.output ? `${known.output}${chunk}` : chunk) : known?.output
     this.#tools.set(id, {
-      ...propertiesWhen(kind, (kind) => ({ kind })),
-      ...propertiesWhen(title, (title) => ({ title })),
-      ...propertiesWhen(output, (output) => ({ output })),
+      ...(kind ? { kind } : {}),
+      ...(title ? { title } : {}),
+      ...(output ? { output } : {}),
     })
 
     const type = (kind && KIND_TO_ITEM.get(kind)) ?? 'tool_call'

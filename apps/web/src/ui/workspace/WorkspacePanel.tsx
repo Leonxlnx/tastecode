@@ -5,8 +5,8 @@ import {
   useEffect,
   useRef,
   useState,
-  type ComponentProps,
-  type ComponentType,
+  useSyncExternalStore,
+  type FormEvent,
   type PointerEvent,
 } from 'react'
 import {
@@ -28,6 +28,7 @@ import {
   prepareAppHaptics,
   ResizeHaptics,
 } from '../../haptics.js'
+import { installState, subscribeInstalls } from '../../provider-install.js'
 import type { Transport } from '../../transport.js'
 import type {
   SideChatParentStatus,
@@ -56,27 +57,10 @@ const WorkspaceSideChat = lazy(() =>
   import('./WorkspaceSideChat.js').then((module) => ({ default: module.WorkspaceSideChat })),
 )
 
-export type WorkspacePanelHaptics = {
-  enabled: typeof appHapticsEnabled
-  perform: typeof performAppHaptic
-  prepare: typeof prepareAppHaptics
-}
-
-export type WorkspacePanelTerminal = ComponentType<ComponentProps<typeof WorkspaceTerminal>>
-export type WorkspacePanelProviderTerminal = ComponentType<
-  ComponentProps<typeof AttachedProviderTerminal>
->
-
 export type WorkspaceProviderLoginRequest = {
   id: number
   title: string
   installKey: string
-}
-
-const defaultWorkspacePanelHaptics: WorkspacePanelHaptics = {
-  enabled: appHapticsEnabled,
-  perform: performAppHaptic,
-  prepare: prepareAppHaptics,
 }
 
 export type WorkspaceTool = 'review' | 'terminal' | 'browser' | 'files' | 'side-chat'
@@ -146,13 +130,9 @@ export function WorkspacePanel(props: {
   onClosed?: () => void
   onExpandedChange: (expanded: boolean) => void
   onWidthChange: (width: number) => void
-  haptics?: WorkspacePanelHaptics | undefined
-  terminalComponent?: WorkspacePanelTerminal | undefined
   providerLogin?: WorkspaceProviderLoginRequest | undefined
-  providerTerminalComponent?: WorkspacePanelProviderTerminal | undefined
   onProviderLoginClose?: ((id: number) => void) | undefined
 }) {
-  const hapticServices = props.haptics ?? defaultWorkspacePanelHaptics
   const [tabs, setTabs] = useState<WorkspaceTab[]>([])
   const [activeId, setActiveId] = useState<string>()
   const [designPreview, setDesignPreview] = useState<BrowserNavigationRequest>()
@@ -331,16 +311,15 @@ export function WorkspacePanel(props: {
   const beginResize = (event: PointerEvent<HTMLDivElement>) => {
     if (props.expanded) return
     event.preventDefault()
-    hapticServices.prepare()
+    prepareAppHaptics()
     event.currentTarget.setPointerCapture(event.pointerId)
     resizeCleanup.current()
     const startX = event.clientX
     const startWidth = props.width
-    const layoutWidth =
-      event.currentTarget.closest<HTMLElement>('.workspace-layout')?.clientWidth ||
-      window.innerWidth
+    const layout = event.currentTarget.closest<HTMLElement>('.workspace-layout')
+    const layoutWidth = layout?.clientWidth || window.innerWidth
     const maximum = Math.max(MIN_PANEL_WIDTH, layoutWidth - MIN_CHAT_WIDTH)
-    const haptics = hapticServices.enabled()
+    const haptics = appHapticsEnabled()
       ? new ResizeHaptics({
           startValue: startWidth,
           startTime: event.timeStamp,
@@ -349,34 +328,61 @@ export function WorkspacePanel(props: {
         })
       : undefined
     let currentWidth = startWidth
+    let resizeFrame: number | undefined
+    let pendingResize: { rawWidth: number; width: number; time: number } | undefined
     let active = true
+    const previousTransition = layout?.style.transition
+    if (layout) layout.style.transition = 'none'
+    const applyPendingResize = () => {
+      resizeFrame = undefined
+      const pending = pendingResize
+      pendingResize = undefined
+      if (!pending) return
+      const changed = pending.width !== currentWidth
+      const tracking = Boolean(layout) && changed
+      if (changed) {
+        currentWidth = pending.width
+        layout?.style.setProperty('--workspace-panel-w', `${pending.width}px`)
+      }
+      const feedback = haptics?.sample({
+        rawValue: pending.rawWidth,
+        value: pending.width,
+        tracking,
+        time: pending.time,
+      })
+      if (feedback) performAppHaptic(feedback)
+    }
     const move = (next: globalThis.PointerEvent) => {
       const rawWidth = startWidth + startX - next.clientX
       const nextWidth = Math.min(maximum, Math.max(MIN_PANEL_WIDTH, rawWidth))
-      const feedback = haptics?.sample({
-        rawValue: rawWidth,
-        value: nextWidth,
-        tracking: nextWidth !== currentWidth,
-        time: next.timeStamp,
-      })
-      currentWidth = nextWidth
-      props.onWidthChange(nextWidth)
-      if (feedback) hapticServices.perform(feedback)
+      pendingResize = { rawWidth, width: nextWidth, time: next.timeStamp }
+      if (resizeFrame === undefined) resizeFrame = requestAnimationFrame(applyPendingResize)
     }
-    const cleanup = () => {
+    const cleanup = (commit: boolean) => {
       if (!active) return
       active = false
       window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', cleanup)
-      window.removeEventListener('pointercancel', cleanup)
-      window.removeEventListener('blur', cleanup)
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', finish)
+      window.removeEventListener('blur', finish)
       resizeCleanup.current = () => {}
+      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
+      resizeFrame = undefined
+      if (commit) {
+        applyPendingResize()
+        props.onWidthChange(currentWidth)
+      } else {
+        pendingResize = undefined
+        layout?.style.setProperty('--workspace-panel-w', `${props.width}px`)
+      }
+      if (layout) layout.style.transition = previousTransition ?? ''
     }
-    resizeCleanup.current = cleanup
+    const finish = () => cleanup(true)
+    resizeCleanup.current = () => cleanup(false)
     window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', cleanup, { once: true })
-    window.addEventListener('pointercancel', cleanup, { once: true })
-    window.addEventListener('blur', cleanup, { once: true })
+    window.addEventListener('pointerup', finish, { once: true })
+    window.addEventListener('pointercancel', finish, { once: true })
+    window.addEventListener('blur', finish, { once: true })
   }
 
   return (
@@ -407,7 +413,7 @@ export function WorkspacePanel(props: {
         aria-orientation="vertical"
         onDoubleClick={() => props.onExpandedChange(true)}
         onPointerEnter={() => {
-          if (!props.expanded) hapticServices.prepare()
+          if (!props.expanded) prepareAppHaptics()
         }}
         onPointerDown={beginResize}
       />
@@ -511,8 +517,6 @@ export function WorkspacePanel(props: {
                   sideChatStartOptions={props.sideChatStartOptions}
                   sideChatPromptRequest={props.sideChatPromptRequest}
                   browserNavigation={tab.id === DESIGN_PREVIEW_TAB_ID ? designPreview : undefined}
-                  terminalComponent={props.terminalComponent}
-                  providerTerminalComponent={props.providerTerminalComponent}
                   onClose={() => closeTab(tab.id)}
                 />
               </Suspense>
@@ -539,20 +543,18 @@ function WorkspaceToolSurface(props: {
   sideChatStartOptions: SideChatStartOptions
   sideChatPromptRequest?: SideChatPromptRequest | undefined
   browserNavigation?: BrowserNavigationRequest | undefined
-  terminalComponent?: WorkspacePanelTerminal | undefined
-  providerTerminalComponent?: WorkspacePanelProviderTerminal | undefined
   onClose: () => void
 }) {
   if (props.tab.kind === 'provider-login') {
-    const TerminalComponent = props.providerTerminalComponent ?? AttachedProviderTerminal
     return (
       <div className="workspace-provider-login">
-        <TerminalComponent
+        <AttachedProviderTerminal
           transport={props.transport}
           installKey={props.tab.installKey}
           ariaLabel={`${props.tab.title} terminal`}
           profile="workspace"
         />
+        <ProviderLoginCodeInput transport={props.transport} installKey={props.tab.installKey} />
       </div>
     )
   }
@@ -568,9 +570,8 @@ function WorkspaceToolSurface(props: {
     )
   }
   if (props.tab.kind === 'terminal') {
-    const TerminalComponent = props.terminalComponent ?? WorkspaceTerminal
     return (
-      <TerminalComponent
+      <WorkspaceTerminal
         active={props.active}
         transport={props.transport}
         threadId={props.threadId}
@@ -603,6 +604,58 @@ function WorkspaceToolSurface(props: {
       startOptions={props.sideChatStartOptions}
       promptRequest={props.sideChatPromptRequest}
     />
+  )
+}
+
+function ProviderLoginCodeInput(props: { transport: Transport; installKey: string }) {
+  const login = useSyncExternalStore(subscribeInstalls, () => installState(props.installKey))
+  const [code, setCode] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string>()
+
+  if (login?.phase !== 'running') return null
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    const submittedCode = code
+    const value = submittedCode.trim()
+    if (!value || sending) return
+    const terminalId = login.terminalId
+    setSending(true)
+    setError(undefined)
+    void props.transport
+      .request('terminal.input', { terminalId, data: `${value}\r` })
+      .then(() =>
+        setCode((current) =>
+          current === submittedCode && installState(props.installKey)?.terminalId === terminalId
+            ? ''
+            : current,
+        ),
+      )
+      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setSending(false))
+  }
+
+  return (
+    <form className="workspace-provider-login__code" onSubmit={submit}>
+      <label className="visually-hidden" htmlFor={`${props.installKey}-code`}>
+        Claude login code
+      </label>
+      <input
+        id={`${props.installKey}-code`}
+        type="text"
+        autoComplete="one-time-code"
+        spellCheck={false}
+        maxLength={2_048}
+        placeholder="Paste code here if prompted"
+        value={code}
+        onChange={(event) => setCode(event.currentTarget.value)}
+      />
+      <button type="submit" disabled={!code.trim() || sending}>
+        {sending ? 'Submitting…' : 'Submit code'}
+      </button>
+      {error ? <span role="alert">{error}</span> : null}
+    </form>
   )
 }
 
