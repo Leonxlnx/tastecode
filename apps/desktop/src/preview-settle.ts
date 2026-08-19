@@ -1,3 +1,18 @@
+import { z } from 'zod'
+
+export const MAX_PREVIEW_CAPTURE_HEIGHT = 12_000
+
+const PreviewPageHeightMeasurementSchema = z.object({
+  documentElement: z.number().finite().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  body: z.number().finite().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+})
+const PreviewViewportHeightSchema = z
+  .number()
+  .finite()
+  .int()
+  .positive()
+  .max(Number.MAX_SAFE_INTEGER)
+
 export const PREVIEW_SETTLE_SCRIPT = `(async () => {
   const frame = () => new Promise(resolve => requestAnimationFrame(resolve))
   const start = { x: scrollX, y: scrollY }
@@ -29,7 +44,24 @@ export const PREVIEW_SETTLE_SCRIPT = `(async () => {
   await frame()
 })()`
 
-export const PREVIEW_PAGE_HEIGHT_SCRIPT = `(() => Math.min(
-  12000,
-  Math.max(innerHeight, document.documentElement.scrollHeight, document.body?.scrollHeight || 0),
-))()`
+export const PREVIEW_PAGE_HEIGHT_SCRIPT = `(() => ({
+  documentElement: document.documentElement.scrollHeight,
+  body: document.body?.scrollHeight ?? 0,
+}))()`
+
+export function boundedPreviewPageHeight(measurement: unknown, viewportHeight: number): number {
+  const parsedMeasurement = PreviewPageHeightMeasurementSchema.safeParse(measurement)
+  const parsedViewportHeight = PreviewViewportHeightSchema.safeParse(viewportHeight)
+  if (!parsedMeasurement.success || !parsedViewportHeight.success) {
+    throw new Error('preview returned an invalid page height')
+  }
+
+  return Math.min(
+    MAX_PREVIEW_CAPTURE_HEIGHT,
+    Math.max(
+      parsedViewportHeight.data,
+      parsedMeasurement.data.documentElement,
+      parsedMeasurement.data.body,
+    ),
+  )
+}
