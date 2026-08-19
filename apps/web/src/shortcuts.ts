@@ -130,7 +130,7 @@ export const KEYBINDING_DEFINITIONS = [
     id: 'toggleTerminal',
     group: 'Workspace',
     label: 'Toggle terminal',
-    description: 'Show or hide the terminal for the current chat.',
+    description: 'Show or hide the preferred terminal for the current chat.',
     defaultShortcut: { key: 'j', primary: true },
   },
   {

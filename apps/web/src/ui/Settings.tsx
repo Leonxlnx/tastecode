@@ -85,6 +85,12 @@ import {
   subscribeAppHaptics,
   writeAppHaptics,
 } from '../haptics.js'
+import {
+  readTerminalPlacement,
+  subscribeTerminalPlacement,
+  writeTerminalPlacement,
+  type TerminalPlacement,
+} from '../terminal-placement.js'
 import { AppSelect } from './AppSelect.js'
 import { McpSettings } from './McpSettings.js'
 import { groupModelsBySource } from './ModelSelector.js'
@@ -160,6 +166,11 @@ const BACKDROP_OPTIONS = [
   { value: 'midnight', label: 'Midnight' },
   { value: 'plum', label: 'Plum' },
 ] as const satisfies ReadonlyArray<{ value: BackdropPreference; label: string }>
+
+const TERMINAL_PLACEMENT_OPTIONS = [
+  { value: 'bottom', label: 'Bottom panel' },
+  { value: 'workspace', label: 'Right sidebar' },
+] as const satisfies ReadonlyArray<{ value: TerminalPlacement; label: string }>
 
 const MCP_PROVIDER_OPTIONS = [
   { provider: 'codex', providerName: 'Codex' },
@@ -446,6 +457,12 @@ function WorkflowSettings(props: {
         note="Show providers in a compact rail instead of a single list."
       >
         <ModelPickerLayoutToggle />
+      </SettingsRow>
+      <SettingsRow
+        title="Default terminal"
+        note="Used by the Toggle terminal shortcut and command."
+      >
+        <TerminalPlacementSelect />
       </SettingsRow>
     </SettingsPanel>
   )
@@ -1271,6 +1288,24 @@ function ModelPickerLayoutToggle() {
     >
       <span className="switch__thumb" />
     </button>
+  )
+}
+
+function TerminalPlacementSelect() {
+  const placement = useSyncExternalStore(
+    subscribeTerminalPlacement,
+    readTerminalPlacement,
+    readTerminalPlacement,
+  )
+  return (
+    <AppSelect
+      className="settings__select"
+      ariaLabel="Default terminal location"
+      align="right"
+      value={placement}
+      options={TERMINAL_PLACEMENT_OPTIONS}
+      onChange={writeTerminalPlacement}
+    />
   )
 }
 

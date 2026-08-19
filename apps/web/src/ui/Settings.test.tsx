@@ -6,6 +6,7 @@ import { customModelChoice, type ModelChoice } from '../model-catalog.js'
 import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker-layout.js'
 import { resetInstalls } from '../provider-install.js'
 import { HAPTICS_KEY, writeAppHaptics } from '../haptics.js'
+import { TERMINAL_PLACEMENT_KEY, writeTerminalPlacement } from '../terminal-placement.js'
 import type { Transport } from '../transport.js'
 import { TestTransport, type TestRequestResolver } from '../test-transport.js'
 import { ProviderSettings, Settings } from './Settings.js'
@@ -21,7 +22,7 @@ vi.mock('./InstallTerminal.js', () => ({
 
 function renderSettings(
   options: {
-    initialSection?: 'appearance' | 'models' | 'keybinds' | 'data' | 'about'
+    initialSection?: 'workflows' | 'appearance' | 'models' | 'keybinds' | 'data' | 'about'
     onClose?: () => void
     onReset?: () => void
     transport?: Transport
@@ -89,6 +90,8 @@ afterEach(() => {
   localStorage.removeItem(MODEL_PICKER_LAYOUT_KEY)
   writeAppHaptics(true)
   localStorage.removeItem(HAPTICS_KEY)
+  writeTerminalPlacement('bottom')
+  localStorage.removeItem(TERMINAL_PLACEMENT_KEY)
   localStorage.removeItem('harness.providerEmail.codex')
   localStorage.removeItem('harness.providerEmail.claude-code')
   localStorage.removeItem('harness.providerEmail.grok')
@@ -118,12 +121,27 @@ describe('settings viewport layout', () => {
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
     expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
     expect(screen.getByRole('switch', { name: 'Provider rail layout' })).toBeTruthy()
+    expect(
+      screen.getByRole('combobox', { name: 'Default terminal location' }).textContent,
+    ).toContain('Bottom panel')
 
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
     expect(screen.queryByRole('switch', { name: 'Provider rail layout' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Data & privacy' }))
     expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy()
+  })
+
+  it('lets the terminal shortcut target the right sidebar', () => {
+    renderSettings({ initialSection: 'workflows' })
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Default terminal location' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Right sidebar' }))
+
+    expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('workspace')
+    expect(
+      screen.getByRole('combobox', { name: 'Default terminal location' }).textContent,
+    ).toContain('Right sidebar')
   })
 })
 
