@@ -389,9 +389,7 @@ function findStoredModel(
 function matchesStoredModel(choice: ModelChoice, stored: string | undefined): boolean {
   if (!stored) return false
   return (
-    choice.key === stored ||
-    choice.model.id === stored ||
-    matchesLegacyStoredModel(choice, stored)
+    choice.key === stored || choice.model.id === stored || matchesLegacyStoredModel(choice, stored)
   )
 }
 
@@ -1434,9 +1432,7 @@ export function App() {
         ? selections[modelSource(fallback)]?.modelKey
         : undefined
       const selected =
-        storedSelection ??
-        findStoredModel(selectionPool, rememberedFallbackKey) ??
-        fallback
+        storedSelection ?? findStoredModel(selectionPool, rememberedFallbackKey) ?? fallback
       if (!selected) {
         setModelId(undefined)
         setEffort(undefined)
