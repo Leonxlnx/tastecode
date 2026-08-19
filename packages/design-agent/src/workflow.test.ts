@@ -100,15 +100,70 @@ describe('provider-neutral briefing workflow', () => {
               { label: 'Design teams (Recommended)', description: 'Focus the initial offer.' },
             ],
           },
+          {
+            id: 'primary_action',
+            header: 'Action',
+            question: 'What should visitors do next?',
+            allowOther: true,
+            options: [{ label: 'Book a demo', description: 'Prioritize qualified leads.' }],
+          },
         ],
         brief: null,
       }),
     )
     expect(output.status).toBe('questions')
     if (output.status !== 'questions') throw new Error('expected questions')
-    expect(designBriefingContinuation(output.questions, { audience: ['Design teams'] })).toContain(
-      'Design teams',
+    expect(
+      designBriefingContinuation(output.questions, {
+        audience: ['Design teams'],
+        primary_action: ['Book a demo'],
+      }),
+    ).toContain(
+      JSON.stringify(
+        [
+          {
+            id: 'audience',
+            question: 'Who is this for?',
+            answers: ['Design teams'],
+          },
+          {
+            id: 'primary_action',
+            question: 'What should visitors do next?',
+            answers: ['Book a demo'],
+          },
+        ],
+        null,
+        2,
+      ),
     )
+  })
+
+  it('rejects duplicate question ids before downstream answers can collide', () => {
+    expect(() =>
+      parseBriefingOutput(
+        JSON.stringify({
+          status: 'questions',
+          message: 'Preparing questions.',
+          questions: [
+            {
+              id: 'audience',
+              header: 'Audience',
+              question: 'Who is this for?',
+              allowOther: true,
+              options: [{ label: 'Teams', description: 'Focus on organizations.' }],
+            },
+            {
+              id: 'audience',
+              header: 'Buyer',
+              question: 'Who approves the purchase?',
+              allowOther: true,
+              options: [{ label: 'Founder', description: 'Speak to the owner.' }],
+            },
+          ],
+          brief: null,
+        }),
+      ),
+    ).toThrow('briefing question ids must be unique')
   })
 
   it('owns the clean final question outside provider-specific tools', () => {
