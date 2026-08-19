@@ -16,9 +16,9 @@ import type { ApprovalMode, ApprovalRequest } from '@harness/contracts'
 import { killTree, spawnCli } from '@harness/proc'
 import { z } from 'zod'
 import {
-  assertPublicWorkspaceFile,
+  assertPublicWorkspacePath,
   existingWorkspacePath,
-  isSecretWorkspaceName,
+  isSecretWorkspacePath,
   writableWorkspacePath,
 } from './api-workspace-paths.js'
 import { safeCommandEnvironment } from './safe-command-environment.js'
@@ -139,17 +139,20 @@ async function executeWorkspaceTool(
   switch (call.name) {
     case 'list_files': {
       const input = WorkspacePathInputSchema.parse(call.input)
+      assertPublicWorkspacePath(input.path)
       const directory = existingWorkspacePath(workspace, input.path, true)
+      assertPublicWorkspacePath(directory)
       const entries = readdirSync(directory, { withFileTypes: true })
-        .filter((entry) => !isSecretWorkspaceName(entry.name))
+        .filter((entry) => !isSecretWorkspacePath(path.join(directory, entry.name)))
         .slice(0, 500)
         .map((entry) => `${entry.isDirectory() ? 'directory' : 'file'}\t${entry.name}`)
       return { content: entries.join('\n') || '(empty directory)' }
     }
     case 'read_file': {
       const input = WorkspacePathInputSchema.parse(call.input)
+      assertPublicWorkspacePath(input.path)
       const file = existingWorkspacePath(workspace, input.path, false)
-      assertPublicWorkspaceFile(file)
+      assertPublicWorkspacePath(file)
       if (statSync(file).size > MAX_READ_BYTES) throw new Error('file exceeds the read limit')
       const content = readFileSync(file, 'utf8')
       return {
@@ -162,8 +165,9 @@ async function executeWorkspaceTool(
     }
     case 'write_file': {
       const input = WriteFileInputSchema.parse(call.input)
+      assertPublicWorkspacePath(input.path)
       const destination = writableWorkspacePath(workspace, input.path)
-      assertPublicWorkspaceFile(destination)
+      assertPublicWorkspacePath(destination)
       const content = input.content
       if (Buffer.byteLength(content) > MAX_WRITE_BYTES)
         throw new Error('file exceeds the write limit')
