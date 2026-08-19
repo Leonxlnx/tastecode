@@ -1,7 +1,37 @@
 import { existsSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 
-const SECRET_NAMES = new Set(['.npmrc', '.pypirc', 'credentials.json', 'id_ed25519', 'id_rsa'])
+const SECRET_DIRECTORY_NAMES = new Set([
+  '.aws',
+  '.azure',
+  '.docker',
+  '.git',
+  '.gnupg',
+  '.kube',
+  '.ssh',
+])
+const SECRET_FILE_NAMES = new Set([
+  '.boto',
+  '.git-credentials',
+  '.netrc',
+  '.npmrc',
+  '.pypirc',
+  '_netrc',
+  'application_default_credentials.json',
+  'credentials.json',
+  'credentials.tfrc.json',
+  'id_dsa',
+  'id_ecdsa',
+  'id_ecdsa_sk',
+  'id_ed25519',
+  'id_ed25519_sk',
+  'id_rsa',
+])
+const SECRET_PATH_COMPONENT_SEQUENCES = [
+  ['.config', 'gcloud'],
+  ['appdata', 'roaming', 'gcloud'],
+  ['library', 'application support', 'gcloud'],
+] as const
 
 export function existingWorkspacePath(
   workspace: string,
@@ -21,7 +51,12 @@ export function existingWorkspacePath(
 export function writableWorkspacePath(workspace: string, relativePath: string): string {
   const target = contained(workspace, relativePath)
   const realWorkspace = realpathSync(workspace)
-  if (existsSync(target)) assertContained(realWorkspace, realpathSync(target))
+  assertPublicWorkspacePath(target)
+  if (existsSync(target)) {
+    const realTarget = realpathSync(target)
+    assertContained(realWorkspace, realTarget)
+    assertPublicWorkspacePath(realTarget)
+  }
   let ancestor = path.dirname(target)
   while (!existsSync(ancestor)) {
     const parent = path.dirname(ancestor)
@@ -31,25 +66,53 @@ export function writableWorkspacePath(workspace: string, relativePath: string): 
     if (parent === ancestor) throw new Error('workspace is unavailable')
     ancestor = parent
   }
-  assertContained(realWorkspace, realpathSync(ancestor))
+  const realAncestor = realpathSync(ancestor)
+  assertContained(realWorkspace, realAncestor)
+  assertPublicWorkspacePath(realAncestor)
   return target
 }
 
-export function assertPublicWorkspaceFile(file: string): void {
-  if (file.split(path.sep).some(isSecretWorkspaceName)) {
+export function assertPublicWorkspacePath(target: string): void {
+  if (isSecretWorkspacePath(target)) {
     throw new Error('credential files are not available')
   }
 }
 
+/** Backward-compatible name for callers that accept files only. */
+export function assertPublicWorkspaceFile(file: string): void {
+  assertPublicWorkspacePath(file)
+}
+
+export function isSecretWorkspacePath(target: string): boolean {
+  const components = pathComponents(target)
+  if (components.some(isSecretWorkspaceName)) return true
+
+  return SECRET_PATH_COMPONENT_SEQUENCES.some((sequence) =>
+    components.some((_, index) =>
+      sequence.every((component, offset) => components[index + offset] === component),
+    ),
+  )
+}
+
 export function isSecretWorkspaceName(name: string): boolean {
-  const lower = name.toLowerCase()
+  const lower = name.normalize('NFC').toLowerCase()
   return (
-    lower === '.git' ||
+    SECRET_DIRECTORY_NAMES.has(lower) ||
     lower === '.env' ||
     lower.startsWith('.env.') ||
-    SECRET_NAMES.has(lower) ||
+    SECRET_FILE_NAMES.has(lower) ||
     /\.(?:key|p12|pem|pfx)$/.test(lower)
   )
+}
+
+function pathComponents(target: string): string[] {
+  // Parse both separators on every host so persisted Windows paths remain
+  // protected when inspected from macOS, and vice versa.
+  return target
+    .normalize('NFC')
+    .split(/[\\/]+/)
+    .filter(Boolean)
+    .map((component) => component.toLowerCase())
 }
 
 function contained(workspace: string, relativePath: string): string {
