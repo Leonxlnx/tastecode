@@ -249,14 +249,15 @@ export class ApiAgentSession extends EventEmitter<Events> {
         }
       }
       if (!interrupted) {
-        const detail = error instanceof Error ? error.message : String(error)
-        this.emit('log', `direct API model request failed: ${detail}`)
+        const detail = this.#redact(error instanceof Error ? error.message : String(error))
+        const diagnostic = detail || 'The model request failed.'
+        this.emit('log', `direct API model request failed: ${diagnostic}`)
         this.emit('event', {
           type: 'thread.error',
           threadId: thread.id,
           // The redacted real cause, not a shrug — "credit balance too low"
           // and "invalid api key" are actionable; "request failed" is not.
-          message: this.#redact(detail) || 'The model request failed.',
+          message: diagnostic,
         })
       }
       this.#finishOpenItems('failed')
