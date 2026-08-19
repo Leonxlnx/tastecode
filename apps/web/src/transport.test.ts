@@ -253,6 +253,32 @@ describe('Transport', () => {
     await expect(pending).rejects.toThrow('The server reported an error.')
   })
 
+  it('rejects an invalid method result and continues serving later requests', async () => {
+    const transport = new Transport('ws://test')
+    transport.connect()
+    const socket = FakeSocket.instances[0]!
+    socket.open()
+
+    const invalid = transport.request('system.info', {})
+    const invalidFrame = RequestFrameSchema.parse(JSON.parse(userFrames(socket)[0]!))
+    socket.onmessage?.({ data: JSON.stringify({ id: invalidFrame.id, result: {} }) })
+
+    await expect(invalid).rejects.toThrow(
+      'The server returned an invalid result for "system.info".',
+    )
+
+    const valid = transport.request('system.info', {})
+    const validFrame = RequestFrameSchema.parse(JSON.parse(userFrames(socket)[1]!))
+    socket.onmessage?.({
+      data: JSON.stringify({
+        id: validFrame.id,
+        result: { serverVersion: 'test', protocolVersion: 1, platform: 'darwin' },
+      }),
+    })
+
+    await expect(valid).resolves.toMatchObject({ serverVersion: 'test' })
+  })
+
   it('applies a push sequence only once', () => {
     const transport = new Transport('ws://test')
     const listener = vi.fn()
