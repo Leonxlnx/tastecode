@@ -1,7 +1,7 @@
 # TasteCode launch handoff
 
-Updated: 2026-08-19 17:00 CEST / 2026-08-19 23:00 China Standard Time
-Launch status: no-go; three provider PRs and the final release proof remain Draft, while macOS, signing, legal, and release-owner decisions remain open
+Updated: 2026-08-19 18:06 CEST / 2026-08-20 00:06 China Standard Time
+Launch status: no-go; #980 is code-fixed but still lacks real gates and screenshot QA, #983/#986 remain Draft, and the final release proof, macOS, signing, legal, and owner decisions remain open
 GitHub is the authority for current commits, branches, pull requests, and release state.
 
 ## 2026-08-19 cloud-agent handoff — current authority
@@ -29,9 +29,9 @@ sequence below it. Older sections remain only as release evidence and history.
 
 | PR   | Branch / exact remote head                                                 | State                               | Required next action                                                                                                                                    |
 | ---- | -------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| #980 | `codex/fix-claude-provider-polish` / `af2efcb4`                            | Draft, mergeable                    | Finish the two model-selection migration blockers below, full gates, real model-picker QA, screenshot, then Ready/merge.                                |
-| #983 | `codex/fix-provider-account-identity` / `16c89dd1`                         | Draft, mergeable, 13 commits behind | Merge current `main`, preserve honest Grok fallback, run full gates and desktop + 390 px Settings QA, screenshot, then Ready/merge.                     |
-| #986 | `codex/feat-claude-mcp` / `7efdd7f2`                                       | Draft, mergeable, 13 commits behind | Merge current `main`, re-audit against the runtime refactor, run full gates, live Claude MCP proof and screenshot, then Ready/merge.                    |
+| #980 | `codex/fix-claude-provider-polish` / `70eba1b3`                            | Draft, mergeable, 0 behind          | Run the blocked real suites/root gates and exact-head model-picker screenshot QA; only then Ready/merge.                                                |
+| #983 | `codex/fix-provider-account-identity` / `16c89dd1`                         | Draft, mergeable, 13 commits behind | After #980 lands, merge new `main`; fix the Grok fallback test, run full gates and desktop + 390 px Settings/login QA, screenshot, then Ready/merge.    |
+| #986 | `codex/feat-claude-mcp` / `7efdd7f2`                                       | Draft, mergeable, 13 commits behind | After #983 lands, merge new `main`; resolve the security/startup/UI blockers below, then full gates and isolated real-Claude proof before Ready/merge.  |
 | #937 | `agent/release-artifact-proof` / current live head containing this handoff | Draft, mergeable                    | Only after the focused PRs land, merge final `main` into this branch, rerun every release gate and rebuild Windows from that exact SHA. Do not publish. |
 
 All four PRs target `main`. Issues #979, #981, and #982 and PRs #980, #983, and #986 are assigned
@@ -46,47 +46,101 @@ Do not create replacements or delete these worktrees.
 
 ### PR #980 — Claude model deduplication
 
-The branch already contains a clean merge of exact current `main`; the merge was pushed normally.
-The provider-default alias regression is fixed. Two review blockers remain:
+Current exact remote head: `70eba1b394fa513fac8a369f1070c45792d785d5`. The branch is
+Draft, mergeable, and 0 behind exact current `main`; it has not been marked Ready or merged.
 
-1. A persisted real selection such as `claude-code:opus%5B1m%5D` must migrate to the surviving
-   canonical Opus 5 row. The current helper only strips `[1m]` from the same base id and therefore
-   misses `opus[1m]` -> `claude-opus-5`. Add a focused regression based on captured adapter output.
-2. Exhaust exact stored-key/id matches before any legacy-family fallback. The current single
-   `.find(matchesStoredModel)` may choose an earlier approximate base row before a later exact row.
+Both documented model-selection blockers are implemented and pushed:
 
-Keep provider-specific behavior in the Claude adapter; do not add provider-name branches to shared
-renderer logic. Use the smallest fix that preserves a user's existing selected family. Rerun the
-Claude adapter tests, focused App tests, then all four root gates and real Settings model-picker QA.
+1. Persisted legacy aliases such as `claude-code:opus%5B1m%5D` migrate to the surviving captured
+   canonical row such as `claude-opus-5`, without adding a provider-name branch to shared UI.
+2. Stored selection resolution exhausts exact encoded keys and exact raw IDs before applying the
+   legacy-family fallback, so an earlier approximate row cannot shadow a later exact row.
+
+The focused renderer regressions use captured-style `claude-fable-5` and `claude-opus-5`
+results, make Fable the default to avoid a fallback false-positive, and cover both encoded-key and
+raw-ID exact precedence. Exact pushed renderer blobs:
+
+- `apps/web/src/App.tsx`: `bbb651f98837322072139433781fec18d4c4c3e1`
+- `apps/web/src/App.test.tsx`: `74635cb8f07bccf9cd68dfce19e53ea0d1575ce8`
+
+Cloud validation that actually completed at this head:
+
+- exact extracted `App.tsx` migration-helper fixture: 4/4 passed;
+- diff-check for the two newly changed renderer files: passed;
+- exact remote blob and branch-head verification after the normal fast-forward push: passed.
+
+The real suites and release gates did **not** run in this cloud. Frozen/offline installation stopped
+honestly on missing cache entries:
+
+- full repository: `@oxlint/plugins@1.78.0`;
+- focused Claude adapter: `@anthropic-ai/sdk@0.117.1`;
+- focused web package: `@pierre/theming@1.0.1`.
+
+Registry access was unavailable and hosted Actions were not run. No screenshot or release artifact
+was produced. Before Ready/merge, run the Claude adapter suite/typecheck, focused App regressions,
+web suite/typecheck, all four root gates, both release-script suites, `licenses:verify`, and real
+model-picker QA from this exact head. Attach a screenshot proving one row per Claude family and the
+legacy Opus selection migration.
 
 ### PR #983 — provider account identity
 
-Scope is exactly `Settings.tsx` and `Settings.test.tsx`. Existing focused evidence at old head:
-Settings 27/27, web typecheck, Prettier, and diff-check green. Required final behavior:
+Scope remains exactly `Settings.tsx` and `Settings.test.tsx`. Current head `16c89dd1` is
+Draft and 13 commits behind current `main`; do not merge it forward until #980 lands. A read-only
+audit found the runtime implementation small and correct, with these required final states:
 
-- one grammar: `<email> · <plan>` when provider-owned metadata exists;
-- `Signed in · <plan>` when no email exists;
-- retain the click-to-reveal privacy treatment;
-- never fabricate Grok email or plan and never read credential files/private APIs.
+- `<email> · <plan>` when provider-owned metadata contains both;
+- `<email>` when only provider-owned email exists;
+- `Signed in · <plan>` when only a provider-owned plan exists;
+- exactly `Signed in` when neither exists;
+- keep email blurred until the explicit reveal action;
+- never fabricate Grok email/plan or inspect provider credential files/private APIs.
 
-The installed Grok 1.0.0 public CLI exposes signed-in state and models but no account email/plan.
-TasteCode may show an email only when the existing login flow captured provider-confirmed output.
+Fix the focused test so Grok `{signedIn: true}` explicitly proves exactly `Signed in`. Test the
+no-email-plus-plan grammar on a provider that actually exposes plan metadata instead of implying
+that Grok exposes a Team plan.
+
+After merging the resulting #980 `main` without rebasing, rerun focused Settings and workspace
+tests, web typecheck, formatting/diff checks, then every required gate. Real evidence must include
+desktop and 390 px Settings screenshots with no clipping/overflow and a Claude one-time-code field
+smoke using a non-secret dummy value: paste and submit only to the current login PTY, then prove a
+delayed older input completion cannot erase newer text. Audit notes were posted to PR #983 as
+comment `5344738195`.
 
 ### PR #986 — Claude project MCP
 
-Current diff is 9 files, 264 additions / 38 deletions. Existing old-head evidence: root build and
-lint green; Claude adapter 31/31, server 387/387, Settings 28/28. This is not final evidence.
-After merging current `main`, verify:
+Current head `7efdd7f2` is Draft and 13 commits behind current `main`. Its old-head tests are not
+final evidence. Do not merge `main` into it until #980 and #983 land in the required order. A
+read-only security/runtime audit found launch-blocking code issues that must be resolved after that
+merge:
 
-- project stdio and HTTP definitions reach the Agent SDK through existing shared contracts;
-- secrets resolve only at the adapter boundary and are never persisted/logged;
-- inherited matching servers can be disabled without mutating vendor-global config;
-- unsupported custom stdio cwd fails honestly;
-- start, resume, orchestrator, and Settings provider selection still work;
-- a real isolated Claude MCP session succeeds and a disabled inherited server stays disabled.
+1. Raw MCP credential values are currently serialized into the Claude SDK MCP configuration and
+   can reach `--mcp-config` argv. Replace them with collision-safe generated environment
+   placeholders; place real values only in the child environment; reject any secret in command or
+   args at the spawn boundary; redact split and complete external Claude errors/logs; clear all
+   launch options and credential state after failure/dispose.
+2. Reject or safely and provably escape user-provided `${...}` expansion syntax in Claude MCP
+   command, args, URL, and literal values. Claude expands against the inherited environment, which
+   otherwise lets literal configuration reference ambient secrets.
+3. Post-start `toggleMcpServer(id, false)` is not honest suppression because an inherited server
+   may already spawn/connect. Use a proven pre-start mechanism for the exact supported scope or
+   narrow/defer the claim. A disabled nonexistent ID must not fail startup, and Settings needs a
+   public provider-neutral way to create a disabled inherited override if the feature remains.
+4. Rebuild on current-main runtime seams: removed helper/factory modules cannot be restored merely
+   to ease the merge. Make session opening atomic and reusable after failure.
+5. Harden user-controlled maps against `__proto__`, reject Claude's reserved `workspace` server
+   ID, bound SDK status/control calls, and test absent/present/already-disabled/timeout/cleanup
+   paths.
 
-Run full typecheck/test in addition to the prior focused suites. Add live high-port evidence and a
-Settings screenshot before Ready/merge.
+Required isolated proof after fixes: start logging before session creation; prove a project MCP
+nonce call, exact same-ID project precedence, disabled inherited server with zero
+connection/initialize attempts, disabled nonexistent no-op, unchanged isolated vendor config, and
+a credential canary present only in the child environment and absent from argv, serialized config,
+logs, and artifacts. Use clean `HARNESS_CONFIG_DIR` and `CLAUDE_CONFIG_DIR`, an authenticated
+owner machine, high/dynamic loopback port, exact SHA/version/checksum records, and Settings plus
+conversation screenshots. Cloud testing without authenticated Claude access cannot replace this
+physical proof. Audit notes were posted to PR #986 as comment `5344738363`.
+
+No #986 files or refs were changed in this pass.
 
 ### Required serial order
 
