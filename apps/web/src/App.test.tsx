@@ -4248,7 +4248,7 @@ describe('new chats', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: TestBoundary) => {
+    transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'models.list') {
         return Promise.resolve({
           models: [
@@ -4305,7 +4305,7 @@ describe('new chats', () => {
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: TestBoundary) => {
+    transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'models.list') {
         return Promise.resolve({
           models: [
