@@ -376,7 +376,7 @@ function matchesLegacyStoredModel(choice: ModelChoice, stored: string): boolean 
 
 function findStoredModel(
   choices: ModelChoice[],
-  stored: string | undefined,
+  stored: string | null | undefined,
 ): ModelChoice | undefined {
   if (!stored) return undefined
   return (
@@ -386,7 +386,7 @@ function findStoredModel(
   )
 }
 
-function matchesStoredModel(choice: ModelChoice, stored: string | undefined): boolean {
+function matchesStoredModel(choice: ModelChoice, stored: string | null | undefined): boolean {
   if (!stored) return false
   return (
     choice.key === stored || choice.model.id === stored || matchesLegacyStoredModel(choice, stored)
@@ -1443,7 +1443,8 @@ export function App() {
         modelsRef.current.find((choice) => choice.key === stored) ??
         modelsRef.current.find((choice) => choice.model.id === stored)
       const remembered = selections[modelSource(selected)]
-      const remembersSelected = matchesStoredModel(selected, remembered?.modelKey)
+      const rememberedSelection =
+        remembered && matchesStoredModel(selected, remembered.modelKey) ? remembered : undefined
       setModelId(selected.key)
       setProvider(selected.provider)
       setAcpAgent(selected.agent?.id)
@@ -1463,9 +1464,10 @@ export function App() {
         removeSetting(AGENT_NAME_KEY)
       }
       setEffort((current) => {
-        if (remembersSelected) {
-          return remembered.effort && selected.model.reasoningEfforts.includes(remembered.effort)
-            ? remembered.effort
+        if (rememberedSelection) {
+          return rememberedSelection.effort &&
+            selected.model.reasoningEfforts.includes(rememberedSelection.effort)
+            ? rememberedSelection.effort
             : resolveReasoningEffort({ currentEffort: undefined, nextModel: selected.model })
         }
         return resolveReasoningEffort({
@@ -1476,12 +1478,12 @@ export function App() {
       })
       setServiceTier((current) => {
         if (unknownKeys.has(selected.key)) {
-          return remembersSelected ? remembered.serviceTier : current
+          return rememberedSelection ? rememberedSelection.serviceTier : current
         }
-        if (remembersSelected) {
-          return remembered.serviceTier &&
-            selected.model.serviceTiers.some((tier) => tier.id === remembered.serviceTier)
-            ? remembered.serviceTier
+        if (rememberedSelection) {
+          return rememberedSelection.serviceTier &&
+            selected.model.serviceTiers.some((tier) => tier.id === rememberedSelection.serviceTier)
+            ? rememberedSelection.serviceTier
             : getFastModeOffValue(selected.model)
         }
         return getNextServiceTierForModel({
