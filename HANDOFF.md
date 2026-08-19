@@ -27,12 +27,12 @@ sequence below it. Older sections remain only as release evidence and history.
 
 ### Exact open pull requests
 
-| PR | Branch / exact remote head | State | Required next action |
-| --- | --- | --- | --- |
-| #980 | `codex/fix-claude-provider-polish` / `af2efcb4` | Draft, mergeable | Finish the two model-selection migration blockers below, full gates, real model-picker QA, screenshot, then Ready/merge. |
-| #983 | `codex/fix-provider-account-identity` / `16c89dd1` | Draft, mergeable, 13 commits behind | Merge current `main`, preserve honest Grok fallback, run full gates and desktop + 390 px Settings QA, screenshot, then Ready/merge. |
-| #986 | `codex/feat-claude-mcp` / `7efdd7f2` | Draft, mergeable, 13 commits behind | Merge current `main`, re-audit against the runtime refactor, run full gates, live Claude MCP proof and screenshot, then Ready/merge. |
-| #937 | `agent/release-artifact-proof` / current live head containing this handoff | Draft, mergeable | Only after the focused PRs land, merge final `main` into this branch, rerun every release gate and rebuild Windows from that exact SHA. Do not publish. |
+| PR   | Branch / exact remote head                                                 | State                               | Required next action                                                                                                                                    |
+| ---- | -------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #980 | `codex/fix-claude-provider-polish` / `af2efcb4`                            | Draft, mergeable                    | Finish the two model-selection migration blockers below, full gates, real model-picker QA, screenshot, then Ready/merge.                                |
+| #983 | `codex/fix-provider-account-identity` / `16c89dd1`                         | Draft, mergeable, 13 commits behind | Merge current `main`, preserve honest Grok fallback, run full gates and desktop + 390 px Settings QA, screenshot, then Ready/merge.                     |
+| #986 | `codex/feat-claude-mcp` / `7efdd7f2`                                       | Draft, mergeable, 13 commits behind | Merge current `main`, re-audit against the runtime refactor, run full gates, live Claude MCP proof and screenshot, then Ready/merge.                    |
+| #937 | `agent/release-artifact-proof` / current live head containing this handoff | Draft, mergeable                    | Only after the focused PRs land, merge final `main` into this branch, rerun every release gate and rebuild Windows from that exact SHA. Do not publish. |
 
 All four PRs target `main`. Issues #979, #981, and #982 and PRs #980, #983, and #986 are assigned
 to `Leonxlnx`. Worktrees already exist at:
