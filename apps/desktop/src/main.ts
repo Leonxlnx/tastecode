@@ -55,7 +55,11 @@ import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PREVIEW_DOM_AUDIT_SCRIPT } from './preview-dom-audit.js'
 import { clearPreviewSession } from './preview-session.js'
-import { PREVIEW_PAGE_HEIGHT_SCRIPT, PREVIEW_SETTLE_SCRIPT } from './preview-settle.js'
+import {
+  boundedPreviewPageHeight,
+  PREVIEW_PAGE_HEIGHT_SCRIPT,
+  PREVIEW_SETTLE_SCRIPT,
+} from './preview-settle.js'
 import { ServerSupervisor } from './server-supervisor.js'
 import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
@@ -118,6 +122,7 @@ const devServer = process.env['HARNESS_DEV_SERVER']
 const attachmentPreviewSecret = randomBytes(32)
 const attachmentThumbnailCache = new Map<string, Promise<Buffer | undefined>>()
 const MAX_ATTACHMENT_THUMBNAILS = 64
+const PREVIEW_ISOLATED_WORLD_ID = 1001
 /** Hidden capture windows are real BrowserWindows; lifecycle checks that count
  *  "the app's windows" must not count them. */
 const captureWindows = new Set<BrowserWindow>()
@@ -549,20 +554,30 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
       if (seen.has(key)) continue
       seen.add(key)
       preview.setContentSize(viewport.width, viewport.height)
-      await Promise.race([preview.webContents.executeJavaScript(PREVIEW_SETTLE_SCRIPT), deadline])
+      await Promise.race([
+        preview.webContents.executeJavaScriptInIsolatedWorld(PREVIEW_ISOLATED_WORLD_ID, [
+          { code: PREVIEW_SETTLE_SCRIPT },
+        ]),
+        deadline,
+      ])
       const domAudit = PreviewDomAuditSchema.parse(
         await Promise.race([
-          preview.webContents.executeJavaScriptInIsolatedWorld(1001, [
+          preview.webContents.executeJavaScriptInIsolatedWorld(PREVIEW_ISOLATED_WORLD_ID, [
             { code: PREVIEW_DOM_AUDIT_SCRIPT },
           ]),
           deadline,
         ]),
       )
       const destination = path.join(directory, `${key}.png`)
-      const pageHeight = await Promise.race([
-        preview.webContents.executeJavaScript(PREVIEW_PAGE_HEIGHT_SCRIPT),
-        deadline,
-      ])
+      const pageHeight = boundedPreviewPageHeight(
+        await Promise.race([
+          preview.webContents.executeJavaScriptInIsolatedWorld(PREVIEW_ISOLATED_WORLD_ID, [
+            { code: PREVIEW_PAGE_HEIGHT_SCRIPT },
+          ]),
+          deadline,
+        ]),
+        viewport.height,
+      )
       await writeFile(
         destination,
         (
@@ -570,7 +585,7 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
             x: 0,
             y: 0,
             width: viewport.width,
-            height: Number(pageHeight),
+            height: pageHeight,
           })
         ).toPNG(),
         {
