@@ -31,6 +31,9 @@ export function useVoiceRecorder() {
   const runtime = useRef<RecorderRuntime | null>(null)
   /** Set synchronously, before the permission prompt can be awaited twice. */
   const starting = useRef(false)
+  /** Invalidates capture work that resolves after cancel, cleanup, or a StrictMode remount. */
+  const generation = useRef(0)
+  const mounted = useRef(true)
   const timer = useRef<number | undefined>(undefined)
   const levelsRef = useRef<number[]>([])
   const lastLevelEmitAt = useRef(0)
@@ -39,12 +42,15 @@ export function useVoiceRecorder() {
   const [levels, setLevels] = useState<number[]>([])
 
   const teardown = useCallback(async () => {
+    generation.current += 1
     const current = runtime.current
     runtime.current = null
     if (timer.current !== undefined) window.clearInterval(timer.current)
     timer.current = undefined
-    setRecording(false)
-    setDurationMs(0)
+    if (mounted.current) {
+      setRecording(false)
+      setDurationMs(0)
+    }
 
     if (!current) return undefined
     current.processor.onaudioprocess = null
@@ -66,18 +72,37 @@ export function useVoiceRecorder() {
       throw new Error('Microphone recording is unavailable in this browser.')
     }
     starting.current = true
+    const startGeneration = generation.current + 1
+    generation.current = startGeneration
 
     let stream: MediaStream | undefined
     let audioContext: AudioContext | undefined
     let source: MediaStreamAudioSourceNode | undefined
     let processor: ScriptProcessorNode | undefined
     let silentGain: GainNode | undefined
+    const isCurrentStart = () => mounted.current && generation.current === startGeneration
+    const releaseAcquiredResources = async () => {
+      if (processor) processor.onaudioprocess = null
+      processor?.disconnect()
+      source?.disconnect()
+      silentGain?.disconnect()
+      for (const track of stream?.getTracks() ?? []) track.stop()
+      await audioContext?.close().catch(() => undefined)
+    }
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
       })
+      if (!isCurrentStart()) {
+        await releaseAcquiredResources()
+        return
+      }
       audioContext = new AudioContext()
       await audioContext.resume()
+      if (!isCurrentStart()) {
+        await releaseAcquiredResources()
+        return
+      }
       source = audioContext.createMediaStreamSource(stream)
       processor = audioContext.createScriptProcessor(BUFFER_SIZE, 1, 1)
       silentGain = audioContext.createGain()
@@ -131,11 +156,7 @@ export function useVoiceRecorder() {
         if (runtime.current) setDurationMs(performance.now() - runtime.current.startedAt)
       }, 200)
     } catch (error) {
-      processor?.disconnect()
-      source?.disconnect()
-      silentGain?.disconnect()
-      for (const track of stream?.getTracks() ?? []) track.stop()
-      await audioContext?.close().catch(() => undefined)
+      await releaseAcquiredResources()
       throw error
     } finally {
       starting.current = false
@@ -169,10 +190,16 @@ export function useVoiceRecorder() {
     await teardown()
     levelsRef.current = []
     lastLevelEmitAt.current = 0
-    setLevels([])
+    if (mounted.current) setLevels([])
   }, [teardown])
 
-  useEffect(() => () => void teardown(), [teardown])
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      void teardown()
+    }
+  }, [teardown])
   return { recording, durationMs, levels, start, stop, cancel }
 }
 
