@@ -1128,16 +1128,12 @@ function mergeClaudeModels(models: ModelInfo[]): Model[] {
   for (const catalogModel of CLAUDE_MODELS) {
     const family = claudeModelFamily(catalogModel.id)
     const matches = discovered.filter((entry) => claudeModelFamily(entry.resolvedId) === family)
-    const extended = matches.filter((entry) => entry.resolvedId.endsWith('[1m]'))
     const standard = matches.find((entry) => !entry.resolvedId.endsWith('[1m]'))
+    const selected = standard ?? matches[0]
 
-    for (const entry of extended) {
-      merged.push(entry.model)
-      used.add(entry)
-    }
-    if (standard) {
-      merged.push(standard.model)
-      used.add(standard)
+    if (selected) {
+      merged.push(selected.model)
+      for (const entry of matches) used.add(entry)
     } else {
       merged.push(catalogModel)
     }
@@ -1195,7 +1191,7 @@ function versionedClaudeModelName(id: string): string | undefined {
   if (!match) return undefined
   const family = `${match[1]![0]!.toUpperCase()}${match[1]!.slice(1)}`
   const version = `${match[2]}${match[3] ? `.${match[3]}` : ''}`
-  return `Claude ${family} ${version}${id.endsWith('[1m]') ? ' (1M context)' : ''}`
+  return `Claude ${family} ${version}`
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {

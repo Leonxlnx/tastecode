@@ -298,7 +298,7 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
-  it('drops the synthetic default, versions aliases, and keeps the complete catalog', async () => {
+  it('drops the synthetic default, deduplicates context aliases, and keeps the catalog', async () => {
     const fake = harness([
       {
         value: 'default',
@@ -348,18 +348,8 @@ describe('Claude Agent SDK session', () => {
         isDefault: model.isDefault,
       })),
     ).toEqual([
-      {
-        id: 'claude-fable-5[1m]',
-        displayName: 'Claude Fable 5 (1M context)',
-        isDefault: false,
-      },
-      { id: 'claude-fable-5', displayName: 'Claude Fable 5', isDefault: false },
-      {
-        id: 'opus[1m]',
-        displayName: 'Claude Opus 5 (1M context)',
-        isDefault: true,
-      },
-      { id: 'claude-opus-5', displayName: 'Claude Opus 5', isDefault: false },
+      { id: 'claude-fable-5[1m]', displayName: 'Claude Fable 5', isDefault: false },
+      { id: 'opus[1m]', displayName: 'Claude Opus 5', isDefault: true },
       { id: 'sonnet', displayName: 'Claude Sonnet 5', isDefault: false },
       { id: 'haiku', displayName: 'Claude Haiku 4.5', isDefault: false },
       { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8', isDefault: false },
@@ -369,6 +359,7 @@ describe('Claude Agent SDK session', () => {
       { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6', isDefault: false },
     ])
     expect(models.some((model) => model.id === 'default')).toBe(false)
+    expect(models.filter((model) => model.displayName.includes('1M context'))).toEqual([])
     expect(models.filter((model) => model.isDefault)).toHaveLength(1)
     expect(fake.inputs[0]!.options.persistSession).toBe(false)
     adapter.dispose()
