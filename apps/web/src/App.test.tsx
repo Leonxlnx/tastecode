@@ -4951,7 +4951,7 @@ describe('global shortcuts', () => {
     expect(sideTerminal).toBeTruthy()
     await waitFor(() => {
       const workspaceTerminal = document.querySelector('.workspace-terminal')
-      expect(within(workspaceTerminal as HTMLElement).getByTestId('terminal-pane')).toBeTruthy()
+      expect(workspaceTerminal?.querySelector('.terminal-pane--workspace')).toBeTruthy()
     })
     expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
     expect(screen.getByRole('button', { name: 'Open terminal' })).toBe(bottomTerminal)
