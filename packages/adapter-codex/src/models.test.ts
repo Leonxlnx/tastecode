@@ -62,4 +62,13 @@ describe('Codex models', () => {
 
     expect(models.filter((model) => model.id === 'gpt-5.3-codex-spark')).toHaveLength(1)
   })
+
+  it('removes the superseded GPT-5.2 row from the catalog', async () => {
+    const models = await listedModels([
+      providerModel,
+      { ...providerModel, id: 'gpt-5.2', displayName: 'GPT-5.2', isDefault: false },
+    ])
+
+    expect(models.some((model) => model.id === 'gpt-5.2')).toBe(false)
+  })
 })

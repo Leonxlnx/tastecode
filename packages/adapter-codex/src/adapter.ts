@@ -639,7 +639,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   async listModels(): Promise<Model[]> {
     const response = await this.#callParsed('model/list', {}, ModelListResponseSchema)
     const models: Model[] = response.data
-      .filter((model) => !model.hidden)
+      .filter((model) => !model.hidden && model.id !== 'gpt-5.2')
       .map((model) => ({
         id: model.id,
         displayName: model.displayName,
