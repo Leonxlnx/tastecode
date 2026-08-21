@@ -175,6 +175,8 @@ const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
 const EMPTY_CHECKPOINTS: Checkpoint[] = []
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
+const MODEL_VISIBILITY_VERSION_KEY = 'harness.modelVisibilityVersion'
+const MODEL_VISIBILITY_VERSION = '2'
 const EFFORT_KEY = 'harness.effort'
 const SERVICE_TIER_KEY = 'harness.serviceTier'
 const APPROVAL_KEY = 'harness.approval'
@@ -1445,6 +1447,7 @@ export function App() {
       // A hidden model cannot remain the internal selection. Otherwise the
       // picker shows no such choice while a turn can still silently use it.
       let hidden = hiddenModelsRef.current
+      let hiddenChanged = false
       if (!modelVisibilityInitialized.current && publicCatalogReady && publicCatalog.length > 0) {
         hidden = new Set(
           publicCatalog
@@ -1452,6 +1455,23 @@ export function App() {
             .map((choice) => choice.key),
         )
         modelVisibilityInitialized.current = true
+        hiddenChanged = true
+      }
+      if (
+        publicCatalogReady &&
+        readSetting(MODEL_VISIBILITY_VERSION_KEY) !== MODEL_VISIBILITY_VERSION
+      ) {
+        const legacyDefault = publicCatalog.find(
+          (choice) => choice.provider === 'codex' && choice.model.id === 'gpt-5.2',
+        )
+        if (legacyDefault && !hidden.has(legacyDefault.key)) {
+          hidden = new Set(hidden)
+          hidden.add(legacyDefault.key)
+          hiddenChanged = true
+        }
+        writeSetting(MODEL_VISIBILITY_VERSION_KEY, MODEL_VISIBILITY_VERSION)
+      }
+      if (hiddenChanged) {
         hiddenModelsRef.current = hidden
         setHiddenModels(hidden)
       }

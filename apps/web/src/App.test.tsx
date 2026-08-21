@@ -845,6 +845,35 @@ describe('web client', () => {
     expect(localStorage.getItem('harness.hiddenModels')).toBe(saved)
   })
 
+  it('migrates GPT-5.2 out of an existing default-visible catalog once', async () => {
+    localStorage.setItem('harness.hiddenModels', '[]')
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list'
+        ? Promise.resolve({
+            models: [
+              cachedCodexChoice().model,
+              {
+                id: 'gpt-5.2',
+                displayName: 'GPT-5.2',
+                isDefault: false,
+                reasoningEfforts: [],
+                serviceTiers: [],
+              },
+            ],
+          })
+        : request(method, params),
+    )
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.2"]'),
+    )
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('2')
+  })
+
   it('explains project loading failures and recovers after reconnect', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
