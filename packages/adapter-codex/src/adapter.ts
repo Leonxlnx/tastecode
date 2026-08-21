@@ -307,14 +307,41 @@ const PLAN_LABELS = [
   ['edu', 'Edu'],
 ] as const
 
-const CODEX_SPARK_COMPATIBILITY_MODEL: Model = {
-  id: 'gpt-5.3-codex-spark',
-  displayName: 'GPT-5.3-Codex-Spark',
-  description: 'Ultra-fast coding model.',
-  isDefault: false,
-  reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
-  defaultReasoningEffort: 'high',
-  serviceTiers: [],
+const CODEX_COMPATIBILITY_MODELS: Model[] = [
+  codexCompatibilityModel(
+    'gpt-5.5',
+    'GPT-5.5',
+    'Frontier model for complex coding, research, and real-world work.',
+  ),
+  codexCompatibilityModel('gpt-5.4', 'GPT-5.4', 'Strong model for everyday coding.'),
+  codexCompatibilityModel(
+    'gpt-5.4-mini',
+    'GPT-5.4-Mini',
+    'Small, fast, and cost-efficient model for simpler coding tasks.',
+  ),
+  codexCompatibilityModel(
+    'gpt-5.3-codex-spark',
+    'GPT-5.3-Codex-Spark',
+    'Ultra-fast coding model.',
+    'high',
+  ),
+]
+
+function codexCompatibilityModel(
+  id: string,
+  displayName: string,
+  description: string,
+  defaultReasoningEffort = 'medium',
+): Model {
+  return {
+    id,
+    displayName,
+    description,
+    isDefault: false,
+    reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+    defaultReasoningEffort,
+    serviceTiers: [],
+  }
 }
 
 /** Which server requests are approval prompts, and what they are about. */
@@ -638,10 +665,12 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
           : {}),
       }))
 
-    // Codex 0.147 stopped listing Spark, but still accepts it. Keep the last
-    // provider-advertised metadata until the CLI rejects the model itself.
-    if (!models.some((model) => model.id === CODEX_SPARK_COMPATIBILITY_MODEL.id)) {
-      models.push(CODEX_SPARK_COMPATIBILITY_MODEL)
+    // Codex 0.147 omits older selectable models from model/list. Preserve the
+    // last provider-advertised metadata while letting live rows win.
+    for (const compatibilityModel of CODEX_COMPATIBILITY_MODELS) {
+      if (!models.some((model) => model.id === compatibilityModel.id)) {
+        models.push(compatibilityModel)
+      }
     }
     return models
   }

@@ -39,15 +39,18 @@ async function listedModels(data = [providerModel]) {
 }
 
 describe('Codex models', () => {
-  it('keeps Spark selectable when Codex omits it from model/list', async () => {
-    expect(await listedModels()).toContainEqual({
-      id: 'gpt-5.3-codex-spark',
+  it('keeps the complete known Codex roster selectable when model/list omits rows', async () => {
+    const models = await listedModels()
+    expect(models.map((model) => model.id)).toEqual([
+      'gpt-5.6-sol',
+      'gpt-5.5',
+      'gpt-5.4',
+      'gpt-5.4-mini',
+      'gpt-5.3-codex-spark',
+    ])
+    expect(models.at(-1)).toMatchObject({
       displayName: 'GPT-5.3-Codex-Spark',
-      description: 'Ultra-fast coding model.',
-      isDefault: false,
-      reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
       defaultReasoningEffort: 'high',
-      serviceTiers: [],
     })
   })
 
