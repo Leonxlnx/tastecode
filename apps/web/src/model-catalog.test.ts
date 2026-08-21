@@ -165,6 +165,7 @@ describe('model catalog', () => {
     ['gpt-5.6-terra', true],
     ['gpt-5.6-luna', true],
     ['gpt-5.3-codex-spark', true],
+    ['gpt-5.2', false],
     ['gpt-5.5', false],
     ['gpt-5.4', false],
     ['gpt-5.4-mini', false],

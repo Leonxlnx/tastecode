@@ -48,7 +48,7 @@ export function filterModelChoicesByQuery(choices: ModelChoice[], query: string)
  * generations explicitly superseded in the current beta roster start hidden. */
 export function modelVisibleByDefault(model: Model): boolean {
   const id = model.id.toLowerCase()
-  if (/^gpt-5\.(?:4|5)(?:$|-)/.test(id)) return false
+  if (/^gpt-5\.(?:2|4|5)(?:$|-)/.test(id)) return false
   return !['haiku', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6'].includes(id)
 }
 

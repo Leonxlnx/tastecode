@@ -307,6 +307,16 @@ const PLAN_LABELS = [
   ['edu', 'Edu'],
 ] as const
 
+const CODEX_SPARK_COMPATIBILITY_MODEL: Model = {
+  id: 'gpt-5.3-codex-spark',
+  displayName: 'GPT-5.3-Codex-Spark',
+  description: 'Ultra-fast coding model.',
+  isDefault: false,
+  reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+  defaultReasoningEffort: 'high',
+  serviceTiers: [],
+}
+
 /** Which server requests are approval prompts, and what they are about. */
 const APPROVAL_KIND = new Map<string, ApprovalRequest['kind']>([
   ['item/commandExecution/requestApproval', 'command'],
@@ -601,7 +611,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
    */
   async listModels(): Promise<Model[]> {
     const response = await this.#callParsed('model/list', {}, ModelListResponseSchema)
-    return response.data
+    const models: Model[] = response.data
       .filter((model) => !model.hidden)
       .map((model) => ({
         id: model.id,
@@ -627,6 +637,13 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
             }
           : {}),
       }))
+
+    // Codex 0.147 stopped listing Spark, but still accepts it. Keep the last
+    // provider-advertised metadata until the CLI rejects the model itself.
+    if (!models.some((model) => model.id === CODEX_SPARK_COMPATIBILITY_MODEL.id)) {
+      models.push(CODEX_SPARK_COMPATIBILITY_MODEL)
+    }
+    return models
   }
 
   async listMcpServers(threadId?: string): Promise<McpServer[]> {
