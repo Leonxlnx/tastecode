@@ -770,6 +770,7 @@ describe('web client', () => {
   )
 
   it('keeps a visibility edit made while live discovery is pending', async () => {
+    localStorage.setItem('harness.modelVisibilityVersion', '3')
     localStorage.setItem(
       'harness.modelCatalog.v1',
       serializeModelCatalogCache([cachedCodexChoice()]),
@@ -811,6 +812,7 @@ describe('web client', () => {
 
   it('never replaces a saved model-visibility choice with curated defaults', async () => {
     const saved = '["codex:gpt-5.6-sol"]'
+    localStorage.setItem('harness.modelVisibilityVersion', '3')
     localStorage.setItem('harness.hiddenModels', saved)
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -845,8 +847,8 @@ describe('web client', () => {
     expect(localStorage.getItem('harness.hiddenModels')).toBe(saved)
   })
 
-  it('migrates GPT-5.2 out of an existing default-visible catalog once', async () => {
-    localStorage.setItem('harness.hiddenModels', '[]')
+  it('migrates an existing profile to the exact public-beta model defaults once', async () => {
+    localStorage.setItem('harness.hiddenModels', '["codex:gpt-5.3-codex-spark"]')
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) =>
@@ -861,6 +863,13 @@ describe('web client', () => {
                 reasoningEfforts: [],
                 serviceTiers: [],
               },
+              {
+                id: 'gpt-5.3-codex-spark',
+                displayName: 'GPT-5.3-Codex-Spark',
+                isDefault: false,
+                reasoningEfforts: [],
+                serviceTiers: [],
+              },
             ],
           })
         : request(method, params),
@@ -871,7 +880,7 @@ describe('web client', () => {
     await waitFor(() =>
       expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.2"]'),
     )
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('2')
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('3')
   })
 
   it('explains project loading failures and recovers after reconnect', async () => {
@@ -4056,6 +4065,8 @@ describe('new chats', () => {
   })
 
   it('keeps highest reasoning effort at the highest stop when switching models', async () => {
+    localStorage.setItem('harness.modelVisibilityVersion', '3')
+    localStorage.setItem('harness.hiddenModels', '[]')
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
