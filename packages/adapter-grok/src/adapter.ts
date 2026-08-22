@@ -116,11 +116,16 @@ const GROK_MODEL_DETAILS = new Map<string, GrokModelDetails>([
   ],
 ])
 
+const GROK_BACKGROUND_MODEL = 'grok-4.6'
+const GROK_BACKGROUND_EFFORT = 'low'
+
 export type GrokStartOptions = {
   instructions?: string | undefined
   model?: string | undefined
   effort?: string | undefined
   approval?: ApprovalMode | undefined
+  /** Product-owned one-shot writing. Keep it on grok-4.6 low without tool loops. */
+  ephemeral?: boolean | undefined
 }
 
 export type GrokTurnOptions = Pick<GrokStartOptions, 'model' | 'effort'>
@@ -143,6 +148,15 @@ export type GrokNativeSession = {
   mode: 'create' | 'resume'
 }
 
+function applyGrokBackgroundDefaults(options: GrokStartOptions): GrokStartOptions {
+  if (!options.ephemeral) return options
+  return {
+    ...options,
+    model: options.model ?? GROK_BACKGROUND_MODEL,
+    effort: options.effort ?? GROK_BACKGROUND_EFFORT,
+  }
+}
+
 /** The per-turn argv. Only a prompt file path travels through CreateProcess. */
 export function grokTurnArgs(
   promptFile: string,
@@ -156,6 +170,9 @@ export function grokTurnArgs(
     'streaming-json',
     ...(options.model ? ['--model', options.model] : []),
     ...(options.effort ? ['--reasoning-effort', options.effort] : []),
+    // One model reply, no tool loop: background titles must not wait on a TTY
+    // permission prompt in an empty temp workspace.
+    ...(options.ephemeral ? ['--max-turns', '1'] : []),
     // ask -> the CLI's default permission behavior; auto -> accept edits but
     // not commands; full -> the CLI's own skip-everything mode.
     ...(options.approval === 'auto' ? ['--permission-mode', 'acceptEdits'] : []),
@@ -276,7 +293,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
       throw new Error('Grok does not support automatic approval review')
     }
     this.#workspacePath = workspacePath
-    this.#options = options
+    this.#options = applyGrokBackgroundDefaults(options)
     const threadId = `grok-${crypto.randomUUID()}`
     this.#threadId = threadId
     // Chosen here, not from the end frame: Stop can kill the first child
@@ -311,7 +328,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     if (!threadId) throw new Error('TasteCode thread id is required to resume Grok')
     if (!providerSessionId) throw new Error('Grok native session id is required to resume')
     this.#workspacePath = workspacePath
-    this.#options = options
+    this.#options = applyGrokBackgroundDefaults(options)
     this.#threadId = threadId
     this.#providerSessionId = providerSessionId
     this.#nativeSessionCreated = true

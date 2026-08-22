@@ -921,8 +921,8 @@ function BackgroundModelSettings(props: { transport: Transport }) {
         <h2>Background work</h2>
         <p>
           Used for session titles, commit-message drafts, and other short writing. Automatic uses
-          Luna at medium on a Codex subscription, or the newest cost-oriented model at its lowest
-          effort elsewhere.
+          Luna at medium on a Codex subscription, Grok 4.6 at low when Grok is connected, or the
+          newest cost-oriented model at its lowest effort elsewhere.
         </p>
       </header>
       <div className="settings__group">

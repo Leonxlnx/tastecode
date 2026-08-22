@@ -68,6 +68,17 @@ export function resolveBackgroundModel(
     return selection(codex, luna, medium ?? lowestReasoningEffort(luna), true)
   }
 
+  const grok = sources.find(
+    (source) => source.provider === 'grok' && !source.agent && !source.connectionId,
+  )
+  const grok46 = grok?.models
+    .filter((model) => isGrok46(model))
+    .sort((left, right) => compareVersions(right, left))[0]
+  if (grok && grok46) {
+    const low = grok46.reasoningEfforts.find((effort) => normalize(effort) === 'low')
+    return selection(grok, grok46, low ?? lowestReasoningEffort(grok46), true)
+  }
+
   const candidates = sources.flatMap((source, sourceIndex) =>
     source.models.map((model, modelIndex) => ({ source, sourceIndex, model, modelIndex })),
   )
@@ -122,6 +133,10 @@ function selection(
 
 function isLuna(model: Model): boolean {
   return /(^|[\s/_.-])luna($|[\s/_.-])/i.test(`${model.id} ${model.displayName}`)
+}
+
+function isGrok46(model: Model): boolean {
+  return /grok[\s._-]*4\.6/i.test(`${model.id} ${model.displayName}`)
 }
 
 function cheapModelScore(model: Model): number {

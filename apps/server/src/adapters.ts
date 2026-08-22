@@ -563,6 +563,7 @@ function grokRuntime(
         effort: options.effort,
         approval: options.approval,
         instructions: options.instructions,
+        ...(options.ephemeral ? { ephemeral: true } : {}),
       })
       return { thread, session: printSessionFor(adapter) }
     },
@@ -605,6 +606,7 @@ function grokRuntime(
           effort: options.effort,
           approval: options.approval,
           instructions: options.instructions,
+          ...(options.ephemeral ? { ephemeral: true } : {}),
         },
       )
       return { thread, session: printSessionFor(adapter) }

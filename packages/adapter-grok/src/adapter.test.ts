@@ -586,6 +586,34 @@ describe('Grok adapter', () => {
     expect(grokTurnArgs('x', {}, { id: 'sess-1', mode: 'resume' })).not.toContain('--session-id')
   })
 
+  it('runs ephemeral background writing on grok-4.6 at low with a single turn', async () => {
+    const child = new FakeChild()
+    let args: string[] = []
+    const adapter = new GrokAdapter({
+      spawn: (_command, value) => {
+        args = value
+        return child
+      },
+    })
+    const thread = await adapter.startThread('C:\\repo', { ephemeral: true })
+    await adapter.sendTurn(thread.id, 'Title this session')
+    expect(args).toEqual([
+      '--prompt-file',
+      expect.any(String),
+      '--output-format',
+      'streaming-json',
+      '--model',
+      'grok-4.6',
+      '--reasoning-effort',
+      'low',
+      '--max-turns',
+      '1',
+      '--session-id',
+      expect.any(String),
+    ])
+    adapter.dispose()
+  })
+
   it('declares the one-shot print-mode capability set', () => {
     expect(GROK_CAPABILITIES).toMatchObject({ steer: false, interrupt: true, reasoningItems: true })
   })

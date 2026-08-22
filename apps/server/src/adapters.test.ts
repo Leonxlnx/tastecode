@@ -192,6 +192,12 @@ describe('one-shot provider turn options', () => {
     },
   )
 
+  it('forwards ephemeral Grok background sessions to the print adapter', async () => {
+    const runtime = providerRuntime('grok', () => {})
+    await runtime.start('C:\\repo', { ephemeral: true })
+    expect(turnAdapters[0]?.startOptions).toMatchObject({ ephemeral: true })
+  })
+
   it('binds a named custom source to the compatible adapter launch', async () => {
     const runtime = providerRuntime(
       'grok',
